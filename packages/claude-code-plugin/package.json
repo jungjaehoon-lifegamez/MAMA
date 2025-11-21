@@ -1,0 +1,52 @@
+{
+  "name": "mama-plugin",
+  "version": "1.0.0",
+  "description": "MAMA Plugin for Claude Code - Memory-Augmented MCP Assistant. Track decisions, learn from mistakes, never repeat errors.",
+  "author": "SpineLift Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spellon/claude-mama.git",
+    "directory": "packages/claude-code-plugin"
+  },
+  "homepage": "https://github.com/spellon/claude-mama#readme",
+  "bugs": {
+    "url": "https://github.com/spellon/claude-mama/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-desktop",
+    "claude-plugin",
+    "mcp-server",
+    "memory-assistant",
+    "decision-tracking",
+    "ai-memory",
+    "knowledge-management",
+    "memory",
+    "decisions",
+    "context",
+    "evolution"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "chalk": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "files": [
+    ".claude-plugin/**",
+    ".mcp.json",
+    "commands/**",
+    "hooks/**",
+    "skills/**",
+    "scripts/**",
+    "docs/**",
+    "README.md"
+  ]
+}

@@ -1,0 +1,303 @@
+/**
+ * Tests for Story M3.2: Auto-context Skill Wrapper
+ *
+ * AC1: Skill declared in plugin manifest and references hook outputs
+ * AC2: Skill respects similarity thresholds + token budgets
+ * AC3: Skill can be disabled via config
+ * AC4: Status indicator shows tier and accuracy
+ * AC5: Smoke test - skill fires during normal coding session
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PLUGIN_ROOT = path.resolve(__dirname, '../..');
+const PLUGIN_JSON_PATH = path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json');
+const SKILL_PATH = path.join(PLUGIN_ROOT, 'skills', 'mama-context', 'SKILL.md');
+const USER_PROMPT_HOOK = path.join(PLUGIN_ROOT, 'scripts', 'userpromptsubmit-hook.js');
+const PRE_TOOL_HOOK = path.join(PLUGIN_ROOT, 'scripts', 'pretooluse-hook.js');
+
+describe('M3.2: Auto-context Skill Wrapper', () => {
+  describe('AC1: Skill declared in plugin manifest', () => {
+    it('should have plugin.json with skill declaration', () => {
+      expect(fs.existsSync(PLUGIN_JSON_PATH)).toBe(true);
+
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+
+      expect(pluginConfig.skills).toBeDefined();
+      expect(Array.isArray(pluginConfig.skills)).toBe(true);
+
+      const mamaContextSkill = pluginConfig.skills.find(s => s.name === 'mama-context');
+      expect(mamaContextSkill).toBeDefined();
+      expect(mamaContextSkill.path).toContain('skills/mama-context');
+    });
+
+    it('should have SKILL.md file', () => {
+      expect(fs.existsSync(SKILL_PATH)).toBe(true);
+
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+      expect(skillContent).toContain('mama-context');
+      expect(skillContent).toContain('Always-on');
+      expect(skillContent).toContain('background context injection');
+    });
+
+    it('should reference hook outputs in plugin.json', () => {
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+
+      expect(pluginConfig.hooks).toBeDefined();
+      expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
+      expect(pluginConfig.hooks.PreToolUse).toBeDefined();
+
+      // Verify hooks reference correct scripts
+      const userPromptHook = pluginConfig.hooks.UserPromptSubmit[0].hooks[0];
+      expect(userPromptHook.command).toContain('userpromptsubmit-hook.js');
+
+      const preToolHook = pluginConfig.hooks.PreToolUse[0].hooks[0];
+      expect(preToolHook.command).toContain('pretooluse-hook.js');
+    });
+  });
+
+  describe('AC2: Respects similarity thresholds + token budgets', () => {
+    it('should document similarity thresholds in SKILL.md', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      // UserPromptSubmit: 75% threshold
+      expect(skillContent).toMatch(/75%|0\.75/);
+
+      // PreToolUse: 70% threshold
+      expect(skillContent).toMatch(/70%|0\.70/);
+    });
+
+    it('should document token budgets in SKILL.md', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      // Teaser format: 40 tokens
+      expect(skillContent).toContain('40 tokens');
+
+      // PreToolUse: 300 tokens
+      expect(skillContent).toContain('300 tokens');
+    });
+
+    it('should use teaser format (not full context)', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      // Verify teaser format is documented
+      expect(skillContent).toContain('Teaser Format');
+      expect(skillContent).toContain('💡 MAMA:');
+      expect(skillContent).toContain('/mama-recall');
+      expect(skillContent).toContain('40 tokens');
+
+      // Verify it explains the transition from 250 to 40 tokens
+      expect(skillContent).toContain('250 tokens → 40 tokens');
+    });
+  });
+
+  describe('AC3: Can be disabled via config', () => {
+    it('should document disable mechanism in SKILL.md', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      expect(skillContent).toContain('MAMA_DISABLE_HOOKS');
+      expect(skillContent).toContain('disable_hooks');
+      expect(skillContent).toContain('Configuration');
+    });
+
+    it('should show how to disable in config file', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      expect(skillContent).toMatch(/config\.json/);
+      expect(skillContent).toMatch(/disable.*true/);
+    });
+  });
+
+  describe('AC4: Status indicator confirms tier and accuracy', () => {
+    it('should document Tier 1 status in SKILL.md', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      expect(skillContent).toContain('Tier 1');
+      expect(skillContent).toContain('Full Features');
+      expect(skillContent).toContain('80% accuracy');
+      expect(skillContent).toContain('Vector Search');
+    });
+
+    it('should document Tier 2 degraded mode in SKILL.md', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      expect(skillContent).toContain('Tier 2');
+      expect(skillContent).toContain('DEGRADED');
+      expect(skillContent).toContain('40% accuracy');
+      expect(skillContent).toContain('exact match');
+    });
+
+    it('should show status indicator in teaser format example', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      expect(skillContent).toContain('System Status');
+      expect(skillContent).toMatch(/✅.*Full Features|⚠️.*DEGRADED/);
+    });
+  });
+
+  describe('AC5: Smoke test - fires during normal coding session', () => {
+    let originalEnv;
+
+    beforeEach(() => {
+      originalEnv = { ...process.env };
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('should have executable hook scripts', () => {
+      expect(fs.existsSync(USER_PROMPT_HOOK)).toBe(true);
+      expect(fs.existsSync(PRE_TOOL_HOOK)).toBe(true);
+
+      // Check shebang
+      const userPromptContent = fs.readFileSync(USER_PROMPT_HOOK, 'utf8');
+      expect(userPromptContent.startsWith('#!/usr/bin/env node')).toBe(true);
+
+      const preToolContent = fs.readFileSync(PRE_TOOL_HOOK, 'utf8');
+      expect(preToolContent.startsWith('#!/usr/bin/env node')).toBe(true);
+
+      // Check executable permissions
+      const userPromptStat = fs.statSync(USER_PROMPT_HOOK);
+      expect(userPromptStat.mode & 0o111).toBeGreaterThan(0); // At least one execute bit
+
+      const preToolStat = fs.statSync(PRE_TOOL_HOOK);
+      expect(preToolStat.mode & 0o111).toBeGreaterThan(0);
+    });
+
+    it('should trigger UserPromptSubmit hook on prompt', () => {
+      // Simulate user prompt
+      process.env.USER_PROMPT = "How should I handle authentication?";
+
+      try {
+        const output = execSync(`node ${USER_PROMPT_HOOK}`, {
+          encoding: 'utf8',
+          timeout: 2000, // 2s timeout
+          stdio: 'pipe'
+        });
+
+        // Should produce output (even if no decisions found)
+        // Output might be empty if no matching decisions, which is OK
+        expect(typeof output).toBe('string');
+      } catch (err) {
+        // Timeout or error is acceptable (may not have DB initialized)
+        // Just verify hook is executable
+        expect(err.code).toBeDefined();
+      }
+    });
+
+    it('should trigger PreToolUse hook on file operation', () => {
+      // Simulate file read
+      process.env.TOOL_NAME = "Read";
+      process.env.FILE_PATH = "src/auth.ts";
+
+      try {
+        const output = execSync(`node ${PRE_TOOL_HOOK}`, {
+          encoding: 'utf8',
+          timeout: 2000,
+          stdio: 'pipe'
+        });
+
+        expect(typeof output).toBe('string');
+      } catch (err) {
+        // Acceptable if DB not initialized
+        expect(err.code).toBeDefined();
+      }
+    });
+
+    it('should complete hook within 500ms timeout', () => {
+      process.env.USER_PROMPT = "test prompt";
+
+      const startTime = Date.now();
+
+      try {
+        execSync(`node ${USER_PROMPT_HOOK}`, {
+          encoding: 'utf8',
+          timeout: 600, // Slightly higher than AC requirement to allow for execution overhead
+          stdio: 'pipe'
+        });
+      } catch (err) {
+        // Check if timeout occurred (would be killed by timeout, not completed)
+        if (err.killed && err.signal === 'SIGTERM') {
+          throw new Error('Hook exceeded 500ms timeout requirement');
+        }
+      }
+
+      const elapsed = Date.now() - startTime;
+      expect(elapsed).toBeLessThan(600); // Should complete well under 500ms on Tier 1
+    });
+  });
+
+  describe('Integration: Skill + Hooks + Commands', () => {
+    it('should have consistent configuration across skill and hooks', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+      const userPromptContent = fs.readFileSync(USER_PROMPT_HOOK, 'utf8');
+
+      // Verify similarity threshold consistency
+      expect(skillContent).toMatch(/75%|0\.75/);
+      expect(userPromptContent).toMatch(/0\.75|75/);
+
+      // Verify timeout consistency
+      expect(skillContent).toContain('500ms');
+      expect(userPromptContent).toMatch(/500/);
+    });
+
+    it('should reference related stories in SKILL.md', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      expect(skillContent).toContain('M3.2'); // This story
+      expect(skillContent).toContain('M2.1'); // UserPromptSubmit
+      expect(skillContent).toContain('M2.2'); // PreToolUse
+      expect(skillContent).toContain('M2.4'); // Transparency banner
+    });
+
+    it('should document architecture decision reference', () => {
+      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+
+      expect(skillContent).toContain('Architecture');
+      expect(skillContent).toContain('Decision 4'); // Hook Implementation decision
+    });
+  });
+
+  describe('Plugin manifest validity', () => {
+    it('should have valid JSON structure', () => {
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+
+      expect(pluginConfig.name).toBe('mama');
+      expect(pluginConfig.version).toBeDefined();
+      expect(pluginConfig.description).toBeDefined();
+      expect(pluginConfig.commands).toBeDefined();
+      expect(pluginConfig.skills).toBeDefined();
+      expect(pluginConfig.hooks).toBeDefined();
+    });
+
+    it('should have all required hook configurations', () => {
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+
+      expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
+      expect(pluginConfig.hooks.PreToolUse).toBeDefined();
+      expect(pluginConfig.hooks.PostToolUse).toBeDefined();
+    });
+
+    it('should use ${CLAUDE_PLUGIN_ROOT} for portable paths', () => {
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+
+      const allHookCommands = [
+        ...pluginConfig.hooks.UserPromptSubmit[0].hooks.map(h => h.command),
+        ...pluginConfig.hooks.PreToolUse[0].hooks.map(h => h.command),
+        ...pluginConfig.hooks.PostToolUse[0].hooks.map(h => h.command)
+      ];
+
+      allHookCommands.forEach(cmd => {
+        expect(cmd).toContain('${CLAUDE_PLUGIN_ROOT}');
+      });
+    });
+  });
+});

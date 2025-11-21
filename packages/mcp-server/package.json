@@ -1,0 +1,54 @@
+{
+  "name": "@spellon/mama-server",
+  "version": "1.0.0",
+  "description": "MAMA MCP Server - Memory-Augmented MCP Assistant for Claude Code & Desktop",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "mama-server": "src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "clean": "rm -rf dist node_modules"
+  },
+  "keywords": [
+    "mcp-server",
+    "model-context-protocol",
+    "claude",
+    "memory-assistant",
+    "decision-tracking",
+    "semantic-search",
+    "embeddings"
+  ],
+  "author": "SpineLift Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spellon/claude-mama.git",
+    "directory": "packages/mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/spellon/claude-mama/issues"
+  },
+  "homepage": "https://github.com/spellon/claude-mama#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "@huggingface/transformers": "^3.0.0",
+    "better-sqlite3": "^11.0.0",
+    "sqlite-vec": "^0.1.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0",
+    "@types/better-sqlite3": "^7.6.0"
+  },
+  "files": [
+    "src/**/*.js",
+    "README.md",
+    "LICENSE"
+  ]
+}

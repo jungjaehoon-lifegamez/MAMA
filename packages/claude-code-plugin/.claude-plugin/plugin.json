@@ -1,0 +1,20 @@
+{
+  "name": "mama",
+  "version": "1.0.0",
+  "description": "Memory-Augmented MCP Assistant - Track decisions, learn from mistakes, never repeat errors.",
+  "author": "SpineLift Team",
+  "repository": "https://github.com/spellon/claude-mama",
+  "commands": [
+    "commands/mama-save.md",
+    "commands/mama-recall.md",
+    "commands/mama-suggest.md",
+    "commands/mama-list.md",
+    "commands/mama-configure.md"
+  ],
+  "skills": [
+    "skills/mama-context.md"
+  ],
+  "hooks": [
+    "hooks/inject-context.json"
+  ]
+}

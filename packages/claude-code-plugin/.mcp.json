@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": ["-y", "@spellon/mama-server"],
+      "env": {
+        "MAMA_DB_PATH": "${HOME}/.claude/mama-memory.db"
+      }
+    }
+  }
+}

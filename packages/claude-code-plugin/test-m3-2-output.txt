@@ -1,0 +1,33 @@
+
+> mama-plugin@1.0.0 test
+> vitest run tests/skills/mama-context-skill.test.js
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v1.6.1 /home/hoons/spineLiftWASM/mama-plugin
+
+ ❯ tests/skills/mama-context-skill.test.js  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/skills/mama-context-skill.test.js [ tests/skills/mama-context-skill.test.js ]
+Error: Vitest cannot be imported in a CommonJS module using require(). Please use "import" instead.
+
+If you are using "import" in your source code, then it's possible it was bundled into require() automatically by your bundler. In that case, do not bundle CommonJS output since it will never work with Vitest, or use dynamic import() which is available in all CommonJS modules.
+ ❯ Object.<anonymous> node_modules/vitest/index.cjs:1:7
+ ❯ TracingChannel.traceSync node:diagnostics_channel:322:14
+ ❯ tests/skills/mama-context-skill.test.js:11:57
+      9|  */
+     10| 
+     11| const { describe, it, expect, beforeEach, afterEach } = require('vites…
+       |                                                         ^
+     12| const fs = require('fs');
+     13| const path = require('path');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  14:42:18
+   Duration  463ms (transform 72ms, setup 0ms, collect 0ms, tests 0ms, environment 0ms, prepare 189ms)
+
