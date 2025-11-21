@@ -156,7 +156,7 @@ MAMA uses a split architecture to enable code reuse across multiple Claude clien
 2. Check migration history in docs/development/developer-playbook.md
 3. Prefer extracting proven patterns over inventing new ones
 
-Reference: packages/claude-code-plugin/docs/development/MAMA-CODE-REUSE-ANALYSIS.md
+Reference: dev-docs/project/code-reuse-analysis.md (local development docs)
 
 ### Code Organization Rules
 
@@ -277,7 +277,7 @@ All tools follow standard MCP patterns:
 
 ## Documentation Structure
 
-Full docs in `packages/claude-code-plugin/docs/` following Diátaxis framework:
+Full docs in `docs/` following Diátaxis framework:
 
 - **Tutorials:** Getting started guides
 - **Guides:** Installation, troubleshooting, workflows
@@ -285,9 +285,9 @@ Full docs in `packages/claude-code-plugin/docs/` following Diátaxis framework:
 - **Development:** Contributing, testing, architecture deep-dives
 
 Key docs:
-- [Developer Playbook](packages/claude-code-plugin/docs/development/developer-playbook.md) - Architecture & standards
-- [Deployment Architecture](packages/claude-code-plugin/docs/development/deployment-architecture.md) - How MAMA is distributed
-- [Testing Guide](packages/claude-code-plugin/docs/development/testing.md) - Test suite details
+- [Developer Playbook](docs/development/developer-playbook.md) - Architecture & standards
+- [Deployment Architecture](docs/development/deployment-architecture.md) - How MAMA is distributed
+- [Testing Guide](docs/development/testing.md) - Test suite details
 
 ## Monorepo Status
 
@@ -317,5 +317,5 @@ Key docs:
 ## Getting Help
 
 - **Issues:** https://github.com/spellon/claude-mama/issues
-- **Docs:** packages/claude-code-plugin/docs/index.md
-- **Developer Playbook:** packages/claude-code-plugin/docs/development/developer-playbook.md
+- **Docs:** docs/index.md
+- **Developer Playbook:** docs/development/developer-playbook.md
