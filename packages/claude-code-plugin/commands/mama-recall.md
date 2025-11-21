@@ -1,7 +1,6 @@
 ---
 description: Recall full decision history for a specific topic
 allowed-tools: Read
-model: claude-3-5-sonnet
 argument-hint: "<topic>"
 ---
 

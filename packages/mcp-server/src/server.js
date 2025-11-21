@@ -177,19 +177,19 @@ class MAMAServer {
 
         switch (name) {
           case 'save_decision':
-            result = await saveDecisionTool(args);
+            result = await saveDecisionTool.handler(args);
             break;
           case 'recall_decision':
-            result = await recallDecisionTool(args);
+            result = await recallDecisionTool.handler(args);
             break;
           case 'suggest_decision':
-            result = await suggestDecisionTool(args);
+            result = await suggestDecisionTool.handler(args);
             break;
           case 'list_decisions':
-            result = await listDecisionsTool(args);
+            result = await listDecisionsTool.handler(args);
             break;
           case 'update_outcome':
-            result = await updateOutcomeTool(args);
+            result = await updateOutcomeTool.handler(args);
             break;
           default:
             throw new Error(`Unknown tool: ${name}`);

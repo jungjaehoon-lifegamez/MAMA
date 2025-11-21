@@ -52,13 +52,13 @@ function getTierInfo() {
   try {
     const config = loadConfig();
 
-    if (config.embeddingModel && config.vectorSearchEnabled !== false) {
+    if (config.modelName && config.vectorSearchEnabled !== false) {
       return {
         tier: 1,
         vectorSearchEnabled: true,
         reason: 'Full MAMA features available'
       };
-    } else if (!config.embeddingModel) {
+    } else if (!config.modelName) {
       return {
         tier: 2,
         vectorSearchEnabled: false,
@@ -283,6 +283,25 @@ function generateDecisionSummary(diffContent, filePath) {
 }
 
 /**
+ * Read input from stdin
+ */
+async function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('end', () => {
+      try {
+        const parsed = JSON.parse(data);
+        resolve(parsed);
+      } catch (error) {
+        reject(new Error(`Failed to parse stdin JSON: ${error.message}`));
+      }
+    });
+    process.stdin.on('error', reject);
+  });
+}
+
+/**
  * Main hook handler
  */
 async function main() {
@@ -292,18 +311,38 @@ async function main() {
     // 1. Check opt-out flags
     if (process.env.MAMA_DISABLE_HOOKS === 'true') {
       info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
     if (process.env.MAMA_DISABLE_AUTO_SAVE === 'true') {
       info('[Hook] Auto-save disabled via MAMA_DISABLE_AUTO_SAVE (privacy mode)');
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
-    // 2. Get tool name
-    const toolName = process.env.TOOL_NAME || '';
+    // 2. Get tool information from stdin
+    let toolName, filePath, diffContent, conversationContext;
+    try {
+      const inputData = await readStdin();
+      toolName = inputData.toolName || inputData.tool || process.env.TOOL_NAME || '';
+      filePath = inputData.filePath || inputData.file_path || inputData.FILE_PATH || process.env.FILE_PATH || '';
+      diffContent = inputData.diffContent || inputData.diff || inputData.content || process.env.DIFF_CONTENT || '';
+      conversationContext = inputData.conversationContext || inputData.context || process.env.CONVERSATION_CONTEXT || '';
+    } catch (error) {
+      // Fallback to environment variables
+      toolName = process.env.TOOL_NAME || '';
+      filePath = process.env.FILE_PATH || '';
+      diffContent = process.env.DIFF_CONTENT || '';
+      conversationContext = process.env.CONVERSATION_CONTEXT || '';
+    }
+
     if (!toolName || !EDIT_TOOLS.some(tool => toolName.includes(tool))) {
       // Silent exit - tool not applicable for auto-save
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -313,17 +352,17 @@ async function main() {
     // 4. Skip on Tier 2/3 (need embeddings for similarity)
     if (tierInfo.tier !== 1) {
       warn(`[Hook] Auto-save requires Tier 1 (embeddings), current: Tier ${tierInfo.tier}`);
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
-    // 5. Extract context
-    const filePath = process.env.FILE_PATH || '';
-    const diffContent = process.env.DIFF_CONTENT || '';
-    const conversationContext = process.env.CONVERSATION_CONTEXT || '';
-
+    // 5. Validate context
     if (!diffContent && !filePath) {
       // No content to analyze
       info('[Hook] No diff or file path provided, skipping auto-save');
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -359,7 +398,17 @@ async function main() {
       similarCheck.decisions
     );
 
-    console.log(suggestion);
+    // Correct Claude Code JSON format with hookSpecificOutput
+    const response = {
+      decision: null,
+      reason: "",
+      hookSpecificOutput: {
+        hookEventName: "PostToolUse",
+        systemMessage: `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`,
+        additionalContext: suggestion
+      }
+    };
+    console.log(JSON.stringify(response));
 
     // Log suggestion (will be logged again when user responds)
     info(`[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar)`);

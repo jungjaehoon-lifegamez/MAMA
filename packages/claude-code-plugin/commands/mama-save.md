@@ -1,7 +1,6 @@
 ---
 description: Save a decision or insight to MAMA's long-term memory
 allowed-tools: Read
-model: claude-3-5-sonnet
 argument-hint: "<topic> <decision> <reasoning> [--confidence=0.8] [--outcome=pending]"
 ---
 

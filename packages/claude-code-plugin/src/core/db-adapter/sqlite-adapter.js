@@ -26,7 +26,7 @@ try {
 
 // Database paths
 const LEGACY_DB_PATH = path.join(os.homedir(), '.spinelift', 'memories.db');
-const DEFAULT_DB_PATH = path.join(os.homedir(), '.mama', 'memories.db');
+const DEFAULT_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
 
 class SQLiteAdapter extends DatabaseAdapter {
   constructor(config = {}) {
@@ -206,12 +206,20 @@ class SQLiteAdapter extends DatabaseAdapter {
     }
 
     const embeddingJson = JSON.stringify(Array.from(embedding));
+
+    // CRITICAL FIX: sqlite-vec virtual tables accept rowid as literal but not via ? placeholder
+    // Using template literal with Number() cast for safety (prevents SQL injection)
+    const safeRowid = Number(rowid);
+    if (!Number.isInteger(safeRowid) || safeRowid < 1) {
+      throw new Error(`Invalid rowid: ${rowid}`);
+    }
+
     const stmt = this.prepare(`
       INSERT INTO vss_memories(rowid, embedding)
-      VALUES (?, ?)
+      VALUES (${safeRowid}, ?)
     `);
 
-    return stmt.run(rowid, embeddingJson);
+    return stmt.run(embeddingJson);
   }
 
   /**

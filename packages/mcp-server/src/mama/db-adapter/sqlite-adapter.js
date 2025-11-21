@@ -26,7 +26,8 @@ try {
 
 // Database paths
 const LEGACY_DB_PATH = path.join(os.homedir(), '.spinelift', 'memories.db');
-const DEFAULT_DB_PATH = path.join(os.homedir(), '.mama', 'memories.db');
+// Default to ~/.claude/mama-memory.db for Claude Code/Desktop compatibility
+const DEFAULT_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
 
 class SQLiteAdapter extends DatabaseAdapter {
   constructor(config = {}) {
@@ -41,11 +42,20 @@ class SQLiteAdapter extends DatabaseAdapter {
    * Get database path with backward compatibility
    */
   getDbPath() {
-    const envPath = process.env.MAMA_DB_PATH;
+    // Support both MAMA_DB_PATH and MAMA_DATABASE_PATH for backward compatibility
+    const envPath = process.env.MAMA_DB_PATH || process.env.MAMA_DATABASE_PATH;
     const configPath = this.config.dbPath;
 
+    // Expand ${HOME} or ~ in environment variable
+    let expandedEnvPath = envPath;
+    if (envPath) {
+      expandedEnvPath = envPath
+        .replace(/\$\{HOME\}/g, os.homedir())
+        .replace(/^~/, os.homedir());
+    }
+
     // Priority: config > env > default
-    const targetPath = configPath || envPath || DEFAULT_DB_PATH;
+    const targetPath = configPath || expandedEnvPath || DEFAULT_DB_PATH;
 
     // Backward compatibility: Check legacy path if not explicitly set
     if (!configPath && !envPath && fs.existsSync(LEGACY_DB_PATH)) {
@@ -206,12 +216,20 @@ class SQLiteAdapter extends DatabaseAdapter {
     }
 
     const embeddingJson = JSON.stringify(Array.from(embedding));
+
+    // CRITICAL FIX: sqlite-vec virtual tables accept rowid as literal but not via ? placeholder
+    // Using template literal with Number() cast for safety (prevents SQL injection)
+    const safeRowid = Number(rowid);
+    if (!Number.isInteger(safeRowid) || safeRowid < 1) {
+      throw new Error(`Invalid rowid: ${rowid}`);
+    }
+
     const stmt = this.prepare(`
       INSERT INTO vss_memories(rowid, embedding)
-      VALUES (?, ?)
+      VALUES (${safeRowid}, ?)
     `);
 
-    return stmt.run(rowid, embeddingJson);
+    return stmt.run(embeddingJson);
   }
 
   /**

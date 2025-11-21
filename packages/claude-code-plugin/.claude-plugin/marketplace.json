@@ -1,0 +1,24 @@
+{
+  "name": "mama-local-dev",
+  "owner": {
+    "name": "SpineLift Team",
+    "email": "dev@spinelift.com"
+  },
+  "metadata": {
+    "description": "Local development marketplace for MAMA plugin",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "mama",
+      "version": "1.0.0",
+      "source": "./plugins/mama",
+      "description": "Memory-Augmented MCP Assistant - Track decisions, learn from mistakes, never repeat errors.",
+      "author": {
+        "name": "SpineLift Team",
+        "email": "dev@spinelift.com"
+      },
+      "license": "MIT"
+    }
+  ]
+}

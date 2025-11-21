@@ -71,6 +71,15 @@ async function injectDecisionContext(userMessage) {
  * @returns {Promise<string|null>} Formatted context or null
  */
 async function performMemoryInjection(userMessage, startTime) {
+  // 0. Initialize database (if not already initialized)
+  const { initDB } = require('./memory-store');
+  try {
+    await initDB();
+  } catch (error) {
+    logError(`[MAMA] Failed to initialize database: ${error.message}`);
+    return null;
+  }
+
   // 1. Generate query embedding
   const { generateEmbedding } = require('./embeddings');
   const queryEmbedding = await generateEmbedding(userMessage);
@@ -83,7 +92,7 @@ async function performMemoryInjection(userMessage, startTime) {
   const adaptiveThreshold = wordCount < 3 ? 0.7 : 0.6;
 
   // 3. Vector search
-  let results = vectorSearch(queryEmbedding, 10, 0.5); // Get more candidates
+  let results = await vectorSearch(queryEmbedding, 10, 0.5); // Get more candidates
 
   // 4. Filter by adaptive threshold
   results = results.filter((r) => r.similarity >= adaptiveThreshold);

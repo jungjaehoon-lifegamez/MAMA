@@ -136,3 +136,37 @@ packages/mcp-server/
 2. Plan Phase 2: MCP server separation
 3. Update README.md for monorepo structure
 4. Fix manifest tests
+## Phase 2 Complete (2025-11-21)
+
+### ✅ MCP Server Independence Achieved
+
+**Completed:**
+- ✅ Standalone MCP server (CommonJS, stdio transport)
+- ✅ Fixed all import paths (../core → ../mama)  
+- ✅ Plugin .mcp.json updated (monorepo path)
+- ✅ Server tested and working
+
+**Architecture:**
+```
+packages/mcp-server/src/
+├── server.js              # Main MCP server (253 lines)
+├── mama/                  # Core logic (19 files)
+└── tools/                 # 5 MCP tool handlers
+    ├── save-decision.js
+    ├── recall-decision.js
+    ├── suggest-decision.js
+    ├── list-decisions.js
+    └── update-outcome.js
+```
+
+**Test Output:**
+```
+[MAMA MCP] Initializing database...
+[MAMA MCP] Database initialized
+[MAMA MCP] Server started successfully
+[MAMA MCP] Listening on stdio transport
+[MAMA MCP] Ready to accept connections
+```
+
+**Next: Phase 3** - Dependency cleanup & final testing
+

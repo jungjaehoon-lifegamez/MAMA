@@ -32,7 +32,7 @@ const { injectDecisionContext } = require(path.join(CORE_PATH, 'memory-inject'))
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // Configuration
-const MAX_RUNTIME_MS = 500; // AC: <500ms p95 on Tier 1
+const MAX_RUNTIME_MS = 2000; // Increased for first-run model loading (p95 target: <500ms after warmup)
 const SIMILARITY_THRESHOLD = 0.75; // AC: similarity >75%
 
 /**
@@ -48,13 +48,13 @@ function getTierInfo() {
     // Tier 2: Degraded (no embeddings, keyword only)
     // Tier 3: Minimal (disabled)
 
-    if (config.embeddingModel && config.vectorSearchEnabled !== false) {
+    if (config.modelName && config.vectorSearchEnabled !== false) {
       return {
         tier: 1,
         vectorSearchEnabled: true,
         reason: 'Full MAMA features available'
       };
-    } else if (!config.embeddingModel) {
+    } else if (!config.modelName) {
       return {
         tier: 2,
         vectorSearchEnabled: false,
@@ -104,6 +104,25 @@ function formatTransparencyLine(tierInfo, latencyMs, resultCount) {
 }
 
 /**
+ * Read input from stdin
+ */
+async function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('end', () => {
+      try {
+        const parsed = JSON.parse(data);
+        resolve(parsed);
+      } catch (error) {
+        reject(new Error(`Failed to parse stdin JSON: ${error.message}`));
+      }
+    });
+    process.stdin.on('error', reject);
+  });
+}
+
+/**
  * Main hook handler
  */
 async function main() {
@@ -113,13 +132,25 @@ async function main() {
     // 1. Check opt-out flag
     if (process.env.MAMA_DISABLE_HOOKS === 'true') {
       info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
-    // 2. Get user prompt from environment
-    const userPrompt = process.env.USER_PROMPT;
+    // 2. Get user prompt from stdin (Claude Code hook format)
+    let userPrompt;
+    try {
+      const inputData = await readStdin();
+      userPrompt = inputData.userPrompt || inputData.prompt || process.env.USER_PROMPT;
+    } catch (error) {
+      // Fallback to environment variable (for manual testing)
+      userPrompt = process.env.USER_PROMPT;
+    }
+
     if (!userPrompt || userPrompt.trim() === '') {
       // Silent exit - no prompt to process
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -174,14 +205,35 @@ async function main() {
 
     if (context) {
       // AC: Top 3 relevant decisions (similarity >75%) injected
-      const output = context + formatTransparencyLine(tierInfo, latencyMs, resultCount);
-      console.log(output);
+      const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, resultCount);
+
+      // Correct Claude Code JSON format with hookSpecificOutput
+      const response = {
+        decision: null,
+        reason: "",
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          systemMessage: `💡 MAMA found ${resultCount} related decision${resultCount > 1 ? 's' : ''} (${latencyMs}ms)`,
+          additionalContext: context + transparencyLine
+        }
+      };
+      console.log(JSON.stringify(response));
 
       info(`[Hook] Injected ${resultCount} decisions (${latencyMs}ms)`);
     } else {
       // No results - output transparency line only (optional)
-      const output = formatTransparencyLine(tierInfo, latencyMs, 0);
-      console.log(output);
+      const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, 0);
+
+      const response = {
+        decision: null,
+        reason: "",
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          systemMessage: `🔍 MAMA: No related decisions found (${latencyMs}ms)`,
+          additionalContext: transparencyLine
+        }
+      };
+      console.log(JSON.stringify(response));
 
       info(`[Hook] No relevant decisions found (${latencyMs}ms)`);
     }

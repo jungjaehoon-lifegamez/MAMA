@@ -95,7 +95,7 @@ function getTierInfo() {
   try {
     const config = loadConfig();
 
-    if (config.embeddingModel && config.vectorSearchEnabled !== false) {
+    if (config.modelName && config.vectorSearchEnabled !== false) {
       return {
         tier: 1,
         vectorSearchEnabled: true,
@@ -209,6 +209,25 @@ function generateQuery(toolName, filePath, grepPattern) {
 }
 
 /**
+ * Read input from stdin
+ */
+async function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('end', () => {
+      try {
+        const parsed = JSON.parse(data);
+        resolve(parsed);
+      } catch (error) {
+        reject(new Error(`Failed to parse stdin JSON: ${error.message}`));
+      }
+    });
+    process.stdin.on('error', reject);
+  });
+}
+
+/**
  * Main hook handler
  */
 async function main() {
@@ -218,13 +237,29 @@ async function main() {
     // 1. Check opt-out flag
     if (process.env.MAMA_DISABLE_HOOKS === 'true') {
       info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
-    // 2. Get tool name
-    const toolName = process.env.TOOL_NAME || '';
+    // 2. Get tool information from stdin
+    let toolName, filePath, grepPattern;
+    try {
+      const inputData = await readStdin();
+      toolName = inputData.toolName || inputData.tool || process.env.TOOL_NAME || '';
+      filePath = inputData.filePath || inputData.file_path || process.env.FILE_PATH;
+      grepPattern = inputData.grepPattern || inputData.pattern || process.env.GREP_PATTERN;
+    } catch (error) {
+      // Fallback to environment variables
+      toolName = process.env.TOOL_NAME || '';
+      filePath = process.env.FILE_PATH;
+      grepPattern = process.env.GREP_PATTERN;
+    }
+
     if (!toolName || !SUPPORTED_TOOLS.includes(toolName)) {
       // Silent exit - tool not supported
+      const response = { success: true, systemMessage: '', additionalContext: '' };
+      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -249,9 +284,7 @@ async function main() {
       // Continue with keyword search only
     }
 
-    // 7. Generate query from context
-    const filePath = process.env.FILE_PATH || '';
-    const grepPattern = process.env.GREP_PATTERN || '';
+    // 7. Generate query from context (variables already declared above)
     const query = generateQuery(toolName, filePath, grepPattern);
 
     info(`[Hook] PreToolUse [${toolName}]: "${query}"`);
@@ -288,13 +321,34 @@ async function main() {
     const latencyMs = Date.now() - startTime;
 
     if (context) {
-      const output = context + formatTransparencyLine(tierInfo, latencyMs, resultCount, toolName);
-      console.log(output);
+      const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, resultCount, toolName);
+
+      // Correct Claude Code JSON format with hookSpecificOutput
+      const response = {
+        decision: null,
+        reason: "",
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          systemMessage: `💡 MAMA: ${resultCount} decision${resultCount > 1 ? 's' : ''} related to ${toolName} (${latencyMs}ms)`,
+          additionalContext: context + transparencyLine
+        }
+      };
+      console.log(JSON.stringify(response));
       info(`[Hook] Injected ${resultCount} decisions (${latencyMs}ms)`);
     } else {
       // No results - output transparency line only
-      const output = formatTransparencyLine(tierInfo, latencyMs, 0, toolName);
-      console.log(output);
+      const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, 0, toolName);
+
+      const response = {
+        decision: null,
+        reason: "",
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          systemMessage: `🔍 MAMA: No decisions related to ${toolName} (${latencyMs}ms)`,
+          additionalContext: transparencyLine
+        }
+      };
+      console.log(JSON.stringify(response));
       info(`[Hook] No relevant decisions found (${latencyMs}ms)`);
     }
 

@@ -200,9 +200,11 @@ async function insertDecisionWithEmbedding(decision) {
 
   try {
     // Generate embedding BEFORE transaction (required for SQLite's sync transaction)
+    info(`[db-manager] Generating embedding for decision: ${decision.topic}`);
     const embedding = await generateEnhancedEmbedding(decision);
+    info(`[db-manager] Embedding generated: ${embedding ? embedding.length : 'null'} dimensions`);
 
-    // SQLite: Synchronous transaction
+    // SQLite: Synchronous transaction including embedding
     const decisionRowid = adapter.transaction(() => {
       // Prepare INSERT statement
       const stmt = adapter.prepare(`
@@ -243,11 +245,25 @@ async function insertDecisionWithEmbedding(decision) {
         decision.time_saved || 0
       );
 
-      return insertResult.lastInsertRowid;
-    });
+      const rowid = Number(insertResult.lastInsertRowid);
 
-    // Insert embedding AFTER transaction (separate operation, can fail gracefully)
-    await insertEmbedding(decisionRowid, embedding);
+      // Insert embedding in same transaction to ensure rowid matching
+      info(`[db-manager] Vector search enabled: ${adapter.vectorSearchEnabled}`);
+      if (adapter.vectorSearchEnabled) {
+        try {
+          info(`[db-manager] Inserting embedding for rowid: ${rowid}`);
+          adapter.insertEmbedding(rowid, embedding);
+          info(`[db-manager] ✅ Embedding inserted successfully`);
+        } catch (embErr) {
+          // Log but don't fail transaction if embedding fails
+          logError(`[db-manager] ❌ Embedding insert failed: ${embErr.message}`);
+        }
+      } else {
+        info(`[db-manager] ⚠️  Vector search disabled, skipping embedding`);
+      }
+
+      return rowid;
+    });
 
     if (process.env.MAMA_DEBUG) {
       info(`[db-manager] Decision stored: ${decision.id}`);

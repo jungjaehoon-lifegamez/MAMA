@@ -1,7 +1,6 @@
 ---
 description: List recent decisions with filtering options
 allowed-tools: Read
-model: claude-3-5-sonnet
 argument-hint: "[--limit=20] [--outcome=success] [--since=7d]"
 ---
 

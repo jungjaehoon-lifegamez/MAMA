@@ -1,7 +1,6 @@
 ---
 description: Auto-suggest relevant past decisions based on semantic search
 allowed-tools: Read
-model: claude-3-5-sonnet
 argument-hint: "<query> [--limit=5] [--recency-weight=0.3]"
 ---
 

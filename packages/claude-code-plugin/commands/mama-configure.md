@@ -1,7 +1,6 @@
 ---
 description: View or modify MAMA configuration (database, embedding model, tier status)
 allowed-tools: Read
-model: claude-3-5-sonnet
 argument-hint: "[--show] [--model=<name>] [--db-path=<path>]"
 ---
 
