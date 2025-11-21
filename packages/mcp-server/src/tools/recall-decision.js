@@ -17,7 +17,7 @@
  * @module recall-decision
  */
 
-const mama = require('../core/mama-api.js');
+const mama = require('../mama/mama-api.js');
 
 /**
  * Recall decision tool definition

@@ -2,6 +2,11 @@
 node_modules/
 .pnpm-store/
 
+# Lock files (pnpm-lock.yaml is tracked, others are not)
+package-lock.json
+yarn.lock
+npm-shrinkwrap.json
+
 # Build outputs
 dist/
 build/
@@ -10,31 +15,53 @@ build/
 # Tests
 coverage/
 .vitest/
+*-output.txt
+test-output.txt
+test-*.txt
 
 # Environment
 .env
 .env.local
+.env.*.local
 
 # Logs
 *.log
 npm-debug.log*
 pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # OS
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.history/
+
+# Cache
+.cache/
+.eslintcache
+.turbo/
+.next/
 
 # MAMA specific
 *.db
 *.db-shm
 *.db-wal
 .claude/
+.mcp.json
+
+# Backup files
+*-old.*
+*.bak
+*.backup
+*~
 
 # Temporary files
 tmp/

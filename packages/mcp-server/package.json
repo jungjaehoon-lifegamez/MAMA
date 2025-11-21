@@ -2,7 +2,6 @@
   "name": "@spellon/mama-server",
   "version": "1.0.0",
   "description": "MAMA MCP Server - Memory-Augmented MCP Assistant for Claude Code & Desktop",
-  "type": "module",
   "main": "src/server.js",
   "bin": {
     "mama-server": "src/server.js"

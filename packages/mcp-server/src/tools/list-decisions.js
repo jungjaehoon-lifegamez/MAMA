@@ -17,7 +17,7 @@
 const path = require('path');
 
 // Import MAMA API from core directory
-const mama = require('../core/mama-api.js');
+const mama = require('../mama/mama-api.js');
 
 /**
  * List decisions tool definition

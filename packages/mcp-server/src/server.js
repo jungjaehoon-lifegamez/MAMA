@@ -3,7 +3,7 @@
 /**
  * MAMA MCP Server
  *
- * Memory-Augmented MCP Assistant - MCP Server Implementation
+ * Memory-Augmented MCP Assistant - Standalone MCP Server
  *
  * This server provides MCP tools for decision tracking, semantic search,
  * and decision graph navigation across Claude Code and Claude Desktop.
@@ -13,27 +13,32 @@
  * - SQLite + sqlite-vec for decision storage
  * - Transformers.js for local embeddings
  * - No network dependencies (100% local)
+ *
+ * Usage:
+ *   node src/server.js                 # Direct execution
+ *   mama-server                        # Via bin (npm install -g)
+ *   npx @spellon/mama-server           # Via npx
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
+const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
+const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
+const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+} = require('@modelcontextprotocol/sdk/types.js');
 
 // Import MAMA tools
-import { saveDecisionTool } from './tools/save-decision.js';
-import { recallDecisionTool } from './tools/recall-decision.js';
-import { suggestDecisionTool } from './tools/suggest-decision.js';
-import { listDecisionsTool } from './tools/list-decisions.js';
-import { updateOutcomeTool } from './tools/update-outcome.js';
+const { saveDecisionTool } = require('./tools/save-decision.js');
+const { recallDecisionTool } = require('./tools/recall-decision.js');
+const { suggestDecisionTool } = require('./tools/suggest-decision.js');
+const { listDecisionsTool } = require('./tools/list-decisions.js');
+const { updateOutcomeTool } = require('./tools/update-outcome.js');
 
 // Import core modules
-import { initDB } from './mama/db-manager.js';
+const { initDB } = require('./mama/db-manager.js');
 
 /**
- * MAMA MCP Server
+ * MAMA MCP Server Class
  */
 class MAMAServer {
   constructor() {
@@ -58,45 +63,37 @@ class MAMAServer {
       tools: [
         {
           name: 'save_decision',
-          description: 'Save a decision or insight to MAMA\'s memory for future reference. Use this when the user explicitly wants to remember something important (e.g., architectural decisions, parameter choices, lessons learned). The decision will be stored with semantic embeddings for later retrieval.',
+          description: 'Save a decision or insight to MAMA\'s memory for future reference.',
           inputSchema: {
             type: 'object',
             properties: {
               topic: {
                 type: 'string',
-                description: 'Decision topic identifier (e.g., \'auth_strategy\', \'mesh_detail_choice\'). Use lowercase with underscores. REUSE SAME TOPIC for related decisions to create supersedes edges.',
+                description: 'Decision topic identifier (e.g., \'auth_strategy\'). Use lowercase with underscores.',
               },
               decision: {
                 type: 'string',
-                description: 'The decision made (e.g., \'Use JWT with refresh tokens\'). Max 2000 characters.',
+                description: 'The decision made (e.g., \'Use JWT with refresh tokens\').',
               },
               reasoning: {
                 type: 'string',
-                description: 'Why this decision was made. REQUIRED - never leave empty. Explain the context, alternatives considered, and rationale. Max 5000 characters.',
+                description: 'Why this decision was made. REQUIRED - explain the context and rationale.',
               },
               confidence: {
                 type: 'number',
-                description: 'Confidence score 0.0-1.0. Use 0.9 for high confidence, 0.8 for medium, 0.5 for experimental. Default: 0.5',
+                description: 'Confidence score 0.0-1.0. Default: 0.5',
                 minimum: 0,
                 maximum: 1,
               },
               type: {
                 type: 'string',
                 enum: ['user_decision', 'assistant_insight'],
-                description: '\'user_decision\' if user explicitly decided, \'assistant_insight\' if this is Claude\'s suggestion. Default: \'user_decision\'',
+                description: 'Decision type. Default: \'user_decision\'',
               },
               outcome: {
                 type: 'string',
                 enum: ['pending', 'success', 'failure', 'partial', 'superseded'],
-                description: 'Decision outcome status. Use \'pending\' for new decisions (default), \'success\' when confirmed working, \'failure\' when approach failed.',
-              },
-              failure_reason: {
-                type: 'string',
-                description: 'Why this decision failed (optional, use with outcome=\'failure\').',
-              },
-              limitation: {
-                type: 'string',
-                description: 'Known limitations or constraints of this decision (optional).',
+                description: 'Outcome status. Default: \'pending\'',
               },
             },
             required: ['topic', 'decision', 'reasoning'],
@@ -104,13 +101,13 @@ class MAMAServer {
         },
         {
           name: 'recall_decision',
-          description: 'Recall full decision history for a specific topic. Returns all past decisions on this topic in chronological order with reasoning, confidence, and outcomes. Use this when you need to review previous decisions or check current position on a topic.',
+          description: 'Recall full decision history for a specific topic.',
           inputSchema: {
             type: 'object',
             properties: {
               topic: {
                 type: 'string',
-                description: 'Decision topic to recall (e.g., \'auth_strategy\'). Use the EXACT SAME topic name used in save_decision.',
+                description: 'Decision topic to recall',
               },
             },
             required: ['topic'],
@@ -118,34 +115,19 @@ class MAMAServer {
         },
         {
           name: 'suggest_decision',
-          description: 'Auto-suggest relevant past decisions based on user\'s question. Uses semantic search to find decisions related to the current context. Returns null if no relevant decisions found. Supports multilingual queries.',
+          description: 'Auto-suggest relevant past decisions based on user question.',
           inputSchema: {
             type: 'object',
             properties: {
               userQuestion: {
                 type: 'string',
-                description: 'User\'s question or intent (e.g., \'How should I handle authentication?\'). The tool will perform semantic search to find relevant past decisions.',
+                description: 'User\'s question or intent',
               },
               recencyWeight: {
                 type: 'number',
-                description: 'How much to weight recency vs semantic similarity (0-1). Default: 0.3 (70% semantic, 30% recency).',
+                description: 'Weight for recency (0-1). Default: 0.3',
                 minimum: 0,
                 maximum: 1,
-              },
-              recencyScale: {
-                type: 'number',
-                description: 'Days until recency score drops to recencyDecay value. Default: 7 days.',
-                minimum: 0.1,
-              },
-              recencyDecay: {
-                type: 'number',
-                description: 'Recency score at scale point (0-1). Default: 0.5 (50% score at 7 days).',
-                minimum: 0.01,
-                maximum: 1,
-              },
-              disableRecency: {
-                type: 'boolean',
-                description: 'Set true to disable recency boosting entirely (pure semantic search). Default: false.',
               },
             },
             required: ['userQuestion'],
@@ -159,7 +141,7 @@ class MAMAServer {
             properties: {
               limit: {
                 type: 'number',
-                description: 'Maximum number of decisions to return (default: 10)',
+                description: 'Maximum number of decisions (default: 10)',
               },
             },
           },
@@ -178,10 +160,6 @@ class MAMAServer {
                 type: 'string',
                 enum: ['pending', 'success', 'failure', 'partial', 'superseded'],
                 description: 'New outcome status',
-              },
-              failure_reason: {
-                type: 'string',
-                description: 'Why this decision failed (optional)',
               },
             },
             required: ['topic', 'outcome'],
@@ -221,11 +199,12 @@ class MAMAServer {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
             },
           ],
         };
       } catch (error) {
+        console.error('[MAMA MCP] Tool execution error:', error);
         return {
           content: [
             {
@@ -240,22 +219,34 @@ class MAMAServer {
   }
 
   async start() {
-    // Initialize database
-    await initDB();
+    try {
+      // Initialize database
+      console.error('[MAMA MCP] Initializing database...');
+      await initDB();
+      console.error('[MAMA MCP] Database initialized');
 
-    // Start server with stdio transport
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
+      // Start server with stdio transport
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
 
-    // Log to stderr (stdout is for MCP JSON-RPC)
-    console.error('MAMA MCP Server started');
-    console.error('Listening on stdio transport');
+      // Log to stderr (stdout is for MCP JSON-RPC)
+      console.error('[MAMA MCP] Server started successfully');
+      console.error('[MAMA MCP] Listening on stdio transport');
+      console.error('[MAMA MCP] Ready to accept connections');
+    } catch (error) {
+      console.error('[MAMA MCP] Failed to start server:', error);
+      process.exit(1);
+    }
   }
 }
 
-// Start server
-const server = new MAMAServer();
-server.start().catch((error) => {
-  console.error('Failed to start MAMA MCP Server:', error);
-  process.exit(1);
-});
+// Start server if run directly
+if (require.main === module) {
+  const server = new MAMAServer();
+  server.start().catch((error) => {
+    console.error('[MAMA MCP] Fatal error:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { MAMAServer };

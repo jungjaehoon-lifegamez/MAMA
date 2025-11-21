@@ -9,7 +9,7 @@
  * @module save-decision
  */
 
-const mama = require('../core/mama-api.js');
+const mama = require('../mama/mama-api.js');
 
 /**
  * Save decision tool definition
