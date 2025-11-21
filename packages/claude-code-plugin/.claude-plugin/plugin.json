@@ -1,20 +1,40 @@
 {
   "name": "mama",
   "version": "1.0.0",
-  "description": "Memory-Augmented MCP Assistant - Track decisions, learn from mistakes, never repeat errors.",
+  "description": "MAMA - Memory-Augmented MCP Assistant. Remember decision evolution, not just conclusions.",
   "author": "SpineLift Team",
-  "repository": "https://github.com/spellon/claude-mama",
-  "commands": [
-    "commands/mama-save.md",
-    "commands/mama-recall.md",
-    "commands/mama-suggest.md",
-    "commands/mama-list.md",
-    "commands/mama-configure.md"
-  ],
+  "keywords": ["memory", "decisions", "context", "knowledge", "evolution"],
+  "license": "MIT",
+
   "skills": [
-    "skills/mama-context.md"
+    {
+      "name": "mama-context",
+      "path": "../skills/mama-context",
+      "description": "Always-on background context injection from MAMA memory"
+    }
   ],
-  "hooks": [
-    "hooks/inject-context.json"
-  ]
+
+  "hooks": {
+    "UserPromptSubmit": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/userpromptsubmit-hook.js"
+      }]
+    }],
+    "PreToolUse": [{
+      "matcher": "Read|Edit|Grep|Glob",
+      "hooks": [{
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
+      }]
+    }],
+    "PostToolUse": [{
+      "matcher": "Write|Edit",
+      "hooks": [{
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js"
+      }]
+    }]
+  }
 }

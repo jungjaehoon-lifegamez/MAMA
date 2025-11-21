@@ -1,11 +1,17 @@
 {
   "mcpServers": {
     "mama": {
-      "command": "npx",
-      "args": ["-y", "@spellon/mama-server"],
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/src/commands/index.js"
+      ],
       "env": {
-        "MAMA_DB_PATH": "${HOME}/.claude/mama-memory.db"
-      }
+        "MAMA_DATABASE_PATH": "${HOME}/.claude/mama-memory.db",
+        "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-small",
+        "NODE_ENV": "production",
+        "MCP_TRANSPORT": "stdio"
+      },
+      "description": "MAMA - Memory-Augmented MCP Assistant (local stdio transport)"
     }
   }
 }

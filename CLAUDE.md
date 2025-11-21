@@ -1,0 +1,321 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+MAMA (Memory-Augmented MCP Assistant) is an always-on companion for Claude Code and Claude Desktop that remembers decision evolution. It's a monorepo containing:
+
+1. **@spellon/mama-server** - MCP server published to npm (packages/mcp-server/)
+2. **MAMA Plugin** - Claude Code plugin distributed via marketplace (packages/claude-code-plugin/)
+
+## Build & Test Commands
+
+```bash
+# Install dependencies (requires pnpm)
+pnpm install
+
+# Run all tests across both packages
+pnpm test
+
+# Build all packages
+pnpm build
+
+# Run type checking
+pnpm typecheck
+
+# Clean all build artifacts
+pnpm clean
+```
+
+### Package-Specific Commands
+
+**MCP Server (packages/mcp-server/):**
+```bash
+cd packages/mcp-server
+npm start                    # Start MCP server via stdio
+pnpm test                    # Run MCP server tests
+```
+
+**Plugin (packages/claude-code-plugin/):**
+```bash
+cd packages/claude-code-plugin
+pnpm test                    # Run plugin tests (hooks, commands, core)
+pnpm test:watch              # Watch mode for tests
+
+# Link plugin for local testing
+ln -s $(pwd) ~/.claude/plugins/repos/mama
+```
+
+### Running Single Tests
+
+```bash
+# Run specific test file
+pnpm vitest run tests/hooks/pretooluse-hook.test.js
+
+# Run tests matching pattern
+pnpm vitest run -t "relevance scorer"
+```
+
+## Architecture
+
+### Two-Package Design
+
+MAMA uses a split architecture to enable code reuse across multiple Claude clients:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│              MAMA Plugin Ecosystem                      │
+├─────────────────────────────────────────────────────────┤
+│                                                           │
+│  Claude Code Plugin          Claude Desktop             │
+│  ┌──────────────────┐       ┌──────────────┐            │
+│  │ Commands         │       │  MCP Client  │            │
+│  │ Skills           │───┐   │              │            │
+│  │ Hooks            │   │   └──────────────┘            │
+│  └──────────────────┘   │          │                    │
+│                          │          │                    │
+│                    ┌─────▼──────────▼─────┐             │
+│                    │  MCP Server (stdio)  │             │
+│                    │  @spellon/mama-server│             │
+│                    └──────────────────────┘             │
+│                              │                           │
+│                    ┌─────────▼──────────┐                │
+│                    │   Core Components  │                │
+│                    │ - Embeddings       │                │
+│                    │ - SQLite+vec       │                │
+│                    │ - Decision Graph   │                │
+│                    └────────────────────┘                │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Key Points:**
+- **MCP Server** is an independent npm package shared by all clients
+- **Plugin** is lightweight (commands/hooks/skills) and references the server via `.mcp.json`
+- One MCP server = shared decision database across all tools
+- Heavy dependencies (better-sqlite3, transformers.js, sqlite-vec) live in the server package
+
+### MCP Server (packages/mcp-server/)
+
+**Core Modules (src/mama/):**
+- `mama-api.js` - Main API interface
+- `db-manager.js` - SQLite database initialization
+- `embeddings.js` - Transformers.js embedding generation
+- `memory-store.js` - Decision CRUD operations
+- `relevance-scorer.js` - Semantic similarity scoring
+- `decision-tracker.js` - Decision graph management
+- `transparency-banner.js` - Tier status display
+- `query-intent.js` - Query interpretation
+
+**MCP Tools (src/tools/):**
+- `save-decision.js` - Save decisions with embeddings
+- `recall-decision.js` - Semantic search across decisions
+- `suggest-decision.js` - Related decision discovery
+- `list-decisions.js` - Browse all decisions
+- `update-outcome.js` - Update decision outcomes
+
+**Transport:** Stdio-based MCP protocol (no HTTP server)
+
+### Claude Code Plugin (packages/claude-code-plugin/)
+
+**Commands (commands/):**
+- `/mama-save` - Save decisions to memory
+- `/mama-recall` - Search decisions by query
+- `/mama-suggest` - Find related decisions
+- `/mama-list` - Browse all decisions
+- `/mama-configure` - Plugin settings
+
+**Skills (skills/mama-context/):**
+- `SKILL.md` - Auto-context injection spec
+- Wraps hooks for background decision surfacing
+
+**Hooks (scripts/):**
+- `userpromptsubmit-hook.js` - Inject context on every prompt (75% threshold, 40 token teaser)
+- `pretooluse-hook.js` - Inject context before Read/Edit/Grep (70% threshold, file-specific)
+- `posttooluse-hook.js` - Track decision outcomes after tool execution
+
+**Core Modules (src/core/):**
+- Shares some modules with MCP server (db-manager, embeddings, relevance-scorer)
+- `hook-metrics.js` - Hook performance tracking
+- `config-loader.js` - Plugin configuration
+
+**Tests (tests/):**
+- Unit tests: 62 (core logic)
+- Integration tests: 39 (hooks, workflows)
+- Regression tests: 33 (bug prevention)
+- 100% pass rate
+
+## Development Philosophy
+
+### Reuse-First Approach
+
+**CRITICAL:** Before adding new features, check if they exist in `packages/mcp-server/src/mama/`. In November 2025, we stopped a rewrite and migrated working code instead (~70% of required functionality already existed).
+
+**Before contributing:**
+1. Search existing code in both packages
+2. Check migration history in docs/development/developer-playbook.md
+3. Prefer extracting proven patterns over inventing new ones
+
+Reference: packages/claude-code-plugin/docs/development/MAMA-CODE-REUSE-ANALYSIS.md
+
+### Code Organization Rules
+
+**MCP Server:**
+- Pure JavaScript (no TypeScript)
+- No web framework dependencies
+- All AI/database operations live here
+- Stdio transport only
+
+**Plugin:**
+- Lightweight markdown-based commands
+- Hook scripts must be fast (<1s)
+- Teaser format for frequent hooks (40 tokens)
+- Full details on demand via commands
+
+### Testing Requirements
+
+**Always run tests before committing:**
+```bash
+pnpm test
+```
+
+**Test coverage targets:**
+- Core logic: Unit tests with 80%+ coverage
+- Hooks: Integration tests verifying timing/rate limits
+- Commands: End-to-end tests with MCP tool calls
+- Regressions: Tests for all reported bugs
+
+**Run specific test suites:**
+```bash
+# Hook tests
+pnpm vitest run tests/hooks/
+
+# Core module tests
+pnpm vitest run tests/core/
+
+# Command tests
+pnpm vitest run tests/commands/
+```
+
+## Key Features & Constraints
+
+### Decision Storage
+- **Database:** SQLite + sqlite-vec extension
+- **Location:** `~/.claude/mama-memory.db` (configurable via MAMA_DB_PATH)
+- **Schema:** decisions table with embedding_vector column
+- **Graph edges:** supersedes, contradicts, refines
+
+### Embeddings
+- **Model:** Xenova/all-MiniLM-L6-v2 (Transformers.js)
+- **Dimension:** 384-dimensional vectors
+- **Language:** Cross-lingual (English + Korean)
+- **Local-first:** No API calls, runs entirely on device
+
+### Hook Performance
+- **UserPromptSubmit:** Must complete <500ms (fires on every prompt)
+- **PreToolUse:** Must complete <1s, rate-limited to 1/second
+- **Token budgets:**
+  - UserPromptSubmit: 40 tokens (teaser only)
+  - PreToolUse: 300 tokens (full context)
+
+### MCP Tool Schema
+All tools follow standard MCP patterns:
+- Input validation via JSON schema
+- Error handling with typed error codes
+- Result format: `{ success: boolean, data?: any, error?: string }`
+
+## Common Tasks
+
+### Adding a New MCP Tool
+
+1. Create tool file in `packages/mcp-server/src/tools/{tool-name}.js`
+2. Export tool definition with schema
+3. Register in `packages/mcp-server/src/server.js`
+4. Add tests in `packages/mcp-server/tests/tools/{tool-name}.test.js`
+5. Update tool list in server.js:setupHandlers()
+
+### Adding a New Command
+
+1. Create `packages/claude-code-plugin/commands/{command-name}.md`
+2. Add frontmatter: description, allowed-tools, model
+3. Register in `.claude-plugin/plugin.json` commands array
+4. Add test in `tests/commands/`
+5. Update docs/reference/commands.md
+
+### Adding a New Hook
+
+1. Create hook script in `packages/claude-code-plugin/scripts/{hook-name}.js`
+2. Export hook handler following hook spec
+3. Create hook config in root (or define inline in plugin.json)
+4. Register in `.claude-plugin/plugin.json` hooks array
+5. Add performance tests (timing, rate limits)
+
+### Modifying Core Logic
+
+1. **First check:** Does this exist in mcp-server/src/mama/?
+2. If yes: Modify there, ensure backward compatibility
+3. If no: Add to server package, export for plugin if needed
+4. Update shared tests in both packages
+5. Run full test suite: `pnpm test`
+
+## Dependencies
+
+### MCP Server
+- `@modelcontextprotocol/sdk` - MCP protocol
+- `@huggingface/transformers` - Local embeddings
+- `better-sqlite3` - SQLite database
+- `sqlite-vec` - Vector similarity extension
+
+### Plugin
+- Minimal dependencies (chalk for CLI colors)
+- References MCP server via npx
+
+### Development
+- `vitest` - Test runner
+- `pnpm` - Package manager (workspaces)
+- Node.js >= 18.0.0
+
+## Documentation Structure
+
+Full docs in `packages/claude-code-plugin/docs/` following Diátaxis framework:
+
+- **Tutorials:** Getting started guides
+- **Guides:** Installation, troubleshooting, workflows
+- **Reference:** Commands, MCP tools, architecture
+- **Development:** Contributing, testing, architecture deep-dives
+
+Key docs:
+- [Developer Playbook](packages/claude-code-plugin/docs/development/developer-playbook.md) - Architecture & standards
+- [Deployment Architecture](packages/claude-code-plugin/docs/development/deployment-architecture.md) - How MAMA is distributed
+- [Testing Guide](packages/claude-code-plugin/docs/development/testing.md) - Test suite details
+
+## Monorepo Status
+
+**Current State:** Monorepo migration in progress (2025-11-21)
+
+**What's Complete:**
+- Two-package structure established
+- pnpm workspaces configured
+- Tests passing (134 tests, 100% pass rate)
+- Build system functional
+
+**What's Next:**
+- CI/CD workflows (GitHub Actions)
+- npm publishing workflow
+- Plugin marketplace publishing
+
+## Important Constraints
+
+1. **Never rewrite working code** - Check mcp-server/src/mama/ first
+2. **Keep hooks fast** - UserPromptSubmit must be <500ms
+3. **Local-first** - No network calls in core functionality
+4. **Backward compatibility** - Existing decisions must remain valid
+5. **Test before commit** - All tests must pass (`pnpm test`)
+6. **SQLite schema changes** - Require migration scripts
+7. **Embedding model** - Cannot change without breaking existing vectors
+
+## Getting Help
+
+- **Issues:** https://github.com/spellon/claude-mama/issues
+- **Docs:** packages/claude-code-plugin/docs/index.md
+- **Developer Playbook:** packages/claude-code-plugin/docs/development/developer-playbook.md
