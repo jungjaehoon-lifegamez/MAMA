@@ -1,7 +1,7 @@
 /**
  * Regression Test: Hook Simulation
  *
- * Story M4.2: 회귀 및 시뮬레이션 하네스
+ * Story M4.2: Regression & Simulation Harness
  * AC #2: Hook simulation script feeds mock PreToolUse/PostToolUse payloads
  *        and verifies injection formatting + latency.
  *

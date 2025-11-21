@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS decisions (
   id TEXT PRIMARY KEY,              -- "decision_mesh_structure_001"
   topic TEXT NOT NULL,              -- "mesh_structure", "auth_strategy"
   decision TEXT NOT NULL,           -- "COMPLEX", "JWT", "< 20 lines"
-  reasoning TEXT,                   -- "초기엔 유연성이 중요"
+  reasoning TEXT,                   -- "Flexibility is important initially"
 
   -- Outcome Tracking (Learn-Unlearn-Relearn)
   outcome TEXT,                     -- "SUCCESS", "FAILED", "PARTIAL", NULL

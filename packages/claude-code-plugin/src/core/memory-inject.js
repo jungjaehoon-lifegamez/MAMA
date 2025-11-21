@@ -216,8 +216,8 @@ if (require.main === module) {
   // Test memory injection flow
   (async () => {
     const testMessages = [
-      '왜 메시 구조를 COMPLEX로 했지?',
-      '파일 읽어줘',
+      'Why did we choose COMPLEX mesh structure?',
+      'Read the file please',
       'We chose JWT authentication, why?',
     ];
 

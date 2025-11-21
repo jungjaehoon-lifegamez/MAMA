@@ -202,7 +202,7 @@ mamaSuggestCommand({
 - **query** (string, required): Natural language search query
   - Can be a question, keyword, or description
   - Supports multilingual queries (English, Korean, etc.)
-  - Examples: "How do I handle authentication?", "메시 개수", "performance optimization"
+  - Examples: "How do I handle authentication?", "mesh count", "performance optimization"
 
 - **limit** (number, optional): Maximum results to return
   - Default: 5
@@ -242,8 +242,8 @@ mamaSuggestCommand({
   recencyWeight: 0.5  // 50% semantic, 50% recency
 })
 
-// Korean query
-mamaSuggestCommand({ query: '성능 최적화 방법' })
+// Performance query
+mamaSuggestCommand({ query: 'performance optimization methods' })
 // Finds: performance_budget, mama_performance_budget, optimization_strategy, etc.
 \`\`\`
 

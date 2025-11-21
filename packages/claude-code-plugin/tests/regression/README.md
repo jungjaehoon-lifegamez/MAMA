@@ -1,6 +1,6 @@
 # MAMA Plugin Regression Test Harness
 
-**Story**: M4.2 - 회귀 및 시뮬레이션 하네스\
+**Story**: M4.2 - Regression & Simulation Harness\
 **Purpose**: Catch cross-cutting bugs before releases by simulating typical workflows and hook executions.
 
 ---

@@ -33,7 +33,7 @@ node --version
 # Recommended: >= 20.0.0
 ```
 
-**If Node too old (Node.js가 너무 오래된 경우):**
+**If Node too old:**
 ```bash
 # Install Node 20 LTS via nvm
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
@@ -51,7 +51,7 @@ ls -la ~/.claude/plugins/mama/.claude-plugin/plugin.json
 # Expected: File exists and is readable
 ```
 
-**If missing (파일이 없으면):**
+**If missing:**
 ```bash
 # Re-copy plugin directory
 cp -r /path/to/mama-plugin ~/.claude/plugins/mama
@@ -169,7 +169,7 @@ df -h ~
 # Total: ~500MB minimum
 ```
 
-### Free Up Space (디스크 공간 확보)
+### Free Up Space
 
 ```bash
 # 1. Clear old model caches
@@ -409,7 +409,7 @@ emb.generateEmbedding('test').then(v => console.log('✅ Embeddings OK', v.lengt
 
 ## Getting Help
 
-**Still having issues? (여전히 문제가 해결되지 않으면?)**
+**Still having issues?**
 
 1. **Check GitHub Issues**: [claude-mama/issues](https://github.com/spellon/claude-mama/issues)
 2. **Enable debug logs** and share output

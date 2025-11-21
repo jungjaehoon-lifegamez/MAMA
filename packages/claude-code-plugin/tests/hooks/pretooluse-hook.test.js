@@ -1,7 +1,7 @@
 /**
  * Tests for PreToolUse Hook
  *
- * Story M2.2: PreToolUse 훅 (Read/Edit/Grep 전 컨텍스트)
+ * Story M2.2: PreToolUse Hook (Context before Read/Edit/Grep)
  * Tests AC #1-5: Tool subscription, recency weighting, file hints, tier awareness, similarity threshold
  */
 

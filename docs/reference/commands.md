@@ -71,7 +71,7 @@ Semantic search across all decisions.
 /mama-suggest "What database should I use?"
 ```
 
-**Note:** Cross-lingual search supported. Korean queries (e.g., "인증") will match English decisions (e.g., "authentication").
+**Note:** Cross-lingual search supported. Multilingual queries will match decisions across different languages.
 
 **Output:** Top 3 relevant decisions with similarity scores.
 

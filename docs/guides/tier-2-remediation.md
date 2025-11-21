@@ -15,7 +15,7 @@ If you see this, follow these steps.
 
 ## Why Am I in Tier 2?
 
-**Common causes (왜 Tier 2로 떨어졌나요?):**
+**Common causes:**
 1. **First install** - Transformers.js model not downloaded yet
 2. **Network issue** - Model download failed during first use
 3. **Disk space** - Insufficient space for model cache (~120MB)
@@ -32,7 +32,7 @@ ls -la ~/.cache/huggingface/
 # Expected: transformers/ directory with ~120MB
 ```
 
-**If missing (없으면):** Model download failed during first use.
+**If missing:** Model download failed during first use.
 
 ---
 
@@ -66,7 +66,7 @@ df -h ~
 # Required: At least 500MB free for model cache + database
 ```
 
-**If insufficient space (디스크 공간 부족 시):**
+**If insufficient space:**
 ```bash
 # Clear old model caches
 rm -rf ~/.cache/huggingface/transformers/.cache

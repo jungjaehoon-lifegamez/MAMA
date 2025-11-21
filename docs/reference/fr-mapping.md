@@ -74,9 +74,9 @@
 - **Reference:** [Performance Tuning](../guides/performance-tuning.md#recency-tuning)
 
 ### FR11: Cross-lingual Search
-- **Supported:** Korean ↔ English
+- **Supported:** Multiple languages
 - **Implementation:** Multilingual embedding model
-- **Example:** Korean "인증" (authentication) matches English "authentication"
+- **Example:** Queries in different languages can match semantically related decisions
 - **Reference:** [Multilingual Support](#fr30-35-multilingual-support)
 
 ### FR12: Relevance Ranking
@@ -187,7 +187,7 @@
 ### FR30: Korean + English
 - **Model:** Xenova/multilingual-e5-small
 - **Cross-lingual:** Korean query matches English decision
-- **Example:** "/mama-suggest 인증" (authentication) finds "authentication" decisions
+- **Example:** "/mama-suggest authentication" finds "authentication" decisions
 
 ### FR31-35: Cross-lingual Search, Detection, Preservation
 - **Implementation:** `src/core/embeddings.js`

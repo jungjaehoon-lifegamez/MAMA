@@ -749,7 +749,7 @@ function formatTeaserList(decisions, topN = 3) {
  * Format decision as curiosity-inducing teaser
  *
  * MAMA = Librarian: Shows book preview, Claude decides to read
- * "궁금할 정도의 컨텍스트" - just enough to make Claude curious
+ * "Just enough context to spark curiosity" - makes Claude want to learn more
  *
  * @param {Object} decision - Decision object
  * @returns {string|null} Formatted teaser or null

@@ -22,7 +22,7 @@ MAMA operates in **two tiers**:
 ### What You Get
 
 - **Semantic understanding:** "authentication" matches "auth", "JWT", "login"
-- **Cross-lingual:** Korean "인증" matches English "authentication"
+- **Cross-lingual:** Multilingual queries match across different languages
 - **Recency boosting:** Recent decisions rank higher
 - **Graph expansion:** Follows supersedes/refines/contradicts links
 - **Confidence scoring:** Combines multiple signals

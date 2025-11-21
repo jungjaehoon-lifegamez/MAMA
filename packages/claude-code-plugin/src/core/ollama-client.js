@@ -171,16 +171,16 @@ Tool Execution:
 
 Decision Indicators:
 1. User explicitly chose between alternatives?
-   Example: "JWT로 가자" (not "JWT 쓰자" - that's just action)
+   Example: "Let's use JWT" (not "Use JWT" - that's just action)
 
 2. User changed previous approach?
-   Example: "복잡하게 → 단순하게 바꾸자"
+   Example: "Complex → Simple approach"
 
 3. User expressed preference?
-   Example: "앞으로는 이렇게 하자", "이 방식이 더 좋아"
+   Example: "Let's do it this way from now", "This approach is better"
 
 4. Significant architectural choice?
-   Example: "메시 구조는 COMPLEX", "인증은 JWT"
+   Example: "Mesh structure: COMPLEX", "Authentication: JWT"
 
 Is this a DECISION? Return JSON with "topic" as a short snake_case identifier:
 {

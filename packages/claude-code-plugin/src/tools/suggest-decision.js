@@ -24,7 +24,7 @@ const suggestDecisionTool = {
       userQuestion: {
         type: 'string',
         description:
-          "User's question or intent (e.g., 'How should I handle authentication?', '메시 개수 어떻게?'). The tool will perform semantic search to find relevant past decisions.",
+          "User's question or intent (e.g., 'How should I handle authentication?', 'What about mesh count?'). The tool will perform semantic search to find relevant past decisions.",
       },
       recencyWeight: {
         type: 'number',

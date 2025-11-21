@@ -2,7 +2,7 @@
 /**
  * PostToolUse Hook for MAMA Plugin
  *
- * Story M2.3: PostToolUse 자동 저장 훅
+ * Story M2.3: PostToolUse Auto-save Hook
  *
  * Triggers automatic decision capture after Write/Edit actions.
  * Suggests auto-save with Accept/Modify/Dismiss options.

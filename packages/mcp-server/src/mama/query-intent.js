@@ -47,8 +47,8 @@ Decision Indicators:
 2. Questions about previous approaches ("why did we use X?")
 3. Decision evolution queries ("should we change from X to Y?")
 4. Architecture/strategy questions
-5. Method/approach questions ("how do I...", "어떻게...", "what's the way to...")
-6. Best practice questions ("what should I use for...", "어떤 걸 써야...")
+5. Method/approach questions ("how do I...", "what's the way to...")
+6. Best practice questions ("what should I use for...", "which one should I use...")
 
 Return JSON with "topic" as a short snake_case identifier (e.g., "mesh_structure", "database_choice", "auth_strategy", "coding_style", "error_handling"):
 {
@@ -61,10 +61,10 @@ Return JSON with "topic" as a short snake_case identifier (e.g., "mesh_structure
 IMPORTANT: Generate "topic" freely based on the message content. Do NOT limit to predefined values.
 
 Examples:
-- "왜 메시 구조를 COMPLEX로 했지?" → {"involves_decision": true, "topic": "mesh_structure", "confidence": 0.9}
-- "Database는 PostgreSQL로 가자" → {"involves_decision": true, "topic": "database_choice", "confidence": 0.9}
-- "워크플로우는 어떻게 저장하지?" → {"involves_decision": true, "topic": "workflow_storage", "confidence": 0.85}
-- "파일 읽어줘" → {"involves_decision": false, "topic": null, "confidence": 0.1}
+- "Why did we choose COMPLEX mesh structure?" → {"involves_decision": true, "topic": "mesh_structure", "confidence": 0.9}
+- "Let's use PostgreSQL for database" → {"involves_decision": true, "topic": "database_choice", "confidence": 0.9}
+- "How should we store workflow data?" → {"involves_decision": true, "topic": "workflow_storage", "confidence": 0.85}
+- "Read the file please" → {"involves_decision": false, "topic": null, "confidence": 0.1}
 `.trim();
 
     // Task 2.3: Call EXAONE 3.5 with Tier 1 fallback
@@ -155,12 +155,12 @@ async function generateWithFallback(prompt, options = {}) {
  */
 function extractTopicKeywords(userMessage) {
   const topicPatterns = {
-    workflow_storage: /workflow|워크플로우|저장|save|persist/i,
-    mesh_structure: /mesh|메시|구조|structure/i,
-    authentication: /auth|인증|jwt|oauth|login/i,
-    testing: /test|테스트|jest|spec/i,
-    architecture: /architecture|설계|아키텍처|design/i,
-    coding_style: /style|스타일|format|코딩/i,
+    workflow_storage: /workflow|save|persist/i,
+    mesh_structure: /mesh|structure/i,
+    authentication: /auth|jwt|oauth|login/i,
+    testing: /test|jest|spec/i,
+    architecture: /architecture|design/i,
+    coding_style: /style|format|coding/i,
   };
 
   for (const [topic, pattern] of Object.entries(topicPatterns)) {
@@ -196,11 +196,11 @@ if (require.main === module) {
   (async () => {
     const testQueries = [
       {
-        message: '왜 메시 구조를 COMPLEX로 했지?',
+        message: 'Why did we choose COMPLEX mesh structure?',
         expected: { involves_decision: true, topic: 'mesh_structure' },
       },
       {
-        message: '파일 읽어줘',
+        message: 'Read the file please',
         expected: { involves_decision: false },
       },
       {

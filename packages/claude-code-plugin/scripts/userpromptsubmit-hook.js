@@ -2,7 +2,7 @@
 /**
  * UserPromptSubmit Hook for MAMA Plugin
  *
- * Story M2.1: UserPromptSubmit 훅 이식
+ * Story M2.1: UserPromptSubmit Hook Implementation
  *
  * Injects relevant decision context automatically when user submits a prompt.
  * Reuses memory-inject.js logic with tier awareness and opt-out support.

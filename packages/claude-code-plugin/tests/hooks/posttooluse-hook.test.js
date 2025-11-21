@@ -1,7 +1,7 @@
 /**
  * Tests for PostToolUse Hook
  *
- * Story M2.3: PostToolUse 자동 저장 훅
+ * Story M2.3: PostToolUse Auto-save Hook
  * Tests AC #1-5: Tool subscription, topic extraction, reasoning extraction, auto-save suggestion, similarity threshold
  */
 

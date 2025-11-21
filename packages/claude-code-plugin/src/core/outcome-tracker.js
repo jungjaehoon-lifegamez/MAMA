@@ -15,21 +15,10 @@ const { getDB, updateDecisionOutcome } = require('./memory-store');
 const { updateConfidence } = require('./decision-tracker');
 
 /**
- * Failure indicators (Korean + English)
+ * Failure indicators
  * Task 4.2: Define failure indicators
  */
 const FAILURE_INDICATORS = [
-  // Korean
-  /안\s*돼/i,
-  /실패/i,
-  /문제야/i,
-  /에러/i,
-  /느려/i,
-  /작동\s*안/i,
-  /버그/i,
-  /망했/i,
-  /잘못/i,
-  // English
   /doesn't\s*work/i,
   /failed/i,
   /error/i,
@@ -41,18 +30,10 @@ const FAILURE_INDICATORS = [
 ];
 
 /**
- * Success indicators (Korean + English)
+ * Success indicators
  * Task 4.3: Define success indicators
  */
 const SUCCESS_INDICATORS = [
-  // Korean
-  /완벽/i,
-  /좋아/i,
-  /잘\s*돼/i,
-  /성공/i,
-  /훌륭/i,
-  /빠르/i,
-  // English
   /works/i,
   /perfect/i,
   /great/i,
@@ -63,15 +44,10 @@ const SUCCESS_INDICATORS = [
 ];
 
 /**
- * Partial success indicators (Korean + English)
+ * Partial success indicators
  * Task 4.3: Define partial success indicators
  */
 const PARTIAL_INDICATORS = [
-  // Korean
-  /괜찮/i,
-  /그럭저럭/i,
-  /개선/i,
-  // English
   /okay/i,
   /acceptable/i,
   /improved/i,

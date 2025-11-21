@@ -2,7 +2,7 @@
 /**
  * PreToolUse Hook for MAMA Plugin
  *
- * Story M2.2: PreToolUse 훅 (Read/Edit/Grep 전 컨텍스트)
+ * Story M2.2: PreToolUse Hook (Context before Read/Edit/Grep)
  *
  * Injects relevant decision context before Read/Edit/Grep operations.
  * Weights recency higher for file operations with rate limiting.

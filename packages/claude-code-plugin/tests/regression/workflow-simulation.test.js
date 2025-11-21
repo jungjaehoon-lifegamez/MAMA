@@ -1,7 +1,7 @@
 /**
  * Regression Test: Typical Workflow Simulation
  *
- * Story M4.2: 회귀 및 시뮬레이션 하네스
+ * Story M4.2: Regression & Simulation Harness
  * AC #1: CLI script spins up plugin MCP server, executes representative tool calls,
  *        and asserts expected outputs via snapshots.
  *

@@ -1,7 +1,7 @@
 /**
  * Tests for Hook Metrics Module
  *
- * Story M2.5: 훅 성능 모니터링 & 로깅
+ * Story M2.5: Hook Performance Monitoring & Logging
  * Tests AC #1-5: Per-hook timings, metrics surfacing, degraded tier alerts, privacy, regression tests
  */
 

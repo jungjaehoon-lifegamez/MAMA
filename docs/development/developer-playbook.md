@@ -47,7 +47,7 @@ This playbook serves as:
 
 ## Project Philosophy: Reuse-First
 
-> "발명된 바퀴를 다시 만들지 않기" (Don't reinvent the wheel)
+> "Don't reinvent the wheel"
 
 ### The Reset Decision (Epic M0)
 

@@ -5,7 +5,7 @@
  * Follows Claude-First Design: Simple, Transparent, Non-Intrusive
  *
  * Core Principle: MAMA = Librarian, Claude = Researcher
- * - MAMA stores (책 정리), retrieves (책 찾기), indexes (카탈로그)
+ * - MAMA stores (organize books), retrieves (find books), indexes (catalog)
  * - Claude decides what to save and how to use recalled decisions
  *
  * @module mama-api
@@ -38,8 +38,8 @@ const { formatRecall, formatList } = require('./decision-formatter');
  * @example
  * const decisionId = await mama.save({
  *   topic: 'date_calculation_format',
- *   decision: 'ISO 8601 + Unix timestamp 모두 지원',
- *   reasoning: 'Bootstrap 데이터가 ISO 8601로 저장되어 NaN 발생',
+ *   decision: 'Support both ISO 8601 and Unix timestamp formats',
+ *   reasoning: 'Bootstrap data stored as ISO 8601 causing NaN errors',
  *   confidence: 0.95,
  *   type: 'assistant_insight',
  *   outcome: 'success'
@@ -322,7 +322,7 @@ async function recall(topic, options = {}) {
  * @example
  * await mama.updateOutcome('decision_auth_strategy_123456_abc', {
  *   outcome: 'FAILED',
- *   failure_reason: '인증 토큰 만료 처리 누락'
+ *   failure_reason: 'Missing token expiration handling'
  * });
  */
 async function updateOutcome(decisionId, { outcome, failure_reason, limitation }) {
@@ -556,7 +556,7 @@ function applyRecencyBoost(results, options = {}) {
  * // → { query, results: [...], meta: {...} }
  *
  * // Human display
- * const markdown = await mama.suggest('메시', { format: 'markdown' });
+ * const markdown = await mama.suggest('mesh optimization', { format: 'markdown' });
  * // → "💡 MAMA found 3 related topics:\n1. ..."
  */
 async function suggest(userQuestion, options = {}) {
@@ -633,7 +633,7 @@ async function suggest(userQuestion, options = {}) {
         .filter((w) => w.length > 2); // Filter short words
 
       if (keywords.length === 0) {
-        return `💡 힌트: 더 구체적으로 질문해주세요.\n예: "Railway Volume 설정" 또는 "메시 파라미터 최적화"`;
+        return `💡 Hint: Please ask more specifically.\nExample: "Railway Volume configuration" or "mesh parameter optimization"`;
       }
 
       // Build LIKE query for each keyword
@@ -666,7 +666,7 @@ async function suggest(userQuestion, options = {}) {
       if (format === 'markdown') {
         const wordCount = userQuestion.split(/\s+/).length;
         if (wordCount < 3) {
-          return `💡 힌트: 더 구체적으로 질문해주세요.\n예: "왜 메시 구조를 COMPLEX로 했지?" 또는 "큰 레이어는 어떤 파라미터를 사용하나?"`;
+          return `💡 Hint: Please ask more specifically.\nExample: "Why did we choose COMPLEX mesh structure?" or "What parameters are used for large layers?"`;
         }
       }
       return null;

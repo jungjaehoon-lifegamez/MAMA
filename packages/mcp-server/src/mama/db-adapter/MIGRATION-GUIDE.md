@@ -2,43 +2,43 @@
 
 ## Overview
 
-MAMA는 SQLite (개발/로컬)와 PostgreSQL (프로덕션/Railway) 두 가지 데이터베이스를 지원합니다.
+MAMA supports two database backends: SQLite (development/local) and PostgreSQL (production/Railway).
 
 ## Quick Start
 
-### SQLite (기본값)
+### SQLite (Default)
 ```bash
-# 환경 변수 없음 → SQLite 사용
+# No environment variables → Uses SQLite
 node your-script.js
 ```
 
 ### PostgreSQL (Railway)
 ```bash
-# PostgreSQL connection string 설정
+# Set PostgreSQL connection string
 export MAMA_DATABASE_URL="postgresql://user:pass@host:5432/mama_db"
 node your-script.js
 ```
 
 ## Database Adapter Selection
 
-Adapter는 환경 변수에 따라 자동 선택됩니다:
+The adapter is automatically selected based on environment variables:
 
 ```javascript
 const { createAdapter } = require('./db-adapter');
 
-// 환경 변수 기반 자동 선택
+// Automatic selection based on environment variables
 const adapter = createAdapter();
 await adapter.connect();
 ```
 
-**선택 로직**:
-- `MAMA_DATABASE_URL` 설정됨 → PostgreSQL
-- 그 외 → SQLite (`MAMA_DB_PATH` 또는 `~/.mama/memories.db`)
+**Selection Logic**:
+- `MAMA_DATABASE_URL` set → PostgreSQL
+- Otherwise → SQLite (`MAMA_DB_PATH` or `~/.mama/memories.db`)
 
 ## Migration Scripts
 
 ### SQLite Migrations
-위치: `.claude/hooks/migrations/*.sql`
+Location: `.claude/hooks/migrations/*.sql`
 
 ```bash
 001-initial-decision-graph.sql
@@ -48,9 +48,9 @@ await adapter.connect();
 ```
 
 ### PostgreSQL Migrations
-위치: `.claude/hooks/migrations/postgresql/*.sql`
+Location: `.claude/hooks/migrations/postgresql/*.sql`
 
-SQLite 문법을 PostgreSQL로 변환:
+SQLite syntax converted to PostgreSQL:
 - `INTEGER PRIMARY KEY AUTOINCREMENT` → `SERIAL PRIMARY KEY`
 - `unixepoch()` → `EXTRACT(EPOCH FROM NOW())::BIGINT`
 - `BLOB` → `vector(384)` (pgvector extension)
@@ -118,36 +118,36 @@ SELECT * FROM decisions WHERE id = ?
 ```sql
 SELECT * FROM decisions WHERE id = $1
 ```
-(Adapter가 자동 변환)
+(Adapter automatically converts)
 
 ## Railway Setup
 
-### 1. PostgreSQL Addon 추가
+### 1. Add PostgreSQL Addon
 
-Railway 웹 UI:
+Railway web UI:
 1. Project → New → Database → Add PostgreSQL
-2. Database 이름: `mama-db`
-3. 자동 생성된 `DATABASE_URL`을 복사
+2. Database name: `mama-db`
+3. Copy the auto-generated `DATABASE_URL`
 
-### 2. 환경 변수 설정
+### 2. Set Environment Variables
 
-Railway MCP Server 서비스:
+Railway MCP Server service:
 ```bash
 MAMA_DATABASE_URL=${mama-db.DATABASE_URL}
 ```
 
-### 3. pgvector Extension 활성화
+### 3. Enable pgvector Extension
 
-Railway PostgreSQL에 접속:
+Connect to Railway PostgreSQL:
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-Migration scripts에 포함되어 있어 자동 실행됩니다.
+Included in migration scripts and runs automatically.
 
-### 4. Migration 실행
+### 4. Run Migrations
 
-첫 배포 시 자동으로 migration이 실행됩니다:
+Migrations run automatically on first deployment:
 ```javascript
 const adapter = createAdapter();
 await adapter.connect();
@@ -156,9 +156,9 @@ await adapter.runMigrations(__dirname + '/migrations');
 
 ## Testing Locally
 
-### PostgreSQL 로컬 테스트
+### Local PostgreSQL Testing
 
-1. Docker로 PostgreSQL + pgvector 실행:
+1. Run PostgreSQL + pgvector with Docker:
 ```bash
 docker run -d \
   --name mama-postgres \
@@ -168,12 +168,12 @@ docker run -d \
   pgvector/pgvector:pg16
 ```
 
-2. 환경 변수 설정:
+2. Set environment variables:
 ```bash
 export MAMA_DATABASE_URL="postgresql://postgres:mama123@localhost:5432/mama_db"
 ```
 
-3. 테스트 실행:
+3. Run tests:
 ```bash
 cd .claude/hooks
 npm test
@@ -181,33 +181,33 @@ npm test
 
 ## Current Status
 
-✅ **완료**:
+✅ **Completed**:
 - Database Adapter interface
 - SQLiteAdapter (synchronous)
 - PostgreSQLAdapter (asynchronous)
-- PostgreSQL migration scripts (4개)
-- pg dependency 추가
+- PostgreSQL migration scripts (4 files)
+- pg dependency added
 
-⏳ **진행 중**:
-- memory-store.js adapter 통합
-- Local PostgreSQL 테스트
-- Railway 배포
+⏳ **In Progress**:
+- memory-store.js adapter integration
+- Local PostgreSQL testing
+- Railway deployment
 
 ## Breaking Changes
 
-**None** - 기존 SQLite 코드는 그대로 동작합니다.
+**None** - Existing SQLite code works as-is.
 
-환경 변수 없이 실행하면 자동으로 SQLite를 사용합니다.
+Runs with SQLite automatically when no environment variables are set.
 
 ## Performance
 
 ### SQLite
-- **장점**: Zero-config, 빠른 로컬 개발
-- **단점**: Railway ephemeral file system (재시작 시 데이터 손실)
+- **Pros**: Zero-config, fast local development
+- **Cons**: Railway ephemeral file system (data loss on restart)
 
 ### PostgreSQL
-- **장점**: Persistent storage, 확장성, 동시성
-- **단점**: Connection overhead (connection pool로 완화)
+- **Pros**: Persistent storage, scalability, concurrency
+- **Cons**: Connection overhead (mitigated by connection pool)
 
 ### Benchmarks
 
@@ -217,7 +217,7 @@ npm test
 | Vector Search (k=5) | ~15ms | ~30ms |
 | Recall by Topic | ~1ms | ~3ms |
 
-*Note: PostgreSQL은 connection pool 사용 시 측정*
+*Note: PostgreSQL measured with connection pool*
 
 ## Troubleshooting
 
@@ -234,26 +234,26 @@ CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
 ### "Database not connected"
-Adapter가 연결되지 않았습니다:
+Adapter is not connected:
 ```javascript
-await adapter.connect(); // PostgreSQL은 await 필요
+await adapter.connect(); // PostgreSQL requires await
 ```
 
-### Migration 실패
+### Migration Failure
 ```bash
-# Migration 버전 확인
+# Check migration version
 SELECT * FROM schema_version;
 
-# 수동 rollback (주의!)
+# Manual rollback (caution!)
 DELETE FROM schema_version WHERE version > 2;
 ```
 
 ## Next Steps
 
-1. ✅ Adapter pattern 완료
-2. 🔄 memory-store.js 통합 (진행 중)
-3. ⏳ Local PostgreSQL 테스트
-4. ⏳ Railway 배포 및 검증
+1. ✅ Adapter pattern completed
+2. 🔄 memory-store.js integration (in progress)
+3. ⏳ Local PostgreSQL testing
+4. ⏳ Railway deployment and verification
 5. ⏳ Production monitoring
 
 ---

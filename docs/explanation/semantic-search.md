@@ -162,23 +162,23 @@ Day 30: 0.01 (1%)
 
 ### How It Works
 
-The **multilingual-e5-small** model maps Korean and English to the **same semantic space**:
+The **multilingual-e5-small** model maps different languages to the **same semantic space**:
 
 ```
-Korean:  "인증" → [0.23, -0.45, 0.78, ...]
-English: "authentication" → [0.25, -0.43, 0.76, ...]
+Language A: "security" → [0.23, -0.45, 0.78, ...]
+Language B: "authentication" → [0.25, -0.43, 0.76, ...]
                            ↑ Very similar vectors!
 ```
 
-**Result:** Korean query "인증" matches English decision "authentication strategy" at 88%
+**Result:** Multilingual queries can match decisions across different languages with high similarity
 
 ### Language Detection
 
-MAMA does **not** detect language. The embedding model automatically handles both languages:
+MAMA does **not** detect language. The embedding model automatically handles multiple languages:
 
 ```
-/mama-suggest "How do I handle 인증?"
-# Matches both English and Korean decisions
+/mama-suggest "How do I handle security?"
+# Matches semantically related decisions across languages
 ```
 
 ---

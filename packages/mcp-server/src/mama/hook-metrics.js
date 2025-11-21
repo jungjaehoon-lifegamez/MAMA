@@ -1,7 +1,7 @@
 /**
  * Hook Metrics Module
  *
- * Story M2.5: 훅 성능 모니터링 & 로깅
+ * Story M2.5: Hook Performance Monitoring & Logging
  *
  * Provides structured metrics logging for MAMA hooks:
  * - Per-hook latency tracking

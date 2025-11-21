@@ -1,7 +1,7 @@
 /**
  * Tests for UserPromptSubmit Hook
  *
- * Story M2.1: UserPromptSubmit 훅 이식
+ * Story M2.1: UserPromptSubmit Hook Migration
  * Tests AC #1-5: Hook implementation, performance, tier awareness, opt-out
  */
 
