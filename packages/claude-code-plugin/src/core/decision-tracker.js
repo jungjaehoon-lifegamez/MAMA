@@ -493,18 +493,12 @@ async function learnDecision(detection, toolExecution, sessionContext) {
     // ════════════════════════════════════════════════════════
     // Story 014.7.6: Generate notification if needs validation
     // ════════════════════════════════════════════════════════
+    // TODO: Implement notification system for insights requiring validation
     let notification = null;
     if (needsValidation) {
-      const { notifyInsight } = require('./notification-manager');
-      notification = notifyInsight({
-        id: decisionId,
-        topic: decision.topic,
-        decision: decision.decision,
-        reasoning: decision.reasoning,
-        confidence: decision.confidence,
-        needs_validation: true,
-        validation_attempts: 0,
-      });
+      // Notification system not yet implemented
+      // Future: notify user that assistant insight needs validation
+      console.debug(`[MAMA] Assistant insight saved, validation recommended: ${decision.topic}`);
     }
 
     // ════════════════════════════════════════════════════════

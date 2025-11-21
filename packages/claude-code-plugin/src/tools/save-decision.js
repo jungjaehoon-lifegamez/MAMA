@@ -83,21 +83,21 @@ const saveDecisionTool = {
         };
       }
 
-      // Call MAMA API (mama.save will handle outcome mapping to DB format)
-      const result = await mama.save({
+      // Call MAMA API (mama.save returns decision ID as string, not object)
+      const decisionId = await mama.save({
         topic,
         decision,
         reasoning,
         confidence,
-        user_involvement: type,
+        type, // Pass type instead of user_involvement
         outcome,
       });
 
       return {
         success: true,
-        decision_id: result.id,
+        decision_id: decisionId,
         topic: topic,
-        message: `✅ Decision saved successfully (ID: ${result.id})`,
+        message: `✅ Decision saved successfully (ID: ${decisionId})`,
         recall_command: `To recall: mama.recall('${topic}')`,
       };
     } catch (error) {

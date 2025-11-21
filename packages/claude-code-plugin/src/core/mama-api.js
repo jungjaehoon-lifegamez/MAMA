@@ -96,6 +96,7 @@ async function save({
     decision,
     reasoning,
     confidence,
+    type, // Include type for validation logic (user_decision vs assistant_insight)
     outcome,
     failure_reason,
     limitation,
