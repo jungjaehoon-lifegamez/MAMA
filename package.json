@@ -1,0 +1,39 @@
+{
+  "name": "claude-mama",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Memory-Augmented MCP Assistant (MAMA) for Claude Code & Desktop - Monorepo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spellon/claude-mama.git"
+  },
+  "homepage": "https://github.com/spellon/claude-mama#readme",
+  "bugs": {
+    "url": "https://github.com/spellon/claude-mama/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-desktop",
+    "mcp-server",
+    "memory-assistant",
+    "monorepo"
+  ],
+  "author": "SpineLift Team",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "clean": "pnpm -r clean",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
