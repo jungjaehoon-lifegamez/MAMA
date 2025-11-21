@@ -19,8 +19,8 @@ Thank you for your interest in contributing to MAMA (Memory-Augmented MCP Assist
 
 ```bash
 # Clone repository
-git clone https://github.com/spellon/claude-mama.git
-cd claude-mama
+git clone https://github.com/jungjaehoon-ui/MAMA.git
+cd MAMA
 
 # Install dependencies
 npm install

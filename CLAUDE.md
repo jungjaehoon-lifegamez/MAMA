@@ -316,6 +316,6 @@ Key docs:
 
 ## Getting Help
 
-- **Issues:** https://github.com/spellon/claude-mama/issues
+- **Issues:** https://github.com/jungjaehoon-ui/MAMA/issues
 - **Docs:** docs/index.md
 - **Developer Playbook:** docs/development/developer-playbook.md

@@ -182,8 +182,8 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/spellon/claude-mama.git
-cd claude-mama
+git clone https://github.com/jungjaehoon-ui/MAMA.git
+cd MAMA
 
 # 2. Install dependencies
 npm install

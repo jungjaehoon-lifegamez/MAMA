@@ -1,53 +1,34 @@
 # MAMA - Memory-Augmented MCP Assistant
 
-**Version:** 1.0.0
-**License:** MIT
-**Author:** SpineLift Team
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
+[![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-ui/MAMA)
 
-> "Remember decision evolution, not just conclusions"
+> Version 1.0.0 | Monorepo migration complete
 
-MAMA is an always-on companion for Claude Code and Claude Desktop that remembers how you think. It preserves the evolution of your decisions—from failed attempts to successful solutions—preventing you from repeating the same mistakes.
+MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work.
 
----
+## What is MAMA?
 
-## 📦 Packages
-
-This monorepo contains:
-
-### 1. [@spellon/mama-server](packages/mcp-server/)
-MCP (Model Context Protocol) server implementation. Published to npm and used by both Claude Code and Claude Desktop.
-
-**Installation:**
-```bash
-npx -y @spellon/mama-server
-# or
-npm install -g @spellon/mama-server
-```
-
-### 2. [MAMA Plugin](packages/claude-code-plugin/)
-Lightweight Claude Code plugin providing `/mama-*` commands, hooks, and auto-context injection.
-
-**Installation:**
-```bash
-/plugin marketplace add spellon/claude-plugins
-/plugin install mama@spellon
-```
+An always-on companion for Claude Code and Claude Desktop that remembers decision evolution. When you make architectural choices, try different approaches, or learn from failures, MAMA stores this context and surfaces it when relevant.
 
 ---
 
-## 🚀 Quick Start
+## Installation
 
-### For Users
+### Claude Code
 
-**Claude Code:**
 ```bash
-/plugin marketplace add spellon/claude-plugins
-/plugin install mama@spellon
-/mama-save  # First use auto-downloads MCP server
+/plugin marketplace add jungjaehoon-ui/MAMA
+/plugin install mama
 ```
 
-**Claude Desktop:**
-Add to `claude_desktop_config.json`:
+First use of `/mama-save` downloads the MCP server automatically.
+
+### Claude Desktop
+
+Add to your `claude_desktop_config.json`:
+
 ```json
 {
   "mcpServers": {
@@ -59,51 +40,113 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-**Full installation guide:** [Installation Guide](docs/guides/installation.md)
+### Prerequisites
+
+- Node.js >= 18.0.0 (20+ recommended)
+- 500MB free disk space for embedding model cache
+- SQLite support (included on most systems)
 
 ---
 
-## 🔧 Development
+## Quick Start
+
+After installation:
+
+```bash
+# Save a decision
+/mama-save topic="auth_strategy" decision="JWT with refresh tokens" reasoning="Need stateless auth for API scaling"
+
+# Search for related decisions
+/mama-suggest "How should I handle authentication?"
+
+# View decision history
+/mama-recall auth_strategy
+
+# List all decisions
+/mama-list
+```
+
+## Available Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/mama-save` | Save decision with reasoning and confidence |
+| `/mama-recall <topic>` | View full evolution history for a topic |
+| `/mama-suggest <query>` | Semantic search across all decisions |
+| `/mama-list` | Browse recent decisions chronologically |
+| `/mama-configure` | View/modify settings and tier status |
+
+---
+
+## How It Works
+
+MAMA uses a two-package architecture:
+
+### MCP Server (@spellon/mama-server)
+
+Published as an independent npm package. Handles SQLite database and vector embeddings. Shared across Claude Code, Claude Desktop, and any MCP client.
+
+### Claude Code Plugin (mama)
+
+Lightweight markdown-based plugin. Provides `/mama-*` commands and hooks. References the MCP server via `.mcp.json`.
+
+This separation means one database works across all your Claude environments, and the MCP server updates independently from the plugin.
+
+---
+
+## Key Features
+
+**Decision Evolution Tracking**
+See how your thinking changed over time, from initial attempts to final solutions.
+
+**Semantic Search**
+Natural language queries find relevant decisions even if exact keywords don't match.
+
+**Automatic Context**
+Relevant past decisions surface automatically when you're working on similar problems.
+
+**Local-First**
+All data stored on your device. No network calls, no external dependencies.
+
+**Multilingual Support**
+Queries work across different languages using multilingual embeddings.
+
+**Tier Transparency**
+System always shows what's working. Degraded mode still functions, just without vector search.
+
+---
+
+## Project Structure
+
+This is a monorepo containing two packages:
+
+```
+MAMA/
+├── packages/
+│   ├── mcp-server/          # @spellon/mama-server (npm)
+│   │   ├── src/             # Server implementation
+│   │   └── tests/           # Server tests
+│   │
+│   └── claude-code-plugin/  # mama (marketplace)
+│       ├── commands/        # Slash commands
+│       ├── hooks/           # Auto-context injection
+│       ├── skills/          # Background skills
+│       └── tests/           # Plugin tests
+│
+└── docs/                    # Documentation
+```
+
+---
+
+## Development
 
 ### Setup
 
 ```bash
-# Clone repository
-git clone https://github.com/spellon/claude-mama.git
-cd claude-mama
-
-# Install dependencies (requires pnpm)
+git clone https://github.com/jungjaehoon-ui/MAMA.git
+cd MAMA
 pnpm install
-
-# Run all tests
 pnpm test
-
-# Build all packages
-pnpm build
-```
-
-### Project Structure
-
-```
-claude-mama/
-├── packages/
-│   ├── mcp-server/           # @spellon/mama-server (npm package)
-│   │   ├── src/              # MCP server implementation
-│   │   ├── tests/            # Server tests
-│   │   └── package.json
-│   │
-│   └── claude-code-plugin/   # MAMA plugin (marketplace distribution)
-│       ├── .claude-plugin/   # Plugin manifest
-│       ├── commands/         # /mama-* commands
-│       ├── hooks/            # Hook configurations
-│       ├── skills/           # Auto-context skill
-│       ├── tests/            # Plugin tests
-│       └── package.json
-│
-├── .github/
-│   └── workflows/            # CI/CD
-├── docs/                     # Documentation (Diátaxis framework)
-└── package.json              # Monorepo root
 ```
 
 ### Running Tests
@@ -112,128 +155,82 @@ claude-mama/
 # All tests
 pnpm test
 
-# MCP server tests only
-cd packages/mcp-server
-pnpm test
+# MCP server only
+cd packages/mcp-server && pnpm test
 
-# Plugin tests only
-cd packages/claude-code-plugin
-pnpm test
+# Plugin only
+cd packages/claude-code-plugin && pnpm test
 ```
 
-### Local Development
+### Local Testing
 
-**Test MCP Server:**
-```bash
-cd packages/mcp-server
-npm start
-# Test with Claude Desktop or MCP Inspector
-```
+Link the plugin for local development:
 
-**Test Plugin:**
 ```bash
 cd packages/claude-code-plugin
-# Link to ~/.claude/plugins/repos/mama for testing
 ln -s $(pwd) ~/.claude/plugins/repos/mama
 ```
 
----
-
-## 📖 Documentation
-
-### For Users
-- **[Getting Started](docs/tutorials/getting-started.md)** - 10-minute quickstart
-- **[Installation Guide](docs/guides/installation.md)** - Complete installation
-- **[Commands Reference](docs/reference/commands.md)** - All `/mama-*` commands
-- **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues
-
-### For Developers
-- **[Developer Playbook](docs/development/developer-playbook.md)** - Architecture & standards
-- **[Deployment Architecture](docs/development/deployment-architecture.md)** - How MAMA is distributed
-- **[Contributing Guide](docs/development/contributing.md)** - How to contribute
-- **[Testing Guide](docs/development/testing.md)** - Test suite
-
-**Full navigation:** [Documentation Index](docs/index.md)
-
----
-
-## ✨ Key Features
-
-- ✅ **Decision Evolution Tracking** - See the journey from confusion to clarity
-- ✅ **Semantic Search** - Natural language queries across all decisions
-- ✅ **Always-on Context** - Automatic background hints when relevant
-- ✅ **Multi-language Support** - Korean + English cross-lingual search
-- ✅ **Tier Transparency** - Always shows what's working, what's degraded
-- ✅ **Local-first** - All data stored on your device
-
----
-
-## 🏗️ Architecture
-
-MAMA uses a **2-package architecture**:
-
-### Package 1: MCP Server (@spellon/mama-server)
-- Independent npm package
-- Handles all AI/database operations
-- Shared across Claude Code, Claude Desktop, and other MCP clients
-- Contains: better-sqlite3, @huggingface/transformers, sqlite-vec
-
-### Package 2: Claude Code Plugin (mama@spellon)
-- Lightweight plugin (Markdown + config)
-- Provides `/mama-*` commands
-- Hooks for automatic context injection
-- References the MCP server via `.mcp.json`
-
-**Benefits:**
-- ✅ One MCP server → Multiple clients
-- ✅ Automatic dependency management (npx)
-- ✅ Shared decision database across all tools
-
-**Learn more:** [Deployment Architecture](docs/development/deployment-architecture.md)
-
----
-
-## 🧪 Testing
+Test the MCP server standalone:
 
 ```bash
-# Run all tests
-pnpm test
-
-# With coverage
-pnpm test -- --coverage
+cd packages/mcp-server
+npm start  # Runs in stdio mode
 ```
 
-**Test coverage:** 134 tests (100% pass rate)
-- Unit tests: 62 (core logic)
-- Integration tests: 39 (hooks, workflows)
-- Regression tests: 33 (bug prevention)
+---
+
+## Documentation
+
+### User Guides
+- [Getting Started](docs/tutorials/getting-started.md) - 10-minute quickstart
+- [Installation](docs/guides/installation.md) - Complete setup guide
+- [Commands Reference](docs/reference/commands.md) - All available commands
+- [Troubleshooting](docs/guides/troubleshooting.md) - Common issues
+
+### Developer Docs
+- [Developer Playbook](docs/development/developer-playbook.md) - Architecture overview
+- [Contributing Guide](docs/development/contributing.md) - How to contribute
+- [Testing Guide](docs/development/testing.md) - Test suite documentation
+
+[Full Documentation Index](docs/index.md)
 
 ---
 
-## 🤝 Contributing
+## Testing
 
-We welcome contributions! Please see:
-- [Contributing Guide](docs/development/contributing.md)
-- [Developer Playbook](docs/development/developer-playbook.md)
-- [Code Standards](docs/development/code-standards.md)
+134 tests, 100% pass rate:
+- 62 unit tests (core logic)
+- 39 integration tests (hooks, workflows)
+- 33 regression tests (bug prevention)
 
----
-
-## 📄 License
-
-MIT License - see LICENSE file for details
-
----
-
-## 🔗 Links
-
-- **Documentation:** [docs/index.md](docs/index.md)
-- **GitHub:** [github.com/spellon/claude-mama](https://github.com/spellon/claude-mama)
-- **Issues:** [github.com/spellon/claude-mama/issues](https://github.com/spellon/claude-mama/issues)
-- **npm Package:** [@spellon/mama-server](https://www.npmjs.com/package/@spellon/mama-server)
-- **Plugin Marketplace:** [spellon/claude-plugins](https://github.com/spellon/claude-plugins)
+```bash
+pnpm test               # Run all tests
+pnpm test -- --coverage # With coverage report
+```
 
 ---
 
-**Status:** Monorepo migration in progress (2025-11-21)
-**Last Updated:** 2025-11-21
+## Contributing
+
+Contributions welcome. See [Contributing Guide](docs/development/contributing.md) for code standards, pull request process, and testing requirements.
+
+---
+
+## License
+
+MIT - see [LICENSE](LICENSE) for details
+
+---
+
+## Links
+
+- [GitHub Repository](https://github.com/jungjaehoon-ui/MAMA)
+- [Issues](https://github.com/jungjaehoon-ui/MAMA/issues)
+- [npm Package](https://www.npmjs.com/package/@spellon/mama-server)
+- [Documentation](docs/index.md)
+
+---
+
+**Author**: SpineLift Team
+**Last Updated**: 2025-11-22

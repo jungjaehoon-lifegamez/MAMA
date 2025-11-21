@@ -13,7 +13,7 @@ MAMA uses a **3-layer architecture**:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Layer 1: Development Repository (Monorepo)                  │
-│ github.com/spellon/claude-mama                               │
+│ github.com/jungjaehoon-ui/MAMA                               │
 │                                                              │
 │ ├── packages/                                                │
 │ │   ├── mcp-server/           → npm publish                  │
@@ -50,7 +50,7 @@ MAMA uses a **3-layer architecture**:
 ### Structure
 
 ```
-github.com/spellon/claude-mama
+github.com/jungjaehoon-ui/MAMA
 ├── README.md                        # Project overview
 ├── LICENSE
 ├── package.json                     # pnpm workspace config
@@ -298,8 +298,8 @@ jobs:
 
 ```bash
 # Clone monorepo
-git clone https://github.com/spellon/claude-mama.git
-cd claude-mama
+git clone https://github.com/jungjaehoon-ui/MAMA.git
+cd MAMA
 
 # Install dependencies
 pnpm install
@@ -345,9 +345,9 @@ git push --tags
 
 ## Migration from Current Structure
 
-**Current (claude-mama):**
+**Current (MAMA):**
 ```
-claude-mama/
+MAMA/
 ├── mama-plugin/              # Plugin files
 └── mcp-server/               # MCP server (mixed with SpineLift code)
 ```

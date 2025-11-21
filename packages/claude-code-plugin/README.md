@@ -294,8 +294,8 @@ MIT License - see LICENSE file for details
 ## 🔗 Links
 
 - **Documentation:** [docs/index.md](docs/index.md)
-- **GitHub:** [github.com/spellon/claude-mama](https://github.com/spellon/claude-mama)
-- **Issues:** [github.com/spellon/claude-mama/issues](https://github.com/spellon/claude-mama/issues)
+- **GitHub:** [github.com/jungjaehoon-ui/MAMA](https://github.com/jungjaehoon-ui/MAMA)
+- **Issues:** [github.com/jungjaehoon-ui/MAMA/issues](https://github.com/jungjaehoon-ui/MAMA/issues)
 - **PRD:** [docs/project/prd.md](docs/project/prd.md)
 
 ---
