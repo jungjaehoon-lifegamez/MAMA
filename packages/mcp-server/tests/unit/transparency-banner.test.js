@@ -24,7 +24,7 @@ describe('Story M2.4: Transparency Banner', () => {
     }
 
     // Import module
-    banner = await import('../../src/core/transparency-banner.js');
+    banner = await import('../../src/mama/transparency-banner.js');
   });
 
   afterEach(() => {

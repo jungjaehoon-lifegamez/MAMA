@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initDB, getDB, closeDB, getAdapter } from '../../src/core/db-manager.js';
+import { initDB, getDB, closeDB, getAdapter } from '../../src/mama/db-manager.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -150,7 +150,7 @@ describe('Story M1.2: SQLite Database Initialization', () => {
       // Try to require PostgreSQL adapter (should fail)
       let error;
       try {
-        require('../../src/core/db-adapter/postgresql-adapter.js');
+        require('../../src/mama/db-adapter/postgresql-adapter.js');
       } catch (e) {
         error = e;
       }

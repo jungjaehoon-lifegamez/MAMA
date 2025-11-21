@@ -26,7 +26,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
     }
 
     // Import module
-    metrics = await import('../../src/core/hook-metrics.js');
+    metrics = await import('../../src/mama/hook-metrics.js');
   });
 
   afterEach(() => {

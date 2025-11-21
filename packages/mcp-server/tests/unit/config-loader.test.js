@@ -33,7 +33,7 @@ describe('Story M1.4: Config Loader', () => {
 
   describe('Default configuration', () => {
     it('should export required functions', async () => {
-      const configLoader = await import('../../src/core/config-loader.js');
+      const configLoader = await import('../../src/mama/config-loader.js');
 
       expect(configLoader.loadConfig).toBeDefined();
       expect(configLoader.getModelName).toBeDefined();
@@ -45,7 +45,7 @@ describe('Story M1.4: Config Loader', () => {
     });
 
     it('should have correct default config values', async () => {
-      const { DEFAULT_CONFIG } = await import('../../src/core/config-loader.js');
+      const { DEFAULT_CONFIG } = await import('../../src/mama/config-loader.js');
 
       expect(DEFAULT_CONFIG.modelName).toBe('Xenova/multilingual-e5-small');
       expect(DEFAULT_CONFIG.embeddingDim).toBe(384);
@@ -60,7 +60,7 @@ describe('Story M1.4: Config Loader', () => {
         fs.unlinkSync(CONFIG_PATH);
       }
 
-      const { loadConfig, DEFAULT_CONFIG } = await import('../../src/core/config-loader.js');
+      const { loadConfig, DEFAULT_CONFIG } = await import('../../src/mama/config-loader.js');
       const config = loadConfig(true); // Force reload
 
       expect(config.modelName).toBe(DEFAULT_CONFIG.modelName);
@@ -74,7 +74,7 @@ describe('Story M1.4: Config Loader', () => {
         fs.unlinkSync(CONFIG_PATH);
       }
 
-      const { loadConfig } = await import('../../src/core/config-loader.js');
+      const { loadConfig } = await import('../../src/mama/config-loader.js');
       loadConfig(true);
 
       expect(fs.existsSync(CONFIG_PATH)).toBe(true);
@@ -93,7 +93,7 @@ describe('Story M1.4: Config Loader', () => {
       };
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(customConfig, null, 2));
 
-      const { loadConfig } = await import('../../src/core/config-loader.js');
+      const { loadConfig } = await import('../../src/mama/config-loader.js');
       const config = loadConfig(true);
 
       expect(config.modelName).toBe('Xenova/gte-large');
@@ -102,7 +102,7 @@ describe('Story M1.4: Config Loader', () => {
     });
 
     it('should use cached config on subsequent calls', async () => {
-      const { loadConfig } = await import('../../src/core/config-loader.js');
+      const { loadConfig } = await import('../../src/mama/config-loader.js');
 
       const config1 = loadConfig(true); // First load (forces reload)
       const config2 = loadConfig(false); // Second load (uses cache)
@@ -113,7 +113,7 @@ describe('Story M1.4: Config Loader', () => {
 
   describe('Config getters (AC #1)', () => {
     it('should expose modelName via getModelName', async () => {
-      const { getModelName } = await import('../../src/core/config-loader.js');
+      const { getModelName } = await import('../../src/mama/config-loader.js');
       const modelName = getModelName();
 
       expect(typeof modelName).toBe('string');
@@ -121,7 +121,7 @@ describe('Story M1.4: Config Loader', () => {
     });
 
     it('should expose embeddingDim via getEmbeddingDim', async () => {
-      const { getEmbeddingDim } = await import('../../src/core/config-loader.js');
+      const { getEmbeddingDim } = await import('../../src/mama/config-loader.js');
       const dim = getEmbeddingDim();
 
       expect(typeof dim).toBe('number');
@@ -129,7 +129,7 @@ describe('Story M1.4: Config Loader', () => {
     });
 
     it('should expose cacheDir via getCacheDir', async () => {
-      const { getCacheDir } = await import('../../src/core/config-loader.js');
+      const { getCacheDir } = await import('../../src/mama/config-loader.js');
       const cacheDir = getCacheDir();
 
       expect(typeof cacheDir).toBe('string');
@@ -139,7 +139,7 @@ describe('Story M1.4: Config Loader', () => {
 
   describe('Config updates (AC #3)', () => {
     it('should update config file successfully', async () => {
-      const { updateConfig, loadConfig } = await import('../../src/core/config-loader.js');
+      const { updateConfig, loadConfig } = await import('../../src/mama/config-loader.js');
 
       const success = updateConfig({
         modelName: 'Xenova/test-model',
@@ -154,7 +154,7 @@ describe('Story M1.4: Config Loader', () => {
     });
 
     it('should persist updates to disk', async () => {
-      const { updateConfig } = await import('../../src/core/config-loader.js');
+      const { updateConfig } = await import('../../src/mama/config-loader.js');
 
       updateConfig({
         modelName: 'Xenova/persisted-model',
@@ -166,7 +166,7 @@ describe('Story M1.4: Config Loader', () => {
     });
 
     it('should handle partial updates', async () => {
-      const { updateConfig, loadConfig } = await import('../../src/core/config-loader.js');
+      const { updateConfig, loadConfig } = await import('../../src/mama/config-loader.js');
 
       // Set initial config
       updateConfig({
@@ -194,7 +194,7 @@ describe('Story M1.4: Config Loader', () => {
       };
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(invalidConfig, null, 2));
 
-      const { loadConfig, DEFAULT_CONFIG } = await import('../../src/core/config-loader.js');
+      const { loadConfig, DEFAULT_CONFIG } = await import('../../src/mama/config-loader.js');
       const config = loadConfig(true);
 
       expect(config.modelName).toBe(DEFAULT_CONFIG.modelName); // Should fallback to default
@@ -208,7 +208,7 @@ describe('Story M1.4: Config Loader', () => {
       };
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(invalidConfig, null, 2));
 
-      const { loadConfig, DEFAULT_CONFIG } = await import('../../src/core/config-loader.js');
+      const { loadConfig, DEFAULT_CONFIG } = await import('../../src/mama/config-loader.js');
       const config = loadConfig(true);
 
       expect(config.embeddingDim).toBe(DEFAULT_CONFIG.embeddingDim); // Should fallback to default
@@ -218,7 +218,7 @@ describe('Story M1.4: Config Loader', () => {
       // Write corrupted JSON
       fs.writeFileSync(CONFIG_PATH, '{ invalid json }');
 
-      const { loadConfig, DEFAULT_CONFIG } = await import('../../src/core/config-loader.js');
+      const { loadConfig, DEFAULT_CONFIG } = await import('../../src/mama/config-loader.js');
       const config = loadConfig(true);
 
       // Should use defaults when parsing fails
@@ -229,7 +229,7 @@ describe('Story M1.4: Config Loader', () => {
 
   describe('Config path', () => {
     it('should return correct config path', async () => {
-      const { getConfigPath } = await import('../../src/core/config-loader.js');
+      const { getConfigPath } = await import('../../src/mama/config-loader.js');
       const configPath = getConfigPath();
 
       expect(configPath).toContain('.mama');
