@@ -345,9 +345,9 @@ git push --tags
 
 ## Migration from Current Structure
 
-**Current (spineLiftWASM):**
+**Current (claude-mama):**
 ```
-spineLiftWASM/
+claude-mama/
 ├── mama-plugin/              # Plugin files
 └── mcp-server/               # MCP server (mixed with SpineLift code)
 ```

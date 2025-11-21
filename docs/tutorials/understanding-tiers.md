@@ -59,7 +59,7 @@ MAMA operates in **two tiers** with full transparency about what's working and w
 
 ## Why Tier 2 Happens
 
-**Common causes / 주요 원인:**
+**Common causes:**
 1. **First install** - Transformers.js model not downloaded yet
 2. **Network issue** - Model download failed during first use
 3. **Disk space** - Insufficient space for model cache (~120MB)
@@ -69,7 +69,6 @@ MAMA operates in **two tiers** with full transparency about what's working and w
 
 ## Transparency Guarantee
 
-**투명성 보장:**
 Every context injection shows current tier status. You **always** know what's working and what's degraded.
 
 ```

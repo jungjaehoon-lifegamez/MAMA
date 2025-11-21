@@ -32,10 +32,10 @@ topic: 'auth_strategy_v1'
 topic: 'auth_strategy_v2'
 ```
 
-**중요: 토픽 재사용** (Critical: Topic reuse):
-- 같은 토픽을 반복 사용하면 "supersedes" 그래프가 자동 생성됩니다
-- 이를 통해 결정의 진화 과정(confusion → clarity)을 추적할 수 있습니다
-- 고유한 토픽명(v1, v2 등)은 그래프 연결을 끊어버립니다
+**Why this matters:**
+- Reusing the same topic automatically creates a "supersedes" graph
+- This lets you track the evolution from confusion to clarity
+- Unique topic names (v1, v2, etc.) break the graph connections
 
 **Learn more:** [Decision Graph Concept](../explanation/decision-graph.md)
 
@@ -128,12 +128,12 @@ Outcome: success  # or failure, partial, superseded
 - **0.3-0.4**: Low confidence, experimental
 - **0.0-0.2**: Very uncertain, placeholder
 
-**Korean guidance / 한국어 가이드:**
-- 확실함: 0.9+
-- 괜찮음: 0.7-0.8
-- 애매함: 0.5-0.6
-- 실험적: 0.3-0.4
-- 모르겠음: 0.0-0.2
+**Quick guide:**
+- Very certain: 0.9+
+- Pretty confident: 0.7-0.8
+- Unsure: 0.5-0.6
+- Experimental: 0.3-0.4
+- No idea: 0.0-0.2
 
 ---
 

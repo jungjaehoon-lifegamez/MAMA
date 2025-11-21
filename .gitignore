@@ -55,7 +55,8 @@ Thumbs.db
 *.db-shm
 *.db-wal
 .claude/
-.mcp.json
+.mcp.json.local
+*.mcp.json.dev
 
 # Backup files
 *-old.*

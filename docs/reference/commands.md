@@ -68,8 +68,10 @@ Semantic search across all decisions.
 **Examples:**
 ```
 /mama-suggest "How should I handle authentication?"
-/mama-suggest "어떤 데이터베이스를 써야 할까?"
+/mama-suggest "What database should I use?"
 ```
+
+**Note:** Cross-lingual search supported. Korean queries (e.g., "인증") will match English decisions (e.g., "authentication").
 
 **Output:** Top 3 relevant decisions with similarity scores.
 

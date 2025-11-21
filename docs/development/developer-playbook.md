@@ -182,8 +182,8 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/spineLiftWASM.git
-cd spineLiftWASM/mama-plugin
+git clone https://github.com/spellon/claude-mama.git
+cd claude-mama
 
 # 2. Install dependencies
 npm install

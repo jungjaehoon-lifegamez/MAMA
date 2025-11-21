@@ -27,7 +27,7 @@ After installing and restarting Claude Code:
 
 **Expected:** Commands `/mama-*` appear when you type `/mama`
 
-**문제 발생 시** (If issues): See [Troubleshooting Guide](../guides/troubleshooting.md)
+**If you have issues:** See [Troubleshooting Guide](../guides/troubleshooting.md)
 
 ---
 
@@ -45,15 +45,15 @@ Claude will ask:
 - Confidence (0.0-1.0, default 0.5)
 ```
 
-**Korean Example / 한국어 예시:**
+**Example:**
 ```
-Topic: 테스트_프레임워크
-Decision: Vitest 사용하기로 결정
-Reasoning: Jest보다 ESM 지원이 좋고, 프로젝트에 이미 설정되어 있음
+Topic: test_framework
+Decision: Use Vitest for testing
+Reasoning: Better ESM support than Jest, already configured in project
 Confidence: 0.9
 ```
 
-**첫 저장 성공 시**: `✅ Decision saved successfully (ID: decision_...)` 메시지 확인
+**On success:** You'll see `✅ Decision saved successfully (ID: decision_...)` message
 
 ---
 
@@ -68,11 +68,11 @@ Expected output shows tier badge:
 🔍 System Status: 🟢 Tier 1 (Full Features Active)
 ```
 
-**Tier Meanings / 티어 의미:**
+**Tier Meanings:**
 - **🟢 Tier 1**: Full vector search + semantic matching (80% accuracy)
 - **🟡 Tier 2**: Fallback exact match only (40% accuracy)
 
-**Tier 2인 경우**: See [Tier 2 Remediation Guide](../guides/tier-2-remediation.md)
+**If Tier 2 detected:** See [Tier 2 Remediation Guide](../guides/tier-2-remediation.md)
 
 ---
 
@@ -86,12 +86,12 @@ You: "How should I handle testing?"
 Expected: Before Claude responds, you'll see:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💡 MAMA: 1 related decision
-   • 테스트_프레임워크 (90%, just now)
-   /mama-recall 테스트_프레임워크 for full history
+   • test_framework (90%, just now)
+   /mama-recall test_framework for full history
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-**자동 컨텍스트 원리** (How it works):
+**How it works:**
 - UserPromptSubmit hook → Semantic search → Gentle hints (not walls of text)
 - Privacy guarantee: 100% local, no network calls ([FR45-49](../reference/fr-mapping.md))
 
@@ -103,10 +103,10 @@ Expected: Before Claude responds, you'll see:
 
 ```bash
 # See decision evolution (supersedes chain)
-/mama-recall 테스트_프레임워크
+/mama-recall test_framework
 
 # Semantic search across all topics
-/mama-suggest "어떤 라이브러리를 써야 할까?"
+/mama-suggest "which library should I use?"
 
 # List recent decisions (default 10)
 /mama-list
