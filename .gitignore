@@ -67,3 +67,6 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# Development documentation (local only)
+dev-docs/
