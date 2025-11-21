@@ -59,7 +59,7 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-**Full installation guide:** [Installation Guide](packages/claude-code-plugin/docs/guides/installation.md)
+**Full installation guide:** [Installation Guide](docs/guides/installation.md)
 
 ---
 
@@ -97,13 +97,12 @@ claude-mama/
 │       ├── commands/         # /mama-* commands
 │       ├── hooks/            # Hook configurations
 │       ├── skills/           # Auto-context skill
-│       ├── docs/             # User documentation (Diátaxis)
 │       ├── tests/            # Plugin tests
 │       └── package.json
 │
 ├── .github/
 │   └── workflows/            # CI/CD
-├── docs/                     # Shared documentation
+├── docs/                     # Documentation (Diátaxis framework)
 └── package.json              # Monorepo root
 ```
 
@@ -143,18 +142,18 @@ ln -s $(pwd) ~/.claude/plugins/repos/mama
 ## 📖 Documentation
 
 ### For Users
-- **[Getting Started](packages/claude-code-plugin/docs/tutorials/getting-started.md)** - 10-minute quickstart
-- **[Installation Guide](packages/claude-code-plugin/docs/guides/installation.md)** - Complete installation
-- **[Commands Reference](packages/claude-code-plugin/docs/reference/commands.md)** - All `/mama-*` commands
-- **[Troubleshooting](packages/claude-code-plugin/docs/guides/troubleshooting.md)** - Common issues
+- **[Getting Started](docs/tutorials/getting-started.md)** - 10-minute quickstart
+- **[Installation Guide](docs/guides/installation.md)** - Complete installation
+- **[Commands Reference](docs/reference/commands.md)** - All `/mama-*` commands
+- **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues
 
 ### For Developers
-- **[Developer Playbook](packages/claude-code-plugin/docs/development/developer-playbook.md)** - Architecture & standards
-- **[Deployment Architecture](packages/claude-code-plugin/docs/development/deployment-architecture.md)** - How MAMA is distributed
-- **[Contributing Guide](packages/claude-code-plugin/docs/development/contributing.md)** - How to contribute
-- **[Testing Guide](packages/claude-code-plugin/docs/development/testing.md)** - Test suite
+- **[Developer Playbook](docs/development/developer-playbook.md)** - Architecture & standards
+- **[Deployment Architecture](docs/development/deployment-architecture.md)** - How MAMA is distributed
+- **[Contributing Guide](docs/development/contributing.md)** - How to contribute
+- **[Testing Guide](docs/development/testing.md)** - Test suite
 
-**Full navigation:** [Documentation Index](packages/claude-code-plugin/docs/index.md)
+**Full navigation:** [Documentation Index](docs/index.md)
 
 ---
 
@@ -190,7 +189,7 @@ MAMA uses a **2-package architecture**:
 - ✅ Automatic dependency management (npx)
 - ✅ Shared decision database across all tools
 
-**Learn more:** [Deployment Architecture](packages/claude-code-plugin/docs/development/deployment-architecture.md)
+**Learn more:** [Deployment Architecture](docs/development/deployment-architecture.md)
 
 ---
 
@@ -214,9 +213,9 @@ pnpm test -- --coverage
 ## 🤝 Contributing
 
 We welcome contributions! Please see:
-- [Contributing Guide](packages/claude-code-plugin/docs/development/contributing.md)
-- [Developer Playbook](packages/claude-code-plugin/docs/development/developer-playbook.md)
-- [Code Standards](packages/claude-code-plugin/docs/development/code-standards.md)
+- [Contributing Guide](docs/development/contributing.md)
+- [Developer Playbook](docs/development/developer-playbook.md)
+- [Code Standards](docs/development/code-standards.md)
 
 ---
 
@@ -228,7 +227,7 @@ MIT License - see LICENSE file for details
 
 ## 🔗 Links
 
-- **Documentation:** [docs/index.md](packages/claude-code-plugin/docs/index.md)
+- **Documentation:** [docs/index.md](docs/index.md)
 - **GitHub:** [github.com/spellon/claude-mama](https://github.com/spellon/claude-mama)
 - **Issues:** [github.com/spellon/claude-mama/issues](https://github.com/spellon/claude-mama/issues)
 - **npm Package:** [@spellon/mama-server](https://www.npmjs.com/package/@spellon/mama-server)

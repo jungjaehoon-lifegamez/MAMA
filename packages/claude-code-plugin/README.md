@@ -12,14 +12,12 @@ MAMA is an always-on companion for Claude Code that remembers how you think. It 
 
 ## ✨ Key Features
 
-**FR Reference:** [FR1-29 (Core Features)](docs/project/prd.md)
-
-✅ **Decision Evolution Tracking** - See the journey from confusion to clarity ([FR13-18](docs/reference/fr-mapping.md))
-✅ **Semantic Search** - Natural language queries across all decisions ([FR8-12](docs/reference/fr-mapping.md))
-✅ **Always-on Context** - Automatic background hints when relevant ([FR19-24](docs/reference/fr-mapping.md))
-✅ **Multi-language Support** - Korean + English cross-lingual search ([FR30-35](docs/reference/fr-mapping.md))
-✅ **Tier Transparency** - Always shows what's working, what's degraded ([FR25-29](docs/reference/fr-mapping.md))
-✅ **Local-first** - All data stored on your device ([FR45-49](docs/reference/fr-mapping.md))
+✅ **Decision Evolution Tracking** - See the journey from confusion to clarity
+✅ **Semantic Search** - Natural language queries across all decisions
+✅ **Always-on Context** - Automatic background hints when relevant
+✅ **Multi-language Support** - Korean + English cross-lingual search
+✅ **Tier Transparency** - Always shows what's working, what's degraded
+✅ **Local-first** - All data stored on your device
 
 ---
 
@@ -53,7 +51,7 @@ Add to `claude_desktop_config.json`:
 
 **Works with both!** Same MCP server, shared database.
 
-**Detailed guide:** [Installation Guide](docs/guides/installation.md)
+**Detailed guide:** [Installation Guide](../../docs/guides/installation.md)
 
 ---
 
@@ -90,7 +88,7 @@ You: "How should I handle testing?"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-**Full tutorial:** [Getting Started Guide](docs/tutorials/getting-started.md)
+**Full tutorial:** [Getting Started Guide](../../docs/tutorials/getting-started.md)
 
 ---
 
@@ -104,7 +102,7 @@ You: "How should I handle testing?"
 | `/mama-list [--limit N]` | List recent decisions (default 10) |
 | `/mama-configure` | Change embedding model or settings |
 
-**Full reference:** [Commands Reference](docs/reference/commands.md)
+**Full reference:** [Commands Reference](../../docs/reference/commands.md)
 
 ---
 
