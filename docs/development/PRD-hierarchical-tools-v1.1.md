@@ -1,4 +1,4 @@
-# PRD: MAMA v2 - Hierarchical Tools & Unified Schema
+# PRD: MAMA v1.1 - Hierarchical Tools & Unified Schema
 
 **Status:** 🔬 Experimental
 **Branch:** `experiment/primitives-architecture`
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-MAMA v2 introduces a hierarchical tool architecture with slash-based namespacing and a unified type-based schema. This redesign aligns with MCP best practices, reduces cognitive load, and enables dynamic context-aware tool exposure.
+MAMA v1.1 introduces a hierarchical tool architecture with slash-based namespacing and a unified type-based schema. This redesign aligns with MCP best practices, reduces cognitive load, and enables dynamic context-aware tool exposure.
 
 **Key Changes:**
 - 7 flat tools → 4 domain actions with 10 sub-tools
@@ -434,7 +434,7 @@ async function updateToolList(context) {
 - [ ] Final release (deprecate old tools)
 
 **Deliverables:**
-- MAMA v2.0.0 release
+- MAMA v1.1.0 release
 - Old tools marked deprecated
 - Backward compatibility maintained
 
@@ -500,7 +500,7 @@ async function updateToolList(context) {
 **Mitigation:**
 - Keep old tools (deprecated)
 - Migration guide with examples
-- Version bump (v2.0.0)
+- Version bump (v1.1.0)
 - Support both old and new for 3 months
 
 ### R5: MCP Client Compatibility
@@ -520,7 +520,7 @@ async function updateToolList(context) {
    - Option B: Migrate to `memory_checkpoint_<timestamp>`
 
 2. **Old tool deprecation timeline:** How long to support?
-   - Proposal: 3 months warning, then remove in v3.0.0
+   - Proposal: 3 months warning, then remove in v2.0.0
 
 3. **Context detection accuracy:** What if we get it wrong?
    - Fallback: Show all tools if confidence < 70%
@@ -553,7 +553,7 @@ async function updateToolList(context) {
 - `mama_architecture_tool_philosophy` - Tool design limits thinking
 - `mama_tool_design_claude_semantic` - Claude's semantic understanding
 - `mama_identity_evolving_project` - MAMA as learning system
-- `mama_v2_hierarchical_architecture` - This PRD's parent decision
+- `mama_v1.1_hierarchical_architecture` - This PRD's parent decision
 
 ---
 

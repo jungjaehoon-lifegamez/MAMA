@@ -3,13 +3,13 @@
 **Status:** Proposed
 **Date:** 2025-11-22
 **Deciders:** SpineLift Team
-**Related:** PRD-hierarchical-tools-v2.md
+**Related:** PRD-hierarchical-tools-v1.1.md
 
 ---
 
 ## Context
 
-MAMA v2 introduces a unified `memories` table with multiple types (decision, checkpoint, insight, context). However, the PRD focused on **what to store** (schema) and **how to access** (tools), missing the critical question: **How do memories connect to each other semantically?**
+MAMA v1.1 introduces a unified `memories` table with multiple types (decision, checkpoint, insight, context). However, the PRD focused on **what to store** (schema) and **how to access** (tools), missing the critical question: **How do memories connect to each other semantically?**
 
 ### The Problem
 
@@ -524,6 +524,624 @@ const results = await traverseGraph(query_embedding, {
 
 ---
 
+## 6. Link Type Decision Logic
+
+### Who Decides Link Types?
+
+**Critical Clarification:** Link types are NOT decided by analyzing text - they're determined by **which tool is called** and **what parameters are provided**.
+
+```javascript
+// Flow:
+User: "JWT 대신 세션 쓰자"
+  ↓
+Claude (LLM): "This supersedes previous auth decision"  ← CLAUDE does reasoning
+  ↓
+Claude calls: save/decision({ supersedes: "decision_jwt_123" })  ← Parameter
+  ↓
+Tool: if (args.supersedes) → link_type = 'evolution'  ← Rule-based mapping
+```
+
+### Role Breakdown
+
+| Actor | Responsibility | Reasoning? |
+|-------|----------------|------------|
+| **Claude (Remote LLM)** | Tool selection, parameter filling | ✅ Yes (interprets user intent) |
+| **MCP Tool (JavaScript)** | Parameter → link_type mapping | ❌ No (rule-based) |
+| **Pattern matching** | Regex on reasoning text | ❌ No (pattern recognition) |
+| **Local LLM** | Deep reasoning analysis | ✅ Yes (future feature) |
+
+### Tool → Link Type Mapping
+
+```javascript
+// Explicit mappings (hardcoded in tools)
+const toolLinkTypeMap = {
+  // save/decision with parameters
+  'supersedes': 'evolution',
+  'refines': 'evolution',
+  'improves': 'evolution',
+
+  // evolve/outcome
+  'outcome_of': 'implementation',
+
+  // save/checkpoint with implements
+  'implements': 'implementation',
+
+  // Automatic (system-created)
+  'temporal': 'temporal',           // Time proximity
+  'semantic': 'association'         // Embedding similarity
+};
+```
+
+### Future: Optional Pattern Matching
+
+```javascript
+// Phase 2: Lightweight text analysis (no LLM)
+if (!args.supersedes && args.reasoning) {
+  const patterns = {
+    'supersedes': /replaces|instead of|switching from/i,
+    'improves': /improves|enhances|better than/i,
+    'fixes': /fixes|resolves|addresses/i
+  };
+
+  for (const [rel, pattern] of Object.entries(patterns)) {
+    if (pattern.test(args.reasoning)) {
+      createLink({
+        link_type: inferCoreType(rel),
+        confidence: 0.7  // Lower than explicit
+      });
+    }
+  }
+}
+```
+
+---
+
+## 7. Creative Parameter Support
+
+### Problem: Fixed Parameters Limit Thinking
+
+Tool schemas traditionally restrict what Claude can express:
+
+```javascript
+// Restrictive schema
+inputSchema: {
+  properties: { supersedes: string },
+  additionalProperties: false  // ← Claude can't express new relationships!
+}
+```
+
+This violates our philosophy: **"Tools should not define boundaries of thought"**.
+
+### Solution: Flexible Links Array
+
+```javascript
+// Tool definition
+inputSchema: {
+  properties: {
+    topic: { type: 'string' },
+    decision: { type: 'string' },
+
+    // Flexible relationship expression
+    links: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          to_id: { type: 'string' },
+          relationship: { type: 'string' },  // ← Unlimited!
+          tags: { type: 'array', items: { type: 'string' } }
+        }
+      }
+    }
+  }
+}
+
+// Claude uses creatively:
+save/decision({
+  topic: "architecture",
+  decision: "Event sourcing",
+  links: [
+    { to_id: "decision_kafka", relationship: "depends_on" },
+    { to_id: "analysis_123", relationship: "inspired_by" },
+    { to_id: "decision_microservices", relationship: "challenges" }
+  ]
+})
+```
+
+### Relationship Processing
+
+```javascript
+// Tool handler
+for (const link of args.links) {
+  // 1. Infer core type from relationship name
+  const coreType = await inferCoreType(link.relationship);
+
+  // 2. Create flexible link
+  await createLink({
+    from_id: newMemoryId,
+    to_id: link.to_id,
+    link_type: coreType,           // Core category (4 types)
+    relationship_tags: [
+      link.relationship,            // Original creative name
+      ...(link.tags || [])          // Additional tags
+    ],
+    confidence: 0.8,                // Explicit but creative
+    created_by: 'llm',
+    metadata: {
+      custom_relationship: link.relationship
+    }
+  });
+}
+```
+
+### Learning Mechanism
+
+```javascript
+// Track new relationships
+class RelationshipLearning {
+  async trackUsage(relationship, context) {
+    await db.upsert('relationship_intelligence', {
+      relationship,
+      usage_count: db.raw('usage_count + 1'),
+      last_used: Date.now(),
+      contexts: db.raw(`json_insert(contexts, '$', ?)`, [context])
+    });
+  }
+
+  async promoteToOfficial(threshold = 50) {
+    const candidates = await db.query(`
+      SELECT relationship, usage_count, avg_confidence
+      FROM relationship_intelligence
+      WHERE usage_count > ? AND avg_confidence > 0.75
+    `, [threshold]);
+
+    // These become official parameters in next version!
+    return candidates;
+  }
+}
+```
+
+### Schema Evolution Example
+
+```javascript
+// v1.1: "inspired_by" is creative
+links: [{ relationship: "inspired_by", ... }]
+
+// [50 uses later...]
+
+// v1.2: "inspired_by" becomes official parameter!
+save/decision({
+  inspired_by: "analysis_123",  // ← Now a first-class parameter
+  // But links[] still available for new creative ones
+})
+```
+
+---
+
+## 8. Relationship Intelligence
+
+### Semantic Embedding for Automatic Understanding
+
+**Key Insight:** We don't need to hardcode relationship synonyms - Transformers.js **automatically understands semantic similarity**!
+
+```javascript
+// NO hardcoding needed!
+const embed1 = await embed("inspired by");
+const embed2 = await embed("motivated by");
+const embed3 = await embed("challenges");
+
+cosine_similarity(embed1, embed2) = 0.87  // Synonyms detected!
+cosine_similarity(embed1, embed3) = 0.23  // Different meaning
+```
+
+### Automatic Synonym Detection
+
+```javascript
+async function findSynonyms(relationship, threshold = 0.75) {
+  // 1. Embed the query
+  const queryEmbed = await embed(relationship);
+
+  // 2. Get all existing relationships
+  const existing = await db.query(`
+    SELECT DISTINCT relationship_tags
+    FROM memory_links
+  `);
+
+  // 3. Find similar ones (semantic similarity!)
+  const synonyms = [];
+  for (const rel of existing) {
+    const relEmbed = await embed(rel);
+    const similarity = cosineSimilarity(queryEmbed, relEmbed);
+
+    if (similarity > threshold) {
+      synonyms.push({ relationship: rel, similarity });
+    }
+  }
+
+  return synonyms.sort((a, b) => b.similarity - a.similarity);
+}
+
+// Example:
+await findSynonyms("motivated by")
+// → [
+//   { relationship: "inspired by", similarity: 0.87 },
+//   { relationship: "influenced by", similarity: 0.84 },
+//   { relationship: "based on", similarity: 0.78 }
+// ]
+```
+
+### Automatic Clustering
+
+```javascript
+// Zero hardcoding - system learns relationship clusters!
+async function autoClusterRelationships() {
+  const allRels = await getAllRelationships();
+  const embeddings = await Promise.all(
+    allRels.map(r => embed(r.relationship))
+  );
+
+  // DBSCAN clustering (density-based)
+  const clusters = await dbscan(embeddings, {
+    epsilon: 0.25,     // Max distance within cluster
+    minPoints: 2
+  });
+
+  // System automatically discovers:
+  return [
+    {
+      canonical: "inspired by",
+      members: ["inspired by", "motivated by", "influenced by", "based on"],
+      avgSimilarity: 0.82
+    },
+    {
+      canonical: "challenges",
+      members: ["challenges", "contradicts", "opposes", "questions"],
+      avgSimilarity: 0.87
+    }
+  ];
+}
+```
+
+### Multilingual Support (Automatic!)
+
+```javascript
+// Works with Korean + English mixed:
+const relationships = [
+  "inspired by",
+  "영감을 받은",
+  "motivated by",
+  "동기부여된",
+  "challenges",
+  "반박한다"
+];
+
+const clusters = await autoClusterRelationships(relationships);
+// → [
+//   ["inspired by", "영감을 받은", "motivated by", "동기부여된"],
+//   ["challenges", "반박한다"]
+// ]
+```
+
+### Directional Analysis
+
+```javascript
+// Infer relationship direction from semantics
+const directionalityPatterns = {
+  forward: ['supersedes', 'implements', 'challenges', 'improves'],
+  backward: ['inspired_by', 'based_on', 'motivated_by'],
+  bidirectional: ['relates_to', 'similar_to']
+};
+
+async function inferDirectionality(relationship) {
+  const embed = await embeddings.generate(relationship);
+
+  const scores = {
+    forward: await semanticSimilarity(embed, directionalityPatterns.forward),
+    backward: await semanticSimilarity(embed, directionalityPatterns.backward),
+    bidirectional: await semanticSimilarity(embed, directionalityPatterns.bidirectional)
+  };
+
+  return Object.keys(scores).reduce((a, b) =>
+    scores[a] > scores[b] ? a : b
+  );
+}
+
+// Example:
+await inferDirectionality("derived_from")
+// → 'backward' (similar to 'inspired_by', 'based_on')
+```
+
+### Context-Aware Scoring
+
+```javascript
+async function scoreRelationship(link, context) {
+  let score = link.confidence;  // Base
+
+  // 1. Frequency boost (popular relationships)
+  const usage = await getRelationshipUsage(link.relationship_tags[0]);
+  score *= (1 + Math.log(usage.count) / 10);
+
+  // 2. Outcome correlation
+  const outcomeScore = await getOutcomeCorrelation(link.relationship_tags[0]);
+  score *= outcomeScore;  // Boost if leads to success
+
+  // 3. Graph centrality
+  const centrality = await getNodeCentrality(link.to_id);
+  score *= (1 + centrality / 100);
+
+  // 4. Time decay (temporal links only)
+  if (link.link_type === 'temporal') {
+    const age = Date.now() - link.created_at;
+    score *= Math.exp(-age / (7 * 24 * 60 * 60 * 1000));  // 1 week half-life
+  }
+
+  // 5. Context relevance
+  if (context?.topic && link.metadata?.topic === context.topic) {
+    score *= 1.5;
+  }
+
+  return Math.min(1.0, score);
+}
+```
+
+---
+
+## 9. Fragmentation Prevention
+
+### Problem: Orphaned Memories & Disconnected Clusters
+
+```javascript
+// Scenario: Synonym fragmentation
+Decision1 → "inspired_by" → A
+Decision2 → "motivated_by" → B  // Isolated!
+Decision3 → "based_on" → C      // Isolated!
+
+// Query "inspired_by" → Only finds Decision1 ❌
+```
+
+### Multi-Layer Defense System
+
+#### Defense 1: Normalization at Creation
+
+```javascript
+async function normalizeRelationship(rawRelationship) {
+  // 1. Clean
+  let normalized = rawRelationship.toLowerCase().trim().replace(/[_-]/g, ' ');
+
+  // 2. Find semantically similar existing relationships
+  const existing = await getAllRelationships();
+  const embedNew = await embed(normalized);
+
+  const similarities = await Promise.all(
+    existing.map(async rel => ({
+      relationship: rel,
+      similarity: cosineSimilarity(embedNew, await embed(rel))
+    }))
+  );
+
+  const topMatch = similarities.sort((a, b) => b.similarity - a.similarity)[0];
+
+  // 3. High similarity → suggest canonical
+  if (topMatch.similarity > 0.85) {
+    return {
+      canonical: topMatch.relationship,
+      original: rawRelationship,
+      confidence: topMatch.similarity,
+      suggested: true  // Claude can override
+    };
+  }
+
+  // 4. New relationship
+  return {
+    canonical: normalized,
+    original: rawRelationship,
+    confidence: 0.5,
+    isNew: true
+  };
+}
+```
+
+#### Defense 2: Fuzzy Query Expansion
+
+```javascript
+async function searchByRelationship(relationship) {
+  // 1. Exact match
+  const exact = await db.query(`
+    SELECT * FROM memory_links
+    WHERE relationship_tags LIKE ?
+  `, [`%${relationship}%`]);
+
+  // 2. Semantic expansion (automatic!)
+  const synonyms = await findSynonyms(relationship, 0.8);
+
+  // 3. Expanded query
+  const expanded = await db.query(`
+    SELECT * FROM memory_links
+    WHERE ${synonyms.map(s => `relationship_tags LIKE '%${s.relationship}%'`).join(' OR ')}
+  `);
+
+  return [...new Set([...exact, ...expanded])];
+}
+```
+
+#### Defense 3: Periodic Clustering
+
+```javascript
+// Weekly: Group similar relationships
+async function clusterRelationships() {
+  const all = await getAllRelationships();
+  const embeddings = await Promise.all(all.map(r => embed(r)));
+
+  const clusters = kMeans(embeddings, { k: 20 });
+
+  // Update canonical forms
+  for (const cluster of clusters) {
+    const canonical = findMostFrequent(cluster.members);
+
+    for (const member of cluster.members) {
+      await db.update('relationship_intelligence', {
+        relationship: member,
+        canonical_form: canonical,
+        cluster_id: cluster.id
+      });
+    }
+  }
+
+  return clusters;
+}
+```
+
+#### Defense 4: Confidence Decay for Orphans
+
+```javascript
+async function decayOrphanedRelationships() {
+  const stats = await db.query(`
+    SELECT relationship_tags, COUNT(*) as usage, MAX(created_at) as last_used
+    FROM memory_links
+    GROUP BY relationship_tags
+  `);
+
+  for (const stat of stats) {
+    const age_days = (Date.now() - stat.last_used) / (24 * 60 * 60 * 1000);
+    const orphan_penalty = stat.usage < 3 ? 2.0 : 1.0;
+
+    const new_confidence = stat.avg_confidence *
+      Math.exp(-0.05 * age_days * orphan_penalty);
+
+    if (new_confidence < 0.2) {
+      await archiveRelationship(stat.relationship_tags);
+    }
+  }
+}
+```
+
+#### Defense 5: Graph Health Monitoring
+
+```javascript
+async function detectIsolation() {
+  const graph = await buildGraph();
+
+  const components = findConnectedComponents(graph);
+  const isolated = graph.nodes.filter(n => n.degree === 1);
+  const uniqueRels = await db.query(`
+    SELECT relationship_tags, COUNT(*) as usage
+    FROM memory_links
+    GROUP BY relationship_tags
+    HAVING usage = 1
+  `);
+
+  return {
+    components: components.length,      // Should be 1
+    isolatedNodes: isolated.length,
+    uniqueRelationships: uniqueRels.length,
+    health: 1 - (isolated.length / graph.nodes.length)
+  };
+}
+```
+
+#### Defense 6: Canonical Promotion
+
+```javascript
+async function promoteToCanonical() {
+  const candidates = await db.query(`
+    SELECT relationship_tags, COUNT(*) as usage, AVG(confidence) as avg_conf
+    FROM memory_links
+    WHERE created_at > ?  -- Last 30 days
+    GROUP BY relationship_tags
+    HAVING usage > 10 AND avg_conf > 0.75
+  `);
+
+  // These become official in next version
+  for (const candidate of candidates) {
+    await addToOfficialSchema(candidate.relationship_tags);
+  }
+}
+```
+
+### Health Metrics
+
+```javascript
+// Dashboard
+{
+  connectivity: 0.92,           // 92% of nodes connected
+  relationshipDiversity: 47,    // 47 unique relationships
+  canonicalCoverage: 0.85,      // 85% use canonical forms
+  orphanedNodes: 23,
+  fragmentedClusters: 2,
+
+  recommendations: [
+    "Merge 'motivated_by' into 'inspired_by' (12 occurrences)",
+    "Archive 'refines_auth_jwt_token' (1 occurrence, 90 days old)"
+  ]
+}
+```
+
+---
+
+## Appendix A: Current System (v1.0) vs Proposed (v1.1)
+
+### Schema Comparison
+
+| Aspect | v1.0 (Current) | v1.1 (Proposed) | Migration Path |
+|--------|----------------|-----------------|----------------|
+| **Tables** | decisions, sessions, checkpoints | memories, memory_links | Data migration script |
+| **Relationship Types** | 3 fixed (supersedes, refines, contradicts) | Unlimited (tagged) | Migrate to tags |
+| **Link Creation** | Explicit only | Automatic + Explicit | New intelligence layer |
+| **Cross-type Search** | UNION queries | Single table | Immediate improvement |
+| **Embedding Storage** | vss_memories (separate) | memories.embedding_vector | Column addition |
+
+### Tool Comparison
+
+| Feature | v1.0 | v1.1 | Notes |
+|---------|------|------|-------|
+| **Tool Count** | 7 flat | 10 hierarchical | Slash namespacing |
+| **save_decision** | Fixed params | Flexible links[] | Backward compatible |
+| **Relationship Types** | Hardcoded in schema | Creative via links | Learning mechanism |
+| **Dynamic Exposure** | No | Yes (context-aware) | Phase 3 feature |
+
+### Migration Strategy
+
+```javascript
+// Phase 1: Add new tables (non-breaking)
+CREATE TABLE memories (...);
+CREATE TABLE memory_links (...);
+
+// Phase 2: Migrate existing data
+INSERT INTO memories
+SELECT id, 'decision' as type, decision as content, ...
+FROM decisions;
+
+// Phase 3: Dual-write period (both schemas)
+await saveToDecisions(...);  // Old
+await saveToMemories(...);    // New
+
+// Phase 4: Deprecate old schema
+-- DROP TABLE decisions;  // After 3 months
+```
+
+### Implementation Complexity
+
+| Component | Complexity | Risk | Priority |
+|-----------|------------|------|----------|
+| Unified schema | Medium | Low | Phase 1 |
+| Hierarchical tools | Low | Low | Phase 2 |
+| Automatic links | High | Medium | Phase 3 |
+| Relationship intelligence | High | Medium | Phase 4 |
+| Dynamic exposure | Medium | Low | Phase 3 |
+
+### Backward Compatibility
+
+```javascript
+// Old tools still work (deprecated)
+save_decision({ topic, decision, supersedes })
+→ Internally: save/decision({ topic, decision, links: [{ relationship: 'supersedes', ... }] })
+
+// Gradual migration encouraged
+Warning: save_decision is deprecated. Use save/decision instead.
+```
+
+---
+
 ## Validation Criteria
 
 This ADR succeeds if:
@@ -545,11 +1163,11 @@ This ADR fails if:
 
 ## References
 
-- PRD: `docs/development/PRD-hierarchical-tools-v2.md`
+- PRD: `docs/development/PRD-hierarchical-tools-v1.1.md`
 - Schema: Migration 001 (decisions), Migration 005 (memories)
 - Research: [Neo4j Graph Algorithms](https://neo4j.com/docs/graph-data-science/)
 - Research: [Temporal Knowledge Graphs](https://arxiv.org/abs/2004.04382)
-- Decision: `mama_v2_hierarchical_architecture`
+- Decision: `mama_v1.1_hierarchical_architecture`
 
 ---
 
