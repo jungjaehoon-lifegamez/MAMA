@@ -720,7 +720,11 @@ save/decision({
 
 ## 8. Relationship Intelligence
 
-### Semantic Embedding for Automatic Understanding
+> **IMPORTANT:** This section is split into v1.1 (simple, proven) and v1.2+ (advanced, experimental) features based on implementation complexity and initial data requirements.
+
+### 8.1 v1.1 Implementation (Included in Initial Release)
+
+#### Semantic Embedding for Automatic Understanding
 
 **Key Insight:** We don't need to hardcode relationship synonyms - Transformers.js **automatically understands semantic similarity**!
 
@@ -734,7 +738,9 @@ cosine_similarity(embed1, embed2) = 0.87  // Synonyms detected!
 cosine_similarity(embed1, embed3) = 0.23  // Different meaning
 ```
 
-### Automatic Synonym Detection
+**Why v1.1:** Simple cosine similarity - no complex dependencies, works from day 1.
+
+#### Manual Synonym Detection
 
 ```javascript
 async function findSynonyms(relationship, threshold = 0.75) {
@@ -770,7 +776,49 @@ await findSynonyms("motivated by")
 // ]
 ```
 
-### Automatic Clustering
+**Why v1.1:** Linear scan is O(n) where n = unique relationships (~50-100). Acceptable performance.
+
+#### Multilingual Support (Built-in!)
+
+```javascript
+// Works with Korean + English mixed - NO extra configuration!
+await findSynonyms("영감을 받은")  // Korean: "inspired by"
+// → [
+//   { relationship: "inspired by", similarity: 0.89 },  // English!
+//   { relationship: "motivated by", similarity: 0.82 },
+//   { relationship: "동기부여된", similarity: 0.86 }      // Korean!
+// ]
+
+// Transformers.js embedding model handles multilingual automatically
+```
+
+**Why v1.1:** Xenova/all-MiniLM-L6-v2 has built-in multilingual support - zero configuration needed.
+
+#### v1.1 Scope Summary
+
+**Included:**
+- ✅ Cosine similarity-based synonym detection
+- ✅ Multilingual relationship matching (Korean + English)
+- ✅ Manual link creation via `links[]` parameter
+- ✅ Simple threshold-based filtering (0.75 similarity)
+
+**Performance:**
+- O(n) linear scan for synonym detection
+- n ≈ 50-100 unique relationships in typical usage
+- <50ms latency for synonym queries
+
+**Rationale:**
+Simple, proven techniques that work from day 1 with minimal data. No complex dependencies or clustering algorithms.
+
+---
+
+### 8.2 Future Enhancements (v1.2+)
+
+> **Note:** These features require larger datasets (50+ relationships) and add significant implementation complexity. Deferred to post-v1.1 based on actual usage patterns.
+
+#### Automatic Clustering (DBSCAN)
+
+**Why deferred:** Requires minimum 50+ relationships to be useful. Early adopters won't benefit.
 
 ```javascript
 // Zero hardcoding - system learns relationship clusters!
@@ -790,39 +838,29 @@ async function autoClusterRelationships() {
   return [
     {
       canonical: "inspired by",
-      members: ["inspired by", "motivated by", "influenced by", "based on"],
+      members: ["inspired by", "motivated by", "influenced by", "based on", "영감을 받은"],
       avgSimilarity: 0.82
     },
     {
       canonical: "challenges",
-      members: ["challenges", "contradicts", "opposes", "questions"],
+      members: ["challenges", "contradicts", "opposes", "questions", "반박한다"],
       avgSimilarity: 0.87
     }
   ];
 }
 ```
 
-### Multilingual Support (Automatic!)
+**Implementation Complexity:**
+- Requires DBSCAN library (ml-dbscan or custom)
+- Cluster maintenance logic
+- Canonical relationship selection algorithm
+- Cluster merging/splitting over time
 
-```javascript
-// Works with Korean + English mixed:
-const relationships = [
-  "inspired by",
-  "영감을 받은",
-  "motivated by",
-  "동기부여된",
-  "challenges",
-  "반박한다"
-];
+**When to implement:** After v1.1 has 100+ users with diverse relationship data.
 
-const clusters = await autoClusterRelationships(relationships);
-// → [
-//   ["inspired by", "영감을 받은", "motivated by", "동기부여된"],
-//   ["challenges", "반박한다"]
-// ]
-```
+#### Directional Analysis
 
-### Directional Analysis
+**Why deferred:** Requires pattern database and inference logic - adds complexity without clear v1.1 use case.
 
 ```javascript
 // Infer relationship direction from semantics
@@ -851,7 +889,17 @@ await inferDirectionality("derived_from")
 // → 'backward' (similar to 'inspired_by', 'based_on')
 ```
 
-### Context-Aware Scoring
+**Implementation Complexity:**
+- Pattern database maintenance
+- Directionality inference logic
+- Bidirectional link handling
+
+**When to implement:** v1.2+ if usage patterns show need for automatic direction inference.
+
+#### Context-Aware Scoring
+
+**Why deferred:** Requires extensive usage data (outcomes, frequency, centrality) - not available in v1.1.
+
 
 ```javascript
 async function scoreRelationship(link, context) {
@@ -1075,6 +1123,197 @@ async function promoteToCanonical() {
   ]
 }
 ```
+
+---
+
+## 10. Performance Considerations
+
+### Graph Traversal Optimization
+
+**Challenge:** As memory graph grows (1K+ nodes, 5K+ links), naive traversal becomes expensive.
+
+**Strategy:**
+
+#### 1. Hard Depth Limits
+
+```javascript
+const MAX_DEPTH = 5;  // Global hard cap
+
+const DEPTH_BY_QUERY = {
+  'search/by_topic': 3,    // Evolution chains are typically 2-3 deep
+  'search/by_context': 5,  // Semantic exploration needs more breadth
+  'load/context': 2         // Immediate context only
+};
+
+async function traverseGraph(start_id, query_type, options = {}) {
+  const maxDepth = Math.min(
+    options.max_depth || DEPTH_BY_QUERY[query_type],
+    MAX_DEPTH  // Never exceed global cap
+  );
+
+  return breadthFirstSearch(start_id, { max_depth: maxDepth });
+}
+```
+
+**Rationale:**
+- 95% of useful relationships are within 3 hops
+- Depth 5 covers semantic exploration without runaway traversal
+- Per-query limits optimize for specific use cases
+
+#### 2. LRU Cache with Invalidation
+
+```javascript
+import LRUCache from 'lru-cache';
+
+const traversalCache = new LRUCache({
+  max: 100,                    // 100 cached paths
+  ttl: 5 * 60 * 1000,         // 5 minutes TTL
+  updateAgeOnGet: true         // Refresh on access
+});
+
+async function cachedTraversal(start_id, link_types, max_depth) {
+  const cacheKey = `${start_id}:${link_types.sort().join(',')}:${max_depth}`;
+
+  // Check cache
+  if (traversalCache.has(cacheKey)) {
+    return traversalCache.get(cacheKey);
+  }
+
+  // Compute
+  const results = await breadthFirstSearch(start_id, { link_types, max_depth });
+
+  // Store
+  traversalCache.set(cacheKey, results);
+  return results;
+}
+
+// Invalidate on link creation
+async function createLink(from_id, to_id, link_type) {
+  await db.insert('memory_links', { from_id, to_id, link_type });
+
+  // Invalidate affected cache entries
+  for (const [key, _] of traversalCache.entries()) {
+    if (key.startsWith(`${from_id}:`) || key.includes(`:${to_id}:`)) {
+      traversalCache.delete(key);
+    }
+  }
+}
+```
+
+**Cache Strategy:**
+- **Size**: 100 entries covers typical session (10-20 queries × 3-5 variations)
+- **TTL**: 5 minutes balances freshness vs hit rate
+- **Invalidation**: Targeted invalidation on link creation (conservative)
+- **LRU**: Automatically evicts least-used paths
+
+**Expected Performance:**
+- Cold query: 50-100ms (breadth-first search)
+- Cached query: <5ms (hash lookup)
+- Cache hit rate: 60-80% for repeated searches
+
+#### 3. Query Optimization
+
+```javascript
+// BEFORE: N+1 query problem
+for (const link of links) {
+  const targetMemory = await db.get('memories', link.to_id);
+  // ... process
+}
+
+// AFTER: Batch fetch
+const targetIds = links.map(l => l.to_id);
+const memories = await db.query(`
+  SELECT * FROM memories
+  WHERE id IN (${targetIds.map(() => '?').join(',')})
+`, targetIds);
+
+const memoryMap = Object.fromEntries(memories.map(m => [m.id, m]));
+for (const link of links) {
+  const targetMemory = memoryMap[link.to_id];
+  // ... process
+}
+```
+
+**Optimizations:**
+- Batch fetches reduce round trips
+- Index on `memory_links(from_id, link_type)` for fast edge lookup
+- Pre-join common queries (memory + links)
+
+#### 4. Performance Budget
+
+| Operation | v1.1 Target | Acceptable | Notes |
+|-----------|-------------|------------|-------|
+| Shallow traversal (depth=2) | <30ms | <50ms | Immediate context |
+| Medium traversal (depth=3-4) | <50ms | <100ms | Evolution chains |
+| Deep traversal (depth=5) | <100ms | <200ms | Semantic exploration |
+| Synonym detection (n=50) | <50ms | <100ms | Linear scan |
+| Link creation | <20ms | <50ms | Insert + cache invalidation |
+
+**Monitoring:**
+```javascript
+async function traverseWithMetrics(start_id, options) {
+  const startTime = Date.now();
+
+  const results = await cachedTraversal(start_id, options.link_types, options.max_depth);
+
+  const latency = Date.now() - startTime;
+  if (latency > 100) {
+    console.warn(`Slow traversal: ${latency}ms for depth=${options.max_depth}, nodes=${results.length}`);
+  }
+
+  return results;
+}
+```
+
+**Fallback:**
+If performance degrades:
+1. Reduce `MAX_DEPTH` to 3
+2. Increase cache size to 200
+3. Add materialized views for common paths
+4. Consider read-through cache with Redis (external dependency)
+
+### Embedding Performance
+
+**Challenge:** Embedding generation is CPU-intensive (30-50ms per text).
+
+**Strategy:**
+
+#### 1. Batch Embeddings
+
+```javascript
+// Generate multiple embeddings in parallel
+async function batchEmbed(texts) {
+  const embeddings = await Promise.all(
+    texts.map(text => embeddings.generate(text))
+  );
+  return embeddings;
+}
+
+// Example: Synonym detection
+const allRelationships = await db.query('SELECT DISTINCT relationship_tags FROM memory_links');
+const allEmbeddings = await batchEmbed(allRelationships);  // Parallel generation
+```
+
+#### 2. Embedding Cache
+
+```javascript
+const embeddingCache = new Map();
+
+async function cachedEmbed(text) {
+  if (embeddingCache.has(text)) {
+    return embeddingCache.get(text);
+  }
+
+  const embedding = await embeddings.generate(text);
+  embeddingCache.set(text, embedding);
+  return embedding;
+}
+```
+
+**Expected Performance:**
+- Embedding generation: 30-50ms per text
+- Cached embedding: <1ms
+- Batch embedding (10 texts): ~80ms (parallelized)
 
 ---
 

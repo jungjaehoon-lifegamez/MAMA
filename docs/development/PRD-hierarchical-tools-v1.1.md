@@ -504,12 +504,90 @@ async function updateToolList(context) {
 - Support both old and new for 3 months
 
 ### R5: MCP Client Compatibility
-**Risk:** Not all MCP clients support dynamic tools
+**Risk:** Not all MCP clients support `tools/list_changed` notification
 **Mitigation:**
-- Feature detection (capability check)
-- Fallback to static tool list
-- Document client requirements
-- Test with Claude Code, Claude Desktop, Codex
+- **MANDATORY Fallback**: Always expose all tools if client doesn't support dynamic exposure
+- Feature detection via MCP capability negotiation
+- Graceful degradation: Dynamic exposure = enhancement, not requirement
+- Test matrix: Claude Code, Claude Desktop, Codex, Antigravity IDE
+- Fallback trigger: If notification fails or times out (>500ms), revert to static list
+
+**Implementation:**
+```javascript
+async function updateToolList(context) {
+  try {
+    const supportsNotification = await mcp.checkCapability('tools/list_changed');
+    if (!supportsNotification) {
+      return getAllTools(); // Fallback: show all
+    }
+
+    const tools = context.allowed === 'all'
+      ? getAllTools()
+      : getToolsByNames(context.allowed);
+
+    await mcp.notify('tools/list_changed', { tools }, { timeout: 500 });
+  } catch (error) {
+    console.warn('Dynamic tool exposure failed, using static list:', error);
+    return getAllTools(); // Fallback on any error
+  }
+}
+```
+
+### R6: Relationship Intelligence Complexity
+**Risk:** DBSCAN clustering adds implementation complexity with minimal initial value
+**Mitigation:**
+- **v1.1 Scope**: EXCLUDE automatic clustering - use simple cosine similarity only
+- **v1.1 Implementation**: Manual synonym detection via similarity threshold (0.75)
+- **v1.2+ Feature**: Promote DBSCAN to future enhancement after v1.1 validation
+- **Early Data Problem**: Clustering requires minimum 50+ relationships to be useful
+- **Incremental Approach**: Start simple, add intelligence based on actual usage patterns
+
+**v1.1 Scope (INCLUDED):**
+- ✅ Explicit link creation via `links[]` parameter
+- ✅ Cosine similarity for synonym detection
+- ✅ Multilingual embedding (Korean + English)
+
+**v1.2+ Scope (DEFERRED):**
+- ⏸️ Automatic DBSCAN clustering
+- ⏸️ Canonical relationship promotion
+- ⏸️ Auto-merging of synonym clusters
+
+### R7: Graph Traversal Performance
+**Risk:** Deep graph traversal becomes expensive as data grows
+**Mitigation:**
+- **Hard Limit**: `max_depth` = 5 for all queries (prevent runaway traversal)
+- **Depth Strategy**:
+  - `search/by_topic`: max_depth=3 (direct evolution chain)
+  - `search/by_context`: max_depth=5 (semantic exploration)
+  - `load/context`: max_depth=2 (immediate context only)
+- **Caching Strategy**:
+  - Cache frequently accessed paths (LRU cache, 100 entries)
+  - Cache key: `${start_id}:${link_type}:${depth}`
+  - TTL: 5 minutes (balance freshness vs performance)
+  - Invalidate on new link creation for affected nodes
+- **Performance Budget**: <100ms for graph traversal (benchmark requirement)
+
+**Implementation:**
+```javascript
+const traversalCache = new LRUCache({ max: 100, ttl: 5 * 60 * 1000 });
+
+async function traverseGraph(start_id, options) {
+  const { max_depth = 5, link_types } = options;
+  const cacheKey = `${start_id}:${link_types.join(',')}:${max_depth}`;
+
+  if (traversalCache.has(cacheKey)) {
+    return traversalCache.get(cacheKey);
+  }
+
+  const results = await breadthFirstSearch(start_id, {
+    max_depth: Math.min(max_depth, 5), // Hard cap at 5
+    link_types
+  });
+
+  traversalCache.set(cacheKey, results);
+  return results;
+}
+```
 
 ---
 
