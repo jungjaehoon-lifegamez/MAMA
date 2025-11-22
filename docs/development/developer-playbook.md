@@ -1,6 +1,6 @@
 # MAMA Plugin - Developer Playbook
 
-**Author:** jungjaehoon-ui
+**Author:** jungjaehoon
 **Date:** 2025-11-21
 **Version:** 1.0
 **Target Audience:** Contributors to the MAMA plugin project
@@ -196,7 +196,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/jungjaehoon-ui/MAMA.git
+git clone https://github.com/jungjaehoon/MAMA.git
 cd MAMA
 
 # 2. Install dependencies
@@ -1173,7 +1173,7 @@ echo '{"topic":"test","decision":"X","reasoning":"Y"}' | node src/tools/save-dec
 
 ## Maintainer Sign-off
 
-**Reviewed by:** jungjaehoon-ui
+**Reviewed by:** jungjaehoon
 **Date:** 2025-11-21
 **Status:** ✅ Approved for use
 
@@ -1192,7 +1192,7 @@ echo '{"topic":"test","decision":"X","reasoning":"Y"}' | node src/tools/save-dec
 
 **Document History:**
 
-- 2025-11-21: v1.0 - Initial version (jungjaehoon-ui)
+- 2025-11-21: v1.0 - Initial version (jungjaehoon)
 - Next update: After Epic M2 completion (Hook Integration)
 
 ---

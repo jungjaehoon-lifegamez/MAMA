@@ -5,11 +5,11 @@
   "description": "Memory-Augmented MCP Assistant (MAMA) for Claude Code & Desktop - Monorepo",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jungjaehoon-ui/MAMA.git"
+    "url": "https://github.com/jungjaehoon/MAMA.git"
   },
-  "homepage": "https://github.com/jungjaehoon-ui/MAMA#readme",
+  "homepage": "https://github.com/jungjaehoon/MAMA#readme",
   "bugs": {
-    "url": "https://github.com/jungjaehoon-ui/MAMA/issues"
+    "url": "https://github.com/jungjaehoon/MAMA/issues"
   },
   "keywords": [
     "claude-code",

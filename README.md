@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-ui/MAMA)
+[![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon/MAMA)
 
 > Version 1.0.0 | Monorepo migration complete
 
@@ -19,7 +19,7 @@ An always-on companion for Claude Code and Claude Desktop that remembers decisio
 ### Claude Code
 
 ```bash
-/plugin marketplace add jungjaehoon-ui/MAMA
+/plugin marketplace add jungjaehoon/MAMA
 /plugin install mama
 ```
 
@@ -34,7 +34,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon-ui/mama-server"]
+      "args": ["-y", "@jungjaehoon/mama-server"]
     }
   }
 }
@@ -90,7 +90,7 @@ After installation:
 
 MAMA uses a two-package architecture:
 
-### MCP Server (@jungjaehoon-ui/mama-server)
+### MCP Server (@jungjaehoon/mama-server)
 
 Published as an independent npm package. Handles SQLite database and vector embeddings. Shared across Claude Code, Claude Desktop, and any MCP client.
 
@@ -134,7 +134,7 @@ This is a monorepo containing two packages:
 ```
 MAMA/
 ├── packages/
-│   ├── mcp-server/          # @jungjaehoon-ui/mama-server (npm)
+│   ├── mcp-server/          # @jungjaehoon/mama-server (npm)
 │   │   ├── src/             # Server implementation
 │   │   └── tests/           # Server tests
 │   │
@@ -154,7 +154,7 @@ MAMA/
 ### Setup
 
 ```bash
-git clone https://github.com/jungjaehoon-ui/MAMA.git
+git clone https://github.com/jungjaehoon/MAMA.git
 cd MAMA
 pnpm install
 pnpm test
@@ -245,9 +245,9 @@ MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0
 
 ## Links
 
-- [GitHub Repository](https://github.com/jungjaehoon-ui/MAMA)
-- [Issues](https://github.com/jungjaehoon-ui/MAMA/issues)
-- [npm Package](https://www.npmjs.com/package/@jungjaehoon-ui/mama-server)
+- [GitHub Repository](https://github.com/jungjaehoon/MAMA)
+- [Issues](https://github.com/jungjaehoon/MAMA/issues)
+- [npm Package](https://www.npmjs.com/package/@jungjaehoon/mama-server)
 - [Documentation](docs/index.md)
 
 ---

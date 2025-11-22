@@ -17,7 +17,7 @@
  * Usage:
  *   node src/server.js                 # Direct execution
  *   mama-server                        # Via bin (npm install -g)
- *   npx @jungjaehoon-ui/mama-server           # Via npx
+ *   npx @jungjaehoon/mama-server           # Via npx
  */
 
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');

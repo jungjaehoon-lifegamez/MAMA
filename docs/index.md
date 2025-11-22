@@ -9,7 +9,7 @@
 ## Quick Links
 
 - **[Main README](../README.md)** - Quick overview, installation, and key features
-- **[GitHub Repository](https://github.com/jungjaehoon-ui/MAMA)** - Source code and issues
+- **[GitHub Repository](https://github.com/jungjaehoon/MAMA)** - Source code and issues
 
 ---
 
@@ -107,8 +107,8 @@ This documentation follows the [Diátaxis framework](https://diataxis.fr/) for c
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/jungjaehoon-ui/MAMA/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/jungjaehoon-ui/MAMA/discussions)
+- **Issues:** [GitHub Issues](https://github.com/jungjaehoon/MAMA/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/jungjaehoon/MAMA/discussions)
 - **Documentation:** You're here!
 
 ---

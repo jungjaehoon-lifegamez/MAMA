@@ -30,8 +30,8 @@ node --version
 **Step 1: Install Plugin**
 
 ```bash
-/plugin marketplace add jungjaehoon-ui/claude-plugins
-/plugin install mama@jungjaehoon-ui
+/plugin marketplace add jungjaehoon/claude-plugins
+/plugin install mama@jungjaehoon
 ```
 
 **Step 2: First Use (Automatic Setup)**
@@ -44,7 +44,7 @@ On first use, MAMA's MCP server will be automatically downloaded and set up via 
 
 **What happens:**
 
-- npx downloads `@jungjaehoon-ui/mama-server`
+- npx downloads `@jungjaehoon/mama-server`
 - Native modules (better-sqlite3) compile for your platform
 - Embedding models download to npm cache
 - Server starts automatically
@@ -68,7 +68,7 @@ MAMA's MCP server works with Claude Desktop too!
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon-ui/mama-server"],
+      "args": ["-y", "@jungjaehoon/mama-server"],
       "env": {
         "MAMA_DB_PATH": "${HOME}/.claude/mama-memory.db"
       }
@@ -86,7 +86,7 @@ Restart Claude Desktop, and MAMA tools will be available.
 If npx fails or you prefer global installation:
 
 ```bash
-npm install -g @jungjaehoon-ui/mama-server
+npm install -g @jungjaehoon/mama-server
 ```
 
 Then update your MCP configuration:
@@ -174,7 +174,7 @@ After installation, try saving your first decision:
 
 - Restart Claude Code
 - Check: `/help` to see if MAMA commands are listed
-- Verify marketplace: `/plugin` should show mama@jungjaehoon-ui
+- Verify marketplace: `/plugin` should show mama@jungjaehoon
 
 ### MCP Server connection fails
 
@@ -188,7 +188,7 @@ node --version
 **Try manual installation:**
 
 ```bash
-npm install -g @jungjaehoon-ui/mama-server
+npm install -g @jungjaehoon/mama-server
 ```
 
 **Update .mcp.json to use global binary:**
@@ -228,7 +228,7 @@ npm install --global windows-build-tools
 Then retry:
 
 ```bash
-npm install -g @jungjaehoon-ui/mama-server --force
+npm install -g @jungjaehoon/mama-server --force
 ```
 
 ### Windows-specific issues
@@ -236,7 +236,7 @@ npm install -g @jungjaehoon-ui/mama-server --force
 If npx fails on Windows, use the global installation method:
 
 ```bash
-npm install -g @jungjaehoon-ui/mama-server
+npm install -g @jungjaehoon/mama-server
 ```
 
 Then configure with absolute path:
@@ -259,7 +259,7 @@ Then configure with absolute path:
 
 MAMA uses a **2-package architecture**:
 
-1. **@jungjaehoon-ui/mama-server** (MCP Server)
+1. **@jungjaehoon/mama-server** (MCP Server)
 
    - Independent npm package
    - Handles all AI/database operations
