@@ -12,6 +12,8 @@ MAMA tracks how your decisions evolve. Instead of just remembering what you chos
 
 An always-on companion for Claude Code and Claude Desktop that remembers decision evolution. When you make architectural choices, try different approaches, or learn from failures, MAMA stores this context and surfaces it when relevant.
 
+**The killer feature:** Session continuity. End your day with `/mama-checkpoint`, resume tomorrow with `/mama-resume` - and pick up exactly where you left off with full context.
+
 ---
 
 ## Installation
@@ -55,6 +57,43 @@ Add to your `claude_desktop_config.json`:
 
 ---
 
+## 💡 Session Continuity - Never Lose Your Context
+
+**End your coding session. Pick up exactly where you left off.**
+
+```bash
+# End of day - save your session state
+/mama-checkpoint
+
+# Next morning - resume with full context
+/mama-resume
+```
+
+**What you get:**
+```
+🔄 Resuming Session (from yesterday, 6:30 PM)
+
+📝 Session Summary:
+Refactoring authentication module. Switched from session-based to JWT.
+Token refresh working, but need to add expiration validation.
+
+📂 Relevant Files:
+- src/auth/jwt-handler.ts
+- src/middleware/auth.ts
+- tests/auth.test.ts
+
+👉 Next Steps:
+1. Add token expiration validation
+2. Update tests for new JWT flow
+3. Document API changes in README
+
+Ready to continue where you left off!
+```
+
+This is MAMA's killer feature - you never lose context between sessions.
+
+---
+
 ## Quick Start
 
 After installation:
@@ -71,12 +110,6 @@ After installation:
 
 # List all decisions
 /mama-list
-
-# Save current session state (checkpoint)
-/mama-checkpoint "Implementing auth module, token issue resolved"
-
-# Resume from last checkpoint
-/mama-resume
 ```
 
 ## Available Commands
@@ -111,6 +144,9 @@ This separation means one database works across all your Claude environments, an
 
 ## Key Features
 
+**Session Continuity (💡 Killer Feature)**
+Save your session state before closing Claude. Resume next time with full context: what you were working on, relevant files, and exact next steps. Never lose your flow between sessions.
+
 **Decision Evolution Tracking**
 See how your thinking changed over time, from initial attempts to final solutions.
 
@@ -128,9 +164,6 @@ Queries work across different languages using multilingual embeddings.
 
 **Tier Transparency**
 System always shows what's working. Degraded mode still functions, just without vector search.
-
-**Session Continuity**
-Save your workspace state (`/mama-checkpoint`) and resume exactly where you left off (`/mama-resume`), preventing context loss between sessions.
 
 ---
 
