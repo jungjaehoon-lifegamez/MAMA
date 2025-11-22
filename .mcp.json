@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@jungjaehoon/mama-server"
+      ],
+      "disabled": false,
+      "disabledTools": []
+    }
+  }
+}
