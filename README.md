@@ -18,12 +18,19 @@ An always-on companion for Claude Code and Claude Desktop that remembers decisio
 
 ### Claude Code
 
+**Quick Start (2 steps):**
+
 ```bash
+# Step 1: Add MAMA marketplace (one-time setup)
 /plugin marketplace add jungjaehoon-lifegamez/claude-plugins
+
+# Step 2: Install MAMA plugin
 /plugin install mama
 ```
 
-First use of `/mama-save` downloads the MCP server automatically.
+> **Note:** Claude Code uses decentralized marketplaces. You need to add the MAMA marketplace once, then you can install and update the plugin anytime.
+
+First use of `/mama-save` downloads the MCP server automatically (~50MB for embedding model).
 
 ### Claude Desktop
 
