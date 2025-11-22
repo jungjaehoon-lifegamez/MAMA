@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MAMA (Memory-Augmented MCP Assistant) is an always-on companion for Claude Code and Claude Desktop that remembers decision evolution. It's a monorepo containing:
 
-1. **@jungjaehoon-lifegamez/mama-server** - MCP server published to npm (packages/mcp-server/)
+1. **@jungjaehoon/mama-server** - MCP server published to npm (packages/mcp-server/)
 2. **MAMA Plugin** - Claude Code plugin distributed via marketplace (packages/claude-code-plugin/)
 
 ## Build & Test Commands
@@ -79,7 +79,7 @@ MAMA uses a split architecture to enable code reuse across multiple Claude clien
 │                          │          │                    │
 │                    ┌─────▼──────────▼─────┐             │
 │                    │  MCP Server (stdio)  │             │
-│                    │  @jungjaehoon-lifegamez/mama-server│             │
+│                    │  @jungjaehoon/mama-server│             │
 │                    └──────────────────────┘             │
 │                              │                           │
 │                    ┌─────────▼──────────┐                │

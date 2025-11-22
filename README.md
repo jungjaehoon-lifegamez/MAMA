@@ -34,7 +34,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon-lifegamez/mama-server"]
+      "args": ["-y", "@jungjaehoon/mama-server"]
     }
   }
 }
@@ -90,7 +90,7 @@ After installation:
 
 MAMA uses a two-package architecture:
 
-### MCP Server (@jungjaehoon-lifegamez/mama-server)
+### MCP Server (@jungjaehoon/mama-server)
 
 Published as an independent npm package. Handles SQLite database and vector embeddings. Shared across Claude Code, Claude Desktop, and any MCP client.
 
@@ -134,7 +134,7 @@ This is a monorepo containing two packages:
 ```
 MAMA/
 ├── packages/
-│   ├── mcp-server/          # @jungjaehoon-lifegamez/mama-server (npm)
+│   ├── mcp-server/          # @jungjaehoon/mama-server (npm)
 │   │   ├── src/             # Server implementation
 │   │   └── tests/           # Server tests
 │   │
@@ -247,7 +247,7 @@ MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0
 
 - [GitHub Repository](https://github.com/jungjaehoon-lifegamez/MAMA)
 - [Issues](https://github.com/jungjaehoon-lifegamez/MAMA/issues)
-- [npm Package](https://www.npmjs.com/package/@jungjaehoon-lifegamez/mama-server)
+- [npm Package](https://www.npmjs.com/package/@jungjaehoon/mama-server)
 - [Documentation](docs/index.md)
 
 ---

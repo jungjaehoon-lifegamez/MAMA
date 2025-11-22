@@ -1,5 +1,5 @@
 {
-  "name": "@jungjaehoon-lifegamez/mama-server",
+  "name": "@jungjaehoon/mama-server",
   "version": "1.0.0",
   "description": "MAMA MCP Server - Memory-Augmented MCP Assistant for Claude Code & Desktop",
   "main": "src/server.js",

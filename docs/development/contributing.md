@@ -187,7 +187,7 @@ Contributors are recognized in:
 ## Questions?
 
 - **Technical questions:** Open a discussion
-- **Security issues:** Email security@jungjaehoon-lifegamez.com (private)
+- **Security issues:** Email security@jungjaehoon.com (private)
 - **Other:** Open an issue
 
 ---
