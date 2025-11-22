@@ -49,6 +49,41 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
+### Other MCP Clients
+
+MAMA works with any MCP-compatible client. Below are verified configurations:
+
+#### Codex
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.mama]
+  command = "npx"
+  args = ["-y", "@jungjaehoon/mama-server"]
+  disabled = false
+  disabled_tools = []
+```
+
+#### Antigravity IDE (Gemini)
+
+Add to `~/.gemini/antigravity/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": ["-y", "@jungjaehoon/mama-server"],
+      "disabled": false,
+      "disabledTools": []
+    }
+  }
+}
+```
+
+> **Note:** All MCP clients share the same database at `~/.claude/mama-memory.db`, so decisions are available across all your IDEs.
+
 ### Prerequisites
 
 - Node.js >= 18.0.0 (20+ recommended)
