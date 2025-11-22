@@ -19,7 +19,7 @@ An always-on companion for Claude Code and Claude Desktop that remembers decisio
 ### Claude Code
 
 ```bash
-/plugin marketplace add jungjaehoon/MAMA
+/plugin marketplace add jungjaehoon-lifegamez/claude-plugins
 /plugin install mama
 ```
 
