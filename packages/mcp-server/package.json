@@ -1,5 +1,5 @@
 {
-  "name": "@jungjaehoon/mama-server",
+  "name": "@jungjaehoon-lifegamez/mama-server",
   "version": "1.0.0",
   "description": "MAMA MCP Server - Memory-Augmented MCP Assistant for Claude Code & Desktop",
   "main": "src/server.js",
@@ -25,13 +25,13 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jungjaehoon/MAMA.git",
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA.git",
     "directory": "packages/mcp-server"
   },
   "bugs": {
-    "url": "https://github.com/jungjaehoon/MAMA/issues"
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA/issues"
   },
-  "homepage": "https://github.com/jungjaehoon/MAMA#readme",
+  "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
   "engines": {
     "node": ">=18.0.0"
   },

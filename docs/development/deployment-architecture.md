@@ -13,7 +13,7 @@ MAMA uses a **3-layer architecture**:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Layer 1: Development Repository (Monorepo)                  │
-│ github.com/jungjaehoon/MAMA                               │
+│ github.com/jungjaehoon-lifegamez/MAMA                               │
 │                                                              │
 │ ├── packages/                                                │
 │ │   ├── mcp-server/           → npm publish                  │
@@ -23,8 +23,8 @@ MAMA uses a **3-layer architecture**:
                     ↓                    ↓
         ┌───────────────────┐    ┌─────────────────────┐
         │ npm Registry      │    │ Plugin Marketplace  │
-        │                   │    │ github.com/jungjaehoon/ │
-        │ @jungjaehoon/  │    │ claude-plugins             │
+        │                   │    │ github.com/jungjaehoon-lifegamez/ │
+        │ @jungjaehoon-lifegamez/  │    │ claude-plugins             │
         │ mama-server       │    │                     │
         │                   │    │ └── plugins/mama/   │
         └───────────────────┘    └─────────────────────┘
@@ -33,11 +33,11 @@ MAMA uses a **3-layer architecture**:
         │ User Installation                         │
         │                                           │
         │ 1. /plugin marketplace add jungjaehoon/...    │
-        │ 2. /plugin install mama@jungjaehoon           │
+        │ 2. /plugin install mama@jungjaehoon-lifegamez           │
         │                                           │
         │ Result:                                   │
         │ ~/.claude/plugins/.../mama/               │
-        │ └── .mcp.json (npx @jungjaehoon/mama-server)  │
+        │ └── .mcp.json (npx @jungjaehoon-lifegamez/mama-server)  │
         └───────────────────────────────────────────┘
                     ↓
         First use: npx auto-downloads MCP server
@@ -50,14 +50,14 @@ MAMA uses a **3-layer architecture**:
 ### Structure
 
 ```
-github.com/jungjaehoon/MAMA
+github.com/jungjaehoon-lifegamez/MAMA
 ├── README.md                        # Project overview
 ├── LICENSE
 ├── package.json                     # pnpm workspace config
 ├── pnpm-workspace.yaml
 │
 ├── packages/
-│   ├── mcp-server/                  # @jungjaehoon/mama-server
+│   ├── mcp-server/                  # @jungjaehoon-lifegamez/mama-server
 │   │   ├── package.json             # Independent npm package
 │   │   ├── src/
 │   │   │   ├── server.js            # MCP server entry point
@@ -78,7 +78,7 @@ github.com/jungjaehoon/MAMA
 │   └── claude-code-plugin/          # MAMA plugin
 │       ├── .claude-plugin/
 │       │   └── plugin.json
-│       ├── .mcp.json                # References @jungjaehoon/mama-server
+│       ├── .mcp.json                # References @jungjaehoon-lifegamez/mama-server
 │       ├── commands/                # /mama-* commands (Markdown)
 │       ├── hooks/                   # Hook configurations (JSON)
 │       ├── skills/                  # Auto-context skill
@@ -118,10 +118,10 @@ github.com/jungjaehoon/MAMA
 
 ## Layer 2: Distribution Channels
 
-### 2a. npm Registry (@jungjaehoon/mama-server)
+### 2a. npm Registry (@jungjaehoon-lifegamez/mama-server)
 
-**Package:** `@jungjaehoon/mama-server`
-**Registry:** https://www.npmjs.com/package/@jungjaehoon/mama-server
+**Package:** `@jungjaehoon-lifegamez/mama-server`
+**Registry:** https://www.npmjs.com/package/@jungjaehoon-lifegamez/mama-server
 
 **Publishing:**
 
@@ -138,7 +138,7 @@ npm publish --access public
 # No manual installation needed!
 
 # Manual (if needed)
-npm install -g @jungjaehoon/mama-server
+npm install -g @jungjaehoon-lifegamez/mama-server
 ```
 
 **Used by:**
@@ -149,7 +149,7 @@ npm install -g @jungjaehoon/mama-server
 
 ### 2b. Plugin Marketplace (jungjaehoon/claude-plugins)
 
-**Repository:** `github.com/jungjaehoon/claude-plugins`
+**Repository:** `github.com/jungjaehoon-lifegamez/claude-plugins`
 
 **Structure:**
 
@@ -182,7 +182,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Copy plugin to marketplace
         run: |
-          git clone https://github.com/jungjaehoon/claude-plugins marketplace
+          git clone https://github.com/jungjaehoon-lifegamez/claude-plugins marketplace
           rm -rf marketplace/plugins/mama
           cp -r packages/claude-code-plugin marketplace/plugins/mama
           cd marketplace
@@ -213,7 +213,7 @@ jobs:
 **Step 2: Install Plugin**
 
 ```bash
-/plugin install mama@jungjaehoon
+/plugin install mama@jungjaehoon-lifegamez
 ```
 
 **Step 3: First Use (Automatic)**
@@ -229,7 +229,7 @@ jobs:
 ~/.claude/plugins/marketplaces/claude-plugins/plugins/mama/
 ├── .claude-plugin/
 │   └── plugin.json
-├── .mcp.json                    # Contains: npx -y @jungjaehoon/mama-server
+├── .mcp.json                    # Contains: npx -y @jungjaehoon-lifegamez/mama-server
 ├── commands/
 │   ├── mama-save.md
 │   ├── mama-recall.md
@@ -241,7 +241,7 @@ jobs:
     └── mama-context.md
 
 ~/.npm/_npx/                     # MCP server cached here
-└── @jungjaehoon/mama-server/
+└── @jungjaehoon-lifegamez/mama-server/
 
 ~/.claude/mama-memory.db         # Shared database
 ```
@@ -255,7 +255,7 @@ jobs:
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon/mama-server"],
+      "args": ["-y", "@jungjaehoon-lifegamez/mama-server"],
       "env": {
         "MAMA_DB_PATH": "${HOME}/.claude/mama-memory.db"
       }
@@ -264,7 +264,7 @@ jobs:
 }
 ```
 
-**First use:** npx downloads @jungjaehoon/mama-server automatically
+**First use:** npx downloads @jungjaehoon-lifegamez/mama-server automatically
 
 ---
 
@@ -274,8 +274,8 @@ jobs:
 
 **Separation:**
 
-- **MCP Server** (@jungjaehoon/mama-server): Heavy dependencies (better-sqlite3, @huggingface/transformers)
-- **Plugin** (mama@jungjaehoon): Lightweight (Markdown + JSON configs)
+- **MCP Server** (@jungjaehoon-lifegamez/mama-server): Heavy dependencies (better-sqlite3, @huggingface/transformers)
+- **Plugin** (mama@jungjaehoon-lifegamez): Lightweight (Markdown + JSON configs)
 
 **Benefits:**
 
@@ -316,7 +316,7 @@ jobs:
 
 ```bash
 # Clone monorepo
-git clone https://github.com/jungjaehoon/MAMA.git
+git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA
 
 # Install dependencies
@@ -355,13 +355,13 @@ git push --tags
 
 **3. GitHub Release triggers:**
 
-- `publish-mcp.yml` → npm publish @jungjaehoon/mama-server
+- `publish-mcp.yml` → npm publish @jungjaehoon-lifegamez/mama-server
 - `publish-plugin.yml` → sync to jungjaehoon/claude-plugins
 
 **4. Users get updates:**
 
 - MCP server: npx auto-updates on next use
-- Plugin: `/plugin update mama@jungjaehoon`
+- Plugin: `/plugin update mama@jungjaehoon-lifegamez`
 
 ---
 

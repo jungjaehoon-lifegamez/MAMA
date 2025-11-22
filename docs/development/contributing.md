@@ -19,7 +19,7 @@ Thank you for your interest in contributing to MAMA (Memory-Augmented MCP Assist
 
 ```bash
 # Clone repository
-git clone https://github.com/jungjaehoon/MAMA.git
+git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA
 
 # Install dependencies
@@ -187,7 +187,7 @@ Contributors are recognized in:
 ## Questions?
 
 - **Technical questions:** Open a discussion
-- **Security issues:** Email security@jungjaehoon.com (private)
+- **Security issues:** Email security@jungjaehoon-lifegamez.com (private)
 - **Other:** Open an issue
 
 ---

@@ -411,7 +411,7 @@ emb.generateEmbedding('test').then(v => console.log('✅ Embeddings OK', v.lengt
 
 **Still having issues?**
 
-1. **Check GitHub Issues**: [MAMA/issues](https://github.com/jungjaehoon/MAMA/issues)
+1. **Check GitHub Issues**: [MAMA/issues](https://github.com/jungjaehoon-lifegamez/MAMA/issues)
 2. **Enable debug logs** and share output
 3. **Run diagnostics**:
    ```bash

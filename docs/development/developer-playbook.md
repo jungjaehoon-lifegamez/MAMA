@@ -196,7 +196,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/jungjaehoon/MAMA.git
+git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA
 
 # 2. Install dependencies

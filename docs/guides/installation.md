@@ -31,7 +31,7 @@ node --version
 
 ```bash
 /plugin marketplace add jungjaehoon/claude-plugins
-/plugin install mama@jungjaehoon
+/plugin install mama@jungjaehoon-lifegamez
 ```
 
 **Step 2: First Use (Automatic Setup)**
@@ -44,7 +44,7 @@ On first use, MAMA's MCP server will be automatically downloaded and set up via 
 
 **What happens:**
 
-- npx downloads `@jungjaehoon/mama-server`
+- npx downloads `@jungjaehoon-lifegamez/mama-server`
 - Native modules (better-sqlite3) compile for your platform
 - Embedding models download to npm cache
 - Server starts automatically
@@ -68,7 +68,7 @@ MAMA's MCP server works with Claude Desktop too!
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon/mama-server"],
+      "args": ["-y", "@jungjaehoon-lifegamez/mama-server"],
       "env": {
         "MAMA_DB_PATH": "${HOME}/.claude/mama-memory.db"
       }
@@ -86,7 +86,7 @@ Restart Claude Desktop, and MAMA tools will be available.
 If npx fails or you prefer global installation:
 
 ```bash
-npm install -g @jungjaehoon/mama-server
+npm install -g @jungjaehoon-lifegamez/mama-server
 ```
 
 Then update your MCP configuration:
@@ -174,7 +174,7 @@ After installation, try saving your first decision:
 
 - Restart Claude Code
 - Check: `/help` to see if MAMA commands are listed
-- Verify marketplace: `/plugin` should show mama@jungjaehoon
+- Verify marketplace: `/plugin` should show mama@jungjaehoon-lifegamez
 
 ### MCP Server connection fails
 
@@ -188,7 +188,7 @@ node --version
 **Try manual installation:**
 
 ```bash
-npm install -g @jungjaehoon/mama-server
+npm install -g @jungjaehoon-lifegamez/mama-server
 ```
 
 **Update .mcp.json to use global binary:**
@@ -228,7 +228,7 @@ npm install --global windows-build-tools
 Then retry:
 
 ```bash
-npm install -g @jungjaehoon/mama-server --force
+npm install -g @jungjaehoon-lifegamez/mama-server --force
 ```
 
 ### Windows-specific issues
@@ -236,7 +236,7 @@ npm install -g @jungjaehoon/mama-server --force
 If npx fails on Windows, use the global installation method:
 
 ```bash
-npm install -g @jungjaehoon/mama-server
+npm install -g @jungjaehoon-lifegamez/mama-server
 ```
 
 Then configure with absolute path:
@@ -259,7 +259,7 @@ Then configure with absolute path:
 
 MAMA uses a **2-package architecture**:
 
-1. **@jungjaehoon/mama-server** (MCP Server)
+1. **@jungjaehoon-lifegamez/mama-server** (MCP Server)
 
    - Independent npm package
    - Handles all AI/database operations

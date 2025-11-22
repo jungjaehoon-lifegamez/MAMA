@@ -29,7 +29,7 @@ MAMA is an always-on companion for Claude Code that remembers how you think. It 
 
 ```bash
 /plugin marketplace add jungjaehoon/claude-plugins
-/plugin install mama@jungjaehoon
+/plugin install mama@jungjaehoon-lifegamez
 ```
 
 **First use:** MCP server downloads automatically (~1-2 min)
@@ -43,7 +43,7 @@ Add to `claude_desktop_config.json`:
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon/mama-server"]
+      "args": ["-y", "@jungjaehoon-lifegamez/mama-server"]
     }
   }
 }
@@ -245,12 +245,12 @@ npm run test:coverage
 
 MAMA uses a **2-package structure**:
 
-### 1. MCP Server (@jungjaehoon/mama-server)
+### 1. MCP Server (@jungjaehoon-lifegamez/mama-server)
 
 Independent npm package shared across all MCP clients:
 
 ```
-@jungjaehoon/mama-server/
+@jungjaehoon-lifegamez/mama-server/
 ├── src/
 │   ├── server.js       # MCP server implementation
 │   ├── db/             # SQLite + better-sqlite3
@@ -268,7 +268,7 @@ Lightweight plugin referencing the MCP server:
 ```
 mama-plugin/
 ├── .claude-plugin/     # Plugin manifest
-├── .mcp.json           # References @jungjaehoon/mama-server
+├── .mcp.json           # References @jungjaehoon-lifegamez/mama-server
 ├── commands/           # /mama-* command definitions (Markdown)
 ├── hooks/              # Hook configurations (JSON)
 ├── skills/             # Auto-context skill (Markdown)
@@ -304,8 +304,8 @@ MIT License - see LICENSE file for details
 ## 🔗 Links
 
 - **Documentation:** [docs/index.md](docs/index.md)
-- **GitHub:** [github.com/jungjaehoon/MAMA](https://github.com/jungjaehoon/MAMA)
-- **Issues:** [github.com/jungjaehoon/MAMA/issues](https://github.com/jungjaehoon/MAMA/issues)
+- **GitHub:** [github.com/jungjaehoon-lifegamez/MAMA](https://github.com/jungjaehoon-lifegamez/MAMA)
+- **Issues:** [github.com/jungjaehoon-lifegamez/MAMA/issues](https://github.com/jungjaehoon-lifegamez/MAMA/issues)
 - **PRD:** [docs/project/prd.md](docs/project/prd.md)
 
 ---

@@ -6,12 +6,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jungjaehoon/MAMA.git",
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA.git",
     "directory": "packages/claude-code-plugin"
   },
-  "homepage": "https://github.com/jungjaehoon/MAMA#readme",
+  "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
   "bugs": {
-    "url": "https://github.com/jungjaehoon/MAMA/issues"
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA/issues"
   },
   "keywords": [
     "claude-code",
