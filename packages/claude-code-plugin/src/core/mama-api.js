@@ -634,7 +634,7 @@ async function suggest(userQuestion, options = {}) {
         .filter((w) => w.length > 2); // Filter short words
 
       if (keywords.length === 0) {
-        return `💡 Hint: Please be more specific.\nExample: "Railway Volume setup" or "mesh parameter optimization"`;
+        return `💡 Hint: Please be more specific.\nExample: "Railway Volume settings" or "mesh parameter optimization"`;
       }
 
       // Build LIKE query for each keyword
@@ -667,7 +667,7 @@ async function suggest(userQuestion, options = {}) {
       if (format === 'markdown') {
         const wordCount = userQuestion.split(/\s+/).length;
         if (wordCount < 3) {
-          return `💡 Hint: Please be more specific.\nExample: "Why did we choose COMPLEX mesh structure?" or "What parameters should I use for large layers?"`;
+          return `💡 Hint: Please be more specific.\nExample: "Why did we choose COMPLEX mesh structure?" or "What parameters are used for large layers?"`;
         }
       }
       return null;
@@ -800,75 +800,95 @@ Example: { "ranking": [2, 0, 4, 1, 3] } means 3rd is most relevant, then 1st, th
  * DEFAULT: Returns JSON array with recent decisions (LLM-first design)
  * OPTIONAL: Returns Markdown string if format='markdown' (for human display)
  *
- * @param {Object} options - List options
- * @param {string} [options.format='json'] - Output format: 'json' (default) or 'markdown'
- * @param {number} [options.limit=20] - Max decisions to show
- * @returns {Promise<Object|string>} Decision list as JSON or Markdown
- *
- * @example
- * // LLM usage (default)
- * const data = await mama.list({ limit: 10 });
- * // → { decisions: [...], meta: {...} }
- *
- * // Human display
- * const markdown = await mama.list({ limit: 10, format: 'markdown' });
- * // → "📋 Recent Decisions (10)\n━━━━━━━━..."
+ * @param {Object} [options] - Options
+ * @param {number} [options.limit=10] - Max results
+ * @param {string} [options.format='json'] - Output format
+ * @returns {Promise<Array|string>} Recent decisions
  */
-async function list(options = {}) {
-  const { format = 'json', limit = 20 } = options;
+async function listDecisions(options = {}) {
+  const { limit = 10, format = 'json' } = options;
 
   try {
     const adapter = getAdapter();
-
-    // Get recent decisions ordered by created_at DESC
-    // Note: created_at is bigint (Unix timestamp), so simple ORDER BY works
-    const stmt = adapter.prepare(
-      `
-      SELECT
-        id, topic, decision, confidence,
-        user_involvement, outcome,
-        created_at, updated_at
-      FROM decisions
+    const stmt = adapter.prepare(`
+      SELECT * FROM decisions
+      WHERE superseded_by IS NULL
       ORDER BY created_at DESC
       LIMIT ?
-    `
-    );
+    `);
     const decisions = await stmt.all(limit);
 
-    if (!decisions || decisions.length === 0) {
-      if (format === 'markdown') {
-        return '❌ No decisions found';
-      }
-      return { decisions: [], meta: { count: 0 } };
-    }
-
-    // Markdown format (for human display)
     if (format === 'markdown') {
-      return formatList(decisions, { limit });
+      return formatList(decisions);
     }
 
-    // JSON format (default - LLM-first)
-    return {
-      decisions: decisions.map((d) => ({
-        id: d.id,
-        topic: d.topic,
-        decision: d.decision,
-        confidence: d.confidence,
-        outcome: d.outcome,
-        user_involvement: d.user_involvement,
-        created_at: d.created_at,
-        updated_at: d.updated_at,
-      })),
-      meta: {
-        count: decisions.length,
-        limit,
-      },
-    };
+    return decisions;
   } catch (error) {
-    throw new Error(`mama.list() failed: ${error.message}`);
+    throw new Error(`mama.listDecisions() failed: ${error.message}`);
   }
 }
 
+/**
+ * Save current session checkpoint (New Feature: Session Continuity)
+ *
+ * @param {string} summary - Summary of current session state
+ * @param {Array<string>} openFiles - List of currently open files
+ * @param {string} nextSteps - Next steps to be taken
+ * @returns {Promise<number>} Checkpoint ID
+ */
+async function saveCheckpoint(summary, openFiles = [], nextSteps = '') {
+  if (!summary) throw new Error('Summary is required for checkpoint');
+
+  try {
+    const adapter = getAdapter();
+    const stmt = adapter.prepare(`
+      INSERT INTO checkpoints (timestamp, summary, open_files, next_steps, status)
+      VALUES (?, ?, ?, ?, 'active')
+    `);
+    
+    const result = stmt.run(
+      Date.now(),
+      summary,
+      JSON.stringify(openFiles),
+      nextSteps
+    );
+    
+    return result.lastInsertRowid;
+  } catch (error) {
+    throw new Error(`Failed to save checkpoint: ${error.message}`);
+  }
+}
+
+/**
+ * Load latest active checkpoint (New Feature: Session Continuity)
+ *
+ * @returns {Promise<Object|null>} Latest checkpoint or null
+ */
+async function loadCheckpoint() {
+  try {
+    const adapter = getAdapter();
+    const stmt = adapter.prepare(`
+      SELECT * FROM checkpoints
+      WHERE status = 'active'
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `);
+    
+    const checkpoint = stmt.get();
+    
+    if (checkpoint) {
+      try {
+        checkpoint.open_files = JSON.parse(checkpoint.open_files);
+      } catch (e) {
+        checkpoint.open_files = [];
+      }
+    }
+    
+    return checkpoint || null;
+  } catch (error) {
+    throw new Error(`Failed to load checkpoint: ${error.message}`);
+  }
+}
 /**
  * MAMA Public API
  *
@@ -886,7 +906,9 @@ const mama = {
   recall,
   updateOutcome,
   suggest,
-  list,
+  list: listDecisions,
+  saveCheckpoint,
+  loadCheckpoint,
 };
 
 module.exports = mama;

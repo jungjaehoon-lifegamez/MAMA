@@ -20,6 +20,7 @@ const { recallDecisionTool } = require('./recall-decision.js');
 const { suggestDecisionTool } = require('./suggest-decision.js');
 const { listDecisionsTool } = require('./list-decisions.js');
 const { updateOutcomeTool } = require('./update-outcome.js');
+const { saveCheckpointTool, loadCheckpointTool } = require('./checkpoint-tools.js');
 
 /**
  * Create all MAMA memory tools
@@ -35,6 +36,8 @@ function createMemoryTools() {
     suggest_decision: suggestDecisionTool,
     list_decisions: listDecisionsTool,
     update_outcome: updateOutcomeTool,
+    save_checkpoint: saveCheckpointTool,
+    load_checkpoint: loadCheckpointTool,
   };
 }
 
@@ -46,4 +49,6 @@ module.exports = {
   suggestDecisionTool,
   listDecisionsTool,
   updateOutcomeTool,
+  saveCheckpointTool,
+  loadCheckpointTool,
 };

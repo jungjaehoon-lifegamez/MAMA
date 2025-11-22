@@ -17,7 +17,7 @@
  * Usage:
  *   node src/server.js                 # Direct execution
  *   mama-server                        # Via bin (npm install -g)
- *   npx @spellon/mama-server           # Via npx
+ *   npx @jungjaehoon-ui/mama-server           # Via npx
  */
 
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
@@ -33,6 +33,7 @@ const { recallDecisionTool } = require('./tools/recall-decision.js');
 const { suggestDecisionTool } = require('./tools/suggest-decision.js');
 const { listDecisionsTool } = require('./tools/list-decisions.js');
 const { updateOutcomeTool } = require('./tools/update-outcome.js');
+const { saveCheckpointTool, loadCheckpointTool } = require('./tools/checkpoint-tools.js');
 
 // Import core modules
 const { initDB } = require('./mama/db-manager.js');
@@ -165,6 +166,37 @@ class MAMAServer {
             required: ['topic', 'outcome'],
           },
         },
+        {
+          name: 'save_checkpoint',
+          description: 'Save the current session state (checkpoint) to MAMA memory. Use this when ending a session or reaching a major milestone so work can be resumed later.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              summary: {
+                type: 'string',
+                description: 'Summary of the current session state, what was accomplished, and what is pending.',
+              },
+              open_files: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'List of currently relevant or open files.',
+              },
+              next_steps: {
+                type: 'string',
+                description: 'Clear instructions for the next session on what to do next.',
+              },
+            },
+            required: ['summary'],
+          },
+        },
+        {
+          name: 'load_checkpoint',
+          description: 'Load the latest active session checkpoint. Use this at the start of a new session to resume work seamlessly.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
       ],
     }));
 
@@ -190,6 +222,12 @@ class MAMAServer {
             break;
           case 'update_outcome':
             result = await updateOutcomeTool.handler(args);
+            break;
+          case 'save_checkpoint':
+            result = await saveCheckpointTool.handler(args);
+            break;
+          case 'load_checkpoint':
+            result = await loadCheckpointTool.handler(args);
             break;
           default:
             throw new Error(`Unknown tool: ${name}`);

@@ -9,6 +9,7 @@
 ## Prerequisites
 
 Before starting this tutorial, ensure you have:
+
 - ✅ Node.js >= 18.0.0 installed
 - ✅ Claude Code (latest version) installed
 - ✅ MAMA plugin installed (see [Installation Guide](../guides/installation.md))
@@ -46,6 +47,7 @@ Claude will ask:
 ```
 
 **Example:**
+
 ```
 Topic: test_framework
 Decision: Use Vitest for testing
@@ -69,6 +71,7 @@ Expected output shows tier badge:
 ```
 
 **Tier Meanings:**
+
 - **🟢 Tier 1**: Full vector search + semantic matching (80% accuracy)
 - **🟡 Tier 2**: Fallback exact match only (40% accuracy)
 
@@ -92,6 +95,7 @@ Expected: Before Claude responds, you'll see:
 ```
 
 **How it works:**
+
 - UserPromptSubmit hook → Semantic search → Gentle hints (not walls of text)
 - Privacy guarantee: 100% local, no network calls ([FR45-49](../reference/fr-mapping.md))
 
@@ -115,6 +119,31 @@ Expected: Before Claude responds, you'll see:
 /mama-list --limit 20
 ```
 
+# List 20 recent decisions
+
+/mama-list --limit 20
+
+````
+
+---
+
+## Step 6: Session Continuity 🔄
+
+MAMA helps you pick up exactly where you left off:
+
+```bash
+# Before ending your session:
+/mama-checkpoint "Finished testing setup, next step is CI configuration"
+
+# When starting a new session:
+/mama-resume
+````
+
+**What happens:**
+
+- MAMA restores your context (summary, open files, next steps)
+- You don't need to re-explain the project state to Claude
+
 **Ready to use!** 🎉 MAMA is now tracking your decision evolution.
 
 ---
@@ -133,19 +162,23 @@ Now that you've verified MAMA is working:
 ## Troubleshooting
 
 **Commands not appearing:**
+
 - Ensure plugin is in `~/.claude/plugins/mama/`
 - Check `.claude-plugin/plugin.json` exists
 - Restart Claude Code
 
 **Tier 2 detected:**
+
 - Follow [Tier 2 Remediation Guide](../guides/tier-2-remediation.md)
 
 **Database errors:**
+
 - See [Troubleshooting Guide](../guides/troubleshooting.md#database-issues)
 
 ---
 
 **Related:**
+
 - [Installation Guide](../guides/installation.md)
 - [Configuration Guide](../guides/configuration.md)
 - [Commands Reference](../reference/commands.md)

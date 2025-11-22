@@ -15,6 +15,7 @@
   - Windows: windows-build-tools
 
 **Check Node.js version:**
+
 ```bash
 node --version
 # Required: >= 18.0.0
@@ -29,8 +30,8 @@ node --version
 **Step 1: Install Plugin**
 
 ```bash
-/plugin marketplace add spellon/claude-plugins
-/plugin install mama@spellon
+/plugin marketplace add jungjaehoon-ui/claude-plugins
+/plugin install mama@jungjaehoon-ui
 ```
 
 **Step 2: First Use (Automatic Setup)**
@@ -42,7 +43,8 @@ node --version
 On first use, MAMA's MCP server will be automatically downloaded and set up via npx (~1-2 minutes).
 
 **What happens:**
-- npx downloads `@spellon/mama-server`
+
+- npx downloads `@jungjaehoon-ui/mama-server`
 - Native modules (better-sqlite3) compile for your platform
 - Embedding models download to npm cache
 - Server starts automatically
@@ -66,7 +68,7 @@ MAMA's MCP server works with Claude Desktop too!
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@spellon/mama-server"],
+      "args": ["-y", "@jungjaehoon-ui/mama-server"],
       "env": {
         "MAMA_DB_PATH": "${HOME}/.claude/mama-memory.db"
       }
@@ -84,12 +86,13 @@ Restart Claude Desktop, and MAMA tools will be available.
 If npx fails or you prefer global installation:
 
 ```bash
-npm install -g @spellon/mama-server
+npm install -g @jungjaehoon-ui/mama-server
 ```
 
 Then update your MCP configuration:
 
 **Claude Code (.mcp.json):**
+
 ```json
 {
   "mcpServers": {
@@ -101,6 +104,7 @@ Then update your MCP configuration:
 ```
 
 **Claude Desktop (claude_desktop_config.json):**
+
 ```json
 {
   "mcpServers": {
@@ -153,6 +157,7 @@ After installation, try saving your first decision:
 ```
 
 **First time will take 1-2 minutes:**
+
 - MCP server downloads automatically
 - Native modules compile
 - Embedding models download
@@ -166,24 +171,28 @@ After installation, try saving your first decision:
 ### Commands not appearing
 
 **Claude Code:**
+
 - Restart Claude Code
 - Check: `/help` to see if MAMA commands are listed
-- Verify marketplace: `/plugin` should show mama@spellon
+- Verify marketplace: `/plugin` should show mama@jungjaehoon-ui
 
 ### MCP Server connection fails
 
 **Check Node.js:**
+
 ```bash
 node --version
 # Must be >= 18.0.0
 ```
 
 **Try manual installation:**
+
 ```bash
-npm install -g @spellon/mama-server
+npm install -g @jungjaehoon-ui/mama-server
 ```
 
 **Update .mcp.json to use global binary:**
+
 ```json
 {
   "mcpServers": {
@@ -199,23 +208,27 @@ npm install -g @spellon/mama-server
 **Install build tools:**
 
 **macOS:**
+
 ```bash
 xcode-select --install
 ```
 
 **Ubuntu/Debian:**
+
 ```bash
 sudo apt-get install build-essential python3
 ```
 
 **Windows:**
+
 ```bash
 npm install --global windows-build-tools
 ```
 
 Then retry:
+
 ```bash
-npm install -g @spellon/mama-server --force
+npm install -g @jungjaehoon-ui/mama-server --force
 ```
 
 ### Windows-specific issues
@@ -223,7 +236,7 @@ npm install -g @spellon/mama-server --force
 If npx fails on Windows, use the global installation method:
 
 ```bash
-npm install -g @spellon/mama-server
+npm install -g @jungjaehoon-ui/mama-server
 ```
 
 Then configure with absolute path:
@@ -246,7 +259,8 @@ Then configure with absolute path:
 
 MAMA uses a **2-package architecture**:
 
-1. **@spellon/mama-server** (MCP Server)
+1. **@jungjaehoon-ui/mama-server** (MCP Server)
+
    - Independent npm package
    - Handles all AI/database operations
    - Shared across Claude Code, Claude Desktop, and other MCP clients
@@ -254,11 +268,12 @@ MAMA uses a **2-package architecture**:
 
 2. **mama-plugin** (Claude Code Plugin)
    - Lightweight plugin (Markdown + config)
-   - Provides /mama-* commands
+   - Provides /mama-\* commands
    - Hooks for automatic context injection
    - References the MCP server via .mcp.json
 
 **Benefits:**
+
 - ✅ One MCP server, multiple clients
 - ✅ Automatic dependency management (npx)
 - ✅ Platform-specific compilation handled automatically

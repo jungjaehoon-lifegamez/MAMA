@@ -1,6 +1,6 @@
 # MAMA Plugin - Developer Playbook
 
-**Author:** spellon
+**Author:** jungjaehoon-ui
 **Date:** 2025-11-21
 **Version:** 1.0
 **Target Audience:** Contributors to the MAMA plugin project
@@ -31,6 +31,7 @@ MAMA (Memory-Augmented MCP Assistant) is a **consciousness flow companion** that
 ### Purpose of This Document
 
 This playbook serves as:
+
 - **Onboarding guide** for new contributors
 - **Architecture reference** for understanding code organization
 - **Safety net** to prevent rewriting already-working code
@@ -54,17 +55,20 @@ This playbook serves as:
 In November 2025, we made a critical decision: **stop the rewrite, embrace migration**.
 
 **What happened:**
+
 - We started rewriting MAMA from scratch in `mama-plugin/`
 - The rewrite diverged from the PRD and fell behind the working `mcp-server/` code
 - Analysis showed ~70% of required code already existed in production
 
 **What we decided:**
+
 - **Discard** the partial rewrite
 - **Extract** proven modules from `mcp-server/src/mama/`
 - **Package** them as a Claude Code plugin
 - **Focus** engineering time on net-new plugin features (hooks, commands, packaging)
 
 **Why it matters for contributors:**
+
 - **Before contributing**: Check if the feature already exists in `mcp-server/`
 - **When fixing bugs**: Look at migration history to understand code provenance
 - **When designing**: Prefer extracting proven patterns over inventing new ones
@@ -114,6 +118,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 ### Core Components
 
 **1. Core Logic (`mama-plugin/src/core/`)**
+
 - **mama-api.js**: Main API (save, recall, suggest, list, updateOutcome)
 - **embeddings.js**: Transformers.js integration for semantic search
 - **db-manager.js**: SQLite database operations (WAL mode, migrations)
@@ -123,6 +128,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 - **decision-formatter.js**: Context formatting with token budgets
 
 **2. MCP Tools (`mama-plugin/src/tools/`)**
+
 - **save-decision.js**: Save decisions/insights to memory
 - **recall-decision.js**: Retrieve decision history by topic
 - **suggest-decision.js**: Semantic search for relevant decisions
@@ -130,20 +136,24 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 - **update-outcome.js**: Update decision outcomes (SUCCESS/FAILED/PARTIAL)
 
 **3. Commands (`mama-plugin/commands/`)**
+
 - User-facing slash commands (.md files)
 - `/mama-save`, `/mama-recall`, `/mama-suggest`, `/mama-list`, `/mama-configure`
 - Auto-discovered by Claude Code plugin system
 
 **4. Hooks (`mama-plugin/scripts/`)**
+
 - **userpromptsubmit-hook.js**: Context injection when user submits prompt
 - **pretooluse-hook.js**: Context injection before Read/Edit/Grep tools
 - **posttooluse-hook.js**: Auto-save decisions after Write/Edit tools
 
 **5. Skills (`mama-plugin/skills/mama-context/`)**
+
 - Always-on background context injection
 - Skill wrapper for automatic invocation
 
 **6. Database (`mama-plugin/src/db/migrations/`)**
+
 - SQLite-only (PostgreSQL removed in M1.2)
 - 4 migration files (001-004)
 - WAL mode + synchronous=NORMAL for performance
@@ -151,19 +161,23 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 ### Technology Stack
 
 **Runtime:**
+
 - Node.js >= 18.0.0 (recommended: 22+)
 - SQLite 3 (better-sqlite3 ^11.0.0)
 
 **AI/ML:**
+
 - @huggingface/transformers ^3.0.0 (embedding generation)
 - Xenova/multilingual-e5-small (default model, 384-dim)
 - sqlite-vec ^0.1.0 (vector search extension)
 
 **MCP:**
+
 - @modelcontextprotocol/sdk ^1.0.1
 - Stdio transport (local use)
 
 **Testing:**
+
 - Vitest ^1.0.0 (unit + integration tests)
 
 **Reference:** [docs/MAMA-ARCHITECTURE.md](./MAMA-ARCHITECTURE.md), [docs/MAMA-PRD.md](./MAMA-PRD.md)
@@ -210,6 +224,7 @@ export MAMA_DATABASE_PATH=/path/to/custom/mama-memory.db
 ```
 
 **Database Structure:**
+
 - `decisions` table: Core decision storage
 - `embeddings` table: Vector embeddings (384-dim)
 - `supersedes` table: Evolution graph edges
@@ -232,6 +247,7 @@ npx vitest run --coverage
 ```
 
 **Test Organization:**
+
 - `tests/core/`: Core logic tests (mama-api, embeddings, db-manager)
 - `tests/tools/`: MCP tool handler tests
 - `tests/commands/`: Command tests
@@ -241,6 +257,7 @@ npx vitest run --coverage
 ### Configuration
 
 **User Configuration (`~/.mama/config.json`):**
+
 ```json
 {
   "modelName": "Xenova/multilingual-e5-small",
@@ -250,6 +267,7 @@ npx vitest run --coverage
 ```
 
 **Plugin Configuration (`.mcp.json`):**
+
 - MCP server transport settings
 - Database path
 - Environment variables
@@ -335,24 +353,28 @@ mama-plugin/
 ### Module Boundaries
 
 **Core Logic (`src/core/`)**
+
 - ✅ **Purpose**: Business logic, algorithms, data structures
 - ✅ **Dependencies**: Only other core modules, no hooks/commands
 - ✅ **Testing**: Unit tests with mocked DB
 - ❌ **Avoid**: Direct CLI output, HTTP requests, file I/O (except DB)
 
 **MCP Tools (`src/tools/`)**
+
 - ✅ **Purpose**: MCP protocol handlers (stdio transport)
 - ✅ **Dependencies**: Core modules via `../core/mama-api.js`
 - ✅ **Testing**: Integration tests with real DB
 - ❌ **Avoid**: Duplicating core logic, complex validation
 
 **Commands (`commands/` + `src/commands/`)**
+
 - ✅ **Purpose**: User-facing slash commands
 - ✅ **Dependencies**: MCP tools or core API
 - ✅ **Testing**: Command tests with mocked tools
 - ❌ **Avoid**: Business logic (belongs in core)
 
 **Hooks (`scripts/`)**
+
 - ✅ **Purpose**: Claude Code hook integration
 - ✅ **Dependencies**: MCP client or direct core API
 - ✅ **Testing**: Hook tests with simulated events
@@ -361,17 +383,20 @@ mama-plugin/
 ### When to Edit `mcp-server` vs `mama-plugin`
 
 **Edit `mcp-server/` when:**
+
 - ❌ **Never** for MAMA plugin development (frozen as source of truth)
 - ✅ Only if fixing bugs in the legacy MCP server deployment
 - ✅ If adding features that need PostgreSQL support
 
 **Edit `mama-plugin/` when:**
+
 - ✅ **Always** for plugin-specific features (hooks, commands, skills)
 - ✅ For SQLite-only improvements
 - ✅ For Claude Code integration features
 - ✅ For bug fixes that apply to the plugin
 
 **Migration Rule:**
+
 - If a feature exists in `mcp-server/` and works well, **extract it** instead of reimplementing
 - If you need to change core logic, **consider** if it should also update `mcp-server/`
 - Document provenance: "Migrated from mcp-server/src/mama/xyz.js @ commit abc123"
@@ -387,11 +412,13 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 **Decision:** Halt the rewrite, adopt migration strategy
 
 **Context:**
+
 - Rewrite in `mama-plugin/` diverged from PRD
 - `mcp-server/` had ~5,400 LOC of proven, working code
 - ~70% code reuse potential identified
 
 **Outcome:**
+
 - Archived partial rewrite
 - Established "reuse-first" principle
 - Created migration epics (M1-M5)
@@ -405,6 +432,7 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 #### M1.1: Core Module Extraction
 
 **Migrated modules** (from `mcp-server/src/mama/` → `mama-plugin/src/core/`):
+
 - mama-api.js (882 LOC)
 - embeddings.js (~400 LOC)
 - decision-tracker.js (~500 LOC)
@@ -426,6 +454,7 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 #### M1.2: SQLite-only DB Adapter
 
 **Changes:**
+
 - ✅ Removed PostgreSQL adapter (`db-adapter/postgresql-adapter.js`)
 - ✅ Simplified adapter factory (SQLite-only)
 - ✅ Fixed circular dependency (extracted `base-adapter.js`)
@@ -439,12 +468,14 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 #### M1.3: MCP Tool Surface Port
 
 **Converted tools** (TypeScript → JavaScript):
+
 - save-decision.ts → save-decision.js
 - recall-decision.ts → recall-decision.js
 - suggest-decision.ts → suggest-decision.js
 - list-decision.ts → list-decision.js
 
 **Changes:**
+
 - Removed TypeScript type annotations
 - Converted to CommonJS (require/module.exports)
 - Updated import paths (`../../mama/` → `../core/`)
@@ -457,13 +488,16 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 #### M1.4: Embedding Configuration & Model Selection
 
 **New modules:**
+
 - config-loader.js (configuration parser)
 - commands/mama-configure.js (command placeholder)
 
 **Updated modules:**
+
 - embeddings.js (dynamic model loading)
 
 **Features:**
+
 - User configuration at `~/.mama/config.json`
 - Configurable embedding model, dimensions, cache directory
 - Automatic pipeline reset on model change
@@ -475,9 +509,11 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 #### M1.5: Outcome & Audit Log Migration
 
 **New files:**
+
 - tools/update-outcome.js (MCP tool handler)
 
 **Features:**
+
 - Update decision outcomes (SUCCESS/FAILED/PARTIAL)
 - Failure reason tracking (required for FAILED)
 - Outcome metadata in all decision displays
@@ -494,6 +530,7 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 ### JavaScript/Node.js Conventions
 
 **Style:**
+
 - Use ES6+ features (arrow functions, destructuring, async/await)
 - CommonJS modules (require/module.exports) for compatibility
 - 2-space indentation
@@ -501,16 +538,18 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 - Semicolons required
 
 **Naming:**
+
 - camelCase for variables and functions
 - PascalCase for classes
 - UPPER_SNAKE_CASE for constants
 - Descriptive names (no single-letter except loop indices)
 
 **Example:**
+
 ```javascript
 // ✅ Good
 const EMBEDDING_DIM = 384;
-const modelName = 'Xenova/multilingual-e5-small';
+const modelName = "Xenova/multilingual-e5-small";
 
 async function generateEmbedding(text) {
   const result = await pipeline(text);
@@ -519,7 +558,7 @@ async function generateEmbedding(text) {
 
 // ❌ Bad
 const D = 384;
-const m = 'Xenova/multilingual-e5-small';
+const m = "Xenova/multilingual-e5-small";
 
 async function gen(t) {
   return Array.from((await pipeline(t)).data);
@@ -529,18 +568,21 @@ async function gen(t) {
 ### Error Handling Patterns
 
 **MCP Tools:**
+
 ```javascript
 // ✅ Return structured errors (LLM can understand)
 return {
-  content: [{
-    type: "text",
-    text: JSON.stringify({
-      isError: true,
-      error: "Decision not found",
-      code: "DECISION_NOT_FOUND",
-      details: { topic: params.topic }
-    })
-  }]
+  content: [
+    {
+      type: "text",
+      text: JSON.stringify({
+        isError: true,
+        error: "Decision not found",
+        code: "DECISION_NOT_FOUND",
+        details: { topic: params.topic },
+      }),
+    },
+  ],
 };
 
 // ❌ Throw exceptions (blocks LLM understanding)
@@ -548,10 +590,11 @@ throw new McpError(ErrorCode.InternalError, "Decision not found");
 ```
 
 **Core Logic:**
+
 ```javascript
 // ✅ Throw descriptive errors
-if (!text || text.trim() === '') {
-  throw new Error('Text cannot be empty for embedding generation');
+if (!text || text.trim() === "") {
+  throw new Error("Text cannot be empty for embedding generation");
 }
 
 // ✅ Graceful degradation
@@ -559,14 +602,18 @@ try {
   const embedding = await generateEmbedding(text);
   return { success: true, embedding };
 } catch (error) {
-  logger.warn('Embedding generation failed, falling back to exact match', error);
-  return { success: false, fallbackMode: 'exact_match' };
+  logger.warn(
+    "Embedding generation failed, falling back to exact match",
+    error
+  );
+  return { success: false, fallbackMode: "exact_match" };
 }
 ```
 
 ### Documentation Standards
 
 **Function Documentation:**
+
 ```javascript
 /**
  * Generate semantic embedding for given text using configured model.
@@ -585,6 +632,7 @@ async function generateEmbedding(text) {
 ```
 
 **File Headers:**
+
 ```javascript
 /**
  * @file mama-api.js
@@ -601,11 +649,12 @@ async function generateEmbedding(text) {
 **Coverage Target:** 80% line coverage minimum
 
 **Test Structure:**
-```javascript
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { saveDecision, recallDecision } from '../src/core/mama-api.js';
 
-describe('mama-api', () => {
+```javascript
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { saveDecision, recallDecision } from "../src/core/mama-api.js";
+
+describe("mama-api", () => {
   beforeEach(() => {
     // Setup: Create test DB
   });
@@ -614,13 +663,13 @@ describe('mama-api', () => {
     // Cleanup: Delete test DB
   });
 
-  describe('saveDecision', () => {
-    it('should save valid decision with all fields', async () => {
+  describe("saveDecision", () => {
+    it("should save valid decision with all fields", async () => {
       const decision = {
-        topic: 'test_topic',
-        decision: 'Use approach X',
-        reasoning: 'Because Y',
-        confidence: 0.9
+        topic: "test_topic",
+        decision: "Use approach X",
+        reasoning: "Because Y",
+        confidence: 0.9,
       };
 
       const result = await saveDecision(decision);
@@ -629,21 +678,24 @@ describe('mama-api', () => {
       expect(result.decision_id).toBeDefined();
     });
 
-    it('should reject decision with empty reasoning', async () => {
+    it("should reject decision with empty reasoning", async () => {
       const decision = {
-        topic: 'test_topic',
-        decision: 'Use approach X',
-        reasoning: '',
-        confidence: 0.9
+        topic: "test_topic",
+        decision: "Use approach X",
+        reasoning: "",
+        confidence: 0.9,
       };
 
-      await expect(saveDecision(decision)).rejects.toThrow('Reasoning cannot be empty');
+      await expect(saveDecision(decision)).rejects.toThrow(
+        "Reasoning cannot be empty"
+      );
     });
   });
 });
 ```
 
 **Test Types:**
+
 1. **Unit Tests**: Core logic with mocked dependencies
 2. **Integration Tests**: Full workflows with real DB
 3. **Regression Tests**: Critical bugs that were fixed
@@ -705,6 +757,7 @@ npx vitest run tests/core/mama-api.test.js --reporter=verbose
 ### Writing Tests
 
 **Test Checklist:**
+
 - [ ] Tests cover happy path
 - [ ] Tests cover error cases (invalid input, missing data, etc.)
 - [ ] Tests cover edge cases (empty strings, null values, etc.)
@@ -713,16 +766,17 @@ npx vitest run tests/core/mama-api.test.js --reporter=verbose
 - [ ] Tests have descriptive names ("should save decision when reasoning is provided")
 
 **Example Test:**
-```javascript
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
-import { saveDecision, recallDecision } from '../src/core/mama-api.js';
 
-describe('Decision Evolution Graph', () => {
+```javascript
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
+import { saveDecision, recallDecision } from "../src/core/mama-api.js";
+
+describe("Decision Evolution Graph", () => {
   let testDb;
 
   beforeEach(() => {
-    testDb = new Database(':memory:');
+    testDb = new Database(":memory:");
     // Run migrations...
   });
 
@@ -730,28 +784,28 @@ describe('Decision Evolution Graph', () => {
     testDb.close();
   });
 
-  it('should create supersedes edge when saving to existing topic', async () => {
+  it("should create supersedes edge when saving to existing topic", async () => {
     // Arrange: Save first decision
     const decision1 = {
-      topic: 'auth_strategy',
-      decision: 'Use session cookies',
-      reasoning: 'Simple to implement'
+      topic: "auth_strategy",
+      decision: "Use session cookies",
+      reasoning: "Simple to implement",
     };
     const result1 = await saveDecision(decision1);
 
     // Act: Save second decision to same topic
     const decision2 = {
-      topic: 'auth_strategy',
-      decision: 'Use JWT tokens',
-      reasoning: 'Better for scaling'
+      topic: "auth_strategy",
+      decision: "Use JWT tokens",
+      reasoning: "Better for scaling",
     };
     const result2 = await saveDecision(decision2);
 
     // Assert: Supersedes edge created
-    const history = await recallDecision('auth_strategy');
+    const history = await recallDecision("auth_strategy");
     expect(history.decisions).toHaveLength(2);
-    expect(history.decisions[0].decision).toBe('Use JWT tokens'); // Latest first
-    expect(history.decisions[1].decision).toBe('Use session cookies');
+    expect(history.decisions[0].decision).toBe("Use JWT tokens"); // Latest first
+    expect(history.decisions[1].decision).toBe("Use session cookies");
   });
 });
 ```
@@ -765,22 +819,26 @@ describe('Decision Evolution Graph', () => {
 Before submitting a pull request:
 
 - [ ] **Code Quality**
+
   - [ ] All tests pass (`npm test`)
   - [ ] No console.log statements (use debug-logger.js)
   - [ ] No commented-out code
   - [ ] No TODOs without GitHub issue references
 
 - [ ] **Documentation**
+
   - [ ] Function docstrings added for new functions
   - [ ] README updated if public API changed
   - [ ] Migration notes added if porting from mcp-server
 
 - [ ] **Testing**
+
   - [ ] New tests added for new features
   - [ ] Edge cases covered
   - [ ] Coverage >= 80%
 
 - [ ] **Architecture**
+
   - [ ] Code in correct module (core/tools/commands/hooks)
   - [ ] No business logic in commands/hooks
   - [ ] No code duplication (DRY principle)
@@ -795,21 +853,25 @@ Before submitting a pull request:
 **For Reviewers:**
 
 - [ ] **Correctness**
+
   - [ ] Logic implements acceptance criteria
   - [ ] Error handling is appropriate
   - [ ] Edge cases are handled
 
 - [ ] **Architecture**
+
   - [ ] Module boundaries respected
   - [ ] No unnecessary abstraction
   - [ ] Consistent with existing patterns
 
 - [ ] **Testing**
+
   - [ ] Tests cover new code paths
   - [ ] Tests are maintainable
   - [ ] No flaky tests
 
 - [ ] **Documentation**
+
   - [ ] Code is self-documenting
   - [ ] Complex logic has comments
   - [ ] Public API is documented
@@ -820,6 +882,7 @@ Before submitting a pull request:
   - [ ] Migration provenance documented
 
 **Review Priorities:**
+
 1. **Correctness** (does it work?)
 2. **Architecture** (does it fit?)
 3. **Testing** (can we trust it?)
@@ -828,6 +891,7 @@ Before submitting a pull request:
 ### When to Ask for Help
 
 Ask for guidance if:
+
 - Unsure whether to reuse or reimplement
 - Changing core API contracts
 - Adding new dependencies
@@ -835,6 +899,7 @@ Ask for guidance if:
 - Unsure about migration strategy
 
 **Where to Ask:**
+
 - GitHub Issues (for bugs and feature requests)
 - Pull Request comments (for code-specific questions)
 - Team chat (for quick clarifications)
@@ -846,18 +911,23 @@ Ask for guidance if:
 ### Picking Up a Story
 
 1. **Check sprint-status.yaml**
+
    ```bash
    cat docs/sprint-artifacts/sprint-status.yaml
    ```
+
    Look for stories with status: `ready` or `ready-for-dev`
 
 2. **Read the story file**
+
    ```bash
    cat docs/stories/story-M4.5.md
    ```
+
    Understand acceptance criteria and context
 
 3. **Check for existing code**
+
    - Search `mcp-server/src/mama/` for related modules
    - Review `docs/MAMA-CODE-REUSE-ANALYSIS.md` for reuse opportunities
 
@@ -894,6 +964,7 @@ git checkout -b refactor/simplify-embeddings
 ```
 
 **Types:**
+
 - `feat`: New feature
 - `fix`: Bug fix
 - `docs`: Documentation changes
@@ -903,6 +974,7 @@ git checkout -b refactor/simplify-embeddings
 - `chore`: Build/tooling changes
 
 **Examples:**
+
 ```
 feat(tools): Add update_outcome MCP tool
 
@@ -930,23 +1002,29 @@ Fixes #52
 ### Pull Request Process
 
 1. **Create PR from feature branch**
+
    - Target: `main` branch
    - Title: `Story M4.5: <Description>`
    - Description: Link to story file, list changes, test results
 
 2. **PR Template:**
+
    ```markdown
    ## Story
+
    [Story M4.5](../docs/stories/story-M4.5.md)
 
    ## Changes
+
    - Added X feature
    - Fixed Y bug
    - Updated Z documentation
 
    ## Test Results
    ```
-   ✓ tests/core/module.test.js  (10 tests) 45ms
+
+   ✓ tests/core/module.test.js (10 tests) 45ms
+
    ```
 
    ## Acceptance Criteria
@@ -961,6 +1039,7 @@ Fixes #52
    ```
 
 3. **Review Process**
+
    - Wait for reviewer assignment
    - Address feedback
    - Update tests if needed
@@ -982,10 +1061,11 @@ Fixes #52
 **Cause:** Multiple tests accessing the same DB file
 
 **Fix:**
+
 ```javascript
 // Use :memory: database for tests
 beforeEach(() => {
-  testDb = new Database(':memory:');
+  testDb = new Database(":memory:");
 });
 ```
 
@@ -994,6 +1074,7 @@ beforeEach(() => {
 **Cause:** Transformers.js model not downloaded or corrupted
 
 **Fix:**
+
 ```bash
 # Clear model cache
 rm -rf ~/.cache/huggingface/transformers
@@ -1007,6 +1088,7 @@ npm test
 **Cause:** Hook script not executable
 
 **Fix:**
+
 ```bash
 chmod +x scripts/userpromptsubmit-hook.js
 chmod +x scripts/pretooluse-hook.js
@@ -1018,6 +1100,7 @@ chmod +x scripts/posttooluse-hook.js
 **Cause:** Database schema mismatch
 
 **Fix:**
+
 ```bash
 # Check current schema version
 sqlite3 ~/.claude/mama-memory.db "PRAGMA user_version;"
@@ -1029,16 +1112,20 @@ node src/db/run-migrations.js
 ### Debug Tools
 
 **Structured Logging:**
-```javascript
-const logger = require('./src/core/debug-logger.js');
 
-logger.debug('Embedding generation started', { text: query });
-logger.info('Decision saved', { id: decisionId, topic });
-logger.warn('Falling back to exact match', { reason: 'embeddings unavailable' });
-logger.error('Database error', { error: err.message });
+```javascript
+const logger = require("./src/core/debug-logger.js");
+
+logger.debug("Embedding generation started", { text: query });
+logger.info("Decision saved", { id: decisionId, topic });
+logger.warn("Falling back to exact match", {
+  reason: "embeddings unavailable",
+});
+logger.error("Database error", { error: err.message });
 ```
 
 **Database Inspection:**
+
 ```bash
 # Open database
 sqlite3 ~/.claude/mama-memory.db
@@ -1054,6 +1141,7 @@ SELECT COUNT(*) FROM embeddings;
 ```
 
 **MCP Tool Testing:**
+
 ```bash
 # Test save_decision tool
 node src/tools/save-decision.js
@@ -1065,15 +1153,18 @@ echo '{"topic":"test","decision":"X","reasoning":"Y"}' | node src/tools/save-dec
 ### Where to Get Help
 
 **Documentation:**
+
 - [docs/MAMA-ARCHITECTURE.md](./MAMA-ARCHITECTURE.md) - Architecture decisions
 - [docs/MAMA-PRD.md](./MAMA-PRD.md) - Product requirements
 - [docs/epics.md](./epics.md) - Epic overview
 - [mama-plugin/README.md](../mama-plugin/README.md) - User guide
 
 **Code References:**
+
 - [docs/MAMA-CODE-REUSE-ANALYSIS.md](./MAMA-CODE-REUSE-ANALYSIS.md) - Migration history
 
 **Community:**
+
 - GitHub Issues (bugs and feature requests)
 - Pull Request discussions (code-specific questions)
 - Team chat (quick clarifications)
@@ -1082,11 +1173,12 @@ echo '{"topic":"test","decision":"X","reasoning":"Y"}' | node src/tools/save-dec
 
 ## Maintainer Sign-off
 
-**Reviewed by:** spellon
+**Reviewed by:** jungjaehoon-ui
 **Date:** 2025-11-21
 **Status:** ✅ Approved for use
 
 **Validation:**
+
 - [x] Architecture section accurate (reviewed against MAMA-ARCHITECTURE.md)
 - [x] Migration history complete (M1.1-M1.5 documented)
 - [x] Coding standards align with current codebase
@@ -1099,13 +1191,15 @@ echo '{"topic":"test","decision":"X","reasoning":"Y"}' | node src/tools/save-dec
 ---
 
 **Document History:**
-- 2025-11-21: v1.0 - Initial version (spellon)
+
+- 2025-11-21: v1.0 - Initial version (jungjaehoon-ui)
 - Next update: After Epic M2 completion (Hook Integration)
 
 ---
 
 **Contributing to This Document:**
 If you find errors or want to add sections, submit a PR with:
+
 - Clear description of changes
 - Validation that changes match actual codebase
 - Maintainer approval before merge

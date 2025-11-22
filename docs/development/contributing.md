@@ -48,12 +48,14 @@ npm test
 ### 2. Submit Pull Requests
 
 **Before submitting:**
+
 - Read [Code Standards](code-standards.md)
 - Write tests for new features
 - Update documentation
 - Run `npm test` (all tests must pass)
 
 **PR checklist:**
+
 - [ ] Tests added/updated
 - [ ] Documentation updated
 - [ ] All tests pass
@@ -102,6 +104,7 @@ git commit -m "feat: Add new feature description"
 ```
 
 **Commit message format:**
+
 - `feat:` New feature
 - `fix:` Bug fix
 - `docs:` Documentation
@@ -131,12 +134,14 @@ git push origin feature/your-feature-name
 ## Documentation Requirements
 
 **Update documentation when:**
+
 - Adding new commands
 - Changing configuration options
 - Modifying architecture
 - Adding FR (Functional Requirements)
 
 **Files to update:**
+
 - User-facing docs (tutorials/, guides/)
 - Reference docs (reference/)
 - FR mapping (reference/fr-mapping.md)
@@ -172,6 +177,7 @@ By contributing, you agree that your contributions will be licensed under the MI
 ## Recognition
 
 Contributors are recognized in:
+
 - README.md (Contributors section)
 - Release notes
 - GitHub contributor graph
@@ -181,7 +187,7 @@ Contributors are recognized in:
 ## Questions?
 
 - **Technical questions:** Open a discussion
-- **Security issues:** Email security@spellon.com (private)
+- **Security issues:** Email security@jungjaehoon-ui.com (private)
 - **Other:** Open an issue
 
 ---

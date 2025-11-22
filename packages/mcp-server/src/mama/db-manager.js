@@ -52,6 +52,18 @@ async function initDB() {
     // Run migrations
     await dbAdapter.runMigrations(MIGRATIONS_DIR);
 
+    // Create checkpoints table (New Feature: Session Continuity)
+    dbAdapter.prepare(`
+      CREATE TABLE IF NOT EXISTS checkpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL,
+        summary TEXT NOT NULL,
+        open_files TEXT, -- JSON array
+        next_steps TEXT,
+        status TEXT DEFAULT 'active' -- 'active', 'archived'
+      )
+    `).run();
+
     isInitialized = true;
 
     info(`[db-manager] Database initialized (${dbAdapter.constructor.name})`);

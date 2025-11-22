@@ -23,8 +23,8 @@ MAMA uses a **3-layer architecture**:
                     ↓                    ↓
         ┌───────────────────┐    ┌─────────────────────┐
         │ npm Registry      │    │ Plugin Marketplace  │
-        │                   │    │ github.com/spellon/ │
-        │ @spellon/         │    │ claude-plugins      │
+        │                   │    │ github.com/jungjaehoon-ui/ │
+        │ @jungjaehoon-ui/  │    │ claude-plugins             │
         │ mama-server       │    │                     │
         │                   │    │ └── plugins/mama/   │
         └───────────────────┘    └─────────────────────┘
@@ -32,12 +32,12 @@ MAMA uses a **3-layer architecture**:
         ┌───────────────────────────────────────────┐
         │ User Installation                         │
         │                                           │
-        │ 1. /plugin marketplace add spellon/...    │
-        │ 2. /plugin install mama@spellon           │
+        │ 1. /plugin marketplace add jungjaehoon-ui/...    │
+        │ 2. /plugin install mama@jungjaehoon-ui           │
         │                                           │
         │ Result:                                   │
         │ ~/.claude/plugins/.../mama/               │
-        │ └── .mcp.json (npx @spellon/mama-server)  │
+        │ └── .mcp.json (npx @jungjaehoon-ui/mama-server)  │
         └───────────────────────────────────────────┘
                     ↓
         First use: npx auto-downloads MCP server
@@ -57,7 +57,7 @@ github.com/jungjaehoon-ui/MAMA
 ├── pnpm-workspace.yaml
 │
 ├── packages/
-│   ├── mcp-server/                  # @spellon/mama-server
+│   ├── mcp-server/                  # @jungjaehoon-ui/mama-server
 │   │   ├── package.json             # Independent npm package
 │   │   ├── src/
 │   │   │   ├── server.js            # MCP server entry point
@@ -78,7 +78,7 @@ github.com/jungjaehoon-ui/MAMA
 │   └── claude-code-plugin/          # MAMA plugin
 │       ├── .claude-plugin/
 │       │   └── plugin.json
-│       ├── .mcp.json                # References @spellon/mama-server
+│       ├── .mcp.json                # References @jungjaehoon-ui/mama-server
 │       ├── commands/                # /mama-* commands (Markdown)
 │       ├── hooks/                   # Hook configurations (JSON)
 │       ├── skills/                  # Auto-context skill
@@ -100,6 +100,7 @@ github.com/jungjaehoon-ui/MAMA
 **Decision:** Use monorepo (pnpm workspace) for development
 
 **Rationale:**
+
 - **Version Sync**: Plugin 1.0.0 always works with MCP server 1.0.0
 - **Single PR**: Changes to both packages in one pull request
 - **Unified Testing**: CI/CD tests both packages together
@@ -107,6 +108,7 @@ github.com/jungjaehoon-ui/MAMA
 - **Industry Standard**: @zilliz/claude-context, @modelcontextprotocol/servers use monorepo
 
 **Alternative Considered:** Multi-repo (separate repos for MCP server and plugin)
+
 - ❌ Version mismatch risk
 - ❌ Duplicate CI/CD configuration
 - ❌ Multiple PRs for single feature
@@ -116,12 +118,13 @@ github.com/jungjaehoon-ui/MAMA
 
 ## Layer 2: Distribution Channels
 
-### 2a. npm Registry (@spellon/mama-server)
+### 2a. npm Registry (@jungjaehoon-ui/mama-server)
 
-**Package:** `@spellon/mama-server`
-**Registry:** https://www.npmjs.com/package/@spellon/mama-server
+**Package:** `@jungjaehoon-ui/mama-server`
+**Registry:** https://www.npmjs.com/package/@jungjaehoon-ui/mama-server
 
 **Publishing:**
+
 ```bash
 cd packages/mcp-server
 npm version patch  # or minor, major
@@ -129,26 +132,29 @@ npm publish --access public
 ```
 
 **Installation (by users):**
+
 ```bash
 # Automatic (via npx in .mcp.json)
 # No manual installation needed!
 
 # Manual (if needed)
-npm install -g @spellon/mama-server
+npm install -g @jungjaehoon-ui/mama-server
 ```
 
 **Used by:**
+
 - Claude Code plugin (via `.mcp.json`)
 - Claude Desktop (via `claude_desktop_config.json`)
 - Other MCP clients
 
-### 2b. Plugin Marketplace (spellon/claude-plugins)
+### 2b. Plugin Marketplace (jungjaehoon-ui/claude-plugins)
 
-**Repository:** `github.com/spellon/claude-plugins`
+**Repository:** `github.com/jungjaehoon-ui/claude-plugins`
 
 **Structure:**
+
 ```
-spellon/claude-plugins/
+jungjaehoon-ui/claude-plugins/
 ├── marketplace.json         # Marketplace metadata
 └── plugins/
     └── mama/                # From claude-mama/packages/claude-code-plugin
@@ -162,6 +168,7 @@ spellon/claude-plugins/
 ```
 
 **Sync Strategy (Option A: Automated):**
+
 ```yaml
 # .github/workflows/publish-plugin.yml
 name: Sync Plugin to Marketplace
@@ -175,7 +182,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Copy plugin to marketplace
         run: |
-          git clone https://github.com/spellon/claude-plugins marketplace
+          git clone https://github.com/jungjaehoon-ui/claude-plugins marketplace
           rm -rf marketplace/plugins/mama
           cp -r packages/claude-code-plugin marketplace/plugins/mama
           cd marketplace
@@ -185,6 +192,7 @@ jobs:
 ```
 
 **Sync Strategy (Option B: Manual Release):**
+
 ```bash
 # Release script
 ./scripts/release-plugin.sh v1.0.0
@@ -197,27 +205,31 @@ jobs:
 ### Claude Code Installation
 
 **Step 1: Add Marketplace**
+
 ```bash
-/plugin marketplace add spellon/claude-plugins
+/plugin marketplace add jungjaehoon-ui/claude-plugins
 ```
 
 **Step 2: Install Plugin**
+
 ```bash
-/plugin install mama@spellon
+/plugin install mama@jungjaehoon-ui
 ```
 
 **Step 3: First Use (Automatic)**
+
 ```bash
 /mama-save
 # MCP server downloads automatically via npx (~1-2 min)
 ```
 
 **Installation Result:**
+
 ```
 ~/.claude/plugins/marketplaces/claude-plugins/plugins/mama/
 ├── .claude-plugin/
 │   └── plugin.json
-├── .mcp.json                    # Contains: npx -y @spellon/mama-server
+├── .mcp.json                    # Contains: npx -y @jungjaehoon-ui/mama-server
 ├── commands/
 │   ├── mama-save.md
 │   ├── mama-recall.md
@@ -229,7 +241,7 @@ jobs:
     └── mama-context.md
 
 ~/.npm/_npx/                     # MCP server cached here
-└── @spellon/mama-server/
+└── @jungjaehoon-ui/mama-server/
 
 ~/.claude/mama-memory.db         # Shared database
 ```
@@ -237,12 +249,13 @@ jobs:
 ### Claude Desktop Installation
 
 **Add to `claude_desktop_config.json`:**
+
 ```json
 {
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@spellon/mama-server"],
+      "args": ["-y", "@jungjaehoon-ui/mama-server"],
       "env": {
         "MAMA_DB_PATH": "${HOME}/.claude/mama-memory.db"
       }
@@ -251,7 +264,7 @@ jobs:
 }
 ```
 
-**First use:** npx downloads @spellon/mama-server automatically
+**First use:** npx downloads @jungjaehoon-ui/mama-server automatically
 
 ---
 
@@ -260,10 +273,12 @@ jobs:
 ### Decision: 2-Package Architecture
 
 **Separation:**
-- **MCP Server** (@spellon/mama-server): Heavy dependencies (better-sqlite3, @huggingface/transformers)
-- **Plugin** (mama@spellon): Lightweight (Markdown + JSON configs)
+
+- **MCP Server** (@jungjaehoon-ui/mama-server): Heavy dependencies (better-sqlite3, @huggingface/transformers)
+- **Plugin** (mama@jungjaehoon-ui): Lightweight (Markdown + JSON configs)
 
 **Benefits:**
+
 - ✅ Share MCP server across Claude Code + Claude Desktop
 - ✅ Plugin updates don't require MCP server recompilation
 - ✅ MCP server can be used standalone (API server, CLI tool)
@@ -272,19 +287,22 @@ jobs:
 ### Decision: npx for MCP Server Distribution
 
 **Why not bundle in plugin?**
+
 - ❌ Native modules (better-sqlite3) are platform-specific
 - ❌ Transformers models are 120MB+
 - ❌ Cannot pre-compile for all platforms
 
 **Why npx?**
+
 - ✅ Auto-downloads on first use
-- ✅ Caches locally (~/.npm/_npx/)
+- ✅ Caches locally (~/.npm/\_npx/)
 - ✅ Compiles native modules for user's platform
 - ✅ Official MCP servers use this pattern
 
 ### Decision: Marketplace Repo Separate from Dev Repo
 
 **Why not use dev repo as marketplace?**
+
 - ✅ Dev repo has CI, tests, docs (users don't need)
 - ✅ Marketplace repo is clean, plugin-only
 - ✅ Can have multiple plugins in marketplace later
@@ -319,6 +337,7 @@ cd packages/claude-code-plugin
 ### Release Workflow
 
 **1. Update version (both packages)**
+
 ```bash
 cd packages/mcp-server
 npm version patch
@@ -328,24 +347,28 @@ npm version patch
 ```
 
 **2. Tag release**
+
 ```bash
 git tag v1.0.1
 git push --tags
 ```
 
 **3. GitHub Release triggers:**
-- `publish-mcp.yml` → npm publish @spellon/mama-server
-- `publish-plugin.yml` → sync to spellon/claude-plugins
+
+- `publish-mcp.yml` → npm publish @jungjaehoon-ui/mama-server
+- `publish-plugin.yml` → sync to jungjaehoon-ui/claude-plugins
 
 **4. Users get updates:**
+
 - MCP server: npx auto-updates on next use
-- Plugin: `/plugin update mama@spellon`
+- Plugin: `/plugin update mama@jungjaehoon-ui`
 
 ---
 
 ## Migration from Current Structure
 
 **Current (MAMA):**
+
 ```
 MAMA/
 ├── mama-plugin/              # Plugin files
@@ -353,6 +376,7 @@ MAMA/
 ```
 
 **New (MAMA monorepo):**
+
 ```
 ~/MAMA/
 └── packages/

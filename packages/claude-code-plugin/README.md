@@ -28,8 +28,8 @@ MAMA is an always-on companion for Claude Code that remembers how you think. It 
 ### Claude Code
 
 ```bash
-/plugin marketplace add spellon/claude-plugins
-/plugin install mama@spellon
+/plugin marketplace add jungjaehoon-ui/claude-plugins
+/plugin install mama@jungjaehoon-ui
 ```
 
 **First use:** MCP server downloads automatically (~1-2 min)
@@ -43,7 +43,7 @@ Add to `claude_desktop_config.json`:
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@spellon/mama-server"]
+      "args": ["-y", "@jungjaehoon-ui/mama-server"]
     }
   }
 }
@@ -94,13 +94,13 @@ You: "How should I handle testing?"
 
 ## 💻 Commands Reference
 
-| Command | Purpose |
-|---------|---------|
-| `/mama-save` | Save a decision with reasoning |
-| `/mama-recall <topic>` | View decision evolution history |
-| `/mama-suggest <question>` | Semantic search across decisions |
-| `/mama-list [--limit N]` | List recent decisions (default 10) |
-| `/mama-configure` | Change embedding model or settings |
+| Command                    | Purpose                            |
+| -------------------------- | ---------------------------------- |
+| `/mama-save`               | Save a decision with reasoning     |
+| `/mama-recall <topic>`     | View decision evolution history    |
+| `/mama-suggest <question>` | Semantic search across decisions   |
+| `/mama-list [--limit N]`   | List recent decisions (default 10) |
+| `/mama-configure`          | Change embedding model or settings |
 
 **Full reference:** [Commands Reference](../../docs/reference/commands.md)
 
@@ -110,10 +110,10 @@ You: "How should I handle testing?"
 
 MAMA operates in **two tiers** with full transparency:
 
-| Tier | Features | Accuracy |
-|------|----------|----------|
-| **🟢 Tier 1** | Vector search + Graph + Recency | 80% |
-| **🟡 Tier 2** | Exact match only | 40% |
+| Tier          | Features                        | Accuracy |
+| ------------- | ------------------------------- | -------- |
+| **🟢 Tier 1** | Vector search + Graph + Recency | 80%      |
+| **🟡 Tier 2** | Exact match only                | 40%      |
 
 **If you see Tier 2:** [Tier 2 Remediation Guide](docs/guides/tier-2-remediation.md)
 
@@ -124,26 +124,31 @@ MAMA operates in **two tiers** with full transparency:
 ## 📖 Documentation
 
 ### For New Users
+
 - **[Getting Started Tutorial](docs/tutorials/getting-started.md)** - 10-minute quickstart
 - **[First Decision Tutorial](docs/tutorials/first-decision.md)** - Best practices
 - **[Understanding Tiers](docs/tutorials/understanding-tiers.md)** - Tier system explained
 
 ### Task-Oriented Guides
+
 - **[Installation Guide](docs/guides/installation.md)** - Complete installation
 - **[Troubleshooting Guide](docs/guides/troubleshooting.md)** - Common issues and fixes
 - **[Configuration Guide](docs/guides/configuration.md)** - All settings
 
 ### Technical Reference
+
 - **[Commands Reference](docs/reference/commands.md)** - All `/mama-*` commands
 - **[MCP Tool API](docs/reference/api.md)** - Tool interfaces
 - **[Hooks Reference](docs/reference/hooks.md)** - Hook configuration
 
 ### Understanding MAMA
+
 - **[Architecture](docs/explanation/architecture.md)** - System architecture
 - **[Decision Graph](docs/explanation/decision-graph.md)** - Decision evolution
 - **[Data Privacy](docs/explanation/data-privacy.md)** - Privacy-first design
 
 ### For Contributors
+
 - **[Developer Playbook](docs/development/developer-playbook.md)** - Architecture & standards
 - **[Contributing Guide](docs/development/contributing.md)** - How to contribute
 - **[Testing Guide](docs/development/testing.md)** - Test suite
@@ -199,6 +204,7 @@ npm run test:coverage
 ```
 
 **Test coverage:** 134 tests (100% pass rate)
+
 - Unit tests: 62 (core logic)
 - Integration tests: 39 (hooks, workflows)
 - Regression tests: 33 (bug prevention)
@@ -223,10 +229,12 @@ npm run test:coverage
 ## 🚀 Performance
 
 **Tier 1:**
+
 - First query: ~987ms (model load + inference)
 - Subsequent queries: ~89ms (cached)
 
 **Tier 2:**
+
 - All queries: ~12ms (exact match only)
 
 **Learn more:** [Performance Characteristics](docs/explanation/performance.md)
@@ -237,12 +245,12 @@ npm run test:coverage
 
 MAMA uses a **2-package structure**:
 
-### 1. MCP Server (@spellon/mama-server)
+### 1. MCP Server (@jungjaehoon-ui/mama-server)
 
 Independent npm package shared across all MCP clients:
 
 ```
-@spellon/mama-server/
+@jungjaehoon-ui/mama-server/
 ├── src/
 │   ├── server.js       # MCP server implementation
 │   ├── db/             # SQLite + better-sqlite3
@@ -260,7 +268,7 @@ Lightweight plugin referencing the MCP server:
 ```
 mama-plugin/
 ├── .claude-plugin/     # Plugin manifest
-├── .mcp.json           # References @spellon/mama-server
+├── .mcp.json           # References @jungjaehoon-ui/mama-server
 ├── commands/           # /mama-* command definitions (Markdown)
 ├── hooks/              # Hook configurations (JSON)
 ├── skills/             # Auto-context skill (Markdown)
@@ -268,6 +276,7 @@ mama-plugin/
 ```
 
 **Benefits:**
+
 - ✅ One MCP server → Multiple clients (Code, Desktop, etc.)
 - ✅ Automatic dependency management (npx)
 - ✅ Shared decision database across all tools
@@ -279,6 +288,7 @@ mama-plugin/
 ## 🤝 Contributing
 
 We welcome contributions! Please see:
+
 - [Contributing Guide](docs/development/contributing.md)
 - [Developer Playbook](docs/development/developer-playbook.md)
 - [Code Standards](docs/development/code-standards.md)

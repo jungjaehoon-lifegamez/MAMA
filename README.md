@@ -34,7 +34,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@spellon/mama-server"]
+      "args": ["-y", "@jungjaehoon-ui/mama-server"]
     }
   }
 }
@@ -64,17 +64,25 @@ After installation:
 
 # List all decisions
 /mama-list
+
+# Save current session state (checkpoint)
+/mama-checkpoint "Implementing auth module, token issue resolved"
+
+# Resume from last checkpoint
+/mama-resume
 ```
 
 ## Available Commands
 
-| Command | Purpose |
-|---------|---------|
-| `/mama-save` | Save decision with reasoning and confidence |
-| `/mama-recall <topic>` | View full evolution history for a topic |
-| `/mama-suggest <query>` | Semantic search across all decisions |
-| `/mama-list` | Browse recent decisions chronologically |
-| `/mama-configure` | View/modify settings and tier status |
+| Command                      | Purpose                                         |
+| ---------------------------- | ----------------------------------------------- |
+| `/mama-save`                 | Save decision with reasoning and confidence     |
+| `/mama-recall <topic>`       | View full evolution history for a topic         |
+| `/mama-suggest <query>`      | Semantic search across all decisions            |
+| `/mama-list`                 | Browse recent decisions chronologically         |
+| `/mama-checkpoint <summary>` | Save current session state for later resumption |
+| `/mama-resume`               | Load last checkpoint and restore context        |
+| `/mama-configure`            | View/modify settings and tier status            |
 
 ---
 
@@ -82,7 +90,7 @@ After installation:
 
 MAMA uses a two-package architecture:
 
-### MCP Server (@spellon/mama-server)
+### MCP Server (@jungjaehoon-ui/mama-server)
 
 Published as an independent npm package. Handles SQLite database and vector embeddings. Shared across Claude Code, Claude Desktop, and any MCP client.
 
@@ -114,6 +122,9 @@ Queries work across different languages using multilingual embeddings.
 **Tier Transparency**
 System always shows what's working. Degraded mode still functions, just without vector search.
 
+**Session Continuity**
+Save your workspace state (`/mama-checkpoint`) and resume exactly where you left off (`/mama-resume`), preventing context loss between sessions.
+
 ---
 
 ## Project Structure
@@ -123,7 +134,7 @@ This is a monorepo containing two packages:
 ```
 MAMA/
 ├── packages/
-│   ├── mcp-server/          # @spellon/mama-server (npm)
+│   ├── mcp-server/          # @jungjaehoon-ui/mama-server (npm)
 │   │   ├── src/             # Server implementation
 │   │   └── tests/           # Server tests
 │   │
@@ -183,12 +194,14 @@ npm start  # Runs in stdio mode
 ## Documentation
 
 ### User Guides
+
 - [Getting Started](docs/tutorials/getting-started.md) - 10-minute quickstart
 - [Installation](docs/guides/installation.md) - Complete setup guide
 - [Commands Reference](docs/reference/commands.md) - All available commands
 - [Troubleshooting](docs/guides/troubleshooting.md) - Common issues
 
 ### Developer Docs
+
 - [Developer Playbook](docs/development/developer-playbook.md) - Architecture overview
 - [Contributing Guide](docs/development/contributing.md) - How to contribute
 - [Testing Guide](docs/development/testing.md) - Test suite documentation
@@ -200,6 +213,7 @@ npm start  # Runs in stdio mode
 ## Testing
 
 134 tests, 100% pass rate:
+
 - 62 unit tests (core logic)
 - 39 integration tests (hooks, workflows)
 - 33 regression tests (bug prevention)
@@ -223,11 +237,17 @@ MIT - see [LICENSE](LICENSE) for details
 
 ---
 
+## Acknowledgments
+
+MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While MAMA is a distinct implementation focused on local-first SQLite/MCP architecture for Claude, we appreciate their pioneering work in LLM memory management.
+
+---
+
 ## Links
 
 - [GitHub Repository](https://github.com/jungjaehoon-ui/MAMA)
 - [Issues](https://github.com/jungjaehoon-ui/MAMA/issues)
-- [npm Package](https://www.npmjs.com/package/@spellon/mama-server)
+- [npm Package](https://www.npmjs.com/package/@jungjaehoon-ui/mama-server)
 - [Documentation](docs/index.md)
 
 ---
