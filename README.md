@@ -14,6 +14,18 @@ An always-on companion for Claude Code and Claude Desktop that remembers decisio
 
 **The killer feature:** Session continuity. End your day with `/mama-checkpoint`, resume tomorrow with `/mama-resume` - and pick up exactly where you left off with full context.
 
+## Why MAMA?
+
+**"Reasoning Graph" over Knowledge Graph.**
+
+Modern vector databases and knowledge graphs often create information overload, burying key insights under thousands of irrelevant links. MAMA takes a different approach:
+
+- **Narrative-First**: We store _why_ you did something (Reasoning), not just _what_ you did (Code).
+- **Evolutionary**: We track how decisions supersede each other over time.
+- **Agent-Centric**: Optimized for how LLMs actually retrieve and use information, not for theoretical graph completeness.
+
+We prioritize **Retrieval Usability**. If an LLM can't easily find and understand the context, the data is useless.
+
 ---
 
 ## Installation
