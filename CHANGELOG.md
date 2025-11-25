@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.3] - 2025-11-25
+
+### Changed
+
+- **Enhanced All Tool Descriptions**: All 4 MCP tools now have context-aware descriptions based on actual usage patterns
+  - `save`: 4-section checkpoint format, 5-layer decision narrative
+  - `search`: Use cases (prior art, context after checkpoint, debugging), decision evolution inference
+  - `update`: Real-world validation timing (days/weeks later), failure learning importance
+  - `load_checkpoint`: Staleness warning, verification-first workflow
+
+---
+
 ## [1.2.2] - 2025-11-25
 
 ### Added
