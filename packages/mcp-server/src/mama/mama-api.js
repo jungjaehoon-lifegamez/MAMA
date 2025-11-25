@@ -1336,10 +1336,10 @@ function generatePreCleanupReport() {
       level: riskLevel,
       message:
         riskLevel === 'HIGH'
-          ? '⚠️ HIGH RISK: 삭제 대상이 50% 초과. 백업 후 신중하게 진행하세요.'
+          ? '⚠️ HIGH RISK: Deletion targets exceed 50%. Create backup before proceeding.'
           : riskLevel === 'MEDIUM'
-            ? '⚡ MEDIUM RISK: 삭제 대상이 30-50%. 백업 확인 권장.'
-            : '✅ LOW RISK: 삭제 대상이 30% 미만. 안전하게 진행 가능.',
+            ? '⚡ MEDIUM RISK: Deletion targets 30-50%. Verify backup recommended.'
+            : '✅ LOW RISK: Deletion targets under 30%. Safe to proceed.',
     },
     deletion_target_samples: samples,
   };
@@ -1696,16 +1696,16 @@ function validateCleanupResult() {
 
   if (remainingRatio < 0.05) {
     status = 'SUCCESS';
-    message = '✅ SUCCESS: 잔여 자동 링크 비율이 5% 미만입니다. 목표 달성!';
-    recommendation = '정리가 성공적으로 완료되었습니다. 마이그레이션을 계속 진행할 수 있습니다.';
+    message = '✅ SUCCESS: Remaining auto-links under 5%. Target achieved!';
+    recommendation = 'Cleanup completed successfully. You can proceed with migration.';
   } else if (remainingRatio < 0.1) {
     status = 'PARTIAL';
-    message = '⚡ PARTIAL: 잔여 자동 링크 비율이 5-10%입니다. 추가 정리 권장.';
-    recommendation = '추가로 자동 링크를 정리하려면 execute_link_cleanup을 다시 실행하세요.';
+    message = '⚡ PARTIAL: Remaining auto-links 5-10%. Additional cleanup recommended.';
+    recommendation = 'Run execute_link_cleanup again to clean up more auto-links.';
   } else {
     status = 'FAILED';
-    message = '⚠️ FAILED: 잔여 자동 링크 비율이 10% 초과입니다. 롤백 또는 재실행 필요.';
-    recommendation = '목표에 크게 미달했습니다. 백업에서 복원 후 재시도를 권장합니다.';
+    message = '⚠️ FAILED: Remaining auto-links exceed 10%. Rollback or re-run needed.';
+    recommendation = 'Significantly missed target. Consider restoring from backup and retry.';
   }
 
   // Generate post-cleanup report
@@ -2136,7 +2136,7 @@ function generateQualityReport(options = {}) {
   if (narrativeCoveragePct < defaultThresholds.narrativeCoverage * 100) {
     recommendations.push({
       type: 'narrative_coverage',
-      message: `서사 커버리지가 목표(${defaultThresholds.narrativeCoverage * 100}%)보다 낮습니다. evidence, alternatives, risks 필드를 채우지 않은 결정에 서사를 추가하세요.`,
+      message: `Narrative coverage below target (${defaultThresholds.narrativeCoverage * 100}%). Add narrative to decisions missing evidence, alternatives, or risks fields.`,
       target: `${defaultThresholds.narrativeCoverage * 100}%`,
       current: coverage.narrativeCoverage,
     });
@@ -2147,7 +2147,7 @@ function generateQualityReport(options = {}) {
   if (linkCoveragePct < defaultThresholds.linkCoverage * 100) {
     recommendations.push({
       type: 'link_coverage',
-      message: `링크 커버리지가 목표(${defaultThresholds.linkCoverage * 100}%)보다 낮습니다. 관련 결정 간 링크를 추가하세요.`,
+      message: `Link coverage below target (${defaultThresholds.linkCoverage * 100}%). Add links between related decisions.`,
       target: `${defaultThresholds.linkCoverage * 100}%`,
       current: coverage.linkCoverage,
     });
@@ -2158,7 +2158,7 @@ function generateQualityReport(options = {}) {
   if (richReasonRatioPct < defaultThresholds.richReasonRatio * 100) {
     recommendations.push({
       type: 'link_quality',
-      message: `링크 품질이 목표(${defaultThresholds.richReasonRatio * 100}%)보다 낮습니다. 링크의 reason 필드에 구체적 인과관계와 근거를 추가하세요.`,
+      message: `Link quality below target (${defaultThresholds.richReasonRatio * 100}%). Add specific causality and evidence to link reason fields.`,
       target: `${defaultThresholds.richReasonRatio * 100}%`,
       current: quality.linkQuality.richReasonRatio,
     });
@@ -2170,7 +2170,7 @@ function generateQualityReport(options = {}) {
     const successRatePct = parseFloat(restartMetrics.successRate.successRate);
     recommendations.push({
       type: 'restart_success_rate',
-      message: `재시작 성공률이 목표(95%)보다 낮습니다. 실패 사유를 분석하고 체크포인트 품질을 개선하세요.`,
+      message: `Restart success rate below target (95%). Analyze failure reasons and improve checkpoint quality.`,
       target: '95%',
       current: restartMetrics.successRate.successRate,
     });
@@ -2185,7 +2185,7 @@ function generateQualityReport(options = {}) {
     ) {
       recommendations.push({
         type: 'restart_latency_full',
-        message: `서사+링크 확장 p95 지연이 목표(2.5s)를 초과했습니다. 링크 확장 깊이를 제한하거나 캐싱을 고려하세요.`,
+        message: `Narrative+link expansion p95 latency exceeds target (2.5s). Consider limiting link expansion depth or adding caching.`,
         target: `${defaultThresholds.restartLatencyP95Full}ms`,
         current: `${fullP95}ms`,
       });
@@ -2198,7 +2198,7 @@ function generateQualityReport(options = {}) {
     ) {
       recommendations.push({
         type: 'restart_latency_summary',
-        message: `요약 모드 p95 지연이 목표(1.0s)를 초과했습니다. 쿼리 최적화 또는 인덱스 추가를 검토하세요.`,
+        message: `Summary mode p95 latency exceeds target (1.0s). Review query optimization or add indexes.`,
         target: `${defaultThresholds.restartLatencyP95Summary}ms`,
         current: `${summaryP95}ms`,
       });
