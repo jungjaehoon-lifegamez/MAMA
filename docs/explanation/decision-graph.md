@@ -7,9 +7,11 @@
 ## The Problem
 
 Traditional documentation shows final decisions:
+
 > "Use JWT for authentication"
 
 But where's the why?
+
 - Why not session cookies?
 - Why not OAuth?
 - What problems led to JWT?
@@ -43,37 +45,46 @@ Track the **evolution**, not just the conclusion:
 ## Decision Graph Structure
 
 ### Nodes
+
 Each decision is a node with:
+
 - **topic**: Decision identifier (e.g., 'auth_strategy')
 - **decision**: What was decided
 - **reasoning**: Why it was decided
 - **confidence**: 0.0-1.0
 - **outcome**: pending/success/failure/partial/superseded
 
-### Edges
-Decisions connect via edges:
-- **supersedes**: Decision A replaces Decision B
-- **refines**: Decision A improves Decision B
-- **contradicts**: Decision A conflicts with Decision B
+### Edges (v1.2.0 Simplification)
+
+In v1.2.0, MAMA uses only **supersedes** edges (same topic, automatic):
+
+- **supersedes**: Decision A replaces Decision B (same topic)
+
+**Removed:** refines, contradicts edges
+
+- **Why?** LLM can infer these relationships from time-ordered search results
+- **Benefit:** Simpler architecture, fewer constraints, more LLM flexibility
 
 ---
 
 ## Topic Reuse is Critical
 
 **✅ GOOD: Reuse same topic**
+
 ```javascript
-topic: 'auth_strategy'  // First attempt
-topic: 'auth_strategy'  // Second attempt
-topic: 'auth_strategy'  // Final decision
+topic: 'auth_strategy'; // First attempt
+topic: 'auth_strategy'; // Second attempt
+topic: 'auth_strategy'; // Final decision
 ```
 
 **Result:** Automatic supersedes chain showing evolution.
 
 **❌ BAD: Unique topics**
+
 ```javascript
-topic: 'auth_strategy_v1'
-topic: 'auth_strategy_v2'
-topic: 'auth_strategy_final'
+topic: 'auth_strategy_v1';
+topic: 'auth_strategy_v2';
+topic: 'auth_strategy_final';
 ```
 
 **Result:** No graph connections, lost evolution history.
@@ -111,15 +122,19 @@ When you recall a topic:
 ## Why This Matters
 
 ### Prevents Repetition
+
 See what was already tried and why it failed.
 
 ### Shows Context
+
 Understand the constraints and trade-offs.
 
 ### Tracks Confidence
+
 See how certainty evolved over time.
 
 ### Records Failures
+
 Failures are MORE valuable than successes!
 
 ---
@@ -139,6 +154,7 @@ Relearn:  Better decision (confidence: 0.9, outcome: success)
 ---
 
 **Related:**
+
 - [First Decision Tutorial](../tutorials/first-decision.md)
 - [Semantic Search](semantic-search.md)
 - [Tier System](tier-system.md)

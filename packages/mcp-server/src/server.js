@@ -27,30 +27,10 @@ const {
   ListToolsRequestSchema,
 } = require('@modelcontextprotocol/sdk/types.js');
 
-// Import MAMA tools
-const { saveDecisionTool } = require('./tools/save-decision.js');
-const { recallDecisionTool } = require('./tools/recall-decision.js');
-const { suggestDecisionTool } = require('./tools/suggest-decision.js');
-const { listDecisionsTool } = require('./tools/list-decisions.js');
-const { updateOutcomeTool } = require('./tools/update-outcome.js');
-const { saveCheckpointTool, loadCheckpointTool } = require('./tools/checkpoint-tools.js');
-const {
-  proposeLinkTool,
-  approveLinkTool,
-  rejectLinkTool,
-  getPendingLinksTool,
-  deprecateAutoLinksTool,
-  scanAutoLinksTool,
-  createLinkBackupTool,
-  generateCleanupReportTool,
-  restoreLinkBackupTool,
-  executeLinkCleanupTool,
-  validateCleanupResultTool,
-} = require('./tools/link-tools.js');
-const {
-  generateQualityReportTool,
-  getRestartMetricsTool,
-} = require('./tools/quality-metrics-tools.js');
+// Import MAMA tools - Simplified to 4 core tools (2025-11-25 refactor)
+// Rationale: LLM can infer relationships from search results, fewer tools = more flexibility
+const { loadCheckpointTool } = require('./tools/checkpoint-tools.js');
+const mama = require('./mama/mama-api.js');
 
 // Import core modules
 const { initDB } = require('./mama/db-manager.js');
@@ -162,227 +142,127 @@ class MAMAServer {
   }
 
   setupHandlers() {
-    // List available tools
+    // List available tools - Simplified to 4 core tools (2025-11-25)
+    // Design principle: LLM infers relationships from search results
+    // Fewer tools = more flexibility, less constraint
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
+        // 1. SAVE - Unified save for decisions and checkpoints
         {
-          name: 'save_decision',
-          description: "Save a decision or insight to MAMA's memory for future reference.",
+          name: 'save',
+          description:
+            "Save a decision or checkpoint to MAMA's memory. type='decision': architectural choices, lessons learned (same topic = newer supersedes older, tracking evolution). type='checkpoint': session state to resume later.",
           inputSchema: {
             type: 'object',
             properties: {
+              type: {
+                type: 'string',
+                enum: ['decision', 'checkpoint'],
+                description: "What to save: 'decision' or 'checkpoint'",
+              },
+              // Decision fields
               topic: {
                 type: 'string',
                 description:
-                  "Decision topic identifier (e.g., 'auth_strategy'). Use lowercase with underscores.",
+                  "[Decision] Topic identifier (e.g., 'auth_strategy'). Same topic = new decision supersedes previous, creating evolution chain.",
               },
               decision: {
                 type: 'string',
-                description: "The decision made (e.g., 'Use JWT with refresh tokens').",
+                description: "[Decision] The decision made (e.g., 'Use JWT with refresh tokens').",
               },
               reasoning: {
                 type: 'string',
                 description:
-                  'Why this decision was made. REQUIRED - explain the context and rationale.',
+                  '[Decision] Why this decision was made. Explain context and rationale.',
               },
               confidence: {
                 type: 'number',
-                description: 'Confidence score 0.0-1.0. Default: 0.5',
+                description: '[Decision] Confidence 0.0-1.0. Default: 0.5',
                 minimum: 0,
                 maximum: 1,
               },
-              type: {
-                type: 'string',
-                enum: ['user_decision', 'assistant_insight'],
-                description: "Decision type. Default: 'user_decision'",
-              },
-              outcome: {
-                type: 'string',
-                enum: ['pending', 'success', 'failure', 'partial', 'superseded'],
-                description: "Outcome status. Default: 'pending'",
-              },
-            },
-            required: ['topic', 'decision', 'reasoning'],
-          },
-        },
-        {
-          name: 'recall_decision',
-          description: 'Recall full decision history for a specific topic.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              topic: {
-                type: 'string',
-                description: 'Decision topic to recall',
-              },
-            },
-            required: ['topic'],
-          },
-        },
-        {
-          name: 'suggest_decision',
-          description: 'Auto-suggest relevant past decisions based on user question.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              userQuestion: {
-                type: 'string',
-                description: "User's question or intent",
-              },
-              recencyWeight: {
-                type: 'number',
-                description: 'Weight for recency (0-1). Default: 0.3',
-                minimum: 0,
-                maximum: 1,
-              },
-            },
-            required: ['userQuestion'],
-          },
-        },
-        {
-          name: 'list_decisions',
-          description: 'List recent decisions with optional limit',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              limit: {
-                type: 'number',
-                description: 'Maximum number of decisions (default: 10)',
-              },
-            },
-          },
-        },
-        {
-          name: 'update_outcome',
-          description: 'Update the outcome status of an existing decision',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              decisionId: {
-                type: 'string',
-                description: "Decision ID to update (e.g., 'decision_auth_strategy_123456_abc').",
-              },
-              outcome: {
-                type: 'string',
-                enum: ['SUCCESS', 'FAILED', 'PARTIAL'],
-                description: 'New outcome status',
-              },
-              failure_reason: {
-                type: 'string',
-                description: "Why the decision failed (REQUIRED if outcome='FAILED').",
-              },
-              limitation: {
-                type: 'string',
-                description: "What limitations were discovered (OPTIONAL for outcome='PARTIAL').",
-              },
-            },
-            required: ['decisionId', 'outcome'],
-          },
-        },
-        {
-          name: 'save_checkpoint',
-          description:
-            'Save the current session state (checkpoint). Format: 1) Goal & Progress (honest about unfinished), 2) Evidence with status [Verified/Not run/Assumed], 3) Unfinished & Risks, 4) Next Agent briefing (Definition of Done + quick health-check commands).',
-          inputSchema: {
-            type: 'object',
-            properties: {
+              // Checkpoint fields
               summary: {
                 type: 'string',
-                description:
-                  'Summary of the current session state, what was accomplished, and what is pending.',
+                description: '[Checkpoint] Session state summary: what was done, what is pending.',
+              },
+              next_steps: {
+                type: 'string',
+                description: '[Checkpoint] Instructions for next session.',
               },
               open_files: {
                 type: 'array',
                 items: { type: 'string' },
-                description: 'List of currently relevant or open files.',
-              },
-              next_steps: {
-                type: 'string',
-                description: 'Clear instructions for the next session on what to do next.',
+                description: '[Checkpoint] Currently relevant files.',
               },
             },
-            required: ['summary'],
+            required: ['type'],
           },
         },
+        // 2. SEARCH - Unified search across decisions and checkpoints
+        {
+          name: 'search',
+          description:
+            'Search decisions and checkpoints. With query: semantic search. Without query: returns recent items by time.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description:
+                  'Search query (optional). If empty, returns recent items sorted by time.',
+              },
+              type: {
+                type: 'string',
+                enum: ['all', 'decision', 'checkpoint'],
+                description: "Filter by type. Default: 'all'",
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results. Default: 10',
+              },
+            },
+          },
+        },
+        // 3. UPDATE - Update decision outcome
+        {
+          name: 'update',
+          description:
+            'Update an existing decision outcome (success/failure/partial). Use after trying a decision to track what worked.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              id: {
+                type: 'string',
+                description: 'Decision ID to update.',
+              },
+              outcome: {
+                type: 'string',
+                enum: ['success', 'failure', 'partial'],
+                description: 'New outcome status.',
+              },
+              reason: {
+                type: 'string',
+                description: 'Why it succeeded/failed/was partial.',
+              },
+            },
+            required: ['id', 'outcome'],
+          },
+        },
+        // 4. LOAD_CHECKPOINT - Resume previous session
         {
           name: 'load_checkpoint',
           description:
-            'Load the latest active session checkpoint. Use this at the start of a new session to resume work seamlessly.',
+            'Load the latest checkpoint to resume a previous session. Use at session start.',
           inputSchema: {
             type: 'object',
             properties: {},
           },
         },
-        // Epic 3: Link Collaboration & Governance
-        {
-          name: 'propose_link',
-          description: proposeLinkTool.description,
-          inputSchema: proposeLinkTool.inputSchema,
-        },
-        {
-          name: 'approve_link',
-          description: approveLinkTool.description,
-          inputSchema: approveLinkTool.inputSchema,
-        },
-        {
-          name: 'reject_link',
-          description: rejectLinkTool.description,
-          inputSchema: rejectLinkTool.inputSchema,
-        },
-        {
-          name: 'get_pending_links',
-          description: getPendingLinksTool.description,
-          inputSchema: getPendingLinksTool.inputSchema,
-        },
-        {
-          name: 'deprecate_auto_links',
-          description: deprecateAutoLinksTool.description,
-          inputSchema: deprecateAutoLinksTool.inputSchema,
-        },
-        {
-          name: 'scan_auto_links',
-          description: scanAutoLinksTool.description,
-          inputSchema: scanAutoLinksTool.inputSchema,
-        },
-        {
-          name: 'create_link_backup',
-          description: createLinkBackupTool.description,
-          inputSchema: createLinkBackupTool.inputSchema,
-        },
-        {
-          name: 'generate_cleanup_report',
-          description: generateCleanupReportTool.description,
-          inputSchema: generateCleanupReportTool.inputSchema,
-        },
-        {
-          name: 'restore_link_backup',
-          description: restoreLinkBackupTool.description,
-          inputSchema: restoreLinkBackupTool.inputSchema,
-        },
-        {
-          name: 'generate_quality_report',
-          description: generateQualityReportTool.description,
-          inputSchema: generateQualityReportTool.inputSchema,
-        },
-        {
-          name: 'get_restart_metrics',
-          description: getRestartMetricsTool.description,
-          inputSchema: getRestartMetricsTool.inputSchema,
-        },
-        {
-          name: 'execute_link_cleanup',
-          description: executeLinkCleanupTool.description,
-          inputSchema: executeLinkCleanupTool.inputSchema,
-        },
-        {
-          name: 'validate_cleanup_result',
-          description: validateCleanupResultTool.description,
-          inputSchema: validateCleanupResultTool.inputSchema,
-        },
       ],
     }));
 
-    // Handle tool execution
+    // Handle tool execution - 4 core tools only
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
@@ -390,65 +270,17 @@ class MAMAServer {
         let result;
 
         switch (name) {
-          case 'save_decision':
-            result = await saveDecisionTool.handler(args);
+          case 'save':
+            result = await this.handleSave(args);
             break;
-          case 'recall_decision':
-            result = await recallDecisionTool.handler(args);
+          case 'search':
+            result = await this.handleSearch(args);
             break;
-          case 'suggest_decision':
-            result = await suggestDecisionTool.handler(args);
-            break;
-          case 'list_decisions':
-            result = await listDecisionsTool.handler(args);
-            break;
-          case 'update_outcome':
-            result = await updateOutcomeTool.handler(args);
-            break;
-          case 'save_checkpoint':
-            result = await saveCheckpointTool.handler(args);
+          case 'update':
+            result = await this.handleUpdate(args);
             break;
           case 'load_checkpoint':
             result = await loadCheckpointTool.handler(args);
-            break;
-          case 'propose_link':
-            result = await proposeLinkTool.handler(args);
-            break;
-          case 'approve_link':
-            result = await approveLinkTool.handler(args);
-            break;
-          case 'reject_link':
-            result = await rejectLinkTool.handler(args);
-            break;
-          case 'get_pending_links':
-            result = await getPendingLinksTool.handler(args);
-            break;
-          case 'deprecate_auto_links':
-            result = await deprecateAutoLinksTool.handler(args);
-            break;
-          case 'scan_auto_links':
-            result = await scanAutoLinksTool.handler(args);
-            break;
-          case 'create_link_backup':
-            result = await createLinkBackupTool.handler(args);
-            break;
-          case 'generate_cleanup_report':
-            result = await generateCleanupReportTool.handler(args);
-            break;
-          case 'restore_link_backup':
-            result = await restoreLinkBackupTool.handler(args);
-            break;
-          case 'generate_quality_report':
-            result = await generateQualityReportTool.handler(args);
-            break;
-          case 'get_restart_metrics':
-            result = await getRestartMetricsTool.handler(args);
-            break;
-          case 'execute_link_cleanup':
-            result = await executeLinkCleanupTool.handler(args);
-            break;
-          case 'validate_cleanup_result':
-            result = await validateCleanupResultTool.handler(args);
             break;
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -475,6 +307,109 @@ class MAMAServer {
         };
       }
     });
+  }
+
+  /**
+   * Handle unified save (decision or checkpoint)
+   */
+  async handleSave(args) {
+    const { type } = args;
+
+    if (type === 'decision') {
+      const { topic, decision, reasoning, confidence = 0.5 } = args;
+      if (!topic || !decision || !reasoning) {
+        return { success: false, message: '❌ Decision requires: topic, decision, reasoning' };
+      }
+      const id = await mama.save({ topic, decision, reasoning, confidence });
+      return {
+        success: true,
+        id,
+        type: 'decision',
+        message: `✅ Decision saved: ${topic}`,
+      };
+    }
+
+    if (type === 'checkpoint') {
+      const { summary, next_steps, open_files } = args;
+      if (!summary) {
+        return { success: false, message: '❌ Checkpoint requires: summary' };
+      }
+      const id = await mama.saveCheckpoint({ summary, next_steps, open_files });
+      return {
+        success: true,
+        id,
+        type: 'checkpoint',
+        message: '✅ Checkpoint saved',
+      };
+    }
+
+    return { success: false, message: "❌ type must be 'decision' or 'checkpoint'" };
+  }
+
+  /**
+   * Handle unified search (decisions + checkpoints)
+   */
+  async handleSearch(args) {
+    const { query, type = 'all', limit = 10 } = args;
+
+    const results = [];
+
+    // Search decisions
+    if (type === 'all' || type === 'decision') {
+      let decisions;
+      if (query) {
+        decisions = await mama.suggest(query, limit);
+      } else {
+        decisions = await mama.list(limit);
+      }
+      results.push(
+        ...decisions.map((d) => ({
+          ...d,
+          _type: 'decision',
+        }))
+      );
+    }
+
+    // Search checkpoints
+    if (type === 'all' || type === 'checkpoint') {
+      const checkpoints = await mama.listCheckpoints(limit);
+      results.push(
+        ...checkpoints.map((c) => ({
+          id: `checkpoint_${c.id}`,
+          summary: c.summary,
+          next_steps: c.next_steps,
+          created_at: c.timestamp,
+          _type: 'checkpoint',
+        }))
+      );
+    }
+
+    // Sort by time (newest first) and limit
+    results.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    const limited = results.slice(0, limit);
+
+    return {
+      success: true,
+      count: limited.length,
+      results: limited,
+    };
+  }
+
+  /**
+   * Handle update (decision outcome)
+   */
+  async handleUpdate(args) {
+    const { id, outcome, reason } = args;
+
+    if (!id || !outcome) {
+      return { success: false, message: '❌ Update requires: id, outcome' };
+    }
+
+    await mama.updateOutcome(id, outcome.toUpperCase(), reason);
+    return {
+      success: true,
+      message: `✅ Updated ${id} → ${outcome}`,
+    };
   }
 
   async start() {

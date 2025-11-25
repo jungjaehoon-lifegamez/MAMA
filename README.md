@@ -4,7 +4,7 @@
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Version 1.1.0 | Link Governance & Narrative Preservation
+> Version 1.2.0 | Simplified Architecture (4 Core MCP Tools)
 
 MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work.
 
@@ -185,27 +185,45 @@ After installation:
 
 ---
 
-## MCP Tool Catalog
+## MCP Tool Catalog (v1.2.0)
 
-For MCP clients (responses are JSON stringified in `content[0].text`). Full schemas live in `docs/reference/api.md`.
+**Design principle:** LLM can infer decision evolution from time-ordered search results. Fewer tools = more LLM flexibility.
 
-### Core Memory
+| Tool                  | Description                    | Key Parameters                                                         |
+| --------------------- | ------------------------------ | ---------------------------------------------------------------------- |
+| **`save`**            | Save decision or checkpoint    | `type` ('decision' or 'checkpoint'), then type-specific fields         |
+| **`search`**          | Semantic search or list recent | `query` (optional), `type` ('all', 'decision', 'checkpoint'), `limit`  |
+| **`update`**          | Update decision outcome        | `id`, `outcome` ('success', 'failure', 'partial'), `reason` (optional) |
+| **`load_checkpoint`** | Resume previous session        | (none)                                                                 |
 
-- **`save_decision`** — Save a decision or assistant insight (`topic`, `decision`, `reasoning`; optional `confidence`, `outcome`, `type`).
-- **`recall_decision`** — Markdown history for a topic (shows supersedes chain).
-- **`suggest_decision`** — Semantic search by question (`userQuestion`, optional `recencyWeight`).
-- **`list_decisions`** — Recent decisions (default limit 10).
-- **`update_outcome`** — Update a decision outcome (`topic`, `outcome` = SUCCESS|FAILED|PARTIAL).
+### save Tool
 
-### Agent Protocol
+```json
+{
+  "type": "decision",
+  "topic": "auth_strategy",
+  "decision": "Use JWT with refresh tokens",
+  "reasoning": "Need stateless auth for API scaling",
+  "confidence": 0.8
+}
+```
 
-- **`save_checkpoint`** — Save session state. **Use the Truthful Continuity format (Goal & Progress, Evidence w/ status, Unfinished/Risks, Next Agent briefing).**
-- **`load_checkpoint`** — Resume session state (zero-context).
+```json
+{
+  "type": "checkpoint",
+  "summary": "Refactoring auth module. JWT working, need expiration validation.",
+  "next_steps": "1. Add expiration check\n2. Update tests",
+  "open_files": ["src/auth/jwt.ts", "tests/auth.test.ts"]
+}
+```
 
-### Planned
+### search Tool
 
-- **`save_insight`** — Specialized tool for insights (use `save_decision` with `type='assistant_insight'` for now).
-- **`evolve/supersede`** — Explicitly mark supersedes (currently handled implicitly by topic reuse).
+```json
+{ "query": "authentication", "limit": 5 }
+```
+
+Without `query`, returns recent items sorted by time (like a list command).
 
 ---
 

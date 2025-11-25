@@ -87,9 +87,11 @@ async function createSupersedesEdge(fromId, toId, reason) {
   const adapter = getAdapter();
 
   try {
+    // Auto-generated links: created_by='llm', approved_by_user=0 (pending approval)
+    // This ensures they appear in get_pending_links and require explicit approval
     const stmt = adapter.prepare(`
-      INSERT INTO decision_edges (from_id, to_id, relationship, reason, created_at)
-      VALUES (?, ?, 'supersedes', ?, ?)
+      INSERT INTO decision_edges (from_id, to_id, relationship, reason, created_at, created_by, approved_by_user)
+      VALUES (?, ?, 'supersedes', ?, ?, 'llm', 0)
     `);
 
     await stmt.run(fromId, toId, reason, Date.now());
@@ -173,154 +175,22 @@ function detectRefinement(_detection, _sessionContext) {
   return null;
 }
 
-/**
- * Create refines edge (multi-parent relationship)
- *
- * Task 5.3: Implement refines edge creation
- * AC #5: Multi-parent refinement
- *
- * @param {string} fromId - New decision ID
- * @param {string} toId - Parent decision ID
- * @param {string} reason - Reason for refinement
- */
-async function createRefinesEdge(fromId, toId, reason) {
-  const adapter = getAdapter();
-
-  try {
-    const stmt = adapter.prepare(`
-      INSERT INTO decision_edges (from_id, to_id, relationship, reason, created_at)
-      VALUES (?, ?, 'refines', ?, ?)
-    `);
-
-    await stmt.run(fromId, toId, reason, Date.now());
-  } catch (error) {
-    throw new Error(`Failed to create refines edge: ${error.message}`);
-  }
-}
-
-/**
- * Detect conflicting decisions (same topic, different decision)
- *
- * Task 5.4: Detect conflicting decisions
- * AC #2, #5: Relationship types
- *
- * @param {string} topic - Decision topic
- * @param {string} newDecision - New decision value
- * @param {string} newId - New decision ID (to exclude from search)
- * @returns {Promise<Array<Object>>} Conflicting decisions
- */
-async function detectConflicts(topic, newDecision, newId) {
-  const adapter = getAdapter();
-
-  try {
-    // Find active decisions on same topic with different decision value
-    const stmt = adapter.prepare(`
-      SELECT * FROM decisions
-      WHERE topic = ?
-        AND decision != ?
-        AND id != ?
-        AND superseded_by IS NULL
-        AND outcome IS NULL
-      ORDER BY created_at DESC
-    `);
-
-    const conflicts = await stmt.all(topic, newDecision, newId);
-    return conflicts || [];
-  } catch (error) {
-    throw new Error(`Failed to detect conflicts: ${error.message}`);
-  }
-}
-
-/**
- * Create contradicts edge (conflicting relationship)
- *
- * Task 5.5: Create contradicts edges for conflicts
- * AC #2, #5: Relationship types
- *
- * @param {string} fromId - New decision ID
- * @param {string} toId - Conflicting decision ID
- * @param {string} reason - Reason for contradiction
- */
-async function createContradictsEdge(fromId, toId, reason) {
-  const adapter = getAdapter();
-
-  try {
-    const stmt = adapter.prepare(`
-      INSERT INTO decision_edges (from_id, to_id, relationship, reason, created_at)
-      VALUES (?, ?, 'contradicts', ?, ?)
-    `);
-
-    await stmt.run(fromId, toId, reason, Date.now());
-  } catch (error) {
-    throw new Error(`Failed to create contradicts edge: ${error.message}`);
-  }
-}
-
-/**
- * Find semantically related decisions using vector search
- *
- * Story 014.14: AC #1 - Vector Search for Related Decisions
- *
- * @param {string} decisionId - New decision ID (exclude from search)
- * @param {string} topic - Decision topic
- * @param {string} decision - Decision text
- * @param {string} reasoning - Decision reasoning
- * @returns {Promise<Array<Object>>} Related decisions with similarity scores
- */
-async function findRelatedDecisions(decisionId, topic, decision, reasoning) {
-  const { queryVectorSearch } = require('./memory-store');
-
-  try {
-    // Combine decision + reasoning for semantic search
-    const searchText = `${decision}. ${reasoning}`;
-
-    // Vector search params
-    const params = {
-      query: searchText,
-      limit: 10, // Get more candidates for filtering
-      threshold: 0.75, // Minimum similarity (Story 014.14: AC #1)
-      timeWindow: 90 * 24 * 60 * 60 * 1000, // Last 90 days (Story 014.14: AC #1)
-    };
-
-    // Query vector database
-    const results = await queryVectorSearch(params);
-
-    // Filter out self and return top 5
-    return results.filter((r) => r.id !== decisionId).slice(0, 5);
-  } catch (error) {
-    info(`[decision-tracker] Vector search failed, returning empty: ${error.message}`);
-    return []; // Graceful degradation
-  }
-}
-
-/**
- * Detect if reasoning contains conflict keywords
- *
- * Story 014.14: AC #3 - Contradicts Edge Detection
- *
- * @param {string} newReasoning - New decision reasoning
- * @param {string} oldReasoning - Previous decision reasoning
- * @returns {boolean} True if conflicting
- */
-function isConflicting(newReasoning, oldReasoning) {
-  const conflictKeywords = [
-    'instead of',
-    'replace',
-    'not',
-    'contrary to',
-    'different from',
-    'opposite',
-    'revert',
-    'undo',
-    'abandon',
-    'deprecate',
-    'remove',
-  ];
-
-  const combined = `${newReasoning} ${oldReasoning}`.toLowerCase();
-
-  return conflictKeywords.some((keyword) => combined.includes(keyword));
-}
+// ════════════════════════════════════════════════════════════════════════════
+// NOTE: Auto-link functions REMOVED in v1.2.0
+//
+// Removed functions:
+//   - createRefinesEdge
+//   - detectConflicts
+//   - createContradictsEdge
+//   - findRelatedDecisions
+//   - isConflicting
+//
+// Reason: LLM can infer decision evolution from time-ordered search results.
+// Auto-links created 366 noise edges (100% cross-topic).
+// Only supersedes (same topic) is reliable.
+//
+// See: CHANGELOG.md v1.2.0 - 2025-11-25
+// ════════════════════════════════════════════════════════════════════════════
 
 /**
  * Learn Decision Function (Main API)
@@ -447,62 +317,14 @@ async function learnDecision(detection, toolExecution, sessionContext) {
     }
 
     // ════════════════════════════════════════════════════════
-    // Story 014.14: Semantic Similarity Edge Detection
+    // NOTE: Auto-link generation (refines, contradicts) REMOVED
+    //
+    // Reason: LLM can infer decision evolution from time-ordered
+    // search results. Auto-links created 366 noise edges (100%
+    // cross-topic). Only supersedes (same topic) is reliable.
+    //
+    // See: 2025-11-25 discussion on decision tracking algorithm
     // ════════════════════════════════════════════════════════
-    const relatedDecisions = await findRelatedDecisions(
-      decisionId,
-      detection.topic,
-      detection.decision,
-      detection.reasoning
-    );
-
-    for (const related of relatedDecisions) {
-      const similarity = related.similarity;
-
-      // Skip if already has supersedes relationship
-      if (related.superseded_by || related.id === previous?.id) {
-        continue;
-      }
-
-      // High similarity → refines edge (Story 014.14: AC #2)
-      if (similarity > 0.85) {
-        const reason = `Refines previous approach (similarity: ${similarity.toFixed(2)})`;
-        await createRefinesEdge(decisionId, related.id, reason);
-      }
-
-      // Medium similarity + conflict keywords → contradicts edge (Story 014.14: AC #3)
-      else if (similarity > 0.75 && isConflicting(detection.reasoning, related.reasoning)) {
-        const reason = `Contradicts previous approach (similarity: ${similarity.toFixed(2)})`;
-        await createContradictsEdge(decisionId, related.id, reason);
-      }
-    }
-
-    // ════════════════════════════════════════════════════════
-    // Task 5.3: Create Refines Edges (if multi-parent refinement)
-    // ════════════════════════════════════════════════════════
-    if (refinedFrom && refinedFrom.length > 0) {
-      // AC #5: Multi-parent refinement
-      await Promise.all(
-        refinedFrom.map(async (parentId) => {
-          const reason = `Refined decision from multiple parents`;
-          await createRefinesEdge(decisionId, parentId, reason);
-        })
-      );
-    }
-
-    // ════════════════════════════════════════════════════════
-    // Task 5.4, 5.5: Detect and Create Contradicts Edges
-    // ════════════════════════════════════════════════════════
-    const conflicts = await detectConflicts(detection.topic, detection.decision, decisionId);
-    if (conflicts.length > 0) {
-      // AC #2, #5: Conflicting decisions
-      await Promise.all(
-        conflicts.map(async (conflict) => {
-          const reason = `Conflicting decision: "${conflict.decision}" vs "${detection.decision}"`;
-          await createContradictsEdge(decisionId, conflict.id, reason);
-        })
-      );
-    }
 
     // ════════════════════════════════════════════════════════
     // Story 014.7.6: Generate notification if needs validation
@@ -562,6 +384,9 @@ function updateConfidence(prior, evidence) {
 }
 
 // Export API
+// NOTE: Auto-link functions (createRefinesEdge, createContradictsEdge,
+// findRelatedDecisions, isConflicting, detectConflicts) removed from exports.
+// LLM infers relationships from search results instead.
 module.exports = {
   learnDecision,
   generateDecisionId,
@@ -571,9 +396,4 @@ module.exports = {
   calculateCombinedConfidence,
   detectRefinement,
   updateConfidence,
-  createRefinesEdge,
-  detectConflicts,
-  createContradictsEdge,
-  findRelatedDecisions, // Story 014.14: AC #1
-  isConflicting, // Story 014.14: AC #3
 };

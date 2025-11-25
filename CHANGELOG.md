@@ -7,27 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.2.0] - 2025-11-25
+
+### Why This Release?
+
+**The Core Insight: LLM Can Infer Relationships**
+
+MAMA v1.1 added 11+ MCP tools including link governance (propose/approve/reject). But analysis revealed:
+
+- 366 auto-generated "refines" links were 100% cross-topic noise
+- Only "supersedes" edges (same topic) were reliable
+- LLM can infer refines/contradicts relationships from time-ordered search results
+
+**Design Principle:** Fewer tools = more LLM flexibility. More tools = more constraints.
+
+### Breaking Changes
+
+**MCP Tools reduced from 11 to 4:**
+
+| Old Tool (v1.1)     | New Equivalent (v1.2)           |
+| ------------------- | ------------------------------- |
+| `save_decision`     | `save` with `type='decision'`   |
+| `save_checkpoint`   | `save` with `type='checkpoint'` |
+| `recall_decision`   | `search` with query             |
+| `suggest_decision`  | `search` with query             |
+| `list_decisions`    | `search` without query          |
+| `update_outcome`    | `update`                        |
+| `load_checkpoint`   | `load_checkpoint` (unchanged)   |
+| `propose_link`      | **Removed**                     |
+| `approve_link`      | **Removed**                     |
+| `reject_link`       | **Removed**                     |
+| `get_pending_links` | **Removed**                     |
+
 ### Changed
 
-- **Hook Optimization**: Disabled PreToolUse and PostToolUse hooks for efficiency
-  - Only UserPromptSubmit hook remains active (best value/latency ratio)
-  - Timeout reduced from 1800ms to 1200ms (HTTP server makes this possible)
-  - Scripts retained for potential future re-enablement
-  - See decision: `mama.recall('hook_optimization_nov2025')`
+- **MCP Tool Consolidation**: 11 tools → 4 tools (save, search, update, load_checkpoint)
+  - `save`: Unified tool with `type` parameter ('decision' or 'checkpoint')
+  - `search`: Unified tool - semantic search with query, list recent without query
+  - `update`: Simplified outcome update
+  - `load_checkpoint`: Unchanged
+
+- **Auto-Link Generation Removed**: `decision-tracker.js` no longer creates refines/contradicts edges
+  - LLM infers relationships from time-ordered search results
+  - Only supersedes edges remain (same topic, automatic)
+
+- **Tool Descriptions Enhanced**: Added supersedes concept to help new LLMs understand evolution tracking
+  - "Same topic = new decision supersedes previous, creating evolution chain"
+
+### Removed
+
+- **Link Governance Tools**: propose_link, approve_link, reject_link, get_pending_links
+- **Auto-Link Code**: Functions for generating refines/contradicts edges
+- **406 Noise Links**: Migration 009 removed all refines (366) and contradicts (40) links
 
 ### Added
 
 - **HTTP Embedding Server**: Shared embedding service for fast hook execution
-  - MCP server now runs HTTP embedding server on `127.0.0.1:3847`
-  - Model stays loaded in memory (singleton) - no repeated 2-7s model loads
-  - Hooks use HTTP client for ~50ms embedding requests (vs 2-9s before)
+  - MCP server runs HTTP embedding server on `127.0.0.1:3847`
+  - Model stays loaded in memory - ~150ms hook latency (vs 2-9s before)
   - Endpoints: `/health`, `/embed`, `/embed/batch`
-  - Port file at `~/.mama-embedding-port` for client discovery
-  - Fallback to local model load if server unavailable
-  - **Result**: Hook latency reduced from 2-9 seconds to ~150ms (94% improvement)
 
-- **Typed Error Classes**: `MAMAError`, `NotFoundError`, `ValidationError`, `DatabaseError`, `EmbeddingError`
-- **Module Sync Check**: `scripts/sync-check.js` for detecting drift between plugin and server
+- **Migration 009**: `009-remove-auto-links.sql` for cleaning noise links
+- **listCheckpoints API**: `mama.listCheckpoints()` for unified search
+
+### Documentation
+
+- `docs/reference/api.md`: Complete rewrite for 4-tool architecture
+- `docs/reference/commands.md`: Added MCP tool mappings
+- `docs/explanation/decision-graph.md`: Updated edge types (supersedes only)
+- `CLAUDE.md`: Updated MCP Tools section
+- `README.md`: Updated to v1.2.0 with new tool catalog
 
 ---
 
@@ -564,7 +615,8 @@ LLM Proposes → User Reviews → User Approves/Rejects → System Enforces
 
 ---
 
-[Unreleased]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.0.0...v1.0.1

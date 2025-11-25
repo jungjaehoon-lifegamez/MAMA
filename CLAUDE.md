@@ -115,13 +115,16 @@ MAMA uses a split architecture to enable code reuse across multiple Claude clien
 - `transparency-banner.js` - Tier status display
 - `query-intent.js` - Query interpretation
 
-**MCP Tools (src/tools/):**
+**MCP Tools (4 core tools, 2025-11-25 refactor):**
 
-- `save-decision.js` - Save decisions with embeddings
-- `recall-decision.js` - Semantic search across decisions
-- `suggest-decision.js` - Related decision discovery
-- `list-decisions.js` - Browse all decisions
-- `update-outcome.js` - Update decision outcomes
+The MCP server exposes only 4 tools. Design principle: LLM can infer decision evolution from time-ordered search results. Fewer tools = more LLM flexibility.
+
+| Tool              | Description                                                           |
+| ----------------- | --------------------------------------------------------------------- |
+| `save`            | Save decision (`type='decision'`) or checkpoint (`type='checkpoint'`) |
+| `search`          | Semantic search (with `query`) or list recent items (without `query`) |
+| `update`          | Update decision outcome (success/failure/partial)                     |
+| `load_checkpoint` | Resume previous session                                               |
 
 **Transport:** Stdio-based MCP protocol (no HTTP server)
 
@@ -224,7 +227,7 @@ pnpm vitest run tests/commands/
 - **Database:** SQLite + sqlite-vec extension
 - **Location:** `~/.claude/mama-memory.db` (configurable via MAMA_DB_PATH)
 - **Schema:** decisions table with embedding_vector column
-- **Graph edges:** supersedes, contradicts, refines
+- **Graph edges:** supersedes only (refines/contradicts removed in 2025-11-25 refactor - LLM infers these)
 
 ### Embeddings
 
