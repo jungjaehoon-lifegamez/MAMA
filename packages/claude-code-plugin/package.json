@@ -1,6 +1,6 @@
 {
   "name": "mama-plugin",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "MAMA Plugin for Claude Code - Memory-Augmented MCP Assistant. Track decisions, learn from mistakes, never repeat errors.",
   "author": "SpineLift Team",
   "license": "MIT",
