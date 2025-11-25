@@ -1,6 +1,8 @@
 # Commands Reference
 
-**All MAMA slash commands**
+**All MAMA slash commands (Claude Code Plugin)**
+
+> **Note (v1.2.0):** These slash commands are part of the Claude Code plugin. They use the simplified 4-tool MCP API internally.
 
 ---
 
@@ -9,50 +11,58 @@
 Save a decision to MAMA's memory.
 
 **Usage:**
+
 ```
 /mama-save
 Topic: <topic_name>
 Decision: <what_you_decided>
 Reasoning: <why_you_decided>
 Confidence: <0.0-1.0>
-Outcome: <pending|success|failure|partial|superseded>
 ```
 
+**Key Concept:** Same topic = new decision **supersedes** previous, creating an evolution chain.
+
 **Parameters:**
-- `topic` (required): Decision identifier (e.g., 'auth_strategy')
+
+- `topic` (required): Decision identifier (e.g., 'auth_strategy'). Reuse same topic for related decisions.
 - `decision` (required): What was decided
 - `reasoning` (required): Why this was decided
 - `confidence` (optional): 0.0-1.0, default 0.5
-- `outcome` (optional): Decision status, default 'pending'
 
 **Examples:**
+
 ```
 /mama-save
 Topic: database_choice
 Decision: Use PostgreSQL
 Reasoning: Better JSON support and ACID guarantees needed
 Confidence: 0.9
-Outcome: success
 ```
+
+**MCP Tool:** Uses `save` with `type='decision'`
 
 ---
 
 ## `/mama-recall <topic>`
 
-View decision evolution history for a specific topic.
+Search for decisions related to a topic.
 
 **Usage:**
+
 ```
 /mama-recall <topic>
 ```
 
 **Examples:**
+
 ```
 /mama-recall auth_strategy
 /mama-recall database_choice
 ```
 
-**Output:** Shows full decision history with supersedes chain.
+**Output:** Shows matching decisions with evolution history (LLM infers supersedes from time order).
+
+**MCP Tool:** Uses `search` with `query=<topic>`
 
 ---
 
@@ -61,11 +71,13 @@ View decision evolution history for a specific topic.
 Semantic search across all decisions.
 
 **Usage:**
+
 ```
 /mama-suggest <question>
 ```
 
 **Examples:**
+
 ```
 /mama-suggest "How should I handle authentication?"
 /mama-suggest "What database should I use?"
@@ -73,26 +85,64 @@ Semantic search across all decisions.
 
 **Note:** Cross-lingual search supported. Multilingual queries will match decisions across different languages.
 
-**Output:** Top 3 relevant decisions with similarity scores.
+**Output:** Relevant decisions ranked by semantic similarity.
+
+**MCP Tool:** Uses `search` with `query=<question>`
 
 ---
 
 ## `/mama-list [--limit N]`
 
-List recent decisions.
+List recent decisions and checkpoints.
 
 **Usage:**
+
 ```
 /mama-list [--limit N]
 ```
 
 **Examples:**
+
 ```
-/mama-list               # Default 10 recent decisions
-/mama-list --limit 20    # Last 20 decisions
+/mama-list               # Default 10 recent items
+/mama-list --limit 20    # Last 20 items
 ```
 
-**Output:** Shows decision previews with tier status.
+**Output:** Shows recent decisions and checkpoints sorted by time.
+
+**MCP Tool:** Uses `search` without query
+
+---
+
+## `/mama-checkpoint`
+
+Save current session state for later resumption.
+
+**Usage:**
+
+```
+/mama-checkpoint
+```
+
+**Output:** Saves summary, next steps, and relevant files.
+
+**MCP Tool:** Uses `save` with `type='checkpoint'`
+
+---
+
+## `/mama-resume`
+
+Resume from the latest checkpoint.
+
+**Usage:**
+
+```
+/mama-resume
+```
+
+**Output:** Loads previous session context to continue work.
+
+**MCP Tool:** Uses `load_checkpoint`
 
 ---
 
@@ -101,24 +151,21 @@ List recent decisions.
 Configure MAMA settings.
 
 **Usage:**
+
 ```
-/mama-configure --model <model_name>
+/mama-configure --show
 /mama-configure --disable-hooks
 ```
 
 **Options:**
-- `--model`: Change embedding model
-- `--disable-hooks`: Disable automatic context injection
 
-**Examples:**
-```
-/mama-configure --model Xenova/all-MiniLM-L6-v2
-/mama-configure --disable-hooks
-```
+- `--show`: Display current configuration
+- `--disable-hooks`: Disable automatic context injection
 
 ---
 
 **Related:**
-- [MCP Tool API](api.md)
+
+- [MCP Tool API](api.md) - 4 core tools reference
 - [Configuration Options](configuration-options.md)
 - [Getting Started Tutorial](../tutorials/getting-started.md)

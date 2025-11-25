@@ -906,6 +906,36 @@ async function loadCheckpoint() {
 }
 
 /**
+ * List recent checkpoints (New Feature: Session Continuity)
+ *
+ * @param {number} limit - Max number of checkpoints to return
+ * @returns {Promise<Array>} Recent checkpoints
+ */
+async function listCheckpoints(limit = 10) {
+  try {
+    const adapter = getAdapter();
+    const stmt = adapter.prepare(`
+      SELECT * FROM checkpoints
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `);
+
+    const checkpoints = stmt.all(limit);
+
+    return checkpoints.map((c) => {
+      try {
+        c.open_files = JSON.parse(c.open_files);
+      } catch (e) {
+        c.open_files = [];
+      }
+      return c;
+    });
+  } catch (error) {
+    throw new Error(`Failed to list checkpoints: ${error.message}`);
+  }
+}
+
+/**
  * Propose a new link between decisions (Epic 3 - Story 3.1)
  *
  * LLM proposes a link for user approval. Link is created but marked as pending.
@@ -2307,35 +2337,42 @@ function formatQualityReportMarkdown(report) {
  * 3. Claude-First Design - Claude decides what to save
  * 4. Non-Intrusive - Silent failures for helpers (suggest)
  */
+// ════════════════════════════════════════════════════════════════════════════
+// MAMA API - Simplified to 4 MCP tools (2025-11-25)
+//
+// Design: LLM can infer decision evolution from time-ordered search results
+// More tools = more constraints = less LLM flexibility
+//
+// Retained internal functions for future use, but MCP exposes only:
+//   save, search, update, load_checkpoint
+// ════════════════════════════════════════════════════════════════════════════
 const mama = {
+  // Core functions (used by 4 MCP tools)
   save,
-  recall,
-  updateOutcome,
   suggest,
   list: listDecisions,
+  listCheckpoints,
+  updateOutcome,
   saveCheckpoint,
   loadCheckpoint,
-  // Epic 3: Link Collaboration & Governance
+  // Legacy functions (retained for internal use, not exposed via MCP)
+  recall,
   proposeLink,
   approveLink,
   rejectLink,
   getPendingLinks,
   deprecateAutoLinks,
-  // Epic 4: Quality Metrics & Observability
   calculateCoverage,
   calculateQuality,
   generateQualityReport,
-  // Epic 4: Restart Metrics (Story 4.2)
   logRestartAttempt,
   calculateRestartSuccessRate,
   calculateRestartLatency,
   getRestartMetrics,
-  // Epic 5: Migration & Cleanup (Story 5.1)
   scanAutoLinks,
   createLinkBackup,
   generatePreCleanupReport,
   restoreLinkBackup,
-  // Epic 5: Migration & Cleanup (Story 5.2)
   verifyBackupExists,
   deleteAutoLinks,
   validateCleanupResult,
