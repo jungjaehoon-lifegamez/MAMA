@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2025-11-25
+
+### Changed
+
+- **Plugin Commands Simplified**: 7 commands → 5 commands with shorter names
+
+| Old Command        | New Command        | Notes                     |
+| ------------------ | ------------------ | ------------------------- |
+| `/mama-save`       | `/mama:decision`   | Shorter, clearer          |
+| `/mama-recall`     | `/mama:search`     | Unified with suggest/list |
+| `/mama-suggest`    | `/mama:search`     | Unified                   |
+| `/mama-list`       | `/mama:search`     | Use without query         |
+| `/mama-checkpoint` | `/mama:checkpoint` | Same                      |
+| `/mama-resume`     | `/mama:resume`     | Same                      |
+| `/mama-configure`  | `/mama:configure`  | Same                      |
+
+- **Command Naming**: Changed from `/mama-*` to `/mama:*` format (plugin namespace)
+
+### Documentation
+
+- `docs/reference/commands.md`: Rewritten for 5 simplified commands
+
+---
+
 ## [1.2.0] - 2025-11-25
 
 ### Why This Release?
@@ -615,7 +639,8 @@ LLM Proposes → User Reviews → User Approves/Rejects → System Enforces
 
 ---
 
-[Unreleased]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/jungjaehoon-lifegamez/MAMA/compare/v1.0.1...v1.0.2
