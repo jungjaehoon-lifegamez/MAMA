@@ -173,7 +173,7 @@ class MAMAServer {
               reasoning: {
                 type: 'string',
                 description:
-                  '[Decision] Why this decision was made. Explain context and rationale.',
+                  '[Decision] Why this decision was made. Include 5-layer narrative: (1) Context - what problem/situation; (2) Evidence - what proves this works (tests, benchmarks, prior experience); (3) Alternatives - what other options were considered and why rejected; (4) Risks - known limitations or failure modes; (5) Rationale - final reasoning for this choice.',
               },
               confidence: {
                 type: 'number',
@@ -184,11 +184,13 @@ class MAMAServer {
               // Checkpoint fields
               summary: {
                 type: 'string',
-                description: '[Checkpoint] Session state summary: what was done, what is pending.',
+                description:
+                  '[Checkpoint] Session state summary. Use 4-section format: (1) 🎯 Goal & Progress - what was the goal, where did you stop; (2) ✅ Evidence - mark each item as Verified/Not run/Assumed with proof; (3) ⏳ Unfinished & Risks - incomplete work, blockers, unknowns; (4) 🚦 Next Agent Briefing - Definition of Done, quick health checks to run first.',
               },
               next_steps: {
                 type: 'string',
-                description: '[Checkpoint] Instructions for next session.',
+                description:
+                  '[Checkpoint] Instructions for next session: DoD (Definition of Done), quick verification commands (npm test, curl health), constraints/cautions.',
               },
               open_files: {
                 type: 'array',
@@ -358,16 +360,21 @@ class MAMAServer {
     if (type === 'all' || type === 'decision') {
       let decisions;
       if (query) {
-        decisions = await mama.suggest(query, limit);
+        // suggest() returns { results: [...] } object or null
+        const suggestResult = await mama.suggest(query, limit);
+        decisions = suggestResult?.results || [];
       } else {
         decisions = await mama.list(limit);
       }
-      results.push(
-        ...decisions.map((d) => ({
-          ...d,
-          _type: 'decision',
-        }))
-      );
+      // Ensure decisions is an array
+      if (Array.isArray(decisions)) {
+        results.push(
+          ...decisions.map((d) => ({
+            ...d,
+            _type: 'decision',
+          }))
+        );
+      }
     }
 
     // Search checkpoints
