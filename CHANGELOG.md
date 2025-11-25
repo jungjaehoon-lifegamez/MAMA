@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.2] - 2025-11-25
+
+### Added
+
+- **5-Layer Narrative Guide in Tool Descriptions**: LLMs now see structured format guides even without slash commands
+  - Checkpoint `summary`: 4-section format (🎯 Goal & Progress, ✅ Evidence, ⏳ Unfinished & Risks, 🚦 Next Agent Briefing)
+  - Checkpoint `next_steps`: DoD and verification commands hint
+  - Decision `reasoning`: 5-layer narrative (Context, Evidence, Alternatives, Risks, Rationale)
+
+### Fixed
+
+- **Search Tool Bug**: Fixed `decisions.map is not a function` error when `suggest()` returns null
+
+---
+
 ## [1.2.1] - 2025-11-25
 
 ### Changed
