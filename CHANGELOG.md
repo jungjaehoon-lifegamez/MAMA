@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.4] - 2025-11-25
+
+### Fixed
+
+- **Checkpoint Save Bug**: Fixed `Too few parameter values` error when saving checkpoints via `save` tool
+
+---
+
 ## [1.2.3] - 2025-11-25
 
 ### Changed

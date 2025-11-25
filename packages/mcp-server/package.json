@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-server",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "MAMA MCP Server - Memory-Augmented MCP Assistant for Claude Code & Desktop",
   "main": "src/server.js",
   "bin": {

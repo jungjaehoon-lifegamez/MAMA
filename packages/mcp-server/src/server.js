@@ -338,7 +338,7 @@ class MAMAServer {
       if (!summary) {
         return { success: false, message: '❌ Checkpoint requires: summary' };
       }
-      const id = await mama.saveCheckpoint({ summary, next_steps, open_files });
+      const id = await mama.saveCheckpoint(summary, open_files || [], next_steps || '');
       return {
         success: true,
         id,
