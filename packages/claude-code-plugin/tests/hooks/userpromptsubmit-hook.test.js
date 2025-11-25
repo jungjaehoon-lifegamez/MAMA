@@ -103,7 +103,7 @@ describe('Story M2.1: UserPromptSubmit Hook', () => {
       const tierInfo = { tier: 1, reason: 'Full features' };
       const line = hook.formatTransparencyLine(tierInfo, 1900, 2);
 
-      // Should warn about slow execution (>1800ms)
+      // Should warn about slow execution (>1200ms)
       expect(line).toContain('⚠️');
       expect(line).toContain('1900ms');
       expect(line).toContain('exceeded');
@@ -138,16 +138,16 @@ describe('Story M2.1: UserPromptSubmit Hook', () => {
   });
 
   describe('AC #4: Performance Requirements', () => {
-    it('should define MAX_RUNTIME_MS <=1800ms', () => {
+    it('should define MAX_RUNTIME_MS <=1200ms', () => {
       const scriptPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
       const content = fs.readFileSync(scriptPath, 'utf8');
 
-      // Check MAX_RUNTIME_MS is defined and <=1800 (balanced for embedding model loading)
+      // Check MAX_RUNTIME_MS is defined and <=1200 (optimized with SessionStart pre-warming)
       const match = content.match(/MAX_RUNTIME_MS\s*=\s*(\d+)/);
       expect(match).toBeTruthy();
 
       const maxRuntime = parseInt(match[1], 10);
-      expect(maxRuntime).toBeLessThanOrEqual(1800);
+      expect(maxRuntime).toBeLessThanOrEqual(1200);
     });
 
     it('should implement timeout handling', () => {

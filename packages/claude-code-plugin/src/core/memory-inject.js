@@ -48,10 +48,15 @@ async function injectDecisionContext(userMessage) {
       setTimeout(() => resolve({ timedOut: true, context: null }), TIMEOUT_MS)
     );
 
-    const injectionPromise = performMemoryInjection(userMessage, startTime).then((ctx) => ({
-      timedOut: false,
-      context: ctx,
-    }));
+    const injectionPromise = performMemoryInjection(userMessage, startTime)
+      .then((ctx) => ({
+        timedOut: false,
+        context: ctx,
+      }))
+      .catch((error) => {
+        logError(`[MAMA] Memory injection internal error: ${error.message}`);
+        return { timedOut: false, context: null };
+      });
 
     const result = await Promise.race([injectionPromise, timeoutPromise]);
 

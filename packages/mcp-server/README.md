@@ -115,13 +115,67 @@ Once configured, use MAMA through your MCP client:
 - **Local-First** - All data stored on your device (~/.claude/mama-memory.db)
 - **Multilingual** - Supports English, Korean, and other languages
 - **Shared Database** - One database works across all your MCP clients
+- **HTTP Embedding Server** - Shared embedding service for fast hook execution
+
+## HTTP Embedding Server
+
+The MCP server includes an HTTP embedding API that keeps the model loaded in memory:
+
+```
+┌─────────────────────────────────────────────────┐
+│              Local Machine                       │
+├─────────────────────────────────────────────────┤
+│  Claude Code  Claude Desktop  Cursor  Aider     │
+│       │            │            │       │        │
+│       └────────────┴────────────┴───────┘        │
+│                      │                           │
+│     ┌────────────────▼────────────────┐         │
+│     │  HTTP Embedding Server          │         │
+│     │  127.0.0.1:3847                 │         │
+│     │  Model stays loaded in memory   │         │
+│     └─────────────────────────────────┘         │
+└─────────────────────────────────────────────────┘
+```
+
+### Endpoints
+
+| Endpoint       | Method | Description                  |
+| -------------- | ------ | ---------------------------- |
+| `/health`      | GET    | Server status and model info |
+| `/embed`       | POST   | Single text embedding        |
+| `/embed/batch` | POST   | Batch text embeddings        |
+
+### Usage Examples
+
+```bash
+# Check server health
+curl http://127.0.0.1:3847/health
+
+# Generate embedding
+curl -X POST http://127.0.0.1:3847/embed \
+  -H "Content-Type: application/json" \
+  -d '{"text": "How does authentication work?"}'
+
+# Batch embeddings
+curl -X POST http://127.0.0.1:3847/embed/batch \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["query 1", "query 2", "query 3"]}'
+```
+
+### Benefits
+
+- **Fast**: ~50ms embedding requests (vs 2-9 seconds loading model each time)
+- **Shared**: Any local LLM client can use this service
+- **Automatic**: Starts with MCP server, no extra configuration needed
+- **Secure**: localhost only (127.0.0.1), no external access
 
 ## Technical Details
 
 - **Database:** SQLite + sqlite-vec extension
-- **Embeddings:** Transformers.js (Xenova/all-MiniLM-L6-v2, 384-dim)
-- **Transport:** stdio-based MCP protocol
+- **Embeddings:** Transformers.js (Xenova/multilingual-e5-small, 384-dim)
+- **Transport:** stdio-based MCP protocol + HTTP embedding server (port 3847)
 - **Storage:** ~/.claude/mama-memory.db (configurable via MAMA_DB_PATH)
+- **Port File:** ~/.mama-embedding-port (for client discovery)
 - **Node.js:** >= 18.0.0 required
 - **Disk Space:** ~500MB for embedding model cache
 
@@ -143,4 +197,4 @@ MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While 
 ---
 
 **Author:** SpineLift Team
-**Version:** 1.0.1
+**Version:** 1.1.0

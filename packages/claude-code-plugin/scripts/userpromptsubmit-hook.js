@@ -33,21 +33,43 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // Configuration
-const MAX_RUNTIME_MS = 1800; // p95 target: <1800ms (balanced for embedding model loading)
+const MAX_RUNTIME_MS = 1200; // p95 target: <1200ms (optimized with SessionStart pre-warming)
 // Note: SIMILARITY_THRESHOLD (0.75) is used in memory-inject.js
+
+/**
+ * Check if session was pre-warmed by SessionStart hook
+ *
+ * @returns {Object} Warm status {isWarm, warmTime}
+ */
+function getWarmStatus() {
+  const warmStatus = process.env.MAMA_WARM_STATUS;
+  const warmTime = process.env.MAMA_WARM_TIME;
+  const sessionStart = process.env.MAMA_SESSION_START;
+
+  if (warmStatus === 'ready') {
+    info(`[Hook] Session pre-warmed (${warmTime}ms at ${sessionStart})`);
+    return { isWarm: true, warmTime: parseInt(warmTime, 10) || 0 };
+  }
+
+  return { isWarm: false, warmTime: 0 };
+}
 
 /**
  * Get tier information from config
  *
- * @returns {Object} Tier info {tier, vectorSearchEnabled, reason}
+ * @returns {Object} Tier info {tier, vectorSearchEnabled, reason, isWarm}
  */
 function getTierInfo() {
+  // Check warm status from SessionStart hook
+  const warmStatus = getWarmStatus();
+
   // Fast path for testing: completely skip MAMA (fastest)
   if (process.env.MAMA_FORCE_TIER_3 === 'true') {
     return {
       tier: 3,
       vectorSearchEnabled: false,
       reason: 'Tier 3 forced for testing (embeddings disabled)',
+      isWarm: false,
     };
   }
 
@@ -57,6 +79,7 @@ function getTierInfo() {
       tier: 2,
       vectorSearchEnabled: false,
       reason: 'Tier 2 forced for testing (fast mode)',
+      isWarm: false,
     };
   }
 
@@ -68,22 +91,28 @@ function getTierInfo() {
     // Tier 3: Minimal (disabled)
 
     if (config.modelName && config.vectorSearchEnabled !== false) {
+      const reason = warmStatus.isWarm
+        ? `Full MAMA features (pre-warmed in ${warmStatus.warmTime}ms)`
+        : 'Full MAMA features available';
       return {
         tier: 1,
         vectorSearchEnabled: true,
-        reason: 'Full MAMA features available',
+        reason,
+        isWarm: warmStatus.isWarm,
       };
     } else if (!config.modelName) {
       return {
         tier: 2,
         vectorSearchEnabled: false,
         reason: 'Embeddings unavailable (Transformers.js not loaded)',
+        isWarm: false,
       };
     } else {
       return {
         tier: 3,
         vectorSearchEnabled: false,
         reason: 'MAMA disabled in config',
+        isWarm: false,
       };
     }
   } catch (error) {
@@ -93,6 +122,7 @@ function getTierInfo() {
       tier: 2,
       vectorSearchEnabled: false,
       reason: 'Config load failed, degraded mode',
+      isWarm: false,
     };
   }
 }
@@ -274,7 +304,12 @@ That's all okay. Just write it down.
       );
 
       const result = await Promise.race([
-        injectDecisionContext(userPrompt).then((ctx) => ({ context: ctx, timedOut: false })),
+        injectDecisionContext(userPrompt)
+          .then((ctx) => ({ context: ctx, timedOut: false }))
+          .catch((error) => {
+            logError(`[Hook] Injection promise failed: ${error.message}`);
+            return { context: null, timedOut: false };
+          }),
         timeoutPromise,
       ]);
 
@@ -342,9 +377,46 @@ That's all okay. Just write it down.
   }
 }
 
+// Handle process abort signals (from Claude Code's external timeout)
+process.on('SIGTERM', () => {
+  warn('[Hook] Received SIGTERM, exiting gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  warn('[Hook] Received SIGINT, exiting gracefully');
+  process.exit(0);
+});
+
+// Handle uncaught errors and unhandled rejections
+process.on('uncaughtException', (error) => {
+  // AbortError is expected when Claude Code kills the hook due to timeout
+  if (error.name === 'AbortError') {
+    warn('[Hook] Process aborted by external timeout');
+    process.exit(0);
+  }
+  logError(`[Hook] Uncaught exception: ${error.message}`);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  // AbortError is expected when Claude Code kills the hook due to timeout
+  if (reason && reason.name === 'AbortError') {
+    warn('[Hook] Promise aborted by external timeout');
+    process.exit(0);
+  }
+  logError(`[Hook] Unhandled rejection: ${reason}`);
+  process.exit(1);
+});
+
 // Run hook
 if (require.main === module) {
   main().catch((error) => {
+    // AbortError is expected when Claude Code kills the hook due to timeout
+    if (error.name === 'AbortError') {
+      warn('[Hook] Main aborted by external timeout');
+      process.exit(0);
+    }
     logError(`[Hook] Unhandled error: ${error.message}`);
     process.exit(1);
   });

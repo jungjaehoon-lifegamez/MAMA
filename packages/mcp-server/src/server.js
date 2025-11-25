@@ -54,6 +54,7 @@ const {
 
 // Import core modules
 const { initDB } = require('./mama/db-manager.js');
+const { startEmbeddingServer, warmModel } = require('./embedding-http-server.js');
 
 const REQUIRED_ENV_VARS = ['MAMA_SERVER_TOKEN', 'MAMA_DB_PATH', 'MAMA_SERVER_PORT'];
 
@@ -485,6 +486,18 @@ class MAMAServer {
       console.error('[MAMA MCP] Initializing database...');
       await initDB();
       console.error('[MAMA MCP] Database initialized');
+
+      // Start HTTP embedding server (for hooks)
+      console.error('[MAMA MCP] Starting HTTP embedding server...');
+      const embeddingPort = parseInt(process.env.MAMA_EMBEDDING_PORT || '3847', 10);
+      const httpServer = await startEmbeddingServer(embeddingPort);
+      if (httpServer) {
+        console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
+        // Pre-warm model in background (don't block MCP startup)
+        warmModel().catch((err) => console.error('[MAMA MCP] Model warmup error:', err.message));
+      } else {
+        console.error('[MAMA MCP] HTTP embedding server skipped (port in use)');
+      }
 
       // Start server with stdio transport
       const transport = new StdioServerTransport();

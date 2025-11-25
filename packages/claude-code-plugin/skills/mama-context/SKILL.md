@@ -24,7 +24,7 @@ The skill wraps the **UserPromptSubmit hook** which handles context injection:
 - Triggers: Every user prompt
 - Similarity threshold: 75%
 - Token budget: 40 tokens (teaser format)
-- Timeout: 1800ms (allows embedding model loading)
+- Timeout: 1200ms (optimized with SessionStart pre-warming)
 - Output: Topic + similarity + time
 
 **Disabled Hooks** (retained for future use):
@@ -129,9 +129,9 @@ export MAMA_DISABLE_HOOKS=true
 **Performance:**
 
 - Hook latency: ~1200-1500ms typical (includes embedding model loading)
-- Cold start: ~1800ms (embedding model initialization)
+- Cold start: ~1500ms (embedding model initialization)
 - Warm: ~300-500ms (model cached)
-- Timeout: 1800ms (graceful degradation if exceeded)
+- Timeout: 1200ms (graceful degradation if exceeded)
 
 **Search Algorithm:**
 

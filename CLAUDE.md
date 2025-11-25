@@ -79,9 +79,13 @@ MAMA uses a split architecture to enable code reuse across multiple Claude clien
 │                          │          │                    │
 │                    ┌─────▼──────────▼─────┐             │
 │                    │  MCP Server (stdio)  │             │
-│                    │  @jungjaehoon/mama-server│             │
+│                    │  @jungjaehoon/mama-server│         │
 │                    └──────────────────────┘             │
 │                              │                           │
+│                    ┌─────────▼──────────┐                │
+│                    │ HTTP Embedding API │                │
+│                    │ port 3847 (local)  │                │
+│                    └─────────▼──────────┘                │
 │                    ┌─────────▼──────────┐                │
 │                    │   Core Components  │                │
 │                    │ - Embeddings       │                │
@@ -231,9 +235,10 @@ pnpm vitest run tests/commands/
 
 ### Hook Performance
 
-- **UserPromptSubmit:** Target <1800ms (includes embedding model loading; only active hook)
+- **UserPromptSubmit:** Target <1200ms (~150ms actual with HTTP embedding server; only active hook)
 - **PreToolUse/PostToolUse:** Disabled (scripts retained for future use)
 - **Token budget:** 40 tokens (teaser format for UserPromptSubmit)
+- **HTTP Embedding Server:** Port 3847, model stays in memory for fast embedding requests
 
 ### MCP Tool Schema
 

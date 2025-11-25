@@ -211,15 +211,48 @@ For MCP clients (responses are JSON stringified in `content[0].text`). Full sche
 
 ## How It Works
 
-MAMA uses a two-package architecture:
+MAMA uses a two-package architecture with a shared HTTP embedding server:
+
+```
+┌─────────────────────────────────────────────────┐
+│              Local Machine                       │
+├─────────────────────────────────────────────────┤
+│  Claude Code  Claude Desktop  Cursor  Aider     │
+│       │            │            │       │        │
+│       └────┬───────┴────┬───────┴───┬───┘        │
+│            │            │           │            │
+│     ┌──────▼────────────▼───────────▼──────┐    │
+│     │  HTTP Embedding Server (port 3847)   │    │
+│     │  Model stays loaded in memory        │    │
+│     └──────────────────────────────────────┘    │
+│                      │                           │
+│     ┌────────────────▼────────────────┐         │
+│     │  MCP Server (stdio)             │         │
+│     │  SQLite + sqlite-vec            │         │
+│     └────────────────▼────────────────┘         │
+│     ┌────────────────▼────────────────┐         │
+│     │  mama-memory.db (shared DB)     │         │
+│     └─────────────────────────────────┘         │
+└─────────────────────────────────────────────────┘
+```
 
 ### MCP Server (@jungjaehoon/mama-server)
 
-Published as an independent npm package. Handles SQLite database and vector embeddings. Shared across Claude Code, Claude Desktop, and any MCP client.
+Published as an independent npm package. Handles SQLite database, vector embeddings, and runs an HTTP embedding server on `127.0.0.1:3847`. Shared across Claude Code, Claude Desktop, and any MCP client on the same machine.
+
+### HTTP Embedding Server
+
+The MCP server starts an HTTP embedding API that keeps the model loaded in memory:
+
+- **Port**: 3847 (localhost only for security)
+- **Endpoints**: `/health`, `/embed`, `/embed/batch`
+- **Benefit**: ~150ms hook latency (vs 2-9 seconds without it)
+
+Any local LLM client can use this shared embedding service.
 
 ### Claude Code Plugin (mama)
 
-Lightweight markdown-based plugin. Provides `/mama-*` commands and hooks. References the MCP server via `.mcp.json`.
+Lightweight markdown-based plugin. Provides `/mama-*` commands and hooks. Hooks use the HTTP embedding server for fast context injection.
 
 This separation means one database works across all your Claude environments, and the MCP server updates independently from the plugin.
 
