@@ -228,14 +228,19 @@ npm run test:coverage
 
 ## 🚀 Performance
 
-**Tier 1:**
+**With HTTP Embedding Server (Default):**
+
+- Hook latency: ~150ms (model stays loaded in memory)
+- Embedding requests: ~50ms via HTTP
+
+**Without HTTP Server (Fallback):**
 
 - First query: ~987ms (model load + inference)
 - Subsequent queries: ~89ms (cached)
 
-**Tier 2:**
+**Tier 2 (Exact Match):**
 
-- All queries: ~12ms (exact match only)
+- All queries: ~12ms (no embeddings)
 
 **Learn more:** [Performance Characteristics](docs/explanation/performance.md)
 
@@ -243,42 +248,40 @@ npm run test:coverage
 
 ## 📦 Architecture
 
-MAMA uses a **2-package structure**:
+MAMA uses a **2-package structure** with a shared HTTP embedding server:
+
+```
+┌─────────────────────────────────────────────────┐
+│              Local Machine                       │
+├─────────────────────────────────────────────────┤
+│  Claude Code  Claude Desktop  Cursor  Aider     │
+│       │            │            │       │        │
+│       └────────────┴────────────┴───────┘        │
+│                      │                           │
+│     ┌────────────────▼────────────────┐         │
+│     │  HTTP Embedding Server          │         │
+│     │  127.0.0.1:3847                 │         │
+│     └─────────────────────────────────┘         │
+│                      │                           │
+│     ┌────────────────▼────────────────┐         │
+│     │  MCP Server + SQLite            │         │
+│     │  mama-memory.db (shared)        │         │
+│     └─────────────────────────────────┘         │
+└─────────────────────────────────────────────────┘
+```
 
 ### 1. MCP Server (@jungjaehoon/mama-server)
 
-Independent npm package shared across all MCP clients:
-
-```
-@jungjaehoon/mama-server/
-├── src/
-│   ├── server.js       # MCP server implementation
-│   ├── db/             # SQLite + better-sqlite3
-│   ├── embeddings/     # @huggingface/transformers
-│   ├── search/         # Vector search + scoring
-│   └── graph/          # Decision graph expansion
-├── package.json        # npm dependencies
-└── dist/               # Compiled output
-```
+Independent npm package shared across all MCP clients. Includes HTTP embedding server on port 3847.
 
 ### 2. Claude Code Plugin (mama-plugin)
 
-Lightweight plugin referencing the MCP server:
-
-```
-mama-plugin/
-├── .claude-plugin/     # Plugin manifest
-├── .mcp.json           # References @jungjaehoon/mama-server
-├── commands/           # /mama-* command definitions (Markdown)
-├── hooks/              # Hook configurations (JSON)
-├── skills/             # Auto-context skill (Markdown)
-└── docs/               # Documentation (Diátaxis framework)
-```
+Lightweight plugin referencing the MCP server. Hooks use HTTP embedding server for fast context injection.
 
 **Benefits:**
 
 - ✅ One MCP server → Multiple clients (Code, Desktop, etc.)
-- ✅ Automatic dependency management (npx)
+- ✅ Shared HTTP embedding server → Fast hook execution (~150ms)
 - ✅ Shared decision database across all tools
 
 **Guide:** [Developer Playbook](docs/development/developer-playbook.md)

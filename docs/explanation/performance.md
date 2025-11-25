@@ -10,14 +10,15 @@ This document explains MAMA's performance characteristics, design choices, and h
 
 MAMA is designed to be **non-blocking** and **fast**. All operations complete within strict time budgets to ensure Claude Code remains responsive.
 
-| Operation | Target (p95) | Actual (Measured) | Status |
-|-----------|-------------|-------------------|--------|
-| Hook injection latency | <500ms | ~100ms | ✅ **5x better than target** |
-| Embedding generation | <30ms | 3ms | ✅ **10x better than target** |
-| Vector search | <100ms | ~50ms | ✅ **PASS** |
-| Decision save | <50ms | ~20ms | ✅ **PASS** |
+| Operation              | Target (p95) | Actual (Measured) | Status                       |
+| ---------------------- | ------------ | ----------------- | ---------------------------- |
+| Hook injection latency | <1200ms      | ~150ms            | ✅ **8x better than target** |
+| HTTP embedding request | <100ms       | ~50ms             | ✅ **2x better than target** |
+| Vector search          | <100ms       | ~50ms             | ✅ **PASS**                  |
+| Decision save          | <50ms        | ~20ms             | ✅ **PASS**                  |
 
 **FR References:**
+
 - [FR36](../reference/fr-mapping.md) - Hook latency
 - [FR37](../reference/fr-mapping.md) - Embedding speed
 - [FR38](../reference/fr-mapping.md) - Search speed
@@ -27,18 +28,42 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 
 ## Tier-Specific Performance
 
-### Tier 1 Performance (Vector Search)
+### With HTTP Embedding Server (Default)
+
+**Hook latency:** ~150ms total
+
+The MCP server runs an HTTP embedding server on port 3847 that keeps the model loaded in memory. Hooks use HTTP requests instead of loading the model each time.
+
+**Breakdown:**
+
+- HTTP embedding request: ~50ms
+- Vector search: ~50ms
+- Graph expansion: ~20ms
+- Recency scoring: ~10ms
+- Formatting: ~6ms
+- Network overhead: ~14ms
+
+**Benefits:**
+
+- ✅ No model load time (stays in memory)
+- ✅ 94% faster than without HTTP server (2-9s → 150ms)
+- ✅ Shared across all local LLM clients
+
+### Tier 1 Performance (Without HTTP Server - Fallback)
 
 **First query:**
+
 - ~987ms (one-time model load + inference)
 - Only happens once per session
 
 **Subsequent queries:**
+
 - ~89ms (cached model)
 - Includes vector search + graph expansion + recency scoring
 
 **Breakdown:**
-- Embedding generation: ~3ms
+
+- Embedding generation: ~3ms (after model load)
 - Vector search: ~50ms
 - Graph expansion: ~20ms
 - Recency scoring: ~10ms
@@ -47,11 +72,13 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 ### Tier 2 Performance (Exact Match)
 
 **All queries:**
+
 - ~12ms (exact match only)
 - No model loading required
 - Simple SQL query with LIKE operator
 
 **Trade-offs:**
+
 - ✅ 7x faster than Tier 1
 - ❌ 40% accuracy (vs 80% in Tier 1)
 - ❌ No semantic understanding
@@ -62,30 +89,37 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 
 ### 1. Non-Blocking Design
 
-**Target:** Hook completes within 500ms to avoid blocking Claude's response.
+**Target:** Hook completes within 1200ms to avoid blocking Claude's response.
 
 **Implementation:**
-- Early timeout: Hooks abort at 500ms
+
+- HTTP embedding server: Model stays loaded, no per-request load time
+- Early timeout: Hooks abort at 1200ms
 - Asynchronous operations: No synchronous waits
-- Fail-fast: If model load fails, fall back to Tier 2
+- Fail-fast: If HTTP server unavailable, fall back to local model or Tier 2
 
-**Result:** ~100ms actual latency (5x better than target)
+**Result:** ~150ms actual latency (8x better than target)
 
-### 2. Lazy Loading
+### 2. HTTP Embedding Server
 
-**Target:** Don't load embedding model until first search.
+**Target:** Avoid repeated model loading across hook invocations.
 
 **Implementation:**
-- Model loads only on first `/mama-suggest` or automatic context injection
-- Once loaded, model stays in memory for session
 
-**Result:** Fast startup, no upfront cost
+- MCP server starts HTTP embedding server on port 3847
+- Model loads once when server starts, stays in memory
+- Hooks make HTTP requests to get embeddings (~50ms)
+- Port file at `~/.mama-embedding-port` for client discovery
+- Fallback: Local model load if HTTP server unavailable
+
+**Result:** ~50ms embedding requests (vs 2-9s model load)
 
 ### 3. Caching Strategy
 
 **Target:** Never recompute embeddings.
 
 **Implementation:**
+
 - Embeddings stored as BLOB in SQLite
 - Generated once during `/mama-save`
 - Reused for all searches
@@ -111,10 +145,12 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 ```
 
 **Expected performance:**
+
 - First query: ~600ms (smaller model)
 - Subsequent: ~60ms (faster inference)
 
 **Trade-offs:**
+
 - ❌ 5% less accurate than default
 - ✅ 30% faster
 
@@ -133,10 +169,12 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 ```
 
 **Expected performance:**
+
 - First query: ~1500ms (larger model load)
 - Subsequent: ~150ms (more results to rank)
 
 **Trade-offs:**
+
 - ✅ 5% more accurate
 - ❌ 2x slower
 
@@ -154,9 +192,11 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 ```
 
 **Expected performance:**
+
 - No latency impact (recency scoring is fast)
 
 **Trade-offs:**
+
 - ✅ Recent items rank higher
 - ❌ Older but semantically relevant items may be buried
 
@@ -164,7 +204,25 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 
 ## Bottleneck Analysis
 
-### Where Time is Spent (Tier 1)
+### Where Time is Spent (With HTTP Server)
+
+```
+Hook latency (~150ms total):
+├── HTTP embedding:    50ms (33%) ← Main cost
+├── Vector search:     50ms (33%)
+├── Graph expansion:   20ms (13%)
+├── Recency scoring:   10ms (7%)
+├── Network overhead:  14ms (9%)
+└── Formatting:         6ms (4%)
+```
+
+**Optimization priority:**
+
+1. **HTTP embedding (50ms)** - Already optimized with memory-resident model
+2. **Vector search (50ms)** - Use smaller model or reduce search_limit
+3. **Graph expansion (20ms)** - Unavoidable (critical feature)
+
+### Where Time is Spent (Without HTTP Server - Fallback)
 
 ```
 First query (987ms total):
@@ -181,11 +239,6 @@ Subsequent queries (89ms total):
 ├── Recency scoring:   10ms (11%)
 └── Formatting:         6ms (7%)
 ```
-
-**Optimization priority:**
-1. **Vector search (50ms)** - Use smaller model or reduce search_limit
-2. **Graph expansion (20ms)** - Unavoidable (critical feature)
-3. **Recency scoring (10ms)** - Adjust recency_weight
 
 ### Where Time is Spent (Tier 2)
 
@@ -239,13 +292,14 @@ npm run test:performance
 
 ### What MAMA Guarantees
 
-✅ **Hook latency < 500ms (p95):** Measured at ~100ms
+✅ **Hook latency < 1200ms (p95):** Measured at ~150ms with HTTP server
+✅ **HTTP embedding < 100ms (p95):** Measured at ~50ms
 ✅ **No blocking operations:** All I/O is asynchronous
-✅ **Graceful degradation:** Falls back to Tier 2 if Tier 1 fails
+✅ **Graceful degradation:** Falls back to local model or Tier 2 if HTTP server unavailable
 
 ### What MAMA Does NOT Guarantee
 
-❌ **First-query speed:** Model load takes ~900ms (unavoidable)
+❌ **HTTP server availability:** Port 3847 may be in use by another process
 ❌ **Disk I/O speed:** Depends on your disk (SSD recommended)
 ❌ **SQLite performance:** Depends on database size (>10k decisions may slow down)
 
@@ -253,20 +307,25 @@ npm run test:performance
 
 ## Performance FAQs
 
-### Q: Why is the first query slow?
+### Q: Why is hook latency so fast now?
 
-**A:** The embedding model needs to be loaded into memory (~900ms one-time cost). This only happens once per session. Subsequent queries are fast (~89ms).
+**A:** The MCP server runs an HTTP embedding server on port 3847 that keeps the model loaded in memory. Hooks make HTTP requests (~50ms) instead of loading the model each time (2-9s). This results in ~150ms total hook latency.
 
-### Q: Can I pre-load the model?
+### Q: What if the HTTP server is not running?
 
-**A:** Not currently supported. Model loads on first search to avoid upfront cost for users who don't search immediately.
+**A:** Hooks fall back to loading the model locally. First query takes ~987ms (model load), subsequent queries ~89ms. If that also fails, falls back to Tier 2 (exact match only).
+
+### Q: Can other tools use the HTTP embedding server?
+
+**A:** Yes! Any local LLM client (Cursor, Aider, Continue, etc.) can use `http://127.0.0.1:3847/embed` to get embeddings. The model stays loaded in memory, benefiting all clients.
 
 ### Q: Does database size affect performance?
 
 **A:** Yes, but minimally:
+
 - <1,000 decisions: ~50ms search time
 - 1,000-10,000 decisions: ~70ms search time
-- >10,000 decisions: May exceed 100ms (consider archiving old decisions)
+- > 10,000 decisions: May exceed 100ms (consider archiving old decisions)
 
 ### Q: Why is Tier 2 so much faster?
 

@@ -1,0 +1,18 @@
+{
+  "name": "@anthropic/mama-embedding-server",
+  "version": "1.0.0",
+  "description": "Persistent embedding server for MAMA - shared by hooks and MCP server",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "echo 'No tests yet - server is integrated into mcp-server'"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.5.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "private": true
+}

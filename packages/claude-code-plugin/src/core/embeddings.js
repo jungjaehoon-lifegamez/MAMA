@@ -5,20 +5,26 @@
  * Generates embeddings using configurable model (default: multilingual-e5-small)
  * Supports: Korean-English cross-lingual similarity, enhanced metadata
  *
+ * Updated: Now uses HTTP client to connect to MCP server's embedding service
+ * for fast embedding generation (avoids cold start in hooks).
+ * Falls back to local model loading if server is unavailable.
+ *
  * @module embeddings
- * @version 1.1
- * @date 2025-11-20
+ * @version 1.2
+ * @date 2025-11-25
  */
 
-const { info } = require('./debug-logger');
+const { info, warn } = require('./debug-logger');
 // Lazy-load @huggingface/transformers to avoid loading sharp at module load time (Story 014.12.7)
 // const { pipeline } = require('@huggingface/transformers');
 const { embeddingCache } = require('./embedding-cache');
 const { loadConfig, getModelName, getEmbeddingDim } = require('./config-loader');
+const { isServerRunning, getEmbeddingFromServer } = require('./embedding-client');
 
-// Singleton pattern for model loading
+// Singleton pattern for model loading (fallback only)
 let embeddingPipeline = null;
 let currentModelName = null;
+let serverAvailable = null; // null = unknown, true/false = checked
 
 /**
  * Load embedding model (configurable)
@@ -74,7 +80,12 @@ async function loadModel() {
  * Generate embedding vector from text
  *
  * Story M1.4 AC #1: Uses configurable embeddingDim from config
- * Target: < 30ms latency
+ * Target: < 30ms latency (via HTTP server)
+ *
+ * Strategy:
+ * 1. Check cache first
+ * 2. Try HTTP server (MCP server's embedding service) - fast path
+ * 3. Fall back to local model loading if server unavailable - slow path
  *
  * @param {string} text - Input text to embed
  * @returns {Promise<Float32Array|null>} Embedding vector (dimension from config) or null if Tier 3
@@ -97,6 +108,30 @@ async function generateEmbedding(text) {
     return cached;
   }
 
+  // Try HTTP server first (fast path)
+  // Only check server availability once per process
+  if (serverAvailable === null) {
+    serverAvailable = await isServerRunning();
+    if (serverAvailable) {
+      info('[MAMA] Embedding server detected, using HTTP client');
+    } else {
+      warn('[MAMA] Embedding server not available, using local fallback');
+    }
+  }
+
+  if (serverAvailable) {
+    const embedding = await getEmbeddingFromServer(text);
+    if (embedding) {
+      // Store in cache
+      embeddingCache.set(text, embedding);
+      return embedding;
+    }
+    // Server failed, fall through to local model
+    warn('[MAMA] Server request failed, falling back to local model');
+    serverAvailable = false; // Don't try server again this process
+  }
+
+  // Fallback: Local model loading (slow path)
   try {
     const model = await loadModel();
     const expectedDim = getEmbeddingDim();

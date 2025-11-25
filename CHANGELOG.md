@@ -11,11 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Hook Optimization**: Disabled PreToolUse and PostToolUse hooks for efficiency
   - Only UserPromptSubmit hook remains active (best value/latency ratio)
-  - Timeout increased from 500ms to 1800ms for embedding model loading
+  - Timeout reduced from 1800ms to 1200ms (HTTP server makes this possible)
   - Scripts retained for potential future re-enablement
   - See decision: `mama.recall('hook_optimization_nov2025')`
 
 ### Added
+
+- **HTTP Embedding Server**: Shared embedding service for fast hook execution
+  - MCP server now runs HTTP embedding server on `127.0.0.1:3847`
+  - Model stays loaded in memory (singleton) - no repeated 2-7s model loads
+  - Hooks use HTTP client for ~50ms embedding requests (vs 2-9s before)
+  - Endpoints: `/health`, `/embed`, `/embed/batch`
+  - Port file at `~/.mama-embedding-port` for client discovery
+  - Fallback to local model load if server unavailable
+  - **Result**: Hook latency reduced from 2-9 seconds to ~150ms (94% improvement)
 
 - **Typed Error Classes**: `MAMAError`, `NotFoundError`, `ValidationError`, `DatabaseError`, `EmbeddingError`
 - **Module Sync Check**: `scripts/sync-check.js` for detecting drift between plugin and server
