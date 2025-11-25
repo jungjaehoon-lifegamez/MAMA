@@ -12,6 +12,7 @@
  * @date 2025-11-14
  */
 
+// eslint-disable-next-line no-unused-vars
 const { info, error: logError } = require('./debug-logger');
 const { formatTopNContext } = require('./relevance-scorer');
 
@@ -209,6 +210,7 @@ Reasoning: ${current.reasoning || 'N/A'}
  * @returns {string} Formatted context with rolling summary
  */
 function formatLargeHistory(current, history) {
+  // eslint-disable-next-line no-unused-vars
   const duration = calculateDuration(current.created_at);
   // Include current decision in total duration calculation
   const allDecisions = [current, ...history];
@@ -802,6 +804,7 @@ function formatTeaser(decision) {
  * @param {string} source - Source file string (may be comma-separated)
  * @returns {string} Formatted file list
  */
+// eslint-disable-next-line no-unused-vars
 function extractFiles(source) {
   if (!source) {
     return 'Multiple files';
@@ -872,6 +875,44 @@ ${decision.reasoning || decision.decision}
     output += `\n⚠️  Failure reason: ${decision.failure_reason}`;
   }
 
+  // Narrative fields section (Story 2.2)
+  if (decision.evidence || decision.alternatives || decision.risks) {
+    output += '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+    output += '\n📝 Narrative Details\n';
+
+    if (decision.evidence) {
+      const evidenceList = Array.isArray(decision.evidence)
+        ? decision.evidence
+        : typeof decision.evidence === 'string'
+          ? JSON.parse(decision.evidence)
+          : [decision.evidence];
+      if (evidenceList.length > 0) {
+        output += '\n🔍 Evidence:';
+        evidenceList.forEach((item, idx) => {
+          output += `\n  ${idx + 1}. ${item}`;
+        });
+      }
+    }
+
+    if (decision.alternatives) {
+      const altList = Array.isArray(decision.alternatives)
+        ? decision.alternatives
+        : typeof decision.alternatives === 'string'
+          ? JSON.parse(decision.alternatives)
+          : [decision.alternatives];
+      if (altList.length > 0) {
+        output += '\n\n🔀 Alternatives Considered:';
+        altList.forEach((item, idx) => {
+          output += `\n  ${idx + 1}. ${item}`;
+        });
+      }
+    }
+
+    if (decision.risks) {
+      output += `\n\n⚠️  Risks: ${decision.risks}`;
+    }
+  }
+
   // Trust context section (if available)
   const trustCtx = parseTrustContext(decision.trust_context);
   if (trustCtx) {
@@ -932,6 +973,47 @@ ${latest.decision}
   }
 
   output += `\n\nConfidence: ${Math.round(latest.confidence * 100)}%`;
+
+  // Show narrative fields for latest decision (Story 2.2)
+  if (latest.evidence || latest.alternatives || latest.risks) {
+    if (latest.evidence) {
+      const evidenceList = Array.isArray(latest.evidence)
+        ? latest.evidence
+        : typeof latest.evidence === 'string'
+          ? JSON.parse(latest.evidence)
+          : [latest.evidence];
+      if (evidenceList.length > 0) {
+        output += '\n\n🔍 Evidence:';
+        evidenceList.slice(0, 3).forEach((item, idx) => {
+          output += `\n  ${idx + 1}. ${item}`;
+        });
+        if (evidenceList.length > 3) {
+          output += `\n  ... and ${evidenceList.length - 3} more`;
+        }
+      }
+    }
+
+    if (latest.alternatives) {
+      const altList = Array.isArray(latest.alternatives)
+        ? latest.alternatives
+        : typeof latest.alternatives === 'string'
+          ? JSON.parse(latest.alternatives)
+          : [latest.alternatives];
+      if (altList.length > 0) {
+        output += '\n\n🔀 Alternatives: ';
+        output += altList.slice(0, 2).join('; ');
+        if (altList.length > 2) {
+          output += `... (+${altList.length - 2} more)`;
+        }
+      }
+    }
+
+    if (latest.risks) {
+      const risksPreview =
+        latest.risks.length > 100 ? latest.risks.substring(0, 100) + '...' : latest.risks;
+      output += `\n\n⚠️  Risks: ${risksPreview}`;
+    }
+  }
 
   // Show older decisions (supersedes chain)
   if (older.length > 0) {

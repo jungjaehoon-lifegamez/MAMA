@@ -10,7 +10,8 @@
 const { DatabaseAdapter } = require('./base-adapter');
 const { SQLiteStatement } = require('./statement');
 const { info, warn, error: logError } = require('../debug-logger');
-const { cosineSimilarity } = require('../embeddings');
+// Lazy-load cosineSimilarity to avoid triggering Transformers.js model loading
+// const { cosineSimilarity } = require('../embeddings');
 const Database = require('better-sqlite3');
 const path = require('path');
 const os = require('os');
@@ -177,21 +178,27 @@ class SQLiteAdapter extends DatabaseAdapter {
       LIMIT ?
     `);
 
-    const queryVector = embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
+    const queryVector =
+      embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
     const results = stmt.all(embeddingJson, Math.max(limit, 1));
 
-    return results.map((row) => {
-      const candidate = bufferToVector(row.embedding);
-      if (!candidate) {
-        return null;
-      }
-      const similarity = cosineSimilarity(candidate, queryVector);
-      return {
-        rowid: row.rowid,
-        similarity,
-        distance: 1 - similarity,
-      };
-    }).filter(Boolean);
+    // Lazy-load cosineSimilarity only when vector search is actually needed
+    const { cosineSimilarity } = require('../embeddings');
+
+    return results
+      .map((row) => {
+        const candidate = bufferToVector(row.embedding);
+        if (!candidate) {
+          return null;
+        }
+        const similarity = cosineSimilarity(candidate, queryVector);
+        return {
+          rowid: row.rowid,
+          similarity,
+          distance: 1 - similarity,
+        };
+      })
+      .filter(Boolean);
   }
 
   /**
@@ -205,6 +212,9 @@ class SQLiteAdapter extends DatabaseAdapter {
       return null;
     }
 
+    if (!embedding) {
+      return null;
+    }
     const embeddingJson = JSON.stringify(Array.from(embedding));
 
     // CRITICAL FIX: sqlite-vec virtual tables accept rowid as literal but not via ? placeholder
@@ -266,10 +276,14 @@ class SQLiteAdapter extends DatabaseAdapter {
     // Apply migrations
     for (const file of migrationFiles) {
       const versionMatch = file.match(/^(\d+)-/);
-      if (!versionMatch) continue;
+      if (!versionMatch) {
+        continue;
+      }
 
       const version = parseInt(versionMatch[1], 10);
-      if (version <= currentVersion) continue;
+      if (version <= currentVersion) {
+        continue;
+      }
 
       const migrationPath = path.join(migrationsDir, file);
       const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
@@ -326,7 +340,9 @@ class SQLiteAdapter extends DatabaseAdapter {
 module.exports = SQLiteAdapter;
 
 function bufferToVector(buffer) {
-  if (!buffer) return null;
+  if (!buffer) {
+    return null;
+  }
   const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   return new Float32Array(arrayBuffer);
 }

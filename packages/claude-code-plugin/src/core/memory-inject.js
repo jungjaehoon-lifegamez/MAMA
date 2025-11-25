@@ -15,7 +15,9 @@
 // Use LLM-based intent detection (EXAONE 3.5)
 // NO FALLBACK: Errors must be thrown for debugging (CLAUDE.md Rule #1)
 const { info, error: logError } = require('./debug-logger');
+// eslint-disable-next-line no-unused-vars
 const { analyzeIntent } = require('./query-intent');
+// eslint-disable-next-line no-unused-vars
 const { queryDecisionGraph, vectorSearch } = require('./memory-store');
 // Lazy-load embeddings to avoid loading sharp at startup (Story 014.12.7 - Windows Node.js compatibility)
 // const { generateEmbedding } = require('./embeddings');
@@ -24,6 +26,7 @@ const { formatContext } = require('./decision-formatter');
 // Configuration
 const TIMEOUT_MS = 5000; // LLM-based intent detection, user accepts longer thinking
 const TOKEN_BUDGET = 500; // AC #1: Max 500 tokens per injection
+// eslint-disable-next-line no-unused-vars
 const ENABLE_VECTOR_SEARCH = true; // Enable vector search for semantic matching
 
 /**
@@ -84,6 +87,12 @@ async function performMemoryInjection(userMessage, startTime) {
   const { generateEmbedding } = require('./embeddings');
   const queryEmbedding = await generateEmbedding(userMessage);
 
+  // TIER 3: If embeddings are disabled, return null (no context injection)
+  if (!queryEmbedding) {
+    info('[MAMA] Tier 3 mode: Skipping context injection');
+    return null;
+  }
+
   const embeddingLatency = Date.now() - startTime;
   info(`[MAMA] Embedding generation: ${embeddingLatency}ms`);
 
@@ -130,12 +139,18 @@ async function performMemoryInjection(userMessage, startTime) {
  * @param {string} topic - Detected topic
  * @returns {Promise<Array<Object>>} Semantically similar decisions
  */
-async function performVectorSearch(userMessage, topic) {
+// eslint-disable-next-line no-unused-vars
+async function performVectorSearch(userMessage, _topic) {
   try {
     // Task 4.1: Generate query embedding from user message
     // Lazy-load embeddings at runtime (Story 014.12.7)
     const { generateEmbedding } = require('./embeddings');
     const queryEmbedding = await generateEmbedding(userMessage);
+
+    // TIER 3: If embeddings are disabled, return null (no context injection)
+    if (!queryEmbedding) {
+      return null;
+    }
 
     // Task 4.2: Search vss_memories with top k=5, threshold=0.6
     // NOTE: Threshold lowered from 0.7 to 0.6 to handle embedding format mismatch
@@ -161,6 +176,7 @@ async function performVectorSearch(userMessage, topic) {
  * @param {Array<Object>} vectorDecisions - Decisions from vector search
  * @returns {Array<Object>} Merged and deduplicated decisions
  */
+// eslint-disable-next-line no-unused-vars
 function mergeDecisions(graphDecisions, vectorDecisions) {
   const seen = new Set();
   const merged = [];

@@ -6,5 +6,26 @@
     "name": "SpineLift Team",
     "email": "dev@spinelift.com"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": "https://github.com/jungjaehoon-lifegamez/MAMA",
+  "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
+  "keywords": [
+    "claude-code",
+    "memory-assistant",
+    "decision-tracking",
+    "mcp-server",
+    "semantic-search"
+  ],
+  "commands": [
+    "./commands/mama-save.md",
+    "./commands/mama-recall.md",
+    "./commands/mama-suggest.md",
+    "./commands/mama-list.md",
+    "./commands/mama-configure.md",
+    "./commands/mama-checkpoint.md",
+    "./commands/mama-resume.md"
+  ],
+  "skills": ["./skills/mama-context"],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": ["./.mcp.json"]
 }

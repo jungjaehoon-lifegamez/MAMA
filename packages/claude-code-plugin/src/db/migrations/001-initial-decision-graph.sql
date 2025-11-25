@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
   description TEXT
 );
 
-INSERT INTO schema_version (version, description)
+INSERT OR IGNORE INTO schema_version (version, description)
 VALUES (1, 'Initial Decision Graph schema');
 
 -- ══════════════════════════════════════════════════════════════

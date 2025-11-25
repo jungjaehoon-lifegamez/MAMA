@@ -28,22 +28,22 @@ const FEATURE_STATUS = {
     graphTraversal: true,
     keywordFallback: true,
     semanticSimilarity: true,
-    accuracyDrop: 0
+    accuracyDrop: 0,
   },
   tier2: {
     vectorSearch: false,
     graphTraversal: true,
     keywordFallback: true,
     semanticSimilarity: false,
-    accuracyDrop: 30 // FR28: 30% accuracy drop without embeddings
+    accuracyDrop: 30, // FR28: 30% accuracy drop without embeddings
   },
   tier3: {
     vectorSearch: false,
     graphTraversal: false,
     keywordFallback: false,
     semanticSimilarity: false,
-    accuracyDrop: 100 // FR28: 100% - MAMA disabled
-  }
+    accuracyDrop: 100, // FR28: 100% - MAMA disabled
+  },
 };
 
 /**
@@ -57,9 +57,9 @@ const FIX_INSTRUCTIONS = {
       '1. Install Transformers.js: npm install @xenova/transformers',
       '2. Configure model in ~/.mama/config.json:',
       '   { "embeddingModel": "Xenova/multilingual-e5-small" }',
-      '3. Restart Claude Code to reload configuration'
+      '3. Restart Claude Code to reload configuration',
     ],
-    impact: 'Without embeddings, MAMA falls back to keyword search (30% less accurate)'
+    impact: 'Without embeddings, MAMA falls back to keyword search (30% less accurate)',
   },
   tier3: {
     title: 'MAMA Disabled',
@@ -68,10 +68,10 @@ const FIX_INSTRUCTIONS = {
       '2. Verify config.json exists: ~/.mama/config.json',
       '3. Enable vector search in config:',
       '   { "vectorSearchEnabled": true }',
-      '4. Restart Claude Code'
+      '4. Restart Claude Code',
     ],
-    impact: 'MAMA features are completely disabled'
-  }
+    impact: 'MAMA features are completely disabled',
+  },
 };
 
 /**
@@ -89,7 +89,7 @@ function logTierTransition(oldTier, newTier, reason) {
       timestamp,
       transition: `Tier ${oldTier} → Tier ${newTier}`,
       reason,
-      feature_impact: FEATURE_STATUS[`tier${newTier}`]
+      feature_impact: FEATURE_STATUS[`tier${newTier}`],
     };
 
     const logLine = JSON.stringify(entry) + '\n';
@@ -189,17 +189,15 @@ function formatFixInstructions(tier) {
  * @returns {string} Formatted banner
  */
 function formatTransparencyBanner(tierInfo, latencyMs, resultCount, hookName, options = {}) {
-  const {
-    showFixInstructions = true,
-    logTransition = true
-  } = options;
+  const { showFixInstructions = true, logTransition = true } = options;
 
   // FR25: Tier badge
-  const tierBadge = {
-    1: '🟢 Tier 1',
-    2: '🟡 Tier 2',
-    3: '🔴 Tier 3'
-  }[tierInfo.tier] || '⚪ Unknown';
+  const tierBadge =
+    {
+      1: '🟢 Tier 1',
+      2: '🟡 Tier 2',
+      3: '🔴 Tier 3',
+    }[tierInfo.tier] || '⚪ Unknown';
 
   // FR29: Log tier transitions
   if (logTransition) {
@@ -217,15 +215,15 @@ function formatTransparencyBanner(tierInfo, latencyMs, resultCount, hookName, op
 
   // FR28: Degradation impact
   const features = FEATURE_STATUS[`tier${tierInfo.tier}`];
-  const impactStr = features.accuracyDrop > 0
-    ? ` | ⚠️ ${features.accuracyDrop}% accuracy drop`
-    : '';
+  const impactStr =
+    features.accuracyDrop > 0 ? ` | ⚠️ ${features.accuracyDrop}% accuracy drop` : '';
 
   // Performance indicator
   const MAX_RUNTIME_MS = 500;
-  const performance = latencyMs > MAX_RUNTIME_MS
-    ? `⚠️ ${latencyMs}ms (exceeded ${MAX_RUNTIME_MS}ms target)`
-    : `✓ ${latencyMs}ms`;
+  const performance =
+    latencyMs > MAX_RUNTIME_MS
+      ? `⚠️ ${latencyMs}ms (exceeded ${MAX_RUNTIME_MS}ms target)`
+      : `✓ ${latencyMs}ms`;
 
   // Build banner
   let banner = `\n\n---\n🔍 MAMA [${hookName}]: ${tierBadge}`;
@@ -280,7 +278,7 @@ function getTierTransitionHistory(limit = 10) {
 
     return lines
       .slice(-limit)
-      .map(line => JSON.parse(line))
+      .map((line) => JSON.parse(line))
       .reverse();
   } catch (error) {
     warn(`[Transparency] Failed to read tier history: ${error.message}`);
@@ -297,5 +295,5 @@ module.exports = {
   getFixInstructions,
   getTierTransitionHistory,
   FEATURE_STATUS,
-  FIX_INSTRUCTIONS
+  FIX_INSTRUCTIONS,
 };

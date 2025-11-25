@@ -37,8 +37,9 @@ const suggestDecisionTool = {
     required: ['userQuestion'],
   },
 
-  async handler(params, context) {
-    const { userQuestion, recencyWeight, recencyScale, recencyDecay, disableRecency } = params || {};
+  async handler(params, _context) {
+    const { userQuestion, recencyWeight, recencyScale, recencyDecay, disableRecency } =
+      params || {};
 
     try {
       // Validation

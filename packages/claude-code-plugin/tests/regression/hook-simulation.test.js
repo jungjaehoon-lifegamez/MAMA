@@ -21,8 +21,6 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { initDB, closeDB, getAdapter } from '../../src/core/db-manager.js';
-import { saveDecisionTool } from '../../src/tools/save-decision.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,6 +66,9 @@ function execHook(scriptPath, env = {}) {
       timeout: 5000, // 5s max (generous for CI)
     });
 
+    // Close stdin immediately to prevent hanging on readStdin
+    child.stdin.end();
+
     let stdout = '';
     let stderr = '';
 
@@ -101,12 +102,24 @@ function execHook(scriptPath, env = {}) {
   });
 }
 
+// Variables for dynamic imports
+let initDB, closeDB, saveDecisionTool;
+
 describe('Story M4.2: Hook Simulation - Regression Harness', () => {
   beforeAll(async () => {
     // Initialize test database
     delete process.env.MAMA_DATABASE_URL;
     process.env.MAMA_FORCE_TIER_2 = 'true';
+    process.env.MAMA_FORCE_TIER_3 = 'true'; // Skip embeddings to prevent OOM
     process.env.MAMA_DB_PATH = TEST_DB_PATH;
+
+    // Dynamic imports to ensure env vars are set BEFORE modules load
+    const dbManager = await import('../../src/core/db-manager.js');
+    initDB = dbManager.initDB;
+    closeDB = dbManager.closeDB;
+
+    const saveDecision = await import('../../src/tools/save-decision.js');
+    saveDecisionTool = saveDecision.saveDecisionTool;
 
     await initDB();
 
@@ -411,7 +424,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
           // Should match tier badge format: 🟢 Tier 1, 🟡 Tier 2, or 🔴 Tier 3
           const hasTier = /Tier [1-3]/.test(result.stdout);
           if (hasTier) {
-            expect(result.stdout).toMatch(/[🟢🟡🔴] Tier [1-3]/);
+            expect(result.stdout).toMatch(/[🟢🟡🔴] Tier [1-3]/u);
           }
         }
       });

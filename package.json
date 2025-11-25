@@ -27,13 +27,35 @@
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "clean": "pnpm -r clean",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint packages/*/src packages/*/tests --ext .js,.mjs",
+    "lint:fix": "eslint packages/*/src packages/*/tests --ext .js,.mjs --fix",
+    "format": "prettier --write \"packages/*/{src,tests}/**/*.{js,mjs,json,md}\"",
+    "format:check": "prettier --check \"packages/*/{src,tests}/**/*.{js,mjs,json,md}\"",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.2.0",
     "vitest": "^1.0.0"
+  },
+  "lint-staged": {
+    "*.{js,mjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
   },
   "engines": {
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
+  },
+  "dependencies": {
+    "pnpm": "^10.23.0"
   }
 }

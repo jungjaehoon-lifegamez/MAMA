@@ -47,12 +47,7 @@ const SUCCESS_INDICATORS = [
  * Partial success indicators
  * Task 4.3: Define partial success indicators
  */
-const PARTIAL_INDICATORS = [
-  /okay/i,
-  /acceptable/i,
-  /improved/i,
-  /better/i,
-];
+const PARTIAL_INDICATORS = [/okay/i, /acceptable/i, /improved/i, /better/i];
 
 /**
  * Recent decision time window (1 hour in milliseconds)

@@ -204,6 +204,7 @@ function testRelevanceScoring() {
   // Mock embeddings (dummy for testing)
   const queryEmbedding = new Float32Array(384).fill(0.5);
   const decisionEmbedding1 = new Float32Array(384).fill(0.5); // Identical (similarity = 1.0)
+  // eslint-disable-next-line no-unused-vars
   const decisionEmbedding2 = new Float32Array(384).fill(0.3); // Different (similarity < 1.0)
 
   const scenarios = [

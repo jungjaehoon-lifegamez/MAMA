@@ -14,10 +14,12 @@
  * @date 2025-11-17
  */
 
+// eslint-disable-next-line no-unused-vars
 const { info, error: logError } = require('./debug-logger');
 const {
   initDB,
   insertDecisionWithEmbedding,
+  // eslint-disable-next-line no-unused-vars
   queryDecisionGraph,
   getAdapter,
 } = require('./memory-store');
@@ -158,7 +160,7 @@ function calculateCombinedConfidence(prior, parents) {
  * @param {Object} sessionContext - Session context
  * @returns {Array<string>|null} Array of parent decision IDs or null
  */
-function detectRefinement(detection, sessionContext) {
+function detectRefinement(_detection, _sessionContext) {
   // TODO: Implement refinement detection heuristics
   // For now, return null (single-parent only)
   // Future: Analyze session context for references to multiple decisions
@@ -412,6 +414,18 @@ async function learnDecision(detection, toolExecution, sessionContext) {
       updated_at: Date.now(),
       // Story 014.7.10: Add trust_context for Claude-Friendly Context Formatting
       trust_context: detection.trust_context ? JSON.stringify(detection.trust_context) : null,
+      // Story 2.1: 5-layer narrative fields
+      evidence: detection.evidence
+        ? Array.isArray(detection.evidence)
+          ? JSON.stringify(detection.evidence)
+          : detection.evidence
+        : null,
+      alternatives: detection.alternatives
+        ? Array.isArray(detection.alternatives)
+          ? JSON.stringify(detection.alternatives)
+          : detection.alternatives
+        : null,
+      risks: detection.risks || null,
     };
 
     // Task 3.7, 3.8: Generate enhanced embedding and store in vss_memories

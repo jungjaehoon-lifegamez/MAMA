@@ -10,6 +10,7 @@
  * @date 2025-11-20
  */
 
+// eslint-disable-next-line no-unused-vars
 const { info, error: logError } = require('./debug-logger');
 // Lazy-load @huggingface/transformers to avoid loading sharp at module load time (Story 014.12.7)
 // const { pipeline } = require('@huggingface/transformers');
@@ -105,6 +106,7 @@ async function generateEmbedding(text) {
       throw new Error(`Expected ${expectedDim}-dim, got ${embedding.length}-dim`);
     }
 
+    // eslint-disable-next-line no-unused-vars
     const latency = Date.now() - startTime;
 
     // Task 2: Store in cache (AC #3)
@@ -132,15 +134,40 @@ async function generateEmbedding(text) {
  * @returns {Promise<Float32Array>} 384-dim enhanced embedding
  */
 async function generateEnhancedEmbedding(decision) {
-  // Construct enriched text representation
-  const enrichedText = `
-Topic: ${decision.topic}
-Decision: ${decision.decision}
-Reasoning: ${decision.reasoning || 'N/A'}
-Outcome: ${decision.outcome || 'ONGOING'}
-Confidence: ${decision.confidence !== undefined ? decision.confidence : 0.5}
-User Involvement: ${decision.user_involvement || 'N/A'}
-`.trim();
+  // Construct enriched text representation with narrative fields (Story 2.2)
+  const parts = [
+    `Topic: ${decision.topic}`,
+    `Decision: ${decision.decision}`,
+    `Reasoning: ${decision.reasoning || 'N/A'}`,
+    `Outcome: ${decision.outcome || 'ONGOING'}`,
+    `Confidence: ${decision.confidence !== undefined ? decision.confidence : 0.5}`,
+    `User Involvement: ${decision.user_involvement || 'N/A'}`,
+  ];
+
+  // Add narrative fields if present (Story 2.2: Narrative-Based Search)
+  if (decision.evidence) {
+    const evidenceText = Array.isArray(decision.evidence)
+      ? decision.evidence.join('; ')
+      : typeof decision.evidence === 'string'
+        ? decision.evidence
+        : JSON.stringify(decision.evidence);
+    parts.push(`Evidence: ${evidenceText}`);
+  }
+
+  if (decision.alternatives) {
+    const alternativesText = Array.isArray(decision.alternatives)
+      ? decision.alternatives.join('; ')
+      : typeof decision.alternatives === 'string'
+        ? decision.alternatives
+        : JSON.stringify(decision.alternatives);
+    parts.push(`Alternatives: ${alternativesText}`);
+  }
+
+  if (decision.risks) {
+    parts.push(`Risks: ${decision.risks}`);
+  }
+
+  const enrichedText = parts.join('\n').trim();
 
   return generateEmbedding(enrichedText);
 }

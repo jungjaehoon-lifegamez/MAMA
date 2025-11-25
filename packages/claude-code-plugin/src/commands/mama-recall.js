@@ -35,7 +35,10 @@ async function mamaRecallCommand(args = {}) {
 
     const result = await mama.recall(args.topic);
 
-    if (!result || !result.history || result.history.length === 0) {
+    // Map supersedes_chain to history for backward compatibility
+    const history = result.supersedes_chain || [];
+
+    if (!history || history.length === 0) {
       info(`[mama-recall] No decisions found for topic: ${args.topic}`);
 
       return {
@@ -45,12 +48,12 @@ async function mamaRecallCommand(args = {}) {
       };
     }
 
-    info(`[mama-recall] Found ${result.history.length} decision(s) for topic: ${args.topic}`);
+    info(`[mama-recall] Found ${history.length} decision(s) for topic: ${args.topic}`);
 
     return {
       success: true,
-      history: result.history,
-      message: formatHistoryMessage(args.topic, result.history, result.markdown),
+      history: history,
+      message: formatHistoryMessage(args.topic, history, result.markdown),
     };
   } catch (err) {
     logError(`[mama-recall] ❌ Failed to recall decisions: ${err.message}`);

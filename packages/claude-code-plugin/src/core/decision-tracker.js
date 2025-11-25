@@ -14,13 +14,8 @@
  * @date 2025-11-17
  */
 
-const { info, error: logError } = require('./debug-logger');
-const {
-  initDB,
-  insertDecisionWithEmbedding,
-  queryDecisionGraph,
-  getAdapter,
-} = require('./memory-store');
+const { info } = require('./debug-logger');
+const { initDB, insertDecisionWithEmbedding, getAdapter } = require('./memory-store');
 
 /**
  * Generate decision ID
@@ -154,11 +149,11 @@ function calculateCombinedConfidence(prior, parents) {
  * Task 3.6: Detect if new decision refines multiple previous decisions
  * AC #5: Multi-parent refinement
  *
- * @param {Object} detection - Decision detection result
- * @param {Object} sessionContext - Session context
+ * @param {Object} _detection - Decision detection result
+ * @param {Object} _sessionContext - Session context
  * @returns {Array<string>|null} Array of parent decision IDs or null
  */
-function detectRefinement(detection, sessionContext) {
+function detectRefinement(_detection, _sessionContext) {
   // TODO: Implement refinement detection heuristics
   // For now, return null (single-parent only)
   // Future: Analyze session context for references to multiple decisions
@@ -494,7 +489,7 @@ async function learnDecision(detection, toolExecution, sessionContext) {
     // Story 014.7.6: Generate notification if needs validation
     // ════════════════════════════════════════════════════════
     // TODO: Implement notification system for insights requiring validation
-    let notification = null;
+    const notification = null;
     if (needsValidation) {
       // Notification system not yet implemented
       // Future: notify user that assistant insight needs validation

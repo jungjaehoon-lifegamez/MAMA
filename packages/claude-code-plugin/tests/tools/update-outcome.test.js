@@ -5,9 +5,45 @@
  * AC: update_outcome tool updates decision outcomes with proper validation
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { initDB, closeDB } from '../../src/core/db-manager.js';
+
+// Test database path (isolated)
+const TEST_DB_PATH = path.join(
+  os.tmpdir(),
+  `mama-test-update-outcome-${Date.now()}-${process.pid}.db`
+);
 
 describe('Story M1.5: Update Outcome Tool', () => {
+  beforeAll(async () => {
+    // Clean up any existing database files
+    if (fs.existsSync(TEST_DB_PATH)) {
+      fs.unlinkSync(TEST_DB_PATH);
+    }
+
+    // Set test database path
+    process.env.MAMA_DB_PATH = TEST_DB_PATH;
+
+    // Initialize test database
+    // Note: ES modules don't need cache clearing - vitest's fork mode provides isolation
+    await initDB();
+  });
+
+  afterAll(async () => {
+    await closeDB();
+    if (fs.existsSync(TEST_DB_PATH)) {
+      fs.unlinkSync(TEST_DB_PATH);
+    }
+    [TEST_DB_PATH + '-wal', TEST_DB_PATH + '-shm'].forEach((file) => {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+      }
+    });
+    delete process.env.MAMA_DB_PATH;
+  });
   describe('Tool exports', () => {
     it('should export updateOutcomeTool', async () => {
       const { updateOutcomeTool } = await import('../../src/tools/update-outcome.js');

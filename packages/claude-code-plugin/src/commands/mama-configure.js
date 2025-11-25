@@ -228,7 +228,7 @@ async function mamaConfigureCommand(args = {}) {
       const success = configureModel(updates);
 
       if (success) {
-        const { config, configPath, tier } = showConfig();
+        const { config, tier } = showConfig();
         return {
           success: true,
           config,
@@ -267,11 +267,12 @@ async function mamaConfigureCommand(args = {}) {
  * @returns {string} Formatted message
  */
 function formatConfigMessage(config, configPath, tier) {
-  const tierBadge = {
-    1: '🟢 Tier 1',
-    2: '🟡 Tier 2',
-    3: '🔴 Tier 3',
-  }[tier.tier] || '⚪ Unknown';
+  const tierBadge =
+    {
+      1: '🟢 Tier 1',
+      2: '🟡 Tier 2',
+      3: '🔴 Tier 3',
+    }[tier.tier] || '⚪ Unknown';
 
   let message = `## ⚙️ MAMA Configuration\n\n`;
   message += `**Config File:** \`${configPath}\`\n\n`;

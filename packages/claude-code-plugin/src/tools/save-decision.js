@@ -28,7 +28,8 @@ const saveDecisionTool = {
       },
       decision: {
         type: 'string',
-        description: "The decision made (e.g., 'Use JWT with refresh tokens'). Max 2000 characters.",
+        description:
+          "The decision made (e.g., 'Use JWT with refresh tokens'). Max 2000 characters.",
       },
       reasoning: {
         type: 'string',
@@ -45,7 +46,8 @@ const saveDecisionTool = {
       type: {
         type: 'string',
         enum: ['user_decision', 'assistant_insight'],
-        description: "'user_decision' if user explicitly decided, 'assistant_insight' if this is Claude's suggestion. Default: 'user_decision'",
+        description:
+          "'user_decision' if user explicitly decided, 'assistant_insight' if this is Claude's suggestion. Default: 'user_decision'",
       },
       outcome: {
         type: 'string',
@@ -57,7 +59,7 @@ const saveDecisionTool = {
     required: ['topic', 'decision', 'reasoning'],
   },
 
-  async handler(params, context) {
+  async handler(params, _context) {
     const {
       topic,
       decision,
@@ -79,7 +81,8 @@ const saveDecisionTool = {
       if (topic.length > 200 || decision.length > 2000 || reasoning.length > 5000) {
         return {
           success: false,
-          message: '❌ Validation error: Field length exceeded (topic≤200, decision≤2000, reasoning≤5000)',
+          message:
+            '❌ Validation error: Field length exceeded (topic≤200, decision≤2000, reasoning≤5000)',
         };
       }
 

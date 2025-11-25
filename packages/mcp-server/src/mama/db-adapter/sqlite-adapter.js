@@ -49,9 +49,7 @@ class SQLiteAdapter extends DatabaseAdapter {
     // Expand ${HOME} or ~ in environment variable
     let expandedEnvPath = envPath;
     if (envPath) {
-      expandedEnvPath = envPath
-        .replace(/\$\{HOME\}/g, os.homedir())
-        .replace(/^~/, os.homedir());
+      expandedEnvPath = envPath.replace(/\$\{HOME\}/g, os.homedir()).replace(/^~/, os.homedir());
     }
 
     // Priority: config > env > default
@@ -187,21 +185,24 @@ class SQLiteAdapter extends DatabaseAdapter {
       LIMIT ?
     `);
 
-    const queryVector = embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
+    const queryVector =
+      embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
     const results = stmt.all(embeddingJson, Math.max(limit, 1));
 
-    return results.map((row) => {
-      const candidate = bufferToVector(row.embedding);
-      if (!candidate) {
-        return null;
-      }
-      const similarity = cosineSimilarity(candidate, queryVector);
-      return {
-        rowid: row.rowid,
-        similarity,
-        distance: 1 - similarity,
-      };
-    }).filter(Boolean);
+    return results
+      .map((row) => {
+        const candidate = bufferToVector(row.embedding);
+        if (!candidate) {
+          return null;
+        }
+        const similarity = cosineSimilarity(candidate, queryVector);
+        return {
+          rowid: row.rowid,
+          similarity,
+          distance: 1 - similarity,
+        };
+      })
+      .filter(Boolean);
   }
 
   /**
@@ -225,7 +226,7 @@ class SQLiteAdapter extends DatabaseAdapter {
     }
 
     const stmt = this.prepare(`
-      INSERT INTO vss_memories(rowid, embedding)
+      INSERT OR REPLACE INTO vss_memories(rowid, embedding)
       VALUES (${safeRowid}, ?)
     `);
 
@@ -276,10 +277,14 @@ class SQLiteAdapter extends DatabaseAdapter {
     // Apply migrations
     for (const file of migrationFiles) {
       const versionMatch = file.match(/^(\d+)-/);
-      if (!versionMatch) continue;
+      if (!versionMatch) {
+        continue;
+      }
 
       const version = parseInt(versionMatch[1], 10);
-      if (version <= currentVersion) continue;
+      if (version <= currentVersion) {
+        continue;
+      }
 
       const migrationPath = path.join(migrationsDir, file);
       const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
@@ -336,7 +341,9 @@ class SQLiteAdapter extends DatabaseAdapter {
 module.exports = SQLiteAdapter;
 
 function bufferToVector(buffer) {
-  if (!buffer) return null;
+  if (!buffer) {
+    return null;
+  }
   const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   return new Float32Array(arrayBuffer);
 }

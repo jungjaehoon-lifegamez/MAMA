@@ -25,8 +25,8 @@ const PLUGIN_JSON = path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json');
 const MCP_JSON = path.join(PLUGIN_ROOT, '.mcp.json');
 const PACKAGE_JSON = path.join(PLUGIN_ROOT, 'package.json');
 
-let errors = [];
-let warnings = [];
+const errors = [];
+const warnings = [];
 let passCount = 0;
 
 /**
@@ -47,7 +47,7 @@ function warn(msg) {
   warnings.push(msg);
 }
 
-function info(msg) {
+function _info(msg) {
   console.log(`\x1b[36mℹ️  ${msg}\x1b[0m`);
 }
 
@@ -75,11 +75,13 @@ function validateJsonFile(filePath, name) {
  * Validate plugin.json structure
  */
 function validatePluginJson(pluginConfig) {
-  if (!pluginConfig) return;
+  if (!pluginConfig) {
+    return;
+  }
 
   // Check required fields
   const required = ['name', 'version', 'description'];
-  required.forEach(field => {
+  required.forEach((field) => {
     if (!pluginConfig[field]) {
       error(`plugin.json missing required field: ${field}`);
     } else {
@@ -90,17 +92,21 @@ function validatePluginJson(pluginConfig) {
   // Check commands (auto-discovered from commands/ directory per official spec)
   const commandsDir = path.join(PLUGIN_ROOT, 'commands');
   if (fs.existsSync(commandsDir)) {
-    const commandFiles = fs.readdirSync(commandsDir).filter(f => f.endsWith('.md'));
+    const commandFiles = fs.readdirSync(commandsDir).filter((f) => f.endsWith('.md'));
     if (commandFiles.length > 0) {
-      success(`commands/ directory has ${commandFiles.length} command(s): ${commandFiles.join(', ')}`);
+      success(
+        `commands/ directory has ${commandFiles.length} command(s): ${commandFiles.join(', ')}`
+      );
     } else {
       warn('commands/ directory exists but has no .md files');
     }
   } else if (pluginConfig.commands && Array.isArray(pluginConfig.commands)) {
     // Legacy: plugin.json lists commands (non-standard, but check if they exist)
-    warn('plugin.json has commands array (non-standard, use commands/ directory for auto-discovery)');
+    warn(
+      'plugin.json has commands array (non-standard, use commands/ directory for auto-discovery)'
+    );
     success(`plugin.json has ${pluginConfig.commands.length} commands`);
-    pluginConfig.commands.forEach(cmd => {
+    pluginConfig.commands.forEach((cmd) => {
       const cmdPath = path.join(PLUGIN_ROOT, '.claude-plugin', cmd);
       if (!fs.existsSync(cmdPath)) {
         error(`Command file not found: ${cmdPath}`);
@@ -112,12 +118,31 @@ function validatePluginJson(pluginConfig) {
     warn('No commands/ directory and no commands in plugin.json');
   }
 
-  // Check skills
-  if (!pluginConfig.skills || !Array.isArray(pluginConfig.skills)) {
-    warn('plugin.json has no skills array');
-  } else {
+  // Check skills (auto-discovered from skills/ directory per official spec)
+  const skillsDir = path.join(PLUGIN_ROOT, 'skills');
+  if (fs.existsSync(skillsDir)) {
+    const skillDirs = fs.readdirSync(skillsDir).filter((f) => {
+      const stat = fs.statSync(path.join(skillsDir, f));
+      return stat.isDirectory();
+    });
+    if (skillDirs.length > 0) {
+      success(`skills/ directory has ${skillDirs.length} skill(s): ${skillDirs.join(', ')}`);
+      skillDirs.forEach((skillDir) => {
+        const skillMdPath = path.join(skillsDir, skillDir, 'SKILL.md');
+        if (!fs.existsSync(skillMdPath)) {
+          error(`Skill SKILL.md not found: ${path.join('skills', skillDir, 'SKILL.md')}`);
+        } else {
+          success(`Skill documentation exists: ${skillDir}/SKILL.md`);
+        }
+      });
+    } else {
+      warn('skills/ directory exists but has no subdirectories');
+    }
+  } else if (pluginConfig.skills && Array.isArray(pluginConfig.skills)) {
+    // Legacy: plugin.json lists skills (non-standard)
+    warn('plugin.json has skills array (non-standard, use skills/ directory for auto-discovery)');
     success(`plugin.json has ${pluginConfig.skills.length} skills`);
-    pluginConfig.skills.forEach(skill => {
+    pluginConfig.skills.forEach((skill) => {
       const skillPath = path.join(PLUGIN_ROOT, '.claude-plugin', skill.path, 'SKILL.md');
       if (!fs.existsSync(skillPath)) {
         error(`Skill SKILL.md not found: ${skillPath}`);
@@ -125,16 +150,70 @@ function validatePluginJson(pluginConfig) {
         success(`Skill exists: ${skill.name}`);
       }
     });
+  } else {
+    warn('No skills/ directory and no skills in plugin.json');
   }
 
-  // Check hooks
+  // Check hooks (can be object or file path)
   if (!pluginConfig.hooks) {
     warn('plugin.json has no hooks');
-  } else {
+  } else if (typeof pluginConfig.hooks === 'string') {
+    // External hooks config file
+    const hooksConfigPath = path.join(PLUGIN_ROOT, pluginConfig.hooks);
+    if (!fs.existsSync(hooksConfigPath)) {
+      error(`Hooks config file not found: ${hooksConfigPath}`);
+    } else {
+      success(`Hooks config file exists: ${pluginConfig.hooks}`);
+      try {
+        const hooksConfig = JSON.parse(fs.readFileSync(hooksConfigPath, 'utf8'));
+        if (hooksConfig.hooks) {
+          const hookTypes = Object.keys(hooksConfig.hooks);
+          success(`Hooks config has ${hookTypes.length} hook type(s): ${hookTypes.join(', ')}`);
+
+          hookTypes.forEach((hookType) => {
+            const hookConfigs = hooksConfig.hooks[hookType];
+            if (!Array.isArray(hookConfigs)) {
+              error(`Hook ${hookType} is not an array`);
+              return;
+            }
+
+            hookConfigs.forEach((hookConfig, idx) => {
+              if (!hookConfig.hooks || !Array.isArray(hookConfig.hooks)) {
+                error(`Hook ${hookType}[${idx}] missing hooks array`);
+                return;
+              }
+
+              hookConfig.hooks.forEach((hook, hookIdx) => {
+                if (!hook.command) {
+                  error(`Hook ${hookType}[${idx}].hooks[${hookIdx}] missing command`);
+                  return;
+                }
+
+                // Check if script exists (resolve ${CLAUDE_PLUGIN_ROOT})
+                const scriptPath = hook.command
+                  .replace('node ${CLAUDE_PLUGIN_ROOT}/', '')
+                  .replace('${CLAUDE_PLUGIN_ROOT}/', '');
+                const fullPath = path.join(PLUGIN_ROOT, scriptPath);
+
+                if (!fs.existsSync(fullPath)) {
+                  error(`Hook script not found: ${fullPath}`);
+                } else {
+                  success(`Hook script exists: ${scriptPath}`);
+                }
+              });
+            });
+          });
+        }
+      } catch (err) {
+        error(`Invalid hooks config JSON: ${err.message}`);
+      }
+    }
+  } else if (typeof pluginConfig.hooks === 'object') {
+    // Inline hooks config (legacy)
     const hookTypes = Object.keys(pluginConfig.hooks);
     success(`plugin.json has hooks: ${hookTypes.join(', ')}`);
 
-    hookTypes.forEach(hookType => {
+    hookTypes.forEach((hookType) => {
       const hookConfigs = pluginConfig.hooks[hookType];
       if (!Array.isArray(hookConfigs)) {
         error(`Hook ${hookType} is not an array`);
@@ -178,7 +257,9 @@ function validatePluginJson(pluginConfig) {
  * Validate .mcp.json structure
  */
 function validateMcpJson(mcpConfig) {
-  if (!mcpConfig) return;
+  if (!mcpConfig) {
+    return;
+  }
 
   if (!mcpConfig.mcpServers) {
     error('.mcp.json missing mcpServers');
@@ -188,7 +269,7 @@ function validateMcpJson(mcpConfig) {
   const serverNames = Object.keys(mcpConfig.mcpServers);
   success(`.mcp.json has ${serverNames.length} servers: ${serverNames.join(', ')}`);
 
-  serverNames.forEach(serverName => {
+  serverNames.forEach((serverName) => {
     const server = mcpConfig.mcpServers[serverName];
 
     if (!server.command) {
@@ -214,10 +295,12 @@ function validateMcpJson(mcpConfig) {
  * Validate package.json
  */
 function validatePackageJson(pkg) {
-  if (!pkg) return;
+  if (!pkg) {
+    return;
+  }
 
   const required = ['name', 'version'];
-  required.forEach(field => {
+  required.forEach((field) => {
     if (!pkg[field]) {
       error(`package.json missing required field: ${field}`);
     } else {

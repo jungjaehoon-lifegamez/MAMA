@@ -19,14 +19,14 @@ const crypto = require('crypto');
 const os = require('os');
 const { info, warn, error: logError } = require('./debug-logger');
 
-// Metrics log directory
-const LOG_DIR = path.join(os.homedir(), '.mama', 'logs');
+// Metrics log directory (override with MAMA_LOG_DIR for tests/sandboxes)
+const LOG_DIR = process.env.MAMA_LOG_DIR || path.join(os.homedir(), '.mama', 'logs');
 const METRICS_FILE = path.join(LOG_DIR, 'hook-metrics.jsonl');
 
 // Performance targets (from MAMA-PRD.md)
 const PERFORMANCE_TARGETS = {
-  maxLatencyMs: 500,  // p95 target
-  warningLatencyMs: 400  // Warning threshold
+  maxLatencyMs: 500, // p95 target
+  warningLatencyMs: 400, // Warning threshold
 };
 
 /**
@@ -50,7 +50,9 @@ function ensureLogDir() {
  * @returns {string} SHA-256 hash
  */
 function hashSensitiveData(text) {
-  if (!text) return null;
+  if (!text) {
+    return null;
+  }
   return crypto.createHash('sha256').update(text).digest('hex').substring(0, 16);
 }
 
@@ -118,7 +120,7 @@ function logHookMetrics(metrics) {
       tier_reason: metrics.tierReason,
       outcome: metrics.outcome,
       performance_target_met: metrics.latencyMs <= PERFORMANCE_TARGETS.maxLatencyMs,
-      performance_warning: metrics.latencyMs >= PERFORMANCE_TARGETS.warningLatencyMs
+      performance_warning: metrics.latencyMs >= PERFORMANCE_TARGETS.warningLatencyMs,
     };
 
     // Add optional metadata (redacted)
@@ -138,14 +140,17 @@ function logHookMetrics(metrics) {
 
     // Log performance warnings
     if (metrics.latencyMs >= PERFORMANCE_TARGETS.warningLatencyMs) {
-      warn(`[Metrics] ${metrics.hookName} latency warning: ${metrics.latencyMs}ms (target: ${PERFORMANCE_TARGETS.maxLatencyMs}ms)`);
+      warn(
+        `[Metrics] ${metrics.hookName} latency warning: ${metrics.latencyMs}ms (target: ${PERFORMANCE_TARGETS.maxLatencyMs}ms)`
+      );
     }
 
     // Log degraded tier
     if (metrics.tier > 1) {
-      info(`[Metrics] ${metrics.hookName} running in degraded Tier ${metrics.tier}: ${metrics.tierReason}`);
+      info(
+        `[Metrics] ${metrics.hookName} running in degraded Tier ${metrics.tier}: ${metrics.tierReason}`
+      );
     }
-
   } catch (error) {
     logError(`[Metrics] Failed to log hook metrics: ${error.message}`);
   }
@@ -192,14 +197,13 @@ function logAutoSaveOutcome(action, metadata = {}) {
       timestamp,
       event_type: 'auto_save_outcome',
       action,
-      metadata: redactSensitiveData(metadata)
+      metadata: redactSensitiveData(metadata),
     };
 
     const logLine = JSON.stringify(entry) + '\n';
     fs.appendFileSync(METRICS_FILE, logLine, 'utf8');
 
     info(`[Metrics] Auto-save outcome: ${action}`);
-
   } catch (error) {
     logError(`[Metrics] Failed to log auto-save outcome: ${error.message}`);
   }
@@ -222,7 +226,7 @@ function getMetricsSummary(options = {}) {
       return {
         total_entries: 0,
         entries: [],
-        statistics: {}
+        statistics: {},
       };
     }
 
@@ -231,38 +235,52 @@ function getMetricsSummary(options = {}) {
       .trim()
       .split('\n')
       .filter(Boolean)
-      .map(line => JSON.parse(line));
+      .map((line) => JSON.parse(line));
 
     // Apply filters
     if (options.hookName) {
-      entries = entries.filter(e => e.hook_name === options.hookName);
+      entries = entries.filter((e) => e.hook_name === options.hookName);
     }
 
     if (options.tier !== undefined) {
-      entries = entries.filter(e => e.tier === options.tier);
+      entries = entries.filter((e) => e.tier === options.tier);
     }
 
     if (options.outcome) {
-      entries = entries.filter(e => e.outcome === options.outcome);
+      entries = entries.filter((e) => e.outcome === options.outcome);
     }
 
     // Calculate statistics
-    const hookMetrics = entries.filter(e => e.hook_name);
+    const hookMetrics = entries.filter((e) => e.hook_name);
     const statistics = {
       total_hook_calls: hookMetrics.length,
-      avg_latency_ms: hookMetrics.length > 0
-        ? Math.round(hookMetrics.reduce((sum, e) => sum + e.latency_ms, 0) / hookMetrics.length)
-        : 0,
-      p95_latency_ms: calculatePercentile(hookMetrics.map(e => e.latency_ms), 0.95),
-      p99_latency_ms: calculatePercentile(hookMetrics.map(e => e.latency_ms), 0.99),
-      performance_target_met_rate: hookMetrics.length > 0
-        ? Math.round((hookMetrics.filter(e => e.performance_target_met).length / hookMetrics.length) * 100)
-        : 0,
+      avg_latency_ms:
+        hookMetrics.length > 0
+          ? Math.round(hookMetrics.reduce((sum, e) => sum + e.latency_ms, 0) / hookMetrics.length)
+          : 0,
+      p95_latency_ms: calculatePercentile(
+        hookMetrics.map((e) => e.latency_ms),
+        0.95
+      ),
+      p99_latency_ms: calculatePercentile(
+        hookMetrics.map((e) => e.latency_ms),
+        0.99
+      ),
+      performance_target_met_rate:
+        hookMetrics.length > 0
+          ? Math.round(
+              (hookMetrics.filter((e) => e.performance_target_met).length / hookMetrics.length) *
+                100
+            )
+          : 0,
       tier_distribution: getTierDistribution(hookMetrics),
       outcome_distribution: getOutcomeDistribution(hookMetrics),
-      degraded_mode_rate: hookMetrics.length > 0
-        ? Math.round((hookMetrics.filter(e => e.degraded_mode).length / hookMetrics.length) * 100)
-        : 0
+      degraded_mode_rate:
+        hookMetrics.length > 0
+          ? Math.round(
+              (hookMetrics.filter((e) => e.degraded_mode).length / hookMetrics.length) * 100
+            )
+          : 0,
     };
 
     // Limit entries
@@ -273,16 +291,15 @@ function getMetricsSummary(options = {}) {
     return {
       total_entries: entries.length,
       entries: entries.reverse(), // Most recent first
-      statistics
+      statistics,
     };
-
   } catch (error) {
     logError(`[Metrics] Failed to get metrics summary: ${error.message}`);
     return {
       total_entries: 0,
       entries: [],
       statistics: {},
-      error: error.message
+      error: error.message,
     };
   }
 }
@@ -295,7 +312,9 @@ function getMetricsSummary(options = {}) {
  * @returns {number} Percentile value
  */
 function calculatePercentile(values, percentile) {
-  if (values.length === 0) return 0;
+  if (values.length === 0) {
+    return 0;
+  }
 
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.ceil(sorted.length * percentile) - 1;
@@ -311,10 +330,14 @@ function calculatePercentile(values, percentile) {
 function getTierDistribution(entries) {
   const distribution = { tier1: 0, tier2: 0, tier3: 0 };
 
-  entries.forEach(entry => {
-    if (entry.tier === 1) distribution.tier1++;
-    else if (entry.tier === 2) distribution.tier2++;
-    else if (entry.tier === 3) distribution.tier3++;
+  entries.forEach((entry) => {
+    if (entry.tier === 1) {
+      distribution.tier1++;
+    } else if (entry.tier === 2) {
+      distribution.tier2++;
+    } else if (entry.tier === 3) {
+      distribution.tier3++;
+    }
   });
 
   return distribution;
@@ -329,7 +352,7 @@ function getTierDistribution(entries) {
 function getOutcomeDistribution(entries) {
   const distribution = {};
 
-  entries.forEach(entry => {
+  entries.forEach((entry) => {
     const outcome = entry.outcome || 'unknown';
     distribution[outcome] = (distribution[outcome] || 0) + 1;
   });
@@ -399,5 +422,5 @@ module.exports = {
   redactSensitiveData,
   getDegradedFeatures,
   PERFORMANCE_TARGETS,
-  METRICS_FILE
+  METRICS_FILE,
 };

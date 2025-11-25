@@ -31,13 +31,14 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 
 const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
-const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+// Lazy load to avoid embedding model initialization before tier check
+// const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 const { formatContext } = require(path.join(CORE_PATH, 'decision-formatter'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // Configuration
 const MAX_RUNTIME_MS = 500; // Same as M2.1
-const SIMILARITY_THRESHOLD = 0.70; // AC: Lower than M2.1 (70% vs 75%)
+const SIMILARITY_THRESHOLD = 0.7; // AC: Lower than M2.1 (70% vs 75%)
 const TOKEN_BUDGET = 300; // Shorter than M2.1 for file operations
 const RATE_LIMIT_MS = 1000; // AC: Rate limiting (min 1s between injections)
 const RATE_LIMIT_FILE = path.join(PLUGIN_ROOT, '.pretooluse-last-run');
@@ -92,6 +93,24 @@ function updateRateLimit() {
  * @returns {Object} Tier info {tier, vectorSearchEnabled, reason}
  */
 function getTierInfo() {
+  // Fast path for testing: completely skip MAMA (fastest)
+  if (process.env.MAMA_FORCE_TIER_3 === 'true') {
+    return {
+      tier: 3,
+      vectorSearchEnabled: false,
+      reason: 'Tier 3 forced for testing (embeddings disabled)',
+    };
+  }
+
+  // Fast path for testing: skip embedding model loading
+  if (process.env.MAMA_FORCE_TIER_2 === 'true') {
+    return {
+      tier: 2,
+      vectorSearchEnabled: false,
+      reason: 'Tier 2 forced for testing (fast mode)',
+    };
+  }
+
   try {
     const config = loadConfig();
 
@@ -99,19 +118,19 @@ function getTierInfo() {
       return {
         tier: 1,
         vectorSearchEnabled: true,
-        reason: 'Full MAMA features available'
+        reason: 'Full MAMA features available',
       };
     } else if (!config.embeddingModel) {
       return {
         tier: 2,
         vectorSearchEnabled: false,
-        reason: 'Embeddings unavailable (Transformers.js not loaded)'
+        reason: 'Embeddings unavailable (Transformers.js not loaded)',
       };
     } else {
       return {
         tier: 3,
         vectorSearchEnabled: false,
-        reason: 'MAMA disabled in config'
+        reason: 'MAMA disabled in config',
       };
     }
   } catch (error) {
@@ -119,7 +138,7 @@ function getTierInfo() {
     return {
       tier: 2,
       vectorSearchEnabled: false,
-      reason: 'Config load failed, degraded mode'
+      reason: 'Config load failed, degraded mode',
     };
   }
 }
@@ -135,16 +154,18 @@ function getTierInfo() {
  * @returns {string} Formatted transparency line
  */
 function formatTransparencyLine(tierInfo, latencyMs, resultCount, toolName) {
-  const tierBadge = {
-    1: '🟢 Tier 1',
-    2: '🟡 Tier 2',
-    3: '🔴 Tier 3'
-  }[tierInfo.tier] || '⚪ Unknown';
+  const tierBadge =
+    {
+      1: '🟢 Tier 1',
+      2: '🟡 Tier 2',
+      3: '🔴 Tier 3',
+    }[tierInfo.tier] || '⚪ Unknown';
 
   const status = tierInfo.reason;
-  const performance = latencyMs > MAX_RUNTIME_MS
-    ? `⚠️ ${latencyMs}ms (exceeded ${MAX_RUNTIME_MS}ms target)`
-    : `✓ ${latencyMs}ms`;
+  const performance =
+    latencyMs > MAX_RUNTIME_MS
+      ? `⚠️ ${latencyMs}ms (exceeded ${MAX_RUNTIME_MS}ms target)`
+      : `✓ ${latencyMs}ms`;
 
   return `\n\n---\n🔍 PreToolUse [${toolName}]: ${tierBadge} | ${status} | ${performance} | ${resultCount} decisions`;
 }
@@ -158,7 +179,7 @@ function formatTransparencyLine(tierInfo, latencyMs, resultCount, toolName) {
  * @returns {Array<Object>} Decisions with file hints
  */
 function extractFileHints(decisions, targetPath) {
-  return decisions.map(decision => {
+  return decisions.map((decision) => {
     const fileHints = [];
 
     // Check if decision mentions file paths
@@ -176,7 +197,7 @@ function extractFileHints(decisions, targetPath) {
 
     return {
       ...decision,
-      fileHints: fileHints.length > 0 ? fileHints : null
+      fileHints: fileHints.length > 0 ? fileHints : null,
     };
   });
 }
@@ -214,7 +235,9 @@ function generateQuery(toolName, filePath, grepPattern) {
 async function readStdin() {
   return new Promise((resolve, reject) => {
     let data = '';
-    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
     process.stdin.on('end', () => {
       try {
         const parsed = JSON.parse(data);
@@ -237,8 +260,6 @@ async function main() {
     // 1. Check opt-out flag
     if (process.env.MAMA_DISABLE_HOOKS === 'true') {
       info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -258,8 +279,6 @@ async function main() {
 
     if (!toolName || !SUPPORTED_TOOLS.includes(toolName)) {
       // Silent exit - tool not supported
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -278,10 +297,24 @@ async function main() {
       process.exit(0);
     }
 
-    // 6. Tier 2 warning (degraded mode)
-    if (tierInfo.tier === 2) {
-      warn(`[Hook] Running in degraded mode (Tier 2): ${tierInfo.reason}`);
-      // Continue with keyword search only
+    // 6. Tier 2/3: Skip injection (requires embeddings)
+    if (tierInfo.tier !== 1) {
+      warn(`[Hook] Skipping injection (Tier ${tierInfo.tier}): ${tierInfo.reason}`);
+
+      const latencyMs = Date.now() - startTime;
+      const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, 0, toolName);
+
+      const response = {
+        decision: null,
+        reason: '',
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          systemMessage: `🔍 MAMA: Embeddings unavailable (Tier ${tierInfo.tier})`,
+          additionalContext: transparencyLine,
+        },
+      };
+      console.log(JSON.stringify(response));
+      process.exit(0);
     }
 
     // 7. Generate query from context (variables already declared above)
@@ -299,7 +332,7 @@ async function main() {
         injectPreToolContext(query, filePath),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Hook timeout')), MAX_RUNTIME_MS)
-        )
+        ),
       ]);
 
       context = result.context;
@@ -307,7 +340,6 @@ async function main() {
 
       // Update rate limit on successful execution
       updateRateLimit();
-
     } catch (error) {
       if (error.message === 'Hook timeout') {
         warn(`[Hook] Injection exceeded ${MAX_RUNTIME_MS}ms, skipping`);
@@ -326,12 +358,12 @@ async function main() {
       // Correct Claude Code JSON format with hookSpecificOutput
       const response = {
         decision: null,
-        reason: "",
+        reason: '',
         hookSpecificOutput: {
-          hookEventName: "PreToolUse",
+          hookEventName: 'PreToolUse',
           systemMessage: `💡 MAMA: ${resultCount} decision${resultCount > 1 ? 's' : ''} related to ${toolName} (${latencyMs}ms)`,
-          additionalContext: context + transparencyLine
-        }
+          additionalContext: context + transparencyLine,
+        },
       };
       console.log(JSON.stringify(response));
       info(`[Hook] Injected ${resultCount} decisions (${latencyMs}ms)`);
@@ -341,19 +373,18 @@ async function main() {
 
       const response = {
         decision: null,
-        reason: "",
+        reason: '',
         hookSpecificOutput: {
-          hookEventName: "PreToolUse",
+          hookEventName: 'PreToolUse',
           systemMessage: `🔍 MAMA: No decisions related to ${toolName} (${latencyMs}ms)`,
-          additionalContext: transparencyLine
-        }
+          additionalContext: transparencyLine,
+        },
       };
       console.log(JSON.stringify(response));
       info(`[Hook] No relevant decisions found (${latencyMs}ms)`);
     }
 
     process.exit(0);
-
   } catch (error) {
     logError(`[Hook] Fatal error: ${error.message}`);
     console.error(`❌ MAMA PreToolUse Hook Error: ${error.message}`);
@@ -370,8 +401,11 @@ async function main() {
  * @returns {Promise<Object>} {context, count}
  */
 async function injectPreToolContext(query, filePath) {
-  // 1. Generate query embedding
+  // Lazy load embeddings and vector search (only on Tier 1)
   const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
+  const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+
+  // 1. Generate query embedding
   const queryEmbedding = await generateEmbedding(query);
 
   // 2. Vector search with lower threshold (70% vs 75%)
@@ -380,12 +414,12 @@ async function injectPreToolContext(query, filePath) {
   // 3. AC: Weight recency higher for file operations
   // Apply Gaussian decay: score = similarity * exp(-age_days / 30)
   const now = Date.now();
-  results = results.map(r => {
+  results = results.map((r) => {
     const ageDays = (now - r.created_at) / (1000 * 60 * 60 * 24);
     const recencyBoost = Math.exp(-ageDays / 30); // 30-day half-life
     return {
       ...r,
-      adjustedScore: r.similarity * 0.7 + recencyBoost * 0.3 // 70% similarity, 30% recency
+      adjustedScore: r.similarity * 0.7 + recencyBoost * 0.3, // 70% similarity, 30% recency
     };
   });
 
@@ -405,21 +439,28 @@ async function injectPreToolContext(query, filePath) {
   // 7. Format context (shorter for file operations)
   const formattedContext = formatContext(results, {
     maxTokens: TOKEN_BUDGET,
-    includeFileHints: true
+    includeFileHints: true,
   });
 
   return {
     context: formattedContext,
-    count: results.length
+    count: results.length,
   };
 }
 
 // Run hook
 if (require.main === module) {
-  main().catch(error => {
+  main().catch((error) => {
     logError(`[Hook] Unhandled error: ${error.message}`);
     process.exit(1);
   });
 }
 
-module.exports = { main, getTierInfo, formatTransparencyLine, checkRateLimit, generateQuery, extractFileHints };
+module.exports = {
+  main,
+  getTierInfo,
+  formatTransparencyLine,
+  checkRateLimit,
+  generateQuery,
+  extractFileHints,
+};

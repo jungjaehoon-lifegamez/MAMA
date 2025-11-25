@@ -14,6 +14,7 @@
  * @module list-decisions
  */
 
+// eslint-disable-next-line no-unused-vars
 const path = require('path');
 
 // Import MAMA API from core directory
@@ -39,7 +40,7 @@ const listDecisionsTool = {
     required: [],
   },
 
-  async handler(params, context) {
+  async handler(params, _context) {
     const { limit = 20 } = params || {};
 
     try {

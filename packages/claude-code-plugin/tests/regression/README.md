@@ -45,6 +45,7 @@ npm run test:watch tests/regression/
 ### Test Output
 
 Successful run:
+
 ```
 ✓ tests/regression/workflow-simulation.test.js (45)
   ✓ Workflow 1: Discovery (save → list → suggest) (2)
@@ -65,6 +66,7 @@ Test Files  2 passed (2)
 ```
 
 With performance metrics:
+
 ```
 [Regression] Discovery workflow latency: 142ms
 [Regression] list_decisions p95: 18ms
@@ -79,12 +81,14 @@ With performance metrics:
 ### GitHub Actions
 
 Regression tests run automatically on:
+
 - **Every PR** that modifies `mama-plugin/**`
 - **Push to main/develop** branches
 
 Workflow file: `.github/workflows/mama-plugin-tests.yml`
 
 View results:
+
 1. Go to PR → Checks tab
 2. Find "MAMA Plugin Tests" workflow
 3. Click "Run all tests" or "Run regression harness" step
@@ -105,26 +109,26 @@ Actions → MAMA Plugin Tests → Run workflow
 
 ### Workflow Simulation (`workflow-simulation.test.js`)
 
-| Workflow | Tests | Coverage |
-|----------|-------|----------|
-| **Discovery** (save→list→suggest) | 2 tests | Happy path, performance |
-| **Evolution Tracking** (save→save→recall) | 2 tests | Supersedes chain, integrity |
-| **Bulk Operations** (multiple saves→list) | 2 tests | Pagination, formatting |
-| **Edge Cases** | 3 tests | Validation, empty DB, concurrent ops |
-| **Performance** | 2 tests | p95 latency, large dataset |
+| Workflow                                  | Tests   | Coverage                             |
+| ----------------------------------------- | ------- | ------------------------------------ |
+| **Discovery** (save→list→suggest)         | 2 tests | Happy path, performance              |
+| **Evolution Tracking** (save→save→recall) | 2 tests | Supersedes chain, integrity          |
+| **Bulk Operations** (multiple saves→list) | 2 tests | Pagination, formatting               |
+| **Edge Cases**                            | 3 tests | Validation, empty DB, concurrent ops |
+| **Performance**                           | 2 tests | p95 latency, large dataset           |
 
 Total: **11 test scenarios**, **45+ assertions**
 
 ### Hook Simulation (`hook-simulation.test.js`)
 
-| Hook | Tests | Coverage |
-|------|-------|----------|
-| **PreToolUse** | 7 tests | Read/Edit/Grep tools, rate limiting, tier awareness |
-| **PostToolUse** | 4 tests | Write/Edit tools, non-triggering tools |
-| **UserPromptSubmit** | 4 tests | Prompt handling, empty prompts |
-| **Cross-Hook Integration** | 2 tests | Parallel execution, format consistency |
-| **Performance** | 2 tests | p95 latency, large dataset |
-| **Error Handling** | 3 tests | Missing env vars, DB failures, timeouts |
+| Hook                       | Tests   | Coverage                                            |
+| -------------------------- | ------- | --------------------------------------------------- |
+| **PreToolUse**             | 7 tests | Read/Edit/Grep tools, rate limiting, tier awareness |
+| **PostToolUse**            | 4 tests | Write/Edit tools, non-triggering tools              |
+| **UserPromptSubmit**       | 4 tests | Prompt handling, empty prompts                      |
+| **Cross-Hook Integration** | 2 tests | Parallel execution, format consistency              |
+| **Performance**            | 2 tests | p95 latency, large dataset                          |
+| **Error Handling**         | 3 tests | Missing env vars, DB failures, timeouts             |
 
 Total: **22 test scenarios**, **38+ assertions**
 
@@ -134,13 +138,13 @@ Total: **22 test scenarios**, **38+ assertions**
 
 ### Enforced Latency Targets
 
-| Operation | p95 Target | CI Allowance | Notes |
-|-----------|-----------|--------------|-------|
-| `list_decisions` | < 100ms | < 100ms | SQLite query + formatting |
-| `suggest_decision` | < 200ms | < 200ms | Includes semantic search (Tier 2) |
-| Discovery workflow | < 500ms | < 500ms | Full save→list→suggest cycle |
-| PreToolUse hook | < 100ms | < 500ms | Real-world vs CI overhead |
-| PostToolUse hook | < 100ms | < 500ms | Real-world vs CI overhead |
+| Operation          | p95 Target | CI Allowance | Notes                             |
+| ------------------ | ---------- | ------------ | --------------------------------- |
+| `list_decisions`   | < 100ms    | < 100ms      | SQLite query + formatting         |
+| `suggest_decision` | < 200ms    | < 200ms      | Includes semantic search (Tier 2) |
+| Discovery workflow | < 500ms    | < 500ms      | Full save→list→suggest cycle      |
+| PreToolUse hook    | < 100ms    | < 500ms      | Real-world vs CI overhead         |
+| PostToolUse hook   | < 100ms    | < 500ms      | Real-world vs CI overhead         |
 
 **Note**: CI allowances are more generous to account for shared runner variability.
 
@@ -207,6 +211,7 @@ Total: **22 test scenarios**, **38+ assertions**
 ### Adding New Regression Tests
 
 1. **Identify the workflow or hook pattern**:
+
    ```javascript
    describe('Workflow X: Pattern Description', () => {
      it('should complete pattern successfully', async () => {
@@ -217,7 +222,7 @@ Total: **22 test scenarios**, **38+ assertions**
 
 2. **Follow existing patterns**:
    - Use isolated test DB (`os.tmpdir()`)
-   - Force Tier 2 mode (`MAMA_FORCE_TIER_2=true`)
+   - Force Tier 3 mode (`MAMA_FORCE_TIER_3=true`) to skip embeddings
    - Measure performance where applicable
    - Clean up resources in `afterAll()`
 
@@ -242,18 +247,21 @@ If legitimate changes require higher latency:
 ### Troubleshooting
 
 **Test DB conflicts**:
+
 ```bash
 # Find and remove stale test DBs
 rm /tmp/mama-*-test-*.db
 ```
 
 **Hook script permissions**:
+
 ```bash
 # Ensure hook scripts are executable
 chmod +x mama-plugin/scripts/*-hook.js
 ```
 
 **Node.js version mismatch**:
+
 ```bash
 # Check version (must be >= 18)
 node --version
@@ -263,6 +271,7 @@ nvm use 18
 ```
 
 **Vitest cache issues**:
+
 ```bash
 # Clear vitest cache
 npx vitest run --clearCache
@@ -292,11 +301,13 @@ npx vitest run --clearCache
 ### Q: How do I debug a failing hook simulation?
 
 **A**: Enable debug logging:
+
 ```bash
 DEBUG=mama:* npm test tests/regression/hook-simulation.test.js
 ```
 
 Or inspect hook stdout/stderr directly:
+
 ```javascript
 const result = await execHook(PRETOOLUSE_HOOK, {...});
 console.log('stdout:', result.stdout);

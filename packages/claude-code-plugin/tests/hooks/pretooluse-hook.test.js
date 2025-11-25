@@ -111,12 +111,12 @@ describe('Story M2.2: PreToolUse Hook', () => {
       const decisions = [
         {
           decision: 'Use db-manager.js for database operations',
-          reasoning: 'Located in src/core/db-manager.js'
+          reasoning: 'Located in src/core/db-manager.js',
         },
         {
           decision: 'Config in config.yaml',
-          reasoning: 'No file references'
-        }
+          reasoning: 'No file references',
+        },
       ];
 
       const result = hook.extractFileHints(decisions, 'db-manager.js');
@@ -193,7 +193,7 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(match).toBeTruthy();
 
       const threshold = parseFloat(match[1]);
-      expect(threshold).toBe(0.70); // Lower than M2.1 (0.75)
+      expect(threshold).toBe(0.7); // Lower than M2.1 (0.75)
     });
 
     it('should use threshold in vector search', () => {

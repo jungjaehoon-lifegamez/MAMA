@@ -47,7 +47,7 @@ const updateOutcomeTool = {
     required: ['decisionId', 'outcome'],
   },
 
-  async handler(params, context) {
+  async handler(params, _context) {
     const { decisionId, outcome, failure_reason, limitation } = params || {};
 
     try {
@@ -103,7 +103,9 @@ const updateOutcomeTool = {
         decision_id: decisionId,
         outcome,
         message: `✅ Decision outcome updated to ${outcome}${
-          failure_reason ? `\n   Reason: ${failure_reason.substring(0, 100)}${failure_reason.length > 100 ? '...' : ''}` : ''
+          failure_reason
+            ? `\n   Reason: ${failure_reason.substring(0, 100)}${failure_reason.length > 100 ? '...' : ''}`
+            : ''
         }${limitation ? `\n   Limitation: ${limitation.substring(0, 100)}${limitation.length > 100 ? '...' : ''}` : ''}`,
       };
     } catch (error) {

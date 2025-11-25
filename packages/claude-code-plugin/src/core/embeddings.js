@@ -10,7 +10,7 @@
  * @date 2025-11-20
  */
 
-const { info, error: logError } = require('./debug-logger');
+const { info } = require('./debug-logger');
 // Lazy-load @huggingface/transformers to avoid loading sharp at module load time (Story 014.12.7)
 // const { pipeline } = require('@huggingface/transformers');
 const { embeddingCache } = require('./embedding-cache');
@@ -29,6 +29,12 @@ let currentModelName = null;
  * @returns {Promise<Function>} Embedding pipeline
  */
 async function loadModel() {
+  // TIER 3: Skip model loading entirely for tests
+  if (process.env.MAMA_FORCE_TIER_3 === 'true') {
+    info('[MAMA] Tier 3 mode: Skipping embedding model load');
+    return null;
+  }
+
   const modelName = getModelName();
 
   // Check if model has changed (Story M1.4 AC #3)
@@ -71,10 +77,16 @@ async function loadModel() {
  * Target: < 30ms latency
  *
  * @param {string} text - Input text to embed
- * @returns {Promise<Float32Array>} Embedding vector (dimension from config)
+ * @returns {Promise<Float32Array|null>} Embedding vector (dimension from config) or null if Tier 3
  * @throws {Error} If text is empty or embedding fails
  */
 async function generateEmbedding(text) {
+  // TIER 3: Skip embedding generation entirely
+  if (process.env.MAMA_FORCE_TIER_3 === 'true') {
+    info('[MAMA] Tier 3 mode: Skipping embedding generation');
+    return null;
+  }
+
   if (!text || text.trim().length === 0) {
     throw new Error('Text cannot be empty');
   }
@@ -84,8 +96,6 @@ async function generateEmbedding(text) {
   if (cached) {
     return cached;
   }
-
-  const startTime = Date.now();
 
   try {
     const model = await loadModel();
@@ -104,8 +114,6 @@ async function generateEmbedding(text) {
     if (embedding.length !== expectedDim) {
       throw new Error(`Expected ${expectedDim}-dim, got ${embedding.length}-dim`);
     }
-
-    const latency = Date.now() - startTime;
 
     // Task 2: Store in cache (AC #3)
     embeddingCache.set(text, embedding);

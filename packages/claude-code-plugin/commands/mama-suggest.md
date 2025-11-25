@@ -1,7 +1,7 @@
 ---
 description: Auto-suggest relevant past decisions based on semantic search
 allowed-tools: Read
-argument-hint: "<query> [--limit=5] [--recency-weight=0.3]"
+argument-hint: '<query> [--limit=5] [--recency-weight=0.3]'
 ---
 
 # Suggest Relevant Decisions from MAMA
@@ -20,8 +20,8 @@ You are helping the user find relevant past decisions using semantic search.
    - `--recency-decay=N` (optional): Score at scale point (default: 0.5)
    - `--disable-recency` (optional): Pure semantic search (no recency boost)
 
-2. Use the MCP tool `suggest_decision` to perform semantic search:
-   - Call `suggest_decision` with userQuestion and optional parameters
+2. Use the MCP tool to perform semantic search:
+   - Call `mcp__plugin_mama_mama__suggest_decision` with userQuestion and optional parameters
    - The tool uses vector embeddings + recency weighting + graph expansion
    - Returns top N most relevant decisions
 
@@ -53,11 +53,13 @@ Format suggestions like this:
 Found {count} relevant decisions:
 
 ## 1. {topic} (92% match)
+
 "{decision preview...}"
 ⏰ {recency} | Recency: {recency_score}% | Final: {final_score}%
 🔍 `/mama-recall {topic}`
 
 ## 2. {topic} (87% match)
+
 "{decision preview...}"
 ⏰ {recency} | Recency: {recency_score}% | Final: {final_score}%
 🔍 `/mama-recall {topic}`

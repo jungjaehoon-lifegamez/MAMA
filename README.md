@@ -4,7 +4,7 @@
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Version 1.0.0 | Monorepo migration complete
+> Version 1.1.0 | Link Governance & Narrative Preservation
 
 MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work.
 
@@ -90,6 +90,29 @@ Add to `~/.gemini/antigravity/mcp_config.json`:
 - 500MB free disk space for embedding model cache
 - SQLite support (included on most systems)
 
+### Configuration
+
+MAMA server requires environment variables for security and configuration.
+
+1. Copy `.env.example` to `.env` in your project root:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit `.env` with your settings:
+
+   ```ini
+   # Security Token (Required)
+   MAMA_SERVER_TOKEN=your_secure_token_here
+
+   # Database Path (Optional, default: ./mama.db)
+   MAMA_DB_PATH=./mama.db
+
+   # Server Port (Optional, default: 3000)
+   MAMA_SERVER_PORT=3000
+   ```
+
 ---
 
 ## 💡 Session Continuity - Never Lose Your Context
@@ -105,6 +128,7 @@ Add to `~/.gemini/antigravity/mcp_config.json`:
 ```
 
 **What you get:**
+
 ```
 🔄 Resuming Session (from yesterday, 6:30 PM)
 
@@ -158,6 +182,30 @@ After installation:
 | `/mama-checkpoint <summary>` | Save current session state for later resumption |
 | `/mama-resume`               | Load last checkpoint and restore context        |
 | `/mama-configure`            | View/modify settings and tier status            |
+
+---
+
+## MCP Tool Catalog
+
+For MCP clients (responses are JSON stringified in `content[0].text`). Full schemas live in `docs/reference/api.md`.
+
+### Core Memory
+
+- **`save_decision`** — Save a decision or assistant insight (`topic`, `decision`, `reasoning`; optional `confidence`, `outcome`, `type`).
+- **`recall_decision`** — Markdown history for a topic (shows supersedes chain).
+- **`suggest_decision`** — Semantic search by question (`userQuestion`, optional `recencyWeight`).
+- **`list_decisions`** — Recent decisions (default limit 10).
+- **`update_outcome`** — Update a decision outcome (`topic`, `outcome` = SUCCESS|FAILED|PARTIAL).
+
+### Agent Protocol
+
+- **`save_checkpoint`** — Save session state. **Use the Truthful Continuity format (Goal & Progress, Evidence w/ status, Unfinished/Risks, Next Agent briefing).**
+- **`load_checkpoint`** — Resume session state (zero-context).
+
+### Planned
+
+- **`save_insight`** — Specialized tool for insights (use `save_decision` with `type='assistant_insight'` for now).
+- **`evolve/supersede`** — Explicitly mark supersedes (currently handled implicitly by topic reuse).
 
 ---
 
@@ -274,6 +322,8 @@ npm start  # Runs in stdio mode
 - [Installation](docs/guides/installation.md) - Complete setup guide
 - [Commands Reference](docs/reference/commands.md) - All available commands
 - [Troubleshooting](docs/guides/troubleshooting.md) - Common issues
+- [Deployment Guide](docs/guides/deployment.md) - pnpm workspace deployment
+- [Migration Guide (v0→v1.1)](docs/guides/migration-v0-to-v1.1.md) - Upgrade from v0
 
 ### Developer Docs
 
@@ -328,4 +378,4 @@ MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0
 ---
 
 **Author**: SpineLift Team
-**Last Updated**: 2025-11-22
+**Last Updated**: 2025-11-25

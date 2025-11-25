@@ -14,14 +14,12 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { saveDecisionTool } from '../../src/tools/save-decision.js';
-import { listDecisionsTool } from '../../src/tools/list-decisions.js';
-import { recallDecisionTool } from '../../src/tools/recall-decision.js';
-import { suggestDecisionTool } from '../../src/tools/suggest-decision.js';
-import { initDB, getAdapter, closeDB } from '../../src/core/db-manager.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 // Test database path (isolated from production)
 const TEST_DB_PATH = path.join(os.tmpdir(), `mama-regression-${Date.now()}.db`);
@@ -35,16 +33,36 @@ const mockContext = {
   },
 };
 
+// Variables for dynamic imports
+let saveDecisionTool, listDecisionsTool, recallDecisionTool, suggestDecisionTool;
+let initDB, getAdapter, closeDB;
+
 describe('Story M4.2: Workflow Simulation - Regression Harness', () => {
   beforeAll(async () => {
     // Force SQLite mode for tests
     delete process.env.MAMA_DATABASE_URL;
-
-    // Force Tier 2 mode (fallback without sqlite-vss)
-    process.env.MAMA_FORCE_TIER_2 = 'true';
+    process.env.MAMA_FORCE_TIER_3 = 'true'; // Skip embeddings for much faster tests
 
     // Set test database path
     process.env.MAMA_DB_PATH = TEST_DB_PATH;
+
+    // Use require to ensure we share the same module instance as the tools (which use require)
+    const dbManager = require('../../src/core/db-manager.js');
+    initDB = dbManager.initDB;
+    getAdapter = dbManager.getAdapter;
+    closeDB = dbManager.closeDB;
+
+    const saveDecision = require('../../src/tools/save-decision.js');
+    saveDecisionTool = saveDecision.saveDecisionTool;
+
+    const listDecisions = require('../../src/tools/list-decisions.js');
+    listDecisionsTool = listDecisions.listDecisionsTool;
+
+    const recallDecision = require('../../src/tools/recall-decision.js');
+    recallDecisionTool = recallDecision.recallDecisionTool;
+
+    const suggestDecision = require('../../src/tools/suggest-decision.js');
+    suggestDecisionTool = suggestDecision.suggestDecisionTool;
 
     // Initialize test database
     await initDB();
@@ -73,12 +91,6 @@ describe('Story M4.2: Workflow Simulation - Regression Harness', () => {
       await adapter.prepare('DELETE FROM decision_edges').run();
     } catch (e) {
       // decision_edges table doesn't exist yet
-    }
-
-    try {
-      await adapter.prepare('DELETE FROM supersedes').run();
-    } catch (e) {
-      // supersedes table doesn't exist yet
     }
 
     await adapter.prepare('DELETE FROM decisions').run();

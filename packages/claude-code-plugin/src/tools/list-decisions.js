@@ -14,8 +14,6 @@
  * @module list-decisions
  */
 
-const path = require('path');
-
 // Import MAMA API from core directory
 const mama = require('../core/mama-api.js');
 
@@ -39,7 +37,7 @@ const listDecisionsTool = {
     required: [],
   },
 
-  async handler(params, context) {
+  async handler(params, _context) {
     const { limit = 20 } = params || {};
 
     try {

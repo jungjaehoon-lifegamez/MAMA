@@ -40,7 +40,10 @@ async function mamaListCommand(args = {}) {
 
     const result = await mama.list({ limit });
 
-    if (!result || !result.list || result.list.length === 0) {
+    // Result is the list array directly (unless format='markdown' which we didn't request)
+    const list = Array.isArray(result) ? result : [];
+
+    if (!list || list.length === 0) {
       info('[mama-list] No decisions found');
 
       return {
@@ -50,12 +53,12 @@ async function mamaListCommand(args = {}) {
       };
     }
 
-    info(`[mama-list] Found ${result.list.length} decision(s)`);
+    info(`[mama-list] Found ${list.length} decision(s)`);
 
     return {
       success: true,
-      list: result.list,
-      message: formatListMessage(result.list, limit, result.markdown),
+      list: list,
+      message: formatListMessage(list, limit, result.markdown),
     };
   } catch (err) {
     logError(`[mama-list] ❌ Failed to list decisions: ${err.message}`);
@@ -94,13 +97,14 @@ function formatListMessage(list, limit, markdown) {
     const outcome = decision.outcome || 'pending';
 
     // Format outcome with emoji
-    const outcomeEmoji = {
-      pending: '⏳',
-      success: '✅',
-      failure: '❌',
-      partial: '⚠️',
-      superseded: '🔄'
-    }[outcome] || '⏳';
+    const outcomeEmoji =
+      {
+        pending: '⏳',
+        success: '✅',
+        failure: '❌',
+        partial: '⚠️',
+        superseded: '🔄',
+      }[outcome] || '⏳';
 
     message += `${index + 1}. **[${decision.created_at || 'Unknown'}]** ${type}\n`;
     message += `   📚 **${decision.topic || 'Unknown topic'}**\n`;

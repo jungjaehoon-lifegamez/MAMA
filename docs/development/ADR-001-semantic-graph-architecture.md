@@ -3,13 +3,26 @@
 **Status:** Proposed
 **Date:** 2025-11-22
 **Deciders:** SpineLift Team
-**Related:** PRD-hierarchical-tools-v1.1.md
+**Related Documents:**
+
+- [PRD: MAMA v1.1 - Hierarchical Tools & Unified Schema](./PRD-hierarchical-tools-v1.1.md) - Product requirements and vision
+- ~~decision-evolution-philosophy.md~~ (merged into PRD)
 
 ---
 
 ## Context
 
-MAMA v1.1 introduces a unified `memories` table with multiple types (decision, checkpoint, insight, context). However, the PRD focused on **what to store** (schema) and **how to access** (tools), missing the critical question: **How do memories connect to each other semantically?**
+### Purpose of This ADR
+
+This ADR answers the **HOW** question: How do we implement decision evolution tracking?
+
+For the **WHY** (vision, goals, user stories), see [PRD Section 1: Vision](./PRD-hierarchical-tools-v1.1.md#1-vision-decision-evolution-not-just-recall).
+
+### The Technical Challenge
+
+MAMA v1.1 introduces a unified `memories` table with multiple types (decision, checkpoint, insight, context). The PRD defined **what to store** (schema) and **how to access** (tools), but the critical question remains:
+
+**How do memories connect to form evolution chains that enable learning?**
 
 ### The Problem
 
@@ -43,11 +56,13 @@ search/context("Why did we abandon JWT?")
 ### The Gap
 
 Current schema has:
+
 ```sql
 related_to TEXT  -- JSON array of IDs
 ```
 
 But no specification for:
+
 1. **When** to create links (automatic vs explicit)
 2. **How** to score link strength (confidence)
 3. **Which** types can link to which
@@ -57,11 +72,13 @@ But no specification for:
 ### Why This Matters
 
 **For Claude:**
+
 - "Why did we decide X?" → Needs decision evolution chain
 - "What happened after we tried Y?" → Needs decision → checkpoint → outcome links
 - "Similar to what we did before?" → Needs semantic similarity across types
 
 **For MAMA:**
+
 - Intelligence = Graph traversal quality
 - Trust = Retrieving complete context, not fragments
 - Evolution = Learn-Unlearn-Relearn visible in graph structure
@@ -77,92 +94,167 @@ We will implement a **Hybrid Semantic Graph** with:
 3. **Unified Embedding Space** with type-aware scoring
 4. **Multi-dimensional Link Weights**
 
-### 1. Link Types & Creation Rules
+### 1. Two-Layer Link Architecture
 
 ```typescript
 interface MemoryLink {
+  // Layer 2: Storage (4 core types for efficient queries)
   from_id: string;
   to_id: string;
-  link_type: 'supersedes' | 'implements' | 'outcome_of' | 'relates_to' | 'temporal';
-  confidence: number;  // 0.0-1.0
+  link_type: 'evolution' | 'implementation' | 'association' | 'temporal';
+  confidence: number; // 0.0-1.0
   created_by: 'user' | 'system' | 'llm';
-  metadata?: {
-    reason?: string;
-    similarity?: number;
-    time_delta?: number;
+
+  // Layer 1: Expression (unlimited, preserved in metadata)
+  metadata: {
+    original_relationship: string; // e.g., 'supersedes', 'motivated_by'
+    relationship_tags?: string[]; // e.g., ['supersedes', 'performance']
+    reason?: string; // Why this link exists
+    similarity?: number; // For semantic links
+    time_delta?: number; // For temporal links
+    inference_confidence?: number; // How confident is the core type mapping?
+    custom_data?: Record<string, any>; // User-provided metadata
   };
 }
+
+// Mapping: Expression → Storage
+const relationshipToCore = {
+  // Evolution family → 'evolution'
+  supersedes: 'evolution',
+  refines: 'evolution',
+  improves: 'evolution',
+
+  // Implementation family → 'implementation'
+  implements: 'implementation',
+  outcome_of: 'implementation',
+  executes: 'implementation',
+
+  // Association family → 'association'
+  relates_to: 'association',
+  motivated_by: 'association',
+  inspired_by: 'association',
+  challenges: 'association',
+  depends_on: 'association',
+
+  // Temporal (1:1 mapping)
+  temporal: 'temporal',
+};
 ```
 
 **Automatic Links (created by system):**
 
+> **⚠️ Design Note:** Initial rules (v0) created 85% noise (see Consequences section). These improved rules target 60%+ signal ratio based on simulation results.
+
 ```javascript
-// Rule 1: Temporal proximity in same session
-if (memory_new.created_at - memory_prev.created_at < 1_hour) {
+// Rule 1: Temporal proximity (strict: same topic + short window)
+const time_delta = memory_new.created_at - memory_prev.created_at;
+const FIFTEEN_MINUTES = 15 * 60 * 1000;
+
+if (time_delta < FIFTEEN_MINUTES && memory_new.topic === memory_prev.topic) {
+  // Same topic REQUIRED
   createLink({
-    from: memory_prev.id,
-    to: memory_new.id,
-    type: 'temporal',
-    confidence: 0.3 + (1 - time_delta_normalized) * 0.2,  // 0.3-0.5
-    created_by: 'system'
+    from_id: memory_prev.id,
+    to_id: memory_new.id,
+    link_type: 'temporal',
+    confidence: 0.4 + (1 - time_delta / FIFTEEN_MINUTES) * 0.3, // 0.4-0.7
+    created_by: 'system',
+    metadata: {
+      original_relationship: 'temporal',
+      time_delta: time_delta,
+      reason: 'same_context',
+    },
   });
 }
 
-// Rule 2: Same topic (for decisions)
-if (memory_new.type === 'decision' &&
-    memory_new.topic === memory_prev.topic) {
+// Rule 2: Same topic (with recency decay)
+const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
+const age = memory_new.created_at - memory_prev.created_at;
+
+if (memory_new.type === 'decision' && memory_new.topic === memory_prev.topic && age < ONE_WEEK) {
+  // Recency limit
+  const recency_factor = 1 - age / ONE_WEEK; // 1.0 → 0.0
+
   createLink({
-    from: memory_prev.id,
-    to: memory_new.id,
-    type: 'relates_to',
-    confidence: 0.6,  // Same topic = fairly confident
+    from_id: memory_prev.id,
+    to_id: memory_new.id,
+    link_type: 'association',
+    confidence: 0.4 + recency_factor * 0.3, // 0.4-0.7 (recent = higher)
     created_by: 'system',
-    metadata: { reason: 'same_topic' }
+    metadata: {
+      original_relationship: 'relates_to',
+      relationship_tags: ['same_topic'],
+      reason: 'same_topic',
+      age_days: Math.floor(age / (24 * 60 * 60 * 1000)),
+    },
   });
 }
 
-// Rule 3: Semantic similarity (cross-type)
-const similarity = cosineSimilarity(
-  memory_new.embedding_vector,
-  memory_prev.embedding_vector
-);
+// Rule 3: Semantic similarity (strict threshold + Top-K limit)
+const candidates = await findSimilar(memory_new.embedding_vector, {
+  threshold: 0.85, // Raised from 0.75 (reduces false positives)
+  limit: 5, // Top-5 only (prevents link explosion)
+  exclude_same_topic: true, // Already covered by Rule 2
+});
 
-if (similarity > 0.75) {
+for (const candidate of candidates) {
   createLink({
-    from: memory_prev.id,
-    to: memory_new.id,
-    type: 'relates_to',
-    confidence: similarity,
+    from_id: candidate.id,
+    to_id: memory_new.id,
+    link_type: 'association',
+    confidence: candidate.similarity, // 0.85-1.0
     created_by: 'system',
-    metadata: { similarity, reason: 'semantic_match' }
+    metadata: {
+      original_relationship: 'relates_to',
+      relationship_tags: ['semantic_similarity'],
+      similarity: candidate.similarity,
+      reason: 'semantic_match',
+    },
   });
 }
 ```
 
+**Rule Changes Rationale:**
+
+- **Rule 1**: Temporal now requires same topic (prevents "React ↔ JWT" noise) + 15min window (real context)
+- **Rule 2**: Added 1-week recency limit (old decisions less relevant) + confidence decay
+- **Rule 3**: Threshold 0.75→0.85 (fewer false positives) + Top-5 limit (prevents explosion)
+
 **Explicit Links (created by user/LLM):**
 
 ```javascript
-// Rule 4: Tool-specified relationships
-save/decision({
-  topic: "auth_strategy",
-  decision: "Session-based auth",
-  supersedes: "memory_1",  // Explicit!
-  confidence: 0.9
-});
-// → Creates link: { type: 'supersedes', confidence: 1.0, created_by: 'llm' }
+// Rule 4: Tool-specified relationships → Core type mapping
+save /
+  decision({
+    topic: 'auth_strategy',
+    decision: 'Session-based auth',
+    supersedes: 'memory_1', // Explicit parameter
+    confidence: 0.9,
+  });
+// → Creates link: {
+//     link_type: 'evolution',  // Core type
+//     metadata: { original_relationship: 'supersedes' }
+//   }
 
-evolve/outcome({
-  memory_id: "memory_1",
-  outcome: "FAILED",
-  reason: "Performance issues"
-});
-// → Creates link: { type: 'outcome_of', confidence: 1.0, created_by: 'llm' }
+evolve /
+  outcome({
+    memory_id: 'memory_1',
+    outcome: 'FAILED',
+    reason: 'Performance issues',
+  });
+// → Creates link: {
+//     link_type: 'implementation',  // Core type
+//     metadata: { original_relationship: 'outcome_of', outcome: 'FAILED' }
+//   }
 
-save/checkpoint({
-  summary: "Implemented JWT auth",
-  implements: ["memory_1"]  // Optional explicit link
-});
-// → Creates link: { type: 'implements', confidence: 1.0, created_by: 'user' }
+save /
+  checkpoint({
+    summary: 'Implemented JWT auth',
+    implements: ['memory_1'], // Optional explicit link
+  });
+// → Creates link: {
+//     link_type: 'implementation',  // Core type
+//     metadata: { original_relationship: 'implements' }
+//   }
 ```
 
 ### 2. Embedding Space Design
@@ -171,7 +263,7 @@ save/checkpoint({
 
 ```javascript
 // Single embedding for all types
-embedding_vector: Float32Array(384)  // Content-based only
+embedding_vector: Float32Array(384); // Content-based only
 
 // But scoring considers type compatibility
 function semanticScore(mem1, mem2) {
@@ -179,11 +271,11 @@ function semanticScore(mem1, mem2) {
 
   // Type compatibility matrix
   const typeBoost = {
-    'decision->checkpoint': 1.2,   // Decisions often followed by implementation
-    'decision->decision': 1.0,     // Neutral
+    'decision->checkpoint': 1.2, // Decisions often followed by implementation
+    'decision->decision': 1.0, // Neutral
     'checkpoint->checkpoint': 0.8, // Less likely to be related
-    'insight->decision': 1.1,      // Insights inform decisions
-    'decision->insight': 0.9       // Reverse less strong
+    'insight->decision': 1.1, // Insights inform decisions
+    'decision->insight': 0.9, // Reverse less strong
   };
 
   const boost = typeBoost[`${mem1.type}->${mem2.type}`] || 1.0;
@@ -192,11 +284,13 @@ function semanticScore(mem1, mem2) {
 ```
 
 **Why not separate spaces?**
+
 - ❌ Cross-type search becomes impossible
 - ❌ "What decisions relate to this checkpoint?" = Hard
 - ✅ Unified = "Show me everything about auth" = Easy
 
 **Why not multi-vector (content + type)?**
+
 - ❌ Increases storage 2x
 - ❌ Complicates similarity calculation
 - ❌ Type is already in metadata (redundant)
@@ -205,15 +299,16 @@ function semanticScore(mem1, mem2) {
 ### 3. Graph Traversal Algorithms
 
 **Query Pattern 1: Evolution Chain**
+
 ```javascript
 // "Why did we decide X?"
 function getDecisionEvolution(topic) {
   return traverseGraph({
     start: findLatest({ type: 'decision', topic }),
     direction: 'backward',
-    link_types: ['supersedes', 'relates_to'],
+    link_types: ['evolution', 'association'], // Core types (not 'supersedes')
     max_depth: 10,
-    min_confidence: 0.6
+    min_confidence: 0.6,
   });
 }
 
@@ -221,15 +316,16 @@ function getDecisionEvolution(topic) {
 ```
 
 **Query Pattern 2: Impact Analysis**
+
 ```javascript
 // "What happened after decision X?"
 function getDecisionImpact(decision_id) {
   return traverseGraph({
     start: decision_id,
     direction: 'forward',
-    link_types: ['implements', 'outcome_of', 'temporal'],
+    link_types: ['implementation', 'temporal'], // Core types (not 'implements'/'outcome_of')
     max_depth: 5,
-    time_window: 7 * 24 * 60 * 60 * 1000  // 1 week
+    time_window: 7 * 24 * 60 * 60 * 1000, // 1 week
   });
 }
 
@@ -237,6 +333,7 @@ function getDecisionImpact(decision_id) {
 ```
 
 **Query Pattern 3: Contextual Search**
+
 ```javascript
 // "Similar to what we did with auth?"
 async function searchByContext(query, contextMemoryId) {
@@ -245,43 +342,55 @@ async function searchByContext(query, contextMemoryId) {
   // 1. Get semantic matches
   const similar = await semanticSearch(query, {
     top_k: 20,
-    min_similarity: 0.7
+    min_similarity: 0.7,
   });
 
   // 2. Boost connected memories
   const connectedIds = await getConnected(contextMemoryId, {
     max_depth: 2,
-    min_confidence: 0.5
+    min_confidence: 0.5,
   });
 
   // 3. Re-rank
-  return similar.map(mem => ({
-    ...mem,
-    score: mem.similarity * (connectedIds.includes(mem.id) ? 1.5 : 1.0)
-  })).sort((a, b) => b.score - a.score);
+  return similar
+    .map((mem) => ({
+      ...mem,
+      score: mem.similarity * (connectedIds.includes(mem.id) ? 1.5 : 1.0),
+    }))
+    .sort((a, b) => b.score - a.score);
 }
 ```
 
 ### 4. Link Confidence Decay
 
-Links degrade over time (except explicit supersedes):
+Links degrade over time (except evolution links):
 
 ```javascript
 function getLinkConfidence(link, current_time) {
-  if (link.link_type === 'supersedes') {
-    return link.confidence;  // Never decays
+  // Evolution links (supersedes, refines, etc.) never decay
+  if (link.link_type === 'evolution') {
+    return link.confidence; // Permanent decision history
   }
 
   const age_days = (current_time - link.created_at) / (24 * 60 * 60 * 1000);
-  const decay_rate = {
-    'temporal': 0.1,    // Decays quickly
-    'relates_to': 0.05, // Decays slowly
-    'implements': 0.02  // Nearly permanent
-  }[link.link_type] || 0.05;
+  const decay_rate =
+    {
+      temporal: 0.1, // Decays quickly (contextual, session-based)
+      association: 0.05, // Decays slowly (semantic connections)
+      implementation: 0.02, // Nearly permanent (action evidence)
+    }[link.link_type] || 0.05;
 
   return link.confidence * Math.exp(-decay_rate * age_days);
 }
+
+// Future enhancement: Fine-grained decay by original_relationship
+// Example: 'supersedes' never decays, 'refines' decays slower than 'relates_to'
+// Implementation:
+// const specificDecay = metadata.original_relationship === 'supersedes' ? 0 :
+//                       metadata.original_relationship === 'refines' ? 0.01 : decay_rate;
 ```
+
+**Note:** Current implementation uses `link_type` (4 core categories) for decay rates. Future versions may add fine-grained policies based on `metadata.original_relationship` for more nuanced aging behavior. See [PRD Future Enhancements](./PRD-hierarchical-tools-v1.1.md#11-future-enhancements-out-of-scope).
 
 ### 5. Storage Schema
 
@@ -291,16 +400,24 @@ CREATE TABLE memory_links (
   id TEXT PRIMARY KEY,
   from_id TEXT NOT NULL,
   to_id TEXT NOT NULL,
-  link_type TEXT NOT NULL,
+  link_type TEXT NOT NULL,        -- 4 core types only
   confidence REAL NOT NULL,
   created_by TEXT NOT NULL,
-  metadata TEXT,  -- JSON
+  metadata TEXT,                  -- JSON: {
+                                  --   original_relationship: string,
+                                  --   relationship_tags: string[],
+                                  --   reason: string,
+                                  --   similarity?: number,
+                                  --   time_delta?: number,
+                                  --   inference_confidence?: number
+                                  -- }
   created_at INTEGER DEFAULT (unixepoch()),
 
   FOREIGN KEY (from_id) REFERENCES memories(id) ON DELETE CASCADE,
   FOREIGN KEY (to_id) REFERENCES memories(id) ON DELETE CASCADE,
 
-  CHECK (link_type IN ('supersedes', 'implements', 'outcome_of', 'relates_to', 'temporal')),
+  -- Core types (4 only, enables efficient queries)
+  CHECK (link_type IN ('evolution', 'implementation', 'association', 'temporal')),
   CHECK (confidence >= 0.0 AND confidence <= 1.0),
   CHECK (created_by IN ('user', 'system', 'llm'))
 );
@@ -309,6 +426,10 @@ CREATE INDEX idx_links_from ON memory_links(from_id);
 CREATE INDEX idx_links_to ON memory_links(to_id);
 CREATE INDEX idx_links_type ON memory_links(link_type);
 CREATE INDEX idx_links_confidence ON memory_links(confidence);
+
+-- JSON metadata indexes for common queries
+CREATE INDEX idx_links_metadata_relationship
+  ON memory_links(json_extract(metadata, '$.original_relationship'));
 
 -- Update memories table: remove related_to (now in links table)
 -- Keep embedding_vector in memories
@@ -321,26 +442,31 @@ CREATE INDEX idx_links_confidence ON memory_links(confidence);
 ### Positive
 
 ✅ **Complete Context Recovery**
+
 - "Why X?" queries return full decision evolution
 - Implementation evidence (checkpoints) automatically linked
 - Failure reasons visible in graph
 
 ✅ **Automatic Intelligence**
+
 - System creates temporal links without user input
 - Semantic similarity surfaces unexpected connections
 - Type-aware scoring improves relevance
 
 ✅ **Flexible Traversal**
+
 - Evolution chains (backward)
 - Impact analysis (forward)
 - Contextual search (graph-aware ranking)
 
 ✅ **Trust Building**
+
 - Explicit links (1.0 confidence) vs automatic (0.3-0.8)
 - Decay function reflects reality (temporal links age)
 - User can verify link reasoning (metadata)
 
 ✅ **Extensible**
+
 - New link types easy to add
 - New traversal patterns = new queries
 - Confidence tuning without schema change
@@ -348,38 +474,67 @@ CREATE INDEX idx_links_confidence ON memory_links(confidence);
 ### Negative
 
 ❌ **Complexity**
+
 - Link creation logic adds system complexity
 - Graph traversal = more compute than flat queries
 - Confidence scoring heuristics need tuning
 
 ❌ **Storage Overhead**
+
 - Links table grows O(n²) worst case
 - Need pruning strategy for low-confidence links
 - Indexes required for performance
 
 ❌ **Tuning Required**
-- Similarity threshold (0.75?) needs experimentation
-- Time window for temporal links (1 hour?) arbitrary
+
+- **CRITICAL**: Initial rules (v0) created 85% noise in simulation
+- Improved rules (v1): Threshold 0.75→0.85, time window 1h→15min, Top-K limit
 - Type boost factors (1.2?) need validation
 
-❌ **Potential Noise**
-- Automatic links may create false positives
-- Low-confidence links clutter graph
-- Need UI to show/hide automatic links
+❌ **Potential Noise (Validated by Simulation)**
+
+**Simulation Results (1000 memories, v0 rules):**
+
+- Signal Ratio: **15.1%** (85% noise!)
+- Context Window Pollution: **69.8%** (37/53 irrelevant)
+- Total Links: 1,085 (164 useful, 921 noise)
+- Graph Traversal: 614 nodes visited (307ms latency)
+
+**Worst Examples:**
+
+- Query: "JWT problems?" → 56.3% noise (9/16 unrelated topics)
+- Same topic (12 decisions) → 132 links (most time-distant, low value)
+- Semantic: "frontend_framework" ↔ "auth_strategy" = similarity 1.00 (false positive)
+
+**Root Causes:**
+
+1. Threshold too low (0.75): Structural similarity ≠ semantic relevance
+2. Time window too wide (1 hour): Different topics in same session linked
+3. No recency filter: 6-month-old decisions equally weighted
+
+**Mitigations Applied (v1 rules):**
+
+- Threshold: 0.75→0.85 + Top-5 limit (prevents explosion)
+- Temporal: Same topic required + 15min window (real context only)
+- Same topic: 1-week recency limit + confidence decay
+- **Expected improvement: 15% → 60%+ signal ratio**
 
 ### Risks & Mitigation
 
 **Risk 1: Link Explosion**
+
 - Mitigation: Prune links with confidence < 0.3 weekly
 - Mitigation: Limit automatic links to top-5 per memory
 - Mitigation: User can disable automatic linking
 
 **Risk 2: Slow Traversal**
+
 - Mitigation: Cache common traversal patterns
 - Mitigation: Limit max_depth in queries
 - Mitigation: Materialized views for hot paths
 
 **Risk 3: Incorrect Links**
+
 - Mitigation: Show link confidence in UI
 - Mitigation: Allow user to delete/downvote links
 - Mitigation: A/B test threshold values
@@ -393,11 +548,13 @@ CREATE INDEX idx_links_confidence ON memory_links(confidence);
 **Description:** No automatic link creation. User/LLM must specify all relationships.
 
 **Pros:**
+
 - ✅ Simple, predictable
 - ✅ High confidence in all links
 - ✅ No false positives
 
 **Cons:**
+
 - ❌ Requires user effort
 - ❌ Misses obvious temporal connections
 - ❌ Claude must remember to link everything
@@ -409,11 +566,13 @@ CREATE INDEX idx_links_confidence ON memory_links(confidence);
 **Description:** System creates all links based on ML model predictions.
 
 **Pros:**
+
 - ✅ Zero user effort
 - ✅ Can learn patterns over time
 - ✅ Sophisticated relationship detection
 
 **Cons:**
+
 - ❌ Black box (users can't understand)
 - ❌ Requires training data
 - ❌ High complexity
@@ -426,11 +585,13 @@ CREATE INDEX idx_links_confidence ON memory_links(confidence);
 **Description:** decisions have one vector space, checkpoints another, etc.
 
 **Pros:**
+
 - ✅ No type pollution
 - ✅ Cleaner clustering per type
 - ✅ Type-specific similarity tuning
 
 **Cons:**
+
 - ❌ Cross-type search impossible
 - ❌ 4x storage for embeddings
 - ❌ Complex query logic
@@ -442,11 +603,13 @@ CREATE INDEX idx_links_confidence ON memory_links(confidence);
 **Description:** Use dedicated graph database instead of SQLite.
 
 **Pros:**
+
 - ✅ Optimized for graph queries
 - ✅ Rich query language (Cypher)
 - ✅ Built-in graph algorithms
 
 **Cons:**
+
 - ❌ Breaks local-first promise (requires server)
 - ❌ Complex deployment
 - ❌ Overkill for current scale
@@ -459,6 +622,7 @@ CREATE INDEX idx_links_confidence ON memory_links(confidence);
 ## Implementation Notes
 
 ### Phase 1: Links Table & Basic Creation
+
 ```sql
 -- Migration 006
 CREATE TABLE memory_links (...);
@@ -468,11 +632,14 @@ CREATE TABLE memory_links (...);
 // In save/decision tool
 if (args.supersedes) {
   await createLink({
-    from: args.supersedes,
-    to: new_memory_id,
-    type: 'supersedes',
+    from_id: args.supersedes,
+    to_id: new_memory_id,
+    link_type: 'evolution', // Core type (NOT 'supersedes')
     confidence: 1.0,
-    created_by: 'llm'
+    created_by: 'llm',
+    metadata: {
+      original_relationship: 'supersedes', // Preserve user expression
+    },
   });
 }
 
@@ -481,26 +648,32 @@ await createTemporalLinks(new_memory_id);
 ```
 
 ### Phase 2: Semantic Similarity Links
+
 ```javascript
 // After embedding generation
 const similar = await findSimilar(new_memory.embedding, {
   threshold: 0.75,
-  limit: 5
+  limit: 5,
 });
 
 for (const mem of similar) {
   await createLink({
-    from: mem.id,
-    to: new_memory.id,
-    type: 'relates_to',
+    from_id: mem.id,
+    to_id: new_memory.id,
+    link_type: 'association', // Core type (NOT 'relates_to')
     confidence: mem.similarity,
     created_by: 'system',
-    metadata: { similarity: mem.similarity }
+    metadata: {
+      original_relationship: 'relates_to',
+      similarity: mem.similarity,
+      reason: 'semantic_match',
+    },
   });
 }
 ```
 
 ### Phase 3: Graph Traversal API
+
 ```javascript
 // Add to mama-api.js
 async function traverseGraph(start_id, options) {
@@ -514,11 +687,12 @@ async function getConnected(memory_id, options) {
 ```
 
 ### Phase 4: Query Integration
+
 ```javascript
 // Update search/by_context tool
 const results = await traverseGraph(query_embedding, {
   boost_connected: true,
-  context_memory_id: last_accessed_memory
+  context_memory_id: last_accessed_memory,
 });
 ```
 
@@ -543,12 +717,12 @@ Tool: if (args.supersedes) → link_type = 'evolution'  ← Rule-based mapping
 
 ### Role Breakdown
 
-| Actor | Responsibility | Reasoning? |
-|-------|----------------|------------|
-| **Claude (Remote LLM)** | Tool selection, parameter filling | ✅ Yes (interprets user intent) |
-| **MCP Tool (JavaScript)** | Parameter → link_type mapping | ❌ No (rule-based) |
-| **Pattern matching** | Regex on reasoning text | ❌ No (pattern recognition) |
-| **Local LLM** | Deep reasoning analysis | ✅ Yes (future feature) |
+| Actor                     | Responsibility                    | Reasoning?                      |
+| ------------------------- | --------------------------------- | ------------------------------- |
+| **Claude (Remote LLM)**   | Tool selection, parameter filling | ✅ Yes (interprets user intent) |
+| **MCP Tool (JavaScript)** | Parameter → link_type mapping     | ❌ No (rule-based)              |
+| **Pattern matching**      | Regex on reasoning text           | ❌ No (pattern recognition)     |
+| **Local LLM**             | Deep reasoning analysis           | ✅ Yes (future feature)         |
 
 ### Tool → Link Type Mapping
 
@@ -556,19 +730,19 @@ Tool: if (args.supersedes) → link_type = 'evolution'  ← Rule-based mapping
 // Explicit mappings (hardcoded in tools)
 const toolLinkTypeMap = {
   // save/decision with parameters
-  'supersedes': 'evolution',
-  'refines': 'evolution',
-  'improves': 'evolution',
+  supersedes: 'evolution',
+  refines: 'evolution',
+  improves: 'evolution',
 
   // evolve/outcome
-  'outcome_of': 'implementation',
+  outcome_of: 'implementation',
 
   // save/checkpoint with implements
-  'implements': 'implementation',
+  implements: 'implementation',
 
   // Automatic (system-created)
-  'temporal': 'temporal',           // Time proximity
-  'semantic': 'association'         // Embedding similarity
+  temporal: 'temporal', // Time proximity
+  semantic: 'association', // Embedding similarity
 };
 ```
 
@@ -578,16 +752,16 @@ const toolLinkTypeMap = {
 // Phase 2: Lightweight text analysis (no LLM)
 if (!args.supersedes && args.reasoning) {
   const patterns = {
-    'supersedes': /replaces|instead of|switching from/i,
-    'improves': /improves|enhances|better than/i,
-    'fixes': /fixes|resolves|addresses/i
+    supersedes: /replaces|instead of|switching from/i,
+    improves: /improves|enhances|better than/i,
+    fixes: /fixes|resolves|addresses/i,
   };
 
   for (const [rel, pattern] of Object.entries(patterns)) {
     if (pattern.test(args.reasoning)) {
       createLink({
         link_type: inferCoreType(rel),
-        confidence: 0.7  // Lower than explicit
+        confidence: 0.7, // Lower than explicit
       });
     }
   }
@@ -653,23 +827,25 @@ save/decision({
 ```javascript
 // Tool handler
 for (const link of args.links) {
-  // 1. Infer core type from relationship name
+  // 1. Infer core type from relationship name (semantically)
   const coreType = await inferCoreType(link.relationship);
 
-  // 2. Create flexible link
+  // 2. Create flexible link with two-layer architecture
   await createLink({
     from_id: newMemoryId,
     to_id: link.to_id,
-    link_type: coreType,           // Core category (4 types)
-    relationship_tags: [
-      link.relationship,            // Original creative name
-      ...(link.tags || [])          // Additional tags
-    ],
-    confidence: 0.8,                // Explicit but creative
+    link_type: coreType, // Core category (4 types for efficient queries)
+    confidence: 0.8, // Explicit but creative
     created_by: 'llm',
     metadata: {
-      custom_relationship: link.relationship
-    }
+      original_relationship: link.relationship, // Preserve user expression
+      relationship_tags: [
+        link.relationship, // Original creative name
+        ...(link.tags || []), // Additional user tags
+      ],
+      inference_confidence: 0.87, // How confident is the categorization?
+      custom_data: link.metadata, // Any additional context
+    },
   });
 }
 ```
@@ -684,16 +860,19 @@ class RelationshipLearning {
       relationship,
       usage_count: db.raw('usage_count + 1'),
       last_used: Date.now(),
-      contexts: db.raw(`json_insert(contexts, '$', ?)`, [context])
+      contexts: db.raw(`json_insert(contexts, '$', ?)`, [context]),
     });
   }
 
   async promoteToOfficial(threshold = 50) {
-    const candidates = await db.query(`
+    const candidates = await db.query(
+      `
       SELECT relationship, usage_count, avg_confidence
       FROM relationship_intelligence
       WHERE usage_count > ? AND avg_confidence > 0.75
-    `, [threshold]);
+    `,
+      [threshold]
+    );
 
     // These become official parameters in next version!
     return candidates;
@@ -768,7 +947,7 @@ async function findSynonyms(relationship, threshold = 0.75) {
 }
 
 // Example:
-await findSynonyms("motivated by")
+await findSynonyms('motivated by');
 // → [
 //   { relationship: "inspired by", similarity: 0.87 },
 //   { relationship: "influenced by", similarity: 0.84 },
@@ -782,7 +961,7 @@ await findSynonyms("motivated by")
 
 ```javascript
 // Works with Korean + English mixed - NO extra configuration!
-await findSynonyms("영감을 받은")  // Korean: "inspired by"
+await findSynonyms('영감을 받은'); // Korean: "inspired by"
 // → [
 //   { relationship: "inspired by", similarity: 0.89 },  // English!
 //   { relationship: "motivated by", similarity: 0.82 },
@@ -797,12 +976,14 @@ await findSynonyms("영감을 받은")  // Korean: "inspired by"
 #### v1.1 Scope Summary
 
 **Included:**
+
 - ✅ Cosine similarity-based synonym detection
 - ✅ Multilingual relationship matching (Korean + English)
 - ✅ Manual link creation via `links[]` parameter
 - ✅ Simple threshold-based filtering (0.75 similarity)
 
 **Performance:**
+
 - O(n) linear scan for synonym detection
 - n ≈ 50-100 unique relationships in typical usage
 - <50ms latency for synonym queries
@@ -824,33 +1005,32 @@ Simple, proven techniques that work from day 1 with minimal data. No complex dep
 // Zero hardcoding - system learns relationship clusters!
 async function autoClusterRelationships() {
   const allRels = await getAllRelationships();
-  const embeddings = await Promise.all(
-    allRels.map(r => embed(r.relationship))
-  );
+  const embeddings = await Promise.all(allRels.map((r) => embed(r.relationship)));
 
   // DBSCAN clustering (density-based)
   const clusters = await dbscan(embeddings, {
-    epsilon: 0.25,     // Max distance within cluster
-    minPoints: 2
+    epsilon: 0.25, // Max distance within cluster
+    minPoints: 2,
   });
 
   // System automatically discovers:
   return [
     {
-      canonical: "inspired by",
-      members: ["inspired by", "motivated by", "influenced by", "based on", "영감을 받은"],
-      avgSimilarity: 0.82
+      canonical: 'inspired by',
+      members: ['inspired by', 'motivated by', 'influenced by', 'based on', '영감을 받은'],
+      avgSimilarity: 0.82,
     },
     {
-      canonical: "challenges",
-      members: ["challenges", "contradicts", "opposes", "questions", "반박한다"],
-      avgSimilarity: 0.87
-    }
+      canonical: 'challenges',
+      members: ['challenges', 'contradicts', 'opposes', 'questions', '반박한다'],
+      avgSimilarity: 0.87,
+    },
   ];
 }
 ```
 
 **Implementation Complexity:**
+
 - Requires DBSCAN library (ml-dbscan or custom)
 - Cluster maintenance logic
 - Canonical relationship selection algorithm
@@ -867,7 +1047,7 @@ async function autoClusterRelationships() {
 const directionalityPatterns = {
   forward: ['supersedes', 'implements', 'challenges', 'improves'],
   backward: ['inspired_by', 'based_on', 'motivated_by'],
-  bidirectional: ['relates_to', 'similar_to']
+  bidirectional: ['relates_to', 'similar_to'],
 };
 
 async function inferDirectionality(relationship) {
@@ -876,20 +1056,19 @@ async function inferDirectionality(relationship) {
   const scores = {
     forward: await semanticSimilarity(embed, directionalityPatterns.forward),
     backward: await semanticSimilarity(embed, directionalityPatterns.backward),
-    bidirectional: await semanticSimilarity(embed, directionalityPatterns.bidirectional)
+    bidirectional: await semanticSimilarity(embed, directionalityPatterns.bidirectional),
   };
 
-  return Object.keys(scores).reduce((a, b) =>
-    scores[a] > scores[b] ? a : b
-  );
+  return Object.keys(scores).reduce((a, b) => (scores[a] > scores[b] ? a : b));
 }
 
 // Example:
-await inferDirectionality("derived_from")
+await inferDirectionality('derived_from');
 // → 'backward' (similar to 'inspired_by', 'based_on')
 ```
 
 **Implementation Complexity:**
+
 - Pattern database maintenance
 - Directionality inference logic
 - Bidirectional link handling
@@ -900,27 +1079,26 @@ await inferDirectionality("derived_from")
 
 **Why deferred:** Requires extensive usage data (outcomes, frequency, centrality) - not available in v1.1.
 
-
 ```javascript
 async function scoreRelationship(link, context) {
-  let score = link.confidence;  // Base
+  let score = link.confidence; // Base
 
   // 1. Frequency boost (popular relationships)
   const usage = await getRelationshipUsage(link.relationship_tags[0]);
-  score *= (1 + Math.log(usage.count) / 10);
+  score *= 1 + Math.log(usage.count) / 10;
 
   // 2. Outcome correlation
   const outcomeScore = await getOutcomeCorrelation(link.relationship_tags[0]);
-  score *= outcomeScore;  // Boost if leads to success
+  score *= outcomeScore; // Boost if leads to success
 
   // 3. Graph centrality
   const centrality = await getNodeCentrality(link.to_id);
-  score *= (1 + centrality / 100);
+  score *= 1 + centrality / 100;
 
   // 4. Time decay (temporal links only)
   if (link.link_type === 'temporal') {
     const age = Date.now() - link.created_at;
-    score *= Math.exp(-age / (7 * 24 * 60 * 60 * 1000));  // 1 week half-life
+    score *= Math.exp(-age / (7 * 24 * 60 * 60 * 1000)); // 1 week half-life
   }
 
   // 5. Context relevance
@@ -961,9 +1139,9 @@ async function normalizeRelationship(rawRelationship) {
   const embedNew = await embed(normalized);
 
   const similarities = await Promise.all(
-    existing.map(async rel => ({
+    existing.map(async (rel) => ({
       relationship: rel,
-      similarity: cosineSimilarity(embedNew, await embed(rel))
+      similarity: cosineSimilarity(embedNew, await embed(rel)),
     }))
   );
 
@@ -975,7 +1153,7 @@ async function normalizeRelationship(rawRelationship) {
       canonical: topMatch.relationship,
       original: rawRelationship,
       confidence: topMatch.similarity,
-      suggested: true  // Claude can override
+      suggested: true, // Claude can override
     };
   }
 
@@ -984,7 +1162,7 @@ async function normalizeRelationship(rawRelationship) {
     canonical: normalized,
     original: rawRelationship,
     confidence: 0.5,
-    isNew: true
+    isNew: true,
   };
 }
 ```
@@ -994,10 +1172,13 @@ async function normalizeRelationship(rawRelationship) {
 ```javascript
 async function searchByRelationship(relationship) {
   // 1. Exact match
-  const exact = await db.query(`
+  const exact = await db.query(
+    `
     SELECT * FROM memory_links
     WHERE relationship_tags LIKE ?
-  `, [`%${relationship}%`]);
+  `,
+    [`%${relationship}%`]
+  );
 
   // 2. Semantic expansion (automatic!)
   const synonyms = await findSynonyms(relationship, 0.8);
@@ -1005,7 +1186,7 @@ async function searchByRelationship(relationship) {
   // 3. Expanded query
   const expanded = await db.query(`
     SELECT * FROM memory_links
-    WHERE ${synonyms.map(s => `relationship_tags LIKE '%${s.relationship}%'`).join(' OR ')}
+    WHERE ${synonyms.map((s) => `relationship_tags LIKE '%${s.relationship}%'`).join(' OR ')}
   `);
 
   return [...new Set([...exact, ...expanded])];
@@ -1018,7 +1199,7 @@ async function searchByRelationship(relationship) {
 // Weekly: Group similar relationships
 async function clusterRelationships() {
   const all = await getAllRelationships();
-  const embeddings = await Promise.all(all.map(r => embed(r)));
+  const embeddings = await Promise.all(all.map((r) => embed(r)));
 
   const clusters = kMeans(embeddings, { k: 20 });
 
@@ -1030,7 +1211,7 @@ async function clusterRelationships() {
       await db.update('relationship_intelligence', {
         relationship: member,
         canonical_form: canonical,
-        cluster_id: cluster.id
+        cluster_id: cluster.id,
       });
     }
   }
@@ -1053,8 +1234,7 @@ async function decayOrphanedRelationships() {
     const age_days = (Date.now() - stat.last_used) / (24 * 60 * 60 * 1000);
     const orphan_penalty = stat.usage < 3 ? 2.0 : 1.0;
 
-    const new_confidence = stat.avg_confidence *
-      Math.exp(-0.05 * age_days * orphan_penalty);
+    const new_confidence = stat.avg_confidence * Math.exp(-0.05 * age_days * orphan_penalty);
 
     if (new_confidence < 0.2) {
       await archiveRelationship(stat.relationship_tags);
@@ -1070,7 +1250,7 @@ async function detectIsolation() {
   const graph = await buildGraph();
 
   const components = findConnectedComponents(graph);
-  const isolated = graph.nodes.filter(n => n.degree === 1);
+  const isolated = graph.nodes.filter((n) => n.degree === 1);
   const uniqueRels = await db.query(`
     SELECT relationship_tags, COUNT(*) as usage
     FROM memory_links
@@ -1079,10 +1259,10 @@ async function detectIsolation() {
   `);
 
   return {
-    components: components.length,      // Should be 1
+    components: components.length, // Should be 1
     isolatedNodes: isolated.length,
     uniqueRelationships: uniqueRels.length,
-    health: 1 - (isolated.length / graph.nodes.length)
+    health: 1 - isolated.length / graph.nodes.length,
   };
 }
 ```
@@ -1137,18 +1317,18 @@ async function promoteToCanonical() {
 #### 1. Hard Depth Limits
 
 ```javascript
-const MAX_DEPTH = 5;  // Global hard cap
+const MAX_DEPTH = 5; // Global hard cap
 
 const DEPTH_BY_QUERY = {
-  'search/by_topic': 3,    // Evolution chains are typically 2-3 deep
-  'search/by_context': 5,  // Semantic exploration needs more breadth
-  'load/context': 2         // Immediate context only
+  'search/by_topic': 3, // Evolution chains are typically 2-3 deep
+  'search/by_context': 5, // Semantic exploration needs more breadth
+  'load/context': 2, // Immediate context only
 };
 
 async function traverseGraph(start_id, query_type, options = {}) {
   const maxDepth = Math.min(
     options.max_depth || DEPTH_BY_QUERY[query_type],
-    MAX_DEPTH  // Never exceed global cap
+    MAX_DEPTH // Never exceed global cap
   );
 
   return breadthFirstSearch(start_id, { max_depth: maxDepth });
@@ -1156,6 +1336,7 @@ async function traverseGraph(start_id, query_type, options = {}) {
 ```
 
 **Rationale:**
+
 - 95% of useful relationships are within 3 hops
 - Depth 5 covers semantic exploration without runaway traversal
 - Per-query limits optimize for specific use cases
@@ -1166,9 +1347,9 @@ async function traverseGraph(start_id, query_type, options = {}) {
 import LRUCache from 'lru-cache';
 
 const traversalCache = new LRUCache({
-  max: 100,                    // 100 cached paths
-  ttl: 5 * 60 * 1000,         // 5 minutes TTL
-  updateAgeOnGet: true         // Refresh on access
+  max: 100, // 100 cached paths
+  ttl: 5 * 60 * 1000, // 5 minutes TTL
+  updateAgeOnGet: true, // Refresh on access
 });
 
 async function cachedTraversal(start_id, link_types, max_depth) {
@@ -1201,12 +1382,14 @@ async function createLink(from_id, to_id, link_type) {
 ```
 
 **Cache Strategy:**
+
 - **Size**: 100 entries covers typical session (10-20 queries × 3-5 variations)
 - **TTL**: 5 minutes balances freshness vs hit rate
 - **Invalidation**: Targeted invalidation on link creation (conservative)
 - **LRU**: Automatically evicts least-used paths
 
 **Expected Performance:**
+
 - Cold query: 50-100ms (breadth-first search)
 - Cached query: <5ms (hash lookup)
 - Cache hit rate: 60-80% for repeated searches
@@ -1221,13 +1404,16 @@ for (const link of links) {
 }
 
 // AFTER: Batch fetch
-const targetIds = links.map(l => l.to_id);
-const memories = await db.query(`
+const targetIds = links.map((l) => l.to_id);
+const memories = await db.query(
+  `
   SELECT * FROM memories
   WHERE id IN (${targetIds.map(() => '?').join(',')})
-`, targetIds);
+`,
+  targetIds
+);
 
-const memoryMap = Object.fromEntries(memories.map(m => [m.id, m]));
+const memoryMap = Object.fromEntries(memories.map((m) => [m.id, m]));
 for (const link of links) {
   const targetMemory = memoryMap[link.to_id];
   // ... process
@@ -1235,21 +1421,23 @@ for (const link of links) {
 ```
 
 **Optimizations:**
+
 - Batch fetches reduce round trips
 - Index on `memory_links(from_id, link_type)` for fast edge lookup
 - Pre-join common queries (memory + links)
 
 #### 4. Performance Budget
 
-| Operation | v1.1 Target | Acceptable | Notes |
-|-----------|-------------|------------|-------|
-| Shallow traversal (depth=2) | <30ms | <50ms | Immediate context |
-| Medium traversal (depth=3-4) | <50ms | <100ms | Evolution chains |
-| Deep traversal (depth=5) | <100ms | <200ms | Semantic exploration |
-| Synonym detection (n=50) | <50ms | <100ms | Linear scan |
-| Link creation | <20ms | <50ms | Insert + cache invalidation |
+| Operation                    | v1.1 Target | Acceptable | Notes                       |
+| ---------------------------- | ----------- | ---------- | --------------------------- |
+| Shallow traversal (depth=2)  | <30ms       | <50ms      | Immediate context           |
+| Medium traversal (depth=3-4) | <50ms       | <100ms     | Evolution chains            |
+| Deep traversal (depth=5)     | <100ms      | <200ms     | Semantic exploration        |
+| Synonym detection (n=50)     | <50ms       | <100ms     | Linear scan                 |
+| Link creation                | <20ms       | <50ms      | Insert + cache invalidation |
 
 **Monitoring:**
+
 ```javascript
 async function traverseWithMetrics(start_id, options) {
   const startTime = Date.now();
@@ -1258,7 +1446,9 @@ async function traverseWithMetrics(start_id, options) {
 
   const latency = Date.now() - startTime;
   if (latency > 100) {
-    console.warn(`Slow traversal: ${latency}ms for depth=${options.max_depth}, nodes=${results.length}`);
+    console.warn(
+      `Slow traversal: ${latency}ms for depth=${options.max_depth}, nodes=${results.length}`
+    );
   }
 
   return results;
@@ -1267,6 +1457,7 @@ async function traverseWithMetrics(start_id, options) {
 
 **Fallback:**
 If performance degrades:
+
 1. Reduce `MAX_DEPTH` to 3
 2. Increase cache size to 200
 3. Add materialized views for common paths
@@ -1283,15 +1474,13 @@ If performance degrades:
 ```javascript
 // Generate multiple embeddings in parallel
 async function batchEmbed(texts) {
-  const embeddings = await Promise.all(
-    texts.map(text => embeddings.generate(text))
-  );
+  const embeddings = await Promise.all(texts.map((text) => embeddings.generate(text)));
   return embeddings;
 }
 
 // Example: Synonym detection
 const allRelationships = await db.query('SELECT DISTINCT relationship_tags FROM memory_links');
-const allEmbeddings = await batchEmbed(allRelationships);  // Parallel generation
+const allEmbeddings = await batchEmbed(allRelationships); // Parallel generation
 ```
 
 #### 2. Embedding Cache
@@ -1311,77 +1500,16 @@ async function cachedEmbed(text) {
 ```
 
 **Expected Performance:**
+
 - Embedding generation: 30-50ms per text
 - Cached embedding: <1ms
 - Batch embedding (10 texts): ~80ms (parallelized)
 
 ---
 
-## Appendix A: Current System (v1.0) vs Proposed (v1.1)
-
-### Schema Comparison
-
-| Aspect | v1.0 (Current) | v1.1 (Proposed) | Migration Path |
-|--------|----------------|-----------------|----------------|
-| **Tables** | decisions, sessions, checkpoints | memories, memory_links | Data migration script |
-| **Relationship Types** | 3 fixed (supersedes, refines, contradicts) | Unlimited (tagged) | Migrate to tags |
-| **Link Creation** | Explicit only | Automatic + Explicit | New intelligence layer |
-| **Cross-type Search** | UNION queries | Single table | Immediate improvement |
-| **Embedding Storage** | vss_memories (separate) | memories.embedding_vector | Column addition |
-
-### Tool Comparison
-
-| Feature | v1.0 | v1.1 | Notes |
-|---------|------|------|-------|
-| **Tool Count** | 7 flat | 10 hierarchical | Slash namespacing |
-| **save_decision** | Fixed params | Flexible links[] | Backward compatible |
-| **Relationship Types** | Hardcoded in schema | Creative via links | Learning mechanism |
-| **Dynamic Exposure** | No | Yes (context-aware) | Phase 3 feature |
-
-### Migration Strategy
-
-```javascript
-// Phase 1: Add new tables (non-breaking)
-CREATE TABLE memories (...);
-CREATE TABLE memory_links (...);
-
-// Phase 2: Migrate existing data
-INSERT INTO memories
-SELECT id, 'decision' as type, decision as content, ...
-FROM decisions;
-
-// Phase 3: Dual-write period (both schemas)
-await saveToDecisions(...);  // Old
-await saveToMemories(...);    // New
-
-// Phase 4: Deprecate old schema
--- DROP TABLE decisions;  // After 3 months
-```
-
-### Implementation Complexity
-
-| Component | Complexity | Risk | Priority |
-|-----------|------------|------|----------|
-| Unified schema | Medium | Low | Phase 1 |
-| Hierarchical tools | Low | Low | Phase 2 |
-| Automatic links | High | Medium | Phase 3 |
-| Relationship intelligence | High | Medium | Phase 4 |
-| Dynamic exposure | Medium | Low | Phase 3 |
-
-### Backward Compatibility
-
-```javascript
-// Old tools still work (deprecated)
-save_decision({ topic, decision, supersedes })
-→ Internally: save/decision({ topic, decision, links: [{ relationship: 'supersedes', ... }] })
-
-// Gradual migration encouraged
-Warning: save_decision is deprecated. Use save/decision instead.
-```
-
----
-
 ## Validation Criteria
+
+> **Note:** For business success metrics (tool selection time, user feedback), see [PRD Section 8: Success Metrics](./PRD-hierarchical-tools-v1.1.md#8-success-metrics). This section covers technical validation.
 
 This ADR succeeds if:
 

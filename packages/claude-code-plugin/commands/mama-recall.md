@@ -1,7 +1,7 @@
 ---
 description: Recall full decision history for a specific topic
 allowed-tools: Read
-argument-hint: "<topic>"
+argument-hint: '<topic>'
 ---
 
 # Recall Decision History from MAMA
@@ -15,8 +15,8 @@ You are helping the user recall the full decision history for a specific topic f
 1. Parse the topic from user's input:
    - `topic` (required): Decision topic to recall (e.g., 'auth_strategy', 'database_choice')
 
-2. Use the MCP tool `recall_decision` to retrieve the decision history:
-   - Call `recall_decision` with topic: `$ARGUMENTS`
+2. Use the MCP tool to retrieve the decision history:
+   - Call `mcp__plugin_mama_mama__recall_decision` with topic: `$ARGUMENTS`
    - The tool returns all decisions for this topic in chronological order
    - Includes: decision, reasoning, confidence, outcome, timestamps
 
@@ -42,12 +42,14 @@ Format the recalled decisions like this:
 # Decision History: {topic}
 
 ## Decision 1 (3 days ago)
+
 **Decision:** {decision text}
 **Reasoning:** {reasoning text}
 **Confidence:** {confidence}% | **Outcome:** {outcome}
 **Created:** {timestamp}
 
 ## Decision 2 (1 day ago) - Supersedes Decision 1
+
 **Decision:** {decision text}
 **Reasoning:** {reasoning text}
 **Confidence:** {confidence}% | **Outcome:** {outcome}

@@ -1,7 +1,7 @@
 ---
 description: Save a decision or insight to MAMA's long-term memory
 allowed-tools: Read
-argument-hint: "<topic> <decision> <reasoning> [--confidence=0.8] [--outcome=pending]"
+argument-hint: '<topic> <decision> <reasoning> [--confidence=0.8] [--outcome=pending]'
 ---
 
 # Save Decision to MAMA Memory
@@ -22,11 +22,12 @@ You are helping the user save a decision to MAMA (Memory-Augmented MCP Assistant
    - `failure_reason` (optional): Why this decision failed (if outcome='failure')
    - `limitation` (optional): Known limitations of this decision
 
-2. Use the MCP tool `save_decision` to save the decision:
-   - Call `save_decision` with the parsed parameters
+2. Use the MCP tool to save the decision:
+   - Call `mcp__plugin_mama_mama__save_decision` with the parsed parameters
    - The tool will return a decision_id
 
 3. Format the response as markdown:
+
    ```
    ✅ Decision Saved Successfully
 
