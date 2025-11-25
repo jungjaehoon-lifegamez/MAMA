@@ -1,26 +1,30 @@
 # Commands Reference
 
-**All MAMA slash commands (Claude Code Plugin)**
+**MAMA Slash Commands (Claude Code Plugin)**
 
-> **Note (v1.2.0):** These slash commands are part of the Claude Code plugin. They use the simplified 4-tool MCP API internally.
+> **v1.2.1:** Commands simplified to match 4 MCP tools. Shorter names for faster typing.
+
+| Command            | Description          | MCP Tool                 |
+| ------------------ | -------------------- | ------------------------ |
+| `/mama:decision`   | Save a decision      | `save` (type=decision)   |
+| `/mama:search`     | Search or list items | `search`                 |
+| `/mama:checkpoint` | Save session state   | `save` (type=checkpoint) |
+| `/mama:resume`     | Load checkpoint      | `load_checkpoint`        |
+| `/mama:configure`  | Settings             | -                        |
 
 ---
 
-## `/mama-save`
+## `/mama:decision`
 
 Save a decision to MAMA's memory.
+
+**Key Concept:** Same topic = new decision **supersedes** previous, creating an evolution chain.
 
 **Usage:**
 
 ```
-/mama-save
-Topic: <topic_name>
-Decision: <what_you_decided>
-Reasoning: <why_you_decided>
-Confidence: <0.0-1.0>
+/mama:decision <topic> <decision> <reasoning> [--confidence=0.8]
 ```
-
-**Key Concept:** Same topic = new decision **supersedes** previous, creating an evolution chain.
 
 **Parameters:**
 
@@ -32,140 +36,123 @@ Confidence: <0.0-1.0>
 **Examples:**
 
 ```
-/mama-save
-Topic: database_choice
-Decision: Use PostgreSQL
-Reasoning: Better JSON support and ACID guarantees needed
-Confidence: 0.9
+/mama:decision auth_strategy "Use JWT" "Stateless, scalable" --confidence=0.9
+/mama:decision database "PostgreSQL" "Need ACID + JSON support"
 ```
-
-**MCP Tool:** Uses `save` with `type='decision'`
 
 ---
 
-## `/mama-recall <topic>`
+## `/mama:search`
 
-Search for decisions related to a topic.
+Search decisions and checkpoints. Semantic search with query, or list recent without query.
 
 **Usage:**
 
 ```
-/mama-recall <topic>
+/mama:search [query] [--type=all|decision|checkpoint] [--limit=10]
 ```
+
+**Parameters:**
+
+- `query` (optional): Search query. If empty, lists recent items.
+- `--type`: Filter by type - 'all' (default), 'decision', 'checkpoint'
+- `--limit`: Number of results (default: 10)
 
 **Examples:**
 
 ```
-/mama-recall auth_strategy
-/mama-recall database_choice
+/mama:search                           # List recent items
+/mama:search auth                      # Semantic search for "auth"
+/mama:search "database strategy"       # Semantic search
+/mama:search --type=checkpoint         # List checkpoints only
+/mama:search --limit=20                # List 20 recent items
 ```
 
-**Output:** Shows matching decisions with evolution history (LLM infers supersedes from time order).
-
-**MCP Tool:** Uses `search` with `query=<topic>`
+**Note:** Cross-lingual search supported (Korean-English).
 
 ---
 
-## `/mama-suggest <question>`
-
-Semantic search across all decisions.
-
-**Usage:**
-
-```
-/mama-suggest <question>
-```
-
-**Examples:**
-
-```
-/mama-suggest "How should I handle authentication?"
-/mama-suggest "What database should I use?"
-```
-
-**Note:** Cross-lingual search supported. Multilingual queries will match decisions across different languages.
-
-**Output:** Relevant decisions ranked by semantic similarity.
-
-**MCP Tool:** Uses `search` with `query=<question>`
-
----
-
-## `/mama-list [--limit N]`
-
-List recent decisions and checkpoints.
-
-**Usage:**
-
-```
-/mama-list [--limit N]
-```
-
-**Examples:**
-
-```
-/mama-list               # Default 10 recent items
-/mama-list --limit 20    # Last 20 items
-```
-
-**Output:** Shows recent decisions and checkpoints sorted by time.
-
-**MCP Tool:** Uses `search` without query
-
----
-
-## `/mama-checkpoint`
+## `/mama:checkpoint`
 
 Save current session state for later resumption.
 
 **Usage:**
 
 ```
-/mama-checkpoint
+/mama:checkpoint
 ```
 
-**Output:** Saves summary, next steps, and relevant files.
+Claude will automatically:
 
-**MCP Tool:** Uses `save` with `type='checkpoint'`
+- Analyze conversation history
+- Extract relevant files from tool usage
+- Infer next steps from pending work
+- Save everything with verification prompts
+
+**Output Format:**
+
+```markdown
+# Goal & Progress
+
+- Goal: [Session goal]
+- Progress: [What was done, where stopped]
+
+# Evidence & Verification
+
+- File `path/to/file.js` — Status: Verified
+- Command `npm test` — Status: Not run
+
+# Unfinished & Risks
+
+- Remaining work: ...
+- Risks/unknowns: ...
+
+# Next Agent Briefing
+
+- DoD: [Definition of Done]
+- Quick checks: npm test, curl localhost:3000/health
+```
 
 ---
 
-## `/mama-resume`
+## `/mama:resume`
 
 Resume from the latest checkpoint.
 
 **Usage:**
 
 ```
-/mama-resume
+/mama:resume
 ```
 
-**Output:** Loads previous session context to continue work.
+**Output:** Loads previous session context including:
 
-**MCP Tool:** Uses `load_checkpoint`
+- Session summary
+- Relevant files
+- Next steps
+- Where you left off
 
 ---
 
-## `/mama-configure`
+## `/mama:configure`
 
 Configure MAMA settings.
 
 **Usage:**
 
 ```
-/mama-configure --show
-/mama-configure --disable-hooks
+/mama:configure --show
+/mama:configure --tier-check
 ```
 
 **Options:**
 
-- `--show`: Display current configuration
-- `--disable-hooks`: Disable automatic context injection
+- `--show`: Display current configuration (tier, database, model)
+- `--tier-check`: Re-run tier detection
 
 ---
 
 **Related:**
 
 - [MCP Tool API](api.md) - 4 core tools reference
-- [Configuration Options](configuration-options.md)
 - [Getting Started Tutorial](../tutorials/getting-started.md)
