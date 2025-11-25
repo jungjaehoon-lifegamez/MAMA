@@ -835,7 +835,7 @@ use_mcp_tool({
   "content": [
     {
       "type": "text",
-      "text": "# Post-Cleanup Validation\n\n**Status:** SUCCESS\n\n✅ SUCCESS: 잔여 자동 링크 비율이 5% 미만입니다. 목표 달성!\n\n## Statistics\n- **Total Links:** 105\n- **Remaining Auto Links:** 0\n- **Remaining Ratio:** 0.0%\n- **Protected Links:** 105\n\n## Recommendation\n정리가 성공적으로 완료되었습니다. 마이그레이션을 계속 진행할 수 있습니다."
+      "text": "# Post-Cleanup Validation\n\n**Status:** SUCCESS\n\n✅ SUCCESS: Remaining auto-links under 5%. Target achieved!\n\n## Statistics\n- **Total Links:** 105\n- **Remaining Auto Links:** 0\n- **Remaining Ratio:** 0.0%\n- **Protected Links:** 105\n\n## Recommendation\nCleanup completed successfully. You can proceed with migration."
     }
   ]
 }
