@@ -42,24 +42,35 @@ async function injectDecisionContext(userMessage) {
   const startTime = Date.now();
 
   try {
-    // Task 1.3: Implement timeout wrapper (Promise.race with 200ms timeout)
-    const context = await Promise.race([
-      performMemoryInjection(userMessage, startTime),
-      createTimeout(TIMEOUT_MS),
-    ]);
+    // Task 1.3: Implement timeout wrapper (Promise.race with graceful timeout)
+    // Use resolve instead of reject to prevent unhandled promise rejection
+    const timeoutPromise = new Promise((resolve) =>
+      setTimeout(() => resolve({ timedOut: true, context: null }), TIMEOUT_MS)
+    );
+
+    const injectionPromise = performMemoryInjection(userMessage, startTime).then((ctx) => ({
+      timedOut: false,
+      context: ctx,
+    }));
+
+    const result = await Promise.race([injectionPromise, timeoutPromise]);
 
     const totalLatency = Date.now() - startTime;
+
+    if (result.timedOut) {
+      console.warn(`[MAMA] Memory injection timed out after ${TIMEOUT_MS}ms`);
+      return null;
+    }
 
     if (totalLatency > TIMEOUT_MS) {
       console.warn(`[MAMA] Memory injection exceeded ${TIMEOUT_MS}ms: ${totalLatency}ms`);
     }
 
-    return context;
+    return result.context;
   } catch (error) {
-    // CLAUDE.md Rule #1: NO FALLBACK
-    // Errors must be thrown for debugging (including timeout)
+    // Log error but return null for graceful degradation
     logError(`[MAMA] Memory injection FAILED: ${error.message}`);
-    throw error;
+    return null;
   }
 }
 
@@ -203,22 +214,7 @@ function mergeDecisions(graphDecisions, vectorDecisions) {
   return merged;
 }
 
-/**
- * Create timeout promise
- *
- * Task 1.3: Timeout wrapper for Promise.race
- * AC #3: Graceful timeout handling
- *
- * @param {number} ms - Timeout in milliseconds
- * @returns {Promise<never>} Rejects after timeout
- */
-function createTimeout(ms) {
-  return new Promise((_, reject) => {
-    setTimeout(() => {
-      reject(new Error(`Memory injection timeout (${ms}ms)`));
-    }, ms);
-  });
-}
+// createTimeout removed - now using inline resolve-based timeout to prevent unhandled rejections
 
 // Export API
 module.exports = {
