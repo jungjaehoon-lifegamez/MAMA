@@ -72,26 +72,20 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
 
         const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
         const hooksConfig = hooksFile.hooks || hooksFile; // Support both nested and flat structure
+
+        // Only UserPromptSubmit is active (PreToolUse/PostToolUse disabled for efficiency)
         expect(hooksConfig.UserPromptSubmit).toBeDefined();
-        expect(hooksConfig.PreToolUse).toBeDefined();
 
         // Verify hooks reference correct scripts
         const userPromptHook = hooksConfig.UserPromptSubmit[0].hooks[0];
         expect(userPromptHook.command).toContain('userpromptsubmit-hook.js');
-
-        const preToolHook = hooksConfig.PreToolUse[0].hooks[0];
-        expect(preToolHook.command).toContain('pretooluse-hook.js');
       } else {
         // Inline format (legacy)
         expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
-        expect(pluginConfig.hooks.PreToolUse).toBeDefined();
 
         // Verify hooks reference correct scripts
         const userPromptHook = pluginConfig.hooks.UserPromptSubmit[0].hooks[0];
         expect(userPromptHook.command).toContain('userpromptsubmit-hook.js');
-
-        const preToolHook = pluginConfig.hooks.PreToolUse[0].hooks[0];
-        expect(preToolHook.command).toContain('pretooluse-hook.js');
       }
     });
   });
@@ -311,7 +305,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       expect(pluginConfig.hooks).toBeDefined();
     });
 
-    it('should have all required hook configurations', () => {
+    it('should have required hook configurations (only UserPromptSubmit active)', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
 
       // Handle external reference or inline format
@@ -321,14 +315,13 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
         const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
         const hooksConfig = hooksFile.hooks || hooksFile; // Support both nested and flat structure
 
+        // Only UserPromptSubmit is active (PreToolUse/PostToolUse disabled for efficiency)
         expect(hooksConfig.UserPromptSubmit).toBeDefined();
-        expect(hooksConfig.PreToolUse).toBeDefined();
-        expect(hooksConfig.PostToolUse).toBeDefined();
+        expect(hooksConfig.PreToolUse).toBeUndefined();
+        expect(hooksConfig.PostToolUse).toBeUndefined();
       } else {
         // Inline format
         expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
-        expect(pluginConfig.hooks.PreToolUse).toBeDefined();
-        expect(pluginConfig.hooks.PostToolUse).toBeDefined();
       }
     });
 
@@ -346,11 +339,8 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
         hooksConfig = pluginConfig.hooks;
       }
 
-      const allHookCommands = [
-        ...hooksConfig.UserPromptSubmit[0].hooks.map((h) => h.command),
-        ...hooksConfig.PreToolUse[0].hooks.map((h) => h.command),
-        ...hooksConfig.PostToolUse[0].hooks.map((h) => h.command),
-      ];
+      // Only UserPromptSubmit is active
+      const allHookCommands = [...hooksConfig.UserPromptSubmit[0].hooks.map((h) => h.command)];
 
       allHookCommands.forEach((cmd) => {
         expect(cmd).toContain('${CLAUDE_PLUGIN_ROOT}');

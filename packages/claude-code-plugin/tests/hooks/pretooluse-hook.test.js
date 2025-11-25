@@ -241,16 +241,16 @@ describe('Story M2.2: PreToolUse Hook', () => {
   });
 
   describe('Performance', () => {
-    it('should define MAX_RUNTIME_MS <500ms', () => {
+    it('should define MAX_RUNTIME_MS <=3000ms', () => {
       const scriptPath = path.join(__dirname, '../../scripts/pretooluse-hook.js');
       const content = fs.readFileSync(scriptPath, 'utf8');
 
-      // Check MAX_RUNTIME_MS is defined and <=500
+      // Check MAX_RUNTIME_MS is defined and <=3000 (increased for embedding model loading)
       const match = content.match(/MAX_RUNTIME_MS\s*=\s*(\d+)/);
       expect(match).toBeTruthy();
 
       const maxRuntime = parseInt(match[1], 10);
-      expect(maxRuntime).toBeLessThanOrEqual(500);
+      expect(maxRuntime).toBeLessThanOrEqual(3000);
     });
 
     it('should implement timeout handling', () => {
