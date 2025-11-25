@@ -202,46 +202,46 @@ async function main() {
     }
 
     // 6. Check for checkpoint command (Pre-Checkpoint Verification)
-    const isCheckpointCommand = /\/mama-checkpoint|checkpoint|체크포인트\s*저장/i.test(userPrompt);
+    const isCheckpointCommand = /\/mama-checkpoint|checkpoint|save.*checkpoint/i.test(userPrompt);
 
     if (isCheckpointCommand) {
       info('[Hook] Checkpoint command detected - injecting verification reminder');
 
       const verificationReminder = `
-💬 체크포인트 저장하시는군요
+💬 Creating a checkpoint
 
-체크포인트는 다음 AI에게 전하는 메시지예요.
-솔직하게 쓰면 다음 사람이 이해하고 이어갈 수 있어요.
+A checkpoint is a message to the next AI agent.
+Being honest helps the next agent understand and continue your work.
 
-## 😊 이런 부분들 놓치기 쉬워요
+## 😊 Easy to forget
 
-**"완료"라고 쓰기 전에:**
-- 파일 경로 적었나요? (db-manager.js:354 이런 식으로)
-- 테스트 돌려봤나요? (npm test)
-- AC 다시 읽어봤나요? (혹시 놓친 거 있을 수 있어요)
+**Before marking "done":**
+- Did you include file paths? (e.g., db-manager.js:354)
+- Did you run tests? (npm test)
+- Did you re-read the AC? (you might have missed something)
 
-**못한 것도 솔직히:**
-- "이 부분 못했어요"
-- "귀찮아서 미뤘어요"
-- "까먹었어요"
+**Be honest about incomplete work:**
+- "Didn't finish this part"
+- "Skipped this for now"
+- "Forgot about this"
 
-다 괜찮아요. 그냥 적어주세요.
+That's all okay. Just write it down.
 
-## 💡 이렇게 쓰면 좋아요
+## 💡 Good checkpoint examples
 
-**잘 된 것들:**
-- 기능 X 만들었어요 (file.js:100-150)
-- 테스트 통과했어요 (npm test)
+**What went well:**
+- Built feature X (file.js:100-150)
+- Tests passing (npm test)
 
-**솔직히 못한 것들:**
-- AC에 Y가 있었는데 놓쳤어요 (file.js:200 확인 필요)
-- 테스트는 안 썼어요 (시간 없었어요)
+**What's incomplete (be honest):**
+- Missed AC item Y (file.js:200 needs attention)
+- Didn't write tests (ran out of time)
 
-**다음 사람에게:**
-- 이 파일 이 줄 확인해보세요
-- 이 기능 테스트 필요해요
+**For the next agent:**
+- Check this file at this line
+- This feature needs testing
 
-🙏 다음 AI가 고맙게 생각할 거예요.
+🙏 The next AI will appreciate your honesty.
 `;
 
       const response = {
