@@ -96,19 +96,13 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
 
       // UserPromptSubmit: 75% threshold
       expect(skillContent).toMatch(/75%|0\.75/);
-
-      // PreToolUse: 70% threshold
-      expect(skillContent).toMatch(/70%|0\.70/);
     });
 
     it('should document token budgets in SKILL.md', () => {
       const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
 
-      // Teaser format: 40 tokens
+      // Teaser format: 40 tokens (only active hook)
       expect(skillContent).toContain('40 tokens');
-
-      // PreToolUse: 300 tokens
-      expect(skillContent).toContain('300 tokens');
     });
 
     it('should use teaser format (not full context)', () => {

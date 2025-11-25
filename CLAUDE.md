@@ -231,11 +231,9 @@ pnpm vitest run tests/commands/
 
 ### Hook Performance
 
-- **UserPromptSubmit:** Must complete <500ms (fires on every prompt)
-- **PreToolUse:** Must complete <1s, rate-limited to 1/second
-- **Token budgets:**
-  - UserPromptSubmit: 40 tokens (teaser only)
-  - PreToolUse: 300 tokens (full context)
+- **UserPromptSubmit:** Target <1800ms (includes embedding model loading; only active hook)
+- **PreToolUse/PostToolUse:** Disabled (scripts retained for future use)
+- **Token budget:** 40 tokens (teaser format for UserPromptSubmit)
 
 ### MCP Tool Schema
 
@@ -334,7 +332,7 @@ Key docs:
 ## Important Constraints
 
 1. **Never rewrite working code** - Check mcp-server/src/mama/ first
-2. **Keep hooks fast** - UserPromptSubmit must be <500ms
+2. **Keep hooks fast** - UserPromptSubmit should complete within 1800ms
 3. **Local-first** - No network calls in core functionality
 4. **Backward compatibility** - Existing decisions must remain valid
 5. **Test before commit** - All tests must pass (`pnpm test`)

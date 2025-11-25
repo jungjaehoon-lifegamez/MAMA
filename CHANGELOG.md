@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Hook Optimization**: Disabled PreToolUse and PostToolUse hooks for efficiency
+  - Only UserPromptSubmit hook remains active (best value/latency ratio)
+  - Timeout increased from 500ms to 1800ms for embedding model loading
+  - Scripts retained for potential future re-enablement
+  - See decision: `mama.recall('hook_optimization_nov2025')`
+
+### Added
+
+- **Typed Error Classes**: `MAMAError`, `NotFoundError`, `ValidationError`, `DatabaseError`, `EmbeddingError`
+- **Module Sync Check**: `scripts/sync-check.js` for detecting drift between plugin and server
+
+---
+
 ## [1.1.0] - 2025-11-25
 
 ### Why This Release?
