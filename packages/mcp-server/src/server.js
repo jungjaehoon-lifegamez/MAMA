@@ -205,19 +205,20 @@ class MAMAServer {
         {
           name: 'search',
           description:
-            'Search decisions and checkpoints. With query: semantic search. Without query: returns recent items by time.',
+            'Search decisions and checkpoints to learn from past reasoning. USE CASES: (1) Before making decisions - search for prior art on same topic; (2) After loading checkpoint - search related decisions for context; (3) When debugging - search for past failures on similar issues. Results are time-ordered so you can infer decision evolution (same topic = newer supersedes older). Cross-lingual: works in Korean and English.',
           inputSchema: {
             type: 'object',
             properties: {
               query: {
                 type: 'string',
                 description:
-                  'Search query (optional). If empty, returns recent items sorted by time.',
+                  'Search query (optional). Semantic search finds related decisions even with different wording. If empty, returns recent items sorted by time.',
               },
               type: {
                 type: 'string',
                 enum: ['all', 'decision', 'checkpoint'],
-                description: "Filter by type. Default: 'all'",
+                description:
+                  "Filter by type: 'decision' for architectural choices, 'checkpoint' for session states, 'all' for both. Default: 'all'",
               },
               limit: {
                 type: 'number',
@@ -230,7 +231,7 @@ class MAMAServer {
         {
           name: 'update',
           description:
-            'Update an existing decision outcome (success/failure/partial). Use after trying a decision to track what worked.',
+            'Update decision outcome after real-world validation. WHEN TO USE: (1) Days/weeks later when issues discovered - mark failure with reason; (2) After production deployment confirms success; (3) After partial success with known limitations. WHY IMPORTANT: Tracks decision evolution - failure outcomes help future LLMs avoid same mistakes. TIP: If decision failed, save a new decision with same topic to supersede it.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -245,7 +246,8 @@ class MAMAServer {
               },
               reason: {
                 type: 'string',
-                description: 'Why it succeeded/failed/was partial.',
+                description:
+                  'Why it succeeded/failed/was partial. Include specific evidence: error logs, metrics, user feedback, or what broke.',
               },
             },
             required: ['id', 'outcome'],
@@ -255,7 +257,7 @@ class MAMAServer {
         {
           name: 'load_checkpoint',
           description:
-            'Load the latest checkpoint to resume a previous session. Use at session start.',
+            'Load the latest checkpoint to resume a previous session. Use at session start. Returns: summary (4-section: Goal/Evidence/Unfinished/NextAgent), next_steps (DoD + verification commands), open_files. IMPORTANT: After loading, verify Evidence items before continuing - checkpoint may be stale if code changed since last session. Run quick health checks from next_steps first.',
           inputSchema: {
             type: 'object',
             properties: {},
