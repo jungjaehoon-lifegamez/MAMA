@@ -1,7 +1,7 @@
 ---
 description: Resume work from the last saved session checkpoint
 allowed-tools: Read
-argument-hint: ""
+argument-hint: ''
 ---
 
 # Resume Session from Checkpoint
@@ -14,12 +14,14 @@ You are helping the user resume work from a previously saved checkpoint.
 
 **Default behavior: Load most recent checkpoint automatically**
 
-1. **Call the MCP tool `load_checkpoint`** with no parameters:
+1. **Call the MCP tool** using the correct function name:
+
    ```javascript
-   load_checkpoint()
+   mcp__plugin_mama_mama__load_checkpoint();
    ```
 
 2. If checkpoint exists, **display the checkpoint** in this format:
+
    ```
    🔄 Resuming Session
 
@@ -40,6 +42,7 @@ You are helping the user resume work from a previously saved checkpoint.
    ```
 
 3. If no checkpoint exists:
+
    ```
    ℹ️ No Active Checkpoint Found
 
@@ -58,6 +61,7 @@ You are helping the user resume work from a previously saved checkpoint.
 ```
 
 That's it! No arguments needed. Claude will:
+
 - Load the most recent checkpoint
 - Display session summary and timestamp
 - Show relevant files from that session

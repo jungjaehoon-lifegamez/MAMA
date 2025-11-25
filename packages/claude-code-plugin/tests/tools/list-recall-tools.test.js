@@ -19,7 +19,10 @@ import fs from 'fs';
 import os from 'os';
 
 // Test database path (isolated from production)
-const TEST_DB_PATH = path.join(os.tmpdir(), `mama-test-list-recall-${Date.now()}.db`);
+const TEST_DB_PATH = path.join(
+  os.tmpdir(),
+  `mama-test-list-recall-${Date.now()}-${process.pid}.db`
+);
 
 // Mock tool context
 const mockContext = {
@@ -46,6 +49,7 @@ describe('Story M4.1: list_decisions and recall_decision Tools (ported from mcp-
     process.env.MAMA_DB_PATH = TEST_DB_PATH;
 
     // Initialize test database
+    // Note: ES modules don't need cache clearing - vitest's fork mode provides isolation
     await initDB();
   });
 

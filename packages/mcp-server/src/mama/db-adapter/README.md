@@ -22,6 +22,7 @@ DatabaseAdapter (interface)
 **Topic**: mama_db_adapter_pattern
 **Decision**: Abstract database layer with driver-specific implementations
 **Reasoning**:
+
 1. **Environment Flexibility**: SQLite for local/testing, PostgreSQL for production
 2. **Zero Breaking Changes**: Existing memory-store.js API remains unchanged
 3. **Vector Search Portability**: sqlite-vss → pgvector migration path
@@ -70,22 +71,26 @@ MAMA_DATABASE_URL=postgresql://user:pass@host:5432/mama_db
 ```
 
 **Detection Logic**:
+
 - If `MAMA_DATABASE_URL` set → PostgreSQL
 - Else → SQLite with `MAMA_DB_PATH`
 
 ## Migration Strategy
 
 ### Phase 1: Adapter Layer (Current)
+
 1. Create adapter interface
 2. Extract SQLite logic to SQLiteAdapter
 3. Update memory-store.js to use adapter
 
 ### Phase 2: PostgreSQL Support
+
 1. Implement PostgreSQLAdapter
 2. Convert migration SQL files
 3. Add pgvector support
 
 ### Phase 3: Testing
+
 1. Run existing tests with SQLite
 2. Add PostgreSQL integration tests
 3. Validate on Railway

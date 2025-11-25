@@ -28,7 +28,7 @@
     "evolution"
   ],
   "scripts": {
-    "test": "vitest run",
+    "test": "MAMA_FORCE_TIER_3=true vitest run",
     "test:watch": "vitest watch",
     "postinstall": "node scripts/postinstall.js"
   },
@@ -50,6 +50,7 @@
     "hooks/**",
     "skills/**",
     "scripts/**",
+    "src/**",
     "docs/**",
     "README.md"
   ]

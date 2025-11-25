@@ -53,7 +53,9 @@ async function initDB() {
     await dbAdapter.runMigrations(MIGRATIONS_DIR);
 
     // Create checkpoints table (New Feature: Session Continuity)
-    dbAdapter.prepare(`
+    dbAdapter
+      .prepare(
+        `
       CREATE TABLE IF NOT EXISTS checkpoints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp INTEGER NOT NULL,
@@ -62,7 +64,9 @@ async function initDB() {
         next_steps TEXT,
         status TEXT DEFAULT 'active' -- 'active', 'archived'
       )
-    `).run();
+    `
+      )
+      .run();
 
     isInitialized = true;
 
@@ -437,6 +441,11 @@ async function queryVectorSearch({
     // Generate embedding for query
     const embedding = await generateEmbedding(query);
 
+    // TIER 3: If embeddings are disabled, return empty results
+    if (!embedding) {
+      return [];
+    }
+
     const cutoffTime = Date.now() - timeWindow;
     const candidates = await adapter.vectorSearch(embedding, limit * 5);
 
@@ -527,10 +536,10 @@ async function updateDecisionOutcome(decisionId, outcomeData) {
  * For backward compatibility with memory-store.js
  * Deprecated: Use adapter.prepare() directly
  *
- * @param {string} name - Statement name (ignored)
+ * @param {string} _name - Statement name (ignored)
  * @returns {Object} Dummy statement object
  */
-function getPreparedStmt(name) {
+function getPreparedStmt(_name) {
   warn('[db-manager] getPreparedStmt() is deprecated. Use adapter.prepare() directly.');
   return {
     run: () => {

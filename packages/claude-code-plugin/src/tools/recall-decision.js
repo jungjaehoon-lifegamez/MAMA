@@ -38,7 +38,7 @@ const recallDecisionTool = {
     required: ['topic'],
   },
 
-  async handler(params, context) {
+  async handler(params, _context) {
     const { topic } = params || {};
 
     try {

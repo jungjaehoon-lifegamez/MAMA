@@ -32,7 +32,8 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 
 const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
-const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+// Lazy load to avoid embedding model initialization before tier check
+// const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // Configuration
@@ -49,6 +50,24 @@ const EDIT_TOOLS = ['write_file', 'apply_patch', 'Edit', 'Write', 'test', 'build
  * @returns {Object} Tier info {tier, vectorSearchEnabled, reason}
  */
 function getTierInfo() {
+  // Fast path for testing: completely skip MAMA (fastest)
+  if (process.env.MAMA_FORCE_TIER_3 === 'true') {
+    return {
+      tier: 3,
+      vectorSearchEnabled: false,
+      reason: 'Tier 3 forced for testing (embeddings disabled)',
+    };
+  }
+
+  // Fast path for testing: skip embedding model loading
+  if (process.env.MAMA_FORCE_TIER_2 === 'true') {
+    return {
+      tier: 2,
+      vectorSearchEnabled: false,
+      reason: 'Tier 2 forced for testing (fast mode)',
+    };
+  }
+
   try {
     const config = loadConfig();
 
@@ -56,19 +75,19 @@ function getTierInfo() {
       return {
         tier: 1,
         vectorSearchEnabled: true,
-        reason: 'Full MAMA features available'
+        reason: 'Full MAMA features available',
       };
     } else if (!config.modelName) {
       return {
         tier: 2,
         vectorSearchEnabled: false,
-        reason: 'Embeddings unavailable'
+        reason: 'Embeddings unavailable',
       };
     } else {
       return {
         tier: 3,
         vectorSearchEnabled: false,
-        reason: 'MAMA disabled'
+        reason: 'MAMA disabled',
       };
     }
   } catch (error) {
@@ -76,7 +95,7 @@ function getTierInfo() {
     return {
       tier: 2,
       vectorSearchEnabled: false,
-      reason: 'Config load failed'
+      reason: 'Config load failed',
     };
   }
 }
@@ -94,9 +113,7 @@ function extractTopic(conversationContext, filePath) {
   if (filePath) {
     const basename = path.basename(filePath, path.extname(filePath));
     // Convert snake_case or kebab-case to readable topic
-    const topic = basename
-      .replace(/[-_]/g, ' ')
-      .replace(/\b\w/g, char => char.toUpperCase());
+    const topic = basename.replace(/[-_]/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 
     if (topic && topic.length > 3) {
       return topic;
@@ -108,7 +125,7 @@ function extractTopic(conversationContext, filePath) {
     const patterns = [
       /(?:implement|add|create|fix|update)\s+([a-z0-9_-]+)/i,
       /(?:for|regarding|about)\s+([a-z0-9_\s]+)/i,
-      /decision.*?:\s*([a-z0-9_\s]+)/i
+      /decision.*?:\s*([a-z0-9_\s]+)/i,
     ];
 
     for (const pattern of patterns) {
@@ -138,7 +155,7 @@ function extractReasoning(conversationContext) {
   const patterns = [
     /(?:because|since|reason|why)[\s:]+([^.!?]+[.!?])/i,
     /(?:this|that)\s+(?:allows|enables|fixes|improves)\s+([^.!?]+[.!?])/i,
-    /(?:to|for)\s+(?:solve|fix|address|handle)\s+([^.!?]+[.!?])/i
+    /(?:to|for)\s+(?:solve|fix|address|handle)\s+([^.!?]+[.!?])/i,
   ];
 
   for (const pattern of patterns) {
@@ -189,7 +206,7 @@ function formatAutoSaveSuggestion(topic, decision, reasoning, similarDecisions) 
   output += '**Actions:**\n';
   output += '- [a] Accept - Save this decision as-is\n';
   output += '- [m] Modify - Edit topic/decision before saving\n';
-  output += '- [d] Dismiss - Don\'t save (this is logged)\n\n';
+  output += "- [d] Dismiss - Don't save (this is logged)\n\n";
 
   output += '💡 *This suggestion is based on your recent code changes.*\n';
   output += '---\n';
@@ -213,7 +230,7 @@ function logAudit(action, topic, decision) {
       action,
       topic,
       decision: decision.substring(0, 100),
-      tool: process.env.TOOL_NAME || 'unknown'
+      tool: process.env.TOOL_NAME || 'unknown',
     };
 
     const logLine = JSON.stringify(entry) + '\n';
@@ -234,20 +251,22 @@ function logAudit(action, topic, decision) {
  */
 async function checkSimilarDecision(decision) {
   try {
+    // Lazy load embeddings and vector search (only on Tier 1)
     const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
-    const embedding = await generateEmbedding(decision);
+    const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 
+    const embedding = await generateEmbedding(decision);
     const results = vectorSearch(embedding, 5, SIMILARITY_THRESHOLD);
 
     return {
       hasSimilar: results.length > 0,
-      decisions: results
+      decisions: results,
     };
   } catch (error) {
     logError(`[Hook] Similarity check failed: ${error.message}`);
     return {
       hasSimilar: false,
-      decisions: []
+      decisions: [],
     };
   }
 }
@@ -266,7 +285,7 @@ function generateDecisionSummary(diffContent, filePath) {
 
   // Extract meaningful changes from diff
   const lines = diffContent.split('\n');
-  const addedLines = lines.filter(l => l.startsWith('+')).slice(0, 3);
+  const addedLines = lines.filter((l) => l.startsWith('+')).slice(0, 3);
 
   if (addedLines.length > 0) {
     // Try to extract function/class names
@@ -288,7 +307,9 @@ function generateDecisionSummary(diffContent, filePath) {
 async function readStdin() {
   return new Promise((resolve, reject) => {
     let data = '';
-    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
     process.stdin.on('end', () => {
       try {
         const parsed = JSON.parse(data);
@@ -311,15 +332,11 @@ async function main() {
     // 1. Check opt-out flags
     if (process.env.MAMA_DISABLE_HOOKS === 'true') {
       info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
     if (process.env.MAMA_DISABLE_AUTO_SAVE === 'true') {
       info('[Hook] Auto-save disabled via MAMA_DISABLE_AUTO_SAVE (privacy mode)');
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -328,9 +345,23 @@ async function main() {
     try {
       const inputData = await readStdin();
       toolName = inputData.toolName || inputData.tool || process.env.TOOL_NAME || '';
-      filePath = inputData.filePath || inputData.file_path || inputData.FILE_PATH || process.env.FILE_PATH || '';
-      diffContent = inputData.diffContent || inputData.diff || inputData.content || process.env.DIFF_CONTENT || '';
-      conversationContext = inputData.conversationContext || inputData.context || process.env.CONVERSATION_CONTEXT || '';
+      filePath =
+        inputData.filePath ||
+        inputData.file_path ||
+        inputData.FILE_PATH ||
+        process.env.FILE_PATH ||
+        '';
+      diffContent =
+        inputData.diffContent ||
+        inputData.diff ||
+        inputData.content ||
+        process.env.DIFF_CONTENT ||
+        '';
+      conversationContext =
+        inputData.conversationContext ||
+        inputData.context ||
+        process.env.CONVERSATION_CONTEXT ||
+        '';
     } catch (error) {
       // Fallback to environment variables
       toolName = process.env.TOOL_NAME || '';
@@ -339,10 +370,8 @@ async function main() {
       conversationContext = process.env.CONVERSATION_CONTEXT || '';
     }
 
-    if (!toolName || !EDIT_TOOLS.some(tool => toolName.includes(tool))) {
+    if (!toolName || !EDIT_TOOLS.some((tool) => toolName.includes(tool))) {
       // Silent exit - tool not applicable for auto-save
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -352,8 +381,6 @@ async function main() {
     // 4. Skip on Tier 2/3 (need embeddings for similarity)
     if (tierInfo.tier !== 1) {
       warn(`[Hook] Auto-save requires Tier 1 (embeddings), current: Tier ${tierInfo.tier}`);
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -361,8 +388,6 @@ async function main() {
     if (!diffContent && !filePath) {
       // No content to analyze
       info('[Hook] No diff or file path provided, skipping auto-save');
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -379,9 +404,7 @@ async function main() {
     try {
       similarCheck = await Promise.race([
         checkSimilarDecision(decision),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), MAX_RUNTIME_MS)
-        )
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), MAX_RUNTIME_MS)),
       ]);
     } catch (error) {
       warn(`[Hook] Similarity check timed out or failed: ${error.message}`);
@@ -391,22 +414,17 @@ async function main() {
 
     // 8. Output auto-save suggestion
     // AC: When diff resembles existing decision, suggest auto-save
-    const suggestion = formatAutoSaveSuggestion(
-      topic,
-      decision,
-      reasoning,
-      similarCheck.decisions
-    );
+    const suggestion = formatAutoSaveSuggestion(topic, decision, reasoning, similarCheck.decisions);
 
     // Correct Claude Code JSON format with hookSpecificOutput
     const response = {
       decision: null,
-      reason: "",
+      reason: '',
       hookSpecificOutput: {
-        hookEventName: "PostToolUse",
+        hookEventName: 'PostToolUse',
         systemMessage: `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`,
-        additionalContext: suggestion
-      }
+        additionalContext: suggestion,
+      },
     };
     console.log(JSON.stringify(response));
 
@@ -418,7 +436,6 @@ async function main() {
     // For now, we just output the suggestion
 
     process.exit(0);
-
   } catch (error) {
     logError(`[Hook] Fatal error: ${error.message}`);
     console.error(`❌ MAMA PostToolUse Hook Error: ${error.message}`);
@@ -428,7 +445,7 @@ async function main() {
 
 // Run hook
 if (require.main === module) {
-  main().catch(error => {
+  main().catch((error) => {
     logError(`[Hook] Unhandled error: ${error.message}`);
     process.exit(1);
   });
@@ -442,5 +459,5 @@ module.exports = {
   formatAutoSaveSuggestion,
   generateDecisionSummary,
   logAudit,
-  checkSimilarDecision
+  checkSimilarDecision,
 };

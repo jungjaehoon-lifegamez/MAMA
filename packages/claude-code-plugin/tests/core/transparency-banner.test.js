@@ -73,7 +73,9 @@ describe('Story M2.4: Transparency Banner', () => {
   describe('FR25: Tier Status Display', () => {
     it('should display Tier 1 badge', () => {
       const tierInfo = { tier: 1, reason: 'Full features' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('🟢 Tier 1');
       expect(result).toContain('TestHook');
@@ -81,21 +83,27 @@ describe('Story M2.4: Transparency Banner', () => {
 
     it('should display Tier 2 badge', () => {
       const tierInfo = { tier: 2, reason: 'Embeddings unavailable' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 3, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 3, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('🟡 Tier 2');
     });
 
     it('should display Tier 3 badge', () => {
       const tierInfo = { tier: 3, reason: 'MAMA disabled' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 0, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 0, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('🔴 Tier 3');
     });
 
     it('should include reason in banner', () => {
       const tierInfo = { tier: 1, reason: 'Full MAMA features available' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('Full MAMA features available');
     });
@@ -128,7 +136,9 @@ describe('Story M2.4: Transparency Banner', () => {
 
     it('should include feature status in banner', () => {
       const tierInfo = { tier: 2, reason: 'Degraded' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 3, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 3, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('Vector Search:');
       expect(result).toContain('Graph:');
@@ -164,7 +174,7 @@ describe('Story M2.4: Transparency Banner', () => {
       const tierInfo = { tier: 2, reason: 'Degraded' };
       const result = banner.formatTransparencyBanner(tierInfo, 100, 3, 'TestHook', {
         showFixInstructions: true,
-        logTransition: false
+        logTransition: false,
       });
 
       expect(result).toContain('Embedding Model Unavailable');
@@ -175,7 +185,7 @@ describe('Story M2.4: Transparency Banner', () => {
       const tierInfo = { tier: 2, reason: 'Degraded' };
       const result = banner.formatTransparencyBanner(tierInfo, 100, 3, 'TestHook', {
         showFixInstructions: false,
-        logTransition: false
+        logTransition: false,
       });
 
       expect(result).not.toContain('Embedding Model Unavailable');
@@ -204,21 +214,27 @@ describe('Story M2.4: Transparency Banner', () => {
 
     it('should display accuracy drop in banner for Tier 2', () => {
       const tierInfo = { tier: 2, reason: 'Degraded' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 3, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 3, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('30% accuracy drop');
     });
 
     it('should display accuracy drop in banner for Tier 3', () => {
       const tierInfo = { tier: 3, reason: 'Disabled' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 0, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 0, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('100% accuracy drop');
     });
 
     it('should not display accuracy drop for Tier 1', () => {
       const tierInfo = { tier: 1, reason: 'Full features' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).not.toContain('accuracy drop');
     });
@@ -273,7 +289,7 @@ describe('Story M2.4: Transparency Banner', () => {
 
     it('should limit transition history', () => {
       for (let i = 1; i <= 20; i++) {
-        banner.logTierTransition(i % 3 + 1, (i + 1) % 3 + 1, `Transition ${i}`);
+        banner.logTierTransition((i % 3) + 1, ((i + 1) % 3) + 1, `Transition ${i}`);
       }
 
       const history = banner.getTierTransitionHistory(5);
@@ -285,14 +301,18 @@ describe('Story M2.4: Transparency Banner', () => {
   describe('Performance Indicators', () => {
     it('should show success indicator for fast operations', () => {
       const tierInfo = { tier: 1, reason: 'Full features' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('✓ 100ms');
     });
 
     it('should show warning for slow operations', () => {
       const tierInfo = { tier: 1, reason: 'Full features' };
-      const result = banner.formatTransparencyBanner(tierInfo, 600, 5, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 600, 5, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('⚠️ 600ms');
       expect(result).toContain('exceeded 500ms target');
@@ -300,7 +320,9 @@ describe('Story M2.4: Transparency Banner', () => {
 
     it('should include result count', () => {
       const tierInfo = { tier: 1, reason: 'Full features' };
-      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', { logTransition: false });
+      const result = banner.formatTransparencyBanner(tierInfo, 100, 5, 'TestHook', {
+        logTransition: false,
+      });
 
       expect(result).toContain('5 decisions');
     });
@@ -311,7 +333,7 @@ describe('Story M2.4: Transparency Banner', () => {
       const tierInfo = { tier: 2, reason: 'Embeddings unavailable' };
       const result = banner.formatTransparencyBanner(tierInfo, 150, 3, 'UserPromptSubmit', {
         showFixInstructions: true,
-        logTransition: false
+        logTransition: false,
       });
 
       // FR25: Tier status

@@ -75,6 +75,7 @@ Examples:
       timeout,
     });
 
+    // eslint-disable-next-line no-unused-vars
     const latency = Date.now() - startTime;
 
     // Task 2.4: Parse response

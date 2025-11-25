@@ -8,7 +8,7 @@
  * AC5: CI smoke test - npm install assertions
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -202,7 +202,7 @@ describe('M3.4: Installation & Tier Detection', () => {
       const output = execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
-        cwd: PLUGIN_ROOT
+        cwd: PLUGIN_ROOT,
       });
 
       // Should contain success message
@@ -220,7 +220,7 @@ describe('M3.4: Installation & Tier Detection', () => {
       const output = execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
-        cwd: PLUGIN_ROOT
+        cwd: PLUGIN_ROOT,
       });
 
       // Should show tier name
@@ -237,7 +237,7 @@ describe('M3.4: Installation & Tier Detection', () => {
       const output = execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
-        cwd: PLUGIN_ROOT
+        cwd: PLUGIN_ROOT,
       });
 
       expect(output).toContain('Next steps');
@@ -250,7 +250,7 @@ describe('M3.4: Installation & Tier Detection', () => {
       execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
-        cwd: PLUGIN_ROOT
+        cwd: PLUGIN_ROOT,
       });
 
       const elapsed = Date.now() - startTime;
@@ -267,7 +267,7 @@ describe('M3.4: Installation & Tier Detection', () => {
       execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
-        cwd: PLUGIN_ROOT
+        cwd: PLUGIN_ROOT,
       });
 
       // Check if config was created
@@ -288,7 +288,7 @@ describe('M3.4: Installation & Tier Detection', () => {
       const output = execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
-        cwd: PLUGIN_ROOT
+        cwd: PLUGIN_ROOT,
       });
 
       // Check order of operations
@@ -307,14 +307,14 @@ describe('M3.4: Installation & Tier Detection', () => {
       const output = execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
-        cwd: PLUGIN_ROOT
+        cwd: PLUGIN_ROOT,
       });
 
       // Should have box drawing characters
       expect(output).toMatch(/[┏┓┃┗┛━]/);
 
-      // Should have check marks
-      expect(output).toMatch(/[✅⚠️]/);
+      // Should have check marks or warning symbols
+      expect(output).toMatch(/✅|⚠️/);
     });
 
     it('should be compatible with Windows (no bash dependencies)', () => {
@@ -361,8 +361,12 @@ describe('M3.4: Installation & Tier Detection', () => {
           postinstall.checkDiskSpace();
         }).not.toThrow();
       } finally {
-        if (originalHome) process.env.HOME = originalHome;
-        if (originalUserProfile) process.env.USERPROFILE = originalUserProfile;
+        if (originalHome) {
+          process.env.HOME = originalHome;
+        }
+        if (originalUserProfile) {
+          process.env.USERPROFILE = originalUserProfile;
+        }
       }
     });
 

@@ -64,12 +64,24 @@ function formatTimeAgo(timestamp) {
     const years = Math.floor(days / 365);
 
     // Return human-readable format
-    if (seconds < 60) return 'just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
-    if (weeks < 4) return `${weeks}w ago`;
-    if (months < 12) return `${months}mo ago`;
+    if (seconds < 60) {
+      return 'just now';
+    }
+    if (minutes < 60) {
+      return `${minutes}m ago`;
+    }
+    if (hours < 24) {
+      return `${hours}h ago`;
+    }
+    if (days < 7) {
+      return `${days}d ago`;
+    }
+    if (weeks < 4) {
+      return `${weeks}w ago`;
+    }
+    if (months < 12) {
+      return `${months}mo ago`;
+    }
     return `${years}y ago`;
   } catch (error) {
     warn(`[time-formatter] Error formatting timestamp ${timestamp}: ${error.message}`);

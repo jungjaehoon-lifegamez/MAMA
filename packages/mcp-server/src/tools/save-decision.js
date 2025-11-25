@@ -12,9 +12,10 @@
 const mama = require('../mama/mama-api.js');
 
 /**
- * Save decision tool definition
+ * Create save decision tool with dependencies
+ * @param {Object} mamaApi - MAMA API instance
  */
-const saveDecisionTool = {
+const createSaveDecisionTool = (mamaApi) => ({
   name: 'save_decision',
   description:
     "Save a decision or insight to MAMA's memory for future reference. Use this when the user explicitly wants to remember something important (e.g., architectural decisions, parameter choices, lessons learned). The decision will be stored with semantic embeddings for later retrieval.\n\n⚡ IMPORTANT - Graph Connectivity: Reuse the SAME topic name for related decisions to create decision graphs (supersedes/refines/contradicts edges). Example: Use 'auth_strategy' for all authentication decisions, not 'auth_strategy_v1', 'auth_strategy_v2'. This enables Learn/Unlearn/Relearn workflows.",
@@ -28,7 +29,8 @@ const saveDecisionTool = {
       },
       decision: {
         type: 'string',
-        description: "The decision made (e.g., 'Use JWT with refresh tokens'). Max 2000 characters.",
+        description:
+          "The decision made (e.g., 'Use JWT with refresh tokens'). Max 2000 characters.",
       },
       reasoning: {
         type: 'string',
@@ -45,19 +47,33 @@ const saveDecisionTool = {
       type: {
         type: 'string',
         enum: ['user_decision', 'assistant_insight'],
-        description: "'user_decision' if user explicitly decided, 'assistant_insight' if this is Claude's suggestion. Default: 'user_decision'",
+        description:
+          "'user_decision' if user explicitly decided, 'assistant_insight' if this is Claude's suggestion. Default: 'user_decision'",
       },
       outcome: {
         type: 'string',
         enum: ['pending', 'success', 'failure', 'partial', 'superseded'],
-        description:
-          "Decision outcome status. Use 'pending' for new decisions (default), 'success' when confirmed working, 'failure' when approach failed.",
+        description: "Outcome status. Default: 'pending'",
+      },
+      evidence: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Evidence supporting the decision (e.g., file paths, logs, metrics).',
+      },
+      alternatives: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Alternative options considered but rejected (Tension layer).',
+      },
+      risks: {
+        type: 'string',
+        description: 'Potential risks or downsides (Tension layer).',
       },
     },
     required: ['topic', 'decision', 'reasoning'],
   },
 
-  async handler(params, context) {
+  async handler(params, _context) {
     const {
       topic,
       decision,
@@ -65,6 +81,9 @@ const saveDecisionTool = {
       confidence = 0.5,
       type = 'user_decision',
       outcome = 'pending',
+      evidence,
+      alternatives,
+      risks,
     } = params || {};
 
     try {
@@ -79,25 +98,29 @@ const saveDecisionTool = {
       if (topic.length > 200 || decision.length > 2000 || reasoning.length > 5000) {
         return {
           success: false,
-          message: '❌ Validation error: Field length exceeded (topic≤200, decision≤2000, reasoning≤5000)',
+          message:
+            '❌ Validation error: Field length exceeded (topic≤200, decision≤2000, reasoning≤5000)',
         };
       }
 
       // Call MAMA API (mama.save will handle outcome mapping to DB format)
-      const result = await mama.save({
+      const id = await mamaApi.save({
         topic,
         decision,
         reasoning,
         confidence,
-        user_involvement: type,
+        type, // Assuming mama.saveDecision now expects 'type' directly
         outcome,
+        evidence,
+        alternatives,
+        risks,
       });
 
       return {
         success: true,
-        decision_id: result.id,
+        decision_id: id,
         topic: topic,
-        message: `✅ Decision saved successfully (ID: ${result.id})`,
+        message: `✅ Decision saved successfully (ID: ${id})`,
         recall_command: `To recall: mama.recall('${topic}')`,
       };
     } catch (error) {
@@ -108,6 +131,9 @@ const saveDecisionTool = {
       };
     }
   },
-};
+});
 
-module.exports = { saveDecisionTool };
+// Default instance with real dependency
+const saveDecisionTool = createSaveDecisionTool(mama);
+
+module.exports = { saveDecisionTool, createSaveDecisionTool };

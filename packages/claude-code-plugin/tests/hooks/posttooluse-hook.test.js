@@ -193,7 +193,7 @@ describe('Story M2.3: PostToolUse Hook', () => {
 
       const similarDecisions = [
         { decision: 'Similar decision 1', similarity: 0.85 },
-        { decision: 'Similar decision 2', similarity: 0.78 }
+        { decision: 'Similar decision 2', similarity: 0.78 },
       ];
 
       const suggestion = hook.formatAutoSaveSuggestion(
@@ -212,10 +212,10 @@ describe('Story M2.3: PostToolUse Hook', () => {
       const hook = await import('../../scripts/posttooluse-hook.js');
 
       const similarDecisions = [
-        { decision: 'Decision 1', similarity: 0.90 },
+        { decision: 'Decision 1', similarity: 0.9 },
         { decision: 'Decision 2', similarity: 0.85 },
-        { decision: 'Decision 3', similarity: 0.80 },
-        { decision: 'Decision 4', similarity: 0.75 }
+        { decision: 'Decision 3', similarity: 0.8 },
+        { decision: 'Decision 4', similarity: 0.75 },
       ];
 
       const suggestion = hook.formatAutoSaveSuggestion(

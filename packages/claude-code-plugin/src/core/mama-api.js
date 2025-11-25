@@ -14,7 +14,9 @@
  */
 
 const { learnDecision } = require('./decision-tracker');
+// eslint-disable-next-line no-unused-vars
 const { injectDecisionContext } = require('./memory-inject');
+// eslint-disable-next-line no-unused-vars
 const { queryDecisionGraph, querySemanticEdges, getDB, getAdapter } = require('./memory-store');
 const { formatRecall, formatList } = require('./decision-formatter');
 
@@ -88,6 +90,7 @@ async function save({
   // Map type to user_involvement field
   // Note: Current schema uses user_involvement ('requested', 'approved', 'rejected')
   // Future: Will use decision_type column for proper distinction
+  // eslint-disable-next-line no-unused-vars
   const userInvolvement = type === 'user_decision' ? 'approved' : null;
 
   // Create detection object for learnDecision()
@@ -350,7 +353,18 @@ async function updateOutcome(decisionId, { outcome, failure_reason, limitation }
       WHERE id = ?
     `
     );
-    await stmt.run(outcome, failure_reason || null, limitation || null, Date.now(), decisionId);
+    const result = await stmt.run(
+      outcome,
+      failure_reason || null,
+      limitation || null,
+      Date.now(),
+      decisionId
+    );
+
+    // Check if any rows were updated
+    if (result.changes === 0) {
+      throw new Error(`Decision not found: ${decisionId}`);
+    }
 
     return;
   } catch (error) {
@@ -471,8 +485,12 @@ async function expandWithGraph(candidates) {
   // 4. Sort: Primary first, then by graph_rank, then by final_score (or similarity)
   results.sort((a, b) => {
     // Primary candidates always first
-    if (primaryIds.has(a.id) && !primaryIds.has(b.id)) return -1;
-    if (!primaryIds.has(a.id) && primaryIds.has(b.id)) return 1;
+    if (primaryIds.has(a.id) && !primaryIds.has(b.id)) {
+      return -1;
+    }
+    if (!primaryIds.has(a.id) && primaryIds.has(b.id)) {
+      return 1;
+    }
 
     // Then by graph_rank
     if (a.graph_rank !== b.graph_rank) {
@@ -579,6 +597,7 @@ async function suggest(userQuestion, options = {}) {
 
   try {
     // 1. Try vector search first (if sqlite-vss is available)
+    // eslint-disable-next-line no-unused-vars
     const { getPreparedStmt, getDB } = require('./memory-store');
     let results = [];
     let searchMethod = 'vector';
@@ -590,6 +609,11 @@ async function suggest(userQuestion, options = {}) {
       // Generate query embedding
       const { generateEmbedding } = require('./embeddings');
       const queryEmbedding = await generateEmbedding(userQuestion);
+
+      // TIER 3: If embeddings are disabled, skip vector search
+      if (!queryEmbedding) {
+        throw new Error('Vector search unavailable (Tier 3 mode)');
+      }
 
       // Adaptive threshold (shorter queries need higher confidence)
       const wordCount = userQuestion.split(/\s+/).length;
@@ -837,7 +861,9 @@ async function listDecisions(options = {}) {
  * @returns {Promise<number>} Checkpoint ID
  */
 async function saveCheckpoint(summary, openFiles = [], nextSteps = '') {
-  if (!summary) throw new Error('Summary is required for checkpoint');
+  if (!summary) {
+    throw new Error('Summary is required for checkpoint');
+  }
 
   try {
     const adapter = getAdapter();
@@ -845,14 +871,9 @@ async function saveCheckpoint(summary, openFiles = [], nextSteps = '') {
       INSERT INTO checkpoints (timestamp, summary, open_files, next_steps, status)
       VALUES (?, ?, ?, ?, 'active')
     `);
-    
-    const result = stmt.run(
-      Date.now(),
-      summary,
-      JSON.stringify(openFiles),
-      nextSteps
-    );
-    
+
+    const result = stmt.run(Date.now(), summary, JSON.stringify(openFiles), nextSteps);
+
     return result.lastInsertRowid;
   } catch (error) {
     throw new Error(`Failed to save checkpoint: ${error.message}`);
@@ -873,9 +894,9 @@ async function loadCheckpoint() {
       ORDER BY timestamp DESC
       LIMIT 1
     `);
-    
+
     const checkpoint = stmt.get();
-    
+
     if (checkpoint) {
       try {
         checkpoint.open_files = JSON.parse(checkpoint.open_files);
@@ -883,7 +904,7 @@ async function loadCheckpoint() {
         checkpoint.open_files = [];
       }
     }
-    
+
     return checkpoint || null;
   } catch (error) {
     throw new Error(`Failed to load checkpoint: ${error.message}`);

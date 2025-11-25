@@ -14,28 +14,28 @@
 class Statement {
   /**
    * Execute statement and return all rows
-   * @param {...any} params - Query parameters
+   * @param {...*} _params - Query parameters
    * @returns {Array<Object>} All matching rows
    */
-  all(...params) {
+  all(..._params) {
     throw new Error('all() must be implemented by subclass');
   }
 
   /**
    * Execute statement and return first row
-   * @param {...any} params - Query parameters
+   * @param {...*} _params - Query parameters
    * @returns {Object|undefined} First matching row or undefined
    */
-  get(...params) {
+  get(..._params) {
     throw new Error('get() must be implemented by subclass');
   }
 
   /**
    * Execute statement without returning rows
-   * @param {...any} params - Query parameters
+   * @param {...*} _params - Query parameters
    * @returns {Object} Execution info (changes, lastInsertRowid)
    */
-  run(...params) {
+  run(..._params) {
     throw new Error('run() must be implemented by subclass');
   }
 

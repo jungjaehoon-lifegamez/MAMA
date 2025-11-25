@@ -28,46 +28,46 @@ class DatabaseAdapter {
 
   /**
    * Prepare a SQL statement
-   * @param {string} sql - SQL query
+   * @param {string} _sql - SQL query
    * @returns {Statement} Prepared statement
    */
-  prepare(sql) {
+  prepare(_sql) {
     throw new Error('prepare() must be implemented by subclass');
   }
 
   /**
    * Execute raw SQL
-   * @param {string} sql - SQL to execute
+   * @param {string} _sql - SQL to execute
    */
-  exec(sql) {
+  exec(_sql) {
     throw new Error('exec() must be implemented by subclass');
   }
 
   /**
    * Execute function in transaction
-   * @param {Function} fn - Function to execute
+   * @param {Function} _fn - Function to execute
    * @returns {*} Function return value
    */
-  transaction(fn) {
+  transaction(_fn) {
     throw new Error('transaction() must be implemented by subclass');
   }
 
   /**
    * Vector similarity search
-   * @param {number[]} embedding - Query embedding (384-dim)
-   * @param {number} limit - Max results
+   * @param {number[]} _embedding - Query embedding (384-dim)
+   * @param {number} _limit - Max results
    * @returns {Array<Object>} Search results with distance
    */
-  vectorSearch(embedding, limit) {
+  vectorSearch(_embedding, _limit) {
     throw new Error('vectorSearch() must be implemented by subclass');
   }
 
   /**
    * Insert vector embedding
-   * @param {number} rowid - Decision rowid
-   * @param {number[]} embedding - Embedding vector
+   * @param {number} _rowid - Decision rowid
+   * @param {number[]} _embedding - Embedding vector
    */
-  insertEmbedding(rowid, embedding) {
+  insertEmbedding(_rowid, _embedding) {
     throw new Error('insertEmbedding() must be implemented by subclass');
   }
 
@@ -81,9 +81,9 @@ class DatabaseAdapter {
 
   /**
    * Run migrations
-   * @param {string} migrationsDir - Path to migrations directory
+   * @param {string} _migrationsDir - Path to migrations directory
    */
-  runMigrations(migrationsDir) {
+  runMigrations(_migrationsDir) {
     throw new Error('runMigrations() must be implemented by subclass');
   }
 }

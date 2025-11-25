@@ -28,12 +28,13 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 
 const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
-const { injectDecisionContext } = require(path.join(CORE_PATH, 'memory-inject'));
+// Lazy load to avoid embedding model initialization before tier check
+// const { injectDecisionContext } = require(path.join(CORE_PATH, 'memory-inject'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // Configuration
-const MAX_RUNTIME_MS = 2000; // Increased for first-run model loading (p95 target: <500ms after warmup)
-const SIMILARITY_THRESHOLD = 0.75; // AC: similarity >75%
+const MAX_RUNTIME_MS = 500; // p95 target: <500ms (increased to 2000ms on first-run for model loading)
+// Note: SIMILARITY_THRESHOLD (0.75) is used in memory-inject.js
 
 /**
  * Get tier information from config
@@ -41,6 +42,24 @@ const SIMILARITY_THRESHOLD = 0.75; // AC: similarity >75%
  * @returns {Object} Tier info {tier, vectorSearchEnabled, reason}
  */
 function getTierInfo() {
+  // Fast path for testing: completely skip MAMA (fastest)
+  if (process.env.MAMA_FORCE_TIER_3 === 'true') {
+    return {
+      tier: 3,
+      vectorSearchEnabled: false,
+      reason: 'Tier 3 forced for testing (embeddings disabled)',
+    };
+  }
+
+  // Fast path for testing: skip embedding model loading
+  if (process.env.MAMA_FORCE_TIER_2 === 'true') {
+    return {
+      tier: 2,
+      vectorSearchEnabled: false,
+      reason: 'Tier 2 forced for testing (fast mode)',
+    };
+  }
+
   try {
     const config = loadConfig();
 
@@ -52,19 +71,19 @@ function getTierInfo() {
       return {
         tier: 1,
         vectorSearchEnabled: true,
-        reason: 'Full MAMA features available'
+        reason: 'Full MAMA features available',
       };
     } else if (!config.modelName) {
       return {
         tier: 2,
         vectorSearchEnabled: false,
-        reason: 'Embeddings unavailable (Transformers.js not loaded)'
+        reason: 'Embeddings unavailable (Transformers.js not loaded)',
       };
     } else {
       return {
         tier: 3,
         vectorSearchEnabled: false,
-        reason: 'MAMA disabled in config'
+        reason: 'MAMA disabled in config',
       };
     }
   } catch (error) {
@@ -73,7 +92,7 @@ function getTierInfo() {
     return {
       tier: 2,
       vectorSearchEnabled: false,
-      reason: 'Config load failed, degraded mode'
+      reason: 'Config load failed, degraded mode',
     };
   }
 }
@@ -89,16 +108,18 @@ function getTierInfo() {
  * @returns {string} Formatted transparency line
  */
 function formatTransparencyLine(tierInfo, latencyMs, resultCount) {
-  const tierBadge = {
-    1: '🟢 Tier 1',
-    2: '🟡 Tier 2',
-    3: '🔴 Tier 3'
-  }[tierInfo.tier] || '⚪ Unknown';
+  const tierBadge =
+    {
+      1: '🟢 Tier 1',
+      2: '🟡 Tier 2',
+      3: '🔴 Tier 3',
+    }[tierInfo.tier] || '⚪ Unknown';
 
   const status = tierInfo.reason;
-  const performance = latencyMs > MAX_RUNTIME_MS
-    ? `⚠️ ${latencyMs}ms (exceeded ${MAX_RUNTIME_MS}ms target)`
-    : `✓ ${latencyMs}ms`;
+  const performance =
+    latencyMs > MAX_RUNTIME_MS
+      ? `⚠️ ${latencyMs}ms (exceeded ${MAX_RUNTIME_MS}ms target)`
+      : `✓ ${latencyMs}ms`;
 
   return `\n\n---\n🔍 System Status: ${tierBadge} | ${status} | ${performance} | ${resultCount} decisions injected`;
 }
@@ -109,7 +130,9 @@ function formatTransparencyLine(tierInfo, latencyMs, resultCount) {
 async function readStdin() {
   return new Promise((resolve, reject) => {
     let data = '';
-    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
     process.stdin.on('end', () => {
       try {
         const parsed = JSON.parse(data);
@@ -126,18 +149,15 @@ async function readStdin() {
  * Main hook handler
  */
 async function main() {
+  if (process.env.MAMA_DISABLE_HOOKS === 'true') {
+    // Opt-out: do nothing when hooks are disabled
+    return;
+  }
+
   const startTime = Date.now();
 
   try {
-    // 1. Check opt-out flag
-    if (process.env.MAMA_DISABLE_HOOKS === 'true') {
-      info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
-      process.exit(0);
-    }
-
-    // 2. Get user prompt from stdin (Claude Code hook format)
+    // 1. Get user prompt from stdin (Claude Code hook format)
     let userPrompt;
     try {
       const inputData = await readStdin();
@@ -149,8 +169,6 @@ async function main() {
 
     if (!userPrompt || userPrompt.trim() === '') {
       // Silent exit - no prompt to process
-      const response = { success: true, systemMessage: '', additionalContext: '' };
-      console.log(JSON.stringify(response));
       process.exit(0);
     }
 
@@ -163,25 +181,98 @@ async function main() {
       process.exit(0);
     }
 
-    // 5. Tier 2 warning (degraded mode)
+    // 5. Tier 2: Skip injection (requires embeddings)
     if (tierInfo.tier === 2) {
-      warn(`[Hook] Running in degraded mode (Tier 2): ${tierInfo.reason}`);
-      // Continue execution but with degraded features
+      warn(`[Hook] Skipping injection (Tier 2): ${tierInfo.reason}`);
+
+      const latencyMs = Date.now() - startTime;
+      const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, 0);
+
+      const response = {
+        decision: null,
+        reason: '',
+        hookSpecificOutput: {
+          hookEventName: 'UserPromptSubmit',
+          systemMessage: `🔍 MAMA: Embeddings unavailable (Tier 2)`,
+          additionalContext: transparencyLine,
+        },
+      };
+      console.log(JSON.stringify(response));
+      process.exit(0);
     }
 
-    // 6. Inject decision context
+    // 6. Check for checkpoint command (Pre-Checkpoint Verification)
+    const isCheckpointCommand = /\/mama-checkpoint|checkpoint|체크포인트\s*저장/i.test(userPrompt);
+
+    if (isCheckpointCommand) {
+      info('[Hook] Checkpoint command detected - injecting verification reminder');
+
+      const verificationReminder = `
+💬 체크포인트 저장하시는군요
+
+체크포인트는 다음 AI에게 전하는 메시지예요.
+솔직하게 쓰면 다음 사람이 이해하고 이어갈 수 있어요.
+
+## 😊 이런 부분들 놓치기 쉬워요
+
+**"완료"라고 쓰기 전에:**
+- 파일 경로 적었나요? (db-manager.js:354 이런 식으로)
+- 테스트 돌려봤나요? (npm test)
+- AC 다시 읽어봤나요? (혹시 놓친 거 있을 수 있어요)
+
+**못한 것도 솔직히:**
+- "이 부분 못했어요"
+- "귀찮아서 미뤘어요"
+- "까먹었어요"
+
+다 괜찮아요. 그냥 적어주세요.
+
+## 💡 이렇게 쓰면 좋아요
+
+**잘 된 것들:**
+- 기능 X 만들었어요 (file.js:100-150)
+- 테스트 통과했어요 (npm test)
+
+**솔직히 못한 것들:**
+- AC에 Y가 있었는데 놓쳤어요 (file.js:200 확인 필요)
+- 테스트는 안 썼어요 (시간 없었어요)
+
+**다음 사람에게:**
+- 이 파일 이 줄 확인해보세요
+- 이 기능 테스트 필요해요
+
+🙏 다음 AI가 고맙게 생각할 거예요.
+`;
+
+      const response = {
+        decision: null,
+        reason: '',
+        hookSpecificOutput: {
+          hookEventName: 'UserPromptSubmit',
+          systemMessage: '⚠️ Checkpoint Verification Reminder',
+          additionalContext: verificationReminder,
+        },
+      };
+      console.log(JSON.stringify(response));
+      process.exit(0);
+    }
+
+    // 7. Inject decision context
     info(`[Hook] Processing prompt: "${userPrompt.substring(0, 50)}..."`);
 
     let context = null;
     let resultCount = 0;
 
     try {
+      // Lazy load memory-inject (only on Tier 1)
+      const { injectDecisionContext } = require(path.join(CORE_PATH, 'memory-inject'));
+
       // AC: Hook runtime stays <500ms p95 on Tier 1
       context = await Promise.race([
         injectDecisionContext(userPrompt),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Hook timeout')), MAX_RUNTIME_MS)
-        )
+        ),
       ]);
 
       // Count results (rough estimate from context length)
@@ -210,12 +301,12 @@ async function main() {
       // Correct Claude Code JSON format with hookSpecificOutput
       const response = {
         decision: null,
-        reason: "",
+        reason: '',
         hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
+          hookEventName: 'UserPromptSubmit',
           systemMessage: `💡 MAMA found ${resultCount} related decision${resultCount > 1 ? 's' : ''} (${latencyMs}ms)`,
-          additionalContext: context + transparencyLine
-        }
+          additionalContext: context + transparencyLine,
+        },
       };
       console.log(JSON.stringify(response));
 
@@ -226,12 +317,12 @@ async function main() {
 
       const response = {
         decision: null,
-        reason: "",
+        reason: '',
         hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
+          hookEventName: 'UserPromptSubmit',
           systemMessage: `🔍 MAMA: No related decisions found (${latencyMs}ms)`,
-          additionalContext: transparencyLine
-        }
+          additionalContext: transparencyLine,
+        },
       };
       console.log(JSON.stringify(response));
 
@@ -239,7 +330,6 @@ async function main() {
     }
 
     process.exit(0);
-
   } catch (error) {
     logError(`[Hook] Fatal error: ${error.message}`);
     console.error(`❌ MAMA Hook Error: ${error.message}`);
@@ -249,7 +339,7 @@ async function main() {
 
 // Run hook
 if (require.main === module) {
-  main().catch(error => {
+  main().catch((error) => {
     logError(`[Hook] Unhandled error: ${error.message}`);
     process.exit(1);
   });

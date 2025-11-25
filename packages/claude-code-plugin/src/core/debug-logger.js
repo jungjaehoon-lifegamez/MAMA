@@ -44,22 +44,30 @@ class DebugLogger {
   }
 
   debug(...args) {
-    if (!this._shouldLog('DEBUG')) return;
+    if (!this._shouldLog('DEBUG')) {
+      return;
+    }
     console.error(...this._formatMessage('DEBUG', ...args));
   }
 
   info(...args) {
-    if (!this._shouldLog('INFO')) return;
+    if (!this._shouldLog('INFO')) {
+      return;
+    }
     console.error(...this._formatMessage('INFO', ...args));
   }
 
   warn(...args) {
-    if (!this._shouldLog('WARN')) return;
+    if (!this._shouldLog('WARN')) {
+      return;
+    }
     console.warn(...this._formatMessage('WARN', ...args));
   }
 
   error(...args) {
-    if (!this._shouldLog('ERROR')) return;
+    if (!this._shouldLog('ERROR')) {
+      return;
+    }
     console.error(...this._formatMessage('ERROR', ...args));
   }
 }

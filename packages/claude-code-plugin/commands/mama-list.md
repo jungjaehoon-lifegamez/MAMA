@@ -1,7 +1,7 @@
 ---
 description: List recent decisions with filtering options
 allowed-tools: Read
-argument-hint: "[--limit=20] [--outcome=success] [--since=7d]"
+argument-hint: '[--limit=20] [--outcome=success] [--since=7d]'
 ---
 
 # List Recent Decisions from MAMA
@@ -16,10 +16,10 @@ You are helping the user list recent decisions from MAMA memory.
    - `--limit=N` (optional): Number of decisions to show (default: 20, max: 100)
    - `--outcome=X` (optional): Filter by outcome (pending|success|failure|partial|superseded)
    - `--since=X` (optional): Show decisions since (e.g., '7d', '24h', '2025-11-01')
-   - `--topic=X` (optional): Filter by topic pattern (e.g., 'mama_*', 'auth*')
+   - `--topic=X` (optional): Filter by topic pattern (e.g., 'mama\__', 'auth_')
 
-2. Use the MCP tool `list_decisions` to retrieve decisions:
-   - Call `list_decisions` with limit and optional filters
+2. Use the MCP tool to retrieve decisions:
+   - Call `mcp__plugin_mama_mama__list_decisions` with limit and optional filters
    - Returns decisions in descending chronological order (newest first)
    - Includes: topic, decision, confidence, outcome, timestamp
 
@@ -46,22 +46,24 @@ Format as a markdown table:
 ```markdown
 # 📋 Recent Decisions (showing {count}/{total})
 
-| Topic | Decision | Confidence | Outcome | Time |
-|-------|----------|------------|---------|------|
-| auth_strategy | Use JWT with refresh tokens... | 90% | ✅ success | 3 hours ago |
-| database_choice | PostgreSQL for relational data... | 85% | ✅ success | 1 day ago |
-| test_framework | Vitest for unit testing... | 75% | ⚠️ partial | 2 days ago |
-| mama_architecture | MCP Server with dual transport... | 95% | ✅ success | 3 days ago |
+| Topic             | Decision                          | Confidence | Outcome    | Time        |
+| ----------------- | --------------------------------- | ---------- | ---------- | ----------- |
+| auth_strategy     | Use JWT with refresh tokens...    | 90%        | ✅ success | 3 hours ago |
+| database_choice   | PostgreSQL for relational data... | 85%        | ✅ success | 1 day ago   |
+| test_framework    | Vitest for unit testing...        | 75%        | ⚠️ partial | 2 days ago  |
+| mama_architecture | MCP Server with dual transport... | 95%        | ✅ success | 3 days ago  |
 
 ---
 
 **Filters Applied:**
+
 - Limit: {limit}
 - Outcome: {outcome} (if specified)
 - Since: {since} (if specified)
 - Topic: {topic_pattern} (if specified)
 
 **Actions:**
+
 - View full history: `/mama-recall <topic>`
 - Search for related: `/mama-suggest <query>`
 ```
@@ -69,6 +71,7 @@ Format as a markdown table:
 ## Outcome Badges
 
 Use these visual indicators:
+
 - ✅ success - Decision validated and working
 - ⏳ pending - Decision not yet validated
 - ❌ failure - Decision failed, changed
@@ -98,5 +101,5 @@ Try:
 - **Default sort**: Newest first (DESC by timestamp)
 - **Limit cap**: Maximum 100 decisions per request
 - **Time formats**: Supports '7d', '24h', '2025-11-01', 'last week'
-- **Topic patterns**: Supports wildcards (* and ?)
+- **Topic patterns**: Supports wildcards (\* and ?)
 - **Performance**: ~10ms for list queries (indexed)

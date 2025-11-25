@@ -10,28 +10,46 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
+import { createRequire } from 'module';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
 
 describe('Story M2.5: Hook Metrics & Logging', () => {
   let metrics;
-  const LOG_DIR = path.join(os.homedir(), '.mama', 'logs');
-  const METRICS_FILE = path.join(LOG_DIR, 'hook-metrics.jsonl');
+  let LOG_DIR;
+  let METRICS_FILE;
+  let metricsModulePath;
 
-  beforeEach(async () => {
-    // Clean up metrics before each test
-    if (fs.existsSync(METRICS_FILE)) {
-      fs.unlinkSync(METRICS_FILE);
-    }
+  beforeEach(() => {
+    // Use a unique temp dir per test to avoid cross-worker conflicts
+    LOG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mama-log-tests-'));
+    process.env.MAMA_LOG_DIR = LOG_DIR;
+    METRICS_FILE = path.join(LOG_DIR, 'hook-metrics.jsonl');
 
-    // Import module
-    metrics = await import('../../src/core/hook-metrics.js');
+    // Force reload CommonJS module to pick up new environment variable
+    // Clear ALL modules in src/core to ensure clean state
+    const coreDir = path.resolve(__dirname, '../../src/core');
+    Object.keys(require.cache).forEach((key) => {
+      if (key.startsWith(coreDir)) {
+        delete require.cache[key];
+      }
+    });
+
+    // Import module (using createRequire since this is a CommonJS module)
+    metricsModulePath = path.resolve(__dirname, '../../src/core/hook-metrics.js');
+    metrics = require(metricsModulePath);
   });
 
   afterEach(() => {
     // Clean up metrics after each test
     metrics.clearMetrics();
+    try {
+      fs.rmSync(LOG_DIR, { recursive: true, force: true });
+    } catch (e) {
+      // best-effort cleanup
+    }
   });
 
   describe('Module Structure', () => {
@@ -59,9 +77,8 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
       expect(metrics.PERFORMANCE_TARGETS.warningLatencyMs).toBe(400);
     });
 
-    it('should use JSONL log file in ~/.mama/logs/', () => {
-      expect(metrics.METRICS_FILE).toContain('.mama');
-      expect(metrics.METRICS_FILE).toContain('logs');
+    it('should use JSONL log file in configured log dir', () => {
+      expect(metrics.METRICS_FILE).toContain(LOG_DIR);
       expect(metrics.METRICS_FILE).toContain('hook-metrics.jsonl');
     });
   });
@@ -74,7 +91,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 5,
         tier: 1,
         tierReason: 'Full features',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       expect(fs.existsSync(METRICS_FILE)).toBe(true);
@@ -106,7 +123,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 3,
         tier: 1,
         tierReason: 'Full features',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       // Slow operation
@@ -116,7 +133,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 2,
         tier: 1,
         tierReason: 'Full features',
-        outcome: 'timeout'
+        outcome: 'timeout',
       });
 
       const content = fs.readFileSync(METRICS_FILE, 'utf8');
@@ -136,7 +153,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 1,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -145,7 +162,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 2,
         tier: 2,
         tierReason: 'Degraded',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const content = fs.readFileSync(METRICS_FILE, 'utf8');
@@ -153,7 +170,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
 
       expect(lines.length).toBe(2);
 
-      lines.forEach(line => {
+      lines.forEach((line) => {
         expect(() => JSON.parse(line)).not.toThrow();
       });
     });
@@ -161,14 +178,14 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
     it('should capture different outcomes', () => {
       const outcomes = ['success', 'timeout', 'error', 'rate_limited'];
 
-      outcomes.forEach(outcome => {
+      outcomes.forEach((outcome) => {
         metrics.logHookMetrics({
           hookName: 'TestHook',
           latencyMs: 100,
           decisionCount: 0,
           tier: 1,
           tierReason: 'Test',
-          outcome
+          outcome,
         });
       });
 
@@ -193,7 +210,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 5,
         tier: 1,
         tierReason: 'Full features',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -202,7 +219,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 3,
         tier: 2,
         tierReason: 'Degraded',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const summary = metrics.getMetricsSummary();
@@ -223,7 +240,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 1,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -232,7 +249,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 2,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -241,7 +258,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 3,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const summary = metrics.getMetricsSummary();
@@ -260,7 +277,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 1,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -269,7 +286,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 2,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const filtered = metrics.getMetricsSummary({ hookName: 'UserPromptSubmit' });
@@ -285,7 +302,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 1,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -294,7 +311,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 2,
         tier: 2,
         tierReason: 'Degraded',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const filtered = metrics.getMetricsSummary({ tier: 2 });
@@ -312,7 +329,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
           decisionCount: i,
           tier: 1,
           tierReason: 'OK',
-          outcome: 'success'
+          outcome: 'success',
         });
       }
 
@@ -328,7 +345,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 5,
         tier: 1,
         tierReason: 'Full features',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const summary = metrics.getMetricsSummary();
@@ -351,7 +368,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 3,
         tier: 2,
         tierReason: 'Embeddings unavailable',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const content = fs.readFileSync(METRICS_FILE, 'utf8');
@@ -369,7 +386,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 0,
         tier: 3,
         tierReason: 'MAMA disabled',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const content = fs.readFileSync(METRICS_FILE, 'utf8');
@@ -386,7 +403,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 5,
         tier: 1,
         tierReason: 'Full features',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const content = fs.readFileSync(METRICS_FILE, 'utf8');
@@ -415,7 +432,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -423,7 +440,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -431,7 +448,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 2,
         tierReason: 'Degraded',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const summary = metrics.getMetricsSummary();
@@ -462,7 +479,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         reasoning: 'Some reasoning',
         topic: 'Some topic',
         query: 'Some query',
-        safe_field: 'OK to keep'
+        safe_field: 'OK to keep',
       };
 
       const redacted = metrics.redactSensitiveData(data);
@@ -495,8 +512,8 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         metadata: {
           decision: 'Sensitive decision',
           reasoning: 'Sensitive reasoning',
-          topic: 'Sensitive topic'
-        }
+          topic: 'Sensitive topic',
+        },
       });
 
       const content = fs.readFileSync(METRICS_FILE, 'utf8');
@@ -513,7 +530,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
     it('should log auto-save outcomes', () => {
       metrics.logAutoSaveOutcome('accept', {
         topic: 'Test topic',
-        decision: 'Test decision'
+        decision: 'Test decision',
       });
 
       expect(fs.existsSync(METRICS_FILE)).toBe(true);
@@ -529,7 +546,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
     it('should log different auto-save actions', () => {
       const actions = ['accept', 'modify', 'dismiss'];
 
-      actions.forEach(action => {
+      actions.forEach((action) => {
         metrics.logAutoSaveOutcome(action, {});
       });
 
@@ -547,7 +564,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
     it('should redact auto-save outcome metadata', () => {
       metrics.logAutoSaveOutcome('accept', {
         topic: 'Sensitive topic',
-        decision: 'Sensitive decision'
+        decision: 'Sensitive decision',
       });
 
       const content = fs.readFileSync(METRICS_FILE, 'utf8');
@@ -584,7 +601,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         decisionCount: 1,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       expect(fs.existsSync(LOG_DIR)).toBe(true);
@@ -597,7 +614,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -605,7 +622,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -613,7 +630,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 2,
         tierReason: 'Degraded',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const summary = metrics.getMetricsSummary();
@@ -630,7 +647,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logHookMetrics({
@@ -638,7 +655,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 600,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'timeout'
+        outcome: 'timeout',
       });
 
       metrics.logHookMetrics({
@@ -646,7 +663,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const summary = metrics.getMetricsSummary();
@@ -662,7 +679,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       metrics.logAutoSaveOutcome('accept', {});
@@ -679,7 +696,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 100,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       expect(fs.existsSync(METRICS_FILE)).toBe(true);
@@ -698,7 +715,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         latencyMs: 450,
         tier: 1,
         tierReason: 'OK',
-        outcome: 'success'
+        outcome: 'success',
       });
 
       const content = fs.readFileSync(METRICS_FILE, 'utf8');
@@ -716,7 +733,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
           latencyMs: i * 5, // 5ms to 500ms
           tier: 1,
           tierReason: 'OK',
-          outcome: 'success'
+          outcome: 'success',
         });
       }
 

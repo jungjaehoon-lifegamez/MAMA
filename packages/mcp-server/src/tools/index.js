@@ -3,6 +3,7 @@
  *
  * Story M1.3: MCP Tool Surface Port
  * Story M1.5: update_outcome tool added
+ * Story 4.1: generate_quality_report tool added
  * MCP tool wrappers for MAMA's memory system
  *
  * Tools:
@@ -11,6 +12,9 @@
  * - suggest_decision: Semantic search for relevant decisions ✅
  * - list_decisions: List recent decisions chronologically ✅
  * - update_outcome: Update decision outcome ✅
+ * - search_narrative: Semantic search with link expansion ✅
+ * - generate_quality_report: Generate coverage and quality metrics report ✅
+ * - get_restart_metrics: Get restart success rate and latency metrics ✅
  *
  * @module tools
  */
@@ -21,6 +25,8 @@ const { suggestDecisionTool } = require('./suggest-decision.js');
 const { listDecisionsTool } = require('./list-decisions.js');
 const { updateOutcomeTool } = require('./update-outcome.js');
 const { saveCheckpointTool, loadCheckpointTool } = require('./checkpoint-tools.js');
+const { searchNarrativeTool } = require('./search-narrative.js');
+const { generateQualityReportTool, getRestartMetricsTool } = require('./quality-metrics-tools.js');
 
 /**
  * Create all MAMA memory tools
@@ -38,6 +44,9 @@ function createMemoryTools() {
     update_outcome: updateOutcomeTool,
     save_checkpoint: saveCheckpointTool,
     load_checkpoint: loadCheckpointTool,
+    search_narrative: searchNarrativeTool,
+    generate_quality_report: generateQualityReportTool,
+    get_restart_metrics: getRestartMetricsTool,
   };
 }
 
@@ -51,4 +60,7 @@ module.exports = {
   updateOutcomeTool,
   saveCheckpointTool,
   loadCheckpointTool,
+  searchNarrativeTool,
+  generateQualityReportTool,
+  getRestartMetricsTool,
 };

@@ -7,12 +7,25 @@
  * @module tests/commands/mama-commands
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
+import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Test database path (isolated from production)
+const TEST_DB_PATH = path.join(os.tmpdir(), `mama-test-commands-${Date.now()}-${process.pid}.db`);
+
+// CRITICAL: Set test database path BEFORE any other imports
+// This ensures db-manager picks up the test path when it's first loaded
+process.env.MAMA_DB_PATH = TEST_DB_PATH;
+
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 // Dynamic import for CommonJS modules
 let mamaSaveCommand;
@@ -20,20 +33,49 @@ let mamaRecallCommand;
 let mamaSuggestCommand;
 let mamaListCommand;
 let mamaConfigureCommand;
+let closeDB;
 
 beforeAll(async () => {
-  // Dynamic import CommonJS modules
-  const mamaSave = await import('../../src/commands/mama-save.js');
-  const mamaRecall = await import('../../src/commands/mama-recall.js');
-  const mamaSuggest = await import('../../src/commands/mama-suggest.js');
-  const mamaList = await import('../../src/commands/mama-list.js');
-  const mamaConfigure = await import('../../src/commands/mama-configure.js');
+  // Clean up any existing test database first
+  if (fs.existsSync(TEST_DB_PATH)) {
+    fs.unlinkSync(TEST_DB_PATH);
+  }
+  [TEST_DB_PATH + '-wal', TEST_DB_PATH + '-shm'].forEach((file) => {
+    if (fs.existsSync(file)) {
+      fs.unlinkSync(file);
+    }
+  });
+
+  // Use require for CommonJS modules
+  const mamaSave = require('../../src/commands/mama-save.js');
+  const mamaRecall = require('../../src/commands/mama-recall.js');
+  const mamaSuggest = require('../../src/commands/mama-suggest.js');
+  const mamaList = require('../../src/commands/mama-list.js');
+  const mamaConfigure = require('../../src/commands/mama-configure.js');
+  const dbManager = require('../../src/core/db-manager.js');
 
   mamaSaveCommand = mamaSave.mamaSaveCommand;
   mamaRecallCommand = mamaRecall.mamaRecallCommand;
   mamaSuggestCommand = mamaSuggest.mamaSuggestCommand;
   mamaListCommand = mamaList.mamaListCommand;
   mamaConfigureCommand = mamaConfigure.mamaConfigureCommand;
+  closeDB = dbManager.closeDB;
+});
+
+afterAll(async () => {
+  // Clean up test database
+  if (closeDB) {
+    await closeDB();
+  }
+  if (fs.existsSync(TEST_DB_PATH)) {
+    fs.unlinkSync(TEST_DB_PATH);
+  }
+  // Clean up WAL files
+  [TEST_DB_PATH + '-wal', TEST_DB_PATH + '-shm'].forEach((file) => {
+    if (fs.existsSync(file)) {
+      fs.unlinkSync(file);
+    }
+  });
 });
 
 describe('MAMA Commands Suite', () => {
@@ -59,7 +101,7 @@ describe('MAMA Commands Suite', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.message).toContain('usage');
+      expect(result.message).toContain('Usage');
     });
 
     it('should handle confidence validation', async () => {
@@ -89,18 +131,17 @@ describe('MAMA Commands Suite', () => {
   });
 
   describe('/mama-recall Command', () => {
-    beforeEach(async () => {
-      // Save a test decision to recall
+    it('should recall decision history for a topic', async () => {
+      // Save a test decision first
       await mamaSaveCommand({
-        topic: 'test_mama_recall',
+        topic: 'test_mama_recall_inline',
         decision: 'Decision for recall test',
         reasoning: 'Testing recall functionality',
       });
-    });
 
-    it('should recall decision history for a topic', async () => {
+      // Then recall it
       const result = await mamaRecallCommand({
-        topic: 'test_mama_recall',
+        topic: 'test_mama_recall_inline',
       });
 
       expect(result.success).toBe(true);
@@ -123,12 +164,19 @@ describe('MAMA Commands Suite', () => {
       const result = await mamaRecallCommand({});
 
       expect(result.success).toBe(false);
-      expect(result.message).toContain('usage');
+      expect(result.message).toContain('Usage');
     });
 
     it('should include recall suggestions in output', async () => {
+      // Save a test decision first
+      await mamaSaveCommand({
+        topic: 'test_mama_recall_output',
+        decision: 'Decision for recall test',
+        reasoning: 'Testing recall functionality',
+      });
+
       const result = await mamaRecallCommand({
-        topic: 'test_mama_recall',
+        topic: 'test_mama_recall_output',
       });
 
       expect(result.success).toBe(true);
@@ -169,7 +217,7 @@ describe('MAMA Commands Suite', () => {
       const result = await mamaSuggestCommand({});
 
       expect(result.success).toBe(false);
-      expect(result.message).toContain('usage');
+      expect(result.message).toContain('Usage');
     });
 
     it('should respect limit parameter', async () => {
@@ -196,28 +244,26 @@ describe('MAMA Commands Suite', () => {
   });
 
   describe('/mama-list Command', () => {
-    beforeEach(async () => {
-      // Save multiple test decisions
+    it('should list recent decisions', async () => {
+      // Save multiple test decisions inline
       await mamaSaveCommand({
-        topic: 'test_list_1',
+        topic: 'test_list_1_inline',
         decision: 'Decision 1',
         reasoning: 'Reasoning 1',
       });
 
       await mamaSaveCommand({
-        topic: 'test_list_2',
+        topic: 'test_list_2_inline',
         decision: 'Decision 2',
         reasoning: 'Reasoning 2',
       });
 
       await mamaSaveCommand({
-        topic: 'test_list_3',
+        topic: 'test_list_3_inline',
         decision: 'Decision 3',
         reasoning: 'Reasoning 3',
       });
-    });
 
-    it('should list recent decisions', async () => {
       const result = await mamaListCommand();
 
       expect(result.success).toBe(true);

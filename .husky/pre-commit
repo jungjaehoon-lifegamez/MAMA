@@ -1,0 +1,7 @@
+#!/bin/sh
+
+# Run lint-staged for staged files
+npx lint-staged
+
+# Run tests (optional - can be slow)
+# npm test

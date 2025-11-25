@@ -73,6 +73,10 @@ describe('Story M4.1: list_decisions and recall_decision Tools (ported from mcp-
     try {
       await adapter.prepare('DELETE FROM decision_edges').run();
       await adapter.prepare('DELETE FROM decisions').run();
+      // Clear vector embeddings to prevent rowid conflicts
+      if (adapter.vectorSearchEnabled) {
+        await adapter.prepare('DELETE FROM vss_memories').run();
+      }
     } catch (error) {
       console.warn('Error clearing test data:', error.message);
     }

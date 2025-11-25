@@ -14,7 +14,9 @@
  */
 
 const { learnDecision } = require('./decision-tracker');
+// eslint-disable-next-line no-unused-vars
 const { injectDecisionContext } = require('./memory-inject');
+// eslint-disable-next-line no-unused-vars
 const { queryDecisionGraph, querySemanticEdges, getDB, getAdapter } = require('./memory-store');
 const { formatRecall, formatList } = require('./decision-formatter');
 
@@ -88,6 +90,7 @@ async function save({
   // Map type to user_involvement field
   // Note: Current schema uses user_involvement ('requested', 'approved', 'rejected')
   // Future: Will use decision_type column for proper distinction
+  // eslint-disable-next-line no-unused-vars
   const userInvolvement = type === 'user_decision' ? 'approved' : null;
 
   // Create detection object for learnDecision()
@@ -349,7 +352,18 @@ async function updateOutcome(decisionId, { outcome, failure_reason, limitation }
       WHERE id = ?
     `
     );
-    await stmt.run(outcome, failure_reason || null, limitation || null, Date.now(), decisionId);
+    const result = stmt.run(
+      outcome,
+      failure_reason || null,
+      limitation || null,
+      Date.now(),
+      decisionId
+    );
+
+    // Check if decision was found and updated
+    if (result.changes === 0) {
+      throw new Error(`Decision not found: ${decisionId}`);
+    }
 
     return;
   } catch (error) {
@@ -470,8 +484,12 @@ async function expandWithGraph(candidates) {
   // 4. Sort: Primary first, then by graph_rank, then by final_score (or similarity)
   results.sort((a, b) => {
     // Primary candidates always first
-    if (primaryIds.has(a.id) && !primaryIds.has(b.id)) return -1;
-    if (!primaryIds.has(a.id) && primaryIds.has(b.id)) return 1;
+    if (primaryIds.has(a.id) && !primaryIds.has(b.id)) {
+      return -1;
+    }
+    if (!primaryIds.has(a.id) && primaryIds.has(b.id)) {
+      return 1;
+    }
 
     // Then by graph_rank
     if (a.graph_rank !== b.graph_rank) {
@@ -578,6 +596,7 @@ async function suggest(userQuestion, options = {}) {
 
   try {
     // 1. Try vector search first (if sqlite-vss is available)
+    // eslint-disable-next-line no-unused-vars
     const { getPreparedStmt, getDB } = require('./memory-store');
     let results = [];
     let searchMethod = 'vector';
@@ -836,7 +855,9 @@ async function listDecisions(options = {}) {
  * @returns {Promise<number>} Checkpoint ID
  */
 async function saveCheckpoint(summary, openFiles = [], nextSteps = '') {
-  if (!summary) throw new Error('Summary is required for checkpoint');
+  if (!summary) {
+    throw new Error('Summary is required for checkpoint');
+  }
 
   try {
     const adapter = getAdapter();
@@ -844,14 +865,9 @@ async function saveCheckpoint(summary, openFiles = [], nextSteps = '') {
       INSERT INTO checkpoints (timestamp, summary, open_files, next_steps, status)
       VALUES (?, ?, ?, ?, 'active')
     `);
-    
-    const result = stmt.run(
-      Date.now(),
-      summary,
-      JSON.stringify(openFiles),
-      nextSteps
-    );
-    
+
+    const result = stmt.run(Date.now(), summary, JSON.stringify(openFiles), nextSteps);
+
     return result.lastInsertRowid;
   } catch (error) {
     throw new Error(`Failed to save checkpoint: ${error.message}`);
@@ -872,9 +888,9 @@ async function loadCheckpoint() {
       ORDER BY timestamp DESC
       LIMIT 1
     `);
-    
+
     const checkpoint = stmt.get();
-    
+
     if (checkpoint) {
       try {
         checkpoint.open_files = JSON.parse(checkpoint.open_files);
@@ -882,12 +898,1403 @@ async function loadCheckpoint() {
         checkpoint.open_files = [];
       }
     }
-    
+
     return checkpoint || null;
   } catch (error) {
     throw new Error(`Failed to load checkpoint: ${error.message}`);
   }
 }
+
+/**
+ * Propose a new link between decisions (Epic 3 - Story 3.1)
+ *
+ * LLM proposes a link for user approval. Link is created but marked as pending.
+ *
+ * @param {Object} params - Link parameters
+ * @param {string} params.from_id - Source decision ID
+ * @param {string} params.to_id - Target decision ID
+ * @param {string} params.relationship - 'refines' or 'contradicts'
+ * @param {string} params.reason - Why this link should exist
+ * @param {string} [params.decision_id] - Context decision where link was proposed
+ * @param {string} [params.evidence] - Supporting evidence
+ * @returns {Promise<void>}
+ */
+async function proposeLink({ from_id, to_id, relationship, reason, decision_id, evidence }) {
+  if (!from_id || !to_id || !relationship || !reason) {
+    throw new Error('proposeLink() requires from_id, to_id, relationship, and reason');
+  }
+
+  if (!['refines', 'contradicts'].includes(relationship)) {
+    throw new Error('proposeLink() relationship must be "refines" or "contradicts"');
+  }
+
+  try {
+    const adapter = getAdapter();
+
+    // Use transaction to ensure atomicity (link + audit log)
+    adapter.transaction(() => {
+      // Insert link with pending approval
+      const stmt = adapter.prepare(`
+        INSERT INTO decision_edges
+          (from_id, to_id, relationship, reason, created_by, approved_by_user, decision_id, evidence, created_at)
+        VALUES (?, ?, ?, ?, 'llm', 0, ?, ?, ?)
+      `);
+      stmt.run(
+        from_id,
+        to_id,
+        relationship,
+        reason,
+        decision_id || null,
+        evidence || null,
+        Date.now()
+      );
+
+      // Log to audit trail
+      const auditStmt = adapter.prepare(`
+        INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, reason, created_at)
+        VALUES (?, ?, ?, 'proposed', 'llm', ?, ?)
+      `);
+      auditStmt.run(from_id, to_id, relationship, reason, Date.now());
+    });
+
+    return;
+  } catch (error) {
+    throw new Error(`proposeLink() failed: ${error.message}`);
+  }
+}
+
+/**
+ * Approve a proposed link (Epic 3 - Story 3.1)
+ *
+ * User approves a pending link, making it active.
+ *
+ * @param {string} from_id - Source decision ID
+ * @param {string} to_id - Target decision ID
+ * @param {string} relationship - Link relationship type
+ * @returns {Promise<void>}
+ */
+async function approveLink(from_id, to_id, relationship) {
+  if (!from_id || !to_id || !relationship) {
+    throw new Error('approveLink() requires from_id, to_id, and relationship');
+  }
+
+  try {
+    const adapter = getAdapter();
+
+    // Update link to approved with timestamp
+    const stmt = adapter.prepare(`
+      UPDATE decision_edges
+      SET approved_by_user = 1, approved_at = ?
+      WHERE from_id = ? AND to_id = ? AND relationship = ?
+    `);
+    stmt.run(Date.now(), from_id, to_id, relationship);
+
+    // Log approval
+    const auditStmt = adapter.prepare(`
+      INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, created_at)
+      VALUES (?, ?, ?, 'approved', 'user', ?)
+    `);
+    auditStmt.run(from_id, to_id, relationship, Date.now());
+
+    return;
+  } catch (error) {
+    throw new Error(`approveLink() failed: ${error.message}`);
+  }
+}
+
+/**
+ * Reject a proposed link (Epic 3 - Story 3.1)
+ *
+ * User rejects a pending link, removing it from the database.
+ *
+ * @param {string} from_id - Source decision ID
+ * @param {string} to_id - Target decision ID
+ * @param {string} relationship - Link relationship type
+ * @param {string} [reason] - Optional reason for rejection
+ * @returns {Promise<void>}
+ */
+async function rejectLink(from_id, to_id, relationship, reason) {
+  if (!from_id || !to_id || !relationship) {
+    throw new Error('rejectLink() requires from_id, to_id, and relationship');
+  }
+
+  try {
+    const adapter = getAdapter();
+
+    // Log rejection before deletion
+    const auditStmt = adapter.prepare(`
+      INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, reason, created_at)
+      VALUES (?, ?, ?, 'rejected', 'user', ?, ?)
+    `);
+    auditStmt.run(from_id, to_id, relationship, reason || 'User rejected', Date.now());
+
+    // Delete the link
+    const stmt = adapter.prepare(`
+      DELETE FROM decision_edges
+      WHERE from_id = ? AND to_id = ? AND relationship = ?
+    `);
+    stmt.run(from_id, to_id, relationship);
+
+    return;
+  } catch (error) {
+    throw new Error(`rejectLink() failed: ${error.message}`);
+  }
+}
+
+/**
+ * Get pending links awaiting approval (Epic 3 - Story 3.1)
+ *
+ * Returns all links that need user approval.
+ *
+ * @param {Object} [options] - Query options
+ * @param {string} [options.from_id] - Filter by source decision
+ * @param {string} [options.to_id] - Filter by target decision
+ * @returns {Promise<Array>} Pending links with decision details
+ */
+async function getPendingLinks(options = {}) {
+  try {
+    const adapter = getAdapter();
+    const { from_id, to_id } = options;
+
+    let query = `
+      SELECT
+        e.*,
+        d_from.topic as from_topic,
+        d_from.decision as from_decision,
+        d_to.topic as to_topic,
+        d_to.decision as to_decision
+      FROM decision_edges e
+      LEFT JOIN decisions d_from ON e.from_id = d_from.id
+      LEFT JOIN decisions d_to ON e.to_id = d_to.id
+      WHERE e.approved_by_user = 0
+    `;
+
+    const params = [];
+    if (from_id) {
+      query += ' AND e.from_id = ?';
+      params.push(from_id);
+    }
+    if (to_id) {
+      query += ' AND e.to_id = ?';
+      params.push(to_id);
+    }
+
+    query += ' ORDER BY e.created_at DESC';
+
+    const stmt = adapter.prepare(query);
+    const links = await stmt.all(...params);
+
+    return links;
+  } catch (error) {
+    throw new Error(`getPendingLinks() failed: ${error.message}`);
+  }
+}
+
+/**
+ * Deprecate auto-generated links (Epic 3 - Story 3.3)
+ *
+ * Identifies and removes v0 auto-generated links that lack explicit approval context.
+ * Protected links (with decision_id or created_by='llm') are preserved.
+ *
+ * @param {Object} [options] - Deprecation options
+ * @param {boolean} [options.dryRun=true] - If true, only report without deleting
+ * @returns {Promise<Object>} Report with counts and deprecated links
+ */
+async function deprecateAutoLinks(options = {}) {
+  const { dryRun = true } = options;
+
+  try {
+    const adapter = getAdapter();
+
+    // Identify auto-generated links (v0 legacy)
+    // Criteria: created_by='user' (default) AND decision_id IS NULL (no proposal context)
+    // Protected: decision_id IS NOT NULL OR created_by='llm' (explicitly proposed)
+    const identifyStmt = adapter.prepare(`
+      SELECT * FROM decision_edges
+      WHERE created_by = 'user' AND decision_id IS NULL
+    `);
+    const autoLinks = await identifyStmt.all();
+
+    // Identify protected links for comparison
+    const protectedStmt = adapter.prepare(`
+      SELECT COUNT(*) as count FROM decision_edges
+      WHERE decision_id IS NOT NULL OR created_by = 'llm'
+    `);
+    const protectedResult = await protectedStmt.get();
+    const protectedCount = protectedResult.count;
+
+    const totalLinks = autoLinks.length + protectedCount;
+    const autoLinkRatio = totalLinks > 0 ? (autoLinks.length / totalLinks) * 100 : 0;
+
+    if (!dryRun && autoLinks.length > 0) {
+      // Delete auto-generated links
+      const deleteStmt = adapter.prepare(`
+        DELETE FROM decision_edges
+        WHERE created_by = 'user' AND decision_id IS NULL
+      `);
+      await deleteStmt.run();
+
+      // Log deprecation to audit trail
+      const timestamp = Date.now();
+      const auditStmt = adapter.prepare(`
+        INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, reason, created_at)
+        VALUES (?, ?, ?, 'deprecated', 'system', ?, ?)
+      `);
+
+      for (const link of autoLinks) {
+        await auditStmt.run(
+          link.from_id,
+          link.to_id,
+          link.relationship,
+          'v0 auto-generated link removed during governance migration',
+          timestamp
+        );
+      }
+    }
+
+    return {
+      dryRun,
+      deprecated: autoLinks.length,
+      protected: protectedCount,
+      total: totalLinks,
+      autoLinkRatio: autoLinkRatio.toFixed(2) + '%',
+      links: autoLinks.map((l) => ({
+        from_id: l.from_id,
+        to_id: l.to_id,
+        relationship: l.relationship,
+        reason: l.reason,
+        created_at: l.created_at,
+      })),
+    };
+  } catch (error) {
+    throw new Error(`deprecateAutoLinks() failed: ${error.message}`);
+  }
+}
+
+/**
+ * Scan and identify auto-generated links for cleanup (Epic 5 - Story 5.1)
+ *
+ * Identifies auto-generated links lacking proper approval metadata.
+ * Separates deletion targets from protected links.
+ *
+ * Identification criteria:
+ * - approved_by_user = 0 OR (created_by IS NULL AND decision_id IS NULL)
+ *
+ * Protected (excluded from deletion):
+ * - approved_by_user = 1 AND (decision_id IS NOT NULL OR evidence IS NOT NULL)
+ *
+ * @returns {Object} Scan results with counts and link details
+ */
+function scanAutoLinks() {
+  const adapter = getAdapter();
+  const db = adapter.db;
+
+  // Total links
+  const totalLinks = db.prepare(`SELECT COUNT(*) as count FROM decision_edges`).get().count;
+
+  // Auto-generated links (lacking proper metadata)
+  const autoLinks = db
+    .prepare(
+      `
+    SELECT * FROM decision_edges
+    WHERE approved_by_user = 0
+       OR (created_by IS NULL AND decision_id IS NULL)
+  `
+    )
+    .all();
+
+  // Protected links (approved or has complete metadata)
+  const protectedLinks = db
+    .prepare(
+      `
+    SELECT COUNT(*) as count FROM decision_edges
+    WHERE approved_by_user = 1
+       OR (decision_id IS NOT NULL AND evidence IS NOT NULL)
+  `
+    )
+    .get().count;
+
+  // Filter deletion targets (exclude protected links)
+  const deletionTargets = autoLinks.filter((link) => {
+    // Exclude protected links
+    return !(link.approved_by_user === 1 || (link.decision_id && link.evidence));
+  });
+
+  return {
+    total_links: totalLinks,
+    auto_links: autoLinks.length,
+    protected_links: protectedLinks,
+    deletion_targets: deletionTargets.length,
+    deletion_target_list: deletionTargets,
+  };
+}
+
+/**
+ * Create backup of links before cleanup (Epic 5 - Story 5.1)
+ *
+ * Backs up deletion target links with full metadata to JSON file.
+ * Generates SHA-256 checksum for data integrity verification.
+ * Creates backup manifest with timestamp and metadata.
+ *
+ * @param {Array} targetLinks - Links to back up
+ * @returns {Object} Backup result with file paths and checksum
+ */
+function createLinkBackup(targetLinks) {
+  const fs = require('fs');
+  const crypto = require('crypto');
+  const path = require('path');
+
+  const backupDir = path.join(process.env.HOME, '.claude', 'mama-backups');
+
+  // Create backup directory if not exists
+  if (!fs.existsSync(backupDir)) {
+    fs.mkdirSync(backupDir, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupFile = path.join(backupDir, `links-backup-${timestamp}.json`);
+
+  // Serialize target links with full metadata
+  const backupData = {
+    timestamp: new Date().toISOString(),
+    link_count: targetLinks.length,
+    links: targetLinks,
+  };
+
+  const backupJson = JSON.stringify(backupData, null, 2);
+
+  // Calculate SHA-256 checksum
+  const checksum = crypto.createHash('sha256').update(backupJson).digest('hex');
+
+  // Save backup file
+  fs.writeFileSync(backupFile, backupJson, 'utf8');
+
+  // Save manifest
+  const manifest = {
+    timestamp: backupData.timestamp,
+    backup_file: backupFile,
+    checksum,
+    link_count: targetLinks.length,
+  };
+
+  const manifestFile = path.join(backupDir, `backup-manifest-${timestamp}.json`);
+  fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2), 'utf8');
+
+  return {
+    backup_file: backupFile,
+    manifest_file: manifestFile,
+    checksum,
+    link_count: targetLinks.length,
+  };
+}
+
+/**
+ * Generate pre-cleanup report with risk assessment (Epic 5 - Story 5.1)
+ *
+ * Creates comprehensive report with statistics, risk level, and samples.
+ * Risk assessment based on deletion ratio:
+ * - HIGH: > 50% deletion
+ * - MEDIUM: 30-50% deletion
+ * - LOW: < 30% deletion
+ *
+ * @returns {Object} Report data with markdown output and file path
+ */
+function generatePreCleanupReport() {
+  const scanResult = scanAutoLinks();
+
+  // Calculate risk level
+  const deletionRatio = scanResult.deletion_targets / scanResult.total_links;
+  let riskLevel;
+  if (deletionRatio > 0.5) {
+    riskLevel = 'HIGH';
+  } else if (deletionRatio > 0.3) {
+    riskLevel = 'MEDIUM';
+  } else {
+    riskLevel = 'LOW';
+  }
+
+  // Sample deletion targets (max 10)
+  const samples = scanResult.deletion_target_list.slice(0, 10).map((link) => ({
+    from_id: link.from_id,
+    to_id: link.to_id,
+    relationship: link.relationship,
+    reason: link.reason,
+    created_by: link.created_by,
+    approved_by_user: link.approved_by_user,
+  }));
+
+  const report = {
+    generated_at: new Date().toISOString(),
+    statistics: {
+      total_links: scanResult.total_links,
+      auto_links: scanResult.auto_links,
+      protected_links: scanResult.protected_links,
+      deletion_targets: scanResult.deletion_targets,
+      deletion_ratio: `${(deletionRatio * 100).toFixed(1)}%`,
+    },
+    risk_assessment: {
+      level: riskLevel,
+      message:
+        riskLevel === 'HIGH'
+          ? '⚠️ HIGH RISK: 삭제 대상이 50% 초과. 백업 후 신중하게 진행하세요.'
+          : riskLevel === 'MEDIUM'
+            ? '⚡ MEDIUM RISK: 삭제 대상이 30-50%. 백업 확인 권장.'
+            : '✅ LOW RISK: 삭제 대상이 30% 미만. 안전하게 진행 가능.',
+    },
+    deletion_target_samples: samples,
+  };
+
+  // Generate markdown report
+  const markdown = `# Pre-Cleanup Report
+
+**Generated:** ${report.generated_at}
+
+## Statistics
+
+- **Total Links:** ${report.statistics.total_links}
+- **Auto Links:** ${report.statistics.auto_links}
+- **Protected Links:** ${report.statistics.protected_links}
+- **Deletion Targets:** ${report.statistics.deletion_targets} (${report.statistics.deletion_ratio})
+
+## Risk Assessment
+
+**Level:** ${report.risk_assessment.level}
+
+${report.risk_assessment.message}
+
+## Sample Deletion Targets (First 10)
+
+${samples
+  .map(
+    (link, idx) => `
+### ${idx + 1}. ${link.from_id} → ${link.to_id}
+
+- **Relationship:** ${link.relationship}
+- **Reason:** ${link.reason || 'N/A'}
+- **Created By:** ${link.created_by || 'N/A'}
+- **Approved:** ${link.approved_by_user ? 'Yes' : 'No'}
+`
+  )
+  .join('\n')}
+
+---
+
+**Next Steps:**
+
+1. Review the deletion targets above
+2. Run \`create_link_backup\` to create a backup
+3. Proceed with cleanup using Story 5.2 tools
+4. If needed, restore from backup using \`restore_link_backup\`
+`;
+
+  const fs = require('fs');
+  const path = require('path');
+  const backupDir = path.join(process.env.HOME, '.claude', 'mama-backups');
+
+  // Ensure backup directory exists
+  if (!fs.existsSync(backupDir)) {
+    fs.mkdirSync(backupDir, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const reportFile = path.join(backupDir, `pre-cleanup-report-${timestamp}.md`);
+
+  fs.writeFileSync(reportFile, markdown, 'utf8');
+
+  return {
+    report: report,
+    report_file: reportFile,
+    markdown,
+  };
+}
+
+/**
+ * Restore links from backup file (Epic 5 - Story 5.1)
+ *
+ * Restores previously backed-up links to the database.
+ * Verifies checksum before restoration to ensure data integrity.
+ * Reports number of restored and failed links.
+ *
+ * @param {string} backupFile - Path to backup file
+ * @returns {Object} Restoration result with counts
+ */
+function restoreLinkBackup(backupFile) {
+  const fs = require('fs');
+  const crypto = require('crypto');
+
+  // Read backup file
+  const backupJson = fs.readFileSync(backupFile, 'utf8');
+  const backupData = JSON.parse(backupJson);
+
+  // Read manifest for checksum verification
+  const manifestFile = backupFile.replace('links-backup', 'backup-manifest');
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+
+  // Verify checksum
+  const calculatedChecksum = crypto.createHash('sha256').update(backupJson).digest('hex');
+  if (calculatedChecksum !== manifest.checksum) {
+    throw new Error('Backup file checksum mismatch. File may be corrupted.');
+  }
+
+  // Restore links to database
+  const adapter = getAdapter();
+  const db = adapter.db;
+
+  let restored = 0;
+  let failed = 0;
+
+  const insertStmt = db.prepare(`
+    INSERT OR REPLACE INTO decision_edges
+    (from_id, to_id, relationship, reason, created_by, approved_by_user, decision_id, evidence, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const link of backupData.links) {
+    try {
+      insertStmt.run(
+        link.from_id,
+        link.to_id,
+        link.relationship,
+        link.reason,
+        link.created_by,
+        link.approved_by_user,
+        link.decision_id,
+        link.evidence,
+        link.created_at
+      );
+      restored++;
+    } catch (error) {
+      console.error(`Failed to restore link ${link.from_id} -> ${link.to_id}:`, error);
+      failed++;
+    }
+  }
+
+  return {
+    total_links: backupData.link_count,
+    restored,
+    failed,
+    backup_file: backupFile,
+  };
+}
+
+/**
+ * Verify backup file exists and is recent (Epic 5 - Story 5.2)
+ *
+ * Checks for backup files in backup directory and verifies they are recent enough.
+ * Required as safety check before executing link deletion.
+ *
+ * @param {number} maxAgeHours - Maximum age of backup in hours (default: 24)
+ * @returns {Object} Backup verification result with latest backup info
+ */
+function verifyBackupExists(maxAgeHours = 24) {
+  const fs = require('fs');
+  const path = require('path');
+  const backupDir = path.join(process.env.HOME, '.claude', 'mama-backups');
+
+  if (!fs.existsSync(backupDir)) {
+    throw new Error(
+      'Backup directory not found. Please create a backup first using create_link_backup.'
+    );
+  }
+
+  const backupFiles = fs
+    .readdirSync(backupDir)
+    .filter((f) => f.startsWith('links-backup-'))
+    .map((f) => ({
+      name: f,
+      path: path.join(backupDir, f),
+      mtime: fs.statSync(path.join(backupDir, f)).mtime,
+    }))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  if (backupFiles.length === 0) {
+    throw new Error('No recent backup found. Please run create_link_backup first.');
+  }
+
+  const latestBackup = backupFiles[0];
+  const backupAge = Date.now() - latestBackup.mtime.getTime();
+  const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+
+  if (backupAge > maxAgeMs) {
+    throw new Error(
+      `Most recent backup is too old (${(backupAge / (60 * 60 * 1000)).toFixed(1)} hours). Max age: ${maxAgeHours} hours.`
+    );
+  }
+
+  // Read backup metadata
+  const backupJson = fs.readFileSync(latestBackup.path, 'utf8');
+  const backupData = JSON.parse(backupJson);
+
+  return {
+    backup_file: latestBackup.path,
+    age_hours: backupAge / (60 * 60 * 1000),
+    link_count: backupData.link_count || 0,
+  };
+}
+
+/**
+ * Delete auto-generated links with batch processing (Epic 5 - Story 5.2)
+ *
+ * Executes batch deletion of auto-generated links with transaction support.
+ * Requires recent backup (within 24 hours) before execution.
+ * Logs all deletions to audit trail.
+ *
+ * Safety features:
+ * - Backup verification before deletion
+ * - Batch processing with transaction support
+ * - Dry-run mode for simulation
+ * - Large deletion warning (> 1000 links)
+ *
+ * @param {number} batchSize - Number of links to delete per batch (default: 100)
+ * @param {boolean} dryRun - If true, simulate deletion without actual changes (default: true)
+ * @returns {Object} Deletion result with counts and backup info
+ */
+function deleteAutoLinks(batchSize = 100, dryRun = true) {
+  const adapter = getAdapter();
+  const db = adapter.db;
+
+  // Safety check: Verify recent backup exists
+  const backupInfo = verifyBackupExists(24);
+
+  // Scan for deletion targets
+  const scanResult = scanAutoLinks();
+  const deletionTargets = scanResult.deletion_target_list;
+
+  if (deletionTargets.length === 0) {
+    return {
+      dry_run: dryRun,
+      deleted: 0,
+      failed: 0,
+      total_targets: 0,
+      backup_file: backupInfo.backup_file,
+      message: 'No auto-generated links found. Nothing to delete.',
+    };
+  }
+
+  // Large deletion warning
+  const largeDelection = deletionTargets.length > 1000;
+  if (largeDelection) {
+    console.warn(
+      `⚠️ LARGE DELETION: ${deletionTargets.length} links will be deleted. Consider running in dry-run mode first.`
+    );
+  }
+
+  if (dryRun) {
+    return {
+      dry_run: true,
+      would_delete: deletionTargets.length,
+      deleted: 0,
+      backup_file: backupInfo.backup_file,
+      large_deletion_warning: largeDelection,
+      warning_message: largeDelection
+        ? `Warning: More than 1000 links (${deletionTargets.length}) will be deleted.`
+        : null,
+      sample_links: deletionTargets.slice(0, 5).map((l) => ({
+        from_id: l.from_id,
+        to_id: l.to_id,
+        relationship: l.relationship,
+      })),
+      message: 'Dry-run mode: No links were actually deleted.',
+    };
+  }
+
+  // Execute batch deletion with transaction support
+  let deleted = 0;
+  let failed = 0;
+  let batchesProcessed = 0;
+  const errors = [];
+
+  const deleteStmt = db.prepare(`
+    DELETE FROM decision_edges
+    WHERE from_id = ? AND to_id = ? AND relationship = ?
+  `);
+
+  const auditStmt = db.prepare(`
+    INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, reason, created_at)
+    VALUES (?, ?, ?, 'deprecated', 'system', ?, ?)
+  `);
+
+  // Process in batches
+  for (let i = 0; i < deletionTargets.length; i += batchSize) {
+    const batch = deletionTargets.slice(i, i + batchSize);
+
+    try {
+      db.transaction(() => {
+        for (const link of batch) {
+          try {
+            deleteStmt.run(link.from_id, link.to_id, link.relationship);
+            auditStmt.run(
+              link.from_id,
+              link.to_id,
+              link.relationship,
+              'Auto-link cleanup - v1.1 migration',
+              Date.now()
+            );
+            deleted++;
+          } catch (error) {
+            failed++;
+            errors.push({
+              link: `${link.from_id}->${link.to_id}`,
+              error: error.message,
+            });
+          }
+        }
+      })();
+      batchesProcessed++;
+    } catch (error) {
+      console.error(`Batch deletion failed at index ${i}:`, error);
+      failed += batch.length;
+      errors.push({
+        batch_index: i,
+        batch_size: batch.length,
+        error: error.message,
+      });
+      break; // Stop on batch failure
+    }
+  }
+
+  const successRate = deletionTargets.length > 0 ? (deleted / deletionTargets.length) * 100 : 0;
+
+  return {
+    dry_run: false,
+    deleted,
+    failed,
+    total_targets: deletionTargets.length,
+    backup_file: backupInfo.backup_file,
+    batches_processed: batchesProcessed,
+    errors: errors.slice(0, 10), // Return first 10 errors
+    success_rate: successRate,
+  };
+}
+
+/**
+ * Validate cleanup result and generate post-cleanup report (Epic 5 - Story 5.2)
+ *
+ * Re-scans for remaining auto-generated links and evaluates cleanup success.
+ * Generates comprehensive report with statistics and recommendations.
+ *
+ * Success criteria:
+ * - SUCCESS: Remaining auto links < 5%
+ * - PARTIAL: Remaining auto links 5-10%
+ * - FAILED: Remaining auto links > 10%
+ *
+ * @returns {Object} Validation result with report and file path
+ */
+function validateCleanupResult() {
+  // Re-scan for remaining auto links
+  const scanResult = scanAutoLinks();
+
+  // Calculate remaining ratio
+  const totalLinks = scanResult.total_links;
+  const remainingAutoLinks = scanResult.auto_links;
+  const remainingRatio = totalLinks > 0 ? remainingAutoLinks / totalLinks : 0;
+
+  // Evaluate cleanup success
+  let status;
+  let message;
+  let recommendation;
+
+  if (remainingRatio < 0.05) {
+    status = 'SUCCESS';
+    message = '✅ SUCCESS: 잔여 자동 링크 비율이 5% 미만입니다. 목표 달성!';
+    recommendation = '정리가 성공적으로 완료되었습니다. 마이그레이션을 계속 진행할 수 있습니다.';
+  } else if (remainingRatio < 0.1) {
+    status = 'PARTIAL';
+    message = '⚡ PARTIAL: 잔여 자동 링크 비율이 5-10%입니다. 추가 정리 권장.';
+    recommendation = '추가로 자동 링크를 정리하려면 execute_link_cleanup을 다시 실행하세요.';
+  } else {
+    status = 'FAILED';
+    message = '⚠️ FAILED: 잔여 자동 링크 비율이 10% 초과입니다. 롤백 또는 재실행 필요.';
+    recommendation = '목표에 크게 미달했습니다. 백업에서 복원 후 재시도를 권장합니다.';
+  }
+
+  // Generate post-cleanup report
+  const report = {
+    validated_at: new Date().toISOString(),
+    status,
+    message,
+    statistics: {
+      total_links: totalLinks,
+      remaining_auto_links: remainingAutoLinks,
+      remaining_ratio: `${(remainingRatio * 100).toFixed(1)}%`,
+      protected_links: scanResult.protected_links,
+      deletion_targets: scanResult.deletion_targets,
+    },
+    recommendation,
+  };
+
+  // Generate markdown report
+  const markdown = generatePostCleanupReportMarkdown(report);
+
+  // Save report to file
+  const fs = require('fs');
+  const path = require('path');
+  const backupDir = path.join(process.env.HOME, '.claude', 'mama-backups');
+
+  if (!fs.existsSync(backupDir)) {
+    fs.mkdirSync(backupDir, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const reportFile = path.join(backupDir, `post-cleanup-report-${timestamp}.md`);
+
+  fs.writeFileSync(reportFile, markdown, 'utf8');
+
+  return {
+    status,
+    total_links_before: totalLinks,
+    auto_links_remaining: remainingAutoLinks,
+    remaining_ratio: remainingRatio * 100,
+    protected_links: scanResult.protected_links,
+    report,
+    report_file: reportFile,
+    markdown,
+  };
+}
+
+/**
+ * Generate post-cleanup report in Markdown format (Epic 5 - Story 5.2)
+ *
+ * @param {Object} report - Validation report data
+ * @returns {string} Markdown formatted report
+ */
+function generatePostCleanupReportMarkdown(report) {
+  let markdown = `# Post-Cleanup Validation Report
+
+**Generated:** ${report.validated_at}
+**Status:** ${report.status}
+
+${report.message}
+
+## Statistics
+
+- **Total Links:** ${report.statistics.total_links}
+- **Remaining Auto Links:** ${report.statistics.remaining_auto_links}
+- **Remaining Ratio:** ${report.statistics.remaining_ratio}
+- **Protected Links:** ${report.statistics.protected_links}
+- **Deletion Targets (if any):** ${report.statistics.deletion_targets}
+
+## Recommendation
+
+${report.recommendation}
+`;
+
+  // Add rollback instructions for non-SUCCESS statuses
+  if (report.status !== 'SUCCESS') {
+    markdown += `
+
+---
+
+## Rollback Instructions
+
+If you need to restore the deleted links:
+
+1. Find the latest backup file in \`~/.claude/mama-backups/\`
+2. Run: \`restore_link_backup <backup_file_path>\`
+3. Re-run validation: \`validate_cleanup_result\`
+
+**Next Steps:**
+
+- For PARTIAL status: Review remaining auto links and run cleanup again if needed
+- For FAILED status: Consider rollback and investigate why many links remain
+`;
+  }
+
+  return markdown;
+}
+
+/**
+ * Calculate coverage metrics (Epic 4 - Story 4.1)
+ *
+ * Measures narrative coverage (% of decisions with narrative fields)
+ * and link coverage (% of decisions with at least one link).
+ *
+ * @returns {Object} Coverage metrics
+ */
+function calculateCoverage() {
+  const adapter = getAdapter();
+  const db = adapter.db;
+
+  // Total decisions
+  const totalDecisions = db.prepare(`SELECT COUNT(*) as count FROM decisions`).get().count;
+
+  if (totalDecisions === 0) {
+    return {
+      narrativeCoverage: '0.0%',
+      linkCoverage: '0.0%',
+      totalDecisions: 0,
+      completeNarratives: 0,
+      decisionsWithLinks: 0,
+    };
+  }
+
+  // Narrative coverage: Decisions with evidence, alternatives, and risks filled
+  // Note: Using existing schema fields (evidence, alternatives, risks) instead of
+  // 5-layer fields (specificity, evidence, reasoning, tension, continuity) mentioned in story
+  const completeNarratives = db
+    .prepare(
+      `
+    SELECT COUNT(*) as count FROM decisions
+    WHERE evidence IS NOT NULL AND evidence != ''
+      AND alternatives IS NOT NULL AND alternatives != ''
+      AND risks IS NOT NULL AND risks != ''
+  `
+    )
+    .get().count;
+
+  const narrativeCoverage = (completeNarratives / totalDecisions) * 100;
+
+  // Link coverage: Decisions with at least one link
+  const decisionsWithLinks = db
+    .prepare(
+      `
+    SELECT COUNT(DISTINCT d.id) as count FROM decisions d
+    WHERE EXISTS (
+      SELECT 1 FROM decision_edges e
+      WHERE e.from_id = d.id OR e.to_id = d.id
+    )
+  `
+    )
+    .get().count;
+
+  const linkCoverage = (decisionsWithLinks / totalDecisions) * 100;
+
+  return {
+    narrativeCoverage: `${narrativeCoverage.toFixed(1)}%`,
+    linkCoverage: `${linkCoverage.toFixed(1)}%`,
+    totalDecisions,
+    completeNarratives,
+    decisionsWithLinks,
+  };
+}
+
+/**
+ * Log restart attempt (Epic 4 - Story 4.2)
+ *
+ * Records restart attempt with success/failure status, latency, and mode.
+ * Replaces in-memory restart-metrics.js with SQLite-backed storage.
+ *
+ * @param {string} sessionId - Session identifier
+ * @param {string} status - 'success' or 'failure'
+ * @param {string|null} failureReason - 'NO_CHECKPOINT', 'LOAD_ERROR', 'CONTEXT_INCOMPLETE', or null
+ * @param {number} latencyMs - Latency in milliseconds
+ * @param {string} mode - 'full' (narrative+links) or 'summary' (summary only)
+ * @returns {void}
+ */
+function logRestartAttempt(sessionId, status, failureReason, latencyMs, mode = 'full') {
+  const adapter = getAdapter();
+  const db = adapter.db;
+
+  const timestamp = new Date().toISOString();
+
+  db.prepare(
+    `
+    INSERT INTO restart_metrics (timestamp, session_id, status, failure_reason, latency_ms, mode)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `
+  ).run(timestamp, sessionId, status, failureReason, latencyMs, mode);
+
+  // Performance warning if exceeds threshold
+  const threshold = mode === 'summary' ? 1000 : 2500;
+  if (latencyMs > threshold) {
+    console.warn(
+      JSON.stringify({
+        performance_warning: true,
+        message: `Restart latency exceeded threshold: ${latencyMs}ms > ${threshold}ms`,
+        session_id: sessionId,
+        mode,
+        latency_ms: latencyMs,
+        threshold_ms: threshold,
+      })
+    );
+  }
+}
+
+/**
+ * Calculate restart success rate (Epic 4 - Story 4.2)
+ *
+ * Calculates success rate over a given period (24h, 7d, 30d).
+ *
+ * @param {string} period - '24h', '7d', or '30d'
+ * @returns {Object} Success rate metrics
+ */
+function calculateRestartSuccessRate(period = '7d') {
+  const adapter = getAdapter();
+  const db = adapter.db;
+
+  const periodMap = {
+    '24h': 1,
+    '7d': 7,
+    '30d': 30,
+  };
+
+  const days = periodMap[period] || 7;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const stats = db
+    .prepare(
+      `
+    SELECT
+      COUNT(*) as total,
+      COUNT(CASE WHEN status = 'success' THEN 1 END) as success,
+      COUNT(CASE WHEN status = 'failure' THEN 1 END) as failure
+    FROM restart_metrics
+    WHERE timestamp >= ?
+  `
+    )
+    .get(since);
+
+  const successRate = stats.total > 0 ? stats.success / stats.total : 0;
+
+  return {
+    period,
+    total: stats.total,
+    success: stats.success,
+    failure: stats.failure,
+    successRate: `${(successRate * 100).toFixed(1)}%`,
+    meetsTarget: successRate >= 0.95,
+  };
+}
+
+/**
+ * Calculate restart latency percentiles (Epic 4 - Story 4.2)
+ *
+ * Calculates p50, p95, p99 latencies for successful restarts.
+ * Optionally filters by mode (full/summary).
+ *
+ * @param {string} period - '24h', '7d', or '30d'
+ * @param {string|null} mode - 'full', 'summary', or null (all modes)
+ * @returns {Object} Latency percentile metrics
+ */
+function calculateRestartLatency(period = '7d', mode = null) {
+  const adapter = getAdapter();
+  const db = adapter.db;
+
+  const periodMap = { '24h': 1, '7d': 7, '30d': 30 };
+  const days = periodMap[period] || 7;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  let query = `
+    SELECT latency_ms
+    FROM restart_metrics
+    WHERE timestamp >= ? AND status = 'success'
+  `;
+
+  const params = [since];
+
+  if (mode) {
+    query += ` AND mode = ?`;
+    params.push(mode);
+  }
+
+  query += ` ORDER BY latency_ms ASC`;
+
+  const rows = db.prepare(query).all(...params);
+  const latencies = rows.map((r) => r.latency_ms);
+
+  if (latencies.length === 0) {
+    return { p50: 0, p95: 0, p99: 0, count: 0, mode: mode || 'all' };
+  }
+
+  const percentile = (arr, p) => {
+    const index = Math.ceil((p / 100) * arr.length) - 1;
+    return arr[Math.max(0, index)];
+  };
+
+  return {
+    p50: percentile(latencies, 50),
+    p95: percentile(latencies, 95),
+    p99: percentile(latencies, 99),
+    count: latencies.length,
+    mode: mode || 'all',
+  };
+}
+
+/**
+ * Get restart metrics (Epic 4 - Story 4.2)
+ *
+ * Combines success rate and latency metrics for a given period.
+ *
+ * @param {string} period - '24h', '7d', or '30d'
+ * @param {boolean} includeLatency - Whether to include latency percentiles
+ * @returns {Object} Combined restart metrics
+ */
+function getRestartMetrics(period = '7d', includeLatency = true) {
+  const successRate = calculateRestartSuccessRate(period);
+  const result = { successRate };
+
+  if (includeLatency) {
+    result.latency = {
+      full: calculateRestartLatency(period, 'full'),
+      summary: calculateRestartLatency(period, 'summary'),
+    };
+  }
+
+  return result;
+}
+
+/**
+ * Calculate quality metrics (Epic 4 - Story 4.1)
+ *
+ * Measures narrative quality (field completeness per layer)
+ * and link quality (rich reason ratio, approved link ratio).
+ *
+ * @returns {Object} Quality metrics
+ */
+function calculateQuality() {
+  const adapter = getAdapter();
+  const db = adapter.db;
+
+  // Narrative quality: Average completeness for each narrative field
+  const narrativeQuality = db
+    .prepare(
+      `
+    SELECT
+      AVG(CASE WHEN evidence IS NOT NULL AND evidence != '' THEN 1 ELSE 0 END) as evidence,
+      AVG(CASE WHEN alternatives IS NOT NULL AND alternatives != '' THEN 1 ELSE 0 END) as alternatives,
+      AVG(CASE WHEN risks IS NOT NULL AND risks != '' THEN 1 ELSE 0 END) as risks
+    FROM decisions
+  `
+    )
+    .get();
+
+  // Link quality: "Rich" reason ratio (reason > 50 chars) and approved link ratio
+  const linkStats = db
+    .prepare(
+      `
+    SELECT
+      COUNT(*) as total,
+      COUNT(CASE WHEN reason IS NOT NULL AND LENGTH(reason) > 50 THEN 1 END) as rich,
+      COUNT(CASE WHEN approved_by_user = 1 THEN 1 END) as approved
+    FROM decision_edges
+  `
+    )
+    .get();
+
+  const linkQuality =
+    linkStats.total > 0 ? ((linkStats.rich / linkStats.total) * 100).toFixed(1) : '0.0';
+  const approvedRatio =
+    linkStats.total > 0 ? ((linkStats.approved / linkStats.total) * 100).toFixed(1) : '0.0';
+
+  return {
+    narrativeQuality: {
+      evidence: `${(narrativeQuality.evidence * 100).toFixed(1)}%`,
+      alternatives: `${(narrativeQuality.alternatives * 100).toFixed(1)}%`,
+      risks: `${(narrativeQuality.risks * 100).toFixed(1)}%`,
+    },
+    linkQuality: {
+      richReasonRatio: `${linkQuality}%`,
+      approvedRatio: `${approvedRatio}%`,
+      totalLinks: linkStats.total,
+      richLinks: linkStats.rich,
+      approvedLinks: linkStats.approved,
+    },
+  };
+}
+
+/**
+ * Generate quality report with recommendations (Epic 4 - Story 4.1 + 4.2)
+ *
+ * Generates a comprehensive quality report with coverage, quality metrics,
+ * restart metrics, and recommendations for improvement.
+ *
+ * @param {Object} options - Report options
+ * @param {string} [options.format='json'] - Output format: 'json' or 'markdown'
+ * @param {string} [options.period='7d'] - Period for restart metrics: '24h', '7d', or '30d'
+ * @param {Object} [options.thresholds] - Custom thresholds
+ * @param {number} [options.thresholds.narrativeCoverage=0.8] - Narrative coverage threshold (0-1)
+ * @param {number} [options.thresholds.linkCoverage=0.7] - Link coverage threshold (0-1)
+ * @param {number} [options.thresholds.richReasonRatio=0.7] - Rich reason ratio threshold (0-1)
+ * @param {number} [options.thresholds.restartSuccessRate=0.95] - Restart success rate threshold (0-1)
+ * @param {number} [options.thresholds.restartLatencyP95Full=2500] - Full mode p95 latency threshold (ms)
+ * @param {number} [options.thresholds.restartLatencyP95Summary=1000] - Summary mode p95 latency threshold (ms)
+ * @returns {Object|string} Quality report as JSON or Markdown
+ */
+function generateQualityReport(options = {}) {
+  const { format = 'json', period = '7d', thresholds = {} } = options;
+
+  const defaultThresholds = {
+    narrativeCoverage: 0.8,
+    linkCoverage: 0.7,
+    richReasonRatio: 0.7,
+    restartSuccessRate: 0.95,
+    restartLatencyP95Full: 2500,
+    restartLatencyP95Summary: 1000,
+    ...thresholds,
+  };
+
+  const coverage = calculateCoverage();
+  const quality = calculateQuality();
+
+  // Story 4.2: Add restart metrics
+  const restartMetrics = getRestartMetrics(period, true);
+
+  const recommendations = [];
+
+  // Check narrative coverage threshold
+  const narrativeCoveragePct = parseFloat(coverage.narrativeCoverage);
+  if (narrativeCoveragePct < defaultThresholds.narrativeCoverage * 100) {
+    recommendations.push({
+      type: 'narrative_coverage',
+      message: `서사 커버리지가 목표(${defaultThresholds.narrativeCoverage * 100}%)보다 낮습니다. evidence, alternatives, risks 필드를 채우지 않은 결정에 서사를 추가하세요.`,
+      target: `${defaultThresholds.narrativeCoverage * 100}%`,
+      current: coverage.narrativeCoverage,
+    });
+  }
+
+  // Check link coverage threshold
+  const linkCoveragePct = parseFloat(coverage.linkCoverage);
+  if (linkCoveragePct < defaultThresholds.linkCoverage * 100) {
+    recommendations.push({
+      type: 'link_coverage',
+      message: `링크 커버리지가 목표(${defaultThresholds.linkCoverage * 100}%)보다 낮습니다. 관련 결정 간 링크를 추가하세요.`,
+      target: `${defaultThresholds.linkCoverage * 100}%`,
+      current: coverage.linkCoverage,
+    });
+  }
+
+  // Check link quality threshold
+  const richReasonRatioPct = parseFloat(quality.linkQuality.richReasonRatio);
+  if (richReasonRatioPct < defaultThresholds.richReasonRatio * 100) {
+    recommendations.push({
+      type: 'link_quality',
+      message: `링크 품질이 목표(${defaultThresholds.richReasonRatio * 100}%)보다 낮습니다. 링크의 reason 필드에 구체적 인과관계와 근거를 추가하세요.`,
+      target: `${defaultThresholds.richReasonRatio * 100}%`,
+      current: quality.linkQuality.richReasonRatio,
+    });
+  }
+
+  // Story 4.2: Check restart success rate threshold (only if there's data)
+  if (restartMetrics.successRate.total > 0 && !restartMetrics.successRate.meetsTarget) {
+    // eslint-disable-next-line no-unused-vars
+    const successRatePct = parseFloat(restartMetrics.successRate.successRate);
+    recommendations.push({
+      type: 'restart_success_rate',
+      message: `재시작 성공률이 목표(95%)보다 낮습니다. 실패 사유를 분석하고 체크포인트 품질을 개선하세요.`,
+      target: '95%',
+      current: restartMetrics.successRate.successRate,
+    });
+  }
+
+  // Story 4.2: Check restart latency thresholds (only if there's data)
+  if (restartMetrics.latency) {
+    const fullP95 = restartMetrics.latency.full.p95;
+    if (
+      restartMetrics.latency.full.count > 0 &&
+      fullP95 > defaultThresholds.restartLatencyP95Full
+    ) {
+      recommendations.push({
+        type: 'restart_latency_full',
+        message: `서사+링크 확장 p95 지연이 목표(2.5s)를 초과했습니다. 링크 확장 깊이를 제한하거나 캐싱을 고려하세요.`,
+        target: `${defaultThresholds.restartLatencyP95Full}ms`,
+        current: `${fullP95}ms`,
+      });
+    }
+
+    const summaryP95 = restartMetrics.latency.summary.p95;
+    if (
+      restartMetrics.latency.summary.count > 0 &&
+      summaryP95 > defaultThresholds.restartLatencyP95Summary
+    ) {
+      recommendations.push({
+        type: 'restart_latency_summary',
+        message: `요약 모드 p95 지연이 목표(1.0s)를 초과했습니다. 쿼리 최적화 또는 인덱스 추가를 검토하세요.`,
+        target: `${defaultThresholds.restartLatencyP95Summary}ms`,
+        current: `${summaryP95}ms`,
+      });
+    }
+  }
+
+  const report = {
+    generated_at: new Date().toISOString(),
+    period,
+    coverage,
+    quality,
+    restart: restartMetrics,
+    thresholds: defaultThresholds,
+    recommendations,
+    format,
+  };
+
+  if (format === 'markdown') {
+    return formatQualityReportMarkdown(report);
+  }
+
+  return report;
+}
+
+/**
+ * Format quality report as Markdown
+ *
+ * @param {Object} report - Quality report data
+ * @returns {string} Markdown-formatted report
+ */
+function formatQualityReportMarkdown(report) {
+  const { generated_at, period, coverage, quality, restart, thresholds, recommendations } = report;
+
+  let markdown = `# 📊 MAMA Quality Report\n\n`;
+  markdown += `Generated: ${generated_at}\n`;
+  markdown += `Period: ${period}\n\n`;
+
+  markdown += `## Coverage Metrics\n\n`;
+  markdown += `- **Narrative Coverage**: ${coverage.narrativeCoverage} (${coverage.completeNarratives}/${coverage.totalDecisions} decisions)\n`;
+  markdown += `- **Link Coverage**: ${coverage.linkCoverage} (${coverage.decisionsWithLinks}/${coverage.totalDecisions} decisions)\n\n`;
+
+  markdown += `## Quality Metrics\n\n`;
+  markdown += `### Narrative Quality\n`;
+  markdown += `- Evidence: ${quality.narrativeQuality.evidence}\n`;
+  markdown += `- Alternatives: ${quality.narrativeQuality.alternatives}\n`;
+  markdown += `- Risks: ${quality.narrativeQuality.risks}\n\n`;
+
+  markdown += `### Link Quality\n`;
+  markdown += `- Rich Reason Ratio: ${quality.linkQuality.richReasonRatio} (${quality.linkQuality.richLinks}/${quality.linkQuality.totalLinks} links)\n`;
+  markdown += `- Approved Link Ratio: ${quality.linkQuality.approvedRatio} (${quality.linkQuality.approvedLinks}/${quality.linkQuality.totalLinks} links)\n\n`;
+
+  // Story 4.2: Add restart metrics section
+  if (restart) {
+    markdown += `## Restart Metrics\n\n`;
+    markdown += `### Success Rate\n`;
+    markdown += `- **Success Rate**: ${restart.successRate.successRate} (${restart.successRate.success}/${restart.successRate.total} attempts)\n`;
+    markdown += `- **Meets Target**: ${restart.successRate.meetsTarget ? '✅ Yes' : '❌ No'}\n`;
+    markdown += `- Failures: ${restart.successRate.failure}\n\n`;
+
+    if (restart.latency) {
+      markdown += `### Latency (Percentiles)\n\n`;
+      markdown += `**Full Mode (Narrative + Links)**\n`;
+      markdown += `- p50: ${restart.latency.full.p50}ms\n`;
+      markdown += `- p95: ${restart.latency.full.p95}ms\n`;
+      markdown += `- p99: ${restart.latency.full.p99}ms\n`;
+      markdown += `- Count: ${restart.latency.full.count}\n\n`;
+
+      markdown += `**Summary Mode**\n`;
+      markdown += `- p50: ${restart.latency.summary.p50}ms\n`;
+      markdown += `- p95: ${restart.latency.summary.p95}ms\n`;
+      markdown += `- p99: ${restart.latency.summary.p99}ms\n`;
+      markdown += `- Count: ${restart.latency.summary.count}\n\n`;
+    }
+  }
+
+  markdown += `## Thresholds\n\n`;
+  markdown += `- Narrative Coverage: ≥ ${thresholds.narrativeCoverage * 100}%\n`;
+  markdown += `- Link Coverage: ≥ ${thresholds.linkCoverage * 100}%\n`;
+  markdown += `- Rich Reason Ratio: ≥ ${thresholds.richReasonRatio * 100}%\n`;
+  markdown += `- Restart Success Rate: ≥ ${thresholds.restartSuccessRate * 100}%\n`;
+  markdown += `- Restart Latency p95 (Full): ≤ ${thresholds.restartLatencyP95Full}ms\n`;
+  markdown += `- Restart Latency p95 (Summary): ≤ ${thresholds.restartLatencyP95Summary}ms\n\n`;
+
+  if (recommendations.length > 0) {
+    markdown += `## ⚠️ Recommendations\n\n`;
+    recommendations.forEach((rec, idx) => {
+      markdown += `${idx + 1}. **${rec.type}**: ${rec.message}\n`;
+      markdown += `   - Target: ${rec.target}, Current: ${rec.current}\n\n`;
+    });
+  } else {
+    markdown += `## ✅ All quality targets met!\n\n`;
+  }
+
+  return markdown;
+}
+
 /**
  * MAMA Public API
  *
@@ -908,6 +2315,30 @@ const mama = {
   list: listDecisions,
   saveCheckpoint,
   loadCheckpoint,
+  // Epic 3: Link Collaboration & Governance
+  proposeLink,
+  approveLink,
+  rejectLink,
+  getPendingLinks,
+  deprecateAutoLinks,
+  // Epic 4: Quality Metrics & Observability
+  calculateCoverage,
+  calculateQuality,
+  generateQualityReport,
+  // Epic 4: Restart Metrics (Story 4.2)
+  logRestartAttempt,
+  calculateRestartSuccessRate,
+  calculateRestartLatency,
+  getRestartMetrics,
+  // Epic 5: Migration & Cleanup (Story 5.1)
+  scanAutoLinks,
+  createLinkBackup,
+  generatePreCleanupReport,
+  restoreLinkBackup,
+  // Epic 5: Migration & Cleanup (Story 5.2)
+  verifyBackupExists,
+  deleteAutoLinks,
+  validateCleanupResult,
 };
 
 module.exports = mama;

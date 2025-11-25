@@ -12,7 +12,7 @@
  * @date 2025-11-14
  */
 
-const { info, error: logError } = require('./debug-logger');
+const { info } = require('./debug-logger');
 const { formatTopNContext } = require('./relevance-scorer');
 
 /**
@@ -209,7 +209,6 @@ Reasoning: ${current.reasoning || 'N/A'}
  * @returns {string} Formatted context with rolling summary
  */
 function formatLargeHistory(current, history) {
-  const duration = calculateDuration(current.created_at);
   // Include current decision in total duration calculation
   const allDecisions = [current, ...history];
   const totalDuration = calculateTotalDuration(allDecisions);
@@ -793,29 +792,6 @@ function formatTeaser(decision) {
   `.trim();
 
   return teaser;
-}
-
-/**
- * Extract files from source string
- * Helper for formatTeaser
- *
- * @param {string} source - Source file string (may be comma-separated)
- * @returns {string} Formatted file list
- */
-function extractFiles(source) {
-  if (!source) {
-    return 'Multiple files';
-  }
-
-  const files = source.split(',').map((f) => f.trim());
-
-  if (files.length === 1) {
-    return files[0];
-  } else if (files.length === 2) {
-    return files.join(', ');
-  } else {
-    return `${files[0]}, ${files[1]} (+${files.length - 2})`;
-  }
 }
 
 /**

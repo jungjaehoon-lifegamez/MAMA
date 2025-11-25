@@ -53,7 +53,9 @@ async function initDB() {
     await dbAdapter.runMigrations(MIGRATIONS_DIR);
 
     // Create checkpoints table (New Feature: Session Continuity)
-    dbAdapter.prepare(`
+    dbAdapter
+      .prepare(
+        `
       CREATE TABLE IF NOT EXISTS checkpoints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp INTEGER NOT NULL,
@@ -62,7 +64,9 @@ async function initDB() {
         next_steps TEXT,
         status TEXT DEFAULT 'active' -- 'active', 'archived'
       )
-    `).run();
+    `
+      )
+      .run();
 
     isInitialized = true;
 
@@ -217,6 +221,7 @@ async function insertDecisionWithEmbedding(decision) {
     info(`[db-manager] Embedding generated: ${embedding ? embedding.length : 'null'} dimensions`);
 
     // SQLite: Synchronous transaction including embedding
+    // eslint-disable-next-line no-unused-vars
     const decisionRowid = adapter.transaction(() => {
       // Prepare INSERT statement
       const stmt = adapter.prepare(`
@@ -227,8 +232,9 @@ async function insertDecisionWithEmbedding(decision) {
           supersedes, superseded_by, refined_from,
           confidence, created_at, updated_at,
           needs_validation, validation_attempts, last_validated_at, usage_count,
-          trust_context, usage_success, usage_failure, time_saved
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          trust_context, usage_success, usage_failure, time_saved,
+          evidence, alternatives, risks
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const insertResult = stmt.run(
@@ -254,7 +260,10 @@ async function insertDecisionWithEmbedding(decision) {
         decision.trust_context || null,
         decision.usage_success || 0,
         decision.usage_failure || 0,
-        decision.time_saved || 0
+        decision.time_saved || 0,
+        decision.evidence || null,
+        decision.alternatives || null,
+        decision.risks || null
       );
 
       const rowid = Number(insertResult.lastInsertRowid);
@@ -350,6 +359,7 @@ async function queryDecisionGraph(topic) {
       const edgesStmt = adapter.prepare(`
         SELECT * FROM decision_edges
         WHERE from_id = ?
+          AND (approved_by_user = 1 OR approved_by_user IS NULL)
       `);
       decision.edges = await edgesStmt.all(decision.id);
 
@@ -396,6 +406,7 @@ async function querySemanticEdges(decisionIds) {
       JOIN decisions d ON e.to_id = d.id
       WHERE e.from_id IN (${placeholders})
         AND e.relationship IN ('refines', 'contradicts')
+        AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
     const outgoingEdges = await outgoingStmt.all(...decisionIds);
@@ -407,6 +418,7 @@ async function querySemanticEdges(decisionIds) {
       JOIN decisions d ON e.from_id = d.id
       WHERE e.to_id IN (${placeholders})
         AND e.relationship IN ('refines', 'contradicts')
+        AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
     const incomingEdges = await incomingStmt.all(...decisionIds);
@@ -546,7 +558,7 @@ async function updateDecisionOutcome(decisionId, outcomeData) {
  * @param {string} name - Statement name (ignored)
  * @returns {Object} Dummy statement object
  */
-function getPreparedStmt(name) {
+function getPreparedStmt(_name) {
   warn('[db-manager] getPreparedStmt() is deprecated. Use adapter.prepare() directly.');
   return {
     run: () => {
