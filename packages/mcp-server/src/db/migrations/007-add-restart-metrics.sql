@@ -1,5 +1,5 @@
 -- Migration 007: Add restart_metrics table for tracking restart success rate and latency
--- Story 4.2: 재시작 성공률/지연 모니터링
+-- Story 4.2: Restart success rate/latency monitoring
 -- Replaces in-memory restart-metrics with persistent SQLite storage
 
 -- Create restart_metrics table
