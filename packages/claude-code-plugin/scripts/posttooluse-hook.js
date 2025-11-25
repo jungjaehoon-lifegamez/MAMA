@@ -38,7 +38,7 @@ const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // Configuration
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
-const MAX_RUNTIME_MS = 500;
+const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
 const AUDIT_LOG_FILE = path.join(PLUGIN_ROOT, '.posttooluse-audit.log');
 
 // Tools that trigger auto-save consideration
@@ -256,7 +256,7 @@ async function checkSimilarDecision(decision) {
     const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 
     const embedding = await generateEmbedding(decision);
-    const results = vectorSearch(embedding, 5, SIMILARITY_THRESHOLD);
+    const results = await vectorSearch(embedding, 5, SIMILARITY_THRESHOLD);
 
     return {
       hasSimilar: results.length > 0,

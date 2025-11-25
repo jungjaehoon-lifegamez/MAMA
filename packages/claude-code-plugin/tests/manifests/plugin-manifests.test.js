@@ -99,19 +99,16 @@ describe('M3.3: Plugin Manifests', () => {
 
       // Verify hooks.json structure
       const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
-      const expectedHooks = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'];
+      // Only UserPromptSubmit is active (PreToolUse/PostToolUse disabled for efficiency)
+      const expectedHooks = ['UserPromptSubmit'];
 
       expectedHooks.forEach((hookType) => {
         expect(hooksConfig.hooks[hookType]).toBeDefined();
         expect(Array.isArray(hooksConfig.hooks[hookType])).toBe(true);
       });
 
-      // Verify hook scripts exist and are executable
-      const hookScripts = [
-        'scripts/userpromptsubmit-hook.js',
-        'scripts/pretooluse-hook.js',
-        'scripts/posttooluse-hook.js',
-      ];
+      // Verify hook scripts exist and are executable (scripts still exist even if not registered)
+      const hookScripts = ['scripts/userpromptsubmit-hook.js'];
 
       hookScripts.forEach((script) => {
         const scriptPath = path.join(PLUGIN_ROOT, script);
@@ -170,26 +167,23 @@ describe('M3.3: Plugin Manifests', () => {
       expect(hook.hooks[0].command).toContain('userpromptsubmit-hook.js');
     });
 
-    it('should register PreToolUse hook correctly', () => {
+    it('should have PreToolUse/PostToolUse hooks disabled (efficiency decision)', () => {
       const hooksJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
       const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
 
-      const preToolHooks = hooksConfig.hooks.PreToolUse;
-      expect(preToolHooks).toBeDefined();
-
-      const hook = preToolHooks[0];
-      expect(hook.hooks[0].command).toContain('pretooluse-hook.js');
+      // PreToolUse and PostToolUse are intentionally disabled for efficiency
+      // Only UserPromptSubmit provides value with acceptable latency
+      expect(hooksConfig.hooks.PreToolUse).toBeUndefined();
+      expect(hooksConfig.hooks.PostToolUse).toBeUndefined();
     });
 
-    it('should register PostToolUse hook correctly', () => {
-      const hooksJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
-      const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+    it('should still have hook scripts available (for future re-enablement)', () => {
+      // Hook scripts exist but are not registered
+      const preToolScript = path.join(PLUGIN_ROOT, 'scripts', 'pretooluse-hook.js');
+      const postToolScript = path.join(PLUGIN_ROOT, 'scripts', 'posttooluse-hook.js');
 
-      const postToolHooks = hooksConfig.hooks.PostToolUse;
-      expect(postToolHooks).toBeDefined();
-
-      const hook = postToolHooks[0];
-      expect(hook.hooks[0].command).toContain('posttooluse-hook.js');
+      expect(fs.existsSync(preToolScript)).toBe(true);
+      expect(fs.existsSync(postToolScript)).toBe(true);
     });
   });
 
@@ -361,7 +355,7 @@ describe('M3.3: Plugin Manifests', () => {
       expect(output).toContain('mama-configure');
     });
 
-    it('should verify all hook scripts exist', () => {
+    it('should verify hook scripts exist', () => {
       const output = execSync(`node ${VALIDATION_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
@@ -370,8 +364,7 @@ describe('M3.3: Plugin Manifests', () => {
       // Updated validation script checks hook scripts exist
       expect(output).toMatch(/Hook script|hook/i);
       expect(output).toContain('userpromptsubmit-hook.js');
-      expect(output).toContain('pretooluse-hook.js');
-      expect(output).toContain('posttooluse-hook.js');
+      // Note: pretooluse and posttooluse scripts exist but are not registered
     });
 
     it('should show summary with pass count', () => {

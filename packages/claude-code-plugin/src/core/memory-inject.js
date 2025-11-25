@@ -155,7 +155,7 @@ async function performVectorSearch(userMessage, _topic) {
     // Task 4.2: Search vss_memories with top k=5, threshold=0.6
     // NOTE: Threshold lowered from 0.7 to 0.6 to handle embedding format mismatch
     // (user queries are natural language, stored embeddings are enriched structured text)
-    const vectorResults = vectorSearch(queryEmbedding, 5, 0.6);
+    const vectorResults = await vectorSearch(queryEmbedding, 5, 0.6);
 
     // Task 4.3: Retrieve corresponding decisions via rowid
     // (Already done by vectorSearch function)

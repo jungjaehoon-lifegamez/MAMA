@@ -33,7 +33,7 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // Configuration
-const MAX_RUNTIME_MS = 500; // p95 target: <500ms (increased to 2000ms on first-run for model loading)
+const MAX_RUNTIME_MS = 1500; // p95 target: <1500ms (balanced for embedding model loading)
 // Note: SIMILARITY_THRESHOLD (0.75) is used in memory-inject.js
 
 /**

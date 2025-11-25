@@ -37,7 +37,7 @@ const { formatContext } = require(path.join(CORE_PATH, 'decision-formatter'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // Configuration
-const MAX_RUNTIME_MS = 500; // Same as M2.1
+const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
 const SIMILARITY_THRESHOLD = 0.7; // AC: Lower than M2.1 (70% vs 75%)
 const TOKEN_BUDGET = 300; // Shorter than M2.1 for file operations
 const RATE_LIMIT_MS = 1000; // AC: Rate limiting (min 1s between injections)
@@ -409,7 +409,7 @@ async function injectPreToolContext(query, filePath) {
   const queryEmbedding = await generateEmbedding(query);
 
   // 2. Vector search with lower threshold (70% vs 75%)
-  let results = vectorSearch(queryEmbedding, 10, SIMILARITY_THRESHOLD);
+  let results = await vectorSearch(queryEmbedding, 10, SIMILARITY_THRESHOLD);
 
   // 3. AC: Weight recency higher for file operations
   // Apply Gaussian decay: score = similarity * exp(-age_days / 30)
