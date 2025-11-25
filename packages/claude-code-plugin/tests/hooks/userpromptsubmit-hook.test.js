@@ -154,10 +154,10 @@ describe('Story M2.1: UserPromptSubmit Hook', () => {
       const scriptPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
       const content = fs.readFileSync(scriptPath, 'utf8');
 
-      // Check timeout implementation with Promise.race
+      // Check timeout implementation with Promise.race (graceful timeout via resolve, not reject)
       expect(content).toContain('Promise.race');
       expect(content).toContain('setTimeout');
-      expect(content).toContain('Hook timeout');
+      expect(content).toContain('timedOut');
     });
   });
 

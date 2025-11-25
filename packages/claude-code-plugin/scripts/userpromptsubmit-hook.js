@@ -267,26 +267,31 @@ That's all okay. Just write it down.
       // Lazy load memory-inject (only on Tier 1)
       const { injectDecisionContext } = require(path.join(CORE_PATH, 'memory-inject'));
 
-      // AC: Hook runtime stays <500ms p95 on Tier 1
-      context = await Promise.race([
-        injectDecisionContext(userPrompt),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Hook timeout')), MAX_RUNTIME_MS)
-        ),
+      // Create a timeout promise that resolves to null (not rejects)
+      // This prevents unhandled rejection when the main promise continues after timeout
+      const timeoutPromise = new Promise((resolve) =>
+        setTimeout(() => resolve({ timedOut: true }), MAX_RUNTIME_MS)
+      );
+
+      const result = await Promise.race([
+        injectDecisionContext(userPrompt).then((ctx) => ({ context: ctx, timedOut: false })),
+        timeoutPromise,
       ]);
 
-      // Count results (rough estimate from context length)
-      if (context) {
-        // Extract number from "Top N relevant decisions" pattern
-        const match = context.match(/Top (\d+) relevant/);
-        resultCount = match ? parseInt(match[1], 10) : 1;
+      if (result.timedOut) {
+        warn(`[Hook] Injection exceeded ${MAX_RUNTIME_MS}ms, skipping`);
+        context = null;
+      } else {
+        context = result.context;
+        // Count results (rough estimate from context length)
+        if (context) {
+          // Extract number from "Top N relevant decisions" pattern
+          const match = context.match(/Top (\d+) relevant/);
+          resultCount = match ? parseInt(match[1], 10) : 1;
+        }
       }
     } catch (error) {
-      if (error.message === 'Hook timeout') {
-        warn(`[Hook] Injection exceeded ${MAX_RUNTIME_MS}ms, skipping`);
-      } else {
-        logError(`[Hook] Injection failed: ${error.message}`);
-      }
+      logError(`[Hook] Injection failed: ${error.message}`);
       // Graceful degradation - continue without context
       context = null;
     }

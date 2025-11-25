@@ -265,9 +265,9 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       expect(skillContent).toMatch(/75%|0\.75/);
       expect(userPromptContent).toMatch(/0\.75|75/);
 
-      // Verify timeout consistency
-      expect(skillContent).toContain('500ms');
-      expect(userPromptContent).toMatch(/500/);
+      // Verify timeout consistency (1800ms)
+      expect(skillContent).toContain('1800ms');
+      expect(userPromptContent).toMatch(/1800/);
     });
 
     it('should reference related stories in SKILL.md', () => {
