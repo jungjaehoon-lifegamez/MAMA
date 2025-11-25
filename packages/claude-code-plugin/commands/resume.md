@@ -20,6 +20,8 @@ You are helping the user resume work from a previously saved checkpoint.
    mcp__plugin_mama_mama__load_checkpoint();
    ```
 
+   (This tool name remains the same in v1.2)
+
 2. If checkpoint exists, **display the checkpoint** in this format:
 
    ```
@@ -49,7 +51,7 @@ You are helping the user resume work from a previously saved checkpoint.
    There's no saved session to resume.
 
    Save a checkpoint at the end of your session with:
-   `/mama-checkpoint`
+   `/mama:checkpoint`
    ```
 
 **Note:** Ignore `$ARGUMENTS` - always load the most recent checkpoint.
@@ -57,7 +59,7 @@ You are helping the user resume work from a previously saved checkpoint.
 ## Example Usage
 
 ```
-/mama-resume
+/mama:resume
 ```
 
 That's it! No arguments needed. Claude will:
@@ -69,7 +71,7 @@ That's it! No arguments needed. Claude will:
 
 ## Important Notes
 
-- **Zero configuration**: Just run `/mama-resume` with no arguments
+- **Zero configuration**: Just run `/mama:resume` with no arguments
 - **Automatic retrieval**: Always gets the most recent checkpoint
 - **Session continuity**: Provides full context from previous session
 - **Ready to work**: All information you need to continue

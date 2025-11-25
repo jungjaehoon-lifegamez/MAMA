@@ -55,7 +55,8 @@ It doesn’t have to be perfect—state what’s missing.
 ### Step 4: Call MCP Tool
 
 ```javascript
-mcp__plugin_mama_mama__save_checkpoint({
+mcp__plugin_mama_mama__save({
+  type: 'checkpoint',
   summary: '...', // Use the Goal/Evidence/Unfinished format above
   open_files: ['file1.js', 'file2.md'],
   next_steps: 'DoD + quick checks (e.g., npm test ..., curl ...)',
@@ -105,7 +106,7 @@ mcp__plugin_mama_mama__save_checkpoint({
 ## Example Usage
 
 ```
-/mama-checkpoint
+/mama:checkpoint
 ```
 
 That's it! No arguments needed. Claude will:
@@ -117,7 +118,7 @@ That's it! No arguments needed. Claude will:
 
 ## Important Notes
 
-- **Zero configuration**: Just run `/mama-checkpoint` with no arguments
+- **Zero configuration**: Just run `/mama:checkpoint` with no arguments
 - **Smart analysis**: Claude automatically extracts relevant context
 - **File tracking**: Captures all Read/Edit/Write operations
 - **Next steps**: Inferred from incomplete todos or mentioned tasks

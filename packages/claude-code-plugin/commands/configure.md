@@ -1,7 +1,7 @@
 ---
 description: View or modify MAMA configuration (database, embedding model, tier status)
 allowed-tools: Read
-argument-hint: "[--show] [--model=<name>] [--db-path=<path>]"
+argument-hint: '[--show] [--model=<name>] [--db-path=<path>]'
 ---
 
 # Configure MAMA Settings
@@ -42,16 +42,16 @@ You are helping the user view or modify MAMA configuration.
 ## Example Usage
 
 ```
-/mama-configure
-/mama-configure --show
-/mama-configure --model=Xenova/multilingual-e5-base
-/mama-configure --db-path=~/custom/mama.db
-/mama-configure --tier-check
+/mama:configure
+/mama:configure --show
+/mama:configure --model=Xenova/multilingual-e5-base
+/mama:configure --db-path=~/custom/mama.db
+/mama:configure --tier-check
 ```
 
 ## Response Format - Show Configuration
 
-```markdown
+````markdown
 # ⚙️ MAMA Configuration
 
 ## System Status
@@ -65,6 +65,7 @@ You are helping the user view or modify MAMA configuration.
 ---
 
 ## Tier 1 - Full Features ✅
+
 - ✅ Vector search (semantic similarity)
 - ✅ Graph search (decision evolution)
 - ✅ Recency weighting
@@ -72,6 +73,7 @@ You are helping the user view or modify MAMA configuration.
 - ✅ Auto-context injection
 
 **Performance:**
+
 - Embedding latency: ~3ms
 - Search latency: ~50ms
 - Hook latency: ~100ms
@@ -84,11 +86,12 @@ You are helping the user view or modify MAMA configuration.
 **Current:** {current_model}
 
 **Alternatives:**
+
 - `Xenova/multilingual-e5-small` (384-dim, 120MB, Korean-English, recommended)
 - `Xenova/multilingual-e5-base` (768-dim, 420MB, better accuracy, slower)
 - `Xenova/all-MiniLM-L6-v2` (384-dim, 80MB, English only, fastest)
 
-**Change model:** `/mama-configure --model=<name>`
+**Change model:** `/mama:configure --model=<name>`
 
 ---
 
@@ -105,7 +108,9 @@ You are helping the user view or modify MAMA configuration.
   "tier_detected_at": "{timestamp}"
 }
 ```
-```
+````
+
+````
 
 ## Response Format - Tier 2 Degraded Mode
 
@@ -145,9 +150,10 @@ xcode-select --install
 # Rebuild native module
 cd {plugin_path}
 npm rebuild better-sqlite3
-```
+````
 
 ### Linux
+
 ```bash
 # Install build tools
 sudo apt install build-essential python3
@@ -158,6 +164,7 @@ npm rebuild better-sqlite3
 ```
 
 ### Windows
+
 ```bash
 # Install build tools
 npm install --global windows-build-tools
@@ -167,7 +174,8 @@ cd {plugin_path}
 npm rebuild better-sqlite3
 ```
 
-After fixing, run: `/mama-configure --tier-check`
+After fixing, run: `/mama:configure --tier-check`
+
 ```
 
 ## Error Handling
@@ -175,14 +183,17 @@ After fixing, run: `/mama-configure --tier-check`
 If configuration file doesn't exist:
 
 ```
+
 ⚠️ Configuration not initialized
 
-Run: `/mama-configure --tier-check`
+Run: `/mama:configure --tier-check`
 
 This will:
+
 1. Detect your system capabilities
 2. Create ~/.mama/config.json
 3. Set appropriate tier (1 or 2)
+
 ```
 
 ## Important Notes
@@ -192,3 +203,4 @@ This will:
 - **DB path change**: Does NOT migrate data (manual migration required)
 - **Config location**: `~/.mama/config.json` (user-specific)
 - **Database location**: Default `~/.claude/mama-memory.db` (shared with Claude Desktop)
+```

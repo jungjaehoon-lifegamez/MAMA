@@ -17,13 +17,11 @@
     "semantic-search"
   ],
   "commands": [
-    "./commands/mama-save.md",
-    "./commands/mama-recall.md",
-    "./commands/mama-suggest.md",
-    "./commands/mama-list.md",
-    "./commands/mama-configure.md",
-    "./commands/mama-checkpoint.md",
-    "./commands/mama-resume.md"
+    "./commands/decision.md",
+    "./commands/search.md",
+    "./commands/checkpoint.md",
+    "./commands/resume.md",
+    "./commands/configure.md"
   ],
   "skills": ["./skills/mama-context"],
   "mcpServers": ["./.mcp.json"]
