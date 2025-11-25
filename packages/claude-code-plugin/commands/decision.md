@@ -23,7 +23,7 @@ You are helping the user save a decision to MAMA (Memory-Augmented MCP Assistant
    - `limitation` (optional): Known limitations of this decision
 
 2. Use the MCP tool to save the decision:
-   - Call `mcp__plugin_mama_mama__save_decision` with the parsed parameters
+   - Call `mcp__plugin_mama_mama__save` with `type='decision'` and the parsed parameters
    - The tool will return a decision_id
 
 3. Format the response as markdown:
@@ -34,17 +34,14 @@ You are helping the user save a decision to MAMA (Memory-Augmented MCP Assistant
    **Decision ID:** `{decision_id}`
    **Topic:** `{topic}`
 
-   You can recall this decision later with:
-   `/mama-recall {topic}`
-
-   Or search for related decisions:
-   `/mama-suggest {topic}`
+   Search for this decision later:
+   `/mama:search {topic}`
    ```
 
 ## Example Usage
 
 ```
-/mama-save auth_strategy "Use JWT with refresh tokens" "Provides better security than sessions" --confidence=0.9 --outcome=success
+/mama:decision auth_strategy "Use JWT with refresh tokens" "Provides better security than sessions" --confidence=0.9 --outcome=success
 ```
 
 ## Error Handling
@@ -52,7 +49,7 @@ You are helping the user save a decision to MAMA (Memory-Augmented MCP Assistant
 If required fields are missing, show this help:
 
 ```
-Usage: /mama-save <topic> <decision> <reasoning> [options]
+Usage: /mama:decision <topic> <decision> <reasoning> [options]
 
 Required:
   topic       Decision topic (e.g., 'auth_strategy')
@@ -62,13 +59,10 @@ Required:
 Optional:
   --confidence=N    Confidence 0.0-1.0 (default: 0.5)
   --outcome=X       pending|success|failure|partial|superseded (default: pending)
-  --type=X          user_decision|assistant_insight (default: user_decision)
-  --failure-reason  Why decision failed (for outcome=failure)
-  --limitation      Known limitations
 
 Examples:
-  /mama-save auth "Use JWT" "Better security" --confidence=0.9
-  /mama-save database "Use PostgreSQL" "Better for our use case" --outcome=success
+  /mama:decision auth "Use JWT" "Better security" --confidence=0.9
+  /mama:decision database "Use PostgreSQL" "Better for our use case" --outcome=success
 ```
 
 ## Important Notes
