@@ -1,78 +1,78 @@
-# 메모리 시스템 자동 추출 구현 가이드
+# Memory System Auto-Extraction Implementation Guide
 
-## 핵심 통찰
+## Core Insight
 
-메모리 시스템에서 **자동 추출**이 제일 어렵고 중요한 부분입니다.
+**Auto-extraction** is the most challenging and important part of a memory system.
 
 ```
-임베딩 모델: 텍스트 → 벡터 (검색용)
-추출 모델: 긴 대화 → 핵심 정보 (이해용)
+Embedding model: Text → Vector (for search)
+Extraction model: Long conversation → Key information (for understanding)
 ```
 
-- **임베딩 모델이 좋아야** → 검색이 정확
-- **추출 모델이 좋아야** → 저장할 게 의미 있음
+- **Good embedding model** → Accurate search
+- **Good extraction model** → Meaningful data to store
 
 ---
 
-## Anthropic의 방식 (추측)
+## Anthropic's Approach (Speculation)
 
-Claude의 메모리 시스템이 작동하는 방식:
-
-```
-[대화 종료]
-     ↓
-[백그라운드 LLM 호출]
-     ↓
-Prompt: "이 대화에서 사용자에 대해 기억할 만한 것들을 추출해줘:
-- 직업/프로젝트
-- 관심사/취향
-- 진행 중인 작업
-- 중요한 결정
-- Context가 필요한 정보"
-     ↓
-[구조화된 데이터로 반환]
-     ↓
-[기존 메모리와 병합/업데이트]
-```
-
-**핵심:** LLM이 직접 추출합니다.
-별도 특화 모델이 아니라 **Claude 자신이 자신의 대화를 분석**
-
-### 속도 분해
+How Claude's memory system likely works:
 
 ```
-1. 메모리 검색: 10-50ms (Vector DB)
-2. LLM 추론: 500-2000ms (모델 처리)
-3. 응답 생성: streaming으로 즉시 출력
-
-총 시간: 대부분 LLM 추론
-메모리 검색은 무시할 수준
+[End of conversation]
+     ↓
+[Background LLM call]
+     ↓
+Prompt: "Extract memorable information about the user from this conversation:
+- Occupation/Projects
+- Interests/Preferences
+- Ongoing work
+- Important decisions
+- Information requiring context"
+     ↓
+[Return structured data]
+     ↓
+[Merge/Update with existing memory]
 ```
 
-**Anthropic의 이점:**
+**Key point:** LLM performs the extraction directly.
+Not a specialized model—**Claude analyzes its own conversations**
 
-- Embedding 서버가 메모리에 상주
-- 최적화된 vector DB (아마 맞춤 제작)
-- 인프라 규모로 해결
+### Speed Breakdown
+
+```
+1. Memory search: 10-50ms (Vector DB)
+2. LLM inference: 500-2000ms (model processing)
+3. Response generation: immediate via streaming
+
+Total time: mostly LLM inference
+Memory search is negligible
+```
+
+**Anthropic's advantages:**
+
+- Embedding server resident in memory
+- Optimized vector DB (likely custom-built)
+- Solved through infrastructure scale
 
 ---
 
-## 개인이 구현 가능한 4가지 방법
+## 4 Methods Individuals Can Implement
 
-### 방법 1: LLM 기반 완전 자동 추출
+### Method 1: Full LLM-Based Auto-Extraction
 
-**가장 간단하지만 비용 발생**
+**Simplest but incurs cost**
 
 ```typescript
-// MAMA에 추가 가능
+// Can be added to MAMA
 async function autoExtractFromChat(chatHistory: Message[]) {
   const prompt = `
-다음 대화에서 향후 협업에 도움될 정보를 추출해줘.
+Extract information from the following conversation that would be useful for future collaboration.
 
-대화:
+Conversation:
 ${chatHistory.map((m) => `${m.role}: ${m.content}`).join('\n')}
 
-다음 형식으로 JSON 반환:
+Return in the following JSON format:
 {
   "decisions": [
     {
@@ -94,60 +94,60 @@ ${chatHistory.map((m) => `${m.role}: ${m.content}`).join('\n')}
   return JSON.parse(result);
 }
 
-// 세션 종료 시 자동 호출
+// Auto-call at session end
 await autoExtractFromChat(currentSession);
-// → MAMA에 자동 저장
+// → Auto-save to MAMA
 ```
 
-**장점:**
+**Pros:**
 
-- 구현 간단
-- Claude API로 가능
-- 품질 높음
+- Simple implementation
+- Works with Claude API
+- High quality
 
-**단점:**
+**Cons:**
 
-- API 비용 (대화당 ~$0.01-0.05)
-- 속도 (2-5초)
+- API cost (~$0.01-0.05 per conversation)
+- Speed (2-5 seconds)
 
 ---
 
-### 방법 2: Semi-automatic (가장 현실적)
+### Method 2: Semi-automatic (Most Realistic)
 
-**사용자가 중요한 순간에 표시 - ChatGPT "memory" 방식**
+**User marks important moments - ChatGPT "memory" style**
 
 ```typescript
-// 자연어 저장 명령
-User: "기억해줘: SpineLift MCP는 MAMA 엔진을 bone mapping에 적용"
+// Natural language save command
+User: "Remember: SpineLift MCP applies MAMA engine to bone mapping"
 
 Claude:
-"저장할까요?
+"Save this?
 - Topic: spinelift_mcp
-- Decision: MAMA 엔진을 bone mapping 도메인에 적용
-- Reasoning: CoT few-shot + semantic search 패턴 재사용
+- Decision: Apply MAMA engine to bone mapping domain
+- Reasoning: Reuse CoT few-shot + semantic search pattern
 
-[확인/수정]"
+[Confirm/Edit]"
 ```
 
-**구현 예시:**
+**Implementation example:**
 
 ```typescript
 // mama-nlp-save.ts
 async function naturalLanguageSave(userMessage: string) {
-  // "기억해줘:", "저장해줘:", "remember:" 감지
-  const savePattern = /(기억해줘|저장해줘|remember)[:：]\s*(.+)/i;
+  // Detect "remember:", "save:", etc.
+  const savePattern = /(remember|save|store)[:：]\s*(.+)/i;
   const match = userMessage.match(savePattern);
 
   if (!match) return null;
 
   const content = match[2];
 
-  // LLM으로 구조화
+  // Structure with LLM
   const structured = await callLLM(`
-다음 내용을 decision 형식으로 구조화해줘:
+Structure the following content into decision format:
 "${content}"
 
-JSON 반환:
+Return JSON:
 {
   "topic": "...",
   "decision": "...",
@@ -156,7 +156,7 @@ JSON 반환:
 }
 `);
 
-  // 사용자 확인
+  // User confirmation
   return {
     ...structured,
     needsConfirmation: true,
@@ -164,32 +164,32 @@ JSON 반환:
 }
 ```
 
-**장점:**
+**Pros:**
 
-- 사용자가 중요도 판단
-- 품질 보장
-- 비용 낮음 (선택적 호출)
+- User determines importance
+- Quality guaranteed
+- Low cost (selective calls)
 
-**단점:**
+**Cons:**
 
-- 수동 개입 필요
-- 놓칠 수 있음
+- Manual intervention required
+- Can miss things
 
 ---
 
-### 방법 3: 점진적 자동화 (⭐ 추천)
+### Method 3: Progressive Automation (⭐ Recommended)
 
-**패턴 감지 + 선택적 LLM 추출**
+**Pattern detection + Selective LLM extraction**
 
 ```typescript
-// 1단계: 패턴 감지 (규칙 기반 - 무료)
+// Step 1: Pattern detection (rule-based - free)
 function detectDecisionPatterns(messages: Message[]) {
   const patterns = {
-    decision: /decided to|결정했다|하기로 했다|선택했다/i,
-    change: /changed from.*to|바꿨다|변경했다/i,
-    failure: /failed because|실패했다.*왜냐하면|망했다/i,
-    insight: /learned that|배웠다|알게 됐다|깨달았다/i,
-    comparison: /better than|worse than|더 좋다|안 좋다/i,
+    decision: /decided to|made a decision|chose to|selected/i,
+    change: /changed from.*to|switched|modified/i,
+    failure: /failed because|didn't work|broke/i,
+    insight: /learned that|realized|discovered/i,
+    comparison: /better than|worse than|preferred over/i,
   };
 
   const candidates = [];
@@ -209,46 +209,46 @@ function detectDecisionPatterns(messages: Message[]) {
   return candidates;
 }
 
-// 2단계: LLM 추출 (감지된 것만 - 비용 효율적)
+// Step 2: LLM extraction (only for detected - cost efficient)
 const candidates = detectDecisionPatterns(chatHistory);
 
 for (const candidate of candidates) {
   const extraction = await extractDecision(candidate);
 
   if (extraction.confidence > 0.8) {
-    // 자동 저장
+    // Auto-save
     await mama.save(extraction);
   } else {
-    // 사용자 확인 요청
+    // Request user confirmation
     suggestForReview(extraction);
   }
 }
 ```
 
-**전체 구현:**
+**Full implementation:**
 
 ```typescript
 // mama-auto-extract.ts
 
 export class AutoExtractor {
   private patterns = {
-    decision: /decided|결정|선택했다/i,
-    failure: /failed|실패|망했다/i,
-    insight: /learned|배웠다|깨달았다/i,
-    change: /changed|바꿨다|변경했다/i,
+    decision: /decided|chose|selected/i,
+    failure: /failed|broke|didn't work/i,
+    insight: /learned|realized|discovered/i,
+    change: /changed|switched|modified/i,
   };
 
   async analyzeSession(messages: Message[]) {
-    // 1. 패턴 기반 후보 찾기
+    // 1. Find candidates via pattern matching
     const candidates = this.findCandidates(messages);
 
-    // 2. LLM으로 구조화
+    // 2. Structure with LLM
     const extractions = await Promise.all(candidates.map((c) => this.extractStructured(c)));
 
-    // 3. 중복 제거
+    // 3. Remove duplicates
     const deduplicated = await this.removeDuplicates(extractions);
 
-    // 4. confidence로 분류
+    // 4. Classify by confidence
     return {
       auto: deduplicated.filter((e) => e.confidence > 0.8),
       review: deduplicated.filter((e) => e.confidence <= 0.8),
@@ -261,10 +261,10 @@ export class AutoExtractor {
 
   private async extractStructured(message: Message) {
     const prompt = `
-이 메시지에서 decision/insight 추출:
+Extract decision/insight from this message:
 "${message.content}"
 
-JSON 반환:
+Return JSON:
 {
   "type": "decision|insight|change|failure",
   "topic": "...",
@@ -273,10 +273,10 @@ JSON 반환:
   "confidence": 0.0-1.0
 }
 
-confidence 기준:
-- 0.9+: 명확한 결정/통찰
-- 0.7-0.9: 중요하지만 확인 필요
-- 0.7 미만: 애매함
+Confidence criteria:
+- 0.9+: Clear decision/insight
+- 0.7-0.9: Important but needs confirmation
+- Below 0.7: Ambiguous
 `;
 
     return await callLLM(prompt);
@@ -286,13 +286,13 @@ confidence 기준:
     const unique = [];
 
     for (const ext of extractions) {
-      // 기존 메모리와 유사도 체크
+      // Check similarity with existing memory
       const similar = await mama.suggest_decision(ext.summary);
 
       if (similar.length === 0 || similar[0].score < 0.9) {
         unique.push(ext);
       } else {
-        // 업데이트 제안
+        // Suggest update
         ext.suggestedAction = 'update_existing';
         ext.existingId = similar[0].id;
         unique.push(ext);
@@ -304,50 +304,50 @@ confidence 기준:
 }
 ```
 
-**사용 예시:**
+**Usage example:**
 
 ```typescript
-// 세션 종료 시
+// At session end
 const extractor = new AutoExtractor();
 const results = await extractor.analyzeSession(chatHistory);
 
-// 높은 confidence → 자동 저장
-console.log(`자동 저장: ${results.auto.length}개`);
+// High confidence → Auto-save
+console.log(`Auto-saved: ${results.auto.length} items`);
 for (const item of results.auto) {
   await mama.save(item);
 }
 
-// 낮은 confidence → 사용자 확인
-console.log(`확인 필요: ${results.review.length}개`);
+// Low confidence → User confirmation
+console.log(`Needs review: ${results.review.length} items`);
 for (const item of results.review) {
   await requestUserConfirmation(item);
 }
 ```
 
-**장점:**
+**Pros:**
 
-- 비용 효율적 (전체 대화가 아닌 일부만 LLM 처리)
-- 중요한 것 놓치지 않음
-- 품질 유지
-- 점진적으로 패턴 개선 가능
+- Cost efficient (only process subset with LLM, not entire conversation)
+- Doesn't miss important things
+- Maintains quality
+- Can progressively improve patterns
 
-**단점:**
+**Cons:**
 
-- 패턴 유지보수 필요
-- 초기 설정 시간 필요
+- Pattern maintenance required
+- Initial setup time needed
 
 ---
 
-### 방법 4: 중복 감지 시스템
+### Method 4: Duplicate Detection System
 
-**새 저장 전에 유사한 게 있는지 체크**
+**Check for similar entries before saving**
 
 ```typescript
 async function checkDuplicate(newDecision: Decision) {
   const similar = await mama.suggest_decision(newDecision.decision);
 
   if (similar.length > 0 && similar[0].score > 0.9) {
-    // 이미 비슷한 게 있음
+    // Similar entry exists
     return {
       isDuplicate: true,
       existing: similar[0],
@@ -359,27 +359,27 @@ async function checkDuplicate(newDecision: Decision) {
 }
 
 function determineSuggestion(newDec: Decision, existing: Decision) {
-  // 시간 비교
+  // Compare timestamps
   const isNewer = newDec.timestamp > existing.timestamp;
 
-  // 내용 비교
+  // Compare content
   const hasNewInfo = containsNewInformation(newDec, existing);
 
   if (isNewer && hasNewInfo) {
-    return 'supersede'; // 새 결정이 이전 결정을 대체
+    return 'supersede'; // New decision replaces previous
   } else if (hasNewInfo) {
-    return 'update'; // 기존 결정에 정보 추가
+    return 'update'; // Add info to existing decision
   } else {
-    return 'skip'; // 중복이므로 저장 안 함
+    return 'skip'; // Duplicate, don't save
   }
 }
 ```
 
-**통합 워크플로우:**
+**Integrated workflow:**
 
 ```typescript
 async function smartSave(decision: Decision) {
-  // 1. 중복 체크
+  // 1. Check for duplicates
   const dupCheck = await checkDuplicate(decision);
 
   if (dupCheck.isDuplicate) {
@@ -399,115 +399,115 @@ async function smartSave(decision: Decision) {
         break;
 
       case 'skip':
-        console.log('이미 저장된 내용입니다.');
+        console.log('This content is already saved.');
         return;
     }
   } else {
-    // 신규 저장
+    // Save as new
     await mama.save(decision);
   }
 }
 ```
 
-**장점:**
+**Pros:**
 
-- 중복 저장 방지
-- 메모리 효율
-- 자동 supersede 관계 생성
+- Prevents duplicate saves
+- Memory efficient
+- Auto-creates supersede relationships
 
 ---
 
-## 임베딩 vs 추출의 차이
+## Embedding vs Extraction Difference
 
-### 임베딩의 역할: 검색
+### Embedding's Role: Search
 
 ```
-저장:
-"SpineLift MCP는 MAMA 엔진을 재사용한다"
+Save:
+"SpineLift MCP reuses the MAMA engine"
      ↓
-[임베딩 모델] → [0.123, -0.456, 0.789, ...]
+[Embedding model] → [0.123, -0.456, 0.789, ...]
      ↓
-[Vector DB 저장]
+[Store in Vector DB]
 
-검색:
-"bone mapping 어떻게?"
+Search:
+"How does bone mapping work?"
      ↓
-[임베딩 모델] → [0.145, -0.423, 0.801, ...]
+[Embedding model] → [0.145, -0.423, 0.801, ...]
      ↓
-[유사도 계산] → SpineLift 관련 decision 반환
+[Similarity calculation] → Return SpineLift-related decision
 ```
 
-**좋은 임베딩 모델:**
+**Good embedding models:**
 
-- `text-embedding-3-large` (OpenAI) ⭐ MAMA 현재 사용
+- `text-embedding-3-large` (OpenAI) ⭐ Currently used by MAMA
 - `voyage-02` (Voyage AI)
-- `bge-large` (오픈소스)
+- `bge-large` (Open source)
 
-**MAMA 실적:** 84% 정확도 (이미 충분히 좋음)
+**MAMA performance:** 84% accuracy (already quite good)
 
-### 추출의 역할: 의미 파악
+### Extraction's Role: Understanding Meaning
 
 ```
-긴 대화:
-"처음엔 규칙 기반으로 했다가 케이스가 많아지면서 망했고,
-그 다음엔 단순 임베딩으로 했다가 왜 매핑되는지 설명 못해서 망했어요.
-결국 경험과 reasoning을 저장하는 방향으로 갔어요."
+Long conversation:
+"First we tried rule-based and failed as cases multiplied,
+then we tried simple embedding but couldn't explain why mappings occurred.
+Eventually we went with storing experience and reasoning."
      ↓
-[추출 LLM]
+[Extraction LLM]
      ↓
 {
   topic: "spinelift_architecture_evolution",
-  decision: "Reasoning 기반 매핑 시스템 채택",
-  reasoning: "규칙 기반은 확장성 문제, 단순 임베딩은 설명 불가.
-              경험 + reasoning 저장이 해결책",
-  failures: ["규칙 기반 확장성", "임베딩 설명 불가"],
+  decision: "Adopted reasoning-based mapping system",
+  reasoning: "Rule-based had scalability issues, simple embedding couldn't explain.
+              Storing experience + reasoning was the solution",
+  failures: ["Rule-based scalability", "Embedding explanation inability"],
   confidence: 0.95
 }
 ```
 
-**핵심 차이:**
+**Key difference:**
 
-- 임베딩: 이미 있는 텍스트를 벡터로
-- 추출: 대화에서 의미있는 것 찾아서 구조화
-
----
-
-## 비용 계산
-
-### Full LLM 자동 추출
-
-```
-대화당 입력 토큰: ~5,000
-추출 출력 토큰: ~1,000
-비용 (Claude Haiku): $0.03/대화
-
-월 사용량:
-- 100 대화 → $3
-- 1,000 대화 → $30
-```
-
-### 패턴 기반 + 선택적 LLM (추천)
-
-```
-패턴 감지: 무료 (규칙 기반)
-LLM 호출: 30% 대화만 (패턴 감지된 경우)
-비용: $0.01/대화
-
-월 사용량:
-- 100 대화 → $1
-- 1,000 대화 → $10
-```
-
-**개인 사용은 충분히 감당 가능**
+- Embedding: Converts existing text to vectors
+- Extraction: Finds meaningful content from conversation and structures it
 
 ---
 
-## MAMA 로드맵
+## Cost Calculation
 
-### MAMA v1.1 (현재)
+### Full LLM Auto-Extraction
+
+```
+Input tokens per conversation: ~5,000
+Extraction output tokens: ~1,000
+Cost (Claude Haiku): $0.03/conversation
+
+Monthly usage:
+- 100 conversations → $3
+- 1,000 conversations → $30
+```
+
+### Pattern-Based + Selective LLM (Recommended)
+
+```
+Pattern detection: Free (rule-based)
+LLM calls: Only 30% of conversations (when patterns detected)
+Cost: $0.01/conversation
+
+Monthly usage:
+- 100 conversations → $1
+- 1,000 conversations → $10
+```
+
+**Affordable for personal use**
+
+---
+
+## MAMA Roadmap
+
+### MAMA v1.1 (Current)
 
 ```typescript
-// 수동 저장
+// Manual save
 await mama.save({
   type: 'decision',
   topic: '...',
@@ -516,45 +516,45 @@ await mama.save({
 });
 ```
 
-**특징:**
+**Features:**
 
-- 명시적 `mama:save` 호출
-- 사용자가 직접 구조화
-- 100% 정확도, 0 비용
+- Explicit `mama:save` call
+- User structures directly
+- 100% accuracy, zero cost
 
 ---
 
-### MAMA v1.2 (다음 단계)
+### MAMA v1.2 (Next Step)
 
 ```typescript
-// 자연어 저장
-User: "기억해줘: SpineLift MCP는 MAMA 엔진 재사용"
+// Natural language save
+User: "Remember: SpineLift MCP reuses MAMA engine"
 
-Claude: [자동 구조화]
-"저장할까요?
+Claude: [Auto-structure]
+"Save this?
 - Topic: spinelift_mcp
 - Decision: ...
-[확인/수정]"
+[Confirm/Edit]"
 
-// 패턴 기반 제안
-Claude: "이 대화에서 중요한 결정이 있었던 것 같은데, 저장할까요?"
-User: "응, 저장해줘"
+// Pattern-based suggestion
+Claude: "It seems like there was an important decision in this conversation. Save it?"
+User: "Yes, save it"
 ```
 
-**추가 기능:**
+**Additional features:**
 
-- `mama:suggest-extraction` 도구
-- 자연어 저장 명령 인식
-- 대화 중 실시간 제안
+- `mama:suggest-extraction` tool
+- Natural language save command recognition
+- Real-time suggestions during conversation
 
-**구현:**
+**Implementation:**
 
 ```typescript
 // mama-tools-v1.2.ts
 
 {
   name: "mama:suggest_extraction",
-  description: "현재 대화에서 저장 가능한 decision/insight 제안",
+  description: "Suggest savable decisions/insights from current conversation",
   inputSchema: {
     threshold: "confidence threshold (default: 0.7)"
   }
@@ -563,84 +563,84 @@ User: "응, 저장해줘"
 
 ---
 
-### MAMA v2.0 (미래)
+### MAMA v2.0 (Future)
 
 ```typescript
-// 완전 자동 추출
-세션 종료 시:
+// Fully automatic extraction
+At session end:
      ↓
-자동 분석 (백그라운드)
+Auto-analyze (background)
      ↓
-High confidence (0.8+) → 자동 저장
+High confidence (0.8+) → Auto-save
      ↓
-Low confidence (0.5-0.8) → 다음 세션 시작 시 확인 요청
+Low confidence (0.5-0.8) → Request confirmation at next session start
 ```
 
-**워크플로우:**
+**Workflow:**
 
 ```
-[채팅 종료]
+[Chat ends]
      ↓
-[백그라운드 분석]
+[Background analysis]
      ↓
-패턴 감지 → 30% 메시지에서 후보 발견
+Pattern detection → Candidates found in 30% of messages
      ↓
-LLM 추출 → 구조화 + confidence 계산
+LLM extraction → Structure + confidence calculation
      ↓
 High confidence:
-  - 자동 저장
-  - 알림: "3개 decision 저장됨"
+  - Auto-save
+  - Notification: "3 decisions saved"
 
 Low confidence:
-  - 대기열에 추가
-  - 다음 세션: "지난번 대화에서 2개 제안 있어요"
+  - Add to queue
+  - Next session: "2 suggestions from last conversation"
 ```
 
-**추가 기능:**
+**Additional features:**
 
-- 백그라운드 처리
-- 스마트 중복 제거
-- Supersede 관계 자동 추론
-- 주기적 메모리 정리
+- Background processing
+- Smart deduplication
+- Auto-infer supersede relationships
+- Periodic memory cleanup
 
 ---
 
-## 실전 구현 팁
+## Practical Implementation Tips
 
-### 1. 시작은 간단하게
+### 1. Start Simple
 
 ```typescript
-// Step 1: 자연어 저장만 추가
-if (message.includes('기억해줘:')) {
-  const content = extractAfterKeyword(message, '기억해줘:');
+// Step 1: Add natural language save only
+if (message.includes('remember:')) {
+  const content = extractAfterKeyword(message, 'remember:');
   await naturalLanguageSave(content);
 }
 ```
 
-### 2. 점진적으로 패턴 추가
+### 2. Add Patterns Progressively
 
 ```typescript
-// 처음엔 명확한 패턴만
-const patterns = [/결정했다/, /하기로 했다/];
+// Start with clear patterns only
+const patterns = [/decided to/, /chose to/];
 
-// 점점 확장
-patterns.push(/바꿨다/, /실패했다/, /배웠다/);
+// Expand gradually
+patterns.push(/changed/, /failed/, /learned/);
 ```
 
-### 3. Confidence 조정
+### 3. Adjust Confidence
 
 ```typescript
-// 초기엔 보수적으로
-const AUTO_SAVE_THRESHOLD = 0.9; // 매우 확실할 때만
+// Initially conservative
+const AUTO_SAVE_THRESHOLD = 0.9; // Only when very certain
 
-// 사용하면서 조정
-const AUTO_SAVE_THRESHOLD = 0.8; // 정확도 확인 후
+// Adjust with usage
+const AUTO_SAVE_THRESHOLD = 0.8; // After confirming accuracy
 ```
 
-### 4. 비용 모니터링
+### 4. Monitor Costs
 
 ```typescript
-// 추출 비용 추적
+// Track extraction costs
 let extractionCost = 0;
 
 async function trackedExtraction(content: string) {
@@ -651,61 +651,61 @@ async function trackedExtraction(content: string) {
   return await extract(content);
 }
 
-// 주기적 리포트
-console.log(`이번 달 추출 비용: $${extractionCost}`);
+// Periodic report
+console.log(`Extraction cost this month: $${extractionCost}`);
 ```
 
 ---
 
-## 결론
+## Conclusion
 
-**개인이 충분히 구현 가능합니다!**
+**Individuals can absolutely implement this!**
 
-### 추천 순서:
+### Recommended Order:
 
-1. **v1.2 자연어 저장** (1-2일)
-   - "기억해줘:" 키워드 인식
-   - LLM 구조화
-   - 사용자 확인
+1. **v1.2 Natural Language Save** (1-2 days)
+   - "Remember:" keyword recognition
+   - LLM structuring
+   - User confirmation
 
-2. **패턴 감지** (3-5일)
-   - 기본 패턴 정의
-   - 후보 추출
-   - confidence 계산
+2. **Pattern Detection** (3-5 days)
+   - Define basic patterns
+   - Extract candidates
+   - Calculate confidence
 
-3. **중복 방지** (2-3일)
-   - 유사도 체크
-   - 자동 supersede
+3. **Duplicate Prevention** (2-3 days)
+   - Similarity check
+   - Auto supersede
 
-4. **백그라운드 처리** (1주)
-   - 세션 종료 시 분석
-   - 다음 세션 제안
+4. **Background Processing** (1 week)
+   - Analyze at session end
+   - Suggest in next session
 
-### 핵심 원칙:
+### Core Principles:
 
-- **완벽보다 실용성**
-  - Anthropic의 100% 자동을 목표로 하지 말고
-  - 90% 자동 + 10% 확인을 목표로
+- **Practicality over Perfection**
+  - Don't aim for Anthropic's 100% automation
+  - Target 90% auto + 10% confirmation
 
-- **비용 효율성**
-  - 전체 대화가 아닌 패턴 감지된 부분만 LLM 처리
-  - Haiku 모델 사용 ($0.01/대화)
+- **Cost Efficiency**
+  - Only LLM-process pattern-detected portions, not entire conversations
+  - Use Haiku model ($0.01/conversation)
 
-- **점진적 개선**
-  - 처음엔 간단하게
-  - 사용하면서 패턴 추가
-  - 데이터로 개선
+- **Progressive Improvement**
+  - Start simple
+  - Add patterns as you use it
+  - Improve with data
 
 ---
 
-## 다음 단계
+## Next Steps
 
-MAMA v1.2 프로토타입 만들어보시겠어요?
+Want to create a MAMA v1.2 prototype?
 
-필요한 것:
+Required components:
 
-1. 자연어 저장 파서
-2. LLM 구조화 프롬프트
-3. Confidence 기반 워크플로우
+1. Natural language save parser
+2. LLM structuring prompt
+3. Confidence-based workflow
 
-코드 예시 드릴까요?
+Want code examples?
