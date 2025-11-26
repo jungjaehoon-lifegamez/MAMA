@@ -241,8 +241,8 @@ class MAMAServer {
               },
               outcome: {
                 type: 'string',
-                enum: ['success', 'failure', 'partial'],
-                description: 'New outcome status.',
+                description:
+                  "New outcome status (case-insensitive): 'success' or 'SUCCESS', 'failed' or 'FAILED', 'partial' or 'PARTIAL'.",
               },
               reason: {
                 type: 'string',
@@ -363,7 +363,8 @@ class MAMAServer {
       let decisions;
       if (query) {
         // suggest() returns { results: [...] } object or null
-        const suggestResult = await mama.suggest(query, limit);
+        // Note: suggest() takes options object as second parameter
+        const suggestResult = await mama.suggest(query, { limit });
         decisions = suggestResult?.results || [];
       } else {
         decisions = await mama.list(limit);
@@ -406,6 +407,7 @@ class MAMAServer {
 
   /**
    * Handle update (decision outcome)
+   * Story 3.1: Case-insensitive outcome support
    */
   async handleUpdate(args) {
     const { id, outcome, reason } = args;
@@ -414,10 +416,20 @@ class MAMAServer {
       return { success: false, message: '❌ Update requires: id, outcome' };
     }
 
-    await mama.updateOutcome(id, outcome.toUpperCase(), reason);
+    // Story 3.1: Normalize outcome - handle both 'failure' and 'failed' variants
+    let normalizedOutcome = outcome.toUpperCase();
+    if (normalizedOutcome === 'FAILURE') {
+      normalizedOutcome = 'FAILED';
+    }
+
+    await mama.updateOutcome(id, {
+      outcome: normalizedOutcome,
+      failure_reason: reason,
+    });
+
     return {
       success: true,
-      message: `✅ Updated ${id} → ${outcome}`,
+      message: `✅ Updated ${id} → ${normalizedOutcome}`,
     };
   }
 
@@ -440,7 +452,7 @@ class MAMAServer {
         // Pre-warm model in background (don't block MCP startup)
         warmModel().catch((err) => console.error('[MAMA MCP] Model warmup error:', err.message));
       } else {
-        console.error('[MAMA MCP] HTTP embedding server skipped (port in use)');
+        console.error('[MAMA MCP] HTTP embedding server skipped (port unavailable or blocked)');
       }
 
       // Start server with stdio transport

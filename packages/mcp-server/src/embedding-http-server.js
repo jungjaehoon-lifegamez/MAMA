@@ -184,6 +184,12 @@ async function startEmbeddingServer(port = DEFAULT_PORT) {
         );
         // Not a fatal error - another server instance may be running
         resolve(null);
+      } else if (error.code === 'EPERM' || error.code === 'EACCES') {
+        console.error(
+          `[EmbeddingHTTP] Permission denied opening port ${port}, skipping HTTP embedding server (sandboxed environment)`
+        );
+        // Some environments block listening on localhost; keep MCP server running without HTTP embeddings
+        resolve(null);
       } else {
         reject(error);
       }
