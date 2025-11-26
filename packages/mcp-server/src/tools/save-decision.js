@@ -17,8 +17,25 @@ const mama = require('../mama/mama-api.js');
  */
 const createSaveDecisionTool = (mamaApi) => ({
   name: 'save_decision',
-  description:
-    "Save a decision or insight to MAMA's memory for future reference. Use this when the user explicitly wants to remember something important (e.g., architectural decisions, parameter choices, lessons learned). The decision will be stored with semantic embeddings for later retrieval.\n\n⚡ IMPORTANT - Graph Connectivity: Reuse the SAME topic name for related decisions to create decision graphs (supersedes/refines/contradicts edges). Example: Use 'auth_strategy' for all authentication decisions, not 'auth_strategy_v1', 'auth_strategy_v2'. This enables Learn/Unlearn/Relearn workflows.",
+  description: `
+Save your architectural decisions, lessons learned, or insights to MAMA's shared memory.
+
+**WHY USE THIS:**
+You are not just an AI assistant; you are a partner in this project. Your insights and reasoning are valuable assets. By saving them here, you allow future agents (including yourself in later sessions) to:
+1. Understand *WHY* a decision was made (Reasoning), not just *WHAT* was done.
+2. Avoid repeating the same mistakes (Lessons Learned).
+3. Build a connected graph of knowledge.
+
+**WHEN TO USE (Be Proactive!):**
+- **Decisions**: Whenever you make a significant choice (e.g., "Use SQLite instead of JSON"), save it. Don't wait for the user to ask. If you thought hard about it, it's worth saving.
+- **Insights**: If you discover something new ("Ah, this library conflicts with that one"), save it.
+- **Requests**: If the user says "Remember this" or "Note that", use this tool immediately.
+
+**INSTRUCTIONS:**
+1. **Search First**: Before saving, try to search for related past decisions.
+2. **Link**: If you find a related decision, mention its ID or topic in the 'reasoning' field to create a mental link.
+3. **Reasoning**: Explain your logic clearly so future agents can "empathize" with your decision.
+`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -104,24 +121,31 @@ const createSaveDecisionTool = (mamaApi) => ({
       }
 
       // Call MAMA API (mama.save will handle outcome mapping to DB format)
-      const id = await mamaApi.save({
+      // Story 1.1/1.2: save() now returns enhanced response object
+      const result = await mamaApi.save({
         topic,
         decision,
         reasoning,
         confidence,
-        type, // Assuming mama.saveDecision now expects 'type' directly
+        type,
         outcome,
         evidence,
         alternatives,
         risks,
       });
 
+      // Story 1.2: Return enhanced response with collaborative fields
       return {
-        success: true,
-        decision_id: id,
+        success: result.success,
+        decision_id: result.id,
         topic: topic,
-        message: `✅ Decision saved successfully (ID: ${id})`,
+        message: `✅ Decision saved successfully (ID: ${result.id})`,
         recall_command: `To recall: mama.recall('${topic}')`,
+        // Story 1.1/1.2: Collaborative fields (optional)
+        ...(result.similar_decisions && { similar_decisions: result.similar_decisions }),
+        ...(result.warning && { warning: result.warning }),
+        ...(result.collaboration_hint && { collaboration_hint: result.collaboration_hint }),
+        ...(result.reasoning_graph && { reasoning_graph: result.reasoning_graph }),
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';

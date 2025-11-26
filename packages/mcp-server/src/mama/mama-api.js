@@ -8,10 +8,20 @@
  * - MAMA stores (organize books), retrieves (find books), indexes (catalog)
  * - Claude decides what to save and how to use recalled decisions
  *
+ * v1.3 Update: Collaborative Reasoning Graph
+ * - Auto-search on save: Find similar decisions before saving
+ * - Collaborative invitation: Suggest build-on/debate/synthesize
+ * - AX-first: Soft warnings, not hard blocks
+ *
  * @module mama-api
- * @version 1.0
- * @date 2025-11-14
+ * @version 1.3
+ * @date 2025-11-26
  */
+
+// Session-level warning cooldown cache (Story 1.1, 1.2)
+// Prevents spam by tracking warned topics per session
+const warnedTopicsCache = new Map();
+const WARNING_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 const { learnDecision } = require('./decision-tracker');
 // eslint-disable-next-line no-unused-vars
@@ -182,7 +192,147 @@ async function save({
     await stmt.run(...values);
   }
 
-  return decisionId;
+  // ════════════════════════════════════════════════════════════════════════════
+  // Story 1.1: Auto-Search on Save
+  // Story 1.2: Response Enhancement
+  // ════════════════════════════════════════════════════════════════════════════
+  let similar_decisions = [];
+  let warning = null;
+  let collaboration_hint = null;
+  let reasoning_graph = null;
+
+  // Only run auto-search for decisions (not checkpoints) with a topic
+  if (topic) {
+    try {
+      // Story 1.1: Auto-search using suggest()
+      const searchResults = await suggest(topic, {
+        limit: 3,
+        threshold: 0.7,
+        disableRecency: true, // Pure semantic similarity for comparison
+      });
+
+      if (searchResults && searchResults.results) {
+        // Filter out the decision we just saved
+        similar_decisions = searchResults.results
+          .filter((d) => d.id !== decisionId)
+          .map((d) => ({
+            id: d.id,
+            topic: d.topic,
+            decision: d.decision,
+            similarity: d.similarity,
+            created_at: d.created_at,
+          }));
+
+        // Story 1.2: Warning logic (similarity >= 0.85)
+        const highSimilarity = similar_decisions.find((d) => d.similarity >= 0.85);
+        if (highSimilarity && !_isTopicInCooldown(topic)) {
+          warning = `High similarity (${(highSimilarity.similarity * 100).toFixed(0)}%) with existing decision "${highSimilarity.decision.substring(0, 50)}..."`;
+          _markTopicWarned(topic);
+        }
+
+        // Story 1.2: Collaboration hint
+        if (similar_decisions.length > 0) {
+          collaboration_hint = _generateCollaborationHint(similar_decisions);
+        }
+      }
+    } catch (error) {
+      // Story 1.1 AC3: Best-effort - save succeeds even if auto-search fails
+      console.error('Auto-search failed:', error.message);
+    }
+
+    // Story 1.2: Reasoning graph info
+    try {
+      reasoning_graph = await _getReasoningGraphInfo(topic, decisionId);
+    } catch (error) {
+      console.error('Reasoning graph query failed:', error.message);
+    }
+  }
+
+  // Story 1.2: Enhanced response (backward compatible)
+  return {
+    success: true,
+    id: decisionId,
+    ...(similar_decisions.length > 0 && { similar_decisions }),
+    ...(warning && { warning }),
+    ...(collaboration_hint && { collaboration_hint }),
+    ...(reasoning_graph && { reasoning_graph }),
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Story 1.2: Helper functions for Response Enhancement
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Check if a topic is in warning cooldown
+ * @param {string} topic - Topic to check
+ * @returns {boolean} True if topic was warned recently
+ */
+function _isTopicInCooldown(topic) {
+  const lastWarned = warnedTopicsCache.get(topic);
+  if (!lastWarned) {
+    return false;
+  }
+  return Date.now() - lastWarned < WARNING_COOLDOWN_MS;
+}
+
+/**
+ * Mark a topic as warned (start cooldown)
+ * @param {string} topic - Topic to mark
+ */
+function _markTopicWarned(topic) {
+  warnedTopicsCache.set(topic, Date.now());
+}
+
+/**
+ * Generate collaboration hint message
+ * @param {Array} similarDecisions - Similar decisions found
+ * @returns {string} Collaboration hint message
+ */
+function _generateCollaborationHint(similarDecisions) {
+  const count = similarDecisions.length;
+  if (count === 0) {
+    return null;
+  }
+
+  return `Found ${count} related decision(s). Consider:
+- SUPERSEDE: Same topic replaces prior (automatic)
+- BUILD-ON: Add "builds_on: <id>" in reasoning to extend
+- DEBATE: Add "debates: <id>" in reasoning for alternative view
+- SYNTHESIZE: Add "synthesizes: [id1, id2]" in reasoning to unify`;
+}
+
+/**
+ * Get reasoning graph info for a topic
+ * @param {string} topic - Topic to query
+ * @param {string} currentId - Current decision ID
+ * @returns {Object} Reasoning graph info
+ */
+async function _getReasoningGraphInfo(topic, currentId) {
+  try {
+    const { queryDecisionGraph } = require('./memory-store');
+    const chain = await queryDecisionGraph(topic);
+
+    if (!chain || chain.length === 0) {
+      return {
+        topic,
+        depth: 1,
+        latest: currentId,
+      };
+    }
+
+    return {
+      topic,
+      depth: chain.length,
+      latest: chain[0]?.id || currentId,
+    };
+  } catch (error) {
+    return {
+      topic,
+      depth: 1,
+      latest: currentId,
+    };
+  }
 }
 
 /**
@@ -333,7 +483,10 @@ async function updateOutcome(decisionId, { outcome, failure_reason, limitation }
     throw new Error('mama.updateOutcome() requires decisionId (string)');
   }
 
-  if (!outcome || !['SUCCESS', 'FAILED', 'PARTIAL'].includes(outcome)) {
+  // AX Improvement: Be forgiving with case sensitivity
+  const normalizedOutcome = outcome ? outcome.toUpperCase() : null;
+
+  if (!normalizedOutcome || !['SUCCESS', 'FAILED', 'PARTIAL'].includes(normalizedOutcome)) {
     throw new Error('mama.updateOutcome() outcome must be "SUCCESS", "FAILED", or "PARTIAL"');
   }
 
@@ -353,7 +506,7 @@ async function updateOutcome(decisionId, { outcome, failure_reason, limitation }
     `
     );
     const result = stmt.run(
-      outcome,
+      normalizedOutcome,
       failure_reason || null,
       limitation || null,
       Date.now(),
