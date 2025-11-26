@@ -13,12 +13,78 @@
 const mama = require('../mama/mama-api.js');
 
 /**
+ * Valid outcome values (uppercase canonical form)
+ */
+const VALID_OUTCOMES = ['SUCCESS', 'FAILED', 'PARTIAL'];
+
+/**
+ * Suggest the closest valid outcome for typos/case errors
+ * @param {string} input - User's input
+ * @returns {string} Suggested outcome
+ */
+function suggestOutcome(input) {
+  if (!input || typeof input !== 'string') {
+    return 'SUCCESS';
+  }
+
+  const normalized = input.toUpperCase().trim();
+
+  // Exact match after normalization
+  if (VALID_OUTCOMES.includes(normalized)) {
+    return normalized;
+  }
+
+  // Prefix matching (e.g., "suc" -> "SUCCESS", "fail" -> "FAILED")
+  const prefixMatch = VALID_OUTCOMES.find((o) => o.startsWith(normalized.slice(0, 3)));
+  if (prefixMatch) {
+    return prefixMatch;
+  }
+
+  // Common typos/variations
+  const typoMap = {
+    SUCCEED: 'SUCCESS',
+    SUCCEEDED: 'SUCCESS',
+    PASS: 'SUCCESS',
+    PASSED: 'SUCCESS',
+    OK: 'SUCCESS',
+    FAIL: 'FAILED',
+    FAILURE: 'FAILED',
+    ERROR: 'FAILED',
+    PART: 'PARTIAL',
+    PARTIALLY: 'PARTIAL',
+  };
+
+  return typoMap[normalized] || 'SUCCESS';
+}
+
+/**
  * Update outcome tool definition
  */
 const updateOutcomeTool = {
   name: 'update_outcome',
-  description:
-    "Update a decision's outcome based on real-world results. Use this to mark decisions as SUCCESS, FAILED, or PARTIAL after implementation/validation. This enables tracking decision success rates and surfacing failures for improvement.\n\n⚡ OUTCOME TYPES:\n• SUCCESS: Decision worked as expected\n• FAILED: Decision caused problems (provide failure_reason)\n• PARTIAL: Decision partially worked (provide limitation)\n\n⚡ USE CASES:\n• After testing: Mark experimental decisions as SUCCESS/FAILED\n• After deployment: Update outcomes based on production metrics\n• After user feedback: Capture failure reasons from complaints",
+  description: `Update decision outcome after real-world validation.
+
+**WHEN TO USE:**
+• Days/weeks later when issues are discovered → mark FAILED with reason
+• After production deployment confirms success → mark SUCCESS
+• After partial success with known limitations → mark PARTIAL with limitation
+
+**WHY IMPORTANT:**
+Tracks decision evolution - failure outcomes help future LLMs avoid same mistakes.
+TIP: If decision failed, save a new decision with same topic to supersede it.
+
+**OUTCOME TYPES (case-insensitive):**
+• SUCCESS / success: Decision worked as expected
+• FAILED / failed: Decision caused problems (provide failure_reason)
+• PARTIAL / partial: Decision partially worked (provide limitation)
+
+**EVIDENCE TYPES:**
+When providing failure_reason or limitation, consider including:
+• url: Link to documentation, PR, or external resource
+• file_path: Path to relevant code file
+• log_snippet: Relevant log output or error message
+• observation: Direct observation or user feedback
+• reasoning_ref: Reference to another decision's reasoning`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -29,9 +95,8 @@ const updateOutcomeTool = {
       },
       outcome: {
         type: 'string',
-        enum: ['SUCCESS', 'FAILED', 'PARTIAL'],
         description:
-          "Outcome status:\n• 'SUCCESS': Decision worked well in practice\n• 'FAILED': Decision caused problems (explain in failure_reason)\n• 'PARTIAL': Decision partially worked (explain in limitation)",
+          "Outcome status (case-insensitive):\n• 'SUCCESS' / 'success': Decision worked well in practice\n• 'FAILED' / 'failed': Decision caused problems (explain in failure_reason)\n• 'PARTIAL' / 'partial': Decision partially worked (explain in limitation)",
       },
       failure_reason: {
         type: 'string',
@@ -55,23 +120,33 @@ const updateOutcomeTool = {
       if (!decisionId || typeof decisionId !== 'string' || decisionId.trim() === '') {
         return {
           success: false,
-          message: '❌ Validation error: decisionId must be a non-empty string',
+          message:
+            '❌ Validation error: decisionId must be a non-empty string\n' +
+            '   💡 Use search tool to find valid decision IDs.',
         };
       }
 
-      if (!outcome || !['SUCCESS', 'FAILED', 'PARTIAL'].includes(outcome)) {
+      // Story 3.1: Case-insensitive outcome normalization
+      const normalizedOutcome =
+        outcome && typeof outcome === 'string' ? outcome.toUpperCase().trim() : outcome;
+
+      if (!normalizedOutcome || !VALID_OUTCOMES.includes(normalizedOutcome)) {
+        const suggestion = suggestOutcome(outcome);
         return {
           success: false,
-          message: '❌ Validation error: outcome must be "SUCCESS", "FAILED", or "PARTIAL"',
+          message:
+            '❌ Validation error: outcome must be "SUCCESS", "FAILED", or "PARTIAL"\n' +
+            `   💡 Did you mean "${suggestion}"? (case-insensitive, e.g., "success" works too)`,
         };
       }
 
       // Validation: failure_reason required for FAILED
-      if (outcome === 'FAILED' && (!failure_reason || failure_reason.trim() === '')) {
+      if (normalizedOutcome === 'FAILED' && (!failure_reason || failure_reason.trim() === '')) {
         return {
           success: false,
           message:
-            '❌ Validation error: failure_reason is required when outcome="FAILED" (explain what went wrong)',
+            '❌ Validation error: failure_reason is required when outcome="FAILED"\n' +
+            '   💡 Explain what went wrong so future agents can learn from this.',
         };
       }
 
@@ -90,9 +165,9 @@ const updateOutcomeTool = {
         };
       }
 
-      // Call MAMA API
+      // Call MAMA API with normalized outcome
       await mama.updateOutcome(decisionId, {
-        outcome,
+        outcome: normalizedOutcome,
         failure_reason,
         limitation,
       });
@@ -101,8 +176,8 @@ const updateOutcomeTool = {
       return {
         success: true,
         decision_id: decisionId,
-        outcome,
-        message: `✅ Decision outcome updated to ${outcome}${
+        outcome: normalizedOutcome,
+        message: `✅ Decision outcome updated to ${normalizedOutcome}${
           failure_reason
             ? `\n   Reason: ${failure_reason.substring(0, 100)}${failure_reason.length > 100 ? '...' : ''}`
             : ''

@@ -54,16 +54,26 @@ Each decision is a node with:
 - **confidence**: 0.0-1.0
 - **outcome**: pending/success/failure/partial/superseded
 
-### Edges (v1.2.0 Simplification)
+### Edges (v1.3.0)
 
-In v1.2.0, MAMA uses only **supersedes** edges (same topic, automatic):
+MAMA supports explicit edge types for decision relationships:
 
-- **supersedes**: Decision A replaces Decision B (same topic)
+| Edge Type     | Automatic? | Usage                            |
+| ------------- | ---------- | -------------------------------- |
+| `supersedes`  | Yes        | Same topic, newer replaces older |
+| `builds_on`   | No         | Extends prior decision           |
+| `debates`     | No         | Presents counter-argument        |
+| `synthesizes` | No         | Merges multiple decisions        |
 
-**Removed:** refines, contradicts edges
+**How to create edges:** Include patterns in your reasoning field:
 
-- **Why?** LLM can infer these relationships from time-ordered search results
-- **Benefit:** Simpler architecture, fewer constraints, more LLM flexibility
+```
+builds_on: decision_auth_strategy_123_abc
+debates: decision_old_approach_456_def
+synthesizes: [decision_a_111, decision_b_222]
+```
+
+Edges appear in search results with `related_to` and `edge_reason` fields.
 
 ---
 

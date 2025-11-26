@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2025-11-26
+
+### Added
+
+**Collaborative Reasoning Graph** - Decisions now form a connected graph through explicit relationships.
+
+#### Epic 1: Collaborative Save
+
+- **Auto-search on save**: When saving a decision, MAMA automatically searches for similar existing decisions
+- **similar_decisions**: Returns up to 2 related decisions with similarity scores
+- **collaboration_hint**: Suggests how to relate new decisions (build-on, debate, synthesize)
+- **reasoning_graph**: Shows topic depth and latest decision in chain
+
+#### Epic 2: Reasoning Graph Edges
+
+- **New edge types**: `builds_on`, `debates`, `synthesizes` (in addition to existing `supersedes`, `refines`, `contradicts`)
+- **Reasoning field parsing**: Auto-detects edge references in reasoning text
+  - Pattern: `builds_on: decision_xxx`, `debates: decision_yyy`, `synthesizes: [id1, id2]`
+- **Edge-connected search results**: Related decisions appear with `related_to` and `edge_reason` fields
+- **Multi-agent collaboration**: Edge types track decision evolution across multiple LLM sessions. During v1.3 development, multiple LLMs debated protocol design choices, with `debates` and `synthesizes` edges recording the reconciliation process.
+
+#### Epic 3: AX Polish
+
+- **Case-insensitive outcome**: `update` tool accepts `success`, `SUCCESS`, `failed`, `FAILED`, `failure` etc.
+- **Enhanced tool descriptions**: Added COLLABORATION MODES and 5-LAYER REASONING guidance
+
+### Changed
+
+- **Search result ordering**: Primary results followed by their edge-connected decisions (interleaved)
+- **Edge approval default**: Auto-detected edges are approved by default (`approved_by_user=1`)
+
+### Database
+
+- **Migration 010**: Extended `decision_edges` CHECK constraint to include new edge types
+
+---
+
 ## [1.2.4] - 2025-11-25
 
 ### Fixed
