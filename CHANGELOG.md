@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.1] - 2025-11-26
+
+### Changed
+
+**AX-Focused Tool Descriptions** - Enhanced tool descriptions for better LLM guidance.
+
+- **⚡ TRIGGERS**: Added Korean/English trigger phrases to each tool
+  - save: "기억해줘", "remember", "decided", "결정했어"
+  - search: "뭐였더라", "what did we decide", "이전에"
+  - update: "이거 안됐어", "this didn't work", "성공했어"
+  - load_checkpoint: "이어서", "continue", "where were we", "지난번"
+
+- **🔗 Workflow Hints**: Cross-tool connection guidance
+  - save: "Call 'search' first to find related decisions"
+  - load_checkpoint: "Call 'search' to refresh related decisions after loading"
+
+- **💡 TIP**: Best practice hints embedded in descriptions
+  - "High similarity (>0.8) = likely related, consider linking"
+  - "Include 'builds_on: <id>' or 'debates: <id>' to link decisions"
+
+---
+
 ## [1.3.0] - 2025-11-26
 
 ### Added

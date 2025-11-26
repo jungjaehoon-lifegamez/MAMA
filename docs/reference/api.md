@@ -376,4 +376,4 @@ If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
 ---
 
 **Last Updated:** 2025-11-26
-**Version:** 1.3.0
+**Version:** 1.3.1
