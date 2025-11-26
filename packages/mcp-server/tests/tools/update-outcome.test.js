@@ -37,7 +37,8 @@ describe('Story M1.5: Update Outcome Tool', () => {
       const props = updateOutcomeTool.inputSchema.properties;
       expect(props.decisionId).toBeDefined();
       expect(props.outcome).toBeDefined();
-      expect(props.outcome.enum).toEqual(['SUCCESS', 'FAILED', 'PARTIAL']);
+      // Story 3.1: enum removed for case-insensitive support
+      expect(props.outcome.description).toContain('case-insensitive');
       expect(props.failure_reason).toBeDefined();
       expect(props.limitation).toBeDefined();
     });
@@ -79,7 +80,7 @@ describe('Story M1.5: Update Outcome Tool', () => {
       expect(result.message).toContain('outcome');
     });
 
-    it('should reject invalid outcome value', async () => {
+    it('should reject invalid outcome value with "Did you mean" hint', async () => {
       const result = await updateOutcomeTool.handler({
         decisionId: 'decision_test_123',
         outcome: 'INVALID',
@@ -90,6 +91,40 @@ describe('Story M1.5: Update Outcome Tool', () => {
       expect(result.message).toContain('SUCCESS');
       expect(result.message).toContain('FAILED');
       expect(result.message).toContain('PARTIAL');
+      // Story 3.1: "Did you mean...?" hint
+      expect(result.message).toContain('Did you mean');
+    });
+
+    // Story 3.1: Case-insensitive outcome tests
+    it('should accept lowercase outcome (success)', async () => {
+      const result = await updateOutcomeTool.handler({
+        decisionId: 'decision_test_123',
+        outcome: 'success', // lowercase
+      });
+
+      // Will fail because decision doesn't exist, but validation passes
+      // Check that it gets past validation to the "not found" error
+      expect(result.message).not.toContain('outcome must be');
+    });
+
+    it('should accept mixed case outcome (Success)', async () => {
+      const result = await updateOutcomeTool.handler({
+        decisionId: 'decision_test_123',
+        outcome: 'Success', // mixed case
+      });
+
+      expect(result.message).not.toContain('outcome must be');
+    });
+
+    it('should accept lowercase failed with failure_reason', async () => {
+      const result = await updateOutcomeTool.handler({
+        decisionId: 'decision_test_123',
+        outcome: 'failed', // lowercase
+        failure_reason: 'Test failure reason',
+      });
+
+      // Validation passes, fails on DB lookup
+      expect(result.message).not.toContain('outcome must be');
     });
 
     it('should reject FAILED outcome without failure_reason', async () => {
@@ -161,16 +196,17 @@ describe('Story M1.5: Update Outcome Tool', () => {
       expect(updateOutcomeTool.description).toContain('SUCCESS');
       expect(updateOutcomeTool.description).toContain('FAILED');
       expect(updateOutcomeTool.description).toContain('PARTIAL');
-      expect(updateOutcomeTool.description).toContain('real-world results');
+      expect(updateOutcomeTool.description).toContain('real-world validation');
     });
 
-    it('should explain use cases', async () => {
+    it('should explain when to use and evidence types', async () => {
       const { updateOutcomeTool } = await import('../../src/tools/update-outcome.js');
 
-      expect(updateOutcomeTool.description).toContain('USE CASES');
-      expect(updateOutcomeTool.description).toContain('testing');
+      // Story 3.2: Updated description with WHEN TO USE and EVIDENCE TYPES
+      expect(updateOutcomeTool.description).toContain('WHEN TO USE');
       expect(updateOutcomeTool.description).toContain('deployment');
-      expect(updateOutcomeTool.description).toContain('feedback');
+      expect(updateOutcomeTool.description).toContain('EVIDENCE TYPES');
+      expect(updateOutcomeTool.description).toContain('file_path');
     });
   });
 });

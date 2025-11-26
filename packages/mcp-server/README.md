@@ -74,17 +74,27 @@ Any MCP-compatible client can use MAMA with:
 npx -y @jungjaehoon/mama-server
 ```
 
-## Available Tools
+## Available Tools (v1.3)
 
-The MCP server exposes these tools:
+The MCP server exposes 4 core tools:
 
-- `save_decision` - Save decisions with reasoning and confidence
-- `recall_decision` - View full evolution history for a topic
-- `suggest_decision` - Semantic search across all decisions
-- `list_decisions` - Browse recent decisions chronologically
-- `update_outcome` - Update decision outcomes (success/failure/partial)
-- `save_checkpoint` - Save session state for later resumption
-- `load_checkpoint` - Restore previous session context
+| Tool              | Description                                                           |
+| ----------------- | --------------------------------------------------------------------- |
+| `save`            | Save decision (`type='decision'`) or checkpoint (`type='checkpoint'`) |
+| `search`          | Semantic search (with `query`) or list recent items (without `query`) |
+| `update`          | Update decision outcome (case-insensitive: success/failed/partial)    |
+| `load_checkpoint` | Resume previous session                                               |
+
+### Edge Types
+
+Decisions connect through relationships. Include patterns in your reasoning:
+
+| Edge Type     | Pattern                    | Meaning                    |
+| ------------- | -------------------------- | -------------------------- |
+| `supersedes`  | (automatic for same topic) | Newer replaces older       |
+| `builds_on`   | `builds_on: decision_xxx`  | Extends prior work         |
+| `debates`     | `debates: decision_xxx`    | Alternative view           |
+| `synthesizes` | `synthesizes: [id1, id2]`  | Merges multiple approaches |
 
 ## Usage Example
 
@@ -197,4 +207,4 @@ MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While 
 ---
 
 **Author:** SpineLift Team
-**Version:** 1.1.0
+**Version:** 1.3.0

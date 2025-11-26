@@ -246,6 +246,17 @@ async function save({
     } catch (error) {
       console.error('Reasoning graph query failed:', error.message);
     }
+
+    // Story 2.2: Parse reasoning for relationship edges (builds_on, debates, synthesizes)
+    if (reasoning) {
+      try {
+        const { createEdgesFromReasoning } = require('./decision-tracker.js');
+        await createEdgesFromReasoning(decisionId, reasoning);
+      } catch (error) {
+        // Best-effort - save succeeds even if edge creation fails
+        console.error('Edge creation from reasoning failed:', error.message);
+      }
+    }
   }
 
   // Story 1.2: Enhanced response (backward compatible)
@@ -569,91 +580,112 @@ async function expandWithGraph(candidates) {
       console.warn(`Failed to get supersedes chain for ${candidate.topic}: ${error.message}`);
     }
 
-    // 2. Add semantic edges (refines, contradicts)
+    // 2. Add semantic edges (refines, contradicts, builds_on, debates, synthesizes)
     try {
       const edges = await querySemanticEdges([candidate.id]);
 
-      // Add refines edges
-      for (const edge of edges.refines) {
-        if (!graphEnhanced.has(edge.to_id)) {
-          graphEnhanced.set(edge.to_id, {
-            id: edge.to_id,
+      // Helper to add edge to graph
+      const addEdge = (edge, idField, source, rank, simFactor) => {
+        const id = edge[idField];
+        if (!graphEnhanced.has(id)) {
+          graphEnhanced.set(id, {
+            id: id,
             topic: edge.topic,
             decision: edge.decision,
             confidence: edge.confidence,
             created_at: edge.created_at,
-            graph_source: 'refines',
-            graph_rank: 0.7,
-            similarity: candidate.similarity * 0.85,
+            graph_source: source,
+            graph_rank: rank,
+            similarity: candidate.similarity * simFactor,
             related_to: candidate.id,
             edge_reason: edge.reason,
           });
         }
+      };
+
+      // Add refines edges
+      for (const edge of edges.refines) {
+        addEdge(edge, 'to_id', 'refines', 0.7, 0.85);
       }
 
       // Add refined_by edges
       for (const edge of edges.refined_by) {
-        if (!graphEnhanced.has(edge.from_id)) {
-          graphEnhanced.set(edge.from_id, {
-            id: edge.from_id,
-            topic: edge.topic,
-            decision: edge.decision,
-            confidence: edge.confidence,
-            created_at: edge.created_at,
-            graph_source: 'refined_by',
-            graph_rank: 0.7,
-            similarity: candidate.similarity * 0.85,
-            related_to: candidate.id,
-            edge_reason: edge.reason,
-          });
-        }
+        addEdge(edge, 'from_id', 'refined_by', 0.7, 0.85);
       }
 
       // Add contradicts edges (lower rank, but still relevant)
       for (const edge of edges.contradicts) {
-        if (!graphEnhanced.has(edge.to_id)) {
-          graphEnhanced.set(edge.to_id, {
-            id: edge.to_id,
-            topic: edge.topic,
-            decision: edge.decision,
-            confidence: edge.confidence,
-            created_at: edge.created_at,
-            graph_source: 'contradicts',
-            graph_rank: 0.6,
-            similarity: candidate.similarity * 0.8,
-            related_to: candidate.id,
-            edge_reason: edge.reason,
-          });
-        }
+        addEdge(edge, 'to_id', 'contradicts', 0.6, 0.8);
+      }
+
+      // Story 2.1: Add builds_on edges (high relevance - extending prior work)
+      for (const edge of edges.builds_on) {
+        addEdge(edge, 'to_id', 'builds_on', 0.75, 0.9);
+      }
+
+      // Add built_on_by edges (someone built on this decision)
+      for (const edge of edges.built_on_by) {
+        addEdge(edge, 'from_id', 'built_on_by', 0.75, 0.9);
+      }
+
+      // Add debates edges (alternative view)
+      for (const edge of edges.debates) {
+        addEdge(edge, 'to_id', 'debates', 0.65, 0.85);
+      }
+
+      // Add debated_by edges
+      for (const edge of edges.debated_by) {
+        addEdge(edge, 'from_id', 'debated_by', 0.65, 0.85);
+      }
+
+      // Add synthesizes edges (unified approach)
+      for (const edge of edges.synthesizes) {
+        addEdge(edge, 'to_id', 'synthesizes', 0.7, 0.88);
+      }
+
+      // Add synthesized_by edges
+      for (const edge of edges.synthesized_by) {
+        addEdge(edge, 'from_id', 'synthesized_by', 0.7, 0.88);
       }
     } catch (error) {
       console.warn(`Failed to get semantic edges for ${candidate.id}: ${error.message}`);
     }
   }
 
-  // 3. Convert Map to Array and sort by graph_rank + similarity
-  const results = Array.from(graphEnhanced.values());
+  // 3. Convert Map to Array
+  const allResults = Array.from(graphEnhanced.values());
 
-  // 4. Sort: Primary first, then by graph_rank, then by final_score (or similarity)
-  results.sort((a, b) => {
-    // Primary candidates always first
-    if (primaryIds.has(a.id) && !primaryIds.has(b.id)) {
-      return -1;
-    }
-    if (!primaryIds.has(a.id) && primaryIds.has(b.id)) {
-      return 1;
-    }
+  // 4. Sort: Interleave expanded results after their related primary
+  // This ensures edge-connected decisions appear near their source
+  const primaryResults = allResults
+    .filter((r) => primaryIds.has(r.id))
+    .sort((a, b) => {
+      const scoreA = a.final_score || a.similarity || 0;
+      const scoreB = b.final_score || b.similarity || 0;
+      return scoreB - scoreA;
+    });
 
-    // Then by graph_rank
-    if (a.graph_rank !== b.graph_rank) {
-      return b.graph_rank - a.graph_rank;
-    }
+  const expandedResults = allResults.filter((r) => !primaryIds.has(r.id));
 
-    // Finally by final_score (recency-boosted) or similarity (fallback)
-    const scoreA = a.final_score || a.similarity || 0;
-    const scoreB = b.final_score || b.similarity || 0;
-    return scoreB - scoreA;
-  });
+  // Build final results: each primary followed by its related expanded results
+  const results = [];
+  for (const primary of primaryResults) {
+    results.push(primary);
+
+    // Find expanded results related to this primary
+    const relatedExpanded = expandedResults.filter((e) => e.related_to === primary.id);
+
+    // Sort related by graph_rank (higher first)
+    relatedExpanded.sort((a, b) => (b.graph_rank || 0) - (a.graph_rank || 0));
+
+    // Add related expanded results right after their primary
+    results.push(...relatedExpanded);
+  }
+
+  // Add any orphaned expanded results (shouldn't happen, but safety net)
+  const includedIds = new Set(results.map((r) => r.id));
+  const orphaned = expandedResults.filter((e) => !includedIds.has(e.id));
+  results.push(...orphaned);
 
   return results;
 }

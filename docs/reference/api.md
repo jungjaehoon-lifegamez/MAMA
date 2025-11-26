@@ -6,7 +6,7 @@ This document details the Model Context Protocol (MCP) tools provided by the MAM
 
 MAMA (Memory-Augmented MCP Assistant) provides **4 core tools** for decision tracking, semantic search, and session continuity.
 
-**Design Principle (v1.2.0):** LLM can infer decision relationships from time-ordered search results. Fewer tools = more LLM flexibility.
+**Design Principle (v1.3.0):** LLM can infer decision relationships from time-ordered search results. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
 
 - **Transport**: Stdio
 - **Server Name**: `mama-server`
@@ -67,7 +67,7 @@ Save a decision or checkpoint to MAMA's memory.
 | **Decision fields**   |
 | `topic`               | string | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous. |
 | `decision`            | string | For decision   | The decision made                                                           |
-| `reasoning`           | string | For decision   | Why this decision was made                                                  |
+| `reasoning`           | string | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3). |
 | `confidence`          | number | No             | 0.0-1.0, default 0.5                                                        |
 | **Checkpoint fields** |
 | `summary`             | string | For checkpoint | Session state: what was done, what's pending                                |
@@ -183,11 +183,11 @@ Update an existing decision's outcome. Use after trying a decision to track what
 
 #### Input Schema
 
-| Field     | Type   | Required | Description                              |
-| --------- | ------ | -------- | ---------------------------------------- |
-| `id`      | string | Yes      | Decision ID to update                    |
-| `outcome` | string | Yes      | `'success'`, `'failure'`, or `'partial'` |
-| `reason`  | string | No       | Why it succeeded/failed/was partial      |
+| Field     | Type   | Required | Description                                                           |
+| --------- | ------ | -------- | --------------------------------------------------------------------- |
+| `id`      | string | Yes      | Decision ID to update                                                 |
+| `outcome` | string | Yes      | Case-insensitive: `success`, `SUCCESS`, `failed`, `FAILED`, `partial` |
+| `reason`  | string | No       | Why it succeeded/failed/was partial                                   |
 
 #### Example: Mark Success
 
@@ -329,25 +329,51 @@ export MAMA_EMBEDDING_PORT="3847"
 
 ---
 
-## Migration from v1.1
+## Edge Types (v1.3)
 
-If upgrading from v1.1 (11 tools) to v1.2 (4 tools):
+Decisions connect through explicit relationships. Include patterns in the `reasoning` field:
 
-| Old Tool            | New Equivalent                     |
-| ------------------- | ---------------------------------- |
-| `save_decision`     | `save` with `type='decision'`      |
-| `save_checkpoint`   | `save` with `type='checkpoint'`    |
-| `recall_decision`   | `search` with `query=<topic>`      |
-| `suggest_decision`  | `search` with `query=<question>`   |
-| `list_decisions`    | `search` without query             |
-| `update_outcome`    | `update`                           |
-| `load_checkpoint`   | `load_checkpoint` (unchanged)      |
-| `propose_link`      | Removed - LLM infers relationships |
-| `approve_link`      | Removed                            |
-| `reject_link`       | Removed                            |
-| `get_pending_links` | Removed                            |
+| Edge Type     | Pattern in Reasoning                    | Meaning                      |
+| ------------- | --------------------------------------- | ---------------------------- |
+| `supersedes`  | (automatic for same topic)              | Newer version replaces older |
+| `builds_on`   | `builds_on: decision_xxx`               | Extends prior work           |
+| `debates`     | `debates: decision_xxx`                 | Presents alternative view    |
+| `synthesizes` | `synthesizes: [decision_a, decision_b]` | Merges multiple approaches   |
+
+### Example: Decision with Edge
+
+```json
+{
+  "type": "decision",
+  "topic": "auth_v2",
+  "decision": "Add OAuth2 support alongside JWT",
+  "reasoning": "builds_on: decision_auth_strategy_1732530000_abc. Need social login for user growth while keeping API auth."
+}
+```
+
+Edges are auto-detected and appear in search results with `related_to` and `edge_reason` fields.
 
 ---
 
-**Last Updated:** 2025-11-25
-**Version:** 1.2.0
+## Migration from v1.1
+
+If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
+
+| Old Tool            | New Equivalent                           |
+| ------------------- | ---------------------------------------- |
+| `save_decision`     | `save` with `type='decision'`            |
+| `save_checkpoint`   | `save` with `type='checkpoint'`          |
+| `recall_decision`   | `search` with `query=<topic>`            |
+| `suggest_decision`  | `search` with `query=<question>`         |
+| `list_decisions`    | `search` without query                   |
+| `update_outcome`    | `update`                                 |
+| `load_checkpoint`   | `load_checkpoint` (unchanged)            |
+| `propose_link`      | Removed - use edge patterns in reasoning |
+| `approve_link`      | Removed                                  |
+| `reject_link`       | Removed                                  |
+| `get_pending_links` | Removed                                  |
+
+---
+
+**Last Updated:** 2025-11-26
+**Version:** 1.3.0

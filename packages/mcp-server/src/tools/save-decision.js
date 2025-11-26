@@ -17,8 +17,7 @@ const mama = require('../mama/mama-api.js');
  */
 const createSaveDecisionTool = (mamaApi) => ({
   name: 'save_decision',
-  description: `
-Save your architectural decisions, lessons learned, or insights to MAMA's shared memory.
+  description: `Save your architectural decisions, lessons learned, or insights to MAMA's shared memory.
 
 **WHY USE THIS:**
 You are not just an AI assistant; you are a partner in this project. Your insights and reasoning are valuable assets. By saving them here, you allow future agents (including yourself in later sessions) to:
@@ -31,11 +30,24 @@ You are not just an AI assistant; you are a partner in this project. Your insigh
 - **Insights**: If you discover something new ("Ah, this library conflicts with that one"), save it.
 - **Requests**: If the user says "Remember this" or "Note that", use this tool immediately.
 
+**COLLABORATION MODES:**
+When you find similar past decisions (returned in similar_decisions), choose your approach:
+- **build_on**: Extend the existing decision with new insights. Use same topic to create supersedes edge.
+- **debate**: Present a counter-argument with evidence. Explain why the prior decision may be wrong.
+- **synthesize**: Merge multiple decisions into a new unified approach.
+
+**5-LAYER REASONING (CoT Guide):**
+Structure your reasoning with these layers for maximum value:
+1. **Context**: What problem/situation prompted this decision?
+2. **Evidence**: What proves this works? (tests, benchmarks, prior experience)
+3. **Alternatives**: What other options were considered and why rejected?
+4. **Risks**: Known limitations or failure modes
+5. **Rationale**: Final reasoning that ties it all together
+
 **INSTRUCTIONS:**
 1. **Search First**: Before saving, try to search for related past decisions.
 2. **Link**: If you find a related decision, mention its ID or topic in the 'reasoning' field to create a mental link.
-3. **Reasoning**: Explain your logic clearly so future agents can "empathize" with your decision.
-`,
+3. **Reasoning**: Explain your logic clearly so future agents can "empathize" with your decision.`,
   inputSchema: {
     type: 'object',
     properties: {

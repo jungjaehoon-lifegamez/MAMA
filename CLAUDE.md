@@ -115,7 +115,7 @@ MAMA uses a split architecture to enable code reuse across multiple Claude clien
 - `transparency-banner.js` - Tier status display
 - `query-intent.js` - Query interpretation
 
-**MCP Tools (4 core tools, 2025-11-25 refactor):**
+**MCP Tools (4 core tools, v1.3.0):**
 
 The MCP server exposes only 4 tools. Design principle: LLM can infer decision evolution from time-ordered search results. Fewer tools = more LLM flexibility.
 
@@ -123,8 +123,19 @@ The MCP server exposes only 4 tools. Design principle: LLM can infer decision ev
 | ----------------- | --------------------------------------------------------------------- |
 | `save`            | Save decision (`type='decision'`) or checkpoint (`type='checkpoint'`) |
 | `search`          | Semantic search (with `query`) or list recent items (without `query`) |
-| `update`          | Update decision outcome (success/failure/partial)                     |
+| `update`          | Update decision outcome (case-insensitive: success/failed/partial)    |
 | `load_checkpoint` | Resume previous session                                               |
+
+**Edge Types (v1.3):**
+
+Decisions connect through relationships. Auto-detected from reasoning field:
+
+| Edge Type     | Pattern                                 | Usage                        |
+| ------------- | --------------------------------------- | ---------------------------- |
+| `supersedes`  | (automatic for same topic)              | Newer version replaces older |
+| `builds_on`   | `builds_on: decision_xxx`               | Extends prior work           |
+| `debates`     | `debates: decision_xxx`                 | Presents alternative view    |
+| `synthesizes` | `synthesizes: [decision_a, decision_b]` | Merges multiple approaches   |
 
 **Transport:** Stdio-based MCP protocol (no HTTP server)
 
@@ -227,7 +238,7 @@ pnpm vitest run tests/commands/
 - **Database:** SQLite + sqlite-vec extension
 - **Location:** `~/.claude/mama-memory.db` (configurable via MAMA_DB_PATH)
 - **Schema:** decisions table with embedding_vector column
-- **Graph edges:** supersedes only (refines/contradicts removed in 2025-11-25 refactor - LLM infers these)
+- **Graph edges:** `supersedes`, `builds_on`, `debates`, `synthesizes` (v1.3), plus legacy `refines`/`contradicts`
 
 ### Embeddings
 
