@@ -236,9 +236,6 @@ export class AutoExtractor {
     failure: /failed|실패|망했다/i,
     insight: /learned|배웠다|깨달았다/i,
     change: /changed|바꿨다|변경했다/i,
-    failure: /failed|실패|망했다/i,
-    insight: /learned|배웠다|깨달았다/i,
-    change: /changed|바꿨다|변경했다/i,
   };
 
   async analyzeSession(messages: Message[]) {
