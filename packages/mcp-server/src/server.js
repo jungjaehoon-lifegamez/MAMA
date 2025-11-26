@@ -150,8 +150,21 @@ class MAMAServer {
         // 1. SAVE - Unified save for decisions and checkpoints
         {
           name: 'save',
-          description:
-            "Save a decision or checkpoint to MAMA's memory. type='decision': architectural choices, lessons learned (same topic = newer supersedes older, tracking evolution). type='checkpoint': session state to resume later.",
+          description: `🤝 Save a decision or checkpoint to your reasoning graph.
+
+⚡ TRIGGERS - Call this when:
+• User says: "기억해줘", "remember", "decided", "결정했어"
+• Lesson learned: "깨달았어", "알게됐어", "this worked/failed"
+• Architectural choice made
+• Session ending → use type='checkpoint'
+
+🔗 BEFORE SAVING (Don't create orphans!):
+1. Call 'search' first to find related decisions
+2. Check if same topic exists (yours will supersede it)
+3. Note related decision IDs for reasoning field
+
+type='decision': choices & lessons (same topic = evolution chain)
+type='checkpoint': session state for resumption`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -164,7 +177,7 @@ class MAMAServer {
               topic: {
                 type: 'string',
                 description:
-                  "[Decision] Topic identifier (e.g., 'auth_strategy'). Same topic = new decision supersedes previous, creating evolution chain.",
+                  "[Decision] Topic identifier (e.g., 'auth_strategy'). ⚡ REUSE same topic = supersedes previous, creating evolution chain.",
               },
               decision: {
                 type: 'string',
@@ -173,7 +186,7 @@ class MAMAServer {
               reasoning: {
                 type: 'string',
                 description:
-                  '[Decision] Why this decision was made. Include 5-layer narrative: (1) Context - what problem/situation; (2) Evidence - what proves this works (tests, benchmarks, prior experience); (3) Alternatives - what other options were considered and why rejected; (4) Risks - known limitations or failure modes; (5) Rationale - final reasoning for this choice.',
+                  "[Decision] Why this decision was made. Include 5-layer narrative: (1) Context - what problem/situation; (2) Evidence - what proves this works (tests, benchmarks, prior experience); (3) Alternatives - what other options were considered and why rejected; (4) Risks - known limitations or failure modes; (5) Rationale - final reasoning for this choice. 💡 TIP: Include 'builds_on: <id>' or 'debates: <id>' to link related decisions.",
               },
               confidence: {
                 type: 'number',
@@ -204,8 +217,22 @@ class MAMAServer {
         // 2. SEARCH - Unified search across decisions and checkpoints
         {
           name: 'search',
-          description:
-            'Search decisions and checkpoints to learn from past reasoning. USE CASES: (1) Before making decisions - search for prior art on same topic; (2) After loading checkpoint - search related decisions for context; (3) When debugging - search for past failures on similar issues. Results are time-ordered so you can infer decision evolution (same topic = newer supersedes older). Cross-lingual: works in Korean and English.',
+          description: `🔍 Search the reasoning graph before acting.
+
+⚡ TRIGGERS - Call this BEFORE:
+• Saving a new decision (find connections!)
+• Making architectural choices (check prior art)
+• Debugging (find past failures on similar issues)
+• Starting work on a topic (load context)
+• User asks: "뭐였더라", "what did we decide", "이전에"
+
+🔗 USE FOR REASONING GRAPH:
+• Find decisions to supersede (same topic)
+• Find decisions to link (builds_on, debates, synthesizes)
+• Understand decision evolution (time-ordered results)
+
+Cross-lingual: Works in Korean and English.
+💡 TIP: High similarity (>0.8) = likely related, consider linking.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -230,8 +257,19 @@ class MAMAServer {
         // 3. UPDATE - Update decision outcome
         {
           name: 'update',
-          description:
-            'Update decision outcome after real-world validation. WHEN TO USE: (1) Days/weeks later when issues discovered - mark failure with reason; (2) After production deployment confirms success; (3) After partial success with known limitations. WHY IMPORTANT: Tracks decision evolution - failure outcomes help future LLMs avoid same mistakes. TIP: If decision failed, save a new decision with same topic to supersede it.',
+          description: `📝 Update decision outcome after real-world validation.
+
+⚡ TRIGGERS - Call this when:
+• Days/weeks later: issues discovered → mark 'failed' + reason
+• Production success confirmed → mark 'success'
+• Partial results with caveats → mark 'partial'
+• User says: "이거 안됐어", "this didn't work", "성공했어"
+
+🔗 REASONING GRAPH IMPACT:
+• 'failed' outcomes teach future LLMs what to avoid
+• After failure → save NEW decision with same topic to supersede
+
+💡 TIP: Don't just update - if approach changed, save a NEW decision with same topic. This creates evolution history.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -256,8 +294,21 @@ class MAMAServer {
         // 4. LOAD_CHECKPOINT - Resume previous session
         {
           name: 'load_checkpoint',
-          description:
-            'Load the latest checkpoint to resume a previous session. Use at session start. Returns: summary (4-section: Goal/Evidence/Unfinished/NextAgent), next_steps (DoD + verification commands), open_files. IMPORTANT: After loading, verify Evidence items before continuing - checkpoint may be stale if code changed since last session. Run quick health checks from next_steps first.',
+          description: `🔄 Resume a previous session with full context.
+
+⚡ TRIGGERS - Call this:
+• At session start
+• User says: "이어서", "continue", "where were we", "지난번"
+• After long break from project
+
+🔗 AFTER LOADING:
+1. Verify Evidence items (code may have changed!)
+2. Run health checks from next_steps first
+3. Call 'search' to refresh related decisions
+
+Returns: summary (4-section), next_steps (DoD + commands), open_files
+
+⚠️ WARNING: Checkpoint may be stale. Always verify before continuing.`,
           inputSchema: {
             type: 'object',
             properties: {},
