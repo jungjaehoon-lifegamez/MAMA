@@ -386,18 +386,34 @@ async function queryDecisionGraph(topic) {
  * for refines and contradicts relationships
  *
  * @param {Array<string>} decisionIds - Decision IDs to query edges for
- * @returns {Promise<Object>} Categorized edges { refines, refined_by, contradicts, contradicted_by }
+ * @returns {Promise<Object>} Categorized edges { refines, refined_by, contradicts, contradicted_by, builds_on, built_on_by, debates, debated_by, synthesizes, synthesized_by }
  */
 async function querySemanticEdges(decisionIds) {
   const adapter = getAdapter();
 
   if (!decisionIds || decisionIds.length === 0) {
-    return { refines: [], refined_by: [], contradicts: [], contradicted_by: [] };
+    return {
+      refines: [],
+      refined_by: [],
+      contradicts: [],
+      contradicted_by: [],
+      // Story 2.1: Extended edge types
+      builds_on: [],
+      built_on_by: [],
+      debates: [],
+      debated_by: [],
+      synthesizes: [],
+      synthesized_by: [],
+    };
   }
 
   try {
     // Build placeholders for IN clause
     const placeholders = decisionIds.map(() => '?').join(',');
+
+    // Story 2.1: Include new edge types in query
+    const edgeTypes = ['refines', 'contradicts', 'builds_on', 'debates', 'synthesizes'];
+    const edgeTypePlaceholders = edgeTypes.map(() => '?').join(',');
 
     // Query outgoing edges (from_id = decision)
     const outgoingStmt = adapter.prepare(`
@@ -405,11 +421,11 @@ async function querySemanticEdges(decisionIds) {
       FROM decision_edges e
       JOIN decisions d ON e.to_id = d.id
       WHERE e.from_id IN (${placeholders})
-        AND e.relationship IN ('refines', 'contradicts')
+        AND e.relationship IN (${edgeTypePlaceholders})
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const outgoingEdges = await outgoingStmt.all(...decisionIds);
+    const outgoingEdges = await outgoingStmt.all(...decisionIds, ...edgeTypes);
 
     // Query incoming edges (to_id = decision)
     const incomingStmt = adapter.prepare(`
@@ -417,23 +433,36 @@ async function querySemanticEdges(decisionIds) {
       FROM decision_edges e
       JOIN decisions d ON e.from_id = d.id
       WHERE e.to_id IN (${placeholders})
-        AND e.relationship IN ('refines', 'contradicts')
+        AND e.relationship IN (${edgeTypePlaceholders})
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const incomingEdges = await incomingStmt.all(...decisionIds);
+    const incomingEdges = await incomingStmt.all(...decisionIds, ...edgeTypes);
 
-    // Categorize edges
+    // Categorize edges (original + v1.3 extended)
     const refines = outgoingEdges.filter((e) => e.relationship === 'refines');
     const refined_by = incomingEdges.filter((e) => e.relationship === 'refines');
     const contradicts = outgoingEdges.filter((e) => e.relationship === 'contradicts');
     const contradicted_by = incomingEdges.filter((e) => e.relationship === 'contradicts');
+    // Story 2.1: New edge type categories
+    const builds_on = outgoingEdges.filter((e) => e.relationship === 'builds_on');
+    const built_on_by = incomingEdges.filter((e) => e.relationship === 'builds_on');
+    const debates = outgoingEdges.filter((e) => e.relationship === 'debates');
+    const debated_by = incomingEdges.filter((e) => e.relationship === 'debates');
+    const synthesizes = outgoingEdges.filter((e) => e.relationship === 'synthesizes');
+    const synthesized_by = incomingEdges.filter((e) => e.relationship === 'synthesizes');
 
     return {
       refines,
       refined_by,
       contradicts,
       contradicted_by,
+      builds_on,
+      built_on_by,
+      debates,
+      debated_by,
+      synthesizes,
+      synthesized_by,
     };
   } catch (error) {
     throw new Error(`Semantic edges query failed: ${error.message}`);

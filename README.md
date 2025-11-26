@@ -4,9 +4,9 @@
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Version 1.2.0 | Simplified Architecture (4 Core MCP Tools)
+> Version 1.3.0 | Collaborative Reasoning Graph
 
-MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work.
+MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work. Decisions connect through explicit relationships—building on prior work, debating alternatives, or synthesizing multiple approaches.
 
 ## What is MAMA?
 
@@ -22,6 +22,7 @@ Modern vector databases and knowledge graphs often create information overload, 
 
 - **Narrative-First**: We store _why_ you did something (Reasoning), not just _what_ you did (Code).
 - **Evolutionary**: We track how decisions supersede each other over time.
+- **Collaborative**: Decisions explicitly reference each other—building on, debating, or synthesizing prior work.
 - **Agent-Centric**: Optimized for how LLMs actually retrieve and use information, not for theoretical graph completeness.
 
 We prioritize **Retrieval Usability**. If an LLM can't easily find and understand the context, the data is useless.
@@ -197,16 +198,38 @@ After installation:
 
 ---
 
-## MCP Tool Catalog (v1.2.0)
+## MCP Tool Catalog (v1.3.0)
 
 **Design principle:** LLM can infer decision evolution from time-ordered search results. Fewer tools = more LLM flexibility.
 
-| Tool                  | Description                    | Key Parameters                                                         |
-| --------------------- | ------------------------------ | ---------------------------------------------------------------------- |
-| **`save`**            | Save decision or checkpoint    | `type` ('decision' or 'checkpoint'), then type-specific fields         |
-| **`search`**          | Semantic search or list recent | `query` (optional), `type` ('all', 'decision', 'checkpoint'), `limit`  |
-| **`update`**          | Update decision outcome        | `id`, `outcome` ('success', 'failure', 'partial'), `reason` (optional) |
-| **`load_checkpoint`** | Resume previous session        | (none)                                                                 |
+| Tool                  | Description                    | Key Parameters                                                        |
+| --------------------- | ------------------------------ | --------------------------------------------------------------------- |
+| **`save`**            | Save decision or checkpoint    | `type` ('decision' or 'checkpoint'), then type-specific fields        |
+| **`search`**          | Semantic search or list recent | `query` (optional), `type` ('all', 'decision', 'checkpoint'), `limit` |
+| **`update`**          | Update decision outcome        | `id`, `outcome` (case-insensitive: success/failed/partial), `reason`  |
+| **`load_checkpoint`** | Resume previous session        | (none)                                                                |
+
+### Edge Types (v1.3)
+
+Decisions connect through relationships. When saving, include references in your reasoning:
+
+| Edge Type     | Pattern in Reasoning                    | Meaning                      |
+| ------------- | --------------------------------------- | ---------------------------- |
+| `supersedes`  | (automatic for same topic)              | Newer version replaces older |
+| `builds_on`   | `builds_on: decision_xxx`               | Extends prior work           |
+| `debates`     | `debates: decision_xxx`                 | Presents alternative view    |
+| `synthesizes` | `synthesizes: [decision_a, decision_b]` | Merges multiple approaches   |
+
+### Multi-Agent Collaboration
+
+Edge types enable tracking decisions across multiple LLM sessions or agents. When different agents have conflicting opinions, the pattern is:
+
+1. **Agent A** saves initial decision (topic: `protocol_design`)
+2. **Agent B** disagrees → saves with `debates: decision_xxx` in reasoning
+3. **Agent C** reconciles → saves with `synthesizes: [id_a, id_b]`
+4. Future agents see the full evolution chain and understand the final consensus
+
+This was used internally during v1.3 development where multiple LLMs debated the AX Supersede Protocol design.
 
 ### save Tool
 
@@ -441,4 +464,4 @@ MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0
 ---
 
 **Author**: SpineLift Team
-**Last Updated**: 2025-11-25
+**Last Updated**: 2025-11-26

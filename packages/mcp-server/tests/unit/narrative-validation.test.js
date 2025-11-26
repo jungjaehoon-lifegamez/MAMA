@@ -29,7 +29,8 @@ describe('Narrative Input Validation', () => {
         risks: 'high risk',
       };
 
-      mamaMock.save.mockResolvedValue('decision_123');
+      // Story 1.1/1.2: save() now returns enhanced response object
+      mamaMock.save.mockResolvedValue({ success: true, id: 'decision_123' });
 
       const result = await saveDecisionTool.handler(params);
 
@@ -55,7 +56,8 @@ describe('Narrative Input Validation', () => {
         reasoning: 'test_reasoning',
       };
 
-      mamaMock.save.mockResolvedValue('decision_123');
+      // Story 1.1/1.2: save() now returns enhanced response object
+      mamaMock.save.mockResolvedValue({ success: true, id: 'decision_123' });
 
       const result = await saveDecisionTool.handler(params);
 
