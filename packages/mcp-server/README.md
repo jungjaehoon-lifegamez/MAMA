@@ -179,6 +179,26 @@ curl -X POST http://127.0.0.1:3847/embed/batch \
 - **Automatic**: Starts with MCP server, no extra configuration needed
 - **Secure**: localhost only (127.0.0.1), no external access
 
+## Graph Viewer
+
+Interactive visualization of your reasoning graph.
+
+**Access:** `http://localhost:3847/viewer`
+
+**Features:**
+
+- Network graph with physics simulation
+- Checkpoint timeline sidebar
+- Draggable detail panel
+- Topic filtering and search
+
+## Environment Variables
+
+| Variable         | Default                    | Description                |
+| ---------------- | -------------------------- | -------------------------- |
+| `MAMA_DB_PATH`   | `~/.claude/mama-memory.db` | SQLite database location   |
+| `MAMA_HTTP_PORT` | `3847`                     | HTTP embedding server port |
+
 ## Technical Details
 
 - **Database:** SQLite + sqlite-vec extension

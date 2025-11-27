@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.5] - 2025-11-27
+
+### Improved
+
+**Graph Viewer UX Enhancements**
+
+![MAMA Reasoning Graph v1.4.5](docs/images/reasoning-graph1.4.5.png)
+
+- **Checkpoint Sidebar**: Always-visible timeline panel showing session checkpoints
+- **Draggable Detail Panel**: Decision detail panel can be dragged by title
+- **Custom Scrollbars**: Thin 6px dark-themed scrollbars (webkit + Firefox)
+- **Layout**: Detail panel positioned left of checkpoint sidebar (no overlap)
+
+---
+
+## [1.4.4] - 2025-11-27
+
+### Added
+
+- **Checkpoint Timeline Sidebar**: `/checkpoints` API endpoint + sidebar UI
+- **Expandable Checkpoint Items**: View timestamp, summary, open files, next steps
+- **Related Decision Links**: Click to navigate to decisions referenced in checkpoints
+
+---
+
+## [1.4.3] - 2025-11-27
+
+### Fixed
+
+- **Port Environment Variable**: Unified to support both `MAMA_HTTP_PORT` and `MAMA_EMBEDDING_PORT`
+
+---
+
+## [1.4.2] - 2025-11-27
+
+### Added
+
+- **MAMA_HTTP_PORT**: Environment variable for custom HTTP server port (default: 3847)
+- Enables dual WSL/Windows environments to use different ports
+
+---
+
+## [1.4.1] - 2025-11-27
+
+### Fixed
+
+- **npm Package**: Include CSS/HTML files in published package (`src/**/*.css`, `src/**/*.html`)
+
+---
+
 ## [1.4.0] - 2025-11-27
 
 ### Added
