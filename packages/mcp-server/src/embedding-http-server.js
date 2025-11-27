@@ -20,6 +20,13 @@ const fs = require('fs');
 // Import embedding functions from mama module
 const { generateEmbedding } = require('./mama/embeddings.js');
 const { getModelName, getEmbeddingDim } = require('./mama/config-loader.js');
+const { initDB } = require('./mama/memory-store.js');
+
+// Import Graph API handler
+const { createGraphHandler } = require('./viewer/graph-api.js');
+
+// Create graph handler instance
+const graphHandler = createGraphHandler();
 
 // Configuration
 const DEFAULT_PORT = 3847;
@@ -137,6 +144,19 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // Graph API routes
+  try {
+    const handled = await graphHandler(req, res);
+    if (handled) {
+      return;
+    }
+  } catch (error) {
+    console.error(`[EmbeddingHTTP] Graph API error: ${error.message}`);
+    res.writeHead(500);
+    res.end(JSON.stringify({ error: error.message }));
+    return;
+  }
+
   // 404 for unknown routes
   res.writeHead(404);
   res.end(JSON.stringify({ error: 'Not found' }));
@@ -174,6 +194,9 @@ function cleanupPortFile() {
  * @returns {Promise<http.Server>} HTTP server instance
  */
 async function startEmbeddingServer(port = DEFAULT_PORT) {
+  // Initialize database for graph API
+  await initDB();
+
   return new Promise((resolve, reject) => {
     const server = http.createServer(handleRequest);
 

@@ -158,10 +158,15 @@ class MAMAServer {
 • Architectural choice made
 • Session ending → use type='checkpoint'
 
-🔗 BEFORE SAVING (Don't create orphans!):
-1. Call 'search' first to find related decisions
+🔗 REQUIRED WORKFLOW (Don't create orphans!):
+1. Call 'search' FIRST to find related decisions
 2. Check if same topic exists (yours will supersede it)
-3. Note related decision IDs for reasoning field
+3. MUST include link in reasoning field (see format below)
+
+📎 LINKING FORMAT (at least ONE required):
+• builds_on: decision_xxx (extends prior work)
+• debates: decision_xxx (alternative view)
+• synthesizes: [decision_a, decision_b] (combines multiple)
 
 type='decision': choices & lessons (same topic = evolution chain)
 type='checkpoint': session state for resumption`,
@@ -186,7 +191,7 @@ type='checkpoint': session state for resumption`,
               reasoning: {
                 type: 'string',
                 description:
-                  "[Decision] Why this decision was made. Include 5-layer narrative: (1) Context - what problem/situation; (2) Evidence - what proves this works (tests, benchmarks, prior experience); (3) Alternatives - what other options were considered and why rejected; (4) Risks - known limitations or failure modes; (5) Rationale - final reasoning for this choice. 💡 TIP: Include 'builds_on: <id>' or 'debates: <id>' to link related decisions.",
+                  "[Decision] Why this decision was made. Include 5-layer narrative: (1) Context - what problem/situation; (2) Evidence - what proves this works (tests, benchmarks, prior experience); (3) Alternatives - what other options were considered and why rejected; (4) Risks - known limitations or failure modes; (5) Rationale - final reasoning for this choice. ⚠️ REQUIRED: End with 'builds_on: <id>' or 'debates: <id>' or 'synthesizes: [id1, id2]' to link related decisions.",
               },
               confidence: {
                 type: 'number',
@@ -198,7 +203,7 @@ type='checkpoint': session state for resumption`,
               summary: {
                 type: 'string',
                 description:
-                  '[Checkpoint] Session state summary. Use 4-section format: (1) 🎯 Goal & Progress - what was the goal, where did you stop; (2) ✅ Evidence - mark each item as Verified/Not run/Assumed with proof; (3) ⏳ Unfinished & Risks - incomplete work, blockers, unknowns; (4) 🚦 Next Agent Briefing - Definition of Done, quick health checks to run first.',
+                  "[Checkpoint] Session state summary. Use 4-section format: (1) 🎯 Goal & Progress - what was the goal, where did you stop; (2) ✅ Evidence - mark each item as Verified/Not run/Assumed with proof; (3) ⏳ Unfinished & Risks - incomplete work, blockers, unknowns; (4) 🚦 Next Agent Briefing - Definition of Done, quick health checks to run first. ⚠️ Include 'Related decisions: decision_xxx, decision_yyy' to link context.",
               },
               next_steps: {
                 type: 'string',
@@ -220,7 +225,7 @@ type='checkpoint': session state for resumption`,
           description: `🔍 Search the reasoning graph before acting.
 
 ⚡ TRIGGERS - Call this BEFORE:
-• Saving a new decision (find connections!)
+• ⚠️ REQUIRED before 'save' (find links first!)
 • Making architectural choices (check prior art)
 • Debugging (find past failures on similar issues)
 • Starting work on a topic (load context)
@@ -232,7 +237,7 @@ type='checkpoint': session state for resumption`,
 • Understand decision evolution (time-ordered results)
 
 Cross-lingual: Works in Korean and English.
-💡 TIP: High similarity (>0.8) = likely related, consider linking.`,
+⚠️ High similarity (>0.8) = MUST link with builds_on/debates/synthesizes.`,
           inputSchema: {
             type: 'object',
             properties: {
