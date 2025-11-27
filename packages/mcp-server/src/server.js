@@ -501,7 +501,10 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
 
       // Start HTTP embedding server (for hooks)
       console.error('[MAMA MCP] Starting HTTP embedding server...');
-      const embeddingPort = parseInt(process.env.MAMA_EMBEDDING_PORT || '3847', 10);
+      const embeddingPort = parseInt(
+        process.env.MAMA_HTTP_PORT || process.env.MAMA_EMBEDDING_PORT || '3847',
+        10
+      );
       const httpServer = await startEmbeddingServer(embeddingPort);
       if (httpServer) {
         console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
