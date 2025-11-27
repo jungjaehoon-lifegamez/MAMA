@@ -248,35 +248,39 @@ function parseReasoningForRelationships(reasoning) {
 
   const relationships = [];
 
-  // Pattern 1: builds_on: <id> or builds_on: decision_xxx
-  const buildsOnMatch = reasoning.match(/builds_on:\s*(decision_[a-z0-9_]+)/gi);
+  // Pattern 1: builds_on: <id> (allows optional markdown **bold**)
+  const buildsOnMatch = reasoning.match(
+    /\*{0,2}builds_on\*{0,2}:\*{0,2}\s*(decision_[a-z0-9_]+)/gi
+  );
   if (buildsOnMatch) {
     buildsOnMatch.forEach((match) => {
-      const id = match.replace(/builds_on:\s*/i, '').trim();
+      const id = match.replace(/\*{0,2}builds_on\*{0,2}:\*{0,2}\s*/i, '').trim();
       if (id) {
         relationships.push({ type: 'builds_on', targetIds: [id] });
       }
     });
   }
 
-  // Pattern 2: debates: <id> or debates: decision_xxx
-  const debatesMatch = reasoning.match(/debates:\s*(decision_[a-z0-9_]+)/gi);
+  // Pattern 2: debates: <id> (allows optional markdown **bold**)
+  const debatesMatch = reasoning.match(/\*{0,2}debates\*{0,2}:\*{0,2}\s*(decision_[a-z0-9_]+)/gi);
   if (debatesMatch) {
     debatesMatch.forEach((match) => {
-      const id = match.replace(/debates:\s*/i, '').trim();
+      const id = match.replace(/\*{0,2}debates\*{0,2}:\*{0,2}\s*/i, '').trim();
       if (id) {
         relationships.push({ type: 'debates', targetIds: [id] });
       }
     });
   }
 
-  // Pattern 3: synthesizes: [id1, id2] or synthesizes: decision_xxx, decision_yyy
+  // Pattern 3: synthesizes: [id1, id2] (allows optional markdown **bold**)
   const synthesizesMatch = reasoning.match(
-    /synthesizes:\s*\[?\s*(decision_[a-z0-9_]+(?:\s*,\s*decision_[a-z0-9_]+)*)\s*\]?/gi
+    /\*{0,2}synthesizes\*{0,2}:\*{0,2}\s*\[?\s*(decision_[a-z0-9_]+(?:\s*,\s*decision_[a-z0-9_]+)*)\s*\]?/gi
   );
   if (synthesizesMatch) {
     synthesizesMatch.forEach((match) => {
-      const idsStr = match.replace(/synthesizes:\s*\[?\s*/i, '').replace(/\s*\]?\s*$/, '');
+      const idsStr = match
+        .replace(/\*{0,2}synthesizes\*{0,2}:\*{0,2}\s*\[?\s*/i, '')
+        .replace(/\s*\]?\s*$/, '');
       const ids = idsStr.split(/\s*,\s*/).filter((id) => id.startsWith('decision_'));
       if (ids.length > 0) {
         relationships.push({ type: 'synthesizes', targetIds: ids });
