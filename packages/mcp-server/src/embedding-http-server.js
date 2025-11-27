@@ -61,6 +61,10 @@ function readBody(req) {
  */
 async function handleRequest(req, res) {
   // CORS headers for local requests
+  // Security Note: CORS '*' is safe here because:
+  // 1. Server binds to localhost only (127.0.0.1)
+  // 2. No sensitive data exposed (user's own decisions)
+  // 3. Required for browser-based Graph Viewer
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
 
