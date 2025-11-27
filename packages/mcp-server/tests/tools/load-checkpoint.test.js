@@ -330,7 +330,8 @@ describe.sequential('load_checkpoint MCP Tool', () => {
 
       // AC-2.3.3 target: p95 < 2.5s
       expect(p95Latency).toBeLessThan(2500);
-      expect(latencies[0]).toBeGreaterThan(0);
+      // Note: latencies[0] can be 0 due to Date.now() millisecond precision
+      expect(latencies[0]).toBeGreaterThanOrEqual(0);
     });
 
     it('should calculate success rate correctly', async () => {
