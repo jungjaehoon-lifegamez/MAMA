@@ -14,11 +14,14 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getAdapter, initDB } = require('../mama/memory-store');
+const { getAdapter, initDB, vectorSearch } = require('../mama/memory-store');
+const { generateEmbedding } = require('../mama/embeddings');
 const mama = require('../mama/mama-api.js');
 
-// Path to viewer.html
+// Paths to viewer files
 const VIEWER_HTML_PATH = path.join(__dirname, 'viewer.html');
+const VIEWER_CSS_PATH = path.join(__dirname, 'viewer.css');
+const VIEWER_JS_PATH = path.join(__dirname, 'viewer.js');
 
 /**
  * Get all decisions as graph nodes
@@ -41,7 +44,7 @@ async function getAllNodes() {
     ORDER BY created_at DESC
   `);
 
-  const rows = await stmt.all();
+  const rows = stmt.all();
 
   return rows.map((row) => ({
     id: row.id,
@@ -72,7 +75,7 @@ async function getAllEdges() {
     ORDER BY created_at DESC
   `);
 
-  const rows = await stmt.all();
+  const rows = stmt.all();
 
   return rows.map((row) => ({
     from: row.from_id,
@@ -117,21 +120,55 @@ function filterEdgesByNodes(edges, nodes) {
 }
 
 /**
+ * Serve static file with appropriate content type
+ *
+ * @param {Object} res - HTTP response
+ * @param {string} filePath - Path to file
+ * @param {string} contentType - MIME type
+ */
+function serveStaticFile(res, filePath, contentType) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    res.writeHead(200, {
+      'Content-Type': `${contentType}; charset=utf-8`,
+      'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+    });
+    res.end(content);
+  } catch (error) {
+    console.error(`[GraphAPI] Static file error: ${error.message}`);
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('Error loading file: ' + error.message);
+  }
+}
+
+/**
  * Handle GET /viewer request - serve HTML viewer
  *
  * @param {Object} req - HTTP request
  * @param {Object} res - HTTP response
  */
 function handleViewerRequest(req, res) {
-  try {
-    const html = fs.readFileSync(VIEWER_HTML_PATH, 'utf8');
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
-  } catch (error) {
-    console.error(`[GraphAPI] Viewer error: ${error.message}`);
-    res.writeHead(500, { 'Content-Type': 'text/html' });
-    res.end('<h1>Error loading viewer</h1><p>' + error.message + '</p>');
-  }
+  serveStaticFile(res, VIEWER_HTML_PATH, 'text/html');
+}
+
+/**
+ * Handle GET /viewer.css request
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+function handleCssRequest(req, res) {
+  serveStaticFile(res, VIEWER_CSS_PATH, 'text/css');
+}
+
+/**
+ * Handle GET /viewer.js request
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+function handleJsRequest(req, res) {
+  serveStaticFile(res, VIEWER_JS_PATH, 'application/javascript');
 }
 
 /**
@@ -296,8 +333,7 @@ async function getSimilarityEdges() {
   }
 
   const similarityEdges = [];
-  const { generateEmbedding } = require('../mama/embeddings');
-  const { vectorSearch } = require('../mama/memory-store');
+  const similarityEdgeKeys = new Set(); // O(1) duplicate checking
 
   // For each decision, find its most similar peers
   for (const decision of decisions.slice(0, 50)) {
@@ -309,15 +345,16 @@ async function getSimilarityEdges() {
 
       for (const s of similar) {
         if (s.id !== decision.id && s.similarity > 0.7) {
-          // Avoid duplicates (A->B and B->A)
+          // Avoid duplicates (A->B and B->A) using Set for O(1) lookup
           const edgeKey = [decision.id, s.id].sort().join('|');
-          if (!similarityEdges.find((e) => [e.from, e.to].sort().join('|') === edgeKey)) {
+          if (!similarityEdgeKeys.has(edgeKey)) {
             similarityEdges.push({
               from: decision.id,
               to: s.id,
               relationship: 'similar',
               similarity: s.similarity,
             });
+            similarityEdgeKeys.add(edgeKey);
           }
         }
       }
@@ -359,7 +396,7 @@ async function handleSimilarRequest(req, res, params) {
     const stmt = adapter.prepare(`
       SELECT topic, decision, reasoning FROM decisions WHERE id = ?
     `);
-    const decision = await stmt.get(decisionId);
+    const decision = stmt.get(decisionId);
 
     if (!decision) {
       res.writeHead(404);
@@ -439,6 +476,18 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
+    // Route: GET /viewer.css - serve stylesheet
+    if (pathname === '/viewer.css' && req.method === 'GET') {
+      handleCssRequest(req, res);
+      return true; // Request handled
+    }
+
+    // Route: GET /viewer.js - serve JavaScript
+    if (pathname === '/viewer.js' && req.method === 'GET') {
+      handleJsRequest(req, res);
+      return true; // Request handled
+    }
+
     // Route: GET /graph - API endpoint
     if (pathname === '/graph' && req.method === 'GET') {
       await handleGraphRequest(req, res, params);
@@ -470,4 +519,6 @@ module.exports = {
   filterNodesByTopic,
   filterEdgesByNodes,
   VIEWER_HTML_PATH,
+  VIEWER_CSS_PATH,
+  VIEWER_JS_PATH,
 };

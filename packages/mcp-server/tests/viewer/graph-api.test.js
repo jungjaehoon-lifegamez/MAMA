@@ -299,15 +299,17 @@ describe('Story 1.3: Viewer HTML Serving', () => {
     });
 
     it('should contain auto /graph API call (AC3)', () => {
-      const html = fs.readFileSync(graphApi.VIEWER_HTML_PATH, 'utf8');
+      // JS is now in separate file, check the JS file
+      const js = fs.readFileSync(graphApi.VIEWER_JS_PATH, 'utf8');
       // Accepts both '/graph' and '/graph?cluster=true'
-      expect(html).toMatch(/fetch\('\/graph(\?cluster=true)?'\)/);
-      expect(html).toContain('DOMContentLoaded');
+      expect(js).toMatch(/fetch\('\/graph(\?cluster=true)?'\)/);
+      expect(js).toContain('DOMContentLoaded');
     });
 
     it('should have dark theme CSS', () => {
-      const html = fs.readFileSync(graphApi.VIEWER_HTML_PATH, 'utf8');
-      expect(html).toContain('#1a1a2e'); // background color
+      // CSS is now in separate file, check the CSS file
+      const css = fs.readFileSync(graphApi.VIEWER_CSS_PATH, 'utf8');
+      expect(css).toContain('#1a1a2e'); // background color
     });
 
     it('should have valid HTML5 structure', () => {
@@ -338,6 +340,7 @@ describe('Story 1.3: Viewer HTML Serving', () => {
       expect(handled).toBe(true);
       expect(res.writeHead).toHaveBeenCalledWith(200, {
         'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'public, max-age=3600',
       });
       expect(res.end).toHaveBeenCalled();
     });
