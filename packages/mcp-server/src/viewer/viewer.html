@@ -63,6 +63,18 @@
       </div>
     </div>
 
+    <!-- Checkpoint Sidebar Panel -->
+    <div id="checkpoint-panel">
+      <div class="checkpoint-header">
+        <h4>📋 Checkpoints</h4>
+        <button class="close-btn" onclick="toggleCheckpoints()">&times;</button>
+      </div>
+      <div class="checkpoint-list" id="checkpoint-list">
+        <div class="loading-checkpoints">Loading...</div>
+      </div>
+    </div>
+    <button class="checkpoint-toggle" id="checkpoint-toggle" onclick="toggleCheckpoints()">📋 Checkpoints</button>
+
     <!-- Legend Panel -->
     <div id="legend-panel">
       <button class="close-btn" onclick="toggleLegend()" style="position:absolute;top:8px;right:8px;">&times;</button>
