@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2025-11-27
+
+### Added
+
+**Graph Viewer** - Interactive visualization of your reasoning graph.
+
+![MAMA Reasoning Graph](docs/images/reasoning-graph.png)
+
+#### Features
+
+- **Interactive Graph Visualization**: vis.js-powered network graph with physics simulation
+- **Legend Panel**: Visual guide for edge types (supersedes, builds_on, debates, synthesizes) and node sizes
+- **Node Size by Connections**: Nodes scale based on connection count (1-2: small → 11+: large)
+- **3-Depth Highlight**: Click a node to highlight connected nodes up to 3 levels deep with BFS traversal
+- **Dimming Effect**: Unconnected nodes/edges fade to 10% opacity when a node is selected
+- **Topic Filter**: Dropdown to filter graph by topic
+- **Detail Panel**: View full decision details, reasoning, similar decisions, and update outcomes
+- **Similar Decisions**: Shows semantically similar decisions with similarity percentages
+- **Outcome Update**: Quick save of decision outcomes (SUCCESS/FAILED/PARTIAL) from the detail panel
+
+#### Endpoints
+
+| Endpoint  | Description                                   |
+| --------- | --------------------------------------------- |
+| `/viewer` | Interactive graph visualization UI            |
+| `/graph`  | JSON API returning nodes, edges, and metadata |
+
+#### Technical Details
+
+- Built on existing HTTP embedding server (port 3847)
+- No additional dependencies (vis.js loaded from CDN)
+- Real-time graph updates via REST API
+- Dark theme optimized for extended viewing
+
+---
+
 ## [1.3.1] - 2025-11-26
 
 ### Changed
