@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAMA Graph Viewer</title>
+  <script src="https://unpkg.com/vis-network@9/dist/vis-network.min.js"></script>
+  <link rel="stylesheet" href="/viewer.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>MAMA Reasoning Graph</h1>
+      <div class="controls">
+        <select id="topic-filter" onchange="filterByTopic(this.value)">
+          <option value="">All Topics</option>
+        </select>
+        <input type="text" id="search-input" placeholder="Search... (press /)"
+               onkeyup="handleSearch(event)" style="display:none;">
+      </div>
+      <div class="stats" id="stats">Loading...</div>
+    </header>
+    <div id="graph-container">
+      <div class="loading" id="loading">Loading graph data...</div>
+    </div>
+    <div id="detail-panel">
+      <button class="close-btn" onclick="closeDetail()">&times;</button>
+      <h3 id="detail-topic">Topic</h3>
+      <div class="field">
+        <div class="field-label">Decision</div>
+        <div class="field-value" id="detail-decision"></div>
+      </div>
+      <div class="field">
+        <div class="field-label reasoning-toggle" id="reasoning-toggle" onclick="toggleReasoning()">Reasoning</div>
+        <div class="field-value reasoning-content" id="detail-reasoning"></div>
+      </div>
+      <div class="field">
+        <div class="field-label">Similar Decisions</div>
+        <div class="field-value similar-list" id="detail-similar">
+          <span class="loading-similar">Searching...</span>
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label">Outcome</div>
+        <div class="field-value outcome-edit">
+          <select id="detail-outcome-select">
+            <option value="PENDING">PENDING</option>
+            <option value="SUCCESS">SUCCESS</option>
+            <option value="FAILED">FAILED</option>
+            <option value="PARTIAL">PARTIAL</option>
+          </select>
+          <button onclick="saveOutcome()" class="save-btn">Save</button>
+          <span id="outcome-status"></span>
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label">Confidence</div>
+        <div class="field-value" id="detail-confidence"></div>
+      </div>
+      <div class="field">
+        <div class="field-label">Created</div>
+        <div class="field-value" id="detail-created"></div>
+      </div>
+    </div>
+
+    <!-- Legend Panel -->
+    <div id="legend-panel">
+      <button class="close-btn" onclick="toggleLegend()" style="position:absolute;top:8px;right:8px;">&times;</button>
+      <h4>Legend</h4>
+      <div class="legend-section">
+        <div class="legend-section-title">Edge Types</div>
+        <div class="legend-item">
+          <span class="legend-edge solid" style="color: #848484;"></span>
+          <span>supersedes</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-edge dashed" style="color: #457b9d;"></span>
+          <span>builds_on</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-edge dashed" style="color: #e63946;"></span>
+          <span>debates</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-edge solid thick" style="color: #9b59b6;"></span>
+          <span>synthesizes</span>
+        </div>
+      </div>
+      <div class="legend-section">
+        <div class="legend-section-title">Node Size</div>
+        <div class="legend-item">
+          <span class="legend-node small" style="background: #6366f1;"></span>
+          <span>1-2 connections</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-node medium" style="background: #6366f1;"></span>
+          <span>3-5 connections</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-node large" style="background: #6366f1;"></span>
+          <span>6+ connections</span>
+        </div>
+      </div>
+    </div>
+    <button class="legend-toggle" onclick="toggleLegend()">Show Legend</button>
+  </div>
+
+  <script src="/viewer.js"></script>
+</body>
+</html>

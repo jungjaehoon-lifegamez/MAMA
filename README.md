@@ -4,7 +4,7 @@
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Version 1.3.0 | Collaborative Reasoning Graph
+> Version 1.4.0 | Graph Viewer
 
 MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work. Decisions connect through explicit relationships—building on prior work, debating alternatives, or synthesizing multiple approaches.
 
@@ -336,6 +336,26 @@ System always shows what's working. Degraded mode still functions, just without 
 
 ---
 
+## 🔍 Graph Viewer (New in v1.4)
+
+Visualize how your decisions connect and evolve over time.
+
+![MAMA Reasoning Graph](docs/images/reasoning-graph.png)
+
+**Access:** `http://localhost:3847/viewer` (when MCP server is running)
+
+**Features:**
+
+- Interactive network graph with physics simulation
+- Click nodes to see 3-depth connected relationships
+- Legend panel showing edge types and node size meanings
+- Filter by topic, view full decision details
+- Update outcomes directly from the viewer
+
+The viewer runs on the existing HTTP embedding server—no additional setup required.
+
+---
+
 ## Project Structure
 
 This is a monorepo containing two packages:
@@ -464,4 +484,4 @@ MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0
 ---
 
 **Author**: SpineLift Team
-**Last Updated**: 2025-11-26
+**Last Updated**: 2025-11-27
