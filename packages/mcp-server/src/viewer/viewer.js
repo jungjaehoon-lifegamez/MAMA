@@ -829,12 +829,7 @@ let checkpointsData = [];
 // eslint-disable-next-line no-unused-vars
 function toggleCheckpoints() {
   const panel = document.getElementById('checkpoint-panel');
-  panel.classList.toggle('visible');
-
-  // Load checkpoints when panel opens
-  if (panel.classList.contains('visible') && checkpointsData.length === 0) {
-    fetchCheckpoints();
-  }
+  panel.classList.toggle('hidden');
 }
 
 // Fetch checkpoints from API
@@ -992,8 +987,45 @@ function navigateToDecision(decisionId) {
   navigateToNode(decisionId);
 }
 
+// Make detail panel draggable
+function initDraggablePanel() {
+  const panel = document.getElementById('detail-panel');
+  const header = panel.querySelector('h3');
+  let isDragging = false;
+  let offsetX, offsetY;
+
+  header.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    offsetX = e.clientX - panel.offsetLeft;
+    offsetY = e.clientY - panel.offsetTop;
+    panel.style.transition = 'none';
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) {
+      return;
+    }
+    const x = Math.max(0, Math.min(e.clientX - offsetX, window.innerWidth - panel.offsetWidth));
+    const y = Math.max(50, Math.min(e.clientY - offsetY, window.innerHeight - panel.offsetHeight));
+    panel.style.left = x + 'px';
+    panel.style.top = y + 'px';
+    panel.style.right = 'auto';
+  });
+
+  document.addEventListener('mouseup', () => {
+    isDragging = false;
+    panel.style.transition = '';
+  });
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
+  // Initialize draggable panel
+  initDraggablePanel();
+
+  // Load checkpoints (panel is visible by default)
+  fetchCheckpoints();
+
   try {
     const data = await fetchGraphData();
     if (data.nodes.length === 0) {
