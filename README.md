@@ -340,7 +340,7 @@ System always shows what's working. Degraded mode still functions, just without 
 
 Visualize how your decisions connect and evolve over time.
 
-![MAMA Reasoning Graph](docs/images/reasoning-graph.png)
+![MAMA Reasoning Graph](docs/images/reasoning-graph1.4.5.png)
 
 **Access:** `http://localhost:3847/viewer` (when MCP server is running)
 
@@ -348,11 +348,15 @@ Visualize how your decisions connect and evolve over time.
 
 - Interactive network graph with physics simulation
 - Click nodes to see 3-depth connected relationships
+- **Checkpoint sidebar** - Always-visible timeline of session checkpoints
+- **Draggable detail panel** - Move the decision panel anywhere on screen
 - Legend panel showing edge types and node size meanings
 - Filter by topic, view full decision details
 - Update outcomes directly from the viewer
 
 The viewer runs on the existing HTTP embedding server—no additional setup required.
+
+> **Tip:** Use `MAMA_HTTP_PORT` environment variable to change the port (default: 3847).
 
 ---
 
