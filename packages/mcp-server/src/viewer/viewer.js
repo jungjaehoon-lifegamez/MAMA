@@ -834,6 +834,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     initGraph(data);
   } catch (error) {
     document.getElementById('loading').innerHTML =
-      `<div class="error">Failed to load graph: ${error.message}</div>`;
+      `<div class="error">Failed to load graph: ${error.message}<br><br><button onclick="location.reload()" style="padding:8px 16px;cursor:pointer;">Retry</button></div>`;
   }
 });
