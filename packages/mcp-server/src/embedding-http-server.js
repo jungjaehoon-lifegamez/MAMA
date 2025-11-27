@@ -29,7 +29,7 @@ const { createGraphHandler } = require('./viewer/graph-api.js');
 const graphHandler = createGraphHandler();
 
 // Configuration
-const DEFAULT_PORT = 3847;
+const DEFAULT_PORT = parseInt(process.env.MAMA_HTTP_PORT, 10) || 3847;
 const HOST = '127.0.0.1'; // localhost only for security
 
 // Port file for clients to discover the server
