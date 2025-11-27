@@ -822,6 +822,176 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Checkpoint Panel Functions
+let checkpointsData = [];
+
+// Toggle checkpoint panel visibility (called from HTML onclick)
+// eslint-disable-next-line no-unused-vars
+function toggleCheckpoints() {
+  const panel = document.getElementById('checkpoint-panel');
+  panel.classList.toggle('visible');
+
+  // Load checkpoints when panel opens
+  if (panel.classList.contains('visible') && checkpointsData.length === 0) {
+    fetchCheckpoints();
+  }
+}
+
+// Fetch checkpoints from API
+async function fetchCheckpoints() {
+  try {
+    const response = await fetch('/checkpoints');
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    checkpointsData = data.checkpoints || [];
+    renderCheckpoints();
+  } catch (error) {
+    console.error('[MAMA] Failed to fetch checkpoints:', error);
+    document.getElementById('checkpoint-list').innerHTML =
+      `<div class="loading-checkpoints" style="color:#f66">Failed to load: ${error.message}</div>`;
+  }
+}
+
+// Render checkpoints list
+function renderCheckpoints() {
+  const container = document.getElementById('checkpoint-list');
+
+  if (checkpointsData.length === 0) {
+    container.innerHTML = '<div class="loading-checkpoints">No checkpoints found</div>';
+    return;
+  }
+
+  const html = checkpointsData
+    .map(
+      (cp, idx) => `
+    <div class="checkpoint-item" onclick="expandCheckpoint(${idx})">
+      <div class="checkpoint-time">${formatCheckpointTime(cp.timestamp)}</div>
+      <div class="checkpoint-summary">${escapeHtml(extractFirstLine(cp.summary))}</div>
+      <div class="checkpoint-details">
+        ${
+          cp.summary
+            ? `
+          <div class="checkpoint-section">
+            <div class="checkpoint-section-title">Summary</div>
+            <div class="checkpoint-section-content">${escapeHtml(cp.summary)}</div>
+          </div>
+        `
+            : ''
+        }
+        ${
+          cp.next_steps
+            ? `
+          <div class="checkpoint-section">
+            <div class="checkpoint-section-title">Next Steps</div>
+            <div class="checkpoint-section-content">${escapeHtml(cp.next_steps)}</div>
+          </div>
+        `
+            : ''
+        }
+        ${
+          cp.open_files && cp.open_files.length > 0
+            ? `
+          <div class="checkpoint-section">
+            <div class="checkpoint-section-title">Open Files</div>
+            <div class="checkpoint-files">
+              ${cp.open_files.map((f) => `<span class="checkpoint-file">${escapeHtml(f.split('/').pop())}</span>`).join('')}
+            </div>
+          </div>
+        `
+            : ''
+        }
+        ${renderRelatedDecisions(cp.summary)}
+      </div>
+    </div>
+  `
+    )
+    .join('');
+
+  container.innerHTML = html;
+}
+
+// Format checkpoint timestamp
+function formatCheckpointTime(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diff = now - date;
+
+  if (diff < 3600000) {
+    const mins = Math.floor(diff / 60000);
+    return `${mins}m ago`;
+  }
+  if (diff < 86400000) {
+    const hours = Math.floor(diff / 3600000);
+    return `${hours}h ago`;
+  }
+
+  return (
+    date.toLocaleDateString() +
+    ' ' +
+    date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  );
+}
+
+// Extract first meaningful line from summary
+function extractFirstLine(summary) {
+  if (!summary) {
+    return 'No summary';
+  }
+  const lines = summary.split('\n').filter((l) => l.trim() && !l.startsWith('**'));
+  return lines[0] || summary.substring(0, 100);
+}
+
+// Extract and render related decisions from summary
+function renderRelatedDecisions(summary) {
+  if (!summary) {
+    return '';
+  }
+
+  // Match patterns like "decision_xxx" or "Related decisions: xxx, yyy"
+  const decisionPattern = /decision_[a-z0-9_]+/gi;
+  const matches = summary.match(decisionPattern);
+
+  if (!matches || matches.length === 0) {
+    return '';
+  }
+
+  const uniqueDecisions = [...new Set(matches)];
+
+  return `
+    <div class="checkpoint-section">
+      <div class="checkpoint-section-title">Related Decisions</div>
+      <div class="checkpoint-related">
+        ${uniqueDecisions.map((d) => `<span class="checkpoint-related-link" onclick="event.stopPropagation(); navigateToDecision('${d}')">${d.substring(9, 30)}...</span>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// Expand/collapse checkpoint item
+// eslint-disable-next-line no-unused-vars
+function expandCheckpoint(idx) {
+  const items = document.querySelectorAll('.checkpoint-item');
+  items.forEach((item, i) => {
+    if (i === idx) {
+      item.classList.toggle('expanded');
+    } else {
+      item.classList.remove('expanded');
+    }
+  });
+}
+
+// Navigate to a decision in the graph (from checkpoint related link)
+// eslint-disable-next-line no-unused-vars
+function navigateToDecision(decisionId) {
+  // Close checkpoint panel
+  document.getElementById('checkpoint-panel').classList.remove('visible');
+
+  // Use existing navigateToNode function
+  navigateToNode(decisionId);
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
   try {
