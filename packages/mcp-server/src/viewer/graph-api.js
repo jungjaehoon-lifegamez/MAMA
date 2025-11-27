@@ -86,6 +86,39 @@ async function getAllEdges() {
 }
 
 /**
+ * Get all checkpoints
+ *
+ * @returns {Promise<Array>} Array of checkpoint objects
+ */
+async function getAllCheckpoints() {
+  const adapter = getAdapter();
+
+  const stmt = adapter.prepare(`
+    SELECT
+      id,
+      timestamp,
+      summary,
+      open_files,
+      next_steps,
+      status
+    FROM checkpoints
+    ORDER BY timestamp DESC
+    LIMIT 50
+  `);
+
+  const rows = stmt.all();
+
+  return rows.map((row) => ({
+    id: row.id,
+    timestamp: row.timestamp,
+    summary: row.summary,
+    open_files: row.open_files ? JSON.parse(row.open_files) : [],
+    next_steps: row.next_steps,
+    status: row.status,
+  }));
+}
+
+/**
  * Get unique topics from nodes
  *
  * @param {Array} nodes - Array of node objects
@@ -456,6 +489,39 @@ async function handleSimilarRequest(req, res, params) {
 }
 
 /**
+ * Handle GET /checkpoints request - list all checkpoints
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleCheckpointsRequest(req, res) {
+  try {
+    // Ensure DB is initialized
+    await initDB();
+
+    const checkpoints = await getAllCheckpoints();
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        checkpoints,
+        count: checkpoints.length,
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] Checkpoints error: ${error.message}`);
+    res.writeHead(500);
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'CHECKPOINTS_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
  * Create route handler for graph API
  *
  * Returns a function that handles /graph and /viewer requests within the existing
@@ -506,6 +572,12 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
+    // Route: GET /checkpoints - list all checkpoints
+    if (pathname === '/checkpoints' && req.method === 'GET') {
+      await handleCheckpointsRequest(req, res);
+      return true; // Request handled
+    }
+
     return false; // Request not handled
   };
 }
@@ -515,6 +587,7 @@ module.exports = {
   // Exported for testing
   getAllNodes,
   getAllEdges,
+  getAllCheckpoints,
   getUniqueTopics,
   filterNodesByTopic,
   filterEdgesByNodes,
