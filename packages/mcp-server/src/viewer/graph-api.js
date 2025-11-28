@@ -727,9 +727,10 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
-    // Route: GET /graph - API endpoint
-    if (pathname === '/graph' && req.method === 'GET') {
-      await handleGraphRequest(req, res, params);
+    // Route: GET /graph/similar - find similar decisions (check before /graph)
+    if (pathname === '/graph/similar' && req.method === 'GET') {
+      console.log('[GraphHandler] Routing to handleSimilarRequest');
+      await handleSimilarRequest(req, res, params);
       return true; // Request handled
     }
 
@@ -739,9 +740,9 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
-    // Route: GET /graph/similar - find similar decisions
-    if (pathname === '/graph/similar' && req.method === 'GET') {
-      await handleSimilarRequest(req, res, params);
+    // Route: GET /graph - API endpoint
+    if (pathname === '/graph' && req.method === 'GET') {
+      await handleGraphRequest(req, res, params);
       return true; // Request handled
     }
 
