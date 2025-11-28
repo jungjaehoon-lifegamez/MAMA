@@ -10,6 +10,7 @@
  */
 
 /* eslint-env browser */
+/* global lucide */
 
 import { escapeHtml, debounce, showToast } from '../utils/dom.js';
 import { formatRelativeTime, truncateText } from '../utils/format.js';
@@ -207,11 +208,15 @@ export class MemoryModule {
     const container = document.getElementById('memory-results');
     container.innerHTML = `
       <div class="memory-placeholder">
-        <p>🧠 Search your MAMA decisions</p>
+        <p><i data-lucide="brain"></i> Search your MAMA decisions</p>
         <p class="memory-hint">Type a keyword or send a chat message to see related decisions</p>
       </div>
     `;
     this.setStatus('', '');
+    // Reinitialize Lucide icons for dynamic content
+    if (typeof lucide !== 'undefined') {
+      lucide.createIcons();
+    }
   }
 
   /**
