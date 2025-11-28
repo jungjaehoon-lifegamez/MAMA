@@ -360,6 +360,59 @@ The viewer runs on the existing HTTP embedding server—no additional setup requ
 
 ---
 
+## 📱 MAMA Mobile (New in v1.5)
+
+Chat with Claude Code from anywhere using a mobile-optimized web interface with voice input and TTS.
+
+![MAMA Mobile Chat Interface](docs/images/1.5-chat.png)
+
+**Access:** `http://localhost:3847/viewer` (Chat tab)
+
+**Features:**
+
+- **Real-time chat** with Claude Code sessions via WebSocket
+- **Voice input** (Web Speech API, Korean optimized)
+- **Text-to-speech** with adjustable speed (1.8x default for Korean)
+- **Hands-free mode** - Auto-listen after TTS completes
+- **Long press to copy** messages (750ms)
+- **PWA support** - Install as a mobile app with offline capability
+- **Slash commands** - `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
+- **Auto-checkpoint** - 5-minute idle auto-save with session resume
+- **Session resume** - Auto-detect resumable sessions with banner UI
+- **MCP tool display** - See real-time tool execution (Read, Write, Bash, etc.)
+- **44px touch targets** - Mobile-optimized button sizing
+
+### External Access Setup
+
+To access MAMA Mobile from outside your local network:
+
+#### Option 1: ngrok (Quick Setup)
+
+```bash
+# Install ngrok from https://ngrok.com/download
+ngrok http 3847
+```
+
+#### Option 2: Cloudflare Tunnel (Production)
+
+Follow the [Cloudflare Tunnel setup guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
+
+**⚠️ Security Notice:** Always set `MAMA_AUTH_TOKEN` before exposing your server:
+
+```bash
+export MAMA_AUTH_TOKEN="your-secure-token-here"
+```
+
+Then access MAMA Mobile with:
+
+```
+https://your-tunnel-url/viewer?token=your-secure-token-here
+```
+
+**Testing Connection:** Open the Chat tab → Click the globe icon → Test Connection
+
+---
+
 ## Project Structure
 
 This is a monorepo containing two packages:
