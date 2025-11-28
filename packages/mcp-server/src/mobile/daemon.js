@@ -105,6 +105,30 @@ class ClaudeDaemon extends EventEmitter {
                   `[MobileDaemon] Parsed JSON: ${JSON.stringify(parsed).substring(0, 100)}...`
                 );
 
+                // Detect tool usage (content_block_start with tool_use type)
+                if (
+                  parsed.type === 'content_block_start' &&
+                  parsed.content_block?.type === 'tool_use'
+                ) {
+                  const toolBlock = parsed.content_block;
+                  console.error(`[MobileDaemon] Tool use detected: ${toolBlock.name}`);
+                  this.emit('tool_use', {
+                    tool: toolBlock.name,
+                    toolId: toolBlock.id,
+                    input: toolBlock.input,
+                    sessionId: this.sessionId,
+                  });
+                }
+
+                // Detect tool completion (content_block_stop after tool_use)
+                if (parsed.type === 'content_block_stop' && parsed.index !== undefined) {
+                  console.error(`[MobileDaemon] Tool complete for block ${parsed.index}`);
+                  this.emit('tool_complete', {
+                    index: parsed.index,
+                    sessionId: this.sessionId,
+                  });
+                }
+
                 // Extract text content from various message types
                 let textContent = '';
                 if (parsed.type === 'assistant' && parsed.message?.content) {

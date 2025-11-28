@@ -131,6 +131,36 @@ function createWebSocketHandler(httpServer, sessionManager) {
           }
         });
 
+        // Handle tool usage
+        session.daemon.on('tool_use', (data) => {
+          if (ws.readyState === ws.OPEN) {
+            console.error(`[WebSocket] Tool use: ${data.tool}`);
+            ws.send(
+              JSON.stringify({
+                type: 'tool_use',
+                tool: data.tool,
+                toolId: data.toolId,
+                input: data.input,
+                sessionId: data.sessionId,
+              })
+            );
+          }
+        });
+
+        // Handle tool completion
+        session.daemon.on('tool_complete', (data) => {
+          if (ws.readyState === ws.OPEN) {
+            console.error(`[WebSocket] Tool complete for block ${data.index}`);
+            ws.send(
+              JSON.stringify({
+                type: 'tool_complete',
+                index: data.index,
+                sessionId: data.sessionId,
+              })
+            );
+          }
+        });
+
         // Handle response completion - send stream_end to finalize the message
         session.daemon.on('response_complete', (data) => {
           if (ws.readyState === ws.OPEN) {
@@ -306,6 +336,36 @@ function handleClientMessage(clientId, message, clientInfo, sessionManager) {
                 type: 'output',
                 content: data.text,
                 streamType: data.type, // 'stdout' or 'stderr'
+                sessionId: data.sessionId,
+              })
+            );
+          }
+        });
+
+        // Handle tool usage for attached session
+        session.daemon.on('tool_use', (data) => {
+          if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
+            console.error(`[WebSocket] Tool use (attached): ${data.tool}`);
+            clientInfo.ws.send(
+              JSON.stringify({
+                type: 'tool_use',
+                tool: data.tool,
+                toolId: data.toolId,
+                input: data.input,
+                sessionId: data.sessionId,
+              })
+            );
+          }
+        });
+
+        // Handle tool completion for attached session
+        session.daemon.on('tool_complete', (data) => {
+          if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
+            console.error(`[WebSocket] Tool complete (attached) for block ${data.index}`);
+            clientInfo.ws.send(
+              JSON.stringify({
+                type: 'tool_complete',
+                index: data.index,
                 sessionId: data.sessionId,
               })
             );
