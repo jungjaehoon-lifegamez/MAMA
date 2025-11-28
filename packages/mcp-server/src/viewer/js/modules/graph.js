@@ -14,7 +14,7 @@
 /* eslint-env browser */
 /* global vis, lucide */
 
-import { escapeHtml, debounce } from '../utils/dom.js';
+import { escapeHtml, debounce, showToast } from '../utils/dom.js';
 import { API } from '../utils/api.js';
 
 /**
@@ -637,15 +637,34 @@ export class GraphModule {
   /**
    * Navigate to specific node
    */
-  navigateToNode(nodeId) {
+  async navigateToNode(nodeId) {
     if (!this.network) {
       return;
     }
 
-    const node = this.graphData.nodes.find((n) => n.id === nodeId);
+    let node = this.graphData.nodes.find((n) => n.id === nodeId);
+
+    // If node not in current graph, reload without filters
     if (!node) {
-      console.warn('[MAMA] Node not found:', nodeId);
-      return;
+      console.log('[MAMA] Node not in current graph, reloading all nodes...');
+
+      // Reset topic filter
+      const topicFilter = document.getElementById('topic-filter');
+      if (topicFilter) {
+        topicFilter.value = '';
+      }
+
+      // Reload graph
+      await this.loadGraph();
+
+      // Try to find node again
+      node = this.graphData.nodes.find((n) => n.id === nodeId);
+
+      if (!node) {
+        console.warn('[MAMA] Node not found even after reload:', nodeId);
+        showToast('⚠️ Decision not found in graph');
+        return;
+      }
     }
 
     // Focus on node
