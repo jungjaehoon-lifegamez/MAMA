@@ -1,11 +1,29 @@
 /**
  * MAMA Graph Viewer JavaScript
- * @version 1.4.0
+ * @version 1.5.0 - Refactored with ES6 modules
  */
 
 /* eslint-env browser */
 /* global vis */
-/* exported filterByTopic, handleSearch, closeDetail, toggleLegend, saveOutcome, toggleReasoning, navigateToNode, getConnectedEdges */
+
+// Import utilities
+import {
+  escapeHtml,
+  debounce,
+  showToast,
+  scrollToBottom,
+  autoResizeTextarea,
+} from './js/utils/dom.js';
+import {
+  formatMessageTime,
+  formatCheckpointTime,
+  formatRelativeTime,
+  truncateText,
+  extractFirstLine,
+  formatAssistantMessage,
+} from './js/utils/format.js';
+// eslint-disable-next-line no-unused-vars
+import { API } from './js/utils/api.js'; // Will be used in Phase 2 refactoring
 
 // Global state
 let network = null;
@@ -53,19 +71,6 @@ const EDGE_STYLES = {
 
 function getEdgeStyle(relationship) {
   return EDGE_STYLES[relationship] || { color: '#4a4a6a', dashes: false };
-}
-
-// Debounce utility for search performance
-function debounce(func, wait) {
-  let timeout;
-  return function executedFunction(...args) {
-    const later = () => {
-      clearTimeout(timeout);
-      func(...args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
 }
 
 // Fetch graph data from API
@@ -530,16 +535,6 @@ function navigateToNode(nodeId) {
   if (nodeData) {
     showDetail(nodeData);
   }
-}
-
-// HTML escape utility
-function escapeHtml(text) {
-  if (!text) {
-    return '';
-  }
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 function closeDetail() {
@@ -1132,6 +1127,9 @@ function sendChatMessage() {
     })
   );
 
+  // Search for related MAMA decisions (Story 4-1)
+  showRelatedDecisionsForMessage(message);
+
   // Clear input and reset height
   input.value = '';
   autoResizeTextarea(input);
@@ -1277,70 +1275,6 @@ function removePlaceholder() {
   if (placeholder) {
     placeholder.remove();
   }
-}
-
-// Format assistant message (markdown support)
-function formatAssistantMessage(text) {
-  if (!text) {
-    return '';
-  }
-
-  // First escape HTML to prevent XSS
-  let formatted = escapeHtml(text);
-
-  // Code blocks with optional language (```js ... ```)
-  formatted = formatted.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
-    const langClass = lang ? ` class="language-${lang}"` : '';
-    return `<pre class="code-block"><code${langClass}>${code.trim()}</code></pre>`;
-  });
-
-  // Inline code
-  formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-  // Bold
-  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  // Italic (avoiding conflicts with bold)
-  formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
-
-  // Links: [text](url)
-  formatted = formatted.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
-  );
-
-  // Auto-detect URLs (not already in anchor tags)
-  formatted = formatted.replace(
-    /(?<!href="|>)(https?:\/\/[^\s<]+)/g,
-    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
-  );
-
-  // Line breaks
-  formatted = formatted.replace(/\n/g, '<br>');
-
-  return formatted;
-}
-
-// Format message timestamp
-function formatMessageTime(date) {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-// Scroll chat to bottom
-function scrollToBottom(container) {
-  // Use setTimeout to ensure DOM has updated before scrolling
-  setTimeout(() => {
-    container.scrollTop = container.scrollHeight;
-  }, 50);
-}
-
-// Auto-resize textarea (max 5 rows)
-function autoResizeTextarea(textarea) {
-  textarea.style.height = 'auto';
-  const lineHeight = parseInt(getComputedStyle(textarea).lineHeight);
-  const maxHeight = lineHeight * 5; // 5 rows max
-  const newHeight = Math.min(textarea.scrollHeight, maxHeight);
-  textarea.style.height = newHeight + 'px';
 }
 
 // Handle chat input keydown (Enter/Shift+Enter)
@@ -1668,29 +1602,6 @@ function restoreChatHistory(sessionId) {
 }
 
 // Show toast notification
-function showToast(message, duration = 3000) {
-  // Remove existing toast
-  const existingToast = document.querySelector('.toast-notification');
-  if (existingToast) {
-    existingToast.remove();
-  }
-
-  const toast = document.createElement('div');
-  toast.className = 'toast-notification';
-  toast.textContent = message;
-  document.body.appendChild(toast);
-
-  // Trigger animation
-  requestAnimationFrame(() => {
-    toast.classList.add('visible');
-  });
-
-  // Auto-remove
-  setTimeout(() => {
-    toast.classList.remove('visible');
-    setTimeout(() => toast.remove(), 300);
-  }, duration);
-}
 
 // Clear chat history for a session
 // eslint-disable-next-line no-unused-vars
@@ -1805,35 +1716,8 @@ function renderCheckpoints() {
 }
 
 // Format checkpoint timestamp
-function formatCheckpointTime(timestamp) {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diff = now - date;
-
-  if (diff < 3600000) {
-    const mins = Math.floor(diff / 60000);
-    return `${mins}m ago`;
-  }
-  if (diff < 86400000) {
-    const hours = Math.floor(diff / 3600000);
-    return `${hours}h ago`;
-  }
-
-  return (
-    date.toLocaleDateString() +
-    ' ' +
-    date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  );
-}
 
 // Extract first meaningful line from summary
-function extractFirstLine(summary) {
-  if (!summary) {
-    return 'No summary';
-  }
-  const lines = summary.split('\n').filter((l) => l.trim() && !l.startsWith('**'));
-  return lines[0] || summary.substring(0, 100);
-}
 
 // Extract and render related decisions from summary
 function renderRelatedDecisions(summary) {
@@ -1918,6 +1802,303 @@ function initDraggablePanel() {
   });
 }
 
+// =============================================
+// Memory Tab Functions (Story 4-1)
+// =============================================
+
+let memorySearchData = [];
+const debouncedMemorySearch = debounce(performMemorySearch, 300);
+
+// Handle memory search input (called from HTML onkeyup)
+// eslint-disable-next-line no-unused-vars
+function handleMemorySearch(event) {
+  if (event.key === 'Enter') {
+    searchMemoryDecisions();
+  } else {
+    debouncedMemorySearch();
+  }
+}
+
+// Perform memory search
+async function performMemorySearch() {
+  const input = document.getElementById('memory-search-input');
+  const query = input.value.trim();
+
+  if (!query) {
+    showMemoryPlaceholder();
+    return;
+  }
+
+  await searchMemoryDecisions();
+}
+
+// Search memory decisions via API (called from HTML onclick)
+// eslint-disable-next-line no-unused-vars
+async function searchMemoryDecisions() {
+  const input = document.getElementById('memory-search-input');
+  const query = input.value.trim();
+
+  if (!query) {
+    showMemoryPlaceholder();
+    return;
+  }
+
+  setMemoryStatus('Searching...', 'loading');
+
+  try {
+    const response = await fetch(`/api/mama/search?q=${encodeURIComponent(query)}&limit=10`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    memorySearchData = data.results || [];
+    renderMemoryResults(memorySearchData, query);
+    setMemoryStatus(`Found ${memorySearchData.length} decision(s)`, '');
+  } catch (error) {
+    console.error('[Memory] Search error:', error);
+    setMemoryStatus(`Error: ${error.message}`, 'error');
+  }
+}
+
+// Search for related decisions (called automatically when user sends chat message)
+async function searchRelatedDecisions(message) {
+  if (!message || message.length < 3) {
+    return [];
+  }
+
+  try {
+    const response = await fetch(`/api/mama/search?q=${encodeURIComponent(message)}&limit=5`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.warn('[Memory] Related search failed:', data.error);
+      return [];
+    }
+
+    return data.results || [];
+  } catch (error) {
+    console.error('[Memory] Related search error:', error);
+    return [];
+  }
+}
+
+// Render memory search results
+function renderMemoryResults(results, query) {
+  const container = document.getElementById('memory-results');
+
+  if (!results || results.length === 0) {
+    container.innerHTML = `
+      <div class="memory-placeholder">
+        <p>No decisions found for "${escapeHtml(query)}"</p>
+        <p class="memory-hint">Try different keywords or check if you have saved decisions</p>
+      </div>
+    `;
+    return;
+  }
+
+  const html = results
+    .map(
+      (item, idx) => `
+      <div class="memory-card" onclick="toggleMemoryCard(${idx})">
+        <div class="memory-card-header">
+          <span class="memory-card-topic">${escapeHtml(item.topic || 'Unknown')}</span>
+          ${item.similarity ? `<span class="memory-card-score">${Math.round(item.similarity * 100)}%</span>` : ''}
+        </div>
+        <div class="memory-card-decision">${escapeHtml(truncateText(item.decision, 150))}</div>
+        <div class="memory-card-meta">
+          <span class="memory-card-outcome ${(item.outcome || 'pending').toLowerCase()}">${item.outcome || 'PENDING'}</span>
+          <span>${formatRelativeTime(item.created_at)}</span>
+        </div>
+        <div class="memory-card-reasoning">${escapeHtml(item.reasoning || 'No reasoning provided')}</div>
+      </div>
+    `
+    )
+    .join('');
+
+  container.innerHTML = html;
+}
+
+// Toggle memory card expand/collapse (called from HTML onclick)
+// eslint-disable-next-line no-unused-vars
+function toggleMemoryCard(idx) {
+  const cards = document.querySelectorAll('.memory-card');
+  cards.forEach((card, i) => {
+    if (i === idx) {
+      card.classList.toggle('expanded');
+    } else {
+      card.classList.remove('expanded');
+    }
+  });
+}
+
+// Show memory placeholder
+function showMemoryPlaceholder() {
+  const container = document.getElementById('memory-results');
+  container.innerHTML = `
+    <div class="memory-placeholder">
+      <p>🧠 Search your MAMA decisions</p>
+      <p class="memory-hint">Type a keyword or send a chat message to see related decisions</p>
+    </div>
+  `;
+  setMemoryStatus('', '');
+}
+
+// Set memory status message
+function setMemoryStatus(message, type) {
+  const status = document.getElementById('memory-status');
+  status.textContent = message;
+  status.className = 'memory-status ' + (type || '');
+}
+
+// Truncate text with ellipsis
+
+// Format relative time
+
+// Show related decisions in Memory tab when user sends a message
+async function showRelatedDecisionsForMessage(message) {
+  // Switch to memory tab to show related decisions
+  const results = await searchRelatedDecisions(message);
+
+  if (results.length > 0) {
+    memorySearchData = results;
+
+    // Update search input with the query
+    const input = document.getElementById('memory-search-input');
+    input.value = message.substring(0, 50) + (message.length > 50 ? '...' : '');
+
+    // Render results
+    renderMemoryResults(results, message);
+    setMemoryStatus(`${results.length} related decision(s) found`, '');
+
+    // Show notification that related decisions were found
+    showToast(`🧠 ${results.length} related MAMA decision(s) found`);
+  }
+}
+
+// =============================================
+// Save Decision Form Functions (Story 4-2)
+// =============================================
+
+// Show save decision form modal (called from HTML onclick)
+// eslint-disable-next-line no-unused-vars
+function showSaveDecisionForm() {
+  const modal = document.getElementById('save-decision-modal');
+  modal.classList.add('visible');
+
+  // Clear form
+  document.getElementById('save-topic').value = '';
+  document.getElementById('save-decision').value = '';
+  document.getElementById('save-reasoning').value = '';
+  document.getElementById('save-confidence').value = '0.8';
+  document.getElementById('save-form-status').textContent = '';
+  document.getElementById('save-form-status').className = 'save-form-status';
+
+  // Focus on topic field
+  setTimeout(() => {
+    document.getElementById('save-topic').focus();
+  }, 100);
+}
+
+// Hide save decision form modal (called from HTML onclick)
+// eslint-disable-next-line no-unused-vars
+function hideSaveDecisionForm() {
+  const modal = document.getElementById('save-decision-modal');
+  modal.classList.remove('visible');
+}
+
+// Submit save decision form (called from HTML onclick)
+// eslint-disable-next-line no-unused-vars
+async function submitSaveDecision() {
+  const topic = document.getElementById('save-topic').value.trim();
+  const decision = document.getElementById('save-decision').value.trim();
+  const reasoning = document.getElementById('save-reasoning').value.trim();
+  const confidence = parseFloat(document.getElementById('save-confidence').value);
+
+  const statusEl = document.getElementById('save-form-status');
+  const submitBtn = document.querySelector('.save-form-submit');
+
+  // Validation
+  if (!topic || !decision || !reasoning) {
+    statusEl.textContent = 'Please fill in all required fields';
+    statusEl.className = 'save-form-status error';
+    return;
+  }
+
+  if (isNaN(confidence) || confidence < 0 || confidence > 1) {
+    statusEl.textContent = 'Confidence must be between 0.0 and 1.0';
+    statusEl.className = 'save-form-status error';
+    return;
+  }
+
+  // Disable submit button
+  submitBtn.disabled = true;
+  statusEl.textContent = 'Saving...';
+  statusEl.className = 'save-form-status';
+
+  try {
+    const response = await fetch('/api/mama/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic,
+        decision,
+        reasoning,
+        confidence,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    // Success
+    statusEl.textContent = '✓ Decision saved successfully!';
+    statusEl.className = 'save-form-status success';
+
+    // Show toast notification
+    showToast('✓ Decision saved to MAMA memory');
+
+    // Close modal after 1.5 seconds
+    setTimeout(() => {
+      hideSaveDecisionForm();
+
+      // Refresh memory search if there's a query
+      const searchInput = document.getElementById('memory-search-input');
+      if (searchInput.value.trim()) {
+        searchMemoryDecisions();
+      }
+    }, 1500);
+  } catch (error) {
+    console.error('[Memory] Save error:', error);
+    statusEl.textContent = `Error: ${error.message}`;
+    statusEl.className = 'save-form-status error';
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
+
+// Close modal when clicking outside
+document.addEventListener('click', (e) => {
+  const modal = document.getElementById('save-decision-modal');
+  if (modal && e.target === modal) {
+    hideSaveDecisionForm();
+  }
+});
+
+// Close modal on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const modal = document.getElementById('save-decision-modal');
+    if (modal && modal.classList.contains('visible')) {
+      hideSaveDecisionForm();
+    }
+  }
+});
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
   // Initialize draggable panel
@@ -1948,3 +2129,33 @@ document.addEventListener('DOMContentLoaded', async () => {
       `<div class="error">Failed to load graph: ${error.message}<br><br><button onclick="location.reload()" style="padding:8px 16px;cursor:pointer;">Retry</button></div>`;
   }
 });
+
+// =============================================
+// Export functions to window for HTML onclick handlers
+// =============================================
+window.filterByTopic = filterByTopic;
+window.handleSearch = handleSearch;
+window.closeDetail = closeDetail;
+window.toggleLegend = toggleLegend;
+window.saveOutcome = saveOutcome;
+window.toggleReasoning = toggleReasoning;
+window.navigateToNode = navigateToNode;
+window.getConnectedEdges = getConnectedEdges;
+window.handleMemorySearch = handleMemorySearch;
+window.searchMemoryDecisions = searchMemoryDecisions;
+window.toggleMemoryCard = toggleMemoryCard;
+window.showSaveDecisionForm = showSaveDecisionForm;
+window.hideSaveDecisionForm = hideSaveDecisionForm;
+window.submitSaveDecision = submitSaveDecision;
+window.toggleSidebar = toggleSidebar;
+window.toggleCheckpoints = toggleCheckpoints;
+window.switchTab = switchTab;
+window.expandCheckpoint = expandCheckpoint;
+window.navigateToDecision = navigateToDecision;
+window.addAssistantMessage = addAssistantMessage;
+window.sendChatMessage = sendChatMessage;
+window.toggleVoiceInput = toggleVoiceInput;
+window.enableMicButton = enableMicButton;
+window.connectToSession = connectToSession;
+window.disconnectChat = disconnectChat;
+window.clearChatHistory = clearChatHistory;

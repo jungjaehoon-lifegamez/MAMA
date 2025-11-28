@@ -73,6 +73,9 @@
         <button class="sidebar-tab" data-tab="chat" onclick="switchTab('chat')">
           💬 Chat
         </button>
+        <button class="sidebar-tab" data-tab="memory" onclick="switchTab('memory')">
+          🧠 Memory
+        </button>
         <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
       </div>
 
@@ -108,8 +111,59 @@
           </div>
         </div>
       </div>
+
+      <!-- Memory Tab Content (Story 4-1) -->
+      <div class="tab-content" id="tab-memory">
+        <div class="memory-container">
+          <div class="memory-search">
+            <input type="text" id="memory-search-input" placeholder="Search decisions..." onkeyup="handleMemorySearch(event)">
+            <button class="memory-search-btn" onclick="searchMemoryDecisions()">🔍</button>
+            <button class="memory-save-btn" onclick="showSaveDecisionForm()" title="Save new decision">💾</button>
+          </div>
+          <div class="memory-results" id="memory-results">
+            <div class="memory-placeholder">
+              <p>🧠 Search your MAMA decisions</p>
+              <p class="memory-hint">Type a keyword or send a chat message to see related decisions</p>
+            </div>
+          </div>
+          <div class="memory-status" id="memory-status"></div>
+        </div>
+      </div>
     </div>
     <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()">📋 Sidebar</button>
+
+    <!-- Save Decision Form Modal (Story 4-2) -->
+    <div class="save-decision-modal" id="save-decision-modal">
+      <div class="save-decision-form">
+        <div class="save-form-header">
+          <h3>💾 Save Decision</h3>
+          <button class="save-form-close" onclick="hideSaveDecisionForm()">&times;</button>
+        </div>
+        <div class="save-form-body">
+          <div class="save-form-field">
+            <label for="save-topic">Topic</label>
+            <input type="text" id="save-topic" placeholder="e.g., mobile_ui_design" required>
+          </div>
+          <div class="save-form-field">
+            <label for="save-decision">Decision</label>
+            <textarea id="save-decision" placeholder="What did you decide?" rows="2" required></textarea>
+          </div>
+          <div class="save-form-field">
+            <label for="save-reasoning">Reasoning</label>
+            <textarea id="save-reasoning" placeholder="Why did you make this decision?" rows="4" required></textarea>
+          </div>
+          <div class="save-form-field">
+            <label for="save-confidence">Confidence (0.0 - 1.0)</label>
+            <input type="number" id="save-confidence" min="0" max="1" step="0.1" value="0.8">
+          </div>
+        </div>
+        <div class="save-form-footer">
+          <button class="save-form-cancel" onclick="hideSaveDecisionForm()">Cancel</button>
+          <button class="save-form-submit" onclick="submitSaveDecision()">Save</button>
+        </div>
+        <div class="save-form-status" id="save-form-status"></div>
+      </div>
+    </div>
 
     <!-- Legend Panel -->
     <div id="legend-panel">
@@ -153,6 +207,6 @@
     <button class="legend-toggle" onclick="toggleLegend()">Show Legend</button>
   </div>
 
-  <script src="/viewer.js"></script>
+  <script type="module" src="/viewer.js"></script>
 </body>
 </html>
