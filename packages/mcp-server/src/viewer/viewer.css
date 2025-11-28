@@ -604,6 +604,14 @@ header h1 {
   margin-bottom: 10px;
   font-weight: 600;
   text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#legend-panel h4 i {
+  width: 14px;
+  height: 14px;
 }
 
 .legend-section {
@@ -690,6 +698,13 @@ header h1 {
   font-size: 11px;
   z-index: 99;
   display: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-toggle i {
+  width: 14px;
+  height: 14px;
 }
 
 .legend-toggle:hover {
@@ -751,6 +766,13 @@ header h1 {
   border-bottom-color: #a0a0ff;
 }
 
+.sidebar-tab i {
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
 .sidebar-close {
   background: none;
   border: none;
@@ -803,6 +825,15 @@ header h1 {
 
 .chat-placeholder p {
   margin: 8px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.chat-placeholder p i {
+  width: 18px;
+  height: 18px;
 }
 
 .chat-hint {
@@ -969,6 +1000,14 @@ header h1 {
   cursor: pointer;
   font-size: 13px;
   transition: background 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-send-btn i {
+  width: 16px;
+  height: 16px;
 }
 
 .chat-send-btn:hover:not(:disabled) {
@@ -1028,6 +1067,8 @@ header h1 {
 }
 
 .chat-mic-btn .mic-icon {
+  width: 18px;
+  height: 18px;
   transition: transform 0.2s;
 }
 
@@ -1116,6 +1157,13 @@ header h1 {
   font-size: 12px;
   z-index: 99;
   display: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-toggle i {
+  width: 14px;
+  height: 14px;
 }
 
 .sidebar-toggle:hover {
@@ -1543,6 +1591,15 @@ header h1 {
   cursor: pointer;
   font-size: 14px;
   transition: background 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memory-search-btn i,
+.memory-save-btn i {
+  width: 16px;
+  height: 16px;
 }
 
 .memory-search-btn:hover,
@@ -1568,6 +1625,15 @@ header h1 {
 
 .memory-placeholder p {
   margin: 8px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.memory-placeholder p i {
+  width: 18px;
+  height: 18px;
 }
 
 .memory-hint {
@@ -1814,6 +1880,14 @@ header h1 {
   margin: 0;
   font-size: 16px;
   color: #a0a0ff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.save-form-header h3 i {
+  width: 18px;
+  height: 18px;
 }
 
 .save-form-close {
@@ -1828,6 +1902,11 @@ header h1 {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.save-form-close i {
+  width: 20px;
+  height: 20px;
 }
 
 .save-form-close:hover {

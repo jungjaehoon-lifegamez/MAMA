@@ -69,15 +69,15 @@
       <!-- Tab Header -->
       <div class="sidebar-tabs">
         <button class="sidebar-tab active" data-tab="checkpoints" onclick="switchTab('checkpoints')">
-          📋 Checkpoints
+          <i data-lucide="clipboard-list"></i> Checkpoints
         </button>
         <button class="sidebar-tab" data-tab="chat" onclick="switchTab('chat')">
-          💬 Chat
+          <i data-lucide="message-circle"></i> Chat
         </button>
         <button class="sidebar-tab" data-tab="memory" onclick="switchTab('memory')">
-          🧠 Memory
+          <i data-lucide="brain"></i> Memory
         </button>
-        <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
+        <button class="sidebar-close" onclick="toggleSidebar()"><i data-lucide="x"></i></button>
       </div>
 
       <!-- Checkpoints Tab Content -->
@@ -92,18 +92,18 @@
         <div class="chat-container">
           <div class="chat-messages" id="chat-messages">
             <div class="chat-placeholder">
-              <p>💬 Connect to a Claude session to start chatting</p>
+              <p><i data-lucide="message-circle"></i> Connect to a Claude session to start chatting</p>
               <p class="chat-hint">Create a session via REST API or use an existing one</p>
             </div>
           </div>
           <div class="chat-input-area">
             <textarea id="chat-input" placeholder="Type your message..." rows="2" disabled></textarea>
             <button id="chat-mic" class="chat-mic-btn" onclick="toggleVoiceInput()" title="Voice input (Korean)">
-              <span class="mic-icon">🎤</span>
+              <i data-lucide="mic" class="mic-icon"></i>
               <span class="recording-dot"></span>
             </button>
             <button id="chat-send" class="chat-send-btn" onclick="sendChatMessage()" disabled>
-              Send
+              <i data-lucide="send"></i> Send
             </button>
           </div>
           <div class="chat-status" id="chat-status">
@@ -118,12 +118,12 @@
         <div class="memory-container">
           <div class="memory-search">
             <input type="text" id="memory-search-input" placeholder="Search decisions..." onkeyup="handleMemorySearch(event)">
-            <button class="memory-search-btn" onclick="searchMemoryDecisions()">🔍</button>
-            <button class="memory-save-btn" onclick="showSaveDecisionForm()" title="Save new decision">💾</button>
+            <button class="memory-search-btn" onclick="searchMemoryDecisions()"><i data-lucide="search"></i></button>
+            <button class="memory-save-btn" onclick="showSaveDecisionForm()" title="Save new decision"><i data-lucide="save"></i></button>
           </div>
           <div class="memory-results" id="memory-results">
             <div class="memory-placeholder">
-              <p>🧠 Search your MAMA decisions</p>
+              <p><i data-lucide="brain"></i> Search your MAMA decisions</p>
               <p class="memory-hint">Type a keyword or send a chat message to see related decisions</p>
             </div>
           </div>
@@ -131,14 +131,14 @@
         </div>
       </div>
     </div>
-    <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()">📋 Sidebar</button>
+    <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()"><i data-lucide="panel-left"></i> Sidebar</button>
 
     <!-- Save Decision Form Modal (Story 4-2) -->
     <div class="save-decision-modal" id="save-decision-modal">
       <div class="save-decision-form">
         <div class="save-form-header">
-          <h3>💾 Save Decision</h3>
-          <button class="save-form-close" onclick="hideSaveDecisionForm()">&times;</button>
+          <h3><i data-lucide="save"></i> Save Decision</h3>
+          <button class="save-form-close" onclick="hideSaveDecisionForm()"><i data-lucide="x"></i></button>
         </div>
         <div class="save-form-body">
           <div class="save-form-field">
@@ -168,8 +168,8 @@
 
     <!-- Legend Panel -->
     <div id="legend-panel">
-      <button class="close-btn" onclick="toggleLegend()" style="position:absolute;top:8px;right:8px;">&times;</button>
-      <h4>Legend</h4>
+      <button class="close-btn" onclick="toggleLegend()" style="position:absolute;top:8px;right:8px;"><i data-lucide="x"></i></button>
+      <h4><i data-lucide="info"></i> Legend</h4>
       <div class="legend-section">
         <div class="legend-section-title">Edge Types</div>
         <div class="legend-item">
@@ -205,7 +205,7 @@
         </div>
       </div>
     </div>
-    <button class="legend-toggle" onclick="toggleLegend()">Show Legend</button>
+    <button class="legend-toggle" onclick="toggleLegend()"><i data-lucide="info"></i> Show Legend</button>
   </div>
 
   <script type="module" src="/viewer.js"></script>
