@@ -210,15 +210,24 @@
 
   <script type="module" src="/viewer.js"></script>
   <script>
+    // Lucide icon configuration (global)
+    window.lucideConfig = {
+      attrs: {
+        width: 16,
+        height: 16,
+        'stroke-width': 1
+      }
+    };
+
     // Initialize Lucide icons after DOM loads
     document.addEventListener('DOMContentLoaded', () => {
-      lucide.createIcons();
+      lucide.createIcons(window.lucideConfig);
 
       // Re-initialize icons when detail panel updates (use MutationObserver)
       const detailPanel = document.getElementById('detail-panel');
       if (detailPanel) {
         const observer = new MutationObserver(() => {
-          lucide.createIcons();
+          lucide.createIcons(window.lucideConfig);
         });
         observer.observe(detailPanel, { childList: true, subtree: true });
       }
