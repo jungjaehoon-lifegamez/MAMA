@@ -546,17 +546,29 @@ export class ChatModule {
       let interimTranscript = '';
       let finalTranscript = '';
 
-      // Build full transcript from all results
-      for (let i = 0; i < event.results.length; i++) {
+      // Build transcript from NEW results only (use resultIndex)
+      console.log(
+        '[Voice] onresult fired, resultIndex:',
+        event.resultIndex,
+        'total results:',
+        event.results.length
+      );
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         const transcript = result[0].transcript;
 
         if (result.isFinal) {
           finalTranscript += transcript;
-          console.log('[Voice] Final result:', transcript, 'Confidence:', result[0].confidence);
+          console.log(
+            '[Voice] Final result [' + i + ']:',
+            transcript,
+            'Confidence:',
+            result[0].confidence
+          );
         } else {
           interimTranscript += transcript;
-          console.log('[Voice] Interim result:', transcript);
+          console.log('[Voice] Interim result [' + i + ']:', transcript);
         }
       }
 
@@ -564,12 +576,16 @@ export class ChatModule {
       if (finalTranscript) {
         const currentValue = input.value;
         // Append to existing text if in continuous mode
-        input.value = currentValue ? currentValue + ' ' + finalTranscript : finalTranscript;
-        console.log('[Voice] Updated input value:', input.value);
+        const newValue = currentValue ? currentValue + ' ' + finalTranscript : finalTranscript;
+        input.value = newValue;
+        input.classList.remove('voice-active');
+        console.log('[Voice] Updated input value:', newValue);
       } else if (interimTranscript) {
-        // Show interim results temporarily
-        input.value = interimTranscript;
+        // Show interim results temporarily (don't save)
+        const currentFinal = input.value;
+        input.value = currentFinal ? currentFinal + ' ' + interimTranscript : interimTranscript;
         input.classList.add('voice-active');
+        console.log('[Voice] Showing interim:', interimTranscript);
       }
 
       autoResizeTextarea(input);
