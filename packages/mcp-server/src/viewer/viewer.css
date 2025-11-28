@@ -161,6 +161,8 @@ header h1 {
   stroke-width: 1px;
   vertical-align: middle;
   display: inline-block;
+  flex-shrink: 0;
+  margin-bottom: -2px; /* Fine-tune vertical alignment */
 }
 
 /* Close button (dynamic HTML uses .close-detail) */
@@ -754,6 +756,10 @@ header h1 {
   cursor: pointer;
   transition: all 0.2s;
   border-bottom: 2px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 
 .sidebar-tab:hover {
@@ -769,8 +775,6 @@ header h1 {
 .sidebar-tab i {
   width: 16px;
   height: 16px;
-  margin-right: 4px;
-  vertical-align: middle;
 }
 
 .sidebar-close {
