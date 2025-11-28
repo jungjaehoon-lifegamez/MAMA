@@ -654,8 +654,9 @@ export class GraphModule {
         topicFilter.value = '';
       }
 
-      // Reload graph
-      await this.loadGraph();
+      // Reload graph: fetch fresh data and reinitialize
+      await this.fetchData();
+      this.init(this.graphData);
 
       // Try to find node again
       node = this.graphData.nodes.find((n) => n.id === nodeId);
