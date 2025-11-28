@@ -30,12 +30,21 @@ export class ChatModule {
     this.reconnectAttempts = 0;
     this.maxReconnectDelay = 30000; // 30 seconds
 
-    // Voice input state
+    // Voice input state (STT)
     this.speechRecognition = null;
     this.isRecording = false;
     this.silenceTimeout = null;
     this.silenceDelay = 2500; // 2.5 seconds (increased for continuous mode)
     this.accumulatedTranscript = ''; // Track accumulated final transcripts
+
+    // Voice output state (TTS)
+    this.speechSynthesis = window.speechSynthesis;
+    this.isSpeaking = false;
+    this.ttsEnabled = false; // Auto-play toggle
+    this.handsFreeMode = false; // Auto-listen after TTS
+    this.ttsVoice = null;
+    this.ttsRate = 1.0; // Speech rate (0.5 - 2.0)
+    this.ttsPitch = 1.0; // Speech pitch (0.0 - 2.0)
 
     // Streaming state
     this.currentStreamEl = null;
@@ -52,6 +61,7 @@ export class ChatModule {
     // Initialize
     this.initChatInput();
     this.initSpeechRecognition();
+    this.initSpeechSynthesis();
   }
 
   // =============================================
@@ -318,6 +328,12 @@ export class ChatModule {
     scrollToBottom(container);
 
     this.saveToHistory('assistant', text, timestamp);
+
+    // Auto-play TTS if enabled
+    if (this.ttsEnabled && text) {
+      console.log('[TTS] Auto-play enabled, speaking assistant message');
+      this.speak(text);
+    }
   }
 
   /**
@@ -718,6 +734,147 @@ export class ChatModule {
     input.placeholder = 'Type your message...';
 
     console.log('[Voice] Recording stopped');
+  }
+
+  // =============================================
+  // Text-to-Speech (TTS)
+  // =============================================
+
+  /**
+   * Initialize Speech Synthesis
+   */
+  initSpeechSynthesis() {
+    if (!this.speechSynthesis) {
+      console.warn('[TTS] SpeechSynthesis not supported');
+      return;
+    }
+
+    // Wait for voices to load
+    const loadVoices = () => {
+      const voices = this.speechSynthesis.getVoices();
+      // Find Korean voice
+      this.ttsVoice =
+        voices.find((v) => v.lang === 'ko-KR') ||
+        voices.find((v) => v.lang.startsWith('ko')) ||
+        voices[0];
+
+      if (this.ttsVoice) {
+        console.log('[TTS] Korean voice selected:', this.ttsVoice.name, this.ttsVoice.lang);
+      } else {
+        console.warn('[TTS] No Korean voice found, using default');
+      }
+    };
+
+    // Voices might not be loaded immediately
+    if (this.speechSynthesis.getVoices().length > 0) {
+      loadVoices();
+    } else {
+      this.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+
+    console.log('[TTS] SpeechSynthesis initialized');
+  }
+
+  /**
+   * Toggle TTS auto-play
+   */
+  toggleTTS() {
+    this.ttsEnabled = !this.ttsEnabled;
+    const btn = document.getElementById('chat-tts-toggle');
+
+    if (btn) {
+      btn.classList.toggle('active', this.ttsEnabled);
+      btn.title = this.ttsEnabled
+        ? 'TTS 활성화됨 (클릭하여 끄기)'
+        : 'TTS 비활성화됨 (클릭하여 켜기)';
+    }
+
+    console.log('[TTS] Auto-play:', this.ttsEnabled ? 'ON' : 'OFF');
+    showToast(this.ttsEnabled ? '🔊 TTS 활성화' : '🔇 TTS 비활성화');
+  }
+
+  /**
+   * Toggle hands-free mode
+   */
+  toggleHandsFree() {
+    this.handsFreeMode = !this.handsFreeMode;
+    const btn = document.getElementById('chat-handsfree-toggle');
+
+    if (btn) {
+      btn.classList.toggle('active', this.handsFreeMode);
+      btn.title = this.handsFreeMode ? '핸즈프리 활성화됨' : '핸즈프리 비활성화됨';
+    }
+
+    console.log('[TTS] Hands-free mode:', this.handsFreeMode ? 'ON' : 'OFF');
+    showToast(this.handsFreeMode ? '🎙️ 핸즈프리 모드 활성화' : '🎙️ 핸즈프리 모드 비활성화');
+
+    // Enable TTS automatically when hands-free is enabled
+    if (this.handsFreeMode && !this.ttsEnabled) {
+      this.toggleTTS();
+    }
+  }
+
+  /**
+   * Speak text using TTS
+   */
+  speak(text) {
+    if (!this.speechSynthesis || !text) {
+      return;
+    }
+
+    // Stop any ongoing speech
+    this.stopSpeaking();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.voice = this.ttsVoice;
+    utterance.rate = this.ttsRate;
+    utterance.pitch = this.ttsPitch;
+    utterance.lang = 'ko-KR';
+
+    utterance.onstart = () => {
+      this.isSpeaking = true;
+      console.log('[TTS] Speaking started');
+    };
+
+    utterance.onend = () => {
+      this.isSpeaking = false;
+      console.log('[TTS] Speaking ended');
+
+      // If hands-free mode, start listening after TTS finishes
+      if (this.handsFreeMode && !this.isRecording) {
+        console.log('[TTS] Hands-free mode: auto-starting voice input');
+        setTimeout(() => {
+          this.startVoice();
+        }, 500); // Small delay for smooth transition
+      }
+    };
+
+    utterance.onerror = (event) => {
+      this.isSpeaking = false;
+      console.error('[TTS] Error:', event.error);
+    };
+
+    this.speechSynthesis.speak(utterance);
+    console.log('[TTS] Speaking:', text.substring(0, 50) + '...');
+  }
+
+  /**
+   * Stop speaking
+   */
+  stopSpeaking() {
+    if (this.speechSynthesis && this.isSpeaking) {
+      this.speechSynthesis.cancel();
+      this.isSpeaking = false;
+      console.log('[TTS] Speaking stopped');
+    }
+  }
+
+  /**
+   * Set TTS rate (0.5 - 2.0)
+   */
+  setTTSRate(rate) {
+    this.ttsRate = Math.max(0.5, Math.min(2.0, rate));
+    console.log('[TTS] Rate set to:', this.ttsRate);
   }
 
   // =============================================

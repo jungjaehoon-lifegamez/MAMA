@@ -1070,6 +1070,45 @@ header h1 {
 }
 
 /* Microphone Button */
+/* TTS Toggle Button */
+.chat-tts-btn,
+.chat-handsfree-btn {
+  background: #4a4a6a;
+  color: #e0e0e0;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-tts-btn:hover,
+.chat-handsfree-btn:hover {
+  background: #5a5a7a;
+}
+
+.chat-tts-btn.active {
+  background: #6366f1;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5);
+}
+
+.chat-handsfree-btn.active {
+  background: #f59e0b;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.5);
+  animation: pulse-handsfree 2s ease-in-out infinite;
+}
+
+@keyframes pulse-handsfree {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.3); }
+}
+
 .chat-mic-btn {
   background: #4a4a6a;
   color: #e0e0e0;
