@@ -162,11 +162,13 @@ function filterEdgesByNodes(edges, nodes) {
 function serveStaticFile(res, filePath, contentType) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
+    const etag = `"${Date.now()}"`; // Force browser to reload
     res.writeHead(200, {
       'Content-Type': `${contentType}; charset=utf-8`,
-      'Cache-Control': 'no-cache, no-store, must-revalidate', // Disable cache for development
+      'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
       Pragma: 'no-cache',
       Expires: '0',
+      ETag: etag,
     });
     res.end(content);
   } catch (error) {
