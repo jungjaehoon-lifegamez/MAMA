@@ -639,6 +639,108 @@ async function handleMamaSaveRequest(req, res) {
 }
 
 /**
+ * Handle POST /api/checkpoint/save request - save session checkpoint
+ * Story 4-3: Auto checkpoint feature for mobile chat
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleCheckpointSaveRequest(req, res) {
+  try {
+    const body = await readBody(req);
+
+    // Validate required fields
+    if (!body.summary) {
+      res.writeHead(400);
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'MISSING_FIELDS',
+          message: 'Missing required field: summary',
+        })
+      );
+      return;
+    }
+
+    // Ensure DB is initialized
+    await initDB();
+
+    // Save checkpoint using mama.saveCheckpoint
+    const checkpointId = await mama.saveCheckpoint(
+      body.summary,
+      body.open_files || [],
+      body.next_steps || ''
+    );
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        success: true,
+        id: checkpointId,
+        message: 'Checkpoint saved successfully',
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] Checkpoint save error: ${error.message}`);
+    res.writeHead(500);
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'SAVE_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle GET /api/checkpoint/load request - load latest checkpoint
+ * Story 4-3: Session resume feature for mobile chat
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleCheckpointLoadRequest(req, res) {
+  try {
+    // Ensure DB is initialized
+    await initDB();
+
+    // Load latest checkpoint using mama.loadCheckpoint
+    const checkpoint = await mama.loadCheckpoint();
+
+    if (!checkpoint) {
+      res.writeHead(404);
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'NO_CHECKPOINT',
+          message: 'No checkpoint found',
+        })
+      );
+      return;
+    }
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        success: true,
+        checkpoint,
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] Checkpoint load error: ${error.message}`);
+    res.writeHead(500);
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'LOAD_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
  * Handle GET /checkpoints request - list all checkpoints
  *
  * @param {Object} req - HTTP request
@@ -765,6 +867,18 @@ function createGraphHandler() {
     // Route: POST /api/mama/save - save a new decision (Story 4-2)
     if (pathname === '/api/mama/save' && req.method === 'POST') {
       await handleMamaSaveRequest(req, res);
+      return true; // Request handled
+    }
+
+    // Route: POST /api/checkpoint/save - save session checkpoint (Story 4-3)
+    if (pathname === '/api/checkpoint/save' && req.method === 'POST') {
+      await handleCheckpointSaveRequest(req, res);
+      return true; // Request handled
+    }
+
+    // Route: GET /api/checkpoint/load - load latest checkpoint (Story 4-3)
+    if (pathname === '/api/checkpoint/load' && req.method === 'GET') {
+      await handleCheckpointLoadRequest(req, res);
       return true; // Request handled
     }
 

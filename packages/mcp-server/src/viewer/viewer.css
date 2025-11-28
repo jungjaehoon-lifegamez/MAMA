@@ -832,6 +832,83 @@ header h1 {
   to { opacity: 1; }
 }
 
+/* Session Resume Banner */
+.session-resume-banner {
+  background: linear-gradient(135deg, #2a2a4a 0%, #1a2a3e 100%);
+  border-bottom: 2px solid #6366f1;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.resume-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.resume-icon {
+  font-size: 24px;
+}
+
+.resume-text {
+  color: #e0e0e0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.resume-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.resume-btn {
+  background: #6366f1;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.resume-btn:hover {
+  background: #5558e3;
+}
+
+.dismiss-btn {
+  background: transparent;
+  color: #888;
+  border: 1px solid #444;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  transition: all 0.2s;
+}
+
+.dismiss-btn:hover {
+  background: #333;
+  color: #fff;
+  border-color: #666;
+}
+
 /* Chat Container */
 .chat-container {
   display: flex;
@@ -988,23 +1065,120 @@ header h1 {
   text-align: right;
 }
 
-/* Chat Input */
-.chat-input-area {
+/* Tool Card (Story 5.1) */
+.tool-card {
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 12px;
+  max-width: 80%;
+  transition: all 0.2s ease;
+}
+
+.tool-card.loading {
+  border-left: 3px solid #ffa726;
+}
+
+.tool-card.completed {
+  border-left: 3px solid #66bb6a;
+}
+
+.tool-header {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.tool-name {
+  font-weight: 600;
+  color: #a0a0ff;
+  flex: 1;
+}
+
+.tool-spinner {
+  font-size: 14px;
+  flex-shrink: 0;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.tool-spinner.checkmark {
+  animation: none;
+  color: #66bb6a;
+  font-weight: bold;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.tool-detail {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #3a3a5a;
+  color: #b0b0c0;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-card[data-collapsed="true"] .tool-detail {
+  display: block;
+}
+
+.tool-card[data-collapsed="false"] .tool-detail {
+  display: block;
+  white-space: pre-wrap;
+  overflow: visible;
+}
+
+.tool-card:hover {
+  background: #32325a;
+  border-color: #4a4a7a;
+}
+
+/* Chat Input - 2 Row Layout (Story 3.2) */
+.chat-input-container {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   padding: 12px;
   border-top: 1px solid #4a4a6a;
   background: #1a1a2e;
 }
 
+/* Row 1: Textarea (expanded for better typing) */
+.chat-input-row {
+  display: flex;
+  width: 100%;
+}
+
 #chat-input {
   flex: 1;
+  width: 100%;
+  min-height: 60px;
   background: #16213e;
   border: 1px solid #4a4a6a;
   border-radius: 4px;
   padding: 8px;
   color: #e0e0e0;
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.5;
   resize: none;
   font-family: inherit;
 }
@@ -1017,6 +1191,56 @@ header h1 {
 #chat-input:disabled {
   background: #1a1a2e;
   color: #666;
+}
+
+/* Row 2: All controls in one row */
+.chat-controls-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  position: relative; /* For popup positioning */
+}
+
+/* Control buttons */
+.chat-control-btn {
+  background: #4a4a6a;
+  color: #e0e0e0;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.chat-control-btn:hover {
+  background: #5a5a7a;
+}
+
+/* TTS Speed Label (clickable) */
+.tts-speed-label {
+  background: #2a2a4a;
+  color: #a0a0ff;
+  border: 1px solid #4a4a6a;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+  position: relative; /* For popup positioning */
+}
+
+.tts-speed-label:hover {
+  background: #3a3a5a;
+  border-color: #6a6a8a;
 }
 
 .chat-send-btn {
@@ -1069,32 +1293,63 @@ header h1 {
   to { transform: rotate(360deg); }
 }
 
-/* Microphone Button */
-/* TTS Toggle Button */
-.chat-tts-btn,
-.chat-handsfree-btn {
-  background: #4a4a6a;
-  color: #e0e0e0;
-  border: none;
-  padding: 8px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.chat-tts-btn:hover,
-.chat-handsfree-btn:hover {
-  background: #5a5a7a;
-}
-
-.chat-tts-btn.active {
+/* Active state for TTS and Handsfree buttons */
+.chat-tts-btn.active,
+.chat-handsfree-btn.active {
   background: #6366f1;
   color: #fff;
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5);
+}
+
+/* TTS Speed Popup - Minimal compact dropdown */
+.tts-speed-popup {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  width: 100px;
+  background: #2a2a4a;
+  border: 1px solid #4a4a6a;
+  border-radius: 4px;
+  padding: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.tts-speed-value {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #a0a0ff;
+  margin-bottom: 6px;
+}
+
+#tts-speed-slider {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: #4a4a6a;
+  outline: none;
+  -webkit-appearance: none;
+}
+
+#tts-speed-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #6366f1;
+  cursor: pointer;
+}
+
+#tts-speed-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #6366f1;
+  cursor: pointer;
+  border: none;
 }
 
 .chat-handsfree-btn.active {
@@ -1597,6 +1852,40 @@ header h1 {
   .checkpoint-summary {
     font-size: 12px;
   }
+
+  /* 44px Touch Targets (Story 3.2) */
+  .chat-control-btn,
+  .chat-send-btn,
+  .chat-mic-btn,
+  .chat-tts-btn,
+  .chat-handsfree-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .tts-speed-label {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px;
+  }
+
+  .sidebar-tab {
+    min-height: 44px;
+  }
+
+  .sidebar-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .memory-save-btn {
+    min-height: 44px;
+  }
+
+  .save-form-submit,
+  .save-form-cancel {
+    min-height: 44px;
+  }
 }
 
 /* Small mobile (< 400px) */
@@ -2097,6 +2386,327 @@ header h1 {
   .save-form-submit {
     padding: 12px 24px;
     font-size: 14px;
+    min-height: 44px;
+  }
+}
+
+/* ============================================= */
+/* Tunnel Setup Modal (Story 5.2) */
+/* ============================================= */
+
+.tunnel-setup-modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+  justify-content: center;
+  align-items: center;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.tunnel-setup-modal.visible {
+  display: flex;
+}
+
+.tunnel-setup-form {
+  background: #16213e;
+  border: 1px solid #4a4a6a;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  animation: slideIn 0.3s ease-out;
+}
+
+.tunnel-form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #4a4a6a;
+}
+
+.tunnel-form-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #a0a0ff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tunnel-form-close {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tunnel-form-close:hover {
+  color: #fff;
+}
+
+.tunnel-form-body {
+  padding: 20px;
+}
+
+.tunnel-section {
+  background: #1a1a2e;
+  border: 1px solid #3a3a5a;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.tunnel-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #a0a0ff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tunnel-description {
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  color: #888;
+}
+
+.tunnel-code {
+  background: #0f1419;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tunnel-code code {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  color: #22c55e;
+  flex: 1;
+}
+
+.tunnel-copy-btn {
+  background: #3a3a5a;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: #e0e0e0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.tunnel-copy-btn:hover {
+  background: #4a4a6a;
+}
+
+.tunnel-copy-btn i {
+  width: 14px;
+  height: 14px;
+}
+
+.tunnel-links {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tunnel-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #6366f1;
+  text-decoration: none;
+  font-size: 12px;
+  transition: color 0.2s;
+}
+
+.tunnel-links a:hover {
+  color: #8b8bf1;
+}
+
+.tunnel-links a i {
+  width: 14px;
+  height: 14px;
+}
+
+.tunnel-warning {
+  background: #3a2a1a;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.tunnel-warning i {
+  color: #f59e0b;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.tunnel-warning div {
+  flex: 1;
+  font-size: 12px;
+  color: #e0e0e0;
+}
+
+.tunnel-warning strong {
+  color: #f59e0b;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.tunnel-warning pre {
+  background: #0f1419;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0 0 0;
+  font-size: 11px;
+  color: #22c55e;
+  overflow-x: auto;
+}
+
+.tunnel-test {
+  border-top: 1px solid #4a4a6a;
+  padding-top: 16px;
+}
+
+.tunnel-test-btn {
+  background: #6366f1;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 20px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.2s;
+  width: 100%;
+  justify-content: center;
+}
+
+.tunnel-test-btn:hover {
+  background: #5a5ad1;
+}
+
+.tunnel-test-btn i {
+  width: 16px;
+  height: 16px;
+}
+
+.tunnel-test-result {
+  margin-top: 12px;
+  min-height: 60px;
+}
+
+.tunnel-test-loading,
+.tunnel-test-success,
+.tunnel-test-error {
+  padding: 12px;
+  border-radius: 6px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 12px;
+}
+
+.tunnel-test-loading {
+  background: #2a2a4a;
+  color: #a0a0ff;
+}
+
+.tunnel-test-success {
+  background: #1a3a2a;
+  border: 1px solid #22c55e;
+  color: #e0e0e0;
+}
+
+.tunnel-test-success i {
+  color: #22c55e;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.tunnel-test-error {
+  background: #3a1a1a;
+  border: 1px solid #ef4444;
+  color: #e0e0e0;
+}
+
+.tunnel-test-error i {
+  color: #ef4444;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.tunnel-test-success div,
+.tunnel-test-error div {
+  flex: 1;
+}
+
+.tunnel-setup-btn {
+  background: #3a3a5a;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: #e0e0e0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  transition: background 0.2s;
+}
+
+.tunnel-setup-btn:hover {
+  background: #4a4a6a;
+}
+
+.tunnel-setup-btn i {
+  width: 16px;
+  height: 16px;
+}
+
+/* Mobile responsive for tunnel form */
+@media screen and (max-width: 768px) {
+  .tunnel-setup-form {
+    width: 95%;
+    max-height: 85vh;
+  }
+
+  .tunnel-form-body {
+    padding: 16px;
+  }
+
+  .tunnel-test-btn {
     min-height: 44px;
   }
 }

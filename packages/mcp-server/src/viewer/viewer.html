@@ -3,13 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MAMA Graph Viewer</title>
+  <title>MAMA Mobile</title>
+
+  <!-- PWA Meta Tags -->
+  <link rel="manifest" href="/viewer/manifest.json">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MAMA">
+  <link rel="apple-touch-icon" href="/viewer/icons/icon-192.png">
+
   <script src="https://unpkg.com/vis-network@9/dist/vis-network.min.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="/viewer.css">
 </head>
 <body>
   <div id="app">
+    <!-- Session Resume Banner -->
+    <div id="session-resume-banner" class="session-resume-banner" style="display: none;">
+      <div class="resume-content">
+        <span class="resume-icon">📖</span>
+        <span class="resume-text">Previous session found</span>
+      </div>
+      <div class="resume-actions">
+        <button class="resume-btn" onclick="window.chatModule.commandResume()">Resume</button>
+        <button class="dismiss-btn" onclick="dismissResumeBanner()">×</button>
+      </div>
+    </div>
+
     <header>
       <h1>MAMA Reasoning Graph</h1>
       <div class="controls">
@@ -96,25 +117,44 @@
               <p class="chat-hint">Create a session via REST API or use an existing one</p>
             </div>
           </div>
-          <div class="chat-input-area">
-            <textarea id="chat-input" placeholder="Type your message..." rows="2" disabled></textarea>
-            <button id="chat-tts-toggle" class="chat-tts-btn" onclick="toggleTTS()" title="TTS 비활성화됨 (클릭하여 켜기)">
-              <i data-lucide="volume-2"></i>
-            </button>
-            <button id="chat-handsfree-toggle" class="chat-handsfree-btn" onclick="toggleHandsFree()" title="핸즈프리 비활성화됨">
-              <i data-lucide="radio"></i>
-            </button>
-            <button id="chat-mic" class="chat-mic-btn" onclick="toggleVoiceInput()" title="Voice input (Korean)">
-              <i data-lucide="mic" class="mic-icon"></i>
-              <span class="recording-dot"></span>
-            </button>
-            <button id="chat-send" class="chat-send-btn" onclick="sendChatMessage()" disabled>
-              <i data-lucide="send"></i> Send
-            </button>
+          <!-- 2-Row Layout for better mobile UX (Story 3.2) -->
+          <div class="chat-input-container">
+            <!-- Row 1: Textarea (expanded) -->
+            <div class="chat-input-row">
+              <textarea id="chat-input" placeholder="Type your message..." rows="3" disabled></textarea>
+            </div>
+
+            <!-- Row 2: All Controls -->
+            <div class="chat-controls-row">
+              <button id="chat-tts-toggle" class="chat-control-btn chat-tts-btn" onclick="toggleTTS()" title="TTS 비활성화됨">
+                <i data-lucide="volume-2"></i>
+              </button>
+              <span id="chat-tts-speed" class="tts-speed-label" title="Click to adjust TTS speed">
+                1.8x
+                <!-- TTS Speed Popup (minimal dropdown) -->
+                <div id="tts-speed-popup" class="tts-speed-popup" style="display: none;">
+                  <div class="tts-speed-value">1.8x</div>
+                  <input type="range" id="tts-speed-slider" min="0.5" max="2.0" step="0.1" value="1.8">
+                </div>
+              </span>
+              <button id="chat-handsfree-toggle" class="chat-control-btn chat-handsfree-btn" onclick="toggleHandsFree()" title="핸즈프리 비활성화됨">
+                <i data-lucide="radio"></i>
+              </button>
+              <button id="chat-mic" class="chat-control-btn chat-mic-btn" onclick="toggleVoiceInput()" title="Voice input (Korean)">
+                <i data-lucide="mic" class="mic-icon"></i>
+                <span class="recording-dot"></span>
+              </button>
+              <button id="chat-send" class="chat-send-btn" onclick="sendChatMessage()" disabled>
+                <i data-lucide="send"></i> Send
+              </button>
+            </div>
           </div>
           <div class="chat-status" id="chat-status">
             <span class="status-indicator disconnected"></span>
             <span>Not connected</span>
+            <button class="tunnel-setup-btn" onclick="showTunnelSetup()" title="External Access Setup">
+              <i data-lucide="globe"></i>
+            </button>
           </div>
         </div>
       </div>
@@ -169,6 +209,62 @@
           <button class="save-form-submit" onclick="submitSaveDecision()">Save</button>
         </div>
         <div class="save-form-status" id="save-form-status"></div>
+      </div>
+    </div>
+
+    <!-- Tunnel Setup Modal (Story 5.2) -->
+    <div class="tunnel-setup-modal" id="tunnel-setup-modal">
+      <div class="tunnel-setup-form">
+        <div class="tunnel-form-header">
+          <h3><i data-lucide="globe"></i> External Access Setup</h3>
+          <button class="tunnel-form-close" onclick="hideTunnelSetup()"><i data-lucide="x"></i></button>
+        </div>
+        <div class="tunnel-form-body">
+          <!-- ngrok Section -->
+          <div class="tunnel-section">
+            <h4><i data-lucide="zap"></i> ngrok (Quick Setup)</h4>
+            <p class="tunnel-description">Tunnel your local server to a public URL</p>
+            <div class="tunnel-code">
+              <code id="ngrok-command">ngrok http 3847</code>
+              <button class="tunnel-copy-btn" onclick="copyNgrokCommand()" title="Copy command">
+                <i data-lucide="copy"></i>
+              </button>
+            </div>
+            <div class="tunnel-links">
+              <a href="https://ngrok.com/download" target="_blank" rel="noopener noreferrer">
+                <i data-lucide="download"></i> Download ngrok
+              </a>
+            </div>
+          </div>
+
+          <!-- Cloudflare Tunnel Section -->
+          <div class="tunnel-section">
+            <h4><i data-lucide="cloud"></i> Cloudflare Tunnel (Production)</h4>
+            <p class="tunnel-description">Secure tunnel with custom domain support</p>
+            <div class="tunnel-links">
+              <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/" target="_blank" rel="noopener noreferrer">
+                <i data-lucide="book-open"></i> Setup Guide
+              </a>
+            </div>
+          </div>
+
+          <!-- Auth Token Warning -->
+          <div class="tunnel-warning">
+            <i data-lucide="alert-triangle"></i>
+            <div>
+              <strong>Security Notice:</strong> Always set MAMA_AUTH_TOKEN environment variable before exposing your server externally.
+              <pre>export MAMA_AUTH_TOKEN="your-secure-token-here"</pre>
+            </div>
+          </div>
+
+          <!-- Connection Test -->
+          <div class="tunnel-test">
+            <button class="tunnel-test-btn" onclick="testConnection()">
+              <i data-lucide="wifi"></i> Test Connection
+            </button>
+            <div class="tunnel-test-result" id="tunnel-test-result"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -241,6 +337,24 @@
         observer.observe(detailPanel, { childList: true, subtree: true });
       }
     });
+
+    // Register Service Worker for PWA
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/viewer/sw.js')
+          .then((registration) => {
+            console.log('[PWA] Service Worker registered:', registration.scope);
+
+            // Check for updates every hour
+            setInterval(() => {
+              registration.update();
+            }, 60 * 60 * 1000);
+          })
+          .catch((error) => {
+            console.error('[PWA] Service Worker registration failed:', error);
+          });
+      });
+    }
   </script>
 </body>
 </html>
