@@ -63,17 +63,53 @@
       </div>
     </div>
 
-    <!-- Checkpoint Sidebar Panel -->
-    <div id="checkpoint-panel">
-      <div class="checkpoint-header">
-        <h4>📋 Checkpoints</h4>
-        <button class="close-btn" onclick="toggleCheckpoints()">&times;</button>
+    <!-- Sidebar Panel with Tabs -->
+    <div id="sidebar-panel">
+      <!-- Tab Header -->
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab active" data-tab="checkpoints" onclick="switchTab('checkpoints')">
+          📋 Checkpoints
+        </button>
+        <button class="sidebar-tab" data-tab="chat" onclick="switchTab('chat')">
+          💬 Chat
+        </button>
+        <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
       </div>
-      <div class="checkpoint-list" id="checkpoint-list">
-        <div class="loading-checkpoints">Loading...</div>
+
+      <!-- Checkpoints Tab Content -->
+      <div class="tab-content active" id="tab-checkpoints">
+        <div class="checkpoint-list" id="checkpoint-list">
+          <div class="loading-checkpoints">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Chat Tab Content -->
+      <div class="tab-content" id="tab-chat">
+        <div class="chat-container">
+          <div class="chat-messages" id="chat-messages">
+            <div class="chat-placeholder">
+              <p>💬 Connect to a Claude session to start chatting</p>
+              <p class="chat-hint">Create a session via REST API or use an existing one</p>
+            </div>
+          </div>
+          <div class="chat-input-area">
+            <textarea id="chat-input" placeholder="Type your message..." rows="2" disabled></textarea>
+            <button id="chat-mic" class="chat-mic-btn" onclick="toggleVoiceInput()" title="Voice input (Korean)">
+              <span class="mic-icon">🎤</span>
+              <span class="recording-dot"></span>
+            </button>
+            <button id="chat-send" class="chat-send-btn" onclick="sendChatMessage()" disabled>
+              Send
+            </button>
+          </div>
+          <div class="chat-status" id="chat-status">
+            <span class="status-indicator disconnected"></span>
+            <span>Not connected</span>
+          </div>
+        </div>
       </div>
     </div>
-    <button class="checkpoint-toggle" id="checkpoint-toggle" onclick="toggleCheckpoints()">📋 Checkpoints</button>
+    <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()">📋 Sidebar</button>
 
     <!-- Legend Panel -->
     <div id="legend-panel">
