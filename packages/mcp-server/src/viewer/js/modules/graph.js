@@ -171,16 +171,22 @@ export class GraphModule {
 
     // Event handlers
     this.network.on('click', (params) => {
-      if (params.nodes.length > 0) {
-        const nodeId = params.nodes[0];
-        const node = data.nodes.find((n) => n.id === nodeId);
-        if (node) {
-          this.showDetail(node);
-          this.highlightConnectedNodes(nodeId);
+      try {
+        if (params.nodes.length > 0) {
+          const nodeId = params.nodes[0];
+          const node = data.nodes.find((n) => n.id === nodeId);
+          if (node) {
+            console.log('[MAMA] Node clicked:', nodeId, node);
+            this.showDetail(node);
+            this.highlightConnectedNodes(nodeId);
+          }
+        } else {
+          this.closeDetail();
+          this.resetNodeHighlight();
         }
-      } else {
-        this.closeDetail();
-        this.resetNodeHighlight();
+      } catch (error) {
+        console.error('[MAMA] Error handling click:', error);
+        console.error('[MAMA] Error stack:', error.stack);
       }
     });
 
@@ -405,10 +411,18 @@ export class GraphModule {
    * Show node detail panel
    */
   async showDetail(node) {
-    this.currentNodeId = node.id;
-    const panel = document.getElementById('detail-panel');
+    try {
+      console.log('[MAMA] showDetail called with node:', node);
+      this.currentNodeId = node.id;
+      const panel = document.getElementById('detail-panel');
 
-    panel.innerHTML = `
+      if (!panel) {
+        console.error('[MAMA] detail-panel element not found');
+        return;
+      }
+
+      console.log('[MAMA] Building detail panel HTML...');
+      panel.innerHTML = `
       <h3>${escapeHtml(node.topic || 'Unknown Topic')}</h3>
       <button onclick="window.graphModule.closeDetail()" class="close-detail">
         <i data-lucide="x" class="icon"></i>
@@ -467,15 +481,27 @@ export class GraphModule {
       </div>
     `;
 
-    panel.style.display = 'block';
+      console.log('[MAMA] Setting panel display to block...');
+      panel.style.display = 'block';
 
-    // Reinitialize Lucide icons for dynamic content
-    if (typeof lucide !== 'undefined') {
-      lucide.createIcons();
+      // Reinitialize Lucide icons for dynamic content
+      console.log('[MAMA] Initializing Lucide icons...');
+      if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+        console.log('[MAMA] Lucide icons initialized');
+      } else {
+        console.error('[MAMA] Lucide library not loaded!');
+      }
+
+      // Fetch similar decisions
+      console.log('[MAMA] Fetching similar decisions...');
+      this.fetchSimilarDecisions(node.id);
+      console.log('[MAMA] showDetail completed successfully');
+    } catch (error) {
+      console.error('[MAMA] Error in showDetail:', error);
+      console.error('[MAMA] Error stack:', error.stack);
+      console.error('[MAMA] Node data:', node);
     }
-
-    // Fetch similar decisions
-    this.fetchSimilarDecisions(node.id);
   }
 
   /**
