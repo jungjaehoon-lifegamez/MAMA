@@ -107,7 +107,7 @@ header h1 {
 #detail-panel h3 {
   color: #a0a0ff;
   margin-bottom: 12px;
-  font-size: 14px;
+  font-size: 12px;
   cursor: move;
   user-select: none;
 }
@@ -117,14 +117,15 @@ header h1 {
 }
 
 #detail-panel .field-label {
-  font-size: 11px;
+  font-size: 10px;
   color: #888;
   text-transform: uppercase;
   margin-bottom: 4px;
+  letter-spacing: 0.5px;
 }
 
 #detail-panel .field-value {
-  font-size: 13px;
+  font-size: 12px;
   color: #e0e0e0;
   line-height: 1.5;
 }
@@ -133,29 +134,49 @@ header h1 {
   position: absolute;
   top: 12px;
   right: 12px;
-  background: none;
-  border: none;
+  background: #1a1a2e;
+  border: 1px solid #4a4a6a;
+  border-radius: 4px;
   color: #888;
   cursor: pointer;
-  font-size: 18px;
+  font-size: 14px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
 }
 
 #detail-panel .close-btn:hover {
   color: #fff;
+  background: #2a2a4e;
+  border-color: #a0a0ff;
 }
 
 #detail-panel .reasoning-toggle {
   cursor: pointer;
   user-select: none;
+  color: #a0a0ff;
+  font-size: 11px;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+#detail-panel .reasoning-toggle:hover {
+  color: #c0c0ff;
 }
 
 #detail-panel .reasoning-toggle::before {
   content: '▶ ';
   font-size: 10px;
+  display: inline-block;
+  transition: transform 0.2s;
 }
 
 #detail-panel .reasoning-toggle.expanded::before {
   content: '▼ ';
+  transform: rotate(0deg);
 }
 
 #detail-panel .reasoning-content {

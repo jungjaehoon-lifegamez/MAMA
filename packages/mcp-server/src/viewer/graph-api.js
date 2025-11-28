@@ -164,7 +164,9 @@ function serveStaticFile(res, filePath, contentType) {
     const content = fs.readFileSync(filePath, 'utf8');
     res.writeHead(200, {
       'Content-Type': `${contentType}; charset=utf-8`,
-      'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+      'Cache-Control': 'no-cache, no-store, must-revalidate', // Disable cache for development
+      Pragma: 'no-cache',
+      Expires: '0',
     });
     res.end(content);
   } catch (error) {
@@ -662,8 +664,19 @@ function createGraphHandler() {
     const pathname = url.pathname;
     const params = url.searchParams;
 
+    console.log('[GraphHandler] Request:', req.method, pathname);
+
+    // Route: GET / - redirect to /viewer
+    if (pathname === '/' && req.method === 'GET') {
+      console.log('[GraphHandler] Redirecting / to /viewer');
+      res.writeHead(302, { Location: '/viewer' });
+      res.end();
+      return true; // Request handled
+    }
+
     // Route: GET /viewer - serve HTML viewer
     if (pathname === '/viewer' && req.method === 'GET') {
+      console.log('[GraphHandler] Serving viewer.html');
       handleViewerRequest(req, res);
       return true; // Request handled
     }

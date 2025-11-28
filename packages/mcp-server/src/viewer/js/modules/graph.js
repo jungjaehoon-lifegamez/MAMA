@@ -185,7 +185,10 @@ export class GraphModule {
     });
 
     this.network.on('stabilized', () => {
-      document.getElementById('loading').style.display = 'none';
+      const loadingEl = document.getElementById('loading');
+      if (loadingEl) {
+        loadingEl.style.display = 'none';
+      }
       console.log('[MAMA] Graph stabilized');
     });
 
