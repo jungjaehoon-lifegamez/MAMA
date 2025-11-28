@@ -411,8 +411,11 @@ async function getSimilarityEdges() {
  * @param {URLSearchParams} params - Query parameters (id required)
  */
 async function handleSimilarRequest(req, res, params) {
+  const startTime = Date.now();
   try {
     const decisionId = params.get('id');
+    console.log(`[GraphAPI] Similar request for decision: ${decisionId}`);
+
     if (!decisionId) {
       res.writeHead(400);
       res.end(
@@ -426,9 +429,11 @@ async function handleSimilarRequest(req, res, params) {
     }
 
     // Ensure DB is initialized
+    console.log(`[GraphAPI] Initializing DB...`);
     await initDB();
 
     // Get the decision by ID
+    console.log(`[GraphAPI] Fetching decision ${decisionId}...`);
     const adapter = getAdapter();
     const stmt = adapter.prepare(`
       SELECT topic, decision, reasoning FROM decisions WHERE id = ?
@@ -436,6 +441,7 @@ async function handleSimilarRequest(req, res, params) {
     const decision = stmt.get(decisionId);
 
     if (!decision) {
+      console.log(`[GraphAPI] Decision ${decisionId} not found`);
       res.writeHead(404);
       res.end(
         JSON.stringify({
@@ -449,12 +455,17 @@ async function handleSimilarRequest(req, res, params) {
 
     // Build search query from decision content
     const searchQuery = `${decision.topic} ${decision.decision}`;
+    console.log(
+      `[GraphAPI] Searching for similar decisions with query: "${searchQuery.substring(0, 50)}..."`
+    );
 
     // Use mama.suggest for semantic search
+    const searchStart = Date.now();
     const results = await mama.suggest(searchQuery, {
       limit: 6, // Get 6 to filter out self
       threshold: 0.5,
     });
+    console.log(`[GraphAPI] Semantic search completed in ${Date.now() - searchStart}ms`);
 
     // Filter out the current decision and format results
     let similar = [];
@@ -471,6 +482,10 @@ async function handleSimilarRequest(req, res, params) {
         }));
     }
 
+    console.log(
+      `[GraphAPI] Found ${similar.length} similar decisions (total time: ${Date.now() - startTime}ms)`
+    );
+
     res.writeHead(200);
     res.end(
       JSON.stringify({
@@ -481,6 +496,7 @@ async function handleSimilarRequest(req, res, params) {
     );
   } catch (error) {
     console.error(`[GraphAPI] Similar error: ${error.message}`);
+    console.error(`[GraphAPI] Similar error stack:`, error.stack);
     res.writeHead(500);
     res.end(
       JSON.stringify({
