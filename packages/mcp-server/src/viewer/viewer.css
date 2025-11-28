@@ -154,6 +154,15 @@ header h1 {
   border-color: #a0a0ff;
 }
 
+/* Lucide icon styling */
+.icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2px;
+  vertical-align: middle;
+  display: inline-block;
+}
+
 /* Close button (dynamic HTML uses .close-detail) */
 #detail-panel .close-detail {
   position: absolute;
@@ -165,12 +174,18 @@ header h1 {
   color: #888;
   cursor: pointer;
   font-size: 14px;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
+  padding: 0;
+}
+
+#detail-panel .close-detail .icon {
+  width: 18px;
+  height: 18px;
 }
 
 #detail-panel .close-detail:hover {
@@ -218,6 +233,14 @@ header h1 {
   margin-top: 8px;
   transition: all 0.2s;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#detail-panel .toggle-reasoning .icon {
+  width: 14px;
+  height: 14px;
 }
 
 #detail-panel .toggle-reasoning:hover {
@@ -247,8 +270,19 @@ header h1 {
   color: #aaa;
 }
 
+#detail-panel .detail-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#detail-panel .detail-meta .icon {
+  width: 14px;
+  height: 14px;
+}
+
 #detail-panel .detail-meta .outcome {
-  padding: 2px 8px;
+  padding: 4px 8px;
   border-radius: 4px;
   font-size: 10px;
   text-transform: uppercase;
@@ -303,11 +337,31 @@ header h1 {
   padding: 4px 12px;
   transition: all 0.2s;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#detail-panel .save-outcome .icon {
+  width: 14px;
+  height: 14px;
 }
 
 #detail-panel .save-outcome:hover {
   background: #5a5a7a;
   border-color: #a0a0ff;
+}
+
+/* Label icons */
+#detail-panel .detail-section strong {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#detail-panel .detail-section strong .icon {
+  width: 12px;
+  height: 12px;
 }
 
 /* Similar decisions */

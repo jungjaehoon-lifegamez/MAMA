@@ -12,7 +12,7 @@
  */
 
 /* eslint-env browser */
-/* global vis */
+/* global vis, lucide */
 
 import { escapeHtml, debounce } from '../utils/dom.js';
 import { API } from '../utils/api.js';
@@ -410,7 +410,9 @@ export class GraphModule {
 
     panel.innerHTML = `
       <h3>${escapeHtml(node.topic || 'Unknown Topic')}</h3>
-      <button onclick="window.graphModule.closeDetail()" class="close-detail">×</button>
+      <button onclick="window.graphModule.closeDetail()" class="close-detail">
+        <i data-lucide="x" class="icon"></i>
+      </button>
 
       <div class="detail-section">
         <strong>Decision:</strong>
@@ -421,14 +423,20 @@ export class GraphModule {
         <strong>Reasoning:</strong>
         <div class="reasoning-text" id="reasoning-text">
           ${escapeHtml((node.reasoning || '').substring(0, 200))}...
-          ${(node.reasoning || '').length > 200 ? '<button onclick="window.graphModule.toggleReasoning()" class="toggle-reasoning">Show More</button>' : ''}
+          ${(node.reasoning || '').length > 200 ? '<button onclick="window.graphModule.toggleReasoning()" class="toggle-reasoning"><i data-lucide="chevron-down" class="icon"></i> Show More</button>' : ''}
           <div class="reasoning-full" style="display:none">${escapeHtml(node.reasoning || '')}</div>
         </div>
       </div>
 
       <div class="detail-meta">
-        <span class="outcome ${(node.outcome || 'pending').toLowerCase()}">${node.outcome || 'PENDING'}</span>
-        <span>Confidence: ${Math.round((node.confidence || 0) * 100)}%</span>
+        <span class="outcome ${(node.outcome || 'pending').toLowerCase()}">
+          <i data-lucide="${this.getOutcomeIcon(node.outcome)}" class="icon"></i>
+          ${node.outcome || 'PENDING'}
+        </span>
+        <span>
+          <i data-lucide="gauge" class="icon"></i>
+          ${Math.round((node.confidence || 0) * 100)}%
+        </span>
       </div>
 
       ${
@@ -442,14 +450,19 @@ export class GraphModule {
             <option value="failed" ${node.outcome?.toLowerCase() === 'failed' ? 'selected' : ''}>Failed</option>
             <option value="partial" ${node.outcome?.toLowerCase() === 'partial' ? 'selected' : ''}>Partial</option>
           </select>
-          <button onclick="window.graphModule.saveOutcome()" class="save-outcome">Save</button>
+          <button onclick="window.graphModule.saveOutcome()" class="save-outcome">
+            <i data-lucide="save" class="icon"></i> Save
+          </button>
         </div>
       `
           : ''
       }
 
       <div class="detail-section">
-        <strong>Similar Decisions:</strong>
+        <strong>
+          <i data-lucide="lightbulb" class="icon"></i>
+          Similar Decisions:
+        </strong>
         <div id="similar-decisions">Loading...</div>
       </div>
     `;
@@ -458,6 +471,19 @@ export class GraphModule {
 
     // Fetch similar decisions
     this.fetchSimilarDecisions(node.id);
+  }
+
+  /**
+   * Get outcome icon name
+   */
+  getOutcomeIcon(outcome) {
+    const outcomeMap = {
+      pending: 'clock',
+      success: 'check-circle',
+      failed: 'x-circle',
+      partial: 'alert-circle',
+    };
+    return outcomeMap[(outcome || 'pending').toLowerCase()] || 'clock';
   }
 
   /**
@@ -471,10 +497,12 @@ export class GraphModule {
     if (fullText.style.display === 'none') {
       shortText.childNodes[0].textContent = '';
       fullText.style.display = 'block';
-      btn.textContent = 'Show Less';
+      btn.innerHTML = '<i data-lucide="chevron-up" class="icon"></i> Show Less';
+      lucide.createIcons(); // Re-initialize icons
     } else {
       fullText.style.display = 'none';
-      btn.textContent = 'Show More';
+      btn.innerHTML = '<i data-lucide="chevron-down" class="icon"></i> Show More';
+      lucide.createIcons(); // Re-initialize icons
     }
   }
 
