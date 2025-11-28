@@ -489,6 +489,132 @@ async function handleSimilarRequest(req, res, params) {
 }
 
 /**
+ * Handle GET /api/mama/search request - semantic search for decisions
+ * Story 4-1: Memory tab search for mobile chat
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ * @param {URLSearchParams} params - Query parameters (q required, limit optional)
+ */
+async function handleMamaSearchRequest(req, res, params) {
+  try {
+    const query = params.get('q');
+    const limit = Math.min(parseInt(params.get('limit') || '10', 10), 20);
+
+    if (!query) {
+      res.writeHead(400);
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'MISSING_QUERY',
+          message: 'Missing required parameter: q',
+        })
+      );
+      return;
+    }
+
+    // Ensure DB is initialized
+    await initDB();
+
+    // Use mama.suggest for semantic search
+    const searchResults = await mama.suggest(query, {
+      limit: limit,
+      threshold: 0.3, // Lower threshold to show more results
+    });
+
+    // Format results for mobile display
+    let results = [];
+    if (searchResults && searchResults.results) {
+      results = searchResults.results.map((r) => ({
+        id: r.id,
+        topic: r.topic,
+        decision: r.decision,
+        reasoning: r.reasoning,
+        outcome: r.outcome,
+        confidence: r.confidence,
+        similarity: r.similarity || r.final_score || 0.5,
+        created_at: r.created_at,
+      }));
+    }
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        query,
+        results,
+        count: results.length,
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] MAMA search error: ${error.message}`);
+    res.writeHead(500);
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'SEARCH_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle POST /api/mama/save request - save a new decision
+ * Story 4-2: Save decisions from mobile chat UI
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleMamaSaveRequest(req, res) {
+  try {
+    const body = await readBody(req);
+
+    // Validate required fields
+    if (!body.topic || !body.decision || !body.reasoning) {
+      res.writeHead(400);
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'MISSING_FIELDS',
+          message: 'Missing required fields: topic, decision, reasoning',
+        })
+      );
+      return;
+    }
+
+    // Ensure DB is initialized
+    await initDB();
+
+    // Save decision using mama.saveDecision
+    const result = await mama.saveDecision({
+      topic: body.topic,
+      decision: body.decision,
+      reasoning: body.reasoning,
+      confidence: body.confidence || 0.8,
+    });
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        success: true,
+        id: result.id,
+        message: 'Decision saved successfully',
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] MAMA save error: ${error.message}`);
+    res.writeHead(500);
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'SAVE_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
  * Handle GET /checkpoints request - list all checkpoints
  *
  * @param {Object} req - HTTP request
@@ -554,6 +680,14 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
+    // Route: GET /js/utils/*.js - serve utility modules (Phase 1 refactoring)
+    if (pathname.startsWith('/js/utils/') && pathname.endsWith('.js') && req.method === 'GET') {
+      const fileName = pathname.split('/').pop();
+      const filePath = path.join(__dirname, 'js', 'utils', fileName);
+      serveStaticFile(res, filePath, 'application/javascript');
+      return true; // Request handled
+    }
+
     // Route: GET /graph - API endpoint
     if (pathname === '/graph' && req.method === 'GET') {
       await handleGraphRequest(req, res, params);
@@ -575,6 +709,18 @@ function createGraphHandler() {
     // Route: GET /checkpoints - list all checkpoints
     if (pathname === '/checkpoints' && req.method === 'GET') {
       await handleCheckpointsRequest(req, res);
+      return true; // Request handled
+    }
+
+    // Route: GET /api/mama/search - semantic search for decisions (Story 4-1)
+    if (pathname === '/api/mama/search' && req.method === 'GET') {
+      await handleMamaSearchRequest(req, res, params);
+      return true; // Request handled
+    }
+
+    // Route: POST /api/mama/save - save a new decision (Story 4-2)
+    if (pathname === '/api/mama/save' && req.method === 'POST') {
+      await handleMamaSaveRequest(req, res);
       return true; // Request handled
     }
 
