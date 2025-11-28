@@ -22,8 +22,7 @@ import {
   extractFirstLine,
   formatAssistantMessage,
 } from './js/utils/format.js';
-// eslint-disable-next-line no-unused-vars
-import { API } from './js/utils/api.js'; // Will be used in Phase 2 refactoring
+import { API } from './js/utils/api.js';
 
 // Global state
 let network = null;
@@ -76,11 +75,7 @@ function getEdgeStyle(relationship) {
 // Fetch graph data from API
 async function fetchGraphData() {
   try {
-    const response = await fetch('/graph?cluster=true');
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    graphData = await response.json();
+    graphData = await API.getGraph();
     console.log('[MAMA] Graph data loaded:', graphData.meta);
     return graphData;
   } catch (error) {
@@ -480,8 +475,7 @@ function showDetail(node) {
 // Fetch similar decisions via API
 async function fetchSimilarDecisions(nodeId) {
   try {
-    const response = await fetch(`/graph/similar?id=${encodeURIComponent(nodeId)}`);
-    const data = await response.json();
+    const data = await API.getSimilarDecisions(nodeId);
 
     if (data.error) {
       document.getElementById('detail-similar').innerHTML =
@@ -567,16 +561,7 @@ async function saveOutcome() {
   statusEl.className = '';
 
   try {
-    const response = await fetch('/graph/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: currentNodeId,
-        outcome: newOutcome,
-      }),
-    });
-
-    const result = await response.json();
+    const result = await API.updateOutcome(currentNodeId, newOutcome);
 
     if (result.success) {
       statusEl.textContent = '✓ Saved';
@@ -877,17 +862,7 @@ async function initChatSession() {
     try {
       addSystemMessage('Creating new session...');
       // Use root directory as default project dir (server will resolve)
-      const response = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectDir: '.' }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await API.createSession('.');
       const sessionId = data.sessionId;
 
       console.log('[Chat] Created new session:', sessionId);
@@ -1643,11 +1618,7 @@ function cleanupExpiredHistories() {
 // Fetch checkpoints from API
 async function fetchCheckpoints() {
   try {
-    const response = await fetch('/checkpoints');
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const data = await response.json();
+    const data = await API.getCheckpoints();
     checkpointsData = data.checkpoints || [];
     renderCheckpoints();
   } catch (error) {
@@ -1846,13 +1817,7 @@ async function searchMemoryDecisions() {
   setMemoryStatus('Searching...', 'loading');
 
   try {
-    const response = await fetch(`/api/mama/search?q=${encodeURIComponent(query)}&limit=10`);
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
-    }
-
+    const data = await API.searchMemory(query, 10);
     memorySearchData = data.results || [];
     renderMemoryResults(memorySearchData, query);
     setMemoryStatus(`Found ${memorySearchData.length} decision(s)`, '');
@@ -1869,14 +1834,7 @@ async function searchRelatedDecisions(message) {
   }
 
   try {
-    const response = await fetch(`/api/mama/search?q=${encodeURIComponent(message)}&limit=5`);
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.warn('[Memory] Related search failed:', data.error);
-      return [];
-    }
-
+    const data = await API.searchMemory(message, 5);
     return data.results || [];
   } catch (error) {
     console.error('[Memory] Related search error:', error);
@@ -2038,22 +1996,7 @@ async function submitSaveDecision() {
   statusEl.className = 'save-form-status';
 
   try {
-    const response = await fetch('/api/mama/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        topic,
-        decision,
-        reasoning,
-        confidence,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
-    }
+    await API.saveDecision({ topic, decision, reasoning, confidence });
 
     // Success
     statusEl.textContent = '✓ Decision saved successfully!';
