@@ -486,11 +486,11 @@ export class GraphModule {
 
       // Reinitialize Lucide icons for dynamic content
       console.log('[MAMA] Initializing Lucide icons...');
-      if (typeof lucide !== 'undefined') {
-        lucide.createIcons();
+      if (typeof lucide !== 'undefined' && typeof window.lucideConfig !== 'undefined') {
+        lucide.createIcons(window.lucideConfig);
         console.log('[MAMA] Lucide icons initialized');
       } else {
-        console.error('[MAMA] Lucide library not loaded!');
+        console.error('[MAMA] Lucide library or config not loaded!');
       }
 
       // Fetch similar decisions
@@ -529,11 +529,15 @@ export class GraphModule {
       shortText.childNodes[0].textContent = '';
       fullText.style.display = 'block';
       btn.innerHTML = '<i data-lucide="chevron-up" class="icon"></i> Show Less';
-      lucide.createIcons(); // Re-initialize icons
+      if (typeof lucide !== 'undefined' && typeof window.lucideConfig !== 'undefined') {
+        lucide.createIcons(window.lucideConfig);
+      }
     } else {
       fullText.style.display = 'none';
       btn.innerHTML = '<i data-lucide="chevron-down" class="icon"></i> Show More';
-      lucide.createIcons(); // Re-initialize icons
+      if (typeof lucide !== 'undefined' && typeof window.lucideConfig !== 'undefined') {
+        lucide.createIcons(window.lucideConfig);
+      }
     }
   }
 
@@ -550,17 +554,22 @@ export class GraphModule {
    * Fetch similar decisions
    */
   async fetchSimilarDecisions(nodeId) {
+    console.log('[MAMA] fetchSimilarDecisions called for node:', nodeId);
     const container = document.getElementById('similar-decisions');
 
     try {
+      console.log('[MAMA] Calling API.getSimilarDecisions...');
       const data = await API.getSimilarDecisions(nodeId);
+      console.log('[MAMA] Similar decisions received:', data);
       const similar = data.similar || [];
 
       if (similar.length === 0) {
+        console.log('[MAMA] No similar decisions found');
         container.innerHTML = '<p class="no-similar">No similar decisions found</p>';
         return;
       }
 
+      console.log('[MAMA] Building similar decisions HTML for', similar.length, 'items');
       const html = similar
         .map(
           (s) => `
@@ -573,9 +582,12 @@ export class GraphModule {
         )
         .join('');
 
+      console.log('[MAMA] Setting similar decisions HTML...');
       container.innerHTML = html;
+      console.log('[MAMA] fetchSimilarDecisions completed');
     } catch (error) {
       console.error('[MAMA] Failed to fetch similar decisions:', error);
+      console.error('[MAMA] Error stack:', error.stack);
       container.innerHTML = '<p class="error">Failed to load similar decisions</p>';
     }
   }

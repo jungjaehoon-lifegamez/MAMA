@@ -214,8 +214,8 @@ export class MemoryModule {
     `;
     this.setStatus('', '');
     // Reinitialize Lucide icons for dynamic content
-    if (typeof lucide !== 'undefined') {
-      lucide.createIcons();
+    if (typeof lucide !== 'undefined' && typeof window.lucideConfig !== 'undefined') {
+      lucide.createIcons(window.lucideConfig);
     }
   }
 
