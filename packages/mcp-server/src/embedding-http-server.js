@@ -25,8 +25,21 @@ const { initDB } = require('./mama/memory-store.js');
 // Import Graph API handler
 const { createGraphHandler } = require('./viewer/graph-api.js');
 
-// Create graph handler instance
+// Import Session API handler (Mobile Chat)
+const { createSessionHandler } = require('./mobile/session-api.js');
+
+// Import WebSocket handler (Mobile Chat)
+const { createWebSocketHandler } = require('./mobile/websocket-handler.js');
+
+// Import Session Manager
+const { SessionManager } = require('./mobile/session-manager.js');
+
+// Create handler instances
 const graphHandler = createGraphHandler();
+
+// Create session manager (shared between REST API and WebSocket)
+const sessionManager = new SessionManager();
+const sessionHandler = createSessionHandler(sessionManager);
 
 // Configuration
 const DEFAULT_PORT = parseInt(process.env.MAMA_HTTP_PORT, 10) || 3847;
@@ -148,6 +161,19 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // Session API routes (Mobile Chat)
+  try {
+    const sessionHandled = await sessionHandler(req, res);
+    if (sessionHandled) {
+      return;
+    }
+  } catch (error) {
+    console.error(`[EmbeddingHTTP] Session API error: ${error.message}`);
+    res.writeHead(500);
+    res.end(JSON.stringify({ error: error.message }));
+    return;
+  }
+
   // Graph API routes
   try {
     const handled = await graphHandler(req, res);
@@ -191,6 +217,9 @@ function cleanupPortFile() {
   }
 }
 
+// Track WebSocket server instance
+let _wssInstance = null;
+
 /**
  * Start the HTTP embedding server
  *
@@ -200,6 +229,9 @@ function cleanupPortFile() {
 async function startEmbeddingServer(port = DEFAULT_PORT) {
   // Initialize database for graph API
   await initDB();
+
+  // Initialize session manager
+  await sessionManager.initDB();
 
   return new Promise((resolve, reject) => {
     const server = http.createServer(handleRequest);
@@ -225,6 +257,16 @@ async function startEmbeddingServer(port = DEFAULT_PORT) {
     server.listen(port, HOST, () => {
       console.error(`[EmbeddingHTTP] Running at http://${HOST}:${port}`);
       writePortFile(port);
+
+      // Initialize WebSocket server
+      try {
+        _wssInstance = createWebSocketHandler(server, sessionManager);
+        console.error(`[EmbeddingHTTP] WebSocket server initialized at ws://${HOST}:${port}/ws`);
+      } catch (wsError) {
+        console.error(`[EmbeddingHTTP] WebSocket initialization failed: ${wsError.message}`);
+        // Continue without WebSocket - HTTP endpoints still work
+      }
+
       resolve(server);
     });
   });
