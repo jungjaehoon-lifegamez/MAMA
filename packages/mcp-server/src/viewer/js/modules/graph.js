@@ -12,7 +12,7 @@
  */
 
 /* eslint-env browser */
-/* global vis, lucide */
+/* global vis */
 
 import { escapeHtml, debounce, showToast } from '../utils/dom.js';
 import { API } from '../utils/api.js';
@@ -421,77 +421,47 @@ export class GraphModule {
         return;
       }
 
-      console.log('[MAMA] Building detail panel HTML...');
-      panel.innerHTML = `
-      <h3>${escapeHtml(node.topic || 'Unknown Topic')}</h3>
-      <button onclick="window.graphModule.closeDetail()" class="close-detail">
-        <i data-lucide="x" class="icon"></i>
-      </button>
+      // Update existing DOM elements instead of replacing HTML
+      document.getElementById('detail-topic').textContent = node.topic || 'Unknown Topic';
+      document.getElementById('detail-decision').textContent = node.decision || '-';
+      document.getElementById('detail-reasoning').textContent = node.reasoning || '-';
 
-      <div class="detail-section">
-        <strong>Decision:</strong>
-        <p>${escapeHtml(node.decision)}</p>
-      </div>
-
-      <div class="detail-section">
-        <strong>Reasoning:</strong>
-        <div class="reasoning-text" id="reasoning-text">
-          ${escapeHtml((node.reasoning || '').substring(0, 200))}...
-          ${(node.reasoning || '').length > 200 ? '<button onclick="window.graphModule.toggleReasoning()" class="toggle-reasoning"><i data-lucide="chevron-down" class="icon"></i> Show More</button>' : ''}
-          <div class="reasoning-full" style="display:none">${escapeHtml(node.reasoning || '')}</div>
-        </div>
-      </div>
-
-      <div class="detail-meta">
-        <span class="outcome ${(node.outcome || 'pending').toLowerCase()}">
-          <i data-lucide="${this.getOutcomeIcon(node.outcome)}" class="icon"></i>
-          ${node.outcome || 'PENDING'}
-        </span>
-        <span>
-          <i data-lucide="gauge" class="icon"></i>
-          ${Math.round((node.confidence || 0) * 100)}%
-        </span>
-      </div>
-
-      ${
-        node.outcome?.toLowerCase() !== 'success'
-          ? `
-        <div class="detail-section">
-          <strong>Update Outcome:</strong>
-          <select id="outcome-select" class="outcome-select">
-            <option value="pending" ${!node.outcome || node.outcome.toLowerCase() === 'pending' ? 'selected' : ''}>Pending</option>
-            <option value="success" ${node.outcome?.toLowerCase() === 'success' ? 'selected' : ''}>Success</option>
-            <option value="failed" ${node.outcome?.toLowerCase() === 'failed' ? 'selected' : ''}>Failed</option>
-            <option value="partial" ${node.outcome?.toLowerCase() === 'partial' ? 'selected' : ''}>Partial</option>
-          </select>
-          <button onclick="window.graphModule.saveOutcome()" class="save-outcome">
-            <i data-lucide="save" class="icon"></i> Save
-          </button>
-        </div>
-      `
-          : ''
+      const outcomeSelect = document.getElementById('detail-outcome-select');
+      if (outcomeSelect) {
+        outcomeSelect.value = (node.outcome || 'PENDING').toUpperCase();
       }
 
-      <div class="detail-section">
-        <strong>
-          <i data-lucide="lightbulb" class="icon"></i>
-          Similar Decisions:
-        </strong>
-        <div id="similar-decisions">Loading...</div>
-      </div>
-    `;
-
-      console.log('[MAMA] Setting panel display to block...');
-      panel.style.display = 'block';
-
-      // Reinitialize Lucide icons for dynamic content
-      console.log('[MAMA] Initializing Lucide icons...');
-      if (typeof lucide !== 'undefined' && typeof window.lucideConfig !== 'undefined') {
-        lucide.createIcons(window.lucideConfig);
-        console.log('[MAMA] Lucide icons initialized');
-      } else {
-        console.error('[MAMA] Lucide library or config not loaded!');
+      // Clear outcome status
+      const outcomeStatus = document.getElementById('outcome-status');
+      if (outcomeStatus) {
+        outcomeStatus.textContent = '';
+        outcomeStatus.className = '';
       }
+
+      document.getElementById('detail-confidence').textContent = node.confidence
+        ? `${(node.confidence * 100).toFixed(0)}%`
+        : '-';
+
+      const createdEl = document.getElementById('detail-created');
+      if (createdEl) {
+        createdEl.textContent = node.created_at ? new Date(node.created_at).toLocaleString() : '-';
+      }
+
+      // Reset reasoning toggle
+      const reasoningToggle = document.getElementById('reasoning-toggle');
+      if (reasoningToggle) {
+        reasoningToggle.classList.remove('expanded');
+      }
+      document.getElementById('detail-reasoning').classList.remove('visible');
+
+      // Show loading state for similar decisions
+      const similarEl = document.getElementById('detail-similar');
+      if (similarEl) {
+        similarEl.innerHTML = '<span class="loading-similar">Searching...</span>';
+      }
+
+      // Show panel
+      panel.classList.add('visible');
 
       // Fetch similar decisions
       console.log('[MAMA] Fetching similar decisions...');
@@ -521,23 +491,13 @@ export class GraphModule {
    * Toggle reasoning full text
    */
   toggleReasoning() {
-    const shortText = document.querySelector('.reasoning-text');
-    const fullText = document.querySelector('.reasoning-full');
-    const btn = document.querySelector('.toggle-reasoning');
-
-    if (fullText.style.display === 'none') {
-      shortText.childNodes[0].textContent = '';
-      fullText.style.display = 'block';
-      btn.innerHTML = '<i data-lucide="chevron-up" class="icon"></i> Show Less';
-      if (typeof lucide !== 'undefined' && typeof window.lucideConfig !== 'undefined') {
-        lucide.createIcons(window.lucideConfig);
-      }
-    } else {
-      fullText.style.display = 'none';
-      btn.innerHTML = '<i data-lucide="chevron-down" class="icon"></i> Show More';
-      if (typeof lucide !== 'undefined' && typeof window.lucideConfig !== 'undefined') {
-        lucide.createIcons(window.lucideConfig);
-      }
+    const toggle = document.getElementById('reasoning-toggle');
+    const content = document.getElementById('detail-reasoning');
+    if (toggle) {
+      toggle.classList.toggle('expanded');
+    }
+    if (content) {
+      content.classList.toggle('visible');
     }
   }
 
@@ -545,7 +505,10 @@ export class GraphModule {
    * Close detail panel
    */
   closeDetail() {
-    document.getElementById('detail-panel').style.display = 'none';
+    const panel = document.getElementById('detail-panel');
+    if (panel) {
+      panel.classList.remove('visible');
+    }
     this.currentNodeId = null;
     this.resetNodeHighlight();
   }
@@ -555,17 +518,28 @@ export class GraphModule {
    */
   async fetchSimilarDecisions(nodeId) {
     console.log('[MAMA] fetchSimilarDecisions called for node:', nodeId);
-    const container = document.getElementById('similar-decisions');
+    const container = document.getElementById('detail-similar');
+
+    if (!container) {
+      console.warn('[MAMA] detail-similar element not found');
+      return;
+    }
 
     try {
       console.log('[MAMA] Calling API.getSimilarDecisions...');
       const data = await API.getSimilarDecisions(nodeId);
       console.log('[MAMA] Similar decisions received:', data);
+
+      if (data.error) {
+        container.innerHTML = `<span style="color:#666">${data.message || 'Search failed'}</span>`;
+        return;
+      }
+
       const similar = data.similar || [];
 
       if (similar.length === 0) {
         console.log('[MAMA] No similar decisions found');
-        container.innerHTML = '<p class="no-similar">No similar decisions found</p>';
+        container.innerHTML = '<span style="color:#666">No similar decisions found</span>';
         return;
       }
 
@@ -573,10 +547,10 @@ export class GraphModule {
       const html = similar
         .map(
           (s) => `
-          <div class="similar-item" onclick="window.graphModule.navigateToNode('${s.id}')">
+          <div class="similar-item" onclick="navigateToNode('${s.id}')">
             <div class="similar-topic">${escapeHtml(s.topic)}</div>
-            <div class="similar-decision">${escapeHtml((s.decision || '').substring(0, 100))}...</div>
-            <div class="similar-score">${Math.round((s.similarity || 0) * 100)}% similar</div>
+            <div class="similar-decision">${escapeHtml((s.decision || '').substring(0, 80))}...</div>
+            <div class="similar-score">${Math.round((s.similarity || 0) * 100)}% match</div>
           </div>
         `
         )
@@ -588,7 +562,7 @@ export class GraphModule {
     } catch (error) {
       console.error('[MAMA] Failed to fetch similar decisions:', error);
       console.error('[MAMA] Error stack:', error.stack);
-      container.innerHTML = '<p class="error">Failed to load similar decisions</p>';
+      container.innerHTML = '<span style="color:#f66">Failed to load</span>';
     }
   }
 
@@ -642,7 +616,19 @@ export class GraphModule {
       return;
     }
 
+    // Try exact match first
     let node = this.graphData.nodes.find((n) => n.id === nodeId);
+
+    // If not found, try partial match (for short IDs from checkpoints)
+    if (!node) {
+      console.log('[MAMA] Exact match not found, trying partial match for:', nodeId);
+      node = this.graphData.nodes.find((n) => n.id.startsWith(nodeId));
+
+      if (node) {
+        console.log('[MAMA] Found node via partial match:', node.id);
+        nodeId = node.id; // Update nodeId to the full ID
+      }
+    }
 
     // If node not in current graph, reload without filters
     if (!node) {
@@ -658,8 +644,17 @@ export class GraphModule {
       await this.fetchData();
       this.init(this.graphData);
 
-      // Try to find node again
+      // Try exact match again
       node = this.graphData.nodes.find((n) => n.id === nodeId);
+
+      // If still not found, try partial match
+      if (!node) {
+        node = this.graphData.nodes.find((n) => n.id.startsWith(nodeId));
+        if (node) {
+          console.log('[MAMA] Found node via partial match after reload:', node.id);
+          nodeId = node.id;
+        }
+      }
 
       if (!node) {
         console.warn('[MAMA] Node not found even after reload:', nodeId);
