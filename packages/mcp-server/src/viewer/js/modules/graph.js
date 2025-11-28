@@ -469,6 +469,11 @@ export class GraphModule {
 
     panel.style.display = 'block';
 
+    // Reinitialize Lucide icons for dynamic content
+    if (typeof lucide !== 'undefined') {
+      lucide.createIcons();
+    }
+
     // Fetch similar decisions
     this.fetchSimilarDecisions(node.id);
   }
