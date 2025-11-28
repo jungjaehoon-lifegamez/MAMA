@@ -1465,4 +1465,40 @@ export class ChatModule {
       console.log('[Chat] No resumable session');
     }
   }
+
+  /**
+   * Cleanup resources when module is destroyed
+   * Prevents memory leaks by cleaning up timers, connections, and APIs
+   */
+  cleanup() {
+    // Clean up WebSocket
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+
+    // Clean up timers
+    if (this.silenceTimeout) {
+      clearTimeout(this.silenceTimeout);
+      this.silenceTimeout = null;
+    }
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+
+    // Clean up Speech Recognition
+    if (this.speechRecognition) {
+      this.speechRecognition.stop();
+      this.speechRecognition = null;
+    }
+
+    // Clean up Speech Synthesis
+    if (this.isSpeaking) {
+      this.speechSynthesis.cancel();
+      this.isSpeaking = false;
+    }
+
+    console.log('[Chat] Cleanup completed');
+  }
 }
