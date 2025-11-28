@@ -537,8 +537,9 @@ export class ChatModule {
 
     this.speechRecognition = new SpeechRecognition();
     this.speechRecognition.lang = 'ko-KR';
-    this.speechRecognition.continuous = false;
+    this.speechRecognition.continuous = true; // Enable continuous recognition for longer phrases
     this.speechRecognition.interimResults = true;
+    this.speechRecognition.maxAlternatives = 3; // Get multiple recognition candidates for better accuracy
 
     this.speechRecognition.onresult = (event) => {
       const input = document.getElementById('chat-input');
