@@ -34,7 +34,7 @@ export class ChatModule {
     this.speechRecognition = null;
     this.isRecording = false;
     this.silenceTimeout = null;
-    this.silenceDelay = 1500; // 1.5 seconds
+    this.silenceDelay = 2500; // 2.5 seconds (increased for continuous mode)
 
     // Streaming state
     this.currentStreamEl = null;
@@ -546,28 +546,39 @@ export class ChatModule {
       let interimTranscript = '';
       let finalTranscript = '';
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      // Build full transcript from all results
+      for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i];
+        const transcript = result[0].transcript;
+
         if (result.isFinal) {
-          finalTranscript += result[0].transcript;
+          finalTranscript += transcript;
+          console.log('[Voice] Final result:', transcript, 'Confidence:', result[0].confidence);
         } else {
-          interimTranscript += result[0].transcript;
+          interimTranscript += transcript;
+          console.log('[Voice] Interim result:', transcript);
         }
       }
 
+      // Accumulate final transcripts for continuous mode
       if (finalTranscript) {
-        input.value = finalTranscript;
-        input.classList.remove('voice-active');
+        const currentValue = input.value;
+        // Append to existing text if in continuous mode
+        input.value = currentValue ? currentValue + ' ' + finalTranscript : finalTranscript;
+        console.log('[Voice] Updated input value:', input.value);
       } else if (interimTranscript) {
+        // Show interim results temporarily
         input.value = interimTranscript;
         input.classList.add('voice-active');
       }
 
       autoResizeTextarea(input);
 
+      // Reset silence timer on each result
       clearTimeout(this.silenceTimeout);
       this.silenceTimeout = setTimeout(() => {
         if (this.isRecording) {
+          console.log('[Voice] Silence detected, stopping...');
           this.stopVoice();
         }
       }, this.silenceDelay);
@@ -624,17 +635,26 @@ export class ChatModule {
     }
 
     try {
-      this.speechRecognition.start();
-      this.isRecording = true;
-
       const micBtn = document.getElementById('chat-mic');
       const input = document.getElementById('chat-input');
 
+      // Clear input for new recording
+      input.value = '';
+
+      this.speechRecognition.start();
+      this.isRecording = true;
+
       micBtn.classList.add('recording');
       input.classList.add('voice-active');
-      input.placeholder = '말씀해주세요...';
+      input.placeholder = '말씀해주세요... (계속 말하면 이어서 인식됩니다)';
 
-      console.log('[Voice] Recording started');
+      console.log('[Voice] Recording started (continuous mode)');
+      console.log('[Voice] Settings:', {
+        lang: this.speechRecognition.lang,
+        continuous: this.speechRecognition.continuous,
+        interimResults: this.speechRecognition.interimResults,
+        maxAlternatives: this.speechRecognition.maxAlternatives,
+      });
 
       this.silenceTimeout = setTimeout(() => {
         if (this.isRecording) {
