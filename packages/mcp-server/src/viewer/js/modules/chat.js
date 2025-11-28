@@ -35,6 +35,7 @@ export class ChatModule {
     this.isRecording = false;
     this.silenceTimeout = null;
     this.silenceDelay = 2500; // 2.5 seconds (increased for continuous mode)
+    this.accumulatedTranscript = ''; // Track accumulated final transcripts
 
     // Streaming state
     this.currentStreamEl = null;
@@ -572,20 +573,27 @@ export class ChatModule {
         }
       }
 
-      // Accumulate final transcripts for continuous mode
+      // Handle final transcripts - accumulate them
       if (finalTranscript) {
-        const currentValue = input.value;
-        // Append to existing text if in continuous mode
-        const newValue = currentValue ? currentValue + ' ' + finalTranscript : finalTranscript;
-        input.value = newValue;
+        // Add space before appending if there's already text
+        if (this.accumulatedTranscript) {
+          this.accumulatedTranscript += ' ' + finalTranscript;
+        } else {
+          this.accumulatedTranscript = finalTranscript;
+        }
+        input.value = this.accumulatedTranscript;
         input.classList.remove('voice-active');
-        console.log('[Voice] Updated input value:', newValue);
-      } else if (interimTranscript) {
-        // Show interim results temporarily (don't save)
-        const currentFinal = input.value;
-        input.value = currentFinal ? currentFinal + ' ' + interimTranscript : interimTranscript;
+        console.log('[Voice] Accumulated transcript:', this.accumulatedTranscript);
+      }
+
+      // Handle interim transcripts - show temporarily with accumulated text
+      if (interimTranscript) {
+        const displayText = this.accumulatedTranscript
+          ? this.accumulatedTranscript + ' ' + interimTranscript
+          : interimTranscript;
+        input.value = displayText;
         input.classList.add('voice-active');
-        console.log('[Voice] Showing interim:', interimTranscript);
+        console.log('[Voice] Showing interim (temp):', displayText);
       }
 
       autoResizeTextarea(input);
@@ -654,8 +662,9 @@ export class ChatModule {
       const micBtn = document.getElementById('chat-mic');
       const input = document.getElementById('chat-input');
 
-      // Clear input for new recording
+      // Clear input and accumulated transcript for new recording
       input.value = '';
+      this.accumulatedTranscript = '';
 
       this.speechRecognition.start();
       this.isRecording = true;
