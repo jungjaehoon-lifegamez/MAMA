@@ -17,14 +17,14 @@ import {
 import {
   formatMessageTime,
   formatCheckpointTime,
-  formatRelativeTime,
-  truncateText,
   extractFirstLine,
   formatAssistantMessage,
 } from './js/utils/format.js';
 import { API } from './js/utils/api.js';
+import { MemoryModule } from './js/modules/memory.js';
 
 // Global state
+let memoryModule = null; // Memory module instance (initialized after DOM loads)
 let network = null;
 let graphData = { nodes: [], edges: [], meta: {} };
 let currentNodeId = null; // Track selected node for outcome editing
@@ -1103,7 +1103,9 @@ function sendChatMessage() {
   );
 
   // Search for related MAMA decisions (Story 4-1)
-  showRelatedDecisionsForMessage(message);
+  if (memoryModule) {
+    memoryModule.showRelatedForMessage(message);
+  }
 
   // Clear input and reset height
   input.value = '';
@@ -1774,276 +1776,17 @@ function initDraggablePanel() {
 }
 
 // =============================================
-// Memory Tab Functions (Story 4-1)
+// Memory Module (Story 4-1, 4-2) - Refactored to js/modules/memory.js
 // =============================================
-
-let memorySearchData = [];
-const debouncedMemorySearch = debounce(performMemorySearch, 300);
-
-// Handle memory search input (called from HTML onkeyup)
-// eslint-disable-next-line no-unused-vars
-function handleMemorySearch(event) {
-  if (event.key === 'Enter') {
-    searchMemoryDecisions();
-  } else {
-    debouncedMemorySearch();
-  }
-}
-
-// Perform memory search
-async function performMemorySearch() {
-  const input = document.getElementById('memory-search-input');
-  const query = input.value.trim();
-
-  if (!query) {
-    showMemoryPlaceholder();
-    return;
-  }
-
-  await searchMemoryDecisions();
-}
-
-// Search memory decisions via API (called from HTML onclick)
-// eslint-disable-next-line no-unused-vars
-async function searchMemoryDecisions() {
-  const input = document.getElementById('memory-search-input');
-  const query = input.value.trim();
-
-  if (!query) {
-    showMemoryPlaceholder();
-    return;
-  }
-
-  setMemoryStatus('Searching...', 'loading');
-
-  try {
-    const data = await API.searchMemory(query, 10);
-    memorySearchData = data.results || [];
-    renderMemoryResults(memorySearchData, query);
-    setMemoryStatus(`Found ${memorySearchData.length} decision(s)`, '');
-  } catch (error) {
-    console.error('[Memory] Search error:', error);
-    setMemoryStatus(`Error: ${error.message}`, 'error');
-  }
-}
-
-// Search for related decisions (called automatically when user sends chat message)
-async function searchRelatedDecisions(message) {
-  if (!message || message.length < 3) {
-    return [];
-  }
-
-  try {
-    const data = await API.searchMemory(message, 5);
-    return data.results || [];
-  } catch (error) {
-    console.error('[Memory] Related search error:', error);
-    return [];
-  }
-}
-
-// Render memory search results
-function renderMemoryResults(results, query) {
-  const container = document.getElementById('memory-results');
-
-  if (!results || results.length === 0) {
-    container.innerHTML = `
-      <div class="memory-placeholder">
-        <p>No decisions found for "${escapeHtml(query)}"</p>
-        <p class="memory-hint">Try different keywords or check if you have saved decisions</p>
-      </div>
-    `;
-    return;
-  }
-
-  const html = results
-    .map(
-      (item, idx) => `
-      <div class="memory-card" onclick="toggleMemoryCard(${idx})">
-        <div class="memory-card-header">
-          <span class="memory-card-topic">${escapeHtml(item.topic || 'Unknown')}</span>
-          ${item.similarity ? `<span class="memory-card-score">${Math.round(item.similarity * 100)}%</span>` : ''}
-        </div>
-        <div class="memory-card-decision">${escapeHtml(truncateText(item.decision, 150))}</div>
-        <div class="memory-card-meta">
-          <span class="memory-card-outcome ${(item.outcome || 'pending').toLowerCase()}">${item.outcome || 'PENDING'}</span>
-          <span>${formatRelativeTime(item.created_at)}</span>
-        </div>
-        <div class="memory-card-reasoning">${escapeHtml(item.reasoning || 'No reasoning provided')}</div>
-      </div>
-    `
-    )
-    .join('');
-
-  container.innerHTML = html;
-}
-
-// Toggle memory card expand/collapse (called from HTML onclick)
-// eslint-disable-next-line no-unused-vars
-function toggleMemoryCard(idx) {
-  const cards = document.querySelectorAll('.memory-card');
-  cards.forEach((card, i) => {
-    if (i === idx) {
-      card.classList.toggle('expanded');
-    } else {
-      card.classList.remove('expanded');
-    }
-  });
-}
-
-// Show memory placeholder
-function showMemoryPlaceholder() {
-  const container = document.getElementById('memory-results');
-  container.innerHTML = `
-    <div class="memory-placeholder">
-      <p>🧠 Search your MAMA decisions</p>
-      <p class="memory-hint">Type a keyword or send a chat message to see related decisions</p>
-    </div>
-  `;
-  setMemoryStatus('', '');
-}
-
-// Set memory status message
-function setMemoryStatus(message, type) {
-  const status = document.getElementById('memory-status');
-  status.textContent = message;
-  status.className = 'memory-status ' + (type || '');
-}
-
-// Truncate text with ellipsis
-
-// Format relative time
-
-// Show related decisions in Memory tab when user sends a message
-async function showRelatedDecisionsForMessage(message) {
-  // Switch to memory tab to show related decisions
-  const results = await searchRelatedDecisions(message);
-
-  if (results.length > 0) {
-    memorySearchData = results;
-
-    // Update search input with the query
-    const input = document.getElementById('memory-search-input');
-    input.value = message.substring(0, 50) + (message.length > 50 ? '...' : '');
-
-    // Render results
-    renderMemoryResults(results, message);
-    setMemoryStatus(`${results.length} related decision(s) found`, '');
-
-    // Show notification that related decisions were found
-    showToast(`🧠 ${results.length} related MAMA decision(s) found`);
-  }
-}
-
-// =============================================
-// Save Decision Form Functions (Story 4-2)
-// =============================================
-
-// Show save decision form modal (called from HTML onclick)
-// eslint-disable-next-line no-unused-vars
-function showSaveDecisionForm() {
-  const modal = document.getElementById('save-decision-modal');
-  modal.classList.add('visible');
-
-  // Clear form
-  document.getElementById('save-topic').value = '';
-  document.getElementById('save-decision').value = '';
-  document.getElementById('save-reasoning').value = '';
-  document.getElementById('save-confidence').value = '0.8';
-  document.getElementById('save-form-status').textContent = '';
-  document.getElementById('save-form-status').className = 'save-form-status';
-
-  // Focus on topic field
-  setTimeout(() => {
-    document.getElementById('save-topic').focus();
-  }, 100);
-}
-
-// Hide save decision form modal (called from HTML onclick)
-// eslint-disable-next-line no-unused-vars
-function hideSaveDecisionForm() {
-  const modal = document.getElementById('save-decision-modal');
-  modal.classList.remove('visible');
-}
-
-// Submit save decision form (called from HTML onclick)
-// eslint-disable-next-line no-unused-vars
-async function submitSaveDecision() {
-  const topic = document.getElementById('save-topic').value.trim();
-  const decision = document.getElementById('save-decision').value.trim();
-  const reasoning = document.getElementById('save-reasoning').value.trim();
-  const confidence = parseFloat(document.getElementById('save-confidence').value);
-
-  const statusEl = document.getElementById('save-form-status');
-  const submitBtn = document.querySelector('.save-form-submit');
-
-  // Validation
-  if (!topic || !decision || !reasoning) {
-    statusEl.textContent = 'Please fill in all required fields';
-    statusEl.className = 'save-form-status error';
-    return;
-  }
-
-  if (isNaN(confidence) || confidence < 0 || confidence > 1) {
-    statusEl.textContent = 'Confidence must be between 0.0 and 1.0';
-    statusEl.className = 'save-form-status error';
-    return;
-  }
-
-  // Disable submit button
-  submitBtn.disabled = true;
-  statusEl.textContent = 'Saving...';
-  statusEl.className = 'save-form-status';
-
-  try {
-    await API.saveDecision({ topic, decision, reasoning, confidence });
-
-    // Success
-    statusEl.textContent = '✓ Decision saved successfully!';
-    statusEl.className = 'save-form-status success';
-
-    // Show toast notification
-    showToast('✓ Decision saved to MAMA memory');
-
-    // Close modal after 1.5 seconds
-    setTimeout(() => {
-      hideSaveDecisionForm();
-
-      // Refresh memory search if there's a query
-      const searchInput = document.getElementById('memory-search-input');
-      if (searchInput.value.trim()) {
-        searchMemoryDecisions();
-      }
-    }, 1500);
-  } catch (error) {
-    console.error('[Memory] Save error:', error);
-    statusEl.textContent = `Error: ${error.message}`;
-    statusEl.className = 'save-form-status error';
-  } finally {
-    submitBtn.disabled = false;
-  }
-}
-
-// Close modal when clicking outside
-document.addEventListener('click', (e) => {
-  const modal = document.getElementById('save-decision-modal');
-  if (modal && e.target === modal) {
-    hideSaveDecisionForm();
-  }
-});
-
-// Close modal on Escape key
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    const modal = document.getElementById('save-decision-modal');
-    if (modal && modal.classList.contains('visible')) {
-      hideSaveDecisionForm();
-    }
-  }
-});
+// All Memory tab functionality now handled by MemoryModule class
+// Window exports below provide HTML onclick compatibility
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
+  // Initialize Memory module (Phase 3 refactoring)
+  memoryModule = new MemoryModule();
+  window.memoryModule = memoryModule; // For HTML onclick handlers
+
   // Initialize draggable panel
   initDraggablePanel();
 
@@ -2084,12 +1827,13 @@ window.saveOutcome = saveOutcome;
 window.toggleReasoning = toggleReasoning;
 window.navigateToNode = navigateToNode;
 window.getConnectedEdges = getConnectedEdges;
-window.handleMemorySearch = handleMemorySearch;
-window.searchMemoryDecisions = searchMemoryDecisions;
-window.toggleMemoryCard = toggleMemoryCard;
-window.showSaveDecisionForm = showSaveDecisionForm;
-window.hideSaveDecisionForm = hideSaveDecisionForm;
-window.submitSaveDecision = submitSaveDecision;
+// Memory module exports (delegate to memoryModule instance)
+window.handleMemorySearch = (event) => memoryModule?.handleSearchInput(event);
+window.searchMemoryDecisions = () => memoryModule?.search();
+window.toggleMemoryCard = (idx) => memoryModule?.toggleCard(idx);
+window.showSaveDecisionForm = () => memoryModule?.showSaveForm();
+window.hideSaveDecisionForm = () => memoryModule?.hideSaveForm();
+window.submitSaveDecision = () => memoryModule?.submitSaveForm();
 window.toggleSidebar = toggleSidebar;
 window.toggleCheckpoints = toggleCheckpoints;
 window.switchTab = switchTab;

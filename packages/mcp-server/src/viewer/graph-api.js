@@ -688,6 +688,14 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
+    // Route: GET /js/modules/*.js - serve feature modules (Phase 3 refactoring)
+    if (pathname.startsWith('/js/modules/') && pathname.endsWith('.js') && req.method === 'GET') {
+      const fileName = pathname.split('/').pop();
+      const filePath = path.join(__dirname, 'js', 'modules', fileName);
+      serveStaticFile(res, filePath, 'application/javascript');
+      return true; // Request handled
+    }
+
     // Route: GET /graph - API endpoint
     if (pathname === '/graph' && req.method === 'GET') {
       await handleGraphRequest(req, res, params);
