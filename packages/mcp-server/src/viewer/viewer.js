@@ -212,6 +212,8 @@ window.submitSaveDecision = () => memoryModule?.submitSaveForm();
 window.addAssistantMessage = (text) => chatModule?.addAssistantMessage(text);
 window.sendChatMessage = () => chatModule?.send();
 window.toggleVoiceInput = () => chatModule?.toggleVoice();
+window.toggleTTS = () => chatModule?.toggleTTS();
+window.toggleHandsFree = () => chatModule?.toggleHandsFree();
 window.enableMicButton = (enabled) => chatModule?.enableMic(enabled);
 window.connectToSession = (sessionId) => chatModule?.connectToSession(sessionId);
 window.disconnectChat = () => chatModule?.disconnect();
