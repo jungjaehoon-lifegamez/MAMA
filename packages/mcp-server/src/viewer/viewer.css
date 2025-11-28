@@ -158,7 +158,7 @@ header h1 {
 .icon {
   width: 16px;
   height: 16px;
-  stroke-width: 2px;
+  stroke-width: 1px;
   vertical-align: middle;
   display: inline-block;
 }
@@ -184,8 +184,8 @@ header h1 {
 }
 
 #detail-panel .close-detail .icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 #detail-panel .close-detail:hover {
@@ -239,8 +239,8 @@ header h1 {
 }
 
 #detail-panel .toggle-reasoning .icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 #detail-panel .toggle-reasoning:hover {
@@ -277,8 +277,8 @@ header h1 {
 }
 
 #detail-panel .detail-meta .icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 #detail-panel .detail-meta .outcome {
@@ -343,8 +343,8 @@ header h1 {
 }
 
 #detail-panel .save-outcome .icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 #detail-panel .save-outcome:hover {
@@ -360,8 +360,8 @@ header h1 {
 }
 
 #detail-panel .detail-section strong .icon {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
 }
 
 /* Similar decisions */
@@ -610,8 +610,8 @@ header h1 {
 }
 
 #legend-panel h4 i {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .legend-section {
@@ -664,8 +664,8 @@ header h1 {
 }
 
 .legend-node {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   border: 2px solid #4a4a6a;
 }
@@ -676,13 +676,13 @@ header h1 {
 }
 
 .legend-node.medium {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .legend-node.large {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .legend-toggle {
@@ -703,8 +703,8 @@ header h1 {
 }
 
 .legend-toggle i {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .legend-toggle:hover {
@@ -767,8 +767,8 @@ header h1 {
 }
 
 .sidebar-tab i {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   margin-right: 4px;
   vertical-align: middle;
 }
@@ -832,8 +832,8 @@ header h1 {
 }
 
 .chat-placeholder p i {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .chat-hint {
@@ -1026,8 +1026,8 @@ header h1 {
 .chat-send-btn.loading::after {
   content: '';
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   right: 8px;
   top: 50%;
   margin-top: -6px;
@@ -1067,8 +1067,8 @@ header h1 {
 }
 
 .chat-mic-btn .mic-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   transition: transform 0.2s;
 }
 
@@ -1162,8 +1162,8 @@ header h1 {
 }
 
 .sidebar-toggle i {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .sidebar-toggle:hover {
@@ -1632,8 +1632,8 @@ header h1 {
 }
 
 .memory-placeholder p i {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .memory-hint {
@@ -1886,8 +1886,8 @@ header h1 {
 }
 
 .save-form-header h3 i {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .save-form-close {
@@ -1905,8 +1905,8 @@ header h1 {
 }
 
 .save-form-close i {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
 }
 
 .save-form-close:hover {
