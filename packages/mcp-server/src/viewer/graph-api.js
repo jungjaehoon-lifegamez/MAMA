@@ -486,7 +486,10 @@ async function handleSimilarRequest(req, res, params) {
       `[GraphAPI] Found ${similar.length} similar decisions (total time: ${Date.now() - startTime}ms)`
     );
 
-    res.writeHead(200);
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
     res.end(
       JSON.stringify({
         id: decisionId,
@@ -494,10 +497,11 @@ async function handleSimilarRequest(req, res, params) {
         count: similar.length,
       })
     );
+    console.log(`[GraphAPI] Response sent for ${decisionId}`);
   } catch (error) {
     console.error(`[GraphAPI] Similar error: ${error.message}`);
     console.error(`[GraphAPI] Similar error stack:`, error.stack);
-    res.writeHead(500);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
