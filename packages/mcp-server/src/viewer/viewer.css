@@ -616,6 +616,30 @@ header h1 {
   height: 16px;
 }
 
+#legend-panel .close-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: #1a1a2e;
+  border: 1px solid #4a4a6a;
+  border-radius: 4px;
+  color: #888;
+  cursor: pointer;
+  font-size: 14px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+#legend-panel .close-btn:hover {
+  color: #fff;
+  background: #2a2a4e;
+  border-color: #a0a0ff;
+}
+
 .legend-section {
   margin-bottom: 12px;
 }
