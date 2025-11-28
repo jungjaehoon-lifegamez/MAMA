@@ -252,11 +252,44 @@ export class MemoryModule {
   }
 
   /**
+   * Show save form with pre-filled text (for /save command)
+   */
+  showSaveFormWithText(text) {
+    const modal = document.getElementById('save-decision-modal');
+    modal.classList.add('visible');
+
+    // Pre-fill decision field
+    document.getElementById('save-topic').value = '';
+    document.getElementById('save-decision').value = text;
+    document.getElementById('save-reasoning').value = '';
+    document.getElementById('save-confidence').value = '0.8';
+    document.getElementById('save-form-status').textContent = '';
+    document.getElementById('save-form-status').className = 'save-form-status';
+
+    // Focus on topic field
+    setTimeout(() => {
+      document.getElementById('save-topic').focus();
+    }, 100);
+  }
+
+  /**
    * Hide save decision form modal
    */
   hideSaveForm() {
     const modal = document.getElementById('save-decision-modal');
     modal.classList.remove('visible');
+  }
+
+  /**
+   * Execute search with query (for /search command)
+   */
+  async searchWithQuery(query) {
+    const searchInput = document.getElementById('memory-search');
+    if (searchInput) {
+      searchInput.value = query;
+    }
+    this.currentQuery = query;
+    await this.search();
   }
 
   /**

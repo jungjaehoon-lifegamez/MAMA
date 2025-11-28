@@ -224,3 +224,182 @@ window.toggleSidebar = toggleSidebar;
 window.toggleCheckpoints = toggleCheckpoints;
 window.switchTab = switchTab;
 window.expandCheckpoint = expandCheckpoint;
+
+// Session resume banner
+window.dismissResumeBanner = () => {
+  const banner = document.getElementById('session-resume-banner');
+  if (banner) {
+    banner.style.display = 'none';
+  }
+};
+
+// TTS Speed Popup (Story 3.2) - Minimal toggle
+window.toggleTTSSpeedPopup = () => {
+  const popup = document.getElementById('tts-speed-popup');
+  const slider = document.getElementById('tts-speed-slider');
+  const valueDisplay = document.querySelector('.tts-speed-value');
+
+  if (popup && slider && valueDisplay && chatModule) {
+    const isVisible = popup.style.display === 'block';
+    if (isVisible) {
+      popup.style.display = 'none';
+    } else {
+      popup.style.display = 'block';
+      slider.value = chatModule.ttsRate;
+      valueDisplay.textContent = chatModule.ttsRate.toFixed(1) + 'x';
+    }
+  }
+};
+
+window.closeTTSSpeedPopup = () => {
+  const popup = document.getElementById('tts-speed-popup');
+  if (popup) {
+    popup.style.display = 'none';
+  }
+};
+
+// Initialize TTS speed popup after DOM loads
+document.addEventListener('DOMContentLoaded', () => {
+  const ttsSpeedLabel = document.getElementById('chat-tts-speed');
+  const ttsSpeedSlider = document.getElementById('tts-speed-slider');
+  const ttsSpeedValue = document.querySelector('.tts-speed-value');
+  const popup = document.getElementById('tts-speed-popup');
+
+  // Toggle popup on label click
+  if (ttsSpeedLabel) {
+    ttsSpeedLabel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.toggleTTSSpeedPopup();
+    });
+  }
+
+  // Close popup when clicking outside
+  document.addEventListener('click', (e) => {
+    if (popup && popup.style.display === 'block') {
+      if (!popup.contains(e.target) && e.target !== ttsSpeedLabel) {
+        window.closeTTSSpeedPopup();
+      }
+    }
+  });
+
+  // Prevent popup close when clicking inside
+  if (popup) {
+    popup.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  }
+
+  // Update speed on slider change
+  if (ttsSpeedSlider && ttsSpeedValue && ttsSpeedLabel) {
+    ttsSpeedSlider.addEventListener('input', (e) => {
+      const rate = parseFloat(e.target.value);
+      ttsSpeedValue.textContent = rate.toFixed(1) + 'x';
+      if (chatModule) {
+        chatModule.setTTSRate(rate);
+        ttsSpeedLabel.childNodes[0].textContent = rate.toFixed(1) + 'x';
+      }
+    });
+  }
+});
+
+// =============================================
+// Tunnel Setup Modal (Story 5.2)
+// =============================================
+
+window.showTunnelSetup = () => {
+  const modal = document.getElementById('tunnel-setup-modal');
+  if (modal) {
+    modal.classList.add('visible');
+  }
+};
+
+window.hideTunnelSetup = () => {
+  const modal = document.getElementById('tunnel-setup-modal');
+  if (modal) {
+    modal.classList.remove('visible');
+  }
+};
+
+window.copyNgrokCommand = () => {
+  const command = document.getElementById('ngrok-command');
+  if (command) {
+    const text = command.textContent;
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        // Show copy feedback
+        const btn = document.querySelector('.tunnel-copy-btn');
+        if (btn) {
+          const originalHTML = btn.innerHTML;
+          btn.innerHTML = '<i data-lucide="check"></i>';
+          window.lucide.createIcons(window.lucideConfig);
+          setTimeout(() => {
+            btn.innerHTML = originalHTML;
+            window.lucide.createIcons(window.lucideConfig);
+          }, 2000);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to copy:', err);
+      });
+  }
+};
+
+window.testConnection = async () => {
+  const resultEl = document.getElementById('tunnel-test-result');
+  if (!resultEl) {
+    return;
+  }
+
+  resultEl.innerHTML = '<div class="tunnel-test-loading">Testing connection...</div>';
+
+  try {
+    const response = await fetch('/api/health', {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    const isHttps = window.location.protocol === 'https:';
+    const status = response.ok ? 'success' : 'error';
+
+    if (response.ok) {
+      resultEl.innerHTML = `
+        <div class="tunnel-test-${status}">
+          <i data-lucide="check-circle"></i>
+          <div>
+            <strong>Connection successful!</strong><br>
+            Protocol: ${isHttps ? 'HTTPS ✓' : 'HTTP'}<br>
+            URL: ${window.location.origin}
+          </div>
+        </div>
+      `;
+    } else {
+      resultEl.innerHTML = `
+        <div class="tunnel-test-error">
+          <i data-lucide="x-circle"></i>
+          <div>
+            <strong>Connection failed</strong><br>
+            Status: ${response.status}<br>
+            ${!isHttps ? 'Warning: Using HTTP (not secure)' : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    // Re-initialize Lucide icons
+    window.lucide.createIcons(window.lucideConfig);
+  } catch (error) {
+    resultEl.innerHTML = `
+      <div class="tunnel-test-error">
+        <i data-lucide="x-circle"></i>
+        <div>
+          <strong>Connection error</strong><br>
+          ${error.message}
+        </div>
+      </div>
+    `;
+    window.lucide.createIcons(window.lucideConfig);
+  }
+};

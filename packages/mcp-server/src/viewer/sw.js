@@ -13,6 +13,14 @@ const STATIC_ASSETS = [
   '/viewer/viewer.css',
   '/viewer/viewer.js',
   '/viewer/manifest.json',
+  '/viewer/js/modules/graph.js',
+  '/viewer/js/modules/chat.js',
+  '/viewer/js/modules/memory.js',
+  '/viewer/js/utils/dom.js',
+  '/viewer/js/utils/format.js',
+  '/viewer/js/utils/api.js',
+  '/viewer/icons/icon-192.png',
+  '/viewer/icons/icon-512.png',
 ];
 
 /**
