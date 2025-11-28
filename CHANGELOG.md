@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**MAMA Mobile v1.5 - Complete Feature Restoration**
+
+![MAMA Mobile Chat Interface](docs/images/1.5-chat.png)
+
+#### Checkpoint API Implementation
+
+- **POST /api/checkpoint/save** - Save session checkpoint with summary, open files, and next steps
+- **GET /api/checkpoint/load** - Load latest active checkpoint for session resume
+- Integrated with `mama.saveCheckpoint()` and `mama.loadCheckpoint()` functions
+
+#### Story 3.2: Touch Optimization
+
+- **Long press to copy** - 750ms press on messages to copy text
+- **44px touch targets** - Mobile-optimized button sizing for all controls
+  - Chat controls (Send, Voice, TTS, Mic)
+  - Sidebar tabs
+  - Memory save button
+
+#### Story 3.3: PWA Support
+
+- **PWA manifest** - Install MAMA Mobile as a standalone app
+- **Service Worker** - Offline capability with static asset caching
+- **App icons** - 192x192 and 512x512 PNG icons
+- **Meta tags** - Mobile-optimized viewport, theme color, Apple touch icon
+
+#### Story 4.3: Commands & Auto-Checkpoint
+
+- **Slash commands** - `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
+  - Command parser in chat.js with prefix detection
+  - Direct integration with Memory tab functions
+- **Auto-checkpoint** - 5-minute idle timer with automatic session save
+  - Idle detection with resetIdleTimer on user input
+  - Auto-generates checkpoint summary from recent messages
+- **Session resume UI** - Banner with "Resume" and "Dismiss" buttons
+  - Auto-detect resumable sessions on page load
+  - One-click restore of previous session context
+
+#### File Changes
+
+- `chat.js` (+353 lines) - Commands, long press, auto-checkpoint logic
+- `memory.js` (+30 lines) - showSaveFormWithText, searchWithQuery
+- `viewer.html` (+20 lines) - PWA meta tags, SW registration, resume banner
+- `viewer.css` (+110 lines) - Banner styles, 44px touch targets
+- `sw.js` - Extended STATIC_ASSETS cache list
+- `viewer.js` (+5 lines) - dismissResumeBanner function
+- `graph-api.js` (+140 lines) - Checkpoint save/load API endpoints
+
 ---
 
 ## [1.4.5] - 2025-11-27
