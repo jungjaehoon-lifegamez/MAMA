@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.4] - 2025-11-30
+
+### Fixed
+
+- **Viewer saveOutcome Bug** - Fixed TypeError when changing decision outcome from pending to success
+  - Element ID mismatch: `outcome-select` → `detail-outcome-select`
+  - Graph viewer now correctly updates decision outcomes
+
+### Added
+
+- **Security Guide Dashboard Method** - Added Cloudflare Zero Trust setup via Dashboard (Method A)
+  - Recommended approach for first-time users
+  - No domain zone authorization required
+  - Step-by-step guide with screenshots
+  - Comparison table: CLI vs Dashboard methods
+
 ## [1.5.3] - 2025-11-29
 
 ### Removed
