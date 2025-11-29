@@ -570,7 +570,7 @@ export class GraphModule {
    * Save outcome for current node
    */
   async saveOutcome() {
-    const select = document.getElementById('outcome-select');
+    const select = document.getElementById('detail-outcome-select');
     const newOutcome = select.value;
 
     if (!this.currentNodeId || !newOutcome) {
