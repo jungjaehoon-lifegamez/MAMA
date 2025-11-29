@@ -9,9 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**MAMA Mobile v1.5 - Complete Feature Restoration**
+**MAMA Mobile v1.5 - Real-time Mobile Chat with Enterprise Security**
 
 ![MAMA Mobile Chat Interface](docs/images/1.5-chat.png)
+
+#### Security & Authentication (v1.5.1)
+
+- **Token Authentication** - `MAMA_AUTH_TOKEN` environment variable for external access
+  - Bearer token + query parameter support
+  - Automatic security warnings on external access detection
+  - Localhost always allowed without authentication
+
+- **Cloudflare Zero Trust Integration** - Production-grade security (RECOMMENDED)
+  - Google/GitHub/Microsoft OAuth authentication
+  - 2FA automatically enforced
+  - Email restriction (only specific emails allowed)
+  - Zero Trust architecture with automatic rate limiting
+  - Complete setup guide in `docs/guides/security.md` (428 lines)
+
+- **Feature Disable Options** - Security controls via environment variables
+  - `MAMA_DISABLE_HTTP_SERVER` - Disable Graph Viewer + Mobile Chat
+  - `MAMA_DISABLE_WEBSOCKET` - Disable Mobile Chat only (keep Graph Viewer)
+  - Easy configuration via `/mama-configure` command
+
+- **Enhanced /mama-configure Command** - One-command security management
+  - `--disable-http` / `--disable-websocket` / `--enable-all`
+  - `--generate-token` - Generate cryptographically secure token
+  - `--set-auth-token=X` - Set authentication token
+  - Shows security status (HTTP server, WebSocket, auth token)
+
+#### Compatibility & Requirements (v1.5.1)
+
+- **Mobile Chat Platform Compatibility** - Clear requirements documentation
+  - ✅ Claude Code Plugin - Full support (uses `claude` CLI subprocess)
+  - ❌ Claude Desktop (MCP) - Not supported (MCP servers only, no CLI)
+  - Graph Viewer works in both environments
+  - Requirements table added to README.md, mobile-access.md, api.md
 
 #### Checkpoint API Implementation
 
@@ -55,6 +88,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sw.js` - Extended STATIC_ASSETS cache list
 - `viewer.js` (+5 lines) - dismissResumeBanner function
 - `graph-api.js` (+140 lines) - Checkpoint save/load API endpoints
+
+### Fixed
+
+**Critical Bug Fixes (v1.5.1)** - Addressed code review feedback from gemini-code-assist
+
+- **Language Auto-Detection** - Fixed hardcoded `ko-KR` in speech recognition
+  - Now uses `navigator.language` for automatic browser language detection
+  - Falls back to `ko-KR` if not available
+  - TTS voice language also auto-detected from selected voice
+
+- **Memory Leak Prevention** - Fixed cleanup() method not called on page unload
+  - Added `beforeunload` event listener in `viewer.js`
+  - Properly cleans up chat, memory, and graph modules
+  - Prevents WebSocket connection leaks
+
+- **WebSocket Session Management** - Fixed session ID parameter mismatch
+  - Server expected `?session=xxx` but client sent `?sessionId=xxx`
+  - Updated `websocket-handler.js:45` to use correct parameter name
+  - WebSocket connections now properly attach to sessions
+
+- **Service Worker 404 Errors** - Fixed missing PWA asset routes
+  - Added routes for `/viewer/sw.js` and `/viewer/manifest.json`
+  - Updated `graph-api.js:822-846` with proper asset serving
+  - PWA installation now works correctly
+
+- **Unknown Message Type Error** - Fixed missing WebSocket message handler
+  - Added handler for `'connected'` message type in `chat.js:239-241`
+  - Eliminates console errors on WebSocket connection
+
+- **Status Display Bug** - Fixed null reference error in connection indicator
+  - Changed `querySelector('span:last-child')` to `querySelector('span:not(.status-indicator)')`
+  - Connection status now displays correctly in `chat.js:688`
+
+- **Session Error Handling** - Added missing error response for expired sessions
+  - Server now notifies client when session not found
+  - Client auto-creates new session when old one expires
+  - Updated `websocket-handler.js:115-127`
+
+### Documentation
+
+**Comprehensive Security & Configuration Guides (v1.5.1)**
+
+- `docs/guides/security.md` (NEW) - Complete security guide (428 lines)
+  - Cloudflare Zero Trust setup (8 steps, 15 minutes)
+  - Token authentication (testing only)
+  - Threat scenarios and mitigations
+  - Security best practices
+
+- `docs/guides/mobile-access.md` - Enhanced with configuration section
+  - Requirements table (Mobile Chat = Claude Code only)
+  - Cloudflare Zero Trust as Option 1 (Production - RECOMMENDED)
+  - Quick Tunnel + Token as Option 2 (TESTING ONLY)
+  - `/mama-configure` command examples
+  - Manual plugin configuration for both Claude Code and Claude Desktop
+
+- `README.md` - Added security and configuration sections
+  - Mobile Chat requirements table
+  - Security warning about full system compromise
+  - Cloudflare Zero Trust as recommended production method
+  - Configuration examples with `/mama-configure`
+
+- `docs/reference/api.md` - Added Mobile Chat compatibility table
+  - Platform compatibility matrix (Claude Code vs Claude Desktop)
+  - Clear note about CLI requirement
+
+- `packages/claude-code-plugin/commands/configure.md` - Enhanced command
+  - Added 6 new security/configuration options
+  - Security settings display in command output
 
 ---
 
