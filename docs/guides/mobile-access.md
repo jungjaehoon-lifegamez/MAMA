@@ -115,98 +115,162 @@ curl http://localhost:3847/graph
 
 ## External Access
 
-⚠️ **SECURITY CRITICAL:** For access from outside your local network, use a tunnel service.
+⚠️ **CRITICAL:** When exposing MAMA externally, attackers can take **complete control** of your computer.
 
-**⚠️ BEFORE YOU START:**
+**Choose your access method based on use case:**
 
-1. **MUST set `MAMA_AUTH_TOKEN`** (see Security Warning above)
-2. Read the [Security Guide](./security.md) thoroughly
-3. Understand the risks (file access, command execution)
-4. Never share tunnel URLs publicly
+### 🌟 Option 1: Cloudflare Zero Trust (Production - RECOMMENDED)
 
-### Option 1: Cloudflare Tunnel (Recommended)
+**Use this for:**
 
-#### Quick Tunnel (Testing)
+- ✅ Real deployment (long-term use)
+- ✅ Accessing from untrusted networks (public WiFi, cafes)
+- ✅ Maximum security
 
-Fast setup for testing, but tunnels expire without warning:
+**What you get:**
+
+- ✅ Google/GitHub account authentication
+- ✅ 2FA automatically enforced
+- ✅ Only YOUR email can access
+- ✅ No token management needed
+- ✅ Enterprise-grade security (FREE!)
+
+#### Quick Setup (15 minutes)
+
+**Step 1: Install cloudflared**
 
 ```bash
-# ⚠️ STEP 1: Set authentication token FIRST!
-export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
-echo "Save this token: $MAMA_AUTH_TOKEN"
-
-# STEP 2: Install cloudflared
 # Download from: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 
-# STEP 3: Start tunnel
+# Verify
+cloudflared --version
+```
+
+**Step 2: Create Named Tunnel**
+
+```bash
+# Login to Cloudflare
+cloudflared tunnel login
+
+# Create tunnel
+cloudflared tunnel create mama-mobile
+
+# Note the tunnel ID shown in output
+```
+
+**Step 3: Configure Tunnel**
+
+Create `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: YOUR_TUNNEL_ID # From Step 2
+credentials-file: ~/.cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: mama.yourdomain.com # Your subdomain
+    service: http://localhost:3847
+  - service: http_status:404
+```
+
+**Step 4: Set up DNS**
+
+```bash
+cloudflared tunnel route dns mama-mobile mama.yourdomain.com
+```
+
+**Step 5: Configure Zero Trust Access**
+
+Go to **Cloudflare Dashboard** → **Zero Trust** → **Access** → **Applications**
+
+1. Click "Add an application" → "Self-hosted"
+2. Application Configuration:
+   - Name: `MAMA Mobile`
+   - Domain: `mama.yourdomain.com`
+3. Identity Provider: Choose **Google** (or GitHub)
+4. Access Policy:
+   - Name: `Allow My Email Only`
+   - Include: `Emails` → `your-email@gmail.com`
+
+**Step 6: Start Everything**
+
+```bash
+# Start MAMA server
+npx @jungjaehoon/mama-server &
+
+# Start tunnel
+cloudflared tunnel run mama-mobile
+```
+
+**Step 7: Access**
+
+```
+https://mama.yourdomain.com/viewer
+
+→ Cloudflare login screen appears
+→ Login with your Google account
+→ If your email is allowed → Access granted ✅
+→ If not → Access denied ❌
+```
+
+**Free Tier:** Up to 50 users, unlimited bandwidth, all features!
+
+📖 **Full Guide:** See [Security Guide - Cloudflare Zero Trust](./security.md#cloudflare-zero-trust-recommended-for-production)
+
+---
+
+### ⚠️ Option 2: Quick Tunnel + Token (TESTING ONLY)
+
+**Use this ONLY for:**
+
+- ✅ Quick testing (few minutes)
+- ✅ Temporary debugging
+- ✅ Same-day use
+
+**DO NOT use for:**
+
+- ❌ Long-term deployment
+- ❌ Public networks
+- ❌ Important work
+
+```bash
+# STEP 1: Set token
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
+echo "Token: $MAMA_AUTH_TOKEN"  # Save this!
+
+# STEP 2: Start MAMA
+npx @jungjaehoon/mama-server &
+
+# STEP 3: Start Quick Tunnel
 cloudflared tunnel --url http://localhost:3847 --no-autoupdate
 
-# Output will show your public URL:
-# https://random-subdomain.trycloudflare.com
-```
-
-Access your mobile chat at:
-
-```
-https://random-subdomain.trycloudflare.com/viewer
+# STEP 4: Access with token
+# https://xxx.trycloudflare.com/viewer?token=YOUR_TOKEN
 ```
 
 **Limitations:**
 
-- No uptime guarantee
-- URL changes on restart
-- May expire anytime
+- ⚠️ Token alone = weak security
+- ⚠️ Tunnel expires randomly
+- ⚠️ URL changes on restart
+- ⚠️ Anyone with token + URL = full access
 
-#### Named Tunnel (Production)
+---
 
-For reliable long-term access:
-
-1. **Create Cloudflare account** (free)
-
-2. **Create named tunnel:**
-
-   ```bash
-   cloudflared tunnel login
-   cloudflared tunnel create mama-mobile
-   ```
-
-3. **Create config file** (`~/.cloudflared/config.yml`):
-
-   ```yaml
-   tunnel: mama-mobile
-   credentials-file: /path/to/credentials.json
-
-   ingress:
-     - hostname: mama.yourdomain.com
-       service: http://localhost:3847
-     - service: http_status:404
-   ```
-
-4. **Run tunnel:**
-
-   ```bash
-   cloudflared tunnel run mama-mobile
-   ```
-
-5. **Set up DNS:** Point `mama.yourdomain.com` to your tunnel (via Cloudflare dashboard)
-
-**Benefits:**
-
-- Permanent URL
-- Survives restarts
-- Better performance
-- Access control options
-
-### Option 2: ngrok
+### Option 3: ngrok
 
 ```bash
-# Install ngrok from https://ngrok.com/download
+# Install from https://ngrok.com/download
+
+# Set token first!
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 
 # Start tunnel
 ngrok http 3847
 
-# Use the displayed HTTPS URL
+# Access: https://xxx.ngrok.io/viewer?token=YOUR_TOKEN
 ```
+
+**Note:** ngrok also offers Zero Trust authentication (ngrok Teams plan)
 
 ---
 
