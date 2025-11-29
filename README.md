@@ -4,7 +4,7 @@
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Version 1.4.0 | Graph Viewer
+> Version 1.5.0 | Mobile Chat & Graph Viewer
 
 MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work. Decisions connect through explicit relationships—building on prior work, debating alternatives, or synthesizing multiple approaches.
 
@@ -362,11 +362,23 @@ The viewer runs on the existing HTTP embedding server—no additional setup requ
 
 ## 📱 MAMA Mobile (New in v1.5)
 
-Chat with Claude Code from anywhere using a mobile-optimized web interface with voice input and TTS.
+**Connect to MAMA and chat with Claude Code from anywhere** - your phone, tablet, or any device. Access your Claude Code sessions remotely through a mobile-optimized web interface with voice input and TTS.
+
+Whether you're on the couch, commuting, or traveling, stay connected to your development workflow with real-time access to Claude Code.
 
 ![MAMA Mobile Chat Interface](docs/images/1.5-chat.png)
 
-**Access:** `http://localhost:3847/viewer` (Chat tab)
+### Starting the HTTP Server
+
+```bash
+cd packages/mcp-server
+node start-http-server.js
+```
+
+The server will start on `http://localhost:3847` with:
+
+- **Graph Viewer:** `http://localhost:3847/viewer` (Memory tab)
+- **Mobile Chat:** `http://localhost:3847/viewer` (Chat tab)
 
 **Features:**
 
@@ -393,7 +405,21 @@ To access MAMA Mobile from outside your local network:
 ngrok http 3847
 ```
 
-#### Option 2: Cloudflare Tunnel (Production)
+#### Option 2: Cloudflare Tunnel
+
+**Quick Tunnel (Testing):**
+
+```bash
+# Install cloudflared from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+cloudflared tunnel --url http://localhost:3847 --no-autoupdate
+
+# URL will be displayed in output:
+# https://random-name.trycloudflare.com
+```
+
+**⚠️ Note:** Quick tunnels have no uptime guarantee and may expire anytime. For production use, create a [Named Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/).
+
+**Named Tunnel (Production):**
 
 Follow the [Cloudflare Tunnel setup guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
 
@@ -541,4 +567,4 @@ MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0
 ---
 
 **Author**: SpineLift Team
-**Last Updated**: 2025-11-27
+**Last Updated**: 2025-11-29
