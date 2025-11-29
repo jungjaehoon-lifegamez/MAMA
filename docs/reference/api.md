@@ -335,6 +335,16 @@ MAMA provides HTTP endpoints for web-based interfaces like the Graph Viewer and 
 
 **Base URL:** `http://localhost:3847` (configurable via `MAMA_HTTP_PORT`)
 
+**Compatibility:**
+
+| Feature         | Claude Code Plugin | Claude Desktop (MCP) |
+| --------------- | ------------------ | -------------------- |
+| HTTP Endpoints  | ✅                 | ✅                   |
+| Graph Viewer    | ✅                 | ✅                   |
+| **Mobile Chat** | ✅                 | ❌                   |
+
+**Note:** Mobile Chat requires Claude Code CLI (`claude` command). Claude Desktop only has MCP servers and cannot spawn CLI subprocesses for chat sessions. Graph Viewer works in both environments.
+
 ### Checkpoint API
 
 #### POST /api/checkpoint/save

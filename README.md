@@ -368,6 +368,20 @@ Whether you're on the couch, commuting, or traveling, stay connected to your dev
 
 ![MAMA Mobile Chat Interface](docs/images/1.5-chat.png)
 
+### ⚠️ Requirements
+
+| Feature                      | Claude Code Plugin | Claude Desktop (MCP) |
+| ---------------------------- | ------------------ | -------------------- |
+| MCP Tools (/mama-save, etc.) | ✅                 | ✅                   |
+| Graph Viewer                 | ✅                 | ✅                   |
+| **Mobile Chat**              | ✅                 | ❌                   |
+
+**Mobile Chat requires Claude Code CLI:**
+
+- Uses `claude` command as subprocess
+- Not available in Claude Desktop (MCP-only)
+- Automatically enabled when using Claude Code plugin
+
 ### Starting the HTTP Server
 
 ```bash
@@ -519,17 +533,58 @@ https://your-tunnel-url/viewer?token=YOUR_TOKEN
 
 **DO NOT use for production** - Token alone is weak security
 
-### Disabling Features
+### Configuration
 
-Control which features are enabled via environment variables:
+**Easy Way: Use `/mama-configure` command (Claude Code only)**
 
 ```bash
-# Disable entire HTTP server (Graph Viewer + Mobile Chat)
-export MAMA_DISABLE_HTTP_SERVER=true
+# View current settings
+/mama-configure
 
-# Disable only WebSocket/Mobile Chat (keep Graph Viewer)
-export MAMA_DISABLE_WEBSOCKET=true
-export MAMA_DISABLE_MOBILE_CHAT=true
+# Disable features
+/mama-configure --disable-http              # Disable all web features
+/mama-configure --disable-websocket         # Disable Mobile Chat only
+/mama-configure --enable-all                # Enable everything
+
+# Set authentication token
+/mama-configure --generate-token            # Generate random token
+/mama-configure --set-auth-token=abc123     # Set specific token
+```
+
+**After configuration changes, restart Claude Code for changes to take effect.**
+
+**Manual Way: Edit plugin configuration**
+
+For Claude Code, edit `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "env": {
+        "MAMA_DISABLE_HTTP_SERVER": "true",
+        "MAMA_DISABLE_WEBSOCKET": "true",
+        "MAMA_AUTH_TOKEN": "your-token-here"
+      }
+    }
+  }
+}
+```
+
+For Claude Desktop, edit `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": ["-y", "@jungjaehoon/mama-server"],
+      "env": {
+        "MAMA_DISABLE_HTTP_SERVER": "true"
+      }
+    }
+  }
+}
 ```
 
 ### Security Warnings
