@@ -396,46 +396,57 @@ The server will start on `http://localhost:3847` with:
 
 ### External Access Setup
 
-To access MAMA Mobile from outside your local network:
+⚠️ **CRITICAL:** External access gives attackers **full control** of your computer via Claude Code.
 
-#### Option 1: ngrok (Quick Setup)
+**Choose based on use case:**
 
-```bash
-# Install ngrok from https://ngrok.com/download
-ngrok http 3847
-```
+#### 🌟 Production Use: Cloudflare Zero Trust (RECOMMENDED)
 
-#### Option 2: Cloudflare Tunnel
-
-**Quick Tunnel (Testing):**
+**Best for:** Real deployment, long-term use, maximum security
 
 ```bash
-# Install cloudflared from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
-cloudflared tunnel --url http://localhost:3847 --no-autoupdate
+# 1. Install cloudflared
+# Download: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 
-# URL will be displayed in output:
-# https://random-name.trycloudflare.com
+# 2. Create tunnel
+cloudflared tunnel login
+cloudflared tunnel create mama-mobile
+
+# 3. Configure Zero Trust access (your Google email only)
+# Cloudflare Dashboard → Zero Trust → Access → Applications
+# Full setup: See docs/guides/security.md
+
+# 4. Start tunnel
+cloudflared tunnel run mama-mobile
 ```
 
-**⚠️ Note:** Quick tunnels have no uptime guarantee and may expire anytime. For production use, create a [Named Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/).
+**What you get:**
 
-**Named Tunnel (Production):**
+- ✅ Google/GitHub account authentication
+- ✅ 2FA automatically enforced
+- ✅ Only your email can access
+- ✅ FREE for personal use
 
-Follow the [Cloudflare Tunnel setup guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
+📖 **Full Guide:** [Security Guide - Cloudflare Zero Trust](docs/guides/security.md#cloudflare-zero-trust-recommended-for-production)
 
-**⚠️ Security Notice:** Always set `MAMA_AUTH_TOKEN` before exposing your server:
+#### ⚠️ Testing Only: Quick Tunnel + Token
+
+**Use ONLY for:** Temporary testing (minutes/hours)
 
 ```bash
-export MAMA_AUTH_TOKEN="your-secure-token-here"
+# 1. Set token
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
+
+# 2. Start Quick Tunnel
+cloudflared tunnel --url http://localhost:3847
+
+# 3. Access with token
+# https://xxx.trycloudflare.com/viewer?token=YOUR_TOKEN
 ```
 
-Then access MAMA Mobile with:
+**DO NOT use for production** - Token alone is weak security
 
-```
-https://your-tunnel-url/viewer?token=your-secure-token-here
-```
-
-**Testing Connection:** Open the Chat tab → Click the globe icon → Test Connection
+**Testing Connection:** Chat tab → Globe icon → Test Connection
 
 ---
 
@@ -454,34 +465,59 @@ https://your-tunnel-url/viewer?token=your-secure-token-here
 
 ### External Access Risks
 
-When using tunnels (ngrok, Cloudflare), anyone with your tunnel URL can access:
+⚠️ **CRITICAL:** When using tunnels, an attacker can take **complete control** of your computer:
 
-- 🔓 Chat sessions with Claude Code
-- 🔓 Decision database (`~/.claude/mama-memory.db`)
-- 🔓 **Local file system** (via Claude Code Read/Write tools)
-- 🔓 **Command execution** (via Claude Code Bash tool)
+**What they can access:**
 
-### Required: Authentication Token
+- 🔓 Chat with Claude Code (send any prompt)
+- 🔓 Read ANY file on your computer
+- 🔓 Write ANY file on your computer
+- 🔓 Execute ANY command (install backdoors, steal data)
+- 🔓 Your decision database
+- 🔓 API keys, SSH keys, passwords
 
-**Before exposing MAMA externally, ALWAYS set `MAMA_AUTH_TOKEN`:**
+**This is not just data theft - it's full system compromise.**
+
+### Recommended: Cloudflare Zero Trust
+
+**For production use, ALWAYS use Cloudflare Zero Trust:**
+
+✅ **Benefits:**
+
+- Only your Google/GitHub account can access
+- 2FA automatically enforced
+- No token management needed
+- FREE for personal use
+- Enterprise-grade security
 
 ```bash
-# Generate a strong random token
+# Quick setup (15 minutes)
+cloudflared tunnel login
+cloudflared tunnel create mama-mobile
+
+# Configure access (Cloudflare Dashboard)
+# Zero Trust → Access → Applications
+# Add your Google email to allow list
+
+# Start tunnel
+cloudflared tunnel run mama-mobile
+```
+
+📖 **Full Guide:** [Cloudflare Zero Trust Setup](docs/guides/security.md#cloudflare-zero-trust-recommended-for-production)
+
+### Alternative: Token Authentication (Testing Only)
+
+⚠️ **Use ONLY for temporary testing** (minutes/hours)
+
+```bash
+# Generate token
 export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 
-# Start MAMA server
-npx @jungjaehoon/mama-server
-```
-
-**Access with token:**
-
-```bash
-# Query parameter
+# Access with token
 https://your-tunnel-url/viewer?token=YOUR_TOKEN
-
-# Or use Authorization header (recommended)
-curl -H "Authorization: Bearer YOUR_TOKEN" https://your-tunnel-url/viewer
 ```
+
+**DO NOT use for production** - Token alone is weak security
 
 ### Disabling Features
 

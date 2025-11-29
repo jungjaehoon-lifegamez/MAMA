@@ -9,7 +9,8 @@
 - [Security Model](#security-model)
 - [Localhost-Only Mode (Default)](#localhost-only-mode-default)
 - [External Access via Tunnels](#external-access-via-tunnels)
-- [Authentication](#authentication)
+- [🌟 Cloudflare Zero Trust (Recommended for Production)](#cloudflare-zero-trust-recommended-for-production)
+- [Token Authentication (Testing Only)](#token-authentication-testing-only)
 - [Disabling Features](#disabling-features)
 - [Security Best Practices](#security-best-practices)
 - [Threat Scenarios](#threat-scenarios)
@@ -70,27 +71,331 @@ http://localhost:3847/viewer
 
 ## External Access via Tunnels
 
-### ⚠️ Security Risks
+### ⚠️ CRITICAL Security Warning
 
-When you use a tunnel (ngrok, Cloudflare, etc.), you expose MAMA to the internet:
+When you use a tunnel to expose MAMA to the internet, **an attacker with access can:**
 
-**What can be accessed:**
+**Complete System Compromise:**
 
-- 🔓 Chat sessions with Claude Code
-- 🔓 Decision database (`~/.claude/mama-memory.db`)
-- 🔓 **Local file system** (via Claude Code Read/Write tools)
-- 🔓 **Command execution** (via Claude Code Bash tool)
+- 🔓 Control your Claude Code sessions
+- 🔓 Read **ANY file** on your computer (via Read tool)
+- 🔓 Write **ANY file** on your computer (via Write tool)
+- 🔓 Execute **ANY command** on your machine (via Bash tool)
+- 🔓 Access your decision database (`~/.claude/mama-memory.db`)
+- 🔓 Steal API keys, SSH keys, passwords from config files
+- 🔓 Install persistent backdoors (crontab, systemd)
+- 🔓 Exfiltrate your entire hard drive
 
-**Potential attacks:**
+**This is not just data theft - it's full remote code execution on your machine.**
 
-- Unauthorized access to your decisions
-- Reading sensitive files from your computer
-- Executing commands on your machine
-- Data exfiltration via Claude Code
+### Two Options for External Access
 
-### ⚠️ Required: Set Authentication Token
+**For PRODUCTION use (real deployment):**
 
-**Before exposing MAMA externally, you MUST set `MAMA_AUTH_TOKEN`:**
+- ✅ **Use Cloudflare Zero Trust** (See below) - Google/GitHub account protection
+- ⛔ **DO NOT use token authentication alone**
+
+**For TESTING only (temporary access):**
+
+- ⚠️ **Token authentication** - Quick but less secure
+- ⛔ **Never use for long-term deployment**
+
+---
+
+## 🌟 Cloudflare Zero Trust (Recommended for Production)
+
+**This is the ONLY recommended way to expose MAMA for real use.**
+
+### Why Cloudflare Zero Trust?
+
+**Security Benefits:**
+
+- ✅ **Google/GitHub/Microsoft account authentication** - Industry-standard OAuth
+- ✅ **2FA automatically enforced** - If you have 2FA on Google, it applies to MAMA
+- ✅ **Email restriction** - Only your email can access (e.g., `you@gmail.com`)
+- ✅ **No token management** - No need to generate/share/rotate tokens
+- ✅ **Enterprise-grade DDoS protection** - Cloudflare's infrastructure
+- ✅ **Automatic rate limiting** - Brute force attacks blocked
+- ✅ **Anomaly detection** - Cloudflare detects suspicious access patterns
+- ✅ **Session management** - Automatic timeout, revocation
+- ✅ **Zero Trust architecture** - Every request is verified
+
+**vs Token Authentication:**
+
+- Token alone: Anyone with token = full access
+- Zero Trust: Must have your Google account + password + 2FA code
+
+### How It Works
+
+```
+User → Cloudflare Zero Trust → Tunnel → MAMA (localhost)
+        ↑
+        Google/GitHub login required
+        Only allowed emails can pass
+```
+
+**MAMA sees all requests as localhost** - No code changes needed!
+
+### Step-by-Step Setup
+
+#### Prerequisites
+
+- Cloudflare account (free)
+- Domain name (optional - Cloudflare provides free subdomain)
+
+#### Step 1: Install cloudflared
+
+```bash
+# Linux/Mac
+# Download from: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+
+# Verify installation
+cloudflared --version
+```
+
+#### Step 2: Login to Cloudflare
+
+```bash
+cloudflared tunnel login
+
+# Opens browser → Login to Cloudflare
+# Select zone (domain) to authorize
+```
+
+#### Step 3: Create Named Tunnel
+
+```bash
+# Create tunnel
+cloudflared tunnel create mama-mobile
+
+# Output:
+# Tunnel credentials written to /home/user/.cloudflared/UUID.json
+# Tunnel mama-mobile created with ID: uuid-abc-123
+
+# Save the tunnel ID for next steps
+```
+
+#### Step 4: Configure Tunnel
+
+Create `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: uuid-abc-123 # Your tunnel ID from Step 3
+credentials-file: /home/user/.cloudflared/uuid-abc-123.json
+
+ingress:
+  - hostname: mama.yourdomain.com # Or use Cloudflare's free subdomain
+    service: http://localhost:3847
+  - service: http_status:404 # Catch-all
+```
+
+#### Step 5: Route DNS
+
+```bash
+# Create DNS record pointing to tunnel
+cloudflared tunnel route dns mama-mobile mama.yourdomain.com
+
+# Or use Cloudflare dashboard:
+# DNS → Add record → CNAME → mama → uuid-abc-123.cfargotunnel.com
+```
+
+#### Step 6: Configure Zero Trust Access Policy
+
+**Via Cloudflare Dashboard:**
+
+1. Go to **Zero Trust** → **Access** → **Applications**
+2. Click **Add an application** → **Self-hosted**
+
+**Application Configuration:**
+
+```yaml
+Application name: MAMA Mobile
+Session Duration: 24 hours (or your preference)
+Application domain: mama.yourdomain.com
+```
+
+**Identity Providers (Choose one or more):**
+
+- ✅ Google (Recommended)
+- ✅ GitHub (For developers)
+- ✅ Microsoft/Azure AD
+- ✅ Generic SAML/OIDC
+
+**Access Policy:**
+
+```yaml
+Policy name: Allow My Email Only
+Action: Allow
+Include:
+  - Emails: your-email@gmail.com  # YOUR email only
+
+# Optional: Add more rules
+Include:
+  - Emails ending in: @yourcompany.com  # For team access
+```
+
+**Example for Personal Use:**
+
+```yaml
+Policy: Allow Only Me
+Include:
+  - Emails: john.doe@gmail.com
+# That's it! Only your Google account can access
+```
+
+#### Step 7: Start Tunnel
+
+```bash
+# Start MAMA server
+npx @jungjaehoon/mama-server &
+
+# Start Cloudflare tunnel
+cloudflared tunnel run mama-mobile
+
+# Output:
+# INF Connection established connIndex=0 location=SFO
+# INF Each HA connection's tunnel IDs will be identified by...
+```
+
+#### Step 8: Access MAMA
+
+```bash
+# Open browser
+https://mama.yourdomain.com/viewer
+
+# Cloudflare shows login screen
+# Login with your Google account
+# If your email is allowed → Access granted
+# If not → Access denied
+```
+
+### Testing Your Setup
+
+**1. Verify Zero Trust is Working:**
+
+```bash
+# Try accessing in incognito/private mode
+# Should redirect to Google login
+# After login with allowed email → Access granted
+# After login with non-allowed email → Access denied (403)
+```
+
+**2. Test with Different Accounts:**
+
+```bash
+# Your allowed email: ✅ Access granted
+# Your friend's email: ❌ Access denied
+# No login: ❌ Redirected to login page
+```
+
+**3. Test 2FA:**
+
+```bash
+# If you have 2FA on Google:
+# 1. Login shows Google login page
+# 2. After password → 2FA code required
+# 3. After 2FA → Access granted
+
+# Someone with stolen password but no 2FA device: ❌ Blocked
+```
+
+### Advantages Over Token Auth
+
+| Feature                | Token Auth            | Cloudflare Zero Trust |
+| ---------------------- | --------------------- | --------------------- |
+| Brute Force Protection | Manual rate limiting  | ✅ Automatic          |
+| 2FA Support            | Manual implementation | ✅ Automatic          |
+| Account-based          | ❌ No                 | ✅ Yes                |
+| Email restriction      | ❌ No                 | ✅ Yes                |
+| Session management     | Manual                | ✅ Automatic          |
+| DDoS protection        | ❌ No                 | ✅ Yes                |
+| Audit logs             | Manual                | ✅ Built-in           |
+| Revoke access          | Change token          | ✅ One click          |
+| MAMA code changes      | Required              | ✅ None needed        |
+
+### Free vs Paid
+
+**Cloudflare Zero Trust Free Tier:**
+
+- ✅ Up to 50 users
+- ✅ Unlimited bandwidth
+- ✅ All authentication providers
+- ✅ Basic access policies
+- ✅ Perfect for personal/small team use
+
+**For Personal MAMA Use:**
+
+- Free tier is more than enough
+- No credit card required
+- No hidden fees
+
+### Troubleshooting
+
+**Issue: "Access Denied" after login**
+
+```bash
+# Check your email in Access Policy
+# Cloudflare Zero Trust → Access → Applications → MAMA Mobile → Policies
+# Ensure your Google email exactly matches
+```
+
+**Issue: Tunnel won't start**
+
+```bash
+# Check config.yml syntax
+cloudflared tunnel info mama-mobile
+
+# Check MAMA is running
+curl http://localhost:3847/health
+```
+
+**Issue: DNS not resolving**
+
+```bash
+# Check DNS record
+dig mama.yourdomain.com
+
+# Should show CNAME to uuid.cfargotunnel.com
+```
+
+### Security Best Practices with Zero Trust
+
+✅ **DO:**
+
+- Use your personal Google/GitHub account
+- Enable 2FA on your auth provider
+- Set short session durations (1-24 hours)
+- Review access logs regularly
+- Use email restriction (only your email)
+
+❌ **DON'T:**
+
+- Share your login credentials
+- Disable 2FA to "make it easier"
+- Allow `*@gmail.com` (too broad)
+- Use the same password for multiple services
+
+---
+
+## Token Authentication (Testing Only)
+
+⚠️ **WARNING: This section is for TESTING/DEVELOPMENT only. DO NOT use for production deployment.**
+
+**Use cases for token auth:**
+
+- ✅ Quick testing of MAMA Mobile features
+- ✅ Temporary access for debugging
+- ✅ Local network access (same WiFi)
+
+**DO NOT use for:**
+
+- ❌ Long-term deployment
+- ❌ Public internet exposure
+- ❌ Untrusted networks
+
+### Quick Testing Setup
+
+**For Cloudflare Quick Tunnel (expires automatically):**
 
 ```bash
 # Generate a strong random token
