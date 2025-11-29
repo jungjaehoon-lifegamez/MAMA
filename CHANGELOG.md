@@ -9,153 +9,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**MAMA Mobile v1.5 - Real-time Mobile Chat with Enterprise Security**
+**MAMA Mobile v1.5 - Mobile Chat & PWA Support**
 
 ![MAMA Mobile Chat Interface](docs/images/1.5-chat.png)
 
-#### Security & Authentication (v1.5.1)
+> **What's New in v1.5?** Real-time mobile chat with Claude Code, voice input/output, PWA installation, and enterprise-grade security.
 
-- **Token Authentication** - `MAMA_AUTH_TOKEN` environment variable for external access
-  - Bearer token + query parameter support
-  - Automatic security warnings on external access detection
-  - Localhost always allowed without authentication
+#### Mobile Chat (NEW)
 
-- **Cloudflare Zero Trust Integration** - Production-grade security (RECOMMENDED)
-  - Google/GitHub/Microsoft OAuth authentication
-  - 2FA automatically enforced
-  - Email restriction (only specific emails allowed)
-  - Zero Trust architecture with automatic rate limiting
-  - Complete setup guide in `docs/guides/security.md` (428 lines)
+**Talk to Claude Code from your phone** - Real-time WebSocket-based chat interface
 
-- **Feature Disable Options** - Security controls via environment variables
-  - `MAMA_DISABLE_HTTP_SERVER` - Disable Graph Viewer + Mobile Chat
-  - `MAMA_DISABLE_WEBSOCKET` - Disable Mobile Chat only (keep Graph Viewer)
-  - Easy configuration via `/mama-configure` command
+- **Voice Input** - Press microphone button to speak (automatic language detection)
+- **Text-to-Speech** - Hear Claude's responses with adjustable speed (1.8x default)
+- **Hands-free Mode** - Auto-listen after TTS completes for continuous conversation
+- **Slash Commands** - `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
+- **Auto-Checkpoint** - Saves session state after 5 minutes idle
+- **Session Resume** - Automatically detect and resume previous sessions
+- **MCP Tool Display** - See real-time tool execution (Read, Write, Bash, etc.)
+- **Long Press to Copy** - Hold message for 750ms to copy text
 
-- **Enhanced /mama-configure Command** - One-command security management
-  - `--disable-http` / `--disable-websocket` / `--enable-all`
-  - `--generate-token` - Generate cryptographically secure token
-  - `--set-auth-token=X` - Set authentication token
-  - Shows security status (HTTP server, WebSocket, auth token)
+**Platform Support:**
 
-#### Compatibility & Requirements (v1.5.1)
+- ✅ **Claude Code Plugin** - Full support (uses `claude` CLI subprocess)
+- ❌ **Claude Desktop (MCP)** - Not supported (MCP servers only, no CLI)
+- Graph Viewer works in both environments
 
-- **Mobile Chat Platform Compatibility** - Clear requirements documentation
-  - ✅ Claude Code Plugin - Full support (uses `claude` CLI subprocess)
-  - ❌ Claude Desktop (MCP) - Not supported (MCP servers only, no CLI)
-  - Graph Viewer works in both environments
-  - Requirements table added to README.md, mobile-access.md, api.md
+#### PWA Support (NEW)
 
-#### Checkpoint API Implementation
+**Install MAMA as a mobile app** - Progressive Web App with offline capability
+
+- **App Installation** - "Add to Home Screen" on Chrome/Safari
+- **Service Worker** - Offline capability with static asset caching
+- **App Icons** - 192x192 and 512x512 PNG icons
+- **Mobile-Optimized** - Meta tags, theme color, viewport settings
+- **Standalone Mode** - Runs like a native app (no browser UI)
+
+#### Touch Optimization (NEW)
+
+**Mobile-first UX improvements**
+
+- **Long Press to Copy** - 750ms press on messages to copy text
+- **44px Touch Targets** - Mobile-optimized button sizing for all controls
+  - Chat controls (Send, Voice, TTS, Mic)
+  - Sidebar tabs (Memory, Chat)
+  - Memory save button
+- **Responsive Layout** - Adapts to phone, tablet, desktop
+
+#### Checkpoint API (NEW)
+
+**Session save/resume for mobile workflow continuity**
 
 - **POST /api/checkpoint/save** - Save session checkpoint with summary, open files, and next steps
 - **GET /api/checkpoint/load** - Load latest active checkpoint for session resume
 - Integrated with `mama.saveCheckpoint()` and `mama.loadCheckpoint()` functions
+- Auto-checkpoint after 5 minutes idle
+- Session resume banner with one-click restore
 
-#### Story 3.2: Touch Optimization
+#### External Access & Security (NEW)
 
-- **Long press to copy** - 750ms press on messages to copy text
-- **44px touch targets** - Mobile-optimized button sizing for all controls
-  - Chat controls (Send, Voice, TTS, Mic)
-  - Sidebar tabs
-  - Memory save button
+**Access MAMA from anywhere with enterprise-grade security**
 
-#### Story 3.3: PWA Support
+- **Cloudflare Zero Trust** - Production-grade security (RECOMMENDED)
+  - Google/GitHub/Microsoft account authentication
+  - 2FA automatically enforced
+  - Email restriction (only your email can access)
+  - No token management needed
+  - Complete 15-minute setup guide in `docs/guides/security.md`
 
-- **PWA manifest** - Install MAMA Mobile as a standalone app
-- **Service Worker** - Offline capability with static asset caching
-- **App icons** - 192x192 and 512x512 PNG icons
-- **Meta tags** - Mobile-optimized viewport, theme color, Apple touch icon
+- **Token Authentication** - Quick testing (local network, temporary access)
+  - `MAMA_AUTH_TOKEN` environment variable
+  - Bearer token + query parameter support
+  - Automatic security warnings on external access
 
-#### Story 4.3: Commands & Auto-Checkpoint
-
-- **Slash commands** - `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
-  - Command parser in chat.js with prefix detection
-  - Direct integration with Memory tab functions
-- **Auto-checkpoint** - 5-minute idle timer with automatic session save
-  - Idle detection with resetIdleTimer on user input
-  - Auto-generates checkpoint summary from recent messages
-- **Session resume UI** - Banner with "Resume" and "Dismiss" buttons
-  - Auto-detect resumable sessions on page load
-  - One-click restore of previous session context
-
-#### File Changes
-
-- `chat.js` (+353 lines) - Commands, long press, auto-checkpoint logic
-- `memory.js` (+30 lines) - showSaveFormWithText, searchWithQuery
-- `viewer.html` (+20 lines) - PWA meta tags, SW registration, resume banner
-- `viewer.css` (+110 lines) - Banner styles, 44px touch targets
-- `sw.js` - Extended STATIC_ASSETS cache list
-- `viewer.js` (+5 lines) - dismissResumeBanner function
-- `graph-api.js` (+140 lines) - Checkpoint save/load API endpoints
+- **Feature Controls** - Disable features you don't use
+  - `/mama-configure --disable-http` - Disable all web features
+  - `/mama-configure --disable-websocket` - Disable Mobile Chat only
+  - `/mama-configure --enable-all` - Enable everything
+  - `/mama-configure --generate-token` - Generate secure auth token
 
 ### Fixed
 
-**Critical Bug Fixes (v1.5.1)** - Addressed code review feedback from gemini-code-assist
-
-- **Language Auto-Detection** - Fixed hardcoded `ko-KR` in speech recognition
-  - Now uses `navigator.language` for automatic browser language detection
-  - Falls back to `ko-KR` if not available
-  - TTS voice language also auto-detected from selected voice
-
-- **Memory Leak Prevention** - Fixed cleanup() method not called on page unload
-  - Added `beforeunload` event listener in `viewer.js`
-  - Properly cleans up chat, memory, and graph modules
-  - Prevents WebSocket connection leaks
-
-- **WebSocket Session Management** - Fixed session ID parameter mismatch
-  - Server expected `?session=xxx` but client sent `?sessionId=xxx`
-  - Updated `websocket-handler.js:45` to use correct parameter name
-  - WebSocket connections now properly attach to sessions
-
-- **Service Worker 404 Errors** - Fixed missing PWA asset routes
-  - Added routes for `/viewer/sw.js` and `/viewer/manifest.json`
-  - Updated `graph-api.js:822-846` with proper asset serving
-  - PWA installation now works correctly
-
-- **Unknown Message Type Error** - Fixed missing WebSocket message handler
-  - Added handler for `'connected'` message type in `chat.js:239-241`
-  - Eliminates console errors on WebSocket connection
-
-- **Status Display Bug** - Fixed null reference error in connection indicator
-  - Changed `querySelector('span:last-child')` to `querySelector('span:not(.status-indicator)')`
-  - Connection status now displays correctly in `chat.js:688`
-
-- **Session Error Handling** - Added missing error response for expired sessions
-  - Server now notifies client when session not found
-  - Client auto-creates new session when old one expires
-  - Updated `websocket-handler.js:115-127`
+- **Language Auto-Detection** - Voice input/TTS now use browser language instead of hardcoded Korean
+- **Memory Leaks** - Properly cleanup WebSocket connections on page close
+- **WebSocket Connection** - Fixed session management preventing chat from connecting
+- **PWA Installation** - Service Worker and manifest now load correctly
+- **Connection Status** - Status indicator displays correctly in all cases
+- **Session Errors** - Graceful handling of expired sessions with auto-recovery
 
 ### Documentation
 
-**Comprehensive Security & Configuration Guides (v1.5.1)**
+- **Security Guide (NEW)** - `docs/guides/security.md`
+  - Cloudflare Zero Trust setup guide (15 minutes)
+  - Token authentication for testing
+  - Threat scenarios and best practices
 
-- `docs/guides/security.md` (NEW) - Complete security guide (428 lines)
-  - Cloudflare Zero Trust setup (8 steps, 15 minutes)
-  - Token authentication (testing only)
-  - Threat scenarios and mitigations
-  - Security best practices
+- **Mobile Access Guide** - Enhanced with configuration and security
+  - Platform compatibility (Claude Code vs Claude Desktop)
+  - Production deployment with Cloudflare Zero Trust
+  - Quick testing with token authentication
 
-- `docs/guides/mobile-access.md` - Enhanced with configuration section
-  - Requirements table (Mobile Chat = Claude Code only)
-  - Cloudflare Zero Trust as Option 1 (Production - RECOMMENDED)
-  - Quick Tunnel + Token as Option 2 (TESTING ONLY)
-  - `/mama-configure` command examples
-  - Manual plugin configuration for both Claude Code and Claude Desktop
-
-- `README.md` - Added security and configuration sections
-  - Mobile Chat requirements table
-  - Security warning about full system compromise
-  - Cloudflare Zero Trust as recommended production method
-  - Configuration examples with `/mama-configure`
-
-- `docs/reference/api.md` - Added Mobile Chat compatibility table
-  - Platform compatibility matrix (Claude Code vs Claude Desktop)
-  - Clear note about CLI requirement
-
-- `packages/claude-code-plugin/commands/configure.md` - Enhanced command
-  - Added 6 new security/configuration options
-  - Security settings display in command output
+- **Configuration Command** - `/mama-configure` documentation
+  - Security settings management
+  - Feature enable/disable controls
 
 ---
 
