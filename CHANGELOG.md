@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**MAMA Mobile v1.5 - Mobile Chat & PWA Support**
+
+![MAMA Mobile Chat Interface](docs/images/1.5-chat.png)
+
+> **What's New in v1.5?** Real-time mobile chat with Claude Code, voice input/output, PWA installation, and enterprise-grade security.
+
+#### Mobile Chat (NEW)
+
+**Talk to Claude Code from your phone** - Real-time WebSocket-based chat interface
+
+- **Voice Input** - Press microphone button to speak (automatic language detection)
+- **Text-to-Speech** - Hear Claude's responses with adjustable speed (1.8x default)
+- **Hands-free Mode** - Auto-listen after TTS completes for continuous conversation
+- **Slash Commands** - `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
+- **Auto-Checkpoint** - Saves session state after 5 minutes idle
+- **Session Resume** - Automatically detect and resume previous sessions
+- **MCP Tool Display** - See real-time tool execution (Read, Write, Bash, etc.)
+- **Long Press to Copy** - Hold message for 750ms to copy text
+
+**Platform Support:**
+
+- ✅ **Claude Code Plugin** - Full support (uses `claude` CLI subprocess)
+- ❌ **Claude Desktop (MCP)** - Not supported (MCP servers only, no CLI)
+- Graph Viewer works in both environments
+
+#### PWA Support (NEW)
+
+**Install MAMA as a mobile app** - Progressive Web App with offline capability
+
+- **App Installation** - "Add to Home Screen" on Chrome/Safari
+- **Service Worker** - Offline capability with static asset caching
+- **App Icons** - 192x192 and 512x512 PNG icons
+- **Mobile-Optimized** - Meta tags, theme color, viewport settings
+- **Standalone Mode** - Runs like a native app (no browser UI)
+
+#### Touch Optimization (NEW)
+
+**Mobile-first UX improvements**
+
+- **Long Press to Copy** - 750ms press on messages to copy text
+- **44px Touch Targets** - Mobile-optimized button sizing for all controls
+  - Chat controls (Send, Voice, TTS, Mic)
+  - Sidebar tabs (Memory, Chat)
+  - Memory save button
+- **Responsive Layout** - Adapts to phone, tablet, desktop
+
+#### Checkpoint API (NEW)
+
+**Session save/resume for mobile workflow continuity**
+
+- **POST /api/checkpoint/save** - Save session checkpoint with summary, open files, and next steps
+- **GET /api/checkpoint/load** - Load latest active checkpoint for session resume
+- Integrated with `mama.saveCheckpoint()` and `mama.loadCheckpoint()` functions
+- Auto-checkpoint after 5 minutes idle
+- Session resume banner with one-click restore
+
+#### External Access & Security (NEW)
+
+**Access MAMA from anywhere with enterprise-grade security**
+
+- **Cloudflare Zero Trust** - Production-grade security (RECOMMENDED)
+  - Google/GitHub/Microsoft account authentication
+  - 2FA automatically enforced
+  - Email restriction (only your email can access)
+  - No token management needed
+  - Complete 15-minute setup guide in `docs/guides/security.md`
+
+- **Token Authentication** - Quick testing (local network, temporary access)
+  - `MAMA_AUTH_TOKEN` environment variable
+  - Bearer token + query parameter support
+  - Automatic security warnings on external access
+
+- **Feature Controls** - Disable features you don't use
+  - `/mama-configure --disable-http` - Disable all web features
+  - `/mama-configure --disable-websocket` - Disable Mobile Chat only
+  - `/mama-configure --enable-all` - Enable everything
+  - `/mama-configure --generate-token` - Generate secure auth token
+
+### Fixed
+
+- **Language Auto-Detection** - Voice input/TTS now use browser language instead of hardcoded Korean
+- **Memory Leaks** - Properly cleanup WebSocket connections on page close
+- **WebSocket Connection** - Fixed session management preventing chat from connecting
+- **PWA Installation** - Service Worker and manifest now load correctly
+- **Connection Status** - Status indicator displays correctly in all cases
+- **Session Errors** - Graceful handling of expired sessions with auto-recovery
+
+### Documentation
+
+- **Security Guide (NEW)** - `docs/guides/security.md`
+  - Cloudflare Zero Trust setup guide (15 minutes)
+  - Token authentication for testing
+  - Threat scenarios and best practices
+
+- **Mobile Access Guide** - Enhanced with configuration and security
+  - Platform compatibility (Claude Code vs Claude Desktop)
+  - Production deployment with Cloudflare Zero Trust
+  - Quick testing with token authentication
+
+- **Configuration Command** - `/mama-configure` documentation
+  - Security settings management
+  - Feature enable/disable controls
+
 ---
 
 ## [1.4.5] - 2025-11-27

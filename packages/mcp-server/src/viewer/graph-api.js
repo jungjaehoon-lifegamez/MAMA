@@ -22,6 +22,8 @@ const mama = require('../mama/mama-api.js');
 const VIEWER_HTML_PATH = path.join(__dirname, 'viewer.html');
 const VIEWER_CSS_PATH = path.join(__dirname, 'viewer.css');
 const VIEWER_JS_PATH = path.join(__dirname, 'viewer.js');
+const SW_JS_PATH = path.join(__dirname, 'sw.js');
+const MANIFEST_JSON_PATH = path.join(__dirname, 'manifest.json');
 
 /**
  * Get all decisions as graph nodes
@@ -162,9 +164,13 @@ function filterEdgesByNodes(edges, nodes) {
 function serveStaticFile(res, filePath, contentType) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
+    const etag = `"${Date.now()}"`; // Force browser to reload
     res.writeHead(200, {
       'Content-Type': `${contentType}; charset=utf-8`,
-      'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+      'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0',
+      ETag: etag,
     });
     res.end(content);
   } catch (error) {
@@ -407,8 +413,11 @@ async function getSimilarityEdges() {
  * @param {URLSearchParams} params - Query parameters (id required)
  */
 async function handleSimilarRequest(req, res, params) {
+  const startTime = Date.now();
   try {
     const decisionId = params.get('id');
+    console.log(`[GraphAPI] Similar request for decision: ${decisionId}`);
+
     if (!decisionId) {
       res.writeHead(400);
       res.end(
@@ -422,9 +431,11 @@ async function handleSimilarRequest(req, res, params) {
     }
 
     // Ensure DB is initialized
+    console.log(`[GraphAPI] Initializing DB...`);
     await initDB();
 
     // Get the decision by ID
+    console.log(`[GraphAPI] Fetching decision ${decisionId}...`);
     const adapter = getAdapter();
     const stmt = adapter.prepare(`
       SELECT topic, decision, reasoning FROM decisions WHERE id = ?
@@ -432,6 +443,7 @@ async function handleSimilarRequest(req, res, params) {
     const decision = stmt.get(decisionId);
 
     if (!decision) {
+      console.log(`[GraphAPI] Decision ${decisionId} not found`);
       res.writeHead(404);
       res.end(
         JSON.stringify({
@@ -445,12 +457,17 @@ async function handleSimilarRequest(req, res, params) {
 
     // Build search query from decision content
     const searchQuery = `${decision.topic} ${decision.decision}`;
+    console.log(
+      `[GraphAPI] Searching for similar decisions with query: "${searchQuery.substring(0, 50)}..."`
+    );
 
     // Use mama.suggest for semantic search
+    const searchStart = Date.now();
     const results = await mama.suggest(searchQuery, {
       limit: 6, // Get 6 to filter out self
       threshold: 0.5,
     });
+    console.log(`[GraphAPI] Semantic search completed in ${Date.now() - searchStart}ms`);
 
     // Filter out the current decision and format results
     let similar = [];
@@ -467,7 +484,14 @@ async function handleSimilarRequest(req, res, params) {
         }));
     }
 
-    res.writeHead(200);
+    console.log(
+      `[GraphAPI] Found ${similar.length} similar decisions (total time: ${Date.now() - startTime}ms)`
+    );
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
     res.end(
       JSON.stringify({
         id: decisionId,
@@ -475,13 +499,243 @@ async function handleSimilarRequest(req, res, params) {
         count: similar.length,
       })
     );
+    console.log(`[GraphAPI] Response sent for ${decisionId}`);
   } catch (error) {
     console.error(`[GraphAPI] Similar error: ${error.message}`);
+    console.error(`[GraphAPI] Similar error stack:`, error.stack);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'SEARCH_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle GET /api/mama/search request - semantic search for decisions
+ * Story 4-1: Memory tab search for mobile chat
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ * @param {URLSearchParams} params - Query parameters (q required, limit optional)
+ */
+async function handleMamaSearchRequest(req, res, params) {
+  try {
+    const query = params.get('q');
+    const limit = Math.min(parseInt(params.get('limit') || '10', 10), 20);
+
+    if (!query) {
+      res.writeHead(400);
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'MISSING_QUERY',
+          message: 'Missing required parameter: q',
+        })
+      );
+      return;
+    }
+
+    // Ensure DB is initialized
+    await initDB();
+
+    // Use mama.suggest for semantic search
+    const searchResults = await mama.suggest(query, {
+      limit: limit,
+      threshold: 0.3, // Lower threshold to show more results
+    });
+
+    // Format results for mobile display
+    let results = [];
+    if (searchResults && searchResults.results) {
+      results = searchResults.results.map((r) => ({
+        id: r.id,
+        topic: r.topic,
+        decision: r.decision,
+        reasoning: r.reasoning,
+        outcome: r.outcome,
+        confidence: r.confidence,
+        similarity: r.similarity || r.final_score || 0.5,
+        created_at: r.created_at,
+      }));
+    }
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        query,
+        results,
+        count: results.length,
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] MAMA search error: ${error.message}`);
     res.writeHead(500);
     res.end(
       JSON.stringify({
         error: true,
         code: 'SEARCH_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle POST /api/mama/save request - save a new decision
+ * Story 4-2: Save decisions from mobile chat UI
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleMamaSaveRequest(req, res) {
+  try {
+    const body = await readBody(req);
+
+    // Validate required fields
+    if (!body.topic || !body.decision || !body.reasoning) {
+      res.writeHead(400);
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'MISSING_FIELDS',
+          message: 'Missing required fields: topic, decision, reasoning',
+        })
+      );
+      return;
+    }
+
+    // Ensure DB is initialized
+    await initDB();
+
+    // Save decision using mama.saveDecision
+    const result = await mama.saveDecision({
+      topic: body.topic,
+      decision: body.decision,
+      reasoning: body.reasoning,
+      confidence: body.confidence || 0.8,
+    });
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        success: true,
+        id: result.id,
+        message: 'Decision saved successfully',
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] MAMA save error: ${error.message}`);
+    res.writeHead(500);
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'SAVE_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle POST /api/checkpoint/save request - save session checkpoint
+ * Story 4-3: Auto checkpoint feature for mobile chat
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleCheckpointSaveRequest(req, res) {
+  try {
+    const body = await readBody(req);
+
+    // Validate required fields
+    if (!body.summary) {
+      res.writeHead(400);
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'MISSING_FIELDS',
+          message: 'Missing required field: summary',
+        })
+      );
+      return;
+    }
+
+    // Ensure DB is initialized
+    await initDB();
+
+    // Save checkpoint using mama.saveCheckpoint
+    const checkpointId = await mama.saveCheckpoint(
+      body.summary,
+      body.open_files || [],
+      body.next_steps || ''
+    );
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        success: true,
+        id: checkpointId,
+        message: 'Checkpoint saved successfully',
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] Checkpoint save error: ${error.message}`);
+    res.writeHead(500);
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'SAVE_FAILED',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle GET /api/checkpoint/load request - load latest checkpoint
+ * Story 4-3: Session resume feature for mobile chat
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleCheckpointLoadRequest(req, res) {
+  try {
+    // Ensure DB is initialized
+    await initDB();
+
+    // Load latest checkpoint using mama.loadCheckpoint
+    const checkpoint = await mama.loadCheckpoint();
+
+    if (!checkpoint) {
+      res.writeHead(404);
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'NO_CHECKPOINT',
+          message: 'No checkpoint found',
+        })
+      );
+      return;
+    }
+
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        success: true,
+        checkpoint,
+      })
+    );
+  } catch (error) {
+    console.error(`[GraphAPI] Checkpoint load error: ${error.message}`);
+    res.writeHead(500);
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'LOAD_FAILED',
         message: error.message,
       })
     );
@@ -536,8 +790,19 @@ function createGraphHandler() {
     const pathname = url.pathname;
     const params = url.searchParams;
 
+    console.log('[GraphHandler] Request:', req.method, pathname);
+
+    // Route: GET / - redirect to /viewer
+    if (pathname === '/' && req.method === 'GET') {
+      console.log('[GraphHandler] Redirecting / to /viewer');
+      res.writeHead(302, { Location: '/viewer' });
+      res.end();
+      return true; // Request handled
+    }
+
     // Route: GET /viewer - serve HTML viewer
     if (pathname === '/viewer' && req.method === 'GET') {
+      console.log('[GraphHandler] Serving viewer.html');
       handleViewerRequest(req, res);
       return true; // Request handled
     }
@@ -554,9 +819,56 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
-    // Route: GET /graph - API endpoint
-    if (pathname === '/graph' && req.method === 'GET') {
-      await handleGraphRequest(req, res, params);
+    // Route: GET /sw.js - serve Service Worker
+    if (pathname === '/sw.js' && req.method === 'GET') {
+      serveStaticFile(res, SW_JS_PATH, 'application/javascript');
+      return true; // Request handled
+    }
+
+    // Route: GET /viewer/sw.js - serve Service Worker (alternative path)
+    if (pathname === '/viewer/sw.js' && req.method === 'GET') {
+      serveStaticFile(res, SW_JS_PATH, 'application/javascript');
+      return true; // Request handled
+    }
+
+    // Route: GET /viewer/manifest.json - serve PWA manifest
+    if (pathname === '/viewer/manifest.json' && req.method === 'GET') {
+      serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
+      return true; // Request handled
+    }
+
+    // Route: GET /viewer/icons/*.png - serve PWA icons
+    if (
+      pathname.startsWith('/viewer/icons/') &&
+      pathname.endsWith('.png') &&
+      req.method === 'GET'
+    ) {
+      const fileName = pathname.split('/').pop();
+      const filePath = path.join(__dirname, 'icons', fileName);
+      serveStaticFile(res, filePath, 'image/png');
+      return true; // Request handled
+    }
+
+    // Route: GET /js/utils/*.js - serve utility modules (Phase 1 refactoring)
+    if (pathname.startsWith('/js/utils/') && pathname.endsWith('.js') && req.method === 'GET') {
+      const fileName = pathname.split('/').pop();
+      const filePath = path.join(__dirname, 'js', 'utils', fileName);
+      serveStaticFile(res, filePath, 'application/javascript');
+      return true; // Request handled
+    }
+
+    // Route: GET /js/modules/*.js - serve feature modules (Phase 3 refactoring)
+    if (pathname.startsWith('/js/modules/') && pathname.endsWith('.js') && req.method === 'GET') {
+      const fileName = pathname.split('/').pop();
+      const filePath = path.join(__dirname, 'js', 'modules', fileName);
+      serveStaticFile(res, filePath, 'application/javascript');
+      return true; // Request handled
+    }
+
+    // Route: GET /graph/similar - find similar decisions (check before /graph)
+    if (pathname === '/graph/similar' && req.method === 'GET') {
+      console.log('[GraphHandler] Routing to handleSimilarRequest');
+      await handleSimilarRequest(req, res, params);
       return true; // Request handled
     }
 
@@ -566,15 +878,39 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
-    // Route: GET /graph/similar - find similar decisions
-    if (pathname === '/graph/similar' && req.method === 'GET') {
-      await handleSimilarRequest(req, res, params);
+    // Route: GET /graph - API endpoint
+    if (pathname === '/graph' && req.method === 'GET') {
+      await handleGraphRequest(req, res, params);
       return true; // Request handled
     }
 
     // Route: GET /checkpoints - list all checkpoints
     if (pathname === '/checkpoints' && req.method === 'GET') {
       await handleCheckpointsRequest(req, res);
+      return true; // Request handled
+    }
+
+    // Route: GET /api/mama/search - semantic search for decisions (Story 4-1)
+    if (pathname === '/api/mama/search' && req.method === 'GET') {
+      await handleMamaSearchRequest(req, res, params);
+      return true; // Request handled
+    }
+
+    // Route: POST /api/mama/save - save a new decision (Story 4-2)
+    if (pathname === '/api/mama/save' && req.method === 'POST') {
+      await handleMamaSaveRequest(req, res);
+      return true; // Request handled
+    }
+
+    // Route: POST /api/checkpoint/save - save session checkpoint (Story 4-3)
+    if (pathname === '/api/checkpoint/save' && req.method === 'POST') {
+      await handleCheckpointSaveRequest(req, res);
+      return true; // Request handled
+    }
+
+    // Route: GET /api/checkpoint/load - load latest checkpoint (Story 4-3)
+    if (pathname === '/api/checkpoint/load' && req.method === 'GET') {
+      await handleCheckpointLoadRequest(req, res);
       return true; // Request handled
     }
 
