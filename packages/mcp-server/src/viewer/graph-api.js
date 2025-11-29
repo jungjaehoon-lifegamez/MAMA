@@ -22,6 +22,8 @@ const mama = require('../mama/mama-api.js');
 const VIEWER_HTML_PATH = path.join(__dirname, 'viewer.html');
 const VIEWER_CSS_PATH = path.join(__dirname, 'viewer.css');
 const VIEWER_JS_PATH = path.join(__dirname, 'viewer.js');
+const SW_JS_PATH = path.join(__dirname, 'sw.js');
+const MANIFEST_JSON_PATH = path.join(__dirname, 'manifest.json');
 
 /**
  * Get all decisions as graph nodes
@@ -814,6 +816,36 @@ function createGraphHandler() {
     // Route: GET /viewer.js - serve JavaScript
     if (pathname === '/viewer.js' && req.method === 'GET') {
       handleJsRequest(req, res);
+      return true; // Request handled
+    }
+
+    // Route: GET /sw.js - serve Service Worker
+    if (pathname === '/sw.js' && req.method === 'GET') {
+      serveStaticFile(res, SW_JS_PATH, 'application/javascript');
+      return true; // Request handled
+    }
+
+    // Route: GET /viewer/sw.js - serve Service Worker (alternative path)
+    if (pathname === '/viewer/sw.js' && req.method === 'GET') {
+      serveStaticFile(res, SW_JS_PATH, 'application/javascript');
+      return true; // Request handled
+    }
+
+    // Route: GET /viewer/manifest.json - serve PWA manifest
+    if (pathname === '/viewer/manifest.json' && req.method === 'GET') {
+      serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
+      return true; // Request handled
+    }
+
+    // Route: GET /viewer/icons/*.png - serve PWA icons
+    if (
+      pathname.startsWith('/viewer/icons/') &&
+      pathname.endsWith('.png') &&
+      req.method === 'GET'
+    ) {
+      const fileName = pathname.split('/').pop();
+      const filePath = path.join(__dirname, 'icons', fileName);
+      serveStaticFile(res, filePath, 'image/png');
       return true; // Request handled
     }
 

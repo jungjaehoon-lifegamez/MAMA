@@ -236,6 +236,10 @@ export class ChatModule {
       case 'pong':
         break;
 
+      case 'connected':
+        console.log('[Chat] WebSocket connected:', data.clientId);
+        break;
+
       default:
         console.log('[Chat] Unknown message type:', data.type);
     }
@@ -675,8 +679,18 @@ export class ChatModule {
    */
   updateStatus(status) {
     const statusEl = document.getElementById('chat-status');
+    if (!statusEl) {
+      console.warn('[Chat] Status element not found');
+      return;
+    }
+
     const indicator = statusEl.querySelector('.status-indicator');
-    const text = statusEl.querySelector('span:last-child');
+    const text = statusEl.querySelector('span:not(.status-indicator)');
+
+    if (!indicator || !text) {
+      console.warn('[Chat] Status indicator or text not found');
+      return;
+    }
 
     indicator.className = 'status-indicator ' + status;
 
