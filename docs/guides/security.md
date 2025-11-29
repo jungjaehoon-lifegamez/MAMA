@@ -516,9 +516,65 @@ export MAMA_AUTH_TOKEN="mama"         # ❌ Guessable
 
 ## Disabling Features
 
-### Environment Variables
+### Easy Way: Using /mama-configure (Claude Code Only)
 
-You can disable features for security or performance:
+The easiest way to configure MAMA security settings is using the `/mama-configure` command:
+
+```bash
+# View current settings
+/mama-configure
+/mama-configure --show
+
+# Disable features
+/mama-configure --disable-http              # Disable Graph Viewer + Mobile Chat
+/mama-configure --disable-websocket         # Disable Mobile Chat only
+/mama-configure --enable-all                # Enable all features
+
+# Set authentication token
+/mama-configure --generate-token            # Generate random token
+/mama-configure --set-auth-token=abc123     # Set specific token
+```
+
+**After configuration changes, restart Claude Code for changes to take effect.**
+
+### Manual Way: Plugin Configuration
+
+For Claude Code, edit `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "env": {
+        "MAMA_DISABLE_HTTP_SERVER": "true",
+        "MAMA_DISABLE_WEBSOCKET": "true",
+        "MAMA_AUTH_TOKEN": "your-token-here"
+      }
+    }
+  }
+}
+```
+
+For Claude Desktop, edit `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": ["-y", "@jungjaehoon/mama-server"],
+      "env": {
+        "MAMA_DISABLE_HTTP_SERVER": "true",
+        "MAMA_AUTH_TOKEN": "your-token-here"
+      }
+    }
+  }
+}
+```
+
+### Environment Variables (Direct Server Usage)
+
+You can also set environment variables when running the server directly:
 
 ```bash
 # Disable entire HTTP server (Graph Viewer + Mobile Chat)
@@ -529,6 +585,9 @@ export MAMA_DISABLE_WEBSOCKET=true
 
 # Alternative: Disable Mobile Chat specifically
 export MAMA_DISABLE_MOBILE_CHAT=true
+
+# Set authentication token
+export MAMA_AUTH_TOKEN="your-secret-token"
 ```
 
 ### Use Cases

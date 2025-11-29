@@ -1,7 +1,7 @@
 ---
-description: View or modify MAMA configuration (database, embedding model, tier status)
-allowed-tools: Read
-argument-hint: '[--show] [--model=<name>] [--db-path=<path>]'
+description: View or modify MAMA configuration (database, embedding model, tier status, security settings)
+allowed-tools: Read, Write, Edit
+argument-hint: '[--show] [--model=<name>] [--db-path=<path>] [--disable-http] [--disable-websocket] [--enable-all] [--set-auth-token=<token>]'
 ---
 
 # Configure MAMA Settings
@@ -17,11 +17,18 @@ You are helping the user view or modify MAMA configuration.
    - `--model=X`: Change embedding model (e.g., 'Xenova/multilingual-e5-small')
    - `--db-path=X`: Change database location (e.g., '~/.claude/mama-memory.db')
    - `--tier-check`: Re-run tier detection (check SQLite, embeddings availability)
+   - `--disable-http`: Disable HTTP server (Graph Viewer + Mobile Chat)
+   - `--disable-websocket`: Disable WebSocket/Mobile Chat only (keep Graph Viewer)
+   - `--enable-all`: Enable all features (remove all disable flags)
+   - `--set-auth-token=X`: Set MAMA_AUTH_TOKEN for external access
+   - `--generate-token`: Generate a strong random auth token
 
 2. For `--show` (default):
    - Read configuration from `~/.mama/config.json`
+   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
    - Display tier status (Tier 1 Full vs Tier 2 Degraded)
    - Show embedding model, database path, performance stats
+   - **Show security settings** (HTTP server, WebSocket, auth token status)
    - Include fix instructions if degraded mode
 
 3. For `--model=X`:
@@ -39,14 +46,65 @@ You are helping the user view or modify MAMA configuration.
    - Update config with detected tier
    - Show remediation steps if Tier 2
 
+6. For `--disable-http`:
+   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
+   - Add `"MAMA_DISABLE_HTTP_SERVER": "true"` to mcpServers.mama.env
+   - Save updated plugin.json
+   - Show confirmation message
+   - **Remind user to restart Claude Code** for changes to take effect
+
+7. For `--disable-websocket`:
+   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
+   - Add `"MAMA_DISABLE_WEBSOCKET": "true"` to mcpServers.mama.env
+   - Save updated plugin.json
+   - Show confirmation message
+   - **Remind user to restart Claude Code**
+
+8. For `--enable-all`:
+   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
+   - Remove `MAMA_DISABLE_HTTP_SERVER` and `MAMA_DISABLE_WEBSOCKET` from env
+   - Save updated plugin.json
+   - Show confirmation message
+   - **Remind user to restart Claude Code**
+
+9. For `--set-auth-token=X`:
+   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
+   - Add `"MAMA_AUTH_TOKEN": "X"` to mcpServers.mama.env
+   - Save updated plugin.json
+   - **Warning:** Show security notice about token storage
+   - **Remind user to restart Claude Code**
+
+10. For `--generate-token`:
+    - Generate a cryptographically secure random token (32 bytes, base64)
+    - Display the generated token
+    - Ask user if they want to save it to plugin config
+    - If yes, update plugin.json as in step 9
+    - **Remind user to save token securely**
+
 ## Example Usage
 
-```
+```bash
+# View current configuration
 /mama:configure
 /mama:configure --show
+
+# Change embedding model
 /mama:configure --model=Xenova/multilingual-e5-base
+
+# Change database path
 /mama:configure --db-path=~/custom/mama.db
+
+# Check tier status
 /mama:configure --tier-check
+
+# Security settings
+/mama:configure --disable-http              # Disable Graph Viewer + Mobile Chat
+/mama:configure --disable-websocket         # Disable Mobile Chat only
+/mama:configure --enable-all                # Enable all features
+
+# Authentication token
+/mama:configure --generate-token            # Generate random token
+/mama:configure --set-auth-token=abc123     # Set specific token
 ```
 
 ## Response Format - Show Configuration
@@ -64,7 +122,32 @@ You are helping the user view or modify MAMA configuration.
 
 ---
 
-## Tier 1 - Full Features ✅
+## Security Settings
+
+**HTTP Server:** {enabled/disabled}
+**Graph Viewer:** {enabled/disabled}
+**Mobile Chat (WebSocket):** {enabled/disabled}
+**Auth Token:** {set/not set}
+
+**Quick Actions:**
+
+- Disable all: `/mama:configure --disable-http`
+- Disable Mobile Chat: `/mama:configure --disable-websocket`
+- Enable all: `/mama:configure --enable-all`
+- Set auth token: `/mama:configure --generate-token`
+
+**⚠️ Security Notice:**
+
+- HTTP server runs on localhost (127.0.0.1:3847) only
+- External access requires tunnel (ngrok, Cloudflare)
+- **For production:** Use Cloudflare Zero Trust (See [Security Guide](docs/guides/security.md))
+- **For testing:** Set auth token with `/mama:configure --generate-token`
+
+---
+
+## Feature Status
+
+**Tier 1 - Full Features** ✅
 
 - ✅ Vector search (semantic similarity)
 - ✅ Graph search (decision evolution)

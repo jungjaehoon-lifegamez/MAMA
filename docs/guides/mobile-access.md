@@ -4,6 +4,22 @@ Complete guide for accessing MAMA's Graph Viewer and Mobile Chat from any device
 
 ---
 
+## ⚠️ Requirements
+
+| Feature                      | Claude Code Plugin | Claude Desktop (MCP) |
+| ---------------------------- | ------------------ | -------------------- |
+| MCP Tools (/mama-save, etc.) | ✅                 | ✅                   |
+| Graph Viewer                 | ✅                 | ✅                   |
+| **Mobile Chat**              | ✅                 | ❌                   |
+
+**Mobile Chat requires Claude Code CLI:**
+
+- Uses `claude` command as subprocess for real-time communication
+- **Not available in Claude Desktop** (MCP servers only, no CLI)
+- Graph Viewer works in both (read-only decision visualization)
+
+---
+
 ## ⚠️ Security Warning
 
 **IMPORTANT: Read before exposing MAMA to the internet!**
@@ -274,31 +290,102 @@ ngrok http 3847
 
 ---
 
+## Configuration
+
+### Disabling Features
+
+You can disable HTTP server or WebSocket via configuration.
+
+**Easy Way: Use `/mama-configure` command (Claude Code only)**
+
+```bash
+# View current settings
+/mama-configure
+
+# Disable features
+/mama-configure --disable-http              # Disable Graph Viewer + Mobile Chat
+/mama-configure --disable-websocket         # Disable Mobile Chat only
+/mama-configure --enable-all                # Enable everything
+
+# Set authentication token
+/mama-configure --generate-token            # Generate random token
+/mama-configure --set-auth-token=abc123     # Set specific token
+```
+
+**After configuration changes, restart Claude Code for changes to take effect.**
+
+**Manual Way: Edit plugin configuration**
+
+For Claude Code, edit `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "env": {
+        "MAMA_DISABLE_HTTP_SERVER": "true",
+        "MAMA_DISABLE_WEBSOCKET": "true",
+        "MAMA_AUTH_TOKEN": "your-token-here"
+      }
+    }
+  }
+}
+```
+
+For Claude Desktop, edit `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": ["-y", "@jungjaehoon/mama-server"],
+      "env": {
+        "MAMA_DISABLE_HTTP_SERVER": "true"
+      }
+    }
+  }
+}
+```
+
+---
+
 ## Security Considerations
 
-### Authentication (Coming Soon)
+### Authentication
 
-Currently, MAMA Mobile has no built-in authentication. When exposing to the internet:
+MAMA supports token-based authentication for external access:
 
-1. **Use MAMA_AUTH_TOKEN** (future feature):
+1. **Generate strong token:**
 
    ```bash
-   export MAMA_AUTH_TOKEN="your-secure-random-token"
-   node start-http-server.js
+   /mama-configure --generate-token
+   # Or manually: openssl rand -base64 32
    ```
 
-2. **Restrict tunnel access** using Cloudflare Access or ngrok auth
+2. **Set token in configuration:**
 
-3. **Monitor access logs** regularly
+   ```bash
+   /mama-configure --set-auth-token=YOUR_TOKEN
+   ```
+
+3. **Restart Claude Code** for changes to take effect
+
+4. **Access with token:**
+   ```
+   https://tunnel-url/viewer?token=YOUR_TOKEN
+   ```
 
 ### Best Practices
 
-- ✅ Use Named Tunnels for production
-- ✅ Set strong authentication tokens
-- ✅ Limit access to specific IP ranges if possible
+- ✅ **Use Cloudflare Zero Trust** for production (Google account + 2FA)
+- ✅ Use Named Tunnels for long-term deployment
+- ✅ Set strong authentication tokens (32+ characters)
 - ✅ Monitor server logs for suspicious activity
+- ✅ Disable features you don't use (`/mama-configure --disable-websocket`)
 - ❌ Don't share Quick Tunnel URLs publicly
 - ❌ Don't use Quick Tunnels for sensitive data
+- ❌ Don't use weak tokens ("password123", "mama", etc.)
 
 ---
 
