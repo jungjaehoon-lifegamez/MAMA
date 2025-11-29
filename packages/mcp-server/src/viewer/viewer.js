@@ -184,6 +184,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('loading').innerHTML =
       `<div class="error">Failed to load graph: ${error.message}<br><br><button onclick="location.reload()" style="padding:8px 16px;cursor:pointer;">Retry</button></div>`;
   }
+
+  // Cleanup modules on page unload to prevent memory leaks
+  window.addEventListener('beforeunload', () => {
+    if (chatModule) {
+      chatModule.cleanup();
+    }
+    if (memoryModule && memoryModule.cleanup) {
+      memoryModule.cleanup();
+    }
+    if (graphModule && graphModule.cleanup) {
+      graphModule.cleanup();
+    }
+  });
 });
 
 // =============================================

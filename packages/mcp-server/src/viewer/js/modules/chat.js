@@ -889,7 +889,7 @@ export class ChatModule {
     }
 
     this.speechRecognition = new SpeechRecognition();
-    this.speechRecognition.lang = 'ko-KR';
+    this.speechRecognition.lang = navigator.language || 'ko-KR';
     this.speechRecognition.continuous = true; // Enable continuous recognition for longer phrases
     this.speechRecognition.interimResults = true;
     this.speechRecognition.maxAlternatives = 3; // Get multiple recognition candidates for better accuracy
@@ -987,7 +987,7 @@ export class ChatModule {
       this.addSystemMessage(errorMessage, 'error');
     };
 
-    console.log('[Voice] SpeechRecognition initialized (lang: ko-KR)');
+    console.log('[Voice] SpeechRecognition initialized (lang:', this.speechRecognition.lang + ')');
   }
 
   /**
@@ -1165,7 +1165,7 @@ export class ChatModule {
     utterance.voice = this.ttsVoice;
     utterance.rate = this.ttsRate;
     utterance.pitch = this.ttsPitch;
-    utterance.lang = 'ko-KR';
+    utterance.lang = this.ttsVoice?.lang || navigator.language || 'ko-KR';
 
     utterance.onstart = () => {
       this.isSpeaking = true;
