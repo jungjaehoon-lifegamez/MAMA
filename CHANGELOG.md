@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.3] - 2025-11-29
+
+### Removed
+
+- **Mobile Chat Auto-Checkpoint** - Removed 5-minute idle auto-save feature to reduce noise in decision database
+  - **Why**: Chat logs are not work context. Auto-saving meaningless conversations polluted the checkpoint database, interfering with SessionStart hook's ability to surface relevant work state
+  - **Philosophy**: "Auto-save/link creates noise. LLM should proactively decide when to save" - only intentional saves create meaningful context
+  - Manual `/checkpoint` command still available for users who need it
+  - **Impact**: Checkpoints now only contain actual work state (open_files, next_steps) instead of chat message history
+  - Related decision: checkpoint_purpose_conflict, mobile_auto_checkpoint_removal
+
 ## [1.5.2] - 2025-11-29
 
 ### Added

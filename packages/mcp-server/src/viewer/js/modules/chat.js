@@ -58,16 +58,11 @@ export class ChatModule {
     this.maxHistoryMessages = 50;
     this.historyExpiryMs = 24 * 60 * 60 * 1000; // 24 hours
 
-    // Auto checkpoint state
-    this.idleTimer = null;
-    this.idleDelay = 5 * 60 * 1000; // 5 minutes
-
     // Initialize
     this.initChatInput();
     this.initLongPressCopy();
     this.initSpeechRecognition();
     this.initSpeechSynthesis();
-    this.initAutoCheckpoint();
   }
 
   // =============================================
@@ -1362,55 +1357,7 @@ export class ChatModule {
   // =============================================
 
   /**
-   * Initialize auto checkpoint timer
-   */
-  initAutoCheckpoint() {
-    // Reset timer on user activity
-    const resetTimer = () => this.resetIdleTimer();
-
-    document.addEventListener('keydown', resetTimer);
-    document.addEventListener('click', resetTimer);
-    document.addEventListener('touchstart', resetTimer);
-
-    console.log('[Chat] Auto checkpoint initialized (5 min idle)');
-  }
-
-  /**
-   * Reset idle timer
-   */
-  resetIdleTimer() {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-    }
-
-    this.idleTimer = setTimeout(() => {
-      this.autoSaveCheckpoint();
-    }, this.idleDelay);
-  }
-
-  /**
-   * Auto-save checkpoint when idle
-   */
-  async autoSaveCheckpoint() {
-    // Only save if there's content
-    if (this.history.length === 0) {
-      console.log('[Chat] No history to save');
-      return;
-    }
-
-    try {
-      const summary = this.generateCheckpointSummary();
-      await this.saveCheckpoint(summary);
-      showToast('💾 Session auto-saved');
-      console.log('[Chat] Auto checkpoint saved');
-    } catch (error) {
-      console.error('[Chat] Auto checkpoint failed:', error);
-      // Silent fail - don't disturb user
-    }
-  }
-
-  /**
-   * Generate checkpoint summary from current session
+   * Generate checkpoint summary from current session (for manual /checkpoint command)
    */
   generateCheckpointSummary() {
     const summary = {
