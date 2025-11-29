@@ -1,10 +1,12 @@
 # MAMA Plugin Documentation
 
-**Version:** 1.2.0
+**Version:** 1.5.0
 **MAMA:** Memory-Augmented MCP Assistant
 **Navigation Hub**
 
 > "Remember decision evolution, not just conclusions"
+>
+> "Chat with Claude Code from anywhere - mobile, desktop, or any device"
 
 ## Quick Links
 
@@ -31,6 +33,7 @@ _Step-by-step lessons for beginners_
 _Step-by-step instructions for specific tasks_
 
 - [Installation Guide](guides/installation.md) - Complete installation process
+- [Mobile Access](guides/mobile-access.md) - Access MAMA from any device with mobile chat
 - [Troubleshooting](guides/troubleshooting.md) - Common issues and solutions
 - [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
 - [Configuration](guides/configuration.md) - Configuration options and setup
@@ -124,5 +127,5 @@ _Planning documents, PRD, and retrospectives_
 
 ---
 
-**Status:** v1.2.0 - Simplified to 4 core MCP tools
-**Last Updated:** 2025-11-25
+**Status:** v1.5.0 - Mobile Chat & Graph Viewer
+**Last Updated:** 2025-11-29
