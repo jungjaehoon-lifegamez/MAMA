@@ -329,6 +329,225 @@ export MAMA_EMBEDDING_PORT="3847"
 
 ---
 
+## HTTP API Endpoints (v1.5)
+
+MAMA provides HTTP endpoints for web-based interfaces like the Graph Viewer and Mobile Chat.
+
+**Base URL:** `http://localhost:3847` (configurable via `MAMA_HTTP_PORT`)
+
+**Compatibility:**
+
+| Feature         | Claude Code Plugin | Claude Desktop (MCP) |
+| --------------- | ------------------ | -------------------- |
+| HTTP Endpoints  | ✅                 | ✅                   |
+| Graph Viewer    | ✅                 | ✅                   |
+| **Mobile Chat** | ✅                 | ❌                   |
+
+**Note:** Mobile Chat requires Claude Code CLI (`claude` command). Claude Desktop only has MCP servers and cannot spawn CLI subprocesses for chat sessions. Graph Viewer works in both environments.
+
+### Checkpoint API
+
+#### POST /api/checkpoint/save
+
+Save a session checkpoint for later resumption.
+
+**Request:**
+
+```json
+{
+  "summary": "Implemented auth module, blocked on rate limiter design",
+  "open_files": ["src/auth/jwt.js", "tests/auth.test.js"],
+  "next_steps": "1. Research token bucket vs leaky bucket\n2. Check Redis compatibility"
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "id": 100,
+  "message": "Checkpoint saved successfully"
+}
+```
+
+#### GET /api/checkpoint/load
+
+Load the latest active checkpoint.
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "checkpoint": {
+    "id": 100,
+    "timestamp": 1732530000000,
+    "summary": "Implemented auth module, blocked on rate limiter design",
+    "open_files": ["src/auth/jwt.js", "tests/auth.test.js"],
+    "next_steps": "1. Research token bucket...",
+    "status": "active"
+  }
+}
+```
+
+**Error (404):**
+
+```json
+{
+  "error": true,
+  "code": "NO_CHECKPOINT",
+  "message": "No checkpoint found"
+}
+```
+
+### MAMA Search API
+
+#### GET /api/mama/search
+
+Semantic search for decisions (used by Memory tab).
+
+**Query Parameters:**
+
+- `q` (required): Search query
+- `limit` (optional): Max results (default: 10, max: 20)
+
+**Response:**
+
+```json
+{
+  "query": "authentication",
+  "results": [
+    {
+      "id": "decision_auth_strategy_1732530000_abc",
+      "topic": "auth_strategy",
+      "decision": "Use JWT with refresh tokens",
+      "reasoning": "Need stateless auth for API scaling...",
+      "similarity": 0.87,
+      "created_at": 1732530000000
+    }
+  ],
+  "count": 1
+}
+```
+
+#### POST /api/mama/save
+
+Save a decision from mobile interface.
+
+**Request:**
+
+```json
+{
+  "topic": "auth_strategy",
+  "decision": "Use JWT with refresh tokens",
+  "reasoning": "Need stateless auth for API scaling",
+  "confidence": 0.8
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "id": "decision_auth_strategy_1732530000_abc",
+  "message": "Decision saved successfully"
+}
+```
+
+### Graph API
+
+#### GET /graph
+
+Get decision graph data (nodes + edges).
+
+**Query Parameters:**
+
+- `topic` (optional): Filter by topic
+- `cluster` (optional): Include similarity edges (true/false)
+
+**Response:**
+
+```json
+{
+  "nodes": [
+    /* decision objects */
+  ],
+  "edges": [
+    /* edge objects */
+  ],
+  "similarityEdges": [
+    /* similarity edges if cluster=true */
+  ],
+  "meta": {
+    "total_nodes": 42,
+    "total_edges": 38,
+    "topics": ["auth_strategy", "caching_strategy"]
+  },
+  "latency": 45
+}
+```
+
+#### GET /graph/similar
+
+Find similar decisions to a given decision.
+
+**Query Parameters:**
+
+- `id` (required): Decision ID
+
+**Response:**
+
+```json
+{
+  "id": "decision_auth_strategy_1732530000_abc",
+  "similar": [
+    {
+      "id": "decision_session_mgmt_1732540000_def",
+      "topic": "session_management",
+      "decision": "Redis for session storage",
+      "similarity": 0.82
+    }
+  ],
+  "count": 1
+}
+```
+
+#### POST /graph/update
+
+Update decision outcome (used by Graph Viewer).
+
+**Request:**
+
+```json
+{
+  "id": "decision_auth_strategy_1732530000_abc",
+  "outcome": "success",
+  "reason": "JWT auth scaled to 10k users without issues"
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "id": "decision_auth_strategy_1732530000_abc",
+  "outcome": "SUCCESS"
+}
+```
+
+### Viewer Routes
+
+| Route     | Description                   |
+| --------- | ----------------------------- |
+| `/viewer` | Graph Viewer + Mobile Chat UI |
+| `/graph`  | Graph data API                |
+| `/`       | Redirects to `/viewer`        |
+
+---
+
 ## Edge Types (v1.3)
 
 Decisions connect through explicit relationships. Include patterns in the `reasoning` field:
@@ -375,5 +594,5 @@ If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
 
 ---
 
-**Last Updated:** 2025-11-26
-**Version:** 1.3.1
+**Last Updated:** 2025-11-28
+**Version:** 1.5.0

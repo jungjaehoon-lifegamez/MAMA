@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_edges_relationship ON decision_edges(relationship
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,              -- "session_2025-11-14-1000"
-  project_path TEXT,                -- "/home/hoons/spineLiftWASM"
+  project_path TEXT,                -- "/path/to/project"
 
   -- Rolling Summary (for next session)
   rolling_summary TEXT,             -- Condensed session summary

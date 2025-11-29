@@ -4,7 +4,7 @@
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Version 1.4.0 | Graph Viewer
+> Version 1.5.0 | Mobile Chat & Graph Viewer
 
 MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work. Decisions connect through explicit relationships—building on prior work, debating alternatives, or synthesizing multiple approaches.
 
@@ -360,6 +360,251 @@ The viewer runs on the existing HTTP embedding server—no additional setup requ
 
 ---
 
+## 📱 MAMA Mobile (New in v1.5)
+
+**Connect to MAMA and chat with Claude Code from anywhere** - your phone, tablet, or any device. Access your Claude Code sessions remotely through a mobile-optimized web interface with voice input and TTS.
+
+Whether you're on the couch, commuting, or traveling, stay connected to your development workflow with real-time access to Claude Code.
+
+![MAMA Mobile Chat Interface](docs/images/1.5-chat.png)
+
+### ⚠️ Requirements
+
+| Feature                      | Claude Code Plugin | Claude Desktop (MCP) |
+| ---------------------------- | ------------------ | -------------------- |
+| MCP Tools (/mama-save, etc.) | ✅                 | ✅                   |
+| Graph Viewer                 | ✅                 | ✅                   |
+| **Mobile Chat**              | ✅                 | ❌                   |
+
+**Mobile Chat requires Claude Code CLI:**
+
+- Uses `claude` command as subprocess
+- Not available in Claude Desktop (MCP-only)
+- Automatically enabled when using Claude Code plugin
+
+### Starting the HTTP Server
+
+```bash
+cd packages/mcp-server
+node start-http-server.js
+```
+
+The server will start on `http://localhost:3847` with:
+
+- **Graph Viewer:** `http://localhost:3847/viewer` (Memory tab)
+- **Mobile Chat:** `http://localhost:3847/viewer` (Chat tab)
+
+**Features:**
+
+- **Real-time chat** with Claude Code sessions via WebSocket
+- **Voice input** (Web Speech API, Korean optimized)
+- **Text-to-speech** with adjustable speed (1.8x default for Korean)
+- **Hands-free mode** - Auto-listen after TTS completes
+- **Long press to copy** messages (750ms)
+- **PWA support** - Install as a mobile app with offline capability
+- **Slash commands** - `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
+- **Auto-checkpoint** - 5-minute idle auto-save with session resume
+- **Session resume** - Auto-detect resumable sessions with banner UI
+- **MCP tool display** - See real-time tool execution (Read, Write, Bash, etc.)
+- **44px touch targets** - Mobile-optimized button sizing
+
+### External Access Setup
+
+⚠️ **CRITICAL:** External access gives attackers **full control** of your computer via Claude Code.
+
+**Choose based on use case:**
+
+#### 🌟 Production Use: Cloudflare Zero Trust (RECOMMENDED)
+
+**Best for:** Real deployment, long-term use, maximum security
+
+```bash
+# 1. Install cloudflared
+# Download: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+
+# 2. Create tunnel
+cloudflared tunnel login
+cloudflared tunnel create mama-mobile
+
+# 3. Configure Zero Trust access (your Google email only)
+# Cloudflare Dashboard → Zero Trust → Access → Applications
+# Full setup: See docs/guides/security.md
+
+# 4. Start tunnel
+cloudflared tunnel run mama-mobile
+```
+
+**What you get:**
+
+- ✅ Google/GitHub account authentication
+- ✅ 2FA automatically enforced
+- ✅ Only your email can access
+- ✅ FREE for personal use
+
+📖 **Full Guide:** [Security Guide - Cloudflare Zero Trust](docs/guides/security.md#cloudflare-zero-trust-recommended-for-production)
+
+#### ⚠️ Testing Only: Quick Tunnel + Token
+
+**Use ONLY for:** Temporary testing (minutes/hours)
+
+```bash
+# 1. Set token
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
+
+# 2. Start Quick Tunnel
+cloudflared tunnel --url http://localhost:3847
+
+# 3. Access with token
+# https://xxx.trycloudflare.com/viewer?token=YOUR_TOKEN
+```
+
+**DO NOT use for production** - Token alone is weak security
+
+**Testing Connection:** Chat tab → Globe icon → Test Connection
+
+---
+
+## 🔒 Security
+
+**IMPORTANT:** MAMA is designed for localhost use only by default. External access via tunnels introduces security risks.
+
+### Default Security Posture
+
+✅ **Secure by default:**
+
+- HTTP server binds to `127.0.0.1` only (localhost)
+- No external access without tunnels
+- No authentication needed for local use
+- Features can be disabled via environment variables
+
+### External Access Risks
+
+⚠️ **CRITICAL:** When using tunnels, an attacker can take **complete control** of your computer:
+
+**What they can access:**
+
+- 🔓 Chat with Claude Code (send any prompt)
+- 🔓 Read ANY file on your computer
+- 🔓 Write ANY file on your computer
+- 🔓 Execute ANY command (install backdoors, steal data)
+- 🔓 Your decision database
+- 🔓 API keys, SSH keys, passwords
+
+**This is not just data theft - it's full system compromise.**
+
+### Recommended: Cloudflare Zero Trust
+
+**For production use, ALWAYS use Cloudflare Zero Trust:**
+
+✅ **Benefits:**
+
+- Only your Google/GitHub account can access
+- 2FA automatically enforced
+- No token management needed
+- FREE for personal use
+- Enterprise-grade security
+
+```bash
+# Quick setup (15 minutes)
+cloudflared tunnel login
+cloudflared tunnel create mama-mobile
+
+# Configure access (Cloudflare Dashboard)
+# Zero Trust → Access → Applications
+# Add your Google email to allow list
+
+# Start tunnel
+cloudflared tunnel run mama-mobile
+```
+
+📖 **Full Guide:** [Cloudflare Zero Trust Setup](docs/guides/security.md#cloudflare-zero-trust-recommended-for-production)
+
+### Alternative: Token Authentication (Testing Only)
+
+⚠️ **Use ONLY for temporary testing** (minutes/hours)
+
+```bash
+# Generate token
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
+
+# Access with token
+https://your-tunnel-url/viewer?token=YOUR_TOKEN
+```
+
+**DO NOT use for production** - Token alone is weak security
+
+### Configuration
+
+**Easy Way: Use `/mama-configure` command (Claude Code only)**
+
+```bash
+# View current settings
+/mama-configure
+
+# Disable features
+/mama-configure --disable-http              # Disable all web features
+/mama-configure --disable-websocket         # Disable Mobile Chat only
+/mama-configure --enable-all                # Enable everything
+
+# Set authentication token
+/mama-configure --generate-token            # Generate random token
+/mama-configure --set-auth-token=abc123     # Set specific token
+```
+
+**After configuration changes, restart Claude Code for changes to take effect.**
+
+**Manual Way: Edit plugin configuration**
+
+For Claude Code, edit `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "env": {
+        "MAMA_DISABLE_HTTP_SERVER": "true",
+        "MAMA_DISABLE_WEBSOCKET": "true",
+        "MAMA_AUTH_TOKEN": "your-token-here"
+      }
+    }
+  }
+}
+```
+
+For Claude Desktop, edit `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": ["-y", "@jungjaehoon/mama-server"],
+      "env": {
+        "MAMA_DISABLE_HTTP_SERVER": "true"
+      }
+    }
+  }
+}
+```
+
+### Security Warnings
+
+MAMA will warn you when external access is detected:
+
+```
+⚠️  ========================================
+⚠️  SECURITY WARNING: External access detected!
+⚠️  ========================================
+⚠️
+⚠️  Your MAMA server is being accessed from outside localhost.
+⚠️  ❌ CRITICAL: MAMA_AUTH_TOKEN is NOT set!
+⚠️  Anyone with your tunnel URL can access your local machine.
+```
+
+📖 **Read the [Security Guide](docs/guides/security.md) for detailed information.**
+
+---
+
 ## Project Structure
 
 This is a monorepo containing two packages:
@@ -488,4 +733,4 @@ MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0
 ---
 
 **Author**: SpineLift Team
-**Last Updated**: 2025-11-27
+**Last Updated**: 2025-11-29
