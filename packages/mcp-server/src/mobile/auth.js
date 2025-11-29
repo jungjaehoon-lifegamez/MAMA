@@ -21,6 +21,12 @@
 const AUTH_TOKEN = process.env.MAMA_AUTH_TOKEN;
 
 /**
+ * Track if we've warned about missing auth token
+ * @type {boolean}
+ */
+let hasWarnedAboutToken = false;
+
+/**
  * Check if request is from localhost
  * @param {http.IncomingMessage} req - HTTP request
  * @returns {boolean} True if from localhost
@@ -43,9 +49,50 @@ function authenticate(req) {
     return true;
   }
 
+  // External access detected - show security warning
+  if (!hasWarnedAboutToken) {
+    console.error('');
+    console.error('⚠️  ========================================');
+    console.error('⚠️  SECURITY WARNING: External access detected!');
+    console.error('⚠️  ========================================');
+    console.error('⚠️  ');
+    console.error('⚠️  Your MAMA server is being accessed from outside localhost.');
+    console.error('⚠️  This likely means you are using a tunnel (ngrok, Cloudflare, etc.)');
+    console.error('⚠️  ');
+
+    if (!AUTH_TOKEN) {
+      console.error('⚠️  ❌ CRITICAL: MAMA_AUTH_TOKEN is NOT set!');
+      console.error('⚠️  Anyone with your tunnel URL can access your:');
+      console.error('⚠️    - Chat sessions with Claude Code');
+      console.error('⚠️    - Decision database (~/.claude/mama-memory.db)');
+      console.error('⚠️    - Local file system (via Claude Code)');
+      console.error('⚠️  ');
+      console.error('⚠️  To secure your server, set MAMA_AUTH_TOKEN:');
+      console.error('⚠️    export MAMA_AUTH_TOKEN="your-secret-token"');
+      console.error('⚠️  ');
+    } else {
+      console.error('⚠️  ✅ MAMA_AUTH_TOKEN is set (authentication enabled)');
+      console.error('⚠️  External clients must provide token in:');
+      console.error('⚠️    - Authorization: Bearer <token> header, OR');
+      console.error('⚠️    - ?token=<token> query parameter');
+      console.error('⚠️  ');
+    }
+
+    console.error('⚠️  To disable external access entirely:');
+    console.error('⚠️    export MAMA_DISABLE_HTTP_SERVER=true');
+    console.error('⚠️    export MAMA_DISABLE_MOBILE_CHAT=true');
+    console.error('⚠️  ');
+    console.error('⚠️  ========================================');
+    console.error('');
+
+    hasWarnedAboutToken = true;
+  }
+
   // External access requires token
   if (!AUTH_TOKEN) {
-    console.error('[Auth] MAMA_AUTH_TOKEN not set, denying external access');
+    console.error(
+      `[Auth] External access denied from ${req.socket?.remoteAddress} (no MAMA_AUTH_TOKEN)`
+    );
     return false;
   }
 
@@ -54,6 +101,9 @@ function authenticate(req) {
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
     if (token === AUTH_TOKEN) {
+      console.error(
+        `[Auth] External access granted via Bearer token from ${req.socket?.remoteAddress}`
+      );
       return true;
     }
   }
@@ -62,9 +112,13 @@ function authenticate(req) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const queryToken = url.searchParams.get('token');
   if (queryToken === AUTH_TOKEN) {
+    console.error(
+      `[Auth] External access granted via query token from ${req.socket?.remoteAddress}`
+    );
     return true;
   }
 
+  console.error(`[Auth] External access denied from ${req.socket?.remoteAddress} (invalid token)`);
   return false;
 }
 

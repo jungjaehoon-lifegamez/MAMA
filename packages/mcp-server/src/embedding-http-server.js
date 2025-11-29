@@ -227,6 +227,13 @@ let _wssInstance = null;
  * @returns {Promise<http.Server>} HTTP server instance
  */
 async function startEmbeddingServer(port = DEFAULT_PORT) {
+  // Check if HTTP server is disabled
+  if (process.env.MAMA_DISABLE_HTTP_SERVER === 'true') {
+    console.error('[EmbeddingHTTP] HTTP server disabled via MAMA_DISABLE_HTTP_SERVER');
+    console.error('[EmbeddingHTTP] Graph Viewer and Mobile Chat will not be available');
+    return null;
+  }
+
   // Initialize database for graph API
   await initDB();
 
@@ -258,13 +265,24 @@ async function startEmbeddingServer(port = DEFAULT_PORT) {
       console.error(`[EmbeddingHTTP] Running at http://${HOST}:${port}`);
       writePortFile(port);
 
-      // Initialize WebSocket server
-      try {
-        _wssInstance = createWebSocketHandler(server, sessionManager);
-        console.error(`[EmbeddingHTTP] WebSocket server initialized at ws://${HOST}:${port}/ws`);
-      } catch (wsError) {
-        console.error(`[EmbeddingHTTP] WebSocket initialization failed: ${wsError.message}`);
-        // Continue without WebSocket - HTTP endpoints still work
+      // Initialize WebSocket server (unless disabled)
+      const wsDisabled =
+        process.env.MAMA_DISABLE_WEBSOCKET === 'true' ||
+        process.env.MAMA_DISABLE_MOBILE_CHAT === 'true';
+
+      if (wsDisabled) {
+        console.error('[EmbeddingHTTP] WebSocket/Mobile Chat disabled via environment variable');
+        console.error(
+          '[EmbeddingHTTP] Set MAMA_DISABLE_WEBSOCKET or MAMA_DISABLE_MOBILE_CHAT to enable'
+        );
+      } else {
+        try {
+          _wssInstance = createWebSocketHandler(server, sessionManager);
+          console.error(`[EmbeddingHTTP] WebSocket server initialized at ws://${HOST}:${port}/ws`);
+        } catch (wsError) {
+          console.error(`[EmbeddingHTTP] WebSocket initialization failed: ${wsError.message}`);
+          // Continue without WebSocket - HTTP endpoints still work
+        }
       }
 
       resolve(server);

@@ -4,6 +4,39 @@ Complete guide for accessing MAMA's Graph Viewer and Mobile Chat from any device
 
 ---
 
+## ⚠️ Security Warning
+
+**IMPORTANT: Read before exposing MAMA to the internet!**
+
+MAMA is designed for **localhost use only** by default. External access via tunnels (ngrok, Cloudflare) **exposes your local machine** to the internet.
+
+### What Can Be Accessed
+
+When you expose MAMA externally, attackers can access:
+
+- 🔓 Chat sessions with Claude Code
+- 🔓 Decision database (`~/.claude/mama-memory.db`)
+- 🔓 **Your local file system** (via Claude Code Read/Write tools)
+- 🔓 **Command execution** (via Claude Code Bash tool)
+
+### Required: Set Authentication Token
+
+**Before using external tunnels, ALWAYS set `MAMA_AUTH_TOKEN`:**
+
+```bash
+# Generate a strong random token
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
+
+# Then start the server
+node start-http-server.js
+```
+
+**Without this token, anyone with your tunnel URL can access your computer.**
+
+📖 **See [Security Guide](./security.md) for detailed security information.**
+
+---
+
 ## Overview
 
 MAMA Mobile provides a web-based interface for:
@@ -82,7 +115,14 @@ curl http://localhost:3847/graph
 
 ## External Access
 
-For access from outside your local network, use a tunnel service.
+⚠️ **SECURITY CRITICAL:** For access from outside your local network, use a tunnel service.
+
+**⚠️ BEFORE YOU START:**
+
+1. **MUST set `MAMA_AUTH_TOKEN`** (see Security Warning above)
+2. Read the [Security Guide](./security.md) thoroughly
+3. Understand the risks (file access, command execution)
+4. Never share tunnel URLs publicly
 
 ### Option 1: Cloudflare Tunnel (Recommended)
 
@@ -91,10 +131,14 @@ For access from outside your local network, use a tunnel service.
 Fast setup for testing, but tunnels expire without warning:
 
 ```bash
-# Install cloudflared
+# ⚠️ STEP 1: Set authentication token FIRST!
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
+echo "Save this token: $MAMA_AUTH_TOKEN"
+
+# STEP 2: Install cloudflared
 # Download from: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 
-# Start tunnel
+# STEP 3: Start tunnel
 cloudflared tunnel --url http://localhost:3847 --no-autoupdate
 
 # Output will show your public URL:
