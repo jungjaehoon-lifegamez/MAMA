@@ -439,6 +439,81 @@ https://your-tunnel-url/viewer?token=your-secure-token-here
 
 ---
 
+## 🔒 Security
+
+**IMPORTANT:** MAMA is designed for localhost use only by default. External access via tunnels introduces security risks.
+
+### Default Security Posture
+
+✅ **Secure by default:**
+
+- HTTP server binds to `127.0.0.1` only (localhost)
+- No external access without tunnels
+- No authentication needed for local use
+- Features can be disabled via environment variables
+
+### External Access Risks
+
+When using tunnels (ngrok, Cloudflare), anyone with your tunnel URL can access:
+
+- 🔓 Chat sessions with Claude Code
+- 🔓 Decision database (`~/.claude/mama-memory.db`)
+- 🔓 **Local file system** (via Claude Code Read/Write tools)
+- 🔓 **Command execution** (via Claude Code Bash tool)
+
+### Required: Authentication Token
+
+**Before exposing MAMA externally, ALWAYS set `MAMA_AUTH_TOKEN`:**
+
+```bash
+# Generate a strong random token
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
+
+# Start MAMA server
+npx @jungjaehoon/mama-server
+```
+
+**Access with token:**
+
+```bash
+# Query parameter
+https://your-tunnel-url/viewer?token=YOUR_TOKEN
+
+# Or use Authorization header (recommended)
+curl -H "Authorization: Bearer YOUR_TOKEN" https://your-tunnel-url/viewer
+```
+
+### Disabling Features
+
+Control which features are enabled via environment variables:
+
+```bash
+# Disable entire HTTP server (Graph Viewer + Mobile Chat)
+export MAMA_DISABLE_HTTP_SERVER=true
+
+# Disable only WebSocket/Mobile Chat (keep Graph Viewer)
+export MAMA_DISABLE_WEBSOCKET=true
+export MAMA_DISABLE_MOBILE_CHAT=true
+```
+
+### Security Warnings
+
+MAMA will warn you when external access is detected:
+
+```
+⚠️  ========================================
+⚠️  SECURITY WARNING: External access detected!
+⚠️  ========================================
+⚠️
+⚠️  Your MAMA server is being accessed from outside localhost.
+⚠️  ❌ CRITICAL: MAMA_AUTH_TOKEN is NOT set!
+⚠️  Anyone with your tunnel URL can access your local machine.
+```
+
+📖 **Read the [Security Guide](docs/guides/security.md) for detailed information.**
+
+---
+
 ## Project Structure
 
 This is a monorepo containing two packages:
