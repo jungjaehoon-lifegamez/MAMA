@@ -141,9 +141,27 @@ User → Cloudflare Zero Trust → Tunnel → MAMA (localhost)
 #### Prerequisites
 
 - Cloudflare account (free)
-- Domain name (optional - Cloudflare provides free subdomain)
+- **Domain in Cloudflare** - Required for Zero Trust. Options:
+  - Transfer existing domain to Cloudflare DNS
+  - Purchase a cheap domain from Cloudflare Registrar (e.g., `.work` ~$7/year)
+  - Note: Team domains like `*.cloudflareaccess.com` cannot be used for tunnel hostnames
 
-#### Step 1: Install cloudflared
+#### Two Setup Methods
+
+You can create tunnels using either **CLI** or **Dashboard**:
+
+| Method    | Best For                 | Domain Required             |
+| --------- | ------------------------ | --------------------------- |
+| CLI       | Automation, scripting    | Need to authorize zone      |
+| Dashboard | First-time setup, visual | Just need domain in account |
+
+**Recommended:** Use Dashboard method for initial setup, then CLI for automation.
+
+---
+
+### Method A: Dashboard Setup (Recommended for First-Time)
+
+#### Step A1: Install cloudflared
 
 ```bash
 # Linux/Mac
@@ -153,7 +171,70 @@ User → Cloudflare Zero Trust → Tunnel → MAMA (localhost)
 cloudflared --version
 ```
 
-#### Step 2: Login to Cloudflare
+#### Step A2: Create Tunnel via Dashboard
+
+1. Go to [Zero Trust Dashboard](https://one.dash.cloudflare.com/)
+2. Navigate to **Networks** → **Tunnels**
+3. Click **Create a tunnel**
+4. Select **Cloudflared** → **Next**
+5. Name your tunnel (e.g., `mama-mobile`) → **Save tunnel**
+6. Copy the **tunnel token** (starts with `eyJ...`)
+
+#### Step A3: Run Tunnel with Token
+
+```bash
+# Run tunnel using token (no login required)
+cloudflared tunnel run --token YOUR_TUNNEL_TOKEN
+```
+
+#### Step A4: Configure Public Hostname
+
+In the Dashboard (after creating tunnel):
+
+1. Click **Configure** on your tunnel
+2. Go to **Public Hostname** tab
+3. Click **Add a public hostname**
+4. Configure:
+   - **Subdomain:** `mama` (or your choice)
+   - **Domain:** Select your domain from dropdown
+   - **Type:** `HTTP`
+   - **URL:** `localhost:3847`
+   - **Path:** Leave empty (routes all paths)
+5. Click **Save hostname**
+
+#### Step A5: Configure Zero Trust Access Policy
+
+1. Go to **Zero Trust** → **Access** → **Applications**
+2. Click **Add an application** → **Self-hosted**
+3. Configure:
+   - **Application name:** `MAMA Mobile`
+   - **Session Duration:** `24 hours`
+4. Click **Add public hostname**:
+   - **Subdomain:** `mama`
+   - **Domain:** Select your domain
+5. Under **Access policies**, click **Add a policy**:
+   - **Policy name:** `Owner Only`
+   - **Action:** `Allow`
+   - **Include** → **Emails** → Your email address
+6. Click through optional settings → **Add application**
+
+#### Step A6: Test
+
+```bash
+# Open in incognito/private browser
+https://mama.yourdomain.com/viewer
+
+# Should redirect to Google/GitHub login
+# After login with allowed email → Access granted
+```
+
+---
+
+### Method B: CLI Setup (Alternative)
+
+Use this method if you prefer command-line or need to automate tunnel creation.
+
+#### Step B1: Login to Cloudflare
 
 ```bash
 cloudflared tunnel login
@@ -162,7 +243,7 @@ cloudflared tunnel login
 # Select zone (domain) to authorize
 ```
 
-#### Step 3: Create Named Tunnel
+#### Step B2: Create Named Tunnel
 
 ```bash
 # Create tunnel
