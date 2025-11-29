@@ -49,6 +49,102 @@ function extractSessionFromUrl(url) {
 }
 
 /**
+ * Set up daemon event listeners for a client
+ * Removes old listeners before adding new ones to prevent duplicates
+ * @param {Object} clientInfo - Client info object
+ * @param {Object} daemon - Daemon instance
+ */
+function setupDaemonListeners(clientInfo, daemon) {
+  // Remove old listeners if they exist
+  if (clientInfo.eventHandlers.output) {
+    daemon.removeListener('output', clientInfo.eventHandlers.output);
+  }
+  if (clientInfo.eventHandlers.tool_use) {
+    daemon.removeListener('tool_use', clientInfo.eventHandlers.tool_use);
+  }
+  if (clientInfo.eventHandlers.tool_complete) {
+    daemon.removeListener('tool_complete', clientInfo.eventHandlers.tool_complete);
+  }
+  if (clientInfo.eventHandlers.response_complete) {
+    daemon.removeListener('response_complete', clientInfo.eventHandlers.response_complete);
+  }
+  if (clientInfo.eventHandlers.exit) {
+    daemon.removeListener('exit', clientInfo.eventHandlers.exit);
+  }
+
+  // Create and store new handlers
+  clientInfo.eventHandlers.output = (data) => {
+    if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
+      clientInfo.ws.send(
+        JSON.stringify({
+          type: 'output',
+          content: data.text,
+          streamType: data.type,
+          sessionId: data.sessionId,
+        })
+      );
+    }
+  };
+
+  clientInfo.eventHandlers.tool_use = (data) => {
+    if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
+      console.error(`[WebSocket] Tool use: ${data.tool}`);
+      clientInfo.ws.send(
+        JSON.stringify({
+          type: 'tool_use',
+          tool: data.tool,
+          toolId: data.toolId,
+          input: data.input,
+          sessionId: data.sessionId,
+        })
+      );
+    }
+  };
+
+  clientInfo.eventHandlers.tool_complete = (data) => {
+    if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
+      console.error(`[WebSocket] Tool complete for block ${data.index}`);
+      clientInfo.ws.send(
+        JSON.stringify({
+          type: 'tool_complete',
+          index: data.index,
+          sessionId: data.sessionId,
+        })
+      );
+    }
+  };
+
+  clientInfo.eventHandlers.response_complete = (data) => {
+    if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
+      console.error(
+        `[WebSocket] Response complete for session ${clientInfo.sessionId}, sending stream_end`
+      );
+      clientInfo.ws.send(
+        JSON.stringify({
+          type: 'stream_end',
+          sessionId: data.sessionId,
+        })
+      );
+    }
+  };
+
+  clientInfo.eventHandlers.exit = (_data) => {
+    if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
+      console.error(`[WebSocket] Daemon exited for session ${clientInfo.sessionId}`);
+    }
+  };
+
+  // Attach listeners
+  daemon.on('output', clientInfo.eventHandlers.output);
+  daemon.on('tool_use', clientInfo.eventHandlers.tool_use);
+  daemon.on('tool_complete', clientInfo.eventHandlers.tool_complete);
+  daemon.on('response_complete', clientInfo.eventHandlers.response_complete);
+  daemon.on('exit', clientInfo.eventHandlers.exit);
+
+  console.error(`[WebSocket] Event listeners set up for client ${clientInfo.clientId}`);
+}
+
+/**
  * Create WebSocket handler for HTTP server
  * @param {http.Server} httpServer - HTTP server to attach WebSocket to
  * @param {SessionManager} sessionManager - Session manager instance
@@ -103,6 +199,8 @@ function createWebSocketHandler(httpServer, sessionManager) {
       ws,
       isAlive: true,
       connectedAt: new Date().toISOString(),
+      // Store event handlers for cleanup
+      eventHandlers: {},
     };
     clients.set(clientId, clientInfo);
 
@@ -129,71 +227,7 @@ function createWebSocketHandler(httpServer, sessionManager) {
 
         // Set up daemon output forwarding
         if (session.daemon) {
-          session.daemon.on('output', (data) => {
-            if (ws.readyState === ws.OPEN) {
-              // Map daemon's 'text' to viewer's 'content', preserve type as 'output'
-              ws.send(
-                JSON.stringify({
-                  type: 'output',
-                  content: data.text,
-                  streamType: data.type, // 'stdout' or 'stderr'
-                  sessionId: data.sessionId,
-                })
-              );
-            }
-          });
-
-          // Handle tool usage
-          session.daemon.on('tool_use', (data) => {
-            if (ws.readyState === ws.OPEN) {
-              console.error(`[WebSocket] Tool use: ${data.tool}`);
-              ws.send(
-                JSON.stringify({
-                  type: 'tool_use',
-                  tool: data.tool,
-                  toolId: data.toolId,
-                  input: data.input,
-                  sessionId: data.sessionId,
-                })
-              );
-            }
-          });
-
-          // Handle tool completion
-          session.daemon.on('tool_complete', (data) => {
-            if (ws.readyState === ws.OPEN) {
-              console.error(`[WebSocket] Tool complete for block ${data.index}`);
-              ws.send(
-                JSON.stringify({
-                  type: 'tool_complete',
-                  index: data.index,
-                  sessionId: data.sessionId,
-                })
-              );
-            }
-          });
-
-          // Handle response completion - send stream_end to finalize the message
-          session.daemon.on('response_complete', (data) => {
-            if (ws.readyState === ws.OPEN) {
-              console.error(
-                `[WebSocket] Response complete for session ${sessionId}, sending stream_end`
-              );
-              ws.send(
-                JSON.stringify({
-                  type: 'stream_end',
-                  sessionId: data.sessionId,
-                })
-              );
-            }
-          });
-
-          // Handle daemon exit (backup)
-          session.daemon.on('exit', (_data) => {
-            if (ws.readyState === ws.OPEN) {
-              console.error(`[WebSocket] Daemon exited for session ${sessionId}`);
-            }
-          });
+          setupDaemonListeners(clientInfo, session.daemon);
         }
       }
     }
@@ -232,9 +266,36 @@ function createWebSocketHandler(httpServer, sessionManager) {
     ws.on('close', (code, _reason) => {
       console.error(`[WebSocket] Client ${clientId} disconnected (code: ${code})`);
 
+      // Clean up event listeners
+      if (clientInfo.sessionId && sessionManager) {
+        const session = sessionManager.getSession(clientInfo.sessionId);
+        if (session && session.daemon) {
+          // Remove all registered event listeners
+          if (clientInfo.eventHandlers.output) {
+            session.daemon.removeListener('output', clientInfo.eventHandlers.output);
+          }
+          if (clientInfo.eventHandlers.tool_use) {
+            session.daemon.removeListener('tool_use', clientInfo.eventHandlers.tool_use);
+          }
+          if (clientInfo.eventHandlers.tool_complete) {
+            session.daemon.removeListener('tool_complete', clientInfo.eventHandlers.tool_complete);
+          }
+          if (clientInfo.eventHandlers.response_complete) {
+            session.daemon.removeListener(
+              'response_complete',
+              clientInfo.eventHandlers.response_complete
+            );
+          }
+          if (clientInfo.eventHandlers.exit) {
+            session.daemon.removeListener('exit', clientInfo.eventHandlers.exit);
+          }
+          console.error(`[WebSocket] Event listeners cleaned up for client ${clientId}`);
+        }
+      }
+
       // Unassign client from session
-      if (sessionId && sessionManager) {
-        sessionManager.unassignClient(sessionId);
+      if (clientInfo.sessionId && sessionManager) {
+        sessionManager.unassignClient(clientInfo.sessionId);
       }
 
       // Remove from clients map
@@ -340,66 +401,9 @@ function handleClientMessage(clientId, message, clientInfo, sessionManager) {
         clientInfo.sessionId = sessionId;
         sessionManager.assignClient(sessionId, clientId);
 
-        // Set up daemon output forwarding for this session
-        session.daemon.on('output', (data) => {
-          if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
-            // Map daemon's 'text' to viewer's 'content', preserve type as 'output'
-            clientInfo.ws.send(
-              JSON.stringify({
-                type: 'output',
-                content: data.text,
-                streamType: data.type, // 'stdout' or 'stderr'
-                sessionId: data.sessionId,
-              })
-            );
-          }
-        });
-
-        // Handle tool usage for attached session
-        session.daemon.on('tool_use', (data) => {
-          if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
-            console.error(`[WebSocket] Tool use (attached): ${data.tool}`);
-            clientInfo.ws.send(
-              JSON.stringify({
-                type: 'tool_use',
-                tool: data.tool,
-                toolId: data.toolId,
-                input: data.input,
-                sessionId: data.sessionId,
-              })
-            );
-          }
-        });
-
-        // Handle tool completion for attached session
-        session.daemon.on('tool_complete', (data) => {
-          if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
-            console.error(`[WebSocket] Tool complete (attached) for block ${data.index}`);
-            clientInfo.ws.send(
-              JSON.stringify({
-                type: 'tool_complete',
-                index: data.index,
-                sessionId: data.sessionId,
-              })
-            );
-          }
-        });
-
-        // Handle response completion for attached session
-        session.daemon.on('response_complete', (data) => {
-          if (clientInfo.ws.readyState === clientInfo.ws.OPEN) {
-            console.error(
-              `[WebSocket] Response complete for attached session ${sessionId}, sending stream_end`
-            );
-            clientInfo.ws.send(
-              JSON.stringify({
-                type: 'stream_end',
-                sessionId: data.sessionId,
-              })
-            );
-          }
-        });
-        console.error(`[WebSocket] Output forwarding set up for session ${sessionId}`);
+        // Set up daemon listeners for the new session
+        // setupDaemonListeners removes old listeners before adding new ones
+        setupDaemonListeners(clientInfo, session.daemon);
 
         clientInfo.ws.send(
           JSON.stringify({
