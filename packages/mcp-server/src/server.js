@@ -499,22 +499,7 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       await initDB();
       console.error('[MAMA MCP] Database initialized');
 
-      // Start HTTP embedding server (for hooks)
-      console.error('[MAMA MCP] Starting HTTP embedding server...');
-      const embeddingPort = parseInt(
-        process.env.MAMA_HTTP_PORT || process.env.MAMA_EMBEDDING_PORT || '3847',
-        10
-      );
-      const httpServer = await startEmbeddingServer(embeddingPort);
-      if (httpServer) {
-        console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
-        // Pre-warm model in background (don't block MCP startup)
-        warmModel().catch((err) => console.error('[MAMA MCP] Model warmup error:', err.message));
-      } else {
-        console.error('[MAMA MCP] HTTP embedding server skipped (port unavailable or blocked)');
-      }
-
-      // Start server with stdio transport
+      // Start MCP server FIRST (don't block on HTTP server)
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
 
@@ -522,6 +507,32 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       console.error('[MAMA MCP] Server started successfully');
       console.error('[MAMA MCP] Listening on stdio transport');
       console.error('[MAMA MCP] Ready to accept connections');
+
+      // Start HTTP embedding server in background (non-blocking)
+      // This allows Graph Viewer and Mobile Chat without delaying MCP initialization
+      const embeddingPort = parseInt(
+        process.env.MAMA_HTTP_PORT || process.env.MAMA_EMBEDDING_PORT || '3847',
+        10
+      );
+
+      console.error('[MAMA MCP] Starting HTTP embedding server in background...');
+      startEmbeddingServer(embeddingPort)
+        .then((httpServer) => {
+          if (httpServer) {
+            console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
+            console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
+            // Pre-warm model in background
+            warmModel().catch((err) =>
+              console.error('[MAMA MCP] Model warmup error:', err.message)
+            );
+          } else {
+            console.error('[MAMA MCP] HTTP embedding server skipped (port unavailable or blocked)');
+          }
+        })
+        .catch((err) => {
+          console.error('[MAMA MCP] HTTP embedding server error:', err.message);
+          console.error('[MAMA MCP] MCP tools will continue to work without Graph Viewer');
+        });
     } catch (error) {
       console.error('[MAMA MCP] Failed to start server:', error);
       process.exit(1);
