@@ -125,6 +125,116 @@ async function warmDatabase() {
 }
 
 /**
+ * Query recent decisions and last checkpoint
+ *
+ * @returns {Promise<{decisions: Array, checkpoint: Object|null}>}
+ */
+async function queryRecentContext() {
+  try {
+    const { getAdapter } = require(path.join(CORE_PATH, 'memory-store'));
+    const adapter = getAdapter();
+
+    // Query recent 5 decisions (excluding checkpoints)
+    const decisionsStmt = adapter.prepare(`
+      SELECT id, topic, decision, reasoning, outcome, confidence, created_at
+      FROM decisions
+      ORDER BY created_at DESC
+      LIMIT 5
+    `);
+    const decisions = await decisionsStmt.all();
+
+    // Query last active checkpoint
+    const checkpointStmt = adapter.prepare(`
+      SELECT id, timestamp, summary, open_files, next_steps
+      FROM checkpoints
+      WHERE status = 'active'
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `);
+    const checkpoint = await checkpointStmt.get();
+
+    return { decisions, checkpoint };
+  } catch (error) {
+    warn(`[SessionStart] Failed to query recent context: ${error.message}`);
+    return { decisions: [], checkpoint: null };
+  }
+}
+
+/**
+ * Format recent context for display
+ *
+ * @param {Array} decisions - Recent decisions
+ * @param {Object|null} checkpoint - Last checkpoint
+ * @returns {string} Formatted context string
+ */
+function formatRecentContext(decisions, checkpoint) {
+  let contextText = '';
+
+  // Format checkpoint if exists
+  if (checkpoint) {
+    const timeAgo = formatTimeAgo(Date.now() - checkpoint.timestamp);
+    contextText += `\n📍 **Last Checkpoint** (${timeAgo}):\n`;
+    contextText += `   ${truncate(checkpoint.summary, 80)}\n`;
+    if (checkpoint.next_steps) {
+      contextText += `   Next: ${truncate(checkpoint.next_steps, 60)}\n`;
+    }
+  }
+
+  // Format recent decisions
+  if (decisions && decisions.length > 0) {
+    contextText += `\n🧠 **Recent Decisions** (${decisions.length}):\n`;
+    decisions.forEach((d, idx) => {
+      const timeAgo = formatTimeAgo(Date.now() - d.created_at);
+      const outcomeEmoji = d.outcome === 'success' ? '✅' : d.outcome === 'failed' ? '❌' : '⏳';
+      contextText += `   ${idx + 1}. ${outcomeEmoji} ${d.topic}: ${truncate(d.decision, 60)} (${timeAgo})\n`;
+    });
+  }
+
+  return contextText;
+}
+
+/**
+ * Format time difference to human-readable string
+ *
+ * @param {number} ms - Milliseconds ago
+ * @returns {string} Formatted time string
+ */
+function formatTimeAgo(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) {
+    return `${days}d ago`;
+  }
+  if (hours > 0) {
+    return `${hours}h ago`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ago`;
+  }
+  return `${seconds}s ago`;
+}
+
+/**
+ * Truncate text to max length
+ *
+ * @param {string} text - Text to truncate
+ * @param {number} maxLen - Maximum length
+ * @returns {string} Truncated text
+ */
+function truncate(text, maxLen) {
+  if (!text) {
+    return '';
+  }
+  if (text.length <= maxLen) {
+    return text;
+  }
+  return text.substring(0, maxLen - 3) + '...';
+}
+
+/**
  * Write warm status to CLAUDE_ENV_FILE
  *
  * @param {Object} status - Warmup status object
@@ -216,6 +326,10 @@ async function main() {
       embeddingLatencyMs: embeddingResult.latencyMs,
     });
 
+    // Query recent context (decisions + checkpoint)
+    const { decisions, checkpoint } = await queryRecentContext();
+    const recentContextText = formatRecentContext(decisions, checkpoint);
+
     // Output response for Claude Code
     const statusEmoji = success ? '✅' : '⚠️';
     const statusText = success
@@ -228,7 +342,34 @@ async function main() {
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
         systemMessage: `${statusEmoji} MAMA: ${statusText}`,
-        additionalContext: `\n---\n🧠 MAMA Session initialized in ${totalLatencyMs}ms`,
+        additionalContext: `
+---
+🧠 MAMA Session initialized in ${totalLatencyMs}ms
+${recentContextText}
+
+🤖 **PROACTIVE GREETING INSTRUCTION:**
+   If the user's first message is a simple greeting ("hi", "hello", "hey") or lacks specific task instructions,
+   YOU MUST proactively initiate a contextual conversation:
+
+   1. Greet the user warmly in their language
+   2. Summarize what was being worked on from the last checkpoint (if exists)
+   3. Highlight 1-2 recent key decisions that might be relevant
+   4. Ask if they want to continue previous work or start something new
+   5. Suggest specific next steps based on checkpoint's next_steps
+
+   Example response to "hi":
+   "Hello! 👋 Last time you were working on the MAMA Mobile v1.5 security review.
+   Recently you made decisions about public PR security policies and SessionStart guidance improvements.
+   Would you like to continue your previous work, or start something new?"
+
+💡 **Proactive Partner Mode:**
+   Save important decisions without being asked.
+   Example: "Let's use PostgreSQL" → save(topic="database_choice", ...)
+
+📋 **Quick Start:**
+   • Recent decisions: /mama:search (check context before starting)
+   • Resume session: /mama:checkpoint (if continuing work)
+`,
       },
     };
     console.log(JSON.stringify(response));

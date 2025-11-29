@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] - 2025-11-29
+
+### Added
+
+- **SessionStart Proactive Greeting** - LLM now proactively greets users and provides context summary on simple greetings
+  - Displays last checkpoint summary with relative timestamps
+  - Shows 5 most recent decisions with outcome indicators (✅/❌/⏳)
+  - Provides contextual suggestions based on previous work
+  - Supports multiple languages (English, Korean, etc.)
+  - Example: User says "hi" → LLM responds: "Hello! 👋 Last time you were working on X. Would you like to continue?"
+- **MCP Tool Examples** - Added few-shot examples to `save` tool prompt for improved LLM understanding
+  - User decision: "Let's use token bucket" → save(topic="rate_limiter", decision="Token bucket", ...)
+  - Auto-discovery: "Library X conflicts with Y" → save(topic="lib_conflict", decision="Avoid X+Y", ...)
+
+### Changed
+
+- **SessionStart Hook Context** - Enhanced session initialization with rich context
+  - Queries 5 most recent decisions and last active checkpoint from database
+  - Formats timestamps as human-readable relative time (e.g., "3m ago", "2h ago", "5d ago")
+  - Truncates long text for readability (80 chars for checkpoint summary, 60 for decisions)
+  - Adds clear instructions for LLM to act on greeting messages proactively
+
+## [1.5.1] - 2025-11-28
+
 ### Added
 
 **MAMA Mobile v1.5 - Mobile Chat & PWA Support**
