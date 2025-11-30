@@ -161,15 +161,14 @@ class MAMAServer {
 🔗 REQUIRED WORKFLOW (Don't create orphans!):
 1. Call 'search' FIRST to find related decisions
 2. Check if same topic exists (yours will supersede it)
-3. MUST include link in reasoning field (see format below)
+3. MUST include link in reasoning/summary field
 
-📎 LINKING FORMAT (at least ONE required):
-• builds_on: decision_xxx (extends prior work)
-• debates: decision_xxx (alternative view)
-• synthesizes: [decision_a, decision_b] (combines multiple)
+📎 LINKING FORMAT:
+• [Decision] reasoning: End with 'builds_on: <id>' or 'debates: <id>' or 'synthesizes: [id1, id2]'
+• [Checkpoint] summary: Include 'Related decisions: decision_xxx, decision_yyy'
 
 type='decision': choices & lessons (same topic = evolution chain)
-type='checkpoint': session state for resumption`,
+type='checkpoint': session state for resumption (ALSO requires search first!)`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -394,34 +393,12 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       if (!summary) {
         return { success: false, message: '❌ Checkpoint requires: summary' };
       }
-
-      // Search for related decisions before saving
-      let relatedDecisionsHint = '';
-      try {
-        const searchResults = await mama.suggest(summary, { limit: 3, threshold: 0.8 });
-        if (searchResults && searchResults.results && searchResults.results.length > 0) {
-          const related = searchResults.results.map((d) => ({
-            id: d.id,
-            topic: d.topic,
-            decision: d.decision?.substring(0, 80) + (d.decision?.length > 80 ? '...' : ''),
-            similarity: d.similarity?.toFixed(2),
-          }));
-          relatedDecisionsHint =
-            `\n\n🔗 Related Decisions Found (consider linking in summary):\n` +
-            related.map((d) => `  • ${d.topic} [${d.similarity}]: ${d.decision}`).join('\n') +
-            `\n\n💡 To link: Add "Related decisions: ${related.map((d) => d.id).join(', ')}" to summary if relevant.`;
-        }
-      } catch (error) {
-        // Silent fail - don't block checkpoint save
-        console.warn('[saveCheckpoint] Failed to search related decisions:', error.message);
-      }
-
       const id = await mama.saveCheckpoint(summary, open_files || [], next_steps || '');
       return {
         success: true,
         id,
         type: 'checkpoint',
-        message: `✅ Checkpoint saved${relatedDecisionsHint}`,
+        message: '✅ Checkpoint saved',
       };
     }
 
