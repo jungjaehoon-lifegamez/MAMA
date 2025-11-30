@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.7] - 2025-11-30
+
+### Changed
+
+- **Checkpoint Linking via Search-First Pattern** - Align with decision workflow
+  - Removed post-save hint display (wrong timing - already saved)
+  - Enhanced save tool prompt: checkpoint also requires "search first"
+  - LLM now calls search before checkpoint save, includes "Related decisions: xxx" in summary
+  - Same pattern as decisions: search → link → save
+  - Cleaner approach: prompt-driven, no code-level forcing
+
 ## [1.5.6] - 2025-11-30
 
 ### Fixed
