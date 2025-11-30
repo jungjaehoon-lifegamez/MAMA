@@ -172,6 +172,30 @@ Before saving: scan for TODOs or missing tests and state them plainly.`,
   handler: async (args) => {
     const { summary, open_files, next_steps } = args;
 
+    // Search for related decisions before saving
+    let relatedDecisions = [];
+    let relatedDecisionsHint = '';
+    try {
+      const searchResults = await search(summary, { limit: 3, threshold: 0.8 });
+      if (searchResults && searchResults.length > 0) {
+        relatedDecisions = searchResults.map((d) => ({
+          id: d.id,
+          topic: d.topic,
+          decision: d.decision?.substring(0, 100) + (d.decision?.length > 100 ? '...' : ''),
+          similarity: d.similarity?.toFixed(2),
+        }));
+        relatedDecisionsHint =
+          `\n\n🔗 Related Decisions Found (consider linking in summary):\n` +
+          relatedDecisions
+            .map((d) => `  • ${d.topic} [${d.similarity}]: ${d.decision}`)
+            .join('\n') +
+          `\n\n💡 To link: Add "Related decisions: ${relatedDecisions.map((d) => d.id).join(', ')}" to summary if relevant.`;
+      }
+    } catch (error) {
+      // Silent fail - don't block checkpoint save
+      console.warn('[saveCheckpoint] Failed to search related decisions:', error.message);
+    }
+
     // BMad Workflow Integration: Check Story status before saving
     const currentStory = inferCurrentStory(summary);
     let bmadWorkflowWarning = '';
@@ -221,7 +245,7 @@ Before saving: scan for TODOs or missing tests and state them plainly.`,
       content: [
         {
           type: 'text',
-          text: `✅ Checkpoint saved (ID: ${id})\nSummary: ${summary}${bmadWorkflowWarning}`,
+          text: `✅ Checkpoint saved (ID: ${id})\nSummary: ${summary}${relatedDecisionsHint}${bmadWorkflowWarning}`,
         },
       ],
     };
