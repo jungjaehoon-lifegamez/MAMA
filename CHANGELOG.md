@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.6] - 2025-11-30
+
+### Fixed
+
+- **Checkpoint Related Decisions - Wrong Handler** - Fixed feature added to wrong location
+  - 1.5.5 added to `checkpoint-tools.js` but production uses `server.js` unified save handler
+  - Now correctly implemented in `server.js` handleSave() for type='checkpoint'
+  - Same functionality: semantic search (threshold 0.8), displays related decisions hint
+
 ## [1.5.5] - 2025-11-30
 
 ### Added
