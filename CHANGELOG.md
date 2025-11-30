@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.5] - 2025-11-30
+
+### Added
+
+- **Checkpoint Related Decisions Display** - `save_checkpoint` now shows related decisions before saving
+  - Automatic semantic search (threshold 0.8) for decisions related to checkpoint summary
+  - Displays hint: "🔗 Related Decisions Found (consider linking in summary)"
+  - LLM can judge whether to link or not - no forced meaningless connections
+  - Improves graph connectivity without noise
+  - Related decision: checkpoint_related_decisions_display
+
 ## [1.5.4] - 2025-11-30
 
 ### Fixed
