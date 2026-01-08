@@ -11,11 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **SessionStart Hook Schema Compatibility** - Fixed Claude Code hook validation error
+- **Hook Schema Compatibility** - Fixed Claude Code hook validation errors
   - Claude Code updated hook output validation to be stricter
+  - Fixed both `SessionStart` and `UserPromptSubmit` hooks
   - Removed unsupported fields: `decision`, `reason` (top level), `systemMessage` (hookSpecificOutput)
   - Now outputs only valid schema: `{ hookSpecificOutput: { hookEventName, additionalContext } }`
-  - Fixes "Hook JSON output validation failed: Invalid input" error on session start
+  - Fixes "Hook JSON output validation failed: Invalid input" error
 
 ## [1.5.7] - 2025-11-30
 

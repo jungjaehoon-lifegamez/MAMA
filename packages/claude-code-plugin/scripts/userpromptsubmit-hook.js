@@ -219,12 +219,9 @@ async function main() {
       const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, 0);
 
       const response = {
-        decision: null,
-        reason: '',
         hookSpecificOutput: {
           hookEventName: 'UserPromptSubmit',
-          systemMessage: `🔍 MAMA: Embeddings unavailable (Tier 2)`,
-          additionalContext: transparencyLine,
+          additionalContext: `🔍 MAMA: Embeddings unavailable (Tier 2)${transparencyLine}`,
         },
       };
       console.log(JSON.stringify(response));
@@ -275,12 +272,9 @@ That's all okay. Just write it down.
 `;
 
       const response = {
-        decision: null,
-        reason: '',
         hookSpecificOutput: {
           hookEventName: 'UserPromptSubmit',
-          systemMessage: '⚠️ Checkpoint Verification Reminder',
-          additionalContext: verificationReminder,
+          additionalContext: `⚠️ Checkpoint Verification Reminder${verificationReminder}`,
         },
       };
       console.log(JSON.stringify(response));
@@ -340,12 +334,9 @@ That's all okay. Just write it down.
 
       // Correct Claude Code JSON format with hookSpecificOutput
       const response = {
-        decision: null,
-        reason: '',
         hookSpecificOutput: {
           hookEventName: 'UserPromptSubmit',
-          systemMessage: `💡 MAMA found ${resultCount} related decision${resultCount > 1 ? 's' : ''} (${latencyMs}ms)`,
-          additionalContext: context + transparencyLine,
+          additionalContext: `💡 MAMA found ${resultCount} related decision${resultCount > 1 ? 's' : ''} (${latencyMs}ms)\n\n${context}${transparencyLine}`,
         },
       };
       console.log(JSON.stringify(response));
@@ -356,12 +347,9 @@ That's all okay. Just write it down.
       const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, 0);
 
       const response = {
-        decision: null,
-        reason: '',
         hookSpecificOutput: {
           hookEventName: 'UserPromptSubmit',
-          systemMessage: `🔍 MAMA: No related decisions found (${latencyMs}ms)`,
-          additionalContext: transparencyLine,
+          additionalContext: `🔍 MAMA: No related decisions found (${latencyMs}ms)${transparencyLine}`,
         },
       };
       console.log(JSON.stringify(response));
