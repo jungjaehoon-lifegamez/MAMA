@@ -263,6 +263,40 @@ function writeEnvStatus(status) {
 }
 
 /**
+ * Check and install missing dependencies
+ *
+ * @returns {Promise<{installed: boolean, error?: string}>}
+ */
+async function ensureDependencies() {
+  const nodeModulesPath = path.join(PLUGIN_ROOT, 'node_modules');
+  const betterSqlitePath = path.join(nodeModulesPath, 'better-sqlite3');
+
+  // Check if critical dependencies exist
+  if (fs.existsSync(betterSqlitePath)) {
+    return { installed: false }; // Already installed
+  }
+
+  info('[SessionStart] Dependencies missing, running npm install...');
+
+  try {
+    const { execSync } = require('child_process');
+
+    // Run npm install in plugin root
+    execSync('npm install', {
+      cwd: PLUGIN_ROOT,
+      stdio: 'pipe', // Suppress output
+      timeout: 120000, // 2 minute timeout
+    });
+
+    info('[SessionStart] Dependencies installed successfully');
+    return { installed: true };
+  } catch (error) {
+    logError(`[SessionStart] npm install failed: ${error.message}`);
+    return { installed: false, error: error.message };
+  }
+}
+
+/**
  * Main hook handler
  */
 async function main() {
@@ -273,6 +307,40 @@ async function main() {
 
   const startTime = Date.now();
   info('[SessionStart] MAMA session initialization starting...');
+
+  // Ensure dependencies are installed before proceeding
+  const depResult = await ensureDependencies();
+  if (depResult.error) {
+    // Dependencies failed to install - output error and exit
+    const response = {
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext: `⚠️ MAMA: Failed to install dependencies
+
+---
+❌ **MAMA Dependency Installation Failed**
+
+Error: ${depResult.error}
+
+**Manual fix required:**
+\`\`\`bash
+cd ${PLUGIN_ROOT}
+npm install
+\`\`\`
+
+Then restart Claude Code.
+`,
+      },
+    };
+    console.log(JSON.stringify(response));
+    process.exit(1);
+  }
+
+  if (depResult.installed) {
+    // Dependencies were just installed - notify user
+    const installLatency = Date.now() - startTime;
+    info(`[SessionStart] Dependencies installed in ${installLatency}ms`);
+  }
 
   try {
     // Read stdin (may be empty for SessionStart)
@@ -301,12 +369,9 @@ async function main() {
 
       // Output response for Claude Code
       const response = {
-        decision: null,
-        reason: '',
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
-          systemMessage: `MAMA: Session warmup timed out (${totalLatencyMs}ms)`,
-          additionalContext: '',
+          additionalContext: `⚠️ MAMA: Session warmup timed out (${totalLatencyMs}ms)`,
         },
       };
       console.log(JSON.stringify(response));
@@ -337,12 +402,10 @@ async function main() {
       : `Partial (${embeddingResult.error || dbResult.error})`;
 
     const response = {
-      decision: null,
-      reason: '',
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        systemMessage: `${statusEmoji} MAMA: ${statusText}`,
-        additionalContext: `
+        additionalContext: `${statusEmoji} MAMA: ${statusText}
+
 ---
 🧠 MAMA Session initialized in ${totalLatencyMs}ms
 ${recentContextText}
@@ -380,12 +443,9 @@ ${recentContextText}
     logError(`[SessionStart] Fatal error: ${error.message}`);
 
     const response = {
-      decision: null,
-      reason: '',
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        systemMessage: `MAMA: Session init failed - ${error.message}`,
-        additionalContext: '',
+        additionalContext: `⚠️ MAMA: Session init failed - ${error.message}`,
       },
     };
     console.log(JSON.stringify(response));
