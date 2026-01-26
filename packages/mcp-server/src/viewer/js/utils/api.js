@@ -71,7 +71,8 @@ export class API {
    * @returns {Promise<Object>} Graph data
    */
   static async getGraph(params = {}) {
-    return this.get('/graph', { cluster: 'true', ...params });
+    // cluster: false by default to avoid slow embedding calculations
+    return this.get('/graph', { cluster: 'false', ...params });
   }
 
   /**
