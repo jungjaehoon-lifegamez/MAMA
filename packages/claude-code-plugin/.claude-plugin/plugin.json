@@ -24,7 +24,6 @@
     "./commands/configure.md"
   ],
   "skills": ["./skills/mama-context"],
-  "hooks": "../hooks/hooks.json",
   "mcpServers": {
     "mama": {
       "command": "npx",
