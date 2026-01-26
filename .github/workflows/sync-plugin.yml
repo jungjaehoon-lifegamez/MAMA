@@ -42,7 +42,18 @@ jobs:
         id: version
         run: |
           VERSION=$(jq -r '.version' claude-plugins/plugins/mama/.claude-plugin/plugin.json)
+          DESCRIPTION=$(jq -r '.description' claude-plugins/plugins/mama/.claude-plugin/plugin.json)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
+
+      - name: Update marketplace.json
+        run: |
+          cd claude-plugins
+          jq --arg ver "${{ steps.version.outputs.version }}" \
+             --arg desc "${{ steps.version.outputs.description }}" \
+             '.plugins[0].version = $ver | .plugins[0].description = $desc' \
+             .claude-plugin/marketplace.json > .claude-plugin/marketplace.json.tmp
+          mv .claude-plugin/marketplace.json.tmp .claude-plugin/marketplace.json
 
       - name: Commit and push
         run: |
