@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.9] - 2026-01-26
+
+### Fixed
+
+- **Plugin Installation Error** - Fixed "hooks: Invalid input" validation error during plugin install
+  - Removed `hooks` field from `plugin.json` - Claude Code rejects path strings
+  - Claude Code auto-discovers `hooks/hooks.json` from plugin root directory
+  - Follows official plugin pattern (hookify, security-guidance, etc.)
+
+- **HuggingFace Model Cache Location** - Fixed model re-download on every npm install
+  - Changed cache from `node_modules/` to `~/.cache/huggingface/transformers/`
+  - 465MB model persists across reinstalls
+  - Respects `HF_HOME` and `TRANSFORMERS_CACHE` environment variables
+
+### Changed
+
+- **Sync Plugin Workflow** - Auto-update `marketplace.json` version on sync
+  - Extracts version/description from `plugin.json`
+  - Updates marketplace manifest automatically
+  - No manual marketplace.json editing required
+
 ## [1.5.8] - 2026-01-08
 
 ### Fixed
