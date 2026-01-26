@@ -1,2 +1,14 @@
 packages:
-  - 'packages/*'
+  - packages/*
+
+enableScripts: true
+
+ignoredBuiltDependencies:
+  - better-sqlite3
+  - esbuild
+  - node-pty
+  - onnxruntime-node
+  - protobufjs
+  - sharp
+
+unsafePerm: true
