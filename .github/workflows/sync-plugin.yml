@@ -1,6 +1,7 @@
 name: Sync Plugin to Marketplace
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
