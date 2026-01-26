@@ -12,10 +12,15 @@
 
 // eslint-disable-next-line no-unused-vars
 const { info, error: logError } = require('./debug-logger');
+const os = require('os');
+const path = require('path');
 // Lazy-load @huggingface/transformers to avoid loading sharp at module load time (Story 014.12.7)
 // const { pipeline } = require('@huggingface/transformers');
 const { embeddingCache } = require('./embedding-cache');
 const { loadConfig, getModelName, getEmbeddingDim } = require('./config-loader');
+
+// Shared cache directory (not in node_modules)
+const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.cache', 'huggingface', 'transformers');
 
 // Singleton pattern for model loading
 let embeddingPipeline = null;
@@ -53,7 +58,14 @@ async function loadModel() {
 
     // Dynamic import for ES Module compatibility (Railway deployment)
     const transformers = await import('@huggingface/transformers');
-    const { pipeline } = transformers;
+    const { pipeline, env } = transformers;
+
+    // Set shared cache directory (not in node_modules)
+    // This prevents re-downloading models on every npm install
+    const cacheDir = process.env.HF_HOME || process.env.TRANSFORMERS_CACHE || DEFAULT_CACHE_DIR;
+    env.cacheDir = cacheDir;
+    info(`[MAMA] Model cache directory: ${cacheDir}`);
+
     embeddingPipeline = await pipeline('feature-extraction', modelName);
     currentModelName = modelName;
 

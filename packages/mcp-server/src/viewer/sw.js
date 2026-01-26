@@ -7,7 +7,7 @@
 
 /* eslint-env serviceworker */
 
-const CACHE_NAME = 'mama-mobile-v1.5.0';
+const CACHE_NAME = 'mama-mobile-v1.5.1';
 const STATIC_ASSETS = [
   '/viewer',
   '/viewer/viewer.css',
@@ -29,8 +29,24 @@ const STATIC_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('[SW] Caching static assets');
-      return cache.addAll(STATIC_ASSETS);
+      console.log('[SW] Caching static assets (graceful)');
+      // Graceful caching - 실패해도 계속 진행
+      return Promise.allSettled(
+        STATIC_ASSETS.map((url) =>
+          fetch(url)
+            .then((res) => {
+              if (res.ok) {
+                return cache.put(url, res);
+              }
+              console.warn('[SW] Failed to cache:', url, res.status);
+              return null;
+            })
+            .catch((err) => {
+              console.warn('[SW] Cache fetch error:', url, err.message);
+              return null;
+            })
+        )
+      );
     })
   );
   // Activate immediately
