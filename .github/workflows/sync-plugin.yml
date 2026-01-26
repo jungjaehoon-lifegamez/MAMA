@@ -1,0 +1,53 @@
+name: Sync Plugin to Marketplace
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/claude-code-plugin/**'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout MAMA
+        uses: actions/checkout@v4
+        with:
+          path: mama
+
+      - name: Checkout claude-plugins
+        uses: actions/checkout@v4
+        with:
+          repository: jungjaehoon-lifegamez/claude-plugins
+          token: ${{ secrets.PLUGIN_DEPLOY_TOKEN }}
+          path: claude-plugins
+
+      - name: Sync plugin files
+        run: |
+          rm -rf claude-plugins/plugins/mama
+          mkdir -p claude-plugins/plugins/mama
+          cp -r mama/packages/claude-code-plugin/.claude-plugin claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/.mcp.json claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/commands claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/hooks claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/scripts claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/skills claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/src claude-plugins/plugins/mama/
+          cp mama/packages/claude-code-plugin/package.json claude-plugins/plugins/mama/
+          cp mama/packages/claude-code-plugin/README.md claude-plugins/plugins/mama/
+
+      - name: Get plugin version
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' claude-plugins/plugins/mama/.claude-plugin/plugin.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit and push
+        run: |
+          cd claude-plugins
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add .
+          git diff --staged --quiet || git commit -m "chore: Sync MAMA plugin v${{ steps.version.outputs.version }}"
+          git push
