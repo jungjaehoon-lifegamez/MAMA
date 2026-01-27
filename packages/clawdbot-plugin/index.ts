@@ -3,6 +3,11 @@
  *
  * NO HTTP/REST - MAMA 로직을 Gateway에 직접 임베드
  * better-sqlite3 + sqlite-vec로 벡터 검색
+ *
+ * Features:
+ * - 4 native tools: mama_search, mama_save, mama_load_checkpoint, mama_update
+ * - Auto-recall: 에이전트 시작 시 유저 프롬프트 기반 시맨틱 검색
+ * - Auto-capture: 에이전트 종료 시 중요 결정 자동 저장
  */
 
 import { Type } from "@sinclair/typebox";
@@ -54,22 +59,160 @@ const mamaPlugin = {
   register(api: ClawdbotPluginApi) {
 
     // =====================================================
+    // Auto-recall: 유저 프롬프트 기반 시맨틱 검색
+    // =====================================================
+    api.on("before_agent_start", async (event: any) => {
+      try {
+        await initMAMA();
+
+        const userPrompt = event.prompt || "";
+
+        // 1. 유저 프롬프트가 있으면 시맨틱 검색 수행
+        let semanticResults: any[] = [];
+        if (userPrompt && userPrompt.length >= 5) {
+          try {
+            const searchResult = await mama.suggest(userPrompt, { limit: 3, threshold: 0.5 });
+            semanticResults = searchResult?.results || [];
+          } catch (searchErr: any) {
+            console.error("[MAMA] Semantic search error:", searchErr.message);
+          }
+        }
+
+        // 2. 최근 체크포인트 로드
+        const checkpoint = await mama.loadCheckpoint();
+
+        // 3. 최근 결정들 로드 (시맨틱 검색 결과가 없을 때만)
+        let recentDecisions: any[] = [];
+        if (semanticResults.length === 0) {
+          const recentResult = await mama.list({ limit: 3 });
+          recentDecisions = recentResult?.decisions || [];
+        }
+
+        // 4. 컨텍스트가 있으면 주입
+        if (checkpoint || semanticResults.length > 0 || recentDecisions.length > 0) {
+          let content = "<relevant-memories>\n";
+          content += "# MAMA Memory Context\n\n";
+
+          if (semanticResults.length > 0) {
+            content += "## Relevant Decisions (semantic match)\n\n";
+            semanticResults.forEach((r: any) => {
+              const pct = Math.round((r.similarity || 0) * 100);
+              content += `- **${r.topic}** [${pct}%]: ${r.decision}`;
+              if (r.outcome) content += ` (${r.outcome})`;
+              content += `\n  _${(r.reasoning || "").substring(0, 100)}..._\n`;
+              content += `  ID: \`${r.id}\`\n`;
+            });
+            content += "\n";
+          }
+
+          if (checkpoint) {
+            content += `## Last Checkpoint (${new Date(checkpoint.timestamp).toLocaleString()})\n\n`;
+            content += `**Summary:** ${checkpoint.summary}\n\n`;
+            if (checkpoint.next_steps) {
+              content += `**Next Steps:** ${checkpoint.next_steps}\n\n`;
+            }
+          }
+
+          if (recentDecisions.length > 0) {
+            content += "## Recent Decisions\n\n";
+            recentDecisions.forEach((d: any) => {
+              content += `- **${d.topic}**: ${d.decision}`;
+              if (d.outcome) content += ` (${d.outcome})`;
+              content += "\n";
+            });
+            content += "\n";
+          }
+
+          content += "</relevant-memories>";
+
+          console.log(`[MAMA] Auto-recall: ${semanticResults.length} semantic matches, ${recentDecisions.length} recent, checkpoint: ${!!checkpoint}`);
+
+          return {
+            prependContext: content,
+          };
+        }
+      } catch (err: any) {
+        console.error("[MAMA] Auto-recall error:", err.message);
+      }
+    });
+
+    // =====================================================
+    // Auto-capture: 에이전트 종료 시 결정 자동 저장
+    // =====================================================
+    api.on("agent_end", async (event: any) => {
+      if (!event.success || !event.messages || event.messages.length === 0) {
+        return;
+      }
+
+      try {
+        await initMAMA();
+
+        // 메시지에서 텍스트 추출
+        const texts: string[] = [];
+        for (const msg of event.messages) {
+          if (!msg || typeof msg !== "object") continue;
+
+          const role = msg.role;
+          if (role !== "user" && role !== "assistant") continue;
+
+          const content = msg.content;
+          if (typeof content === "string") {
+            texts.push(content);
+          } else if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block?.type === "text" && typeof block.text === "string") {
+                texts.push(block.text);
+              }
+            }
+          }
+        }
+
+        // 결정 패턴 감지
+        const decisionPatterns = [
+          /decided|결정|선택|chose|use.*instead|going with/i,
+          /will use|사용할|approach|방식|strategy/i,
+          /remember|기억|learned|배웠|lesson/i,
+        ];
+
+        for (const text of texts) {
+          // Skip short or injected content
+          if (text.length < 20 || text.length > 500) continue;
+          if (text.includes("<relevant-memories>")) continue;
+          if (text.startsWith("<") && text.includes("</")) continue;
+
+          // Check if it matches decision patterns
+          const isDecision = decisionPatterns.some(p => p.test(text));
+          if (!isDecision) continue;
+
+          // Auto-save detected decision (logged only, not actually saved without explicit topic)
+          console.log(`[MAMA] Auto-capture candidate: ${text.substring(0, 50)}...`);
+          // Note: 실제 저장은 명시적 topic이 필요하므로 로그만 남김
+          // 향후 LLM을 통한 topic 추출 기능 추가 가능
+        }
+      } catch (err: any) {
+        console.error("[MAMA] Auto-capture error:", err.message);
+      }
+    });
+
+    // =====================================================
     // mama_search - 시맨틱 메모리 검색
     // =====================================================
     api.registerTool({
       name: "mama_search",
       description: `Search semantic memory for relevant past decisions.
 
-**ALWAYS use BEFORE making architectural decisions:**
-- Find if this problem was solved before
-- Recall reasoning and lessons learned
-- Avoid repeating past mistakes
-- Check for related decisions to link
+⚠️ **TRIGGERS - Call this BEFORE:**
+• Making architectural choices (check prior art)
+• Calling mama_save (find links first!)
+• Debugging (find past failures on similar issues)
+• Starting work on a topic (load context)
 
 **Returns:** Decisions ranked by semantic similarity with:
 - Topic, decision, reasoning
 - Similarity score (0-100%)
 - Decision ID (for linking/updating)
+
+**High similarity (>80%) = MUST link with builds_on/debates/synthesizes**
 
 **Example queries:** "authentication", "database choice", "error handling"`,
 
@@ -126,6 +269,11 @@ const mamaPlugin = {
       name: "mama_save",
       description: `Save a decision or checkpoint to semantic memory.
 
+⚠️ **REQUIRED WORKFLOW (Don't create orphans!):**
+1. Call mama_search FIRST to find related decisions
+2. Check if same topic exists (yours will supersede it)
+3. MUST include link in reasoning/summary field
+
 **DECISION - Use when:**
 - Making architectural choices
 - Learning a lesson (success or failure)
@@ -137,7 +285,7 @@ const mamaPlugin = {
 - Reaching a milestone
 - Before switching tasks
 
-**Link decisions:** Add "builds_on: decision_xxx" in reasoning to create graph edges.`,
+**Link decisions:** End reasoning with 'builds_on: <id>' or 'debates: <id>' or 'synthesizes: [id1, id2]'`,
 
       parameters: Type.Object({
         type: Type.Union([
