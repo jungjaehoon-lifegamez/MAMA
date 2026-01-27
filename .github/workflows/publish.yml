@@ -4,9 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+      - 'clawdbot-v*'
 
 jobs:
-  publish:
+  publish-mcp-server:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -22,6 +24,41 @@ jobs:
 
       - name: Install dependencies
         run: npm install --ignore-scripts
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-clawdbot-plugin:
+    if: startsWith(github.ref, 'refs/tags/clawdbot-v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/clawdbot-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --ignore-scripts
+
+      - name: Replace workspace protocol
+        run: |
+          # Replace workspace:* with actual version from mcp-server
+          MCP_VERSION=$(node -p "require('../mcp-server/package.json').version")
+          sed -i "s/\"workspace:\*\"/\"^$MCP_VERSION\"/" package.json
+          cat package.json
 
       - name: Publish to npm
         run: npm publish --access public
