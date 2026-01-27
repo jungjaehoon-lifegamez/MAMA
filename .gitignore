@@ -57,6 +57,7 @@ Thumbs.db
 .husky/_/
 
 # MAMA specific
+.mama/
 *.db
 *.db-shm
 *.db-wal
