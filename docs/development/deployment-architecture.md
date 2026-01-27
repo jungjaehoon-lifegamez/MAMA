@@ -1,6 +1,6 @@
 # Deployment Architecture
 
-**Last Updated:** 2025-11-21
+**Last Updated:** 2026-01-27
 
 This document explains how MAMA is structured, developed, and deployed to users.
 
@@ -8,39 +8,41 @@ This document explains how MAMA is structured, developed, and deployed to users.
 
 ## Architecture Overview
 
-MAMA uses a **3-layer architecture**:
+MAMA uses a **3-layer architecture** with **3 packages**:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Layer 1: Development Repository (Monorepo)                  │
-│ github.com/jungjaehoon-lifegamez/MAMA                               │
-│                                                              │
-│ ├── packages/                                                │
-│ │   ├── mcp-server/           → npm publish                  │
-│ │   └── claude-code-plugin/   → copy to marketplace         │
-│ └── docs/                                                    │
+│ github.com/jungjaehoon-lifegamez/MAMA                       │
+│                                                             │
+│ ├── packages/                                               │
+│ │   ├── mcp-server/           → npm: @jungjaehoon/mama-server│
+│ │   ├── claude-code-plugin/   → Claude Code marketplace     │
+│ │   └── clawdbot-plugin/      → npm: @jungjaehoon/clawdbot-mama│
+│ └── docs/                                                   │
 └─────────────────────────────────────────────────────────────┘
                     ↓                    ↓
         ┌───────────────────┐    ┌─────────────────────┐
         │ npm Registry      │    │ Plugin Marketplace  │
-        │                   │    │ github.com/jungjaehoon-lifegamez/ │
-        │ @jungjaehoon/  │    │ claude-plugins             │
+        │                   │    │ jungjaehoon-lifegamez/│
+        │ @jungjaehoon/     │    │ claude-plugins      │
         │ mama-server       │    │                     │
-        │                   │    │ └── plugins/mama/   │
+        │ clawdbot-mama     │    │ └── plugins/mama/   │
         └───────────────────┘    └─────────────────────┘
                     ↓                    ↓
         ┌───────────────────────────────────────────┐
         │ User Installation                         │
         │                                           │
-        │ 1. /plugin marketplace add jungjaehoon/...    │
-        │ 2. /plugin install mama@jungjaehoon           │
+        │ Clawdbot (Recommended):                   │
+        │   clawdbot plugins install @jungjaehoon/clawdbot-mama│
         │                                           │
-        │ Result:                                   │
-        │ ~/.claude/plugins/.../mama/               │
-        │ └── .mcp.json (npx @jungjaehoon/mama-server)  │
+        │ Claude Code:                              │
+        │   /plugin marketplace add jungjaehoon/...│
+        │   /plugin install mama                   │
+        │                                           │
+        │ Claude Desktop:                           │
+        │   npx @jungjaehoon/mama-server           │
         └───────────────────────────────────────────┘
-                    ↓
-        First use: npx auto-downloads MCP server
 ```
 
 ---
@@ -63,36 +65,38 @@ github.com/jungjaehoon-lifegamez/MAMA
 │   │   │   ├── server.js            # MCP server entry point
 │   │   │   ├── mama/                # Core logic
 │   │   │   │   ├── db-manager.js
-│   │   │   │   ├── embeddings-manager.js
-│   │   │   │   ├── search-manager.js
-│   │   │   │   └── graph-expander.js
+│   │   │   │   ├── embeddings.js
+│   │   │   │   ├── memory-store.js
+│   │   │   │   └── mama-api.js
 │   │   │   └── tools/               # MCP tool handlers
-│   │   │       ├── save-decision.js
-│   │   │       ├── recall-decision.js
-│   │   │       ├── suggest-decision.js
-│   │   │       └── list-decisions.js
 │   │   ├── tests/
 │   │   └── bin/
 │   │       └── mama-server          # CLI executable
 │   │
-│   └── claude-code-plugin/          # MAMA plugin
-│       ├── .claude-plugin/
-│       │   └── plugin.json
-│       ├── .mcp.json                # References @jungjaehoon/mama-server
-│       ├── commands/                # /mama-* commands (Markdown)
-│       ├── hooks/                   # Hook configurations (JSON)
-│       ├── skills/                  # Auto-context skill
-│       ├── docs/                    # User documentation (Diátaxis)
-│       └── tests/
+│   ├── claude-code-plugin/          # MAMA plugin (Claude Code)
+│   │   ├── .claude-plugin/
+│   │   │   └── plugin.json
+│   │   ├── .mcp.json                # References @jungjaehoon/mama-server
+│   │   ├── commands/                # /mama-* commands (Markdown)
+│   │   ├── hooks/                   # Hook configurations (JSON)
+│   │   ├── skills/                  # Auto-context skill
+│   │   └── tests/
+│   │
+│   └── clawdbot-plugin/             # @jungjaehoon/clawdbot-mama
+│       ├── package.json             # npm package
+│       ├── index.ts                 # Plugin entry (lifecycle hooks + tools)
+│       ├── clawdbot.plugin.json     # Plugin metadata
+│       └── scripts/                 # Postinstall scripts
 │
 ├── .github/
 │   └── workflows/
-│       ├── test.yml                 # CI for both packages
-│       ├── publish-mcp.yml          # npm publish workflow
-│       └── publish-plugin.yml       # Marketplace sync workflow
+│       ├── test.yml                 # CI for all packages
+│       ├── publish-mcp.yml          # npm publish @jungjaehoon/mama-server
+│       ├── sync-plugin.yml          # Claude Code marketplace sync
+│       └── publish-clawdbot.yml     # npm publish @jungjaehoon/clawdbot-mama
 │
-└── docs/                            # Shared documentation (optional)
-    └── architecture/
+└── docs/                            # Shared documentation
+    └── ...
 ```
 
 ### Why Monorepo?
@@ -270,18 +274,20 @@ jobs:
 
 ## Key Design Decisions
 
-### Decision: 2-Package Architecture
+### Decision: 3-Package Architecture
 
 **Separation:**
 
 - **MCP Server** (@jungjaehoon/mama-server): Heavy dependencies (better-sqlite3, @huggingface/transformers)
-- **Plugin** (mama@jungjaehoon): Lightweight (Markdown + JSON configs)
+- **Claude Code Plugin** (mama): Lightweight (Markdown + JSON configs)
+- **Clawdbot Plugin** (@jungjaehoon/clawdbot-mama): Native plugin with lifecycle hooks
 
 **Benefits:**
 
-- ✅ Share MCP server across Claude Code + Claude Desktop
+- ✅ Share MCP server across Claude Code + Claude Desktop + Clawdbot
 - ✅ Plugin updates don't require MCP server recompilation
 - ✅ MCP server can be used standalone (API server, CLI tool)
+- ✅ Clawdbot gets native integration with auto-recall
 - ✅ Clear dependency boundaries
 
 ### Decision: npx for MCP Server Distribution
