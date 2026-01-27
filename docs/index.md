@@ -1,6 +1,6 @@
 # MAMA Plugin Documentation
 
-**Version:** 1.5.0
+**Version:** 1.5.9
 **MAMA:** Memory-Augmented MCP Assistant
 **Navigation Hub**
 
@@ -127,5 +127,5 @@ _Planning documents, PRD, and retrospectives_
 
 ---
 
-**Status:** v1.5.0 - Mobile Chat & Graph Viewer
-**Last Updated:** 2025-11-29
+**Status:** v1.5.9 - Mobile Chat, Graph Viewer & Clawdbot Support
+**Last Updated:** 2026-01-27

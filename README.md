@@ -4,52 +4,161 @@
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Version 1.5.0 | Mobile Chat & Graph Viewer
-
-MAMA tracks how your decisions evolve. Instead of just remembering what you chose, it remembers why you chose it, what you tried before, and what didn't work. Decisions connect through explicit relationships—building on prior work, debating alternatives, or synthesizing multiple approaches.
+> Version 1.5.9 | Mobile Chat, Graph Viewer & Clawdbot Support
 
 ## What is MAMA?
 
-An always-on companion for Claude Code and Claude Desktop that remembers decision evolution. When you make architectural choices, try different approaches, or learn from failures, MAMA stores this context and surfaces it when relevant.
+A memory system for Claude that remembers **why** you made choices, not just what you chose.
 
-**The killer feature:** Session continuity. End your day with `/mama-checkpoint`, resume tomorrow with `/mama-resume` - and pick up exactly where you left off with full context.
+```
+Regular memory: "Likes morning meetings"
+MAMA:           "Prefers morning meetings (tried afternoons but energy was low) → worked well for 3 months"
+```
+
+**What you get:**
+
+- Claude remembers your past choices and whether they worked
+- Pick up conversations without re-explaining everything
+- See how your preferences evolved over time
+- Free, private, all data stays on your machine
 
 ## Why MAMA?
 
-**"Reasoning Graph" over Knowledge Graph.**
+**Use MAMA if you want to:**
 
-Modern vector databases and knowledge graphs often create information overload, burying key insights under thousands of irrelevant links. MAMA takes a different approach:
+- Pick up where you left off without losing context
+- Remember why you made a choice, not just what you chose
+- Track which decisions worked and which didn't
+- Keep your data local and free
 
-- **Narrative-First**: We store _why_ you did something (Reasoning), not just _what_ you did (Code).
-- **Evolutionary**: We track how decisions supersede each other over time.
-- **Collaborative**: Decisions explicitly reference each other—building on, debating, or synthesizing prior work.
-- **Agent-Centric**: Optimized for how LLMs actually retrieve and use information, not for theoretical graph completeness.
+**Skip MAMA if you:**
 
-We prioritize **Retrieval Usability**. If an LLM can't easily find and understand the context, the data is useless.
+- Just want simple "remember this" notes → try memory-lancedb
+- Want zero setup → try memory-core
+- Need the highest accuracy search → use paid solutions
+
+### Reasoning Graph
+
+Choices don't exist in isolation. MAMA connects them:
+
+```
+workout_plan_v1 (stopped: too intense)
+    ↓ learned from
+workout_plan_v2 (partial: good but took too long)
+    ↓ improved
+workout_plan_v3 (working well: 30min sessions)
+```
+
+When you ask about workouts, MAMA shows how you got to your current routine—not just the latest choice.
+
+### Auto-Recall
+
+MAMA automatically brings up relevant memories during conversation:
+
+```
+You: "I want to start a new diet"
+
+[MAMA finds related context]
+┌─────────────────────────────────────────────────┐
+│ 📝 Related past decisions:                      │
+│ • diet_approach: "Focus on protein, not carbs"  │
+│ • meal_timing: "Skip breakfast, eat 12-8pm"     │
+└─────────────────────────────────────────────────┘
+
+Claude: "Based on your previous preference for
+        intermittent fasting and high protein..."
+```
+
+You don't need to remind Claude what worked before—MAMA brings it up automatically.
+
+### Comparison with Other Memory Solutions
+
+| Feature              | MAMA                  | memory-lancedb        | memory-core     |
+| -------------------- | --------------------- | --------------------- | --------------- |
+| **Embeddings**       | Local (free, 384d)    | OpenAI API ($, 3072d) | None            |
+| **Semantic Search**  | ✅ sqlite-vec         | ✅ LanceDB            | ❌ keyword only |
+| **Auto-capture**     | LLM-judged            | Regex patterns        | ❌ manual       |
+| **Reasoning Graph**  | ✅ builds_on, debates | ❌                    | ❌              |
+| **Outcome Tracking** | ✅ success/failed     | ❌                    | ❌              |
+| **Setup Complexity** | MCP server            | API key               | Zero            |
+| **Cost**             | Free                  | ~$0.0001/embed        | Free            |
+| **Privacy**          | 100% local            | API calls             | 100% local      |
+
+**Honest Assessment:**
+
+| Use Case                 | Best Choice    | Why                                        |
+| ------------------------ | -------------- | ------------------------------------------ |
+| "What did I say?"        | memory-lancedb | Higher quality embeddings, full automation |
+| "Why did I decide that?" | MAMA           | Reasoning + outcome tracking               |
+| Quick notes              | memory-core    | Zero setup, just markdown                  |
+
+**The Real Differentiator: Linked Decisions**
+
+Both MAMA and memory-lancedb use LLM to save memories. The difference:
+
+```
+memory-lancedb: detect pattern → save → done
+MAMA:           detect pattern → search related → link → save
+```
+
+The extra "search → link" step creates a **reasoning graph**. Without it, you just have isolated memories. With it, you can trace how your thinking evolved:
+
+```
+sleep_schedule_v1 (failed) → v2 (adjusted from v1) → v3 (combined best of v1 & v2)
+```
+
+**MAMA's Tradeoffs:**
+
+- ✅ Free, local, private
+- ✅ Decision evolution tracking
+- ✅ Outcome verification (did it work?)
+- ⚠️ Lower embedding quality than OpenAI
+- ⚠️ Requires "search before save" discipline
+- ⚠️ Learning curve (topic, reasoning, outcome concepts)
 
 ---
 
 ## Installation
 
-### Claude Code
+### Clawdbot (Recommended)
 
-**Quick Start (2 steps):**
+Native plugin with **auto-recall** — memories surface automatically during conversation.
 
 ```bash
-# Step 1: Add MAMA marketplace (one-time setup)
+clawdbot plugins install @jungjaehoon/clawdbot-mama
+```
+
+Enable in `~/.clawdbot/clawdbot.json`:
+
+```json
+{
+  "plugins": {
+    "slots": { "memory": "clawdbot-mama" },
+    "entries": { "clawdbot-mama": { "enabled": true } }
+  }
+}
+```
+
+**What you get:**
+
+- Auto-recall: relevant decisions injected on every agent start
+- 4 tools: `mama_search`, `mama_save`, `mama_load_checkpoint`, `mama_update`
+
+### Claude Code
+
+```bash
+# Add marketplace (one-time)
 /plugin marketplace add jungjaehoon-lifegamez/claude-plugins
 
-# Step 2: Install MAMA plugin
+# Install plugin
 /plugin install mama
 ```
 
-> **Note:** Claude Code uses decentralized marketplaces. You need to add the MAMA marketplace once, then you can install and update the plugin anytime.
-
-First use of `/mama-save` downloads the MCP server automatically (~50MB for embedding model).
+First use downloads the embedding model (~50MB).
 
 ### Claude Desktop
 
-Add to your `claude_desktop_config.json`:
+Add to `claude_desktop_config.json`:
 
 ```json
 {
@@ -64,9 +173,10 @@ Add to your `claude_desktop_config.json`:
 
 ### Other MCP Clients
 
-MAMA works with any MCP-compatible client. Below are verified configurations:
+MAMA works with any MCP-compatible client:
 
-#### Codex
+<details>
+<summary>Codex</summary>
 
 Add to `~/.codex/config.toml`:
 
@@ -74,11 +184,12 @@ Add to `~/.codex/config.toml`:
 [mcp_servers.mama]
   command = "npx"
   args = ["-y", "@jungjaehoon/mama-server"]
-  disabled = false
-  disabled_tools = []
 ```
 
-#### Antigravity IDE (Gemini)
+</details>
+
+<details>
+<summary>Antigravity IDE (Gemini)</summary>
 
 Add to `~/.gemini/antigravity/mcp_config.json`:
 
@@ -87,15 +198,15 @@ Add to `~/.gemini/antigravity/mcp_config.json`:
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon/mama-server"],
-      "disabled": false,
-      "disabledTools": []
+      "args": ["-y", "@jungjaehoon/mama-server"]
     }
   }
 }
 ```
 
-> **Note:** All MCP clients share the same database at `~/.claude/mama-memory.db`, so decisions are available across all your IDEs.
+</details>
+
+> **Note:** All clients share the same database (`~/.claude/mama-memory.db`).
 
 ### Prerequisites
 
@@ -607,7 +718,7 @@ MAMA will warn you when external access is detected:
 
 ## Project Structure
 
-This is a monorepo containing two packages:
+This is a monorepo containing three packages:
 
 ```
 MAMA/
@@ -616,11 +727,15 @@ MAMA/
 │   │   ├── src/             # Server implementation
 │   │   └── tests/           # Server tests
 │   │
-│   └── claude-code-plugin/  # mama (marketplace)
-│       ├── commands/        # Slash commands
-│       ├── hooks/           # Auto-context injection
-│       ├── skills/          # Background skills
-│       └── tests/           # Plugin tests
+│   ├── claude-code-plugin/  # mama (Claude Code marketplace)
+│   │   ├── commands/        # Slash commands
+│   │   ├── hooks/           # Auto-context injection
+│   │   ├── skills/          # Background skills
+│   │   └── tests/           # Plugin tests
+│   │
+│   └── clawdbot-plugin/     # @jungjaehoon/clawdbot-mama (npm)
+│       ├── index.ts         # Plugin entry (lifecycle hooks + tools)
+│       └── scripts/         # Postinstall scripts
 │
 └── docs/                    # Documentation
 ```
@@ -733,4 +848,4 @@ MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0
 ---
 
 **Author**: SpineLift Team
-**Last Updated**: 2025-11-29
+**Last Updated**: 2026-01-27
