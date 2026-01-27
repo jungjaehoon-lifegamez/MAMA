@@ -25,19 +25,55 @@ node --version
 
 ## Quick Install
 
+### For Clawdbot Users (Recommended)
+
+Native plugin with **auto-recall** — memories surface automatically during conversation.
+
+**Step 1: Install Plugin**
+
+```bash
+clawdbot plugins install @jungjaehoon/clawdbot-mama
+```
+
+**Step 2: Enable in config**
+
+Add to `~/.clawdbot/clawdbot.json`:
+
+```json
+{
+  "plugins": {
+    "slots": { "memory": "clawdbot-mama" },
+    "entries": { "clawdbot-mama": { "enabled": true } }
+  }
+}
+```
+
+**Step 3: Restart gateway**
+
+```bash
+clawdbot gateway restart
+```
+
+**What you get:**
+
+- Auto-recall: relevant decisions injected on every agent start
+- 4 tools: `mama_search`, `mama_save`, `mama_load_checkpoint`, `mama_update`
+
+---
+
 ### For Claude Code Users
 
 **Step 1: Install Plugin**
 
 ```bash
-/plugin marketplace add jungjaehoon/claude-plugins
-/plugin install mama@jungjaehoon
+/plugin marketplace add jungjaehoon-lifegamez/claude-plugins
+/plugin install mama
 ```
 
 **Step 2: First Use (Automatic Setup)**
 
 ```bash
-/mama-save
+/mama:decision
 ```
 
 On first use, MAMA's MCP server will be automatically downloaded and set up via npx (~1-2 minutes).
@@ -257,25 +293,29 @@ Then configure with absolute path:
 
 ## Architecture Overview
 
-MAMA uses a **2-package architecture**:
+MAMA uses a **3-package architecture**:
 
 1. **@jungjaehoon/mama-server** (MCP Server)
-
    - Independent npm package
    - Handles all AI/database operations
-   - Shared across Claude Code, Claude Desktop, and other MCP clients
+   - Shared across all clients
    - Contains: better-sqlite3, @huggingface/transformers
 
-2. **mama-plugin** (Claude Code Plugin)
+2. **mama** (Claude Code Plugin)
    - Lightweight plugin (Markdown + config)
-   - Provides /mama-\* commands
+   - Provides /mama:\* commands
    - Hooks for automatic context injection
    - References the MCP server via .mcp.json
+
+3. **@jungjaehoon/clawdbot-mama** (Clawdbot Plugin)
+   - Native plugin with lifecycle hooks
+   - Auto-recall on agent start
+   - Direct module integration (no HTTP)
 
 **Benefits:**
 
 - ✅ One MCP server, multiple clients
-- ✅ Automatic dependency management (npx)
+- ✅ Clawdbot gets native auto-recall
 - ✅ Platform-specific compilation handled automatically
 - ✅ Shared decision database across all tools
 

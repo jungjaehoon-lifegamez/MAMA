@@ -10,38 +10,31 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                    MAMA Plugin Ecosystem                     │
 ├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  Claude Code Plugin    Claude Desktop    Cursor    Aider    │
-│  ┌──────────────────┐  ┌──────────────┐                      │
-│  │ Commands         │  │              │                      │
-│  │ Skills           │  │  MCP Client  │  (Any MCP client)    │
-│  │ Hooks ───HTTP───┐│  │              │                      │
-│  └──────────────────┘│  └──────────────┘                      │
-│                      │          │                             │
-│              ┌───────▼──────────▼──────────┐                 │
-│              │  HTTP Embedding Server      │                 │
-│              │  127.0.0.1:3847             │                 │
-│              │  Model stays in memory      │                 │
-│              └─────────────────────────────┘                 │
-│                            │                                  │
-│              ┌─────────────▼─────────────┐                   │
-│              │   MCP Server (stdio)      │                   │
-│              │  5 Tools: save/recall/    │                   │
-│              │  suggest/list/update      │                   │
-│              └───────────────────────────┘                   │
-│                            │                                  │
-│              ┌─────────────▼─────────────┐                   │
-│              │   Core Logic              │                   │
-│              │  - Embeddings             │                   │
-│              │  - Vector Search          │                   │
-│              │  - Graph Traversal        │                   │
-│              └───────────────────────────┘                   │
-│                            │                                  │
-│              ┌─────────────▼─────────────┐                   │
-│              │  SQLite Database          │                   │
-│              │  ~/.claude/mama-memory.db │                   │
-│              └───────────────────────────┘                   │
-│                                                               │
+│                                                              │
+│  Clawdbot         Claude Code      Claude Desktop   Others  │
+│  ┌────────────┐   ┌────────────┐   ┌────────────┐          │
+│  │ Native     │   │ Commands   │   │            │          │
+│  │ Plugin     │   │ Skills     │   │ MCP Client │  (Cursor,│
+│  │ (auto-     │   │ Hooks      │   │            │   Aider) │
+│  │  recall)   │   └────────────┘   └────────────┘          │
+│  └──────┬─────┘         │                │                  │
+│         │               │                │                  │
+│         │       ┌───────▼────────────────▼──────────┐      │
+│         │       │  HTTP Embedding Server (3847)     │      │
+│         │       │  Model stays in memory            │      │
+│         │       └───────────────────────────────────┘      │
+│         │                       │                           │
+│         │       ┌───────────────▼───────────────┐          │
+│  Direct │       │   MCP Server (stdio)          │          │
+│  module ├──────▶│   4 Tools: save/search/       │          │
+│  import │       │   update/load_checkpoint      │          │
+│         │       └───────────────────────────────┘          │
+│         │                       │                           │
+│         │       ┌───────────────▼───────────────┐          │
+│         └──────▶│  SQLite + sqlite-vec          │          │
+│                 │  ~/.claude/mama-memory.db     │          │
+│                 └───────────────────────────────┘          │
+│                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -74,18 +67,24 @@
 ### MCP Server
 
 - **Transport:** stdio (local process)
-- **Tools:** 5 (save, recall, suggest, list, update)
+- **Tools:** 4 (save, search, update, load_checkpoint)
 - **Performance:** <100ms p99 latency
+
+### Clawdbot Plugin
+
+- **Integration:** Direct module import (no HTTP)
+- **Tools:** 4 (mama_search, mama_save, mama_update, mama_load_checkpoint)
+- **Auto-recall:** Semantic search on `before_agent_start` event
 
 ### Database (SQLite + sqlite-vec)
 
 - **Decisions table:** topic, decision, reasoning, confidence, outcome
-- **Embeddings:** 384-dimensional vectors (multilingual-e5-small)
-- **Graph:** supersedes/refines/contradicts edges
+- **Embeddings:** 384-dimensional vectors (all-MiniLM-L6-v2)
+- **Graph:** supersedes/builds_on/debates/synthesizes edges
 
 ### Embeddings
 
-- **Model:** Xenova/multilingual-e5-small (120MB)
+- **Model:** Xenova/all-MiniLM-L6-v2 (~30MB)
 - **Tier 1:** Transformers.js (ONNX runtime)
 - **Tier 2:** Disabled (fallback to exact match)
 

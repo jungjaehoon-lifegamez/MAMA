@@ -18,6 +18,19 @@ MAMA (Memory-Augmented MCP Assistant) provides **4 core tools** for decision tra
   }
   ```
 
+### Clawdbot Plugin
+
+Clawdbot uses the same 4 tools with `mama_` prefix:
+
+| MCP Server        | Clawdbot Plugin        |
+| ----------------- | ---------------------- |
+| `save`            | `mama_save`            |
+| `search`          | `mama_search`          |
+| `update`          | `mama_update`          |
+| `load_checkpoint` | `mama_load_checkpoint` |
+
+Clawdbot also provides **auto-recall**: relevant decisions are automatically injected on agent start based on user prompt.
+
 ## Response Format
 
 All tools return a standard MCP response structure.

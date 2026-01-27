@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [clawdbot-plugin-0.2.0] - 2026-01-27
+
+### Added
+
+- **Clawdbot Plugin** - Native plugin for Clawdbot/Moltbot gateway integration
+  - **Auto-recall**: Semantic search on `before_agent_start` based on user prompt
+  - **4 native tools**: `mama_search`, `mama_save`, `mama_load_checkpoint`, `mama_update`
+  - **Auto-capture detection**: Pattern matching for decision-like messages on `agent_end`
+  - **Context injection**: Injects relevant memories via `prependContext` return value
+
+### Changed
+
+- **Tool descriptions**: Enhanced with "REQUIRED WORKFLOW" guidance
+  - `mama_save`: Now instructs "Call mama_search FIRST to find related decisions"
+  - `mama_search`: Now shows "⚠️ TRIGGERS - Call this BEFORE mama_save"
+
+### Technical
+
+- Uses lifecycle hooks (`api.on("before_agent_start")`) instead of bootstrap hooks
+- Direct module integration (no HTTP/REST) via `@jungjaehoon/mama-server` workspace dependency
+- Published to npm as `@jungjaehoon/clawdbot-mama`
+
 ## [1.5.9] - 2026-01-26
 
 ### Fixed
