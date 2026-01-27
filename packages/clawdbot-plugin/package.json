@@ -1,0 +1,47 @@
+{
+  "name": "@jungjaehoon/clawdbot-mama",
+  "version": "1.0.0",
+  "description": "MAMA Memory Plugin for Clawdbot - Semantic decision memory with reasoning graph",
+  "type": "module",
+  "main": "index.ts",
+  "clawdbot": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "echo 'No tests yet'",
+    "clean": "rm -rf node_modules"
+  },
+  "keywords": [
+    "clawdbot",
+    "clawdbot-plugin",
+    "memory",
+    "semantic-search",
+    "decision-tracking",
+    "mama"
+  ],
+  "author": "SpineLift Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA.git",
+    "directory": "packages/clawdbot-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA/issues"
+  },
+  "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
+  "peerDependencies": {
+    "clawdbot": ">=2026.1.24"
+  },
+  "dependencies": {
+    "@jungjaehoon/mama-server": "workspace:*",
+    "@sinclair/typebox": "^0.32.0"
+  },
+  "files": [
+    "index.ts",
+    "clawdbot.plugin.json",
+    "README.md"
+  ]
+}
