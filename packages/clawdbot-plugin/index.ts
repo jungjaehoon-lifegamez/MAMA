@@ -24,6 +24,29 @@ let initialized = false;
 let mama: any = null;
 
 /**
+ * Format reasoning with link extraction
+ * Shows truncated reasoning + preserves builds_on/debates/synthesizes links
+ */
+function formatReasoning(reasoning: string, maxLen: number = 80): string {
+  if (!reasoning) return "";
+
+  // Extract link patterns
+  const linkMatch = reasoning.match(/(builds_on|debates|synthesizes):\s*[\w\[\],\s_-]+/i);
+
+  // Truncate main reasoning
+  const truncated = reasoning.length > maxLen
+    ? reasoning.substring(0, maxLen) + "..."
+    : reasoning;
+
+  // Add link info if found and not already in truncated part
+  if (linkMatch && !truncated.includes(linkMatch[0])) {
+    return `${truncated}\n  🔗 ${linkMatch[0]}`;
+  }
+
+  return truncated;
+}
+
+/**
  * Initialize MAMA (lazy, once)
  */
 async function initMAMA(): Promise<void> {
@@ -99,7 +122,7 @@ const mamaPlugin = {
               const pct = Math.round((r.similarity || 0) * 100);
               content += `- **${r.topic}** [${pct}%]: ${r.decision}`;
               if (r.outcome) content += ` (${r.outcome})`;
-              content += `\n  _${(r.reasoning || "").substring(0, 100)}..._\n`;
+              content += `\n  _${formatReasoning(r.reasoning, 100)}_\n`;
               content += `  ID: \`${r.id}\`\n`;
             });
             content += "\n";
@@ -251,7 +274,7 @@ const mamaPlugin = {
             const pct = Math.round((r.similarity || 0) * 100);
             output += `**${idx + 1}. ${r.topic}** [${pct}% match]\n`;
             output += `   Decision: ${r.decision}\n`;
-            output += `   Reasoning: ${(r.reasoning || "").substring(0, 150)}...\n`;
+            output += `   Reasoning: ${formatReasoning(r.reasoning, 150)}\n`;
             output += `   ID: \`${r.id}\` | Outcome: ${r.outcome || "pending"}\n\n`;
           });
 

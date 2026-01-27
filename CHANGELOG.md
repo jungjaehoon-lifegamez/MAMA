@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [clawdbot-plugin-0.2.1] - 2026-01-27
+
+### Fixed
+
+- **Reasoning truncation losing link info** - `builds_on`, `debates`, `synthesizes` patterns now preserved
+  - Auto-recall and mama_search both extract link patterns from reasoning
+  - Shows truncated reasoning + separate 🔗 link line if pattern found after truncation point
+  - Fixes context loss when reasoning graph connections were cut off
+
 ## [clawdbot-plugin-0.2.0] - 2026-01-27
 
 ### Added
