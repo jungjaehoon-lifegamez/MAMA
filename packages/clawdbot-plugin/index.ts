@@ -45,7 +45,7 @@ async function initMAMA(): Promise<void> {
 }
 
 const mamaPlugin = {
-  id: "mama",
+  id: "clawdbot-mama",
   name: "MAMA Memory",
   description: "Semantic decision memory - Direct Gateway integration (no HTTP)",
   kind: "memory" as const,
