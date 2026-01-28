@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [clawdbot-plugin-0.2.3] - 2026-01-28
+
+### Fixed
+
+- **CodeRabbit Review Feedback** - Addressed all code review issues from PR #6
+  - Fixed hooks path resolution: `./hooks/hooks.json` → `../hooks/hooks.json` (relative to plugin.json location)
+  - Added guard for missing `better-sqlite3` in postinstall scripts
+  - Re-verify native module load after `prebuild-install` (success doesn't guarantee loadability)
+  - Resolve `better-sqlite3` through `@jungjaehoon/mama-server` dependency path
+
+### Changed
+
+- **TypeScript Improvements**
+  - Use `Static<typeof pluginConfigSchema>` for type-safe PluginConfig
+  - Add warning when `initMAMA` called with different config after initialization
+
+### Documentation
+
+- **JSDoc Coverage** - Improved from 66.67% to 80%+
+  - Added docstrings to `mamaPlugin` and `register` method
+  - Added docstrings to postinstall `main` functions in both packages
+
+## [mcp-server-1.5.11] - 2026-01-28
+
+### Added
+
+- **Postinstall Script** - New `scripts/postinstall.js` for automatic `better-sqlite3` prebuild installation
+  - Ensures native module is ready after npm install
+  - Uses shared utility `scripts/ensure-sqlite-prebuild.js` in monorepo
+  - Falls back to inline logic when installed from npm
+
 ## [1.5.10] - 2026-01-28
 
 ### Fixed
