@@ -7,6 +7,11 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
+/**
+ * Main postinstall function for MAMA MCP Server.
+ * Ensures better-sqlite3 native module prebuild is installed correctly.
+ * @returns {Promise<void>}
+ */
 async function main() {
   console.log('[MAMA] Running postinstall checks...');
 

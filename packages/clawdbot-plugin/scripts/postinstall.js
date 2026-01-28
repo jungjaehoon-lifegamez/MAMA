@@ -7,6 +7,11 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
+/**
+ * Main postinstall function for MAMA Clawdbot Plugin.
+ * Downloads embedding model and ensures SQLite native module is ready.
+ * @returns {Promise<void>}
+ */
 async function main() {
   console.log('[MAMA] Running postinstall checks...');
 
