@@ -9,7 +9,7 @@
     "properties": {
       "dbPath": {
         "type": "string",
-        "description": "Path to MAMA SQLite database"
+        "description": "Path to MAMA SQLite database. Defaults to ~/.claude/mama-memory.db"
       }
     }
   }
