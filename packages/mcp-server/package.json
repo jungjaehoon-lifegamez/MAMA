@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
+    "postinstall": "node scripts/postinstall.js",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "clean": "rm -rf dist node_modules"
@@ -51,6 +52,7 @@
     "src/**/*.css",
     "src/**/*.html",
     "src/db/migrations/*.sql",
+    "scripts/postinstall.js",
     "README.md",
     "LICENSE"
   ]

@@ -12,16 +12,51 @@
 
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "clawdbot/plugin-sdk";
-import { emptyPluginConfigSchema } from "clawdbot/plugin-sdk";
 import path from "node:path";
 import os from "node:os";
 
 // MAMA 모듈 경로 - workspace dependency에서 resolve
-const MAMA_MODULE_PATH = require.resolve("@jungjaehoon/mama-server/src/mama/mama-api.js").replace("/mama-api.js", "");
+const MAMA_MODULE_PATH = path.dirname(require.resolve("@jungjaehoon/mama-server/src/mama/mama-api.js"));
+
+// MAMA API interface for type safety
+interface MAMAApi {
+  suggest(query: string, options: { limit: number; threshold: number }): Promise<{ results: MAMADecision[] }>;
+  save(params: { topic: string; decision: string; reasoning: string; confidence: number; type: string }): Promise<{ id: string; warning?: string; collaboration_hint?: string }>;
+  saveCheckpoint(summary: string, files: string[], nextSteps: string): Promise<number>;
+  loadCheckpoint(): Promise<MAMACheckpoint | null>;
+  list(options: { limit: number }): Promise<{ decisions: MAMADecision[] }>;
+  updateOutcome(id: string, options: { outcome: string; failure_reason?: string; limitation?: string }): Promise<void>;
+}
+
+interface MAMADecision {
+  id: string;
+  topic: string;
+  decision: string;
+  reasoning: string;
+  outcome?: string;
+  similarity?: number;
+  timestamp?: string;
+}
+
+interface MAMACheckpoint {
+  id: number;
+  summary: string;
+  next_steps?: string;
+  timestamp: string;
+}
+
+// Plugin config schema
+const pluginConfigSchema = Type.Object({
+  dbPath: Type.Optional(Type.String({
+    description: "Path to MAMA SQLite database. Defaults to ~/.claude/mama-memory.db"
+  }))
+});
+
+type PluginConfig = { dbPath?: string };
 
 // Singleton state
 let initialized = false;
-let mama: any = null;
+let mama: MAMAApi | null = null;
 
 /**
  * Format reasoning with link extraction
@@ -49,12 +84,14 @@ function formatReasoning(reasoning: string, maxLen: number = 80): string {
 /**
  * Initialize MAMA (lazy, once)
  */
-async function initMAMA(): Promise<void> {
+async function initMAMA(config?: PluginConfig): Promise<void> {
   if (initialized) return;
 
-  // Set DB path
-  process.env.MAMA_DB_PATH = process.env.MAMA_DB_PATH ||
+  // Set DB path from config or environment or default
+  const dbPath = config?.dbPath ||
+    process.env.MAMA_DB_PATH ||
     path.join(os.homedir(), ".claude/mama-memory.db");
+  process.env.MAMA_DB_PATH = dbPath;
 
   try {
     // Load mama-api (high-level API)
@@ -65,7 +102,7 @@ async function initMAMA(): Promise<void> {
     await memoryStore.initDB();
 
     initialized = true;
-    console.log("[MAMA Plugin] Initialized with direct module integration");
+    console.log(`[MAMA Plugin] Initialized with direct module integration (db: ${dbPath})`);
   } catch (err: any) {
     console.error("[MAMA Plugin] Init failed:", err.message);
     throw err;
@@ -77,16 +114,18 @@ const mamaPlugin = {
   name: "MAMA Memory",
   description: "Semantic decision memory - Direct Gateway integration (no HTTP)",
   kind: "memory" as const,
-  configSchema: emptyPluginConfigSchema(),
+  configSchema: pluginConfigSchema,
 
   register(api: ClawdbotPluginApi) {
+    // Get plugin config
+    const config = (api as any).config as PluginConfig | undefined;
 
     // =====================================================
     // Auto-recall: 유저 프롬프트 기반 시맨틱 검색
     // =====================================================
     api.on("before_agent_start", async (event: any) => {
       try {
-        await initMAMA();
+        await initMAMA(config);
 
         const userPrompt = event.prompt || "";
 
@@ -129,7 +168,7 @@ const mamaPlugin = {
           }
 
           if (checkpoint) {
-            content += `## Last Checkpoint (${new Date(checkpoint.timestamp).toLocaleString()})\n\n`;
+            content += `## Last Checkpoint (${new Date(checkpoint.timestamp).toISOString()})\n\n`;
             content += `**Summary:** ${checkpoint.summary}\n\n`;
             if (checkpoint.next_steps) {
               content += `**Next Steps:** ${checkpoint.next_steps}\n\n`;
@@ -168,7 +207,7 @@ const mamaPlugin = {
       }
 
       try {
-        await initMAMA();
+        await initMAMA(config);
 
         // 메시지에서 텍스트 추출
         const texts: string[] = [];
@@ -250,7 +289,7 @@ const mamaPlugin = {
 
       async execute(_id: string, params: Record<string, unknown>) {
         try {
-          await initMAMA();
+          await initMAMA(config);
 
           const query = String(params.query || "").trim();
           if (!query) {
@@ -339,7 +378,7 @@ const mamaPlugin = {
 
       async execute(_id: string, params: Record<string, unknown>) {
         try {
-          await initMAMA();
+          await initMAMA(config);
 
           const saveType = String(params.type);
 
@@ -417,7 +456,7 @@ Also returns recent decisions for context.`,
 
       async execute(_id: string, _params: Record<string, unknown>) {
         try {
-          await initMAMA();
+          await initMAMA(config);
 
           // Use mama.loadCheckpoint() and mama.list()
           const checkpoint = await mama.loadCheckpoint();
@@ -435,7 +474,7 @@ Also returns recent decisions for context.`,
             return { content: [{ type: "text", text: msg }] };
           }
 
-          let msg = `**Checkpoint** (${new Date(checkpoint.timestamp).toLocaleString()})\n\n`;
+          let msg = `**Checkpoint** (${new Date(checkpoint.timestamp).toISOString()})\n\n`;
           msg += `**Summary:**\n${checkpoint.summary}\n\n`;
 
           if (checkpoint.next_steps) {
@@ -484,7 +523,7 @@ Helps future sessions learn from experience.`,
 
       async execute(_id: string, params: Record<string, unknown>) {
         try {
-          await initMAMA();
+          await initMAMA(config);
 
           const decisionId = String(params.id || "");
           const outcome = String(params.outcome || "").toUpperCase();

@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 /**
- * MAMA Clawdbot Plugin - Postinstall Script
- * Downloads embedding model during installation
+ * MAMA MCP Server - Postinstall Script
+ * Ensures better-sqlite3 prebuild is installed correctly
  */
+
+const { execSync } = require('child_process');
+const path = require('path');
 
 async function main() {
   console.log('[MAMA] Running postinstall checks...');
@@ -13,28 +16,6 @@ async function main() {
     console.warn('[MAMA] Warning: Node.js 18+ recommended, current:', process.versions.node);
   }
 
-  // Try to download embedding model
-  console.log('[MAMA] Pre-downloading embedding model...');
-
-  try {
-    // Dynamic import for ESM module
-    const { pipeline } = await import('@huggingface/transformers');
-
-    // This will download and cache the model
-    console.log('[MAMA] Downloading Xenova/all-MiniLM-L6-v2 (~30MB)...');
-    const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-      quantized: true,
-    });
-
-    // Quick test to verify it works
-    const testResult = await extractor('test', { pooling: 'mean', normalize: true });
-    console.log('[MAMA] Embedding model ready (dimension:', testResult.data.length, ')');
-  } catch (err) {
-    // Non-fatal - model will be downloaded on first use
-    console.warn('[MAMA] Could not pre-download model:', err.message);
-    console.warn('[MAMA] Model will be downloaded on first use.');
-  }
-
   // Check better-sqlite3 and install prebuild if needed
   try {
     require('better-sqlite3');
@@ -43,11 +24,9 @@ async function main() {
     console.warn('[MAMA] SQLite native module not ready, installing prebuild...');
 
     // Try to install prebuild
-    const { execSync } = require('child_process');
-    const path = require('path');
-    const betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
-
     try {
+      const betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
+
       execSync('npx prebuild-install', {
         cwd: betterSqlitePath,
         stdio: 'inherit',

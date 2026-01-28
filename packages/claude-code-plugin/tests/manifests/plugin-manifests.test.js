@@ -52,14 +52,8 @@ describe('M3.3: Plugin Manifests', () => {
         expect(fs.existsSync(cmdPath)).toBe(true);
       });
 
-      // Expected commands (M3.1)
-      const expectedCommands = [
-        'mama-recall',
-        'mama-suggest',
-        'mama-list',
-        'mama-save',
-        'mama-configure',
-      ];
+      // Expected commands (current structure)
+      const expectedCommands = ['decision', 'search', 'checkpoint', 'resume', 'configure'];
 
       expectedCommands.forEach((cmdName) => {
         const found = pluginConfig.commands.some((cmd) => cmd.includes(cmdName));
@@ -348,11 +342,11 @@ describe('M3.3: Plugin Manifests', () => {
 
       // Updated validation script uses directory-based discovery
       expect(output).toMatch(/commands.*directory|Command/i);
-      expect(output).toContain('mama-recall');
-      expect(output).toContain('mama-suggest');
-      expect(output).toContain('mama-list');
-      expect(output).toContain('mama-save');
-      expect(output).toContain('mama-configure');
+      expect(output).toContain('decision.md');
+      expect(output).toContain('search.md');
+      expect(output).toContain('checkpoint.md');
+      expect(output).toContain('resume.md');
+      expect(output).toContain('configure.md');
     });
 
     it('should verify hook scripts exist', () => {

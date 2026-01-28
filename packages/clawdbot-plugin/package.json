@@ -2,7 +2,6 @@
   "name": "@jungjaehoon/clawdbot-mama",
   "version": "0.2.2",
   "description": "MAMA Memory Plugin for Clawdbot - Semantic decision memory with reasoning graph",
-  "type": "module",
   "main": "index.ts",
   "clawdbot": {
     "extensions": [
