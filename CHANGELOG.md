@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.10] - 2026-01-28
+
+### Fixed
+
+- **Plugin MCP Connection Failure** - Fixed `Cannot find package '@huggingface/transformers'` error
+  - Plugin hooks use `embeddings.js` which falls back to local model when HTTP server unavailable
+  - Added missing `@huggingface/transformers` dependency to plugin `package.json`
+  - Previously worked only when HTTP embedding server was running on port 3847
+  - Now plugin cache survives updates without manual `npm install`
+
 ## [clawdbot-plugin-0.2.1] - 2026-01-27
 
 ### Fixed
