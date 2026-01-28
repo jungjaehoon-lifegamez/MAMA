@@ -158,8 +158,9 @@ function validatePluginJson(pluginConfig) {
   if (!pluginConfig.hooks) {
     warn('plugin.json has no hooks');
   } else if (typeof pluginConfig.hooks === 'string') {
-    // External hooks config file
-    const hooksConfigPath = path.join(PLUGIN_ROOT, pluginConfig.hooks);
+    // External hooks config file - resolve relative to plugin.json location
+    const pluginJsonDir = path.dirname(PLUGIN_JSON);
+    const hooksConfigPath = path.resolve(pluginJsonDir, pluginConfig.hooks);
     if (!fs.existsSync(hooksConfigPath)) {
       error(`Hooks config file not found: ${hooksConfigPath}`);
     } else {
