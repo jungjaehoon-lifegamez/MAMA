@@ -43,53 +43,41 @@ async function main() {
     console.warn('[MAMA] Model will be downloaded on first use.');
   }
 
-  // Check better-sqlite3 and install prebuild if needed (uses shared utility)
+  // Check better-sqlite3 via mama-server dependency (not direct dependency)
+  // clawdbot-plugin gets sqlite through @jungjaehoon/mama-server
   try {
-    // Try to use shared utility first
-    const sharedScript = path.resolve(__dirname, '../../../scripts/ensure-sqlite-prebuild.js');
-    const { ensureSqlitePrebuild } = require(sharedScript);
-    ensureSqlitePrebuild({ prefix: '[MAMA]' });
-  } catch (sharedErr) {
-    // Shared utility not available when installed from npm (monorepo structure not present).
-    // Inline logic below mirrors scripts/ensure-sqlite-prebuild.js - keep in sync.
+    // Resolve better-sqlite3 through mama-server's dependency path
+    const mamaServerPath = path.dirname(require.resolve('@jungjaehoon/mama-server/package.json'));
+    const betterSqlitePath = path.join(mamaServerPath, 'node_modules', 'better-sqlite3');
+
+    // Try loading via mama-server's node_modules
     try {
-      require('better-sqlite3');
+      require(path.join(betterSqlitePath, 'build/Release/better_sqlite3.node'));
       console.log('[MAMA] SQLite native module: OK');
-    } catch (err) {
-      console.warn('[MAMA] SQLite native module not ready, installing prebuild...');
-
-      // Guard: check if better-sqlite3 package exists before resolving path
-      let betterSqlitePath;
-      try {
-        betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
-      } catch {
-        // better-sqlite3 not installed at all - this is OK for clawdbot-plugin
-        // as it gets sqlite through @jungjaehoon/mama-server dependency
-        console.warn('[MAMA] better-sqlite3 not found, skipping prebuild check');
-        return;
-      }
-
-      try {
-        let prebuildCmd = 'npx prebuild-install';
+    } catch (loadErr) {
+      // Try prebuild-install in mama-server's better-sqlite3
+      if (require('fs').existsSync(betterSqlitePath)) {
+        console.warn('[MAMA] SQLite native module not ready, installing prebuild...');
         try {
-          const prebuildPath = require.resolve('prebuild-install/bin.js');
-          prebuildCmd = `node "${prebuildPath}"`;
-        } catch {
-          // use npx
+          execSync('npx prebuild-install', { cwd: betterSqlitePath, stdio: 'inherit' });
+          console.log('[MAMA] SQLite native module: OK (prebuild installed)');
+        } catch (prebuildErr) {
+          console.warn('[MAMA] Prebuild install failed:', prebuildErr.message);
+          console.warn('[MAMA] SQLite will be loaded at runtime via mama-server');
         }
-
-        execSync(prebuildCmd, { cwd: betterSqlitePath, stdio: 'inherit' });
-
-        delete require.cache[require.resolve('better-sqlite3')];
-        require('better-sqlite3');
-        console.log('[MAMA] SQLite native module: OK (prebuild installed)');
-      } catch (prebuildErr) {
-        console.error('[MAMA] Failed to install prebuild:', prebuildErr.message);
-        console.error(
-          '[MAMA] Try manually: cd node_modules/better-sqlite3 && npx prebuild-install'
-        );
+      } else {
+        // Monorepo with hoisted deps - try direct require
+        try {
+          require('better-sqlite3');
+          console.log('[MAMA] SQLite native module: OK (hoisted)');
+        } catch {
+          console.warn('[MAMA] SQLite native module will be loaded at runtime via mama-server');
+        }
       }
     }
+  } catch (err) {
+    // mama-server not available yet (first install) - skip check
+    console.log('[MAMA] SQLite check skipped (dependencies not ready yet)');
   }
 
   console.log('[MAMA] Postinstall complete.');
