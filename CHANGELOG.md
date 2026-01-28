@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Previously worked only when HTTP embedding server was running on port 3847
   - Now plugin cache survives updates without manual `npm install`
 
+## [clawdbot-plugin-0.2.2] - 2026-01-28
+
+### Fixed
+
+- **Postinstall Model Download** - Fixed `Cannot find package '@huggingface/transformers'` in postinstall
+  - Added `@huggingface/transformers` dependency for postinstall script model pre-download
+
 ## [clawdbot-plugin-0.2.1] - 2026-01-27
 
 ### Fixed
