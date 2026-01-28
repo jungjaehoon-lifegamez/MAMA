@@ -60,7 +60,17 @@ async function main() {
         console.warn('[MAMA] SQLite native module not ready, installing prebuild...');
         try {
           execSync('npx prebuild-install', { cwd: betterSqlitePath, stdio: 'inherit' });
-          console.log('[MAMA] SQLite native module: OK (prebuild installed)');
+          // Re-verify native module actually loads after prebuild-install
+          try {
+            require(path.join(betterSqlitePath, 'build/Release/better_sqlite3.node'));
+            console.log('[MAMA] SQLite native module: OK (prebuild installed)');
+          } catch (verifyErr) {
+            console.warn(
+              '[MAMA] Prebuild installed but module still not loadable:',
+              verifyErr.message
+            );
+            console.warn('[MAMA] SQLite will be loaded at runtime via mama-server');
+          }
         } catch (prebuildErr) {
           console.warn('[MAMA] Prebuild install failed:', prebuildErr.message);
           console.warn('[MAMA] SQLite will be loaded at runtime via mama-server');
