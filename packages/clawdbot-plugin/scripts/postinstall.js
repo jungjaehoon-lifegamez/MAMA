@@ -44,8 +44,9 @@ async function main() {
     const sharedScript = path.resolve(__dirname, '../../../scripts/ensure-sqlite-prebuild.js');
     const { ensureSqlitePrebuild } = require(sharedScript);
     ensureSqlitePrebuild({ prefix: '[MAMA]' });
-  } catch {
-    // Shared utility not available (e.g., when installed from npm), use inline logic
+  } catch (sharedErr) {
+    // Shared utility not available when installed from npm (monorepo structure not present).
+    // Inline logic below mirrors scripts/ensure-sqlite-prebuild.js - keep in sync.
     try {
       require('better-sqlite3');
       console.log('[MAMA] SQLite native module: OK');

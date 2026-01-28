@@ -160,13 +160,13 @@ const mamaPlugin = {
 
         const userPrompt = event.prompt || "";
 
-        const api = getMAMA();
+        const mamaApi = getMAMA();
 
         // 1. 유저 프롬프트가 있으면 시맨틱 검색 수행
         let semanticResults: MAMADecision[] = [];
         if (userPrompt && userPrompt.length >= 5) {
           try {
-            const searchResult = await api.suggest(userPrompt, { limit: 3, threshold: 0.5 });
+            const searchResult = await mamaApi.suggest(userPrompt, { limit: 3, threshold: 0.5 });
             semanticResults = searchResult?.results || [];
           } catch (searchErr: any) {
             console.error("[MAMA] Semantic search error:", searchErr.message);
@@ -174,12 +174,12 @@ const mamaPlugin = {
         }
 
         // 2. 최근 체크포인트 로드
-        const checkpoint = await api.loadCheckpoint();
+        const checkpoint = await mamaApi.loadCheckpoint();
 
         // 3. 최근 결정들 로드 (시맨틱 검색 결과가 없을 때만)
         let recentDecisions: MAMADecision[] = [];
         if (semanticResults.length === 0) {
-          recentDecisions = await api.list({ limit: 3 });
+          recentDecisions = await mamaApi.list({ limit: 3 });
         }
 
         // 4. 컨텍스트가 있으면 주입
@@ -492,8 +492,8 @@ Also returns recent decisions for context.`,
 
           // Use mama.loadCheckpoint() and mama.list()
           const checkpoint = await getMAMA().loadCheckpoint();
-          const recentResult = await getMAMA().list({ limit: 5 });
-          const recent = recentResult?.decisions || [];
+          // list() returns MAMADecision[] directly
+          const recent = await getMAMA().list({ limit: 5 });
 
           if (!checkpoint) {
             let msg = "No checkpoint found - fresh start.";

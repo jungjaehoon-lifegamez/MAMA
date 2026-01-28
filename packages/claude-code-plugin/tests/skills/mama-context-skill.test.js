@@ -66,8 +66,8 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
         // External reference format (e.g., "./hooks/hooks.json")
         expect(pluginConfig.hooks).toContain('hooks.json');
 
-        // Load and validate the external hooks file
-        const hooksPath = path.join(path.dirname(PLUGIN_JSON_PATH), '..', pluginConfig.hooks);
+        // Load and validate the external hooks file (resolve relative to plugin.json location)
+        const hooksPath = path.resolve(path.dirname(PLUGIN_JSON_PATH), pluginConfig.hooks);
         expect(fs.existsSync(hooksPath)).toBe(true);
 
         const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
@@ -304,8 +304,8 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
 
       // Handle external reference or inline format
       if (typeof pluginConfig.hooks === 'string') {
-        // External reference - load the hooks file
-        const hooksPath = path.join(path.dirname(PLUGIN_JSON_PATH), '..', pluginConfig.hooks);
+        // External reference - load the hooks file (resolve relative to plugin.json location)
+        const hooksPath = path.resolve(path.dirname(PLUGIN_JSON_PATH), pluginConfig.hooks);
         const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
         const hooksConfig = hooksFile.hooks || hooksFile; // Support both nested and flat structure
 
@@ -324,8 +324,8 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
 
       let hooksConfig;
       if (typeof pluginConfig.hooks === 'string') {
-        // External reference - load the hooks file
-        const hooksPath = path.join(path.dirname(PLUGIN_JSON_PATH), '..', pluginConfig.hooks);
+        // External reference - load the hooks file (resolve relative to plugin.json location)
+        const hooksPath = path.resolve(path.dirname(PLUGIN_JSON_PATH), pluginConfig.hooks);
         const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
         hooksConfig = hooksFile.hooks || hooksFile; // Support both nested and flat structure
       } else {

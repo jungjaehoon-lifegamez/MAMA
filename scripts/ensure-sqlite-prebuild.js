@@ -47,7 +47,11 @@ function ensureSqlitePrebuild(options = {}) {
       });
 
       // Clear require cache and retry
-      delete require.cache[require.resolve('better-sqlite3')];
+      try {
+        delete require.cache[require.resolve('better-sqlite3')];
+      } catch {
+        // Module not in cache yet, that's fine
+      }
       require('better-sqlite3');
       console.log(`${prefix} SQLite native module: OK (prebuild installed)`);
       return true;
@@ -61,9 +65,12 @@ function ensureSqlitePrebuild(options = {}) {
   }
 }
 
-// If run directly, execute the check
+// If run directly, execute the check and exit with appropriate code
 if (require.main === module) {
-  ensureSqlitePrebuild({ prefix: '[MAMA]' });
+  const success = ensureSqlitePrebuild({ prefix: '[MAMA]' });
+  if (!success) {
+    process.exit(1);
+  }
 }
 
 module.exports = { ensureSqlitePrebuild };

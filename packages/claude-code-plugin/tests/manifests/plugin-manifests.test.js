@@ -85,7 +85,7 @@ describe('M3.3: Plugin Manifests', () => {
       // Hooks should reference external file (official spec)
       expect(pluginConfig.hooks).toBeDefined();
       expect(typeof pluginConfig.hooks).toBe('string');
-      expect(pluginConfig.hooks).toBe('./hooks/hooks.json');
+      expect(pluginConfig.hooks).toBe('../hooks/hooks.json');
 
       // Verify hooks.json exists
       const hooksJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
@@ -142,7 +142,7 @@ describe('M3.3: Plugin Manifests', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
       expect(pluginConfig.hooks).toBeDefined();
       expect(typeof pluginConfig.hooks).toBe('string');
-      expect(pluginConfig.hooks).toBe('./hooks/hooks.json');
+      expect(pluginConfig.hooks).toBe('../hooks/hooks.json');
 
       const hookJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
       expect(fs.existsSync(hookJsonPath)).toBe(true);
