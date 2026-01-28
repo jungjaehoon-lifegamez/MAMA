@@ -30,8 +30,7 @@
       "command": "npx",
       "args": ["-y", "@jungjaehoon/mama-server"],
       "env": {
-        "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-small",
-        "MAMA_AUTH_TOKEN": "e0aqZbjG/xPNKFh+Qx8TAkWeKIhI0rJkSSfn6/YNlKk="
+        "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-small"
       }
     }
   }

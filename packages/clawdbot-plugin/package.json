@@ -40,6 +40,9 @@
     "@jungjaehoon/mama-server": "workspace:*",
     "@sinclair/typebox": "^0.32.0"
   },
+  "optionalDependencies": {
+    "prebuild-install": "^7.1.0"
+  },
   "files": [
     "index.ts",
     "clawdbot.plugin.json",

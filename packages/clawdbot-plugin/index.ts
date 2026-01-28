@@ -18,14 +18,28 @@ import os from "node:os";
 // MAMA 모듈 경로 - workspace dependency에서 resolve
 const MAMA_MODULE_PATH = path.dirname(require.resolve("@jungjaehoon/mama-server/src/mama/mama-api.js"));
 
-// MAMA API interface for type safety
+// MAMA API interface for type safety (matching actual mama-api.js implementation)
 interface MAMAApi {
-  suggest(query: string, options: { limit: number; threshold: number }): Promise<{ results: MAMADecision[] }>;
-  save(params: { topic: string; decision: string; reasoning: string; confidence: number; type: string }): Promise<{ id: string; warning?: string; collaboration_hint?: string }>;
+  suggest(query: string, options: { limit: number; threshold: number }): Promise<MAMASuggestResult | null>;
+  save(params: { topic: string; decision: string; reasoning: string; confidence: number; type: string }): Promise<MAMASaveResult>;
   saveCheckpoint(summary: string, files: string[], nextSteps: string): Promise<number>;
   loadCheckpoint(): Promise<MAMACheckpoint | null>;
-  list(options: { limit: number }): Promise<{ decisions: MAMADecision[] }>;
+  list(options: { limit: number }): Promise<MAMADecision[]>;
   updateOutcome(id: string, options: { outcome: string; failure_reason?: string; limitation?: string }): Promise<void>;
+}
+
+interface MAMASaveResult {
+  success: boolean;
+  id: string;
+  similar_decisions?: MAMADecision[];
+  warning?: string;
+  collaboration_hint?: string;
+  reasoning_graph?: unknown;
+}
+
+interface MAMASuggestResult {
+  query: string;
+  results: MAMADecision[];
 }
 
 interface MAMADecision {
@@ -33,9 +47,13 @@ interface MAMADecision {
   topic: string;
   decision: string;
   reasoning: string;
+  confidence?: number;
   outcome?: string;
   similarity?: number;
-  timestamp?: string;
+  created_at?: string;
+  recency_score?: number;
+  recency_age_days?: number;
+  final_score?: number;
 }
 
 interface MAMACheckpoint {
@@ -57,6 +75,17 @@ type PluginConfig = { dbPath?: string };
 // Singleton state
 let initialized = false;
 let mama: MAMAApi | null = null;
+
+/**
+ * Get MAMA API with null guard
+ * @throws Error if MAMA is not initialized
+ */
+function getMAMA(): MAMAApi {
+  if (!mama) {
+    throw new Error('MAMA not initialized. Call initMAMA() first.');
+  }
+  return mama;
+}
 
 /**
  * Format reasoning with link extraction
@@ -117,8 +146,10 @@ const mamaPlugin = {
   configSchema: pluginConfigSchema,
 
   register(api: ClawdbotPluginApi) {
-    // Get plugin config
-    const config = (api as any).config as PluginConfig | undefined;
+    // Get plugin config (config property may be available depending on SDK version)
+    const config: PluginConfig | undefined = 'config' in api
+      ? (api as { config?: PluginConfig }).config
+      : undefined;
 
     // =====================================================
     // Auto-recall: 유저 프롬프트 기반 시맨틱 검색
@@ -129,11 +160,13 @@ const mamaPlugin = {
 
         const userPrompt = event.prompt || "";
 
+        const api = getMAMA();
+
         // 1. 유저 프롬프트가 있으면 시맨틱 검색 수행
-        let semanticResults: any[] = [];
+        let semanticResults: MAMADecision[] = [];
         if (userPrompt && userPrompt.length >= 5) {
           try {
-            const searchResult = await mama.suggest(userPrompt, { limit: 3, threshold: 0.5 });
+            const searchResult = await api.suggest(userPrompt, { limit: 3, threshold: 0.5 });
             semanticResults = searchResult?.results || [];
           } catch (searchErr: any) {
             console.error("[MAMA] Semantic search error:", searchErr.message);
@@ -141,13 +174,12 @@ const mamaPlugin = {
         }
 
         // 2. 최근 체크포인트 로드
-        const checkpoint = await mama.loadCheckpoint();
+        const checkpoint = await api.loadCheckpoint();
 
         // 3. 최근 결정들 로드 (시맨틱 검색 결과가 없을 때만)
-        let recentDecisions: any[] = [];
+        let recentDecisions: MAMADecision[] = [];
         if (semanticResults.length === 0) {
-          const recentResult = await mama.list({ limit: 3 });
-          recentDecisions = recentResult?.decisions || [];
+          recentDecisions = await api.list({ limit: 3 });
         }
 
         // 4. 컨텍스트가 있으면 주입
@@ -299,7 +331,7 @@ const mamaPlugin = {
           const limit = Math.min(Number(params.limit) || 5, 20);
 
           // Use mama.suggest() for semantic search
-          const result = await mama.suggest(query, { limit, threshold: 0.5 });
+          const result = await getMAMA().suggest(query, { limit, threshold: 0.5 });
 
           if (!result?.results?.length) {
             return {
@@ -389,7 +421,7 @@ const mamaPlugin = {
             }
 
             // mama.saveCheckpoint returns lastInsertRowid directly (not {id: ...})
-            const checkpointId = await mama.saveCheckpoint(
+            const checkpointId = await getMAMA().saveCheckpoint(
               summary,
               [],
               String(params.next_steps || "")
@@ -414,7 +446,7 @@ const mamaPlugin = {
           const confidence = Number(params.confidence) || 0.8;
 
           // Use mama.save() API
-          const result = await mama.save({
+          const result = await getMAMA().save({
             topic,
             decision,
             reasoning,
@@ -459,8 +491,8 @@ Also returns recent decisions for context.`,
           await initMAMA(config);
 
           // Use mama.loadCheckpoint() and mama.list()
-          const checkpoint = await mama.loadCheckpoint();
-          const recentResult = await mama.list({ limit: 5 });
+          const checkpoint = await getMAMA().loadCheckpoint();
+          const recentResult = await getMAMA().list({ limit: 5 });
           const recent = recentResult?.decisions || [];
 
           if (!checkpoint) {
@@ -534,7 +566,7 @@ Helps future sessions learn from experience.`,
           }
 
           // mama.updateOutcome(id, { outcome, failure_reason, limitation })
-          await mama.updateOutcome(decisionId, {
+          await getMAMA().updateOutcome(decisionId, {
             outcome,
             failure_reason: outcome === "FAILED" ? reason : undefined,
             limitation: outcome === "PARTIAL" ? reason : undefined,

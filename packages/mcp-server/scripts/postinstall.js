@@ -16,29 +16,34 @@ async function main() {
     console.warn('[MAMA] Warning: Node.js 18+ recommended, current:', process.versions.node);
   }
 
-  // Check better-sqlite3 and install prebuild if needed
+  // Check better-sqlite3 and install prebuild if needed (uses shared utility)
   try {
-    require('better-sqlite3');
-    console.log('[MAMA] SQLite native module: OK');
-  } catch (err) {
-    console.warn('[MAMA] SQLite native module not ready, installing prebuild...');
-
-    // Try to install prebuild
+    // Try to use shared utility first
+    const sharedScript = path.resolve(__dirname, '../../../scripts/ensure-sqlite-prebuild.js');
+    const { ensureSqlitePrebuild } = require(sharedScript);
+    ensureSqlitePrebuild({ prefix: '[MAMA]' });
+  } catch {
+    // Shared utility not available (e.g., when installed from npm), use inline logic
     try {
-      const betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
-
-      execSync('npx prebuild-install', {
-        cwd: betterSqlitePath,
-        stdio: 'inherit',
-      });
-
-      // Clear require cache and retry
-      delete require.cache[require.resolve('better-sqlite3')];
       require('better-sqlite3');
-      console.log('[MAMA] SQLite native module: OK (prebuild installed)');
-    } catch (prebuildErr) {
-      console.error('[MAMA] Failed to install prebuild:', prebuildErr.message);
-      console.error('[MAMA] Try manually: cd node_modules/better-sqlite3 && npx prebuild-install');
+      console.log('[MAMA] SQLite native module: OK');
+    } catch (err) {
+      console.warn('[MAMA] SQLite native module not ready, installing prebuild...');
+
+      try {
+        const betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
+
+        execSync('npx prebuild-install', { cwd: betterSqlitePath, stdio: 'inherit' });
+
+        delete require.cache[require.resolve('better-sqlite3')];
+        require('better-sqlite3');
+        console.log('[MAMA] SQLite native module: OK (prebuild installed)');
+      } catch (prebuildErr) {
+        console.error('[MAMA] Failed to install prebuild:', prebuildErr.message);
+        console.error(
+          '[MAMA] Try manually: cd node_modules/better-sqlite3 && npx prebuild-install'
+        );
+      }
     }
   }
 
