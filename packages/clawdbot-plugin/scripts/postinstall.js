@@ -53,7 +53,16 @@ async function main() {
     } catch (err) {
       console.warn('[MAMA] SQLite native module not ready, installing prebuild...');
 
-      const betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
+      // Guard: check if better-sqlite3 package exists before resolving path
+      let betterSqlitePath;
+      try {
+        betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
+      } catch {
+        // better-sqlite3 not installed at all - this is OK for clawdbot-plugin
+        // as it gets sqlite through @jungjaehoon/mama-server dependency
+        console.warn('[MAMA] better-sqlite3 not found, skipping prebuild check');
+        return;
+      }
 
       try {
         let prebuildCmd = 'npx prebuild-install';

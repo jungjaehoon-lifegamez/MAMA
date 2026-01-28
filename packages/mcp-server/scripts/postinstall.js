@@ -31,9 +31,17 @@ async function main() {
     } catch (err) {
       console.warn('[MAMA] SQLite native module not ready, installing prebuild...');
 
+      // Guard: check if better-sqlite3 package exists before resolving path
+      let betterSqlitePath;
       try {
-        const betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
+        betterSqlitePath = path.dirname(require.resolve('better-sqlite3/package.json'));
+      } catch {
+        console.error('[MAMA] better-sqlite3 package not found');
+        console.error('[MAMA] This should not happen - better-sqlite3 is a direct dependency');
+        return;
+      }
 
+      try {
         execSync('npx prebuild-install', { cwd: betterSqlitePath, stdio: 'inherit' });
 
         delete require.cache[require.resolve('better-sqlite3')];
