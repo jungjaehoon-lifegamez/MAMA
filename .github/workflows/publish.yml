@@ -4,11 +4,13 @@ on:
   push:
     tags:
       - 'v*'
+      - 'mcp-server-*'
       - 'clawdbot-v*'
+      - 'clawdbot-plugin-*'
 
 jobs:
   publish-mcp-server:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/mcp-server-')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,7 +38,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-clawdbot-plugin:
-    if: startsWith(github.ref, 'refs/tags/clawdbot-v')
+    if: startsWith(github.ref, 'refs/tags/clawdbot-v') || startsWith(github.ref, 'refs/tags/clawdbot-plugin-')
     runs-on: ubuntu-latest
     defaults:
       run:
