@@ -148,6 +148,10 @@ async function initMAMA(config?: PluginConfig): Promise<void> {
   }
 }
 
+/**
+ * MAMA Clawdbot Plugin definition.
+ * Provides semantic decision memory with auto-recall and auto-capture features.
+ */
 const mamaPlugin = {
   id: "clawdbot-mama",
   name: "MAMA Memory",
@@ -155,6 +159,11 @@ const mamaPlugin = {
   kind: "memory" as const,
   configSchema: pluginConfigSchema,
 
+  /**
+   * Register MAMA plugin with Clawdbot Gateway.
+   * Sets up auto-recall, auto-capture, and native MCP tools.
+   * @param api - Clawdbot plugin API for event registration and tool creation
+   */
   register(api: ClawdbotPluginApi) {
     // Get plugin config (config property may be available depending on SDK version)
     const config: PluginConfig | undefined = 'config' in api
