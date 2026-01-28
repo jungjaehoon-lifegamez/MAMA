@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.11] - 2026-01-28
+
+### Fixed
+
+- **Hooks Path Resolution** - Fixed plugin hooks path for correct loading
+  - Changed `./hooks/hooks.json` → `../hooks/hooks.json` (relative to plugin.json in `.claude-plugin/`)
+  - Updated `validate-manifests.js` to resolve hooks path correctly
+
 ## [clawdbot-plugin-0.2.3] - 2026-01-28
 
 ### Fixed
