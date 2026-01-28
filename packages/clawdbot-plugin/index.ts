@@ -10,7 +10,7 @@
  * - Auto-capture: 에이전트 종료 시 중요 결정 자동 저장
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "clawdbot/plugin-sdk";
 import path from "node:path";
 import os from "node:os";
@@ -70,11 +70,13 @@ const pluginConfigSchema = Type.Object({
   }))
 });
 
-type PluginConfig = { dbPath?: string };
+// Derive PluginConfig from schema for type safety
+type PluginConfig = Static<typeof pluginConfigSchema>;
 
 // Singleton state
 let initialized = false;
 let mama: MAMAApi | null = null;
+let initialDbPath: string | null = null;
 
 /**
  * Get MAMA API with null guard
@@ -114,12 +116,19 @@ function formatReasoning(reasoning: string, maxLen: number = 80): string {
  * Initialize MAMA (lazy, once)
  */
 async function initMAMA(config?: PluginConfig): Promise<void> {
-  if (initialized) return;
-
   // Set DB path from config or environment or default
   const dbPath = config?.dbPath ||
     process.env.MAMA_DB_PATH ||
     path.join(os.homedir(), ".claude/mama-memory.db");
+
+  // Warn if re-initialized with different config
+  if (initialized) {
+    if (initialDbPath && dbPath !== initialDbPath) {
+      console.warn(`[MAMA Plugin] Warning: initMAMA called with different dbPath (${dbPath}) after initialization with (${initialDbPath}). Using original path.`);
+    }
+    return;
+  }
+
   process.env.MAMA_DB_PATH = dbPath;
 
   try {
@@ -131,6 +140,7 @@ async function initMAMA(config?: PluginConfig): Promise<void> {
     await memoryStore.initDB();
 
     initialized = true;
+    initialDbPath = dbPath;
     console.log(`[MAMA Plugin] Initialized with direct module integration (db: ${dbPath})`);
   } catch (err: any) {
     console.error("[MAMA Plugin] Init failed:", err.message);
