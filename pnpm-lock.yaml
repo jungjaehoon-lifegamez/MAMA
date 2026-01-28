@@ -48,6 +48,9 @@ importers:
 
   packages/clawdbot-plugin:
     dependencies:
+      '@huggingface/transformers':
+        specifier: ^3.0.0
+        version: 3.8.0
       '@jungjaehoon/mama-server':
         specifier: workspace:*
         version: link:../mcp-server
