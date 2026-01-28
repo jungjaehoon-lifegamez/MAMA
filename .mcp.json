@@ -3,8 +3,9 @@
     "mama": {
       "command": "npx",
       "args": ["-y", "@jungjaehoon/mama-server"],
-      "disabled": true,
-      "disabledTools": []
+      "env": {
+        "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-small"
+      }
     }
   }
 }
