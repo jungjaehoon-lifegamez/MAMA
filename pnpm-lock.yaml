@@ -60,6 +60,10 @@ importers:
       clawdbot:
         specifier: '>=2026.1.24'
         version: 2026.1.24(@types/express@5.0.6)(devtools-protocol@0.0.1574117)
+    optionalDependencies:
+      prebuild-install:
+        specifier: ^7.1.0
+        version: 7.1.3
 
   packages/embedding-server:
     dependencies:

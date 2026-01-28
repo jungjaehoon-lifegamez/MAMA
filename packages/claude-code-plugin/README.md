@@ -51,6 +51,8 @@ Add to `claude_desktop_config.json`:
 
 **Works with both!** Same MCP server, shared database.
 
+**Configuration:** See `.mcp.json` for MCP server settings.
+
 **Detailed guide:** [Installation Guide](../../docs/guides/installation.md)
 
 ---
