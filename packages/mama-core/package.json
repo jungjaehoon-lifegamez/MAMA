@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
   "main": "src/index.js",
   "exports": {

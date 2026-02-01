@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/openclaw-mama",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "MAMA Memory Plugin for OpenClaw - Semantic decision memory with reasoning graph",
   "main": "index.ts",
   "openclaw": {
