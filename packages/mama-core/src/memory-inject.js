@@ -89,8 +89,15 @@ async function performMemoryInjection(userMessage, startTime) {
   const wordCount = userMessage.split(/\s+/).length;
   const adaptiveThreshold = wordCount < 3 ? 0.7 : 0.6;
 
-  // 3. Vector search
-  let results = vectorSearch(queryEmbedding, 10, 0.5); // Get more candidates
+  // 3. Vector search (returns [] on error for graceful degradation)
+  let results;
+  try {
+    results = await vectorSearch(queryEmbedding, 10, 0.5); // Get more candidates
+  } catch (error) {
+    // Vector search unavailability should not block the main conversation flow
+    logError(`[MAMA] Vector search failed: ${error.message}`);
+    return null;
+  }
 
   // 4. Filter by adaptive threshold
   results = results.filter((r) => r.similarity >= adaptiveThreshold);
@@ -102,7 +109,8 @@ async function performMemoryInjection(userMessage, startTime) {
 
   // 5. Check if we have any decisions
   if (results.length === 0) {
-    info(`[MAMA] No relevant decisions found (query: "${userMessage.substring(0, 50)}...")`);
+    // Redact user content for privacy - only log length, not content
+    info(`[MAMA] No relevant decisions found (query length: ${userMessage.length} chars)`);
     return null;
   }
 

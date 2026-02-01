@@ -9,7 +9,13 @@ echo "Scanning for secrets..."
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks protect --staged --no-banner
 else
-  npx gitleaks protect --staged --no-banner 2>/dev/null || echo "⚠️  gitleaks not installed, skipping secret scan"
+  # Check if gitleaks is available via npx
+  if npx --yes gitleaks --version >/dev/null 2>&1; then
+    # gitleaks available - run scan (will exit non-zero if secrets found)
+    npx --yes gitleaks protect --staged --no-banner
+  else
+    echo "⚠️  gitleaks not installed, skipping secret scan"
+  fi
 fi
 
 # Run typecheck for standalone package

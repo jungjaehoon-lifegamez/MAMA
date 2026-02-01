@@ -129,6 +129,7 @@ async function closeDB() {
     dbAdapter = null;
     dbConnection = null;
     isInitialized = false;
+    initializingPromise = null; // Clear to allow re-initialization
     info('[db-manager] Database connection closed');
   }
 }
