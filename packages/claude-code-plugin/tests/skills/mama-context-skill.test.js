@@ -186,12 +186,14 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       const preToolContent = fs.readFileSync(PRE_TOOL_HOOK, 'utf8');
       expect(preToolContent.startsWith('#!/usr/bin/env node')).toBe(true);
 
-      // Check executable permissions
-      const userPromptStat = fs.statSync(USER_PROMPT_HOOK);
-      expect(userPromptStat.mode & 0o111).toBeGreaterThan(0); // At least one execute bit
+      // Check executable permissions (Unix only - Windows doesn't use execute bits)
+      if (process.platform !== 'win32') {
+        const userPromptStat = fs.statSync(USER_PROMPT_HOOK);
+        expect(userPromptStat.mode & 0o111).toBeGreaterThan(0); // At least one execute bit
 
-      const preToolStat = fs.statSync(PRE_TOOL_HOOK);
-      expect(preToolStat.mode & 0o111).toBeGreaterThan(0);
+        const preToolStat = fs.statSync(PRE_TOOL_HOOK);
+        expect(preToolStat.mode & 0o111).toBeGreaterThan(0);
+      }
     });
 
     it('should trigger UserPromptSubmit hook on prompt', () => {

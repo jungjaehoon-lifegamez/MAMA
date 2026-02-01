@@ -47,10 +47,6 @@ function warn(msg) {
   warnings.push(msg);
 }
 
-function _info(msg) {
-  console.log(`\x1b[36mℹ️  ${msg}\x1b[0m`);
-}
-
 /**
  * Validate JSON file exists and is valid
  */

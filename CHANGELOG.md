@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **mama-os**: CLI `--version` now reads from package.json instead of hardcoded value
+- **mama-os**: Version fallback changed from hardcoded '0.1.4' to 'unknown'
+- **plugin**: Removed unused `_info` function in validate-manifests.js
+- **plugin**: Execute bit tests now skip on Windows for cross-platform compatibility
 
 ## [mama-os-0.1.1] - 2026-02-01
 
