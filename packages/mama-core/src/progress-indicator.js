@@ -46,14 +46,20 @@ function logComplete(message) {
 }
 
 /**
- * Log error message
+ * Log failure/error message (user-facing progress indicator)
  *
- * @param {string} message - Error message
+ * Note: Named logFailed to avoid confusion with debug-logger's logError
+ * which is used for internal debugging. This is for user-facing progress.
+ *
+ * @param {string} message - Failure message
  * @returns {void}
  */
-function logError(message) {
+function logFailed(message) {
   logProgress(message, '❌');
 }
+
+// Alias for backward compatibility
+const logError = logFailed;
 
 /**
  * Log info message
@@ -93,7 +99,8 @@ function logSearching(message) {
 module.exports = {
   logProgress,
   logComplete,
-  logError,
+  logFailed,
+  logError, // Alias for backward compatibility
   logInfo,
   logLoading,
   logSearching,

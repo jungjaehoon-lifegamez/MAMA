@@ -13,8 +13,9 @@
  * - Vector similarity search (when sqlite-vec available)
  *
  * @module db-manager
- * @version 2.0 (Plugin - SQLite-only)
- * @date 2025-11-20
+ * @version 2.1 (Plugin - SQLite-only)
+ * @date 2026-02-01
+ * @source-of-truth packages/mama-core/src/db-manager.js (mama-core)
  */
 
 const { info, warn, error: logError } = require('./debug-logger');
@@ -26,6 +27,7 @@ const path = require('path');
 let dbAdapter = null;
 let dbConnection = null;
 let isInitialized = false;
+let initializingPromise = null; // Single-flight guard for concurrent callers
 
 // Migration directory (moved to src/db/migrations for M1.2)
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
@@ -36,64 +38,53 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
  * Lazy initialization: Only connects when first accessed
  * Creates database file at ~/.claude/mama-memory.db by default
  *
+ * Single-flight guard: Concurrent callers await the same promise
+ * to prevent multiple adapters/migrations running simultaneously.
+ *
  * @returns {Promise<Object>} SQLite database connection
  */
 async function initDB() {
+  // Already initialized - return immediately
   if (isInitialized) {
     return dbConnection;
   }
 
-  try {
-    logSearching('Initializing database...');
-
-    // Create SQLite adapter
-    dbAdapter = createAdapter();
-
-    // Connect to database
-    dbConnection = await dbAdapter.connect();
-
-    // Run migrations
-    await dbAdapter.runMigrations(MIGRATIONS_DIR);
-
-    // Create checkpoints table (New Feature: Session Continuity)
-    dbAdapter
-      .prepare(
-        `
-      CREATE TABLE IF NOT EXISTS checkpoints (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp INTEGER NOT NULL,
-        summary TEXT NOT NULL,
-        open_files TEXT, -- JSON array
-        next_steps TEXT,
-        recent_conversation TEXT DEFAULT '[]',
-        status TEXT DEFAULT 'active' -- 'active', 'archived'
-      )
-    `
-      )
-      .run();
-
-    // Migration: Add recent_conversation column if not exists (backward compatibility)
-    try {
-      dbAdapter
-        .prepare(`ALTER TABLE checkpoints ADD COLUMN recent_conversation TEXT DEFAULT '[]'`)
-        .run();
-      info('[db-manager] Added recent_conversation column to checkpoints table');
-    } catch (error) {
-      // Column already exists or other error - safe to ignore
-      if (!error.message.includes('duplicate column')) {
-        warn(`[db-manager] Could not add recent_conversation column: ${error.message}`);
-      }
-    }
-
-    isInitialized = true;
-
-    info(`[db-manager] Database initialized (${dbAdapter.constructor.name})`);
-    logComplete('Database ready');
-
-    return dbConnection;
-  } catch (error) {
-    throw new Error(`Failed to initialize database: ${error.message}`);
+  // Single-flight guard: If initialization is in progress, wait for it
+  if (initializingPromise) {
+    return initializingPromise;
   }
+
+  // Start initialization and store promise for concurrent callers
+  initializingPromise = (async () => {
+    try {
+      logSearching('Initializing database...');
+
+      // Create SQLite adapter
+      dbAdapter = createAdapter();
+
+      // Connect to database
+      dbConnection = await dbAdapter.connect();
+
+      // Run migrations (includes 012-create-checkpoints-table.sql)
+      await dbAdapter.runMigrations(MIGRATIONS_DIR);
+
+      isInitialized = true;
+
+      info(`[db-manager] Database initialized (${dbAdapter.constructor.name})`);
+      logComplete('Database ready');
+
+      return dbConnection;
+    } catch (error) {
+      // Clear state on failure so retry is possible
+      initializingPromise = null;
+      dbAdapter = null;
+      dbConnection = null;
+      isInitialized = false;
+      throw new Error(`Failed to initialize database: ${error.message}`);
+    }
+  })();
+
+  return initializingPromise;
 }
 
 /**
@@ -603,18 +594,54 @@ async function updateDecisionOutcome(decisionId, outcomeData) {
  * Get prepared statement
  *
  * For backward compatibility with memory-store.js
- * Deprecated: Use adapter.prepare() directly
+ * Returns a compatibility shim that proxies to adapter.prepare()
  *
- * @param {string} name - Statement name (ignored)
- * @returns {Object} Dummy statement object
+ * @param {string} sql - SQL statement
+ * @returns {Object} Statement-like object with run/get/all methods
  */
-function getPreparedStmt(_name) {
-  warn('[db-manager] getPreparedStmt() is deprecated. Use adapter.prepare() directly.');
-  return {
-    run: () => {
-      throw new Error('getPreparedStmt() is deprecated');
-    },
-  };
+function getPreparedStmt(sql) {
+  if (!dbAdapter) {
+    warn('[db-manager] getPreparedStmt() called before initialization');
+    // Return no-op object for feature detection (won't throw)
+    return {
+      run: () => ({ changes: 0, lastInsertRowid: 0 }),
+      get: () => null,
+      all: () => [],
+    };
+  }
+
+  // Proxy to adapter.prepare() for actual usage
+  try {
+    return dbAdapter.prepare(sql);
+  } catch (error) {
+    warn(`[db-manager] getPreparedStmt() failed: ${error.message}`);
+    // Return no-op object on error (graceful degradation)
+    return {
+      run: () => ({ changes: 0, lastInsertRowid: 0 }),
+      get: () => null,
+      all: () => [],
+    };
+  }
+}
+
+/**
+ * Get database file path
+ *
+ * @returns {string} Actual database path or 'Not initialized'
+ */
+function getDbPath() {
+  if (!dbAdapter) {
+    return 'Not initialized';
+  }
+  // Use adapter's getDbPath method if available, fallback to description
+  if (typeof dbAdapter.getDbPath === 'function') {
+    return dbAdapter.getDbPath();
+  }
+  // Fallback: try to get path from adapter properties
+  if (dbAdapter.dbPath) {
+    return dbAdapter.dbPath;
+  }
+  return `${dbAdapter.constructor.name} (path unavailable)`;
 }
 
 // Export API (same interface as memory-store.js, but async where needed)
@@ -630,17 +657,10 @@ module.exports = {
   insertDecisionWithEmbedding, // Async
   queryDecisionGraph, // Async
   updateDecisionOutcome, // Async
-  getPreparedStmt, // Deprecated
-  // Legacy exports for backward compatibility
-  getDbPath: () => (dbAdapter ? dbAdapter.constructor.name : 'Not initialized'),
+  getPreparedStmt, // Compatibility shim
+  getDbPath, // Returns actual path
 };
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  await closeDB();
-  process.exit(0);
-});
-process.on('SIGTERM', async () => {
-  await closeDB();
-  process.exit(0);
-});
+// Note: Removed auto-registered SIGINT/SIGTERM handlers that called process.exit(0)
+// This was causing issues with host cleanup in parent processes.
+// If graceful shutdown is needed, the host application should handle closeDB().

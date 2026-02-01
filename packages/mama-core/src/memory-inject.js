@@ -12,24 +12,16 @@
  * @date 2025-11-14
  */
 
-// Use LLM-based intent detection (EXAONE 3.5)
 // Error handling policy:
 // - Timeout errors: thrown (caller handles retry/fallback)
 // - Vector search unavailable: returns empty array (recoverable, not critical)
 const { info, error: logError } = require('./debug-logger');
-// eslint-disable-next-line no-unused-vars
-const { analyzeIntent } = require('./query-intent');
-// eslint-disable-next-line no-unused-vars
-const { queryDecisionGraph, vectorSearch } = require('./memory-store');
-// Lazy-load embeddings to avoid loading sharp at startup (Story 014.12.7 - Windows Node.js compatibility)
-// const { generateEmbedding } = require('./embeddings');
+const { vectorSearch } = require('./memory-store');
 const { formatContext } = require('./decision-formatter');
 
 // Configuration
 const TIMEOUT_MS = 5000; // LLM-based intent detection, user accepts longer thinking
 const TOKEN_BUDGET = 500; // AC #1: Max 500 tokens per injection
-// eslint-disable-next-line no-unused-vars
-const ENABLE_VECTOR_SEARCH = true; // Enable vector search for semantic matching
 
 /**
  * UserPromptSubmit Hook Handler
@@ -126,77 +118,6 @@ async function performMemoryInjection(userMessage, startTime) {
   return formattedContext;
 }
 
-/**
- * Perform vector search for semantic matching
- *
- * Task 4.1-4.5: Vector search with similarity threshold
- * AC #1: Semantic matching for relevant decisions
- *
- * @param {string} userMessage - User's message
- * @param {string} topic - Detected topic
- * @returns {Promise<Array<Object>>} Semantically similar decisions
- */
-// eslint-disable-next-line no-unused-vars
-async function performVectorSearch(userMessage, _topic) {
-  try {
-    // Task 4.1: Generate query embedding from user message
-    // Lazy-load embeddings at runtime (Story 014.12.7)
-    const { generateEmbedding } = require('./embeddings');
-    const queryEmbedding = await generateEmbedding(userMessage);
-
-    // Task 4.2: Search vss_memories with top k=5, threshold=0.6
-    // NOTE: Threshold lowered from 0.7 to 0.6 to handle embedding format mismatch
-    // (user queries are natural language, stored embeddings are enriched structured text)
-    const vectorResults = vectorSearch(queryEmbedding, 5, 0.6);
-
-    // Task 4.3: Retrieve corresponding decisions via rowid
-    // (Already done by vectorSearch function)
-
-    return vectorResults;
-  } catch (error) {
-    // NOTE: Intentionally returns [] instead of throwing for graceful degradation.
-    // Vector search unavailability should not block the main conversation flow.
-    // This is an exception to the "NO FALLBACK" rule for non-critical features.
-    logError(`[MAMA] Vector search failed: ${error.message}`);
-    return [];
-  }
-}
-
-/**
- * Merge decision from graph and vector search (deduplicate)
- *
- * Task 4.4: Merge results and deduplicate
- *
- * @param {Array<Object>} graphDecisions - Decisions from graph query
- * @param {Array<Object>} vectorDecisions - Decisions from vector search
- * @returns {Array<Object>} Merged and deduplicated decisions
- */
-// eslint-disable-next-line no-unused-vars
-function mergeDecisions(graphDecisions, vectorDecisions) {
-  const seen = new Set();
-  const merged = [];
-
-  // Prioritize graph decisions (they're from explicit supersedes chain)
-  for (const decision of graphDecisions) {
-    if (!seen.has(decision.id)) {
-      seen.add(decision.id);
-      merged.push(decision);
-    }
-  }
-
-  // Add vector decisions if not already included
-  for (const decision of vectorDecisions) {
-    if (!seen.has(decision.id)) {
-      seen.add(decision.id);
-      merged.push(decision);
-    }
-  }
-
-  // Sort by recency (most recent first)
-  merged.sort((a, b) => b.created_at - a.created_at);
-
-  return merged;
-}
 // Export API
 module.exports = {
   injectDecisionContext,
