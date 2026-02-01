@@ -708,9 +708,9 @@ export class DiscordGateway implements Gateway {
   }
 
   /**
-   * Send an image file to a specific channel
+   * Send a file (image, document, etc.) to a specific channel
    */
-  async sendImage(channelId: string, imagePath: string, caption?: string): Promise<void> {
+  async sendFile(channelId: string, filePath: string, caption?: string): Promise<void> {
     if (!this.connected) {
       throw new Error('Discord gateway not connected');
     }
@@ -729,7 +729,15 @@ export class DiscordGateway implements Gateway {
     ).send.bind(channel);
     await sendFn({
       content: caption,
-      files: [imagePath],
+      files: [filePath],
     });
+  }
+
+  /**
+   * Send an image file to a specific channel (alias for sendFile)
+   * @deprecated Use sendFile instead
+   */
+  async sendImage(channelId: string, imagePath: string, caption?: string): Promise<void> {
+    return this.sendFile(channelId, imagePath, caption);
   }
 }

@@ -194,6 +194,18 @@ export class TelegramGateway implements Gateway {
   }
 
   /**
+   * Send file/document to a chat
+   * Supports any file type (documents, images, etc.)
+   */
+  async sendFile(chatId: string, filePath: string, caption?: string): Promise<void> {
+    if (!this.bot) {
+      throw new Error('Telegram gateway not connected');
+    }
+
+    await this.bot.sendDocument(chatId, filePath, { caption });
+  }
+
+  /**
    * Send image to a chat
    */
   async sendImage(chatId: string, imagePath: string, caption?: string): Promise<void> {
@@ -272,6 +284,11 @@ interface TelegramBot {
   sendPhoto(
     chatId: string | number,
     photo: string,
+    options?: { caption?: string }
+  ): Promise<unknown>;
+  sendDocument(
+    chatId: string | number,
+    document: string,
     options?: { caption?: string }
   ): Promise<unknown>;
 }

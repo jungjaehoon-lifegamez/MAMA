@@ -30,6 +30,7 @@ import { AgentError } from './types.js';
  */
 export interface DiscordGatewayInterface {
   sendMessage(channelId: string, message: string): Promise<void>;
+  sendFile(channelId: string, filePath: string, caption?: string): Promise<void>;
   sendImage(channelId: string, imagePath: string, caption?: string): Promise<void>;
 }
 

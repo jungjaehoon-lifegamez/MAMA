@@ -18,6 +18,7 @@ import { ContextInjector, type MamaApiClient } from './context-injector.js';
 import type { NormalizedMessage, MessageRouterConfig, Session, RelatedDecision } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
+import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
 
 /**
  * Content block for multimodal input
@@ -326,9 +327,9 @@ Now the user is responding for the FIRST time. This is their reply to your awake
 6. Do NOT jump straight to quiz questions`;
     }
 
-    // Normal mode - use hybrid history management
-    let prompt = `You are MAMA, an always-on AI assistant.
-`;
+    // Normal mode - use hybrid history management with persona
+    // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md)
+    let prompt = loadComposedSystemPrompt() + '\n';
 
     // For NEW CLI sessions: inject history from DB to restore context
     // For EXISTING CLI sessions: Claude CLI maintains history via --session-id
