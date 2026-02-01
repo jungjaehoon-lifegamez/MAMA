@@ -198,6 +198,34 @@ function createSessionHandler(sessionManager = null) {
         return true;
       }
 
+      // GET /api/sessions/last-active - Get the most recently active session
+      // NOTE: This must come BEFORE the generic :id handler to avoid being matched as an ID
+      if (pathname === '/api/sessions/last-active' && req.method === 'GET') {
+        const sessions = await manager.getActiveSessions();
+
+        if (sessions.length > 0) {
+          // Sort by lastActive descending and get the first one
+          const sorted = sessions.sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
+          const lastSession = sorted[0];
+
+          res.writeHead(200);
+          res.end(
+            JSON.stringify({
+              id: lastSession.id,
+              projectDir: lastSession.projectDir,
+              status: lastSession.status,
+              createdAt: lastSession.createdAt,
+              lastActive: lastSession.lastActive,
+              isAlive: lastSession.isAlive,
+            })
+          );
+        } else {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: 'No active sessions found' }));
+        }
+        return true;
+      }
+
       // GET /api/sessions/:id - Get single session (bonus endpoint)
       if (pathname.startsWith('/api/sessions/') && req.method === 'GET') {
         const sessionId = extractSessionId(pathname);
@@ -225,33 +253,6 @@ function createSessionHandler(sessionManager = null) {
         } else {
           res.writeHead(404);
           res.end(JSON.stringify({ error: 'Session not found', sessionId }));
-        }
-        return true;
-      }
-
-      // GET /api/sessions/last-active - Get the most recently active session
-      if (pathname === '/api/sessions/last-active' && req.method === 'GET') {
-        const sessions = await manager.getActiveSessions();
-
-        if (sessions.length > 0) {
-          // Sort by lastActive descending and get the first one
-          const sorted = sessions.sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
-          const lastSession = sorted[0];
-
-          res.writeHead(200);
-          res.end(
-            JSON.stringify({
-              id: lastSession.id,
-              projectDir: lastSession.projectDir,
-              status: lastSession.status,
-              createdAt: lastSession.createdAt,
-              lastActive: lastSession.lastActive,
-              isAlive: lastSession.isAlive,
-            })
-          );
-        } else {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: 'No active sessions found' }));
         }
         return true;
       }

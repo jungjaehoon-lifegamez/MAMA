@@ -243,7 +243,7 @@ function getEvidenceImpact(outcome, durationDays) {
  * @param {string} failureReason - Failure reason (if outcome=FAILED)
  * @param {number} durationDays - Duration in days
  */
-function markOutcome(decisionId, outcome, failureReason, durationDays) {
+async function markOutcome(decisionId, outcome, failureReason, durationDays) {
   try {
     // Get current decision to read confidence
     const db = getDB();
@@ -253,13 +253,20 @@ function markOutcome(decisionId, outcome, failureReason, durationDays) {
       throw new Error(`Decision not found: ${decisionId}`);
     }
 
+    // Guard against double-marking
+    if (decision.outcome) {
+      info(`[MAMA] Outcome already set for ${decisionId}: ${decision.outcome}`);
+      return;
+    }
+
     // Task 6.5: Calculate new confidence
     const evidenceImpact = getEvidenceImpact(outcome, durationDays);
     const evidence = [{ type: outcome, impact: evidenceImpact }];
-    const newConfidence = updateConfidence(decision.confidence, evidence);
+    const prevConfidence = Number(decision.confidence ?? 0);
+    const newConfidence = updateConfidence(prevConfidence, evidence);
 
     // Update decision with outcome and new confidence
-    updateDecisionOutcome(decisionId, {
+    await updateDecisionOutcome(decisionId, {
       outcome,
       failure_reason: failureReason,
       duration_days: durationDays,
@@ -267,7 +274,7 @@ function markOutcome(decisionId, outcome, failureReason, durationDays) {
     });
 
     info(
-      `[MAMA] Confidence updated: ${decision.confidence.toFixed(2)} → ${newConfidence.toFixed(2)} (${outcome})`
+      `[MAMA] Confidence updated: ${prevConfidence.toFixed(2)} → ${newConfidence.toFixed(2)} (${outcome})`
     );
   } catch (error) {
     throw new Error(`Failed to mark outcome: ${error.message}`);
@@ -289,7 +296,7 @@ function markOutcome(decisionId, outcome, failureReason, durationDays) {
  * @param {string} hookContext.user_message - User's message
  * @param {string} hookContext.session_id - Session ID
  */
-function onUserPromptSubmit(hookContext) {
+async function onUserPromptSubmit(hookContext) {
   try {
     const userMessage = hookContext.user_message || '';
     const sessionId = hookContext.session_id || '';
@@ -317,7 +324,7 @@ function onUserPromptSubmit(hookContext) {
     const durationDays = calculateDurationDays(recentDecision.created_at);
 
     // Task 4.8: Mark outcome
-    markOutcome(recentDecision.id, outcome, failureReason, durationDays);
+    await markOutcome(recentDecision.id, outcome, failureReason, durationDays);
 
     info(`[MAMA] Outcome marked: ${recentDecision.id} → ${outcome} (${durationDays} days)`);
   } catch (error) {

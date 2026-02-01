@@ -30,6 +30,7 @@ const { injectDecisionContext } = require('./memory-inject');
 const { queryDecisionGraph, querySemanticEdges, getDB, getAdapter } = require('./memory-store');
 const { formatRecall, formatList } = require('./decision-formatter');
 const { logProgress, logComplete, logSearching } = require('./progress-indicator');
+const os = require('os');
 
 /**
  * Save a decision or insight to MAMA's memory
@@ -398,7 +399,13 @@ async function recall(topic, options = {}) {
 
     // Query semantic edges for all decisions
     const decisionIds = decisions.map((d) => d.id);
-    const semanticEdges = await querySemanticEdges(decisionIds);
+    const rawEdges = (await querySemanticEdges(decisionIds)) || {};
+    const semanticEdges = {
+      refines: rawEdges.refines || [],
+      refined_by: rawEdges.refined_by || [],
+      contradicts: rawEdges.contradicts || [],
+      contradicted_by: rawEdges.contradicted_by || [],
+    };
 
     // Markdown format (for human display)
     if (format === 'markdown') {
@@ -590,7 +597,19 @@ async function expandWithGraph(candidates) {
 
     // 2. Add semantic edges (refines, contradicts, builds_on, debates, synthesizes)
     try {
-      const edges = await querySemanticEdges([candidate.id]);
+      const rawEdges = (await querySemanticEdges([candidate.id])) || {};
+      const edges = {
+        refines: rawEdges.refines || [],
+        refined_by: rawEdges.refined_by || [],
+        contradicts: rawEdges.contradicts || [],
+        contradicted_by: rawEdges.contradicted_by || [],
+        builds_on: rawEdges.builds_on || [],
+        built_upon_by: rawEdges.built_upon_by || [],
+        debates: rawEdges.debates || [],
+        debated_by: rawEdges.debated_by || [],
+        synthesizes: rawEdges.synthesizes || [],
+        synthesized_by: rawEdges.synthesized_by || [],
+      };
 
       // Helper to add edge to graph
       const addEdge = (edge, idField, source, rank, simFactor) => {
@@ -845,7 +864,10 @@ async function suggest(userQuestion, options = {}) {
         .filter((w) => w.length > 2); // Filter short words
 
       if (keywords.length === 0) {
-        return `💡 Hint: Please be more specific.\nExample: "Railway Volume settings" or "mesh parameter optimization"`;
+        if (format === 'markdown') {
+          return `💡 Hint: Please be more specific.\nExample: "Railway Volume settings" or "mesh parameter optimization"`;
+        }
+        return null; // JSON mode returns null for empty/invalid queries
       }
 
       // Build LIKE query for each keyword
@@ -1479,7 +1501,7 @@ function createLinkBackup(targetLinks) {
   const crypto = require('crypto');
   const path = require('path');
 
-  const backupDir = path.join(process.env.HOME, '.claude', 'mama-backups');
+  const backupDir = path.join(os.homedir(), '.claude', 'mama-backups');
 
   // Create backup directory if not exists
   if (!fs.existsSync(backupDir)) {
@@ -1624,7 +1646,7 @@ ${samples
 
   const fs = require('fs');
   const path = require('path');
-  const backupDir = path.join(process.env.HOME, '.claude', 'mama-backups');
+  const backupDir = path.join(os.homedir(), '.claude', 'mama-backups');
 
   // Ensure backup directory exists
   if (!fs.existsSync(backupDir)) {
@@ -1724,7 +1746,7 @@ function restoreLinkBackup(backupFile) {
 function verifyBackupExists(maxAgeHours = 24) {
   const fs = require('fs');
   const path = require('path');
-  const backupDir = path.join(process.env.HOME, '.claude', 'mama-backups');
+  const backupDir = path.join(os.homedir(), '.claude', 'mama-backups');
 
   if (!fs.existsSync(backupDir)) {
     throw new Error(
@@ -1964,7 +1986,7 @@ function validateCleanupResult() {
   // Save report to file
   const fs = require('fs');
   const path = require('path');
-  const backupDir = path.join(process.env.HOME, '.claude', 'mama-backups');
+  const backupDir = path.join(os.homedir(), '.claude', 'mama-backups');
 
   if (!fs.existsSync(backupDir)) {
     fs.mkdirSync(backupDir, { recursive: true });

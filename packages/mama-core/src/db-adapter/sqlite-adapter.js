@@ -311,6 +311,13 @@ class SQLiteAdapter extends DatabaseAdapter {
         }
 
         if (err.message && err.message.includes('no such table')) {
+          // Only skip if this migration contains an ALTER TABLE (adding column to optional table)
+          // Note: migrationSQL may contain comments, so check if ALTER TABLE exists anywhere
+          const hasAlterTable = migrationSQL.toUpperCase().includes('ALTER TABLE');
+          if (!hasAlterTable) {
+            logError(`[sqlite-adapter] Migration ${file} failed (missing required table):`, err);
+            throw new Error(`Migration ${file} failed: ${err.message}`);
+          }
           warn(
             `[sqlite-adapter] Migration ${file} skipped (table not yet created - will be created with column)`
           );

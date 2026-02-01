@@ -18,6 +18,9 @@
 
 const { WebSocketServer } = require('ws');
 const { authenticateWebSocket } = require('./auth.js');
+const fs = require('fs').promises;
+const path = require('path');
+const os = require('os');
 
 /**
  * Default heartbeat interval (30 seconds)
@@ -52,7 +55,10 @@ function extractUserId(req) {
       return userId;
     }
 
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+    if (!ip) {
+      return `user_${Date.now()}`;
+    }
     return `user_${ip.replace(/[:.]/g, '_')}`;
   } catch {
     return `user_${Date.now()}`;
@@ -302,11 +308,13 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
             console.log(`[WebSocket] Sent ${history.length} history messages to ${clientId}`);
           } else {
             // No history - check if onboarding mode (SOUL.md not found)
-            const fs = require('fs');
-            const path = require('path');
-            const os = require('os');
             const soulPath = path.join(os.homedir(), '.mama', 'SOUL.md');
-            const isOnboarding = !fs.existsSync(soulPath);
+            let isOnboarding = false;
+            try {
+              await fs.access(soulPath);
+            } catch {
+              isOnboarding = true;
+            }
 
             if (isOnboarding) {
               // Send onboarding greeting based on browser language

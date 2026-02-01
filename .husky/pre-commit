@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 # Run lint-staged for staged files (ESLint + Prettier)
 npx lint-staged
