@@ -82,26 +82,20 @@ describe('M3.3: Plugin Manifests', () => {
     it('should list all hooks with entry points', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
 
-      // Hooks should reference external file (official spec)
+      // Hooks should be inline object (official Claude Code plugin spec)
       expect(pluginConfig.hooks).toBeDefined();
-      expect(typeof pluginConfig.hooks).toBe('string');
-      expect(pluginConfig.hooks).toBe('../hooks/hooks.json');
+      expect(typeof pluginConfig.hooks).toBe('object');
 
-      // Verify hooks.json exists
-      const hooksJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
-      expect(fs.existsSync(hooksJsonPath)).toBe(true);
-
-      // Verify hooks.json structure
-      const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
-      // Only UserPromptSubmit is active (PreToolUse/PostToolUse disabled for efficiency)
-      const expectedHooks = ['UserPromptSubmit'];
+      // Expected hooks (SessionStart and UserPromptSubmit are active)
+      const expectedHooks = ['SessionStart', 'UserPromptSubmit'];
 
       expectedHooks.forEach((hookType) => {
-        expect(hooksConfig[hookType]).toBeDefined();
+        expect(pluginConfig.hooks[hookType]).toBeDefined();
+        expect(Array.isArray(pluginConfig.hooks[hookType])).toBe(true);
       });
 
-      // Verify hook scripts exist and are executable (scripts still exist even if not registered)
-      const hookScripts = ['scripts/userpromptsubmit-hook.js'];
+      // Verify hook scripts exist and are executable
+      const hookScripts = ['scripts/sessionstart-hook.js', 'scripts/userpromptsubmit-hook.js'];
 
       hookScripts.forEach((script) => {
         const scriptPath = path.join(PLUGIN_ROOT, script);
@@ -113,9 +107,9 @@ describe('M3.3: Plugin Manifests', () => {
     });
 
     it('should use portable paths with ${CLAUDE_PLUGIN_ROOT}', () => {
-      // Read hooks from external file
-      const hooksJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
-      const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+      // Read hooks from inline plugin.json
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+      const hooksConfig = pluginConfig.hooks;
 
       const allHooks = [];
       Object.values(hooksConfig).forEach((hookConfigs) => {
@@ -130,24 +124,21 @@ describe('M3.3: Plugin Manifests', () => {
     });
   });
 
-  describe('AC2: Hooks registered via external file (official spec)', () => {
-    it('should reference hooks.json file from plugin.json', () => {
-      // According to official Claude Code spec:
-      // hooks can be a file path (string) or inline object
-      // External file is preferred for complex configurations
+  describe('AC2: Hooks registered inline in plugin.json (official spec)', () => {
+    it('should have inline hooks object in plugin.json', () => {
+      // According to official Claude Code plugin spec:
+      // hooks must be inline object (not file path)
 
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
       expect(pluginConfig.hooks).toBeDefined();
-      expect(typeof pluginConfig.hooks).toBe('string');
-      expect(pluginConfig.hooks).toBe('../hooks/hooks.json');
-
-      const hookJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
-      expect(fs.existsSync(hookJsonPath)).toBe(true);
+      expect(typeof pluginConfig.hooks).toBe('object');
+      expect(pluginConfig.hooks.SessionStart).toBeDefined();
+      expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
     });
 
     it('should register UserPromptSubmit hook correctly', () => {
-      const hooksJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
-      const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+      const hooksConfig = pluginConfig.hooks;
 
       const userPromptHooks = hooksConfig.UserPromptSubmit;
       expect(userPromptHooks).toBeDefined();
@@ -158,11 +149,11 @@ describe('M3.3: Plugin Manifests', () => {
     });
 
     it('should have PreToolUse/PostToolUse hooks disabled (efficiency decision)', () => {
-      const hooksJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
-      const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+      const hooksConfig = pluginConfig.hooks;
 
       // PreToolUse and PostToolUse are intentionally disabled for efficiency
-      // Only UserPromptSubmit provides value with acceptable latency
+      // Only SessionStart and UserPromptSubmit provide value with acceptable latency
       expect(hooksConfig.PreToolUse).toBeUndefined();
       expect(hooksConfig.PostToolUse).toBeUndefined();
     });
@@ -351,9 +342,10 @@ describe('M3.3: Plugin Manifests', () => {
         stdio: 'pipe',
       });
 
-      // Updated validation script checks hook scripts exist
-      expect(output).toMatch(/Hook script|hook/i);
+      // Updated validation script checks hook scripts exist (inline hooks)
+      expect(output).toMatch(/Hook|hooks/i);
       expect(output).toContain('userpromptsubmit-hook.js');
+      expect(output).toContain('sessionstart-hook.js');
       // Note: pretooluse and posttooluse scripts exist but are not registered
     });
 
