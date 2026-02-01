@@ -42,8 +42,11 @@ describe('M3.4: Installation & Tier Detection', () => {
     it('should have executable postinstall script', () => {
       expect(fs.existsSync(POSTINSTALL_SCRIPT)).toBe(true);
 
-      const stat = fs.statSync(POSTINSTALL_SCRIPT);
-      expect(stat.mode & 0o111).toBeGreaterThan(0);
+      // Execute bit check only on Unix (Windows doesn't use execute bits)
+      if (process.platform !== 'win32') {
+        const stat = fs.statSync(POSTINSTALL_SCRIPT);
+        expect(stat.mode & 0o111).toBeGreaterThan(0);
+      }
     });
 
     it('should export checkNodeVersion function', () => {
