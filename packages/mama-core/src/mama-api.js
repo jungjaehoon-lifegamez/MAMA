@@ -650,9 +650,9 @@ async function expandWithGraph(candidates) {
         addEdge(edge, 'to_id', 'builds_on', 0.75, 0.9);
       }
 
-      // Add built_on_by edges (someone built on this decision)
-      for (const edge of edges.built_on_by) {
-        addEdge(edge, 'from_id', 'built_on_by', 0.75, 0.9);
+      // Add built_upon_by edges (someone built on this decision)
+      for (const edge of edges.built_upon_by) {
+        addEdge(edge, 'from_id', 'built_upon_by', 0.75, 0.9);
       }
 
       // Add debates edges (alternative view)
@@ -1559,8 +1559,9 @@ function createLinkBackup(targetLinks) {
 function generatePreCleanupReport() {
   const scanResult = scanAutoLinks();
 
-  // Calculate risk level
-  const deletionRatio = scanResult.deletion_targets / scanResult.total_links;
+  // Calculate risk level (guard against division by zero)
+  const deletionRatio =
+    scanResult.total_links > 0 ? scanResult.deletion_targets / scanResult.total_links : 0;
   let riskLevel;
   if (deletionRatio > 0.5) {
     riskLevel = 'HIGH';
