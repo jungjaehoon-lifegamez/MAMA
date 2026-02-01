@@ -15,8 +15,21 @@ import { stopCommand } from './commands/stop.js';
 import { statusCommand } from './commands/status.js';
 import { runCommand } from './commands/run.js';
 import { loadConfig } from './config/config-manager.js';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
-const VERSION = '1.0.0';
+// Read version from package.json at runtime
+const getVersion = (): string => {
+  try {
+    // Try relative path from dist/cli/index.js
+    const pkgPath = join(__dirname, '../../package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    return pkg.version;
+  } catch {
+    return '0.1.4'; // Fallback
+  }
+};
+const VERSION = getVersion();
 
 const program = new Command();
 
