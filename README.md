@@ -53,10 +53,35 @@ mama start
 >
 > See [Security Guide](docs/guides/security.md) for details.
 
-> ✅ **ToS Compliance**: MAMA OS uses the official Claude Code CLI via subprocess spawning,
-> NOT OAuth token spoofing. This is a [supported usage pattern](https://code.claude.com/docs/en/sub-agents)
-> per Anthropic's subagent documentation. In January 2026, Anthropic [blocked third-party tools](https://venturebeat.com/technology/anthropic-cracks-down-on-unauthorized-claude-usage-by-third-party-harnesses)
-> that spoofed Claude Code headers—MAMA OS was unaffected because it uses the legitimate CLI approach.
+<details>
+<summary>✅ <strong>Why CLI Subprocess? (ToS & Stability)</strong></summary>
+
+MAMA OS deliberately uses **Claude Code CLI as a subprocess** rather than direct API calls with OAuth tokens. This architectural choice prioritizes long-term stability:
+
+**How it works:**
+
+```
+MAMA OS → spawn('claude', [...args]) → Official Claude CLI → Anthropic API
+```
+
+**Why this matters:**
+
+| Approach           | Method                            | Risk                                   |
+| ------------------ | --------------------------------- | -------------------------------------- |
+| Direct OAuth       | Extract token → call API directly | Token refresh conflicts, ToS gray area |
+| **CLI Subprocess** | Spawn official `claude` binary    | ✅ Officially supported, stable        |
+
+**Benefits of CLI subprocess approach:**
+
+- 🔒 **ToS Compliant** - Uses the [official subagent pattern](https://code.claude.com/docs/en/sub-agents) documented by Anthropic
+- 🛡️ **Future-Proof** - Anthropic maintains CLI compatibility; no risk from internal API changes
+- 🔄 **Auth Handled** - CLI manages token refresh internally; no race conditions
+- 📊 **Usage Tracking** - Proper session/cost tracking through official tooling
+
+**Historical Context:**
+In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/technology/anthropic-cracks-down-on-unauthorized-claude-usage-by-third-party-harnesses) against tools that spoofed Claude Code headers. MAMA OS was unaffected because we chose the legitimate CLI approach from the start—not because other approaches are "wrong," but because we prioritized stability for an always-on autonomous agent that users depend on daily.
+
+</details>
 
 **Requires:** [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated.
 
