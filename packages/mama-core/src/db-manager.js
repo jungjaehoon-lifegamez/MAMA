@@ -226,7 +226,10 @@ async function insertDecisionWithEmbedding(decision) {
 
   try {
     // Generate embedding BEFORE transaction (required for SQLite's sync transaction)
-    info(`[db-manager] Generating embedding for decision: ${decision.topic}`);
+    // Note: Redact topic for privacy - only log length
+    info(
+      `[db-manager] Generating embedding for decision (topic length: ${decision.topic?.length || 0})`
+    );
     const embedding = await generateEnhancedEmbedding(decision);
     info(`[db-manager] Embedding generated: ${embedding ? embedding.length : 'null'} dimensions`);
 
@@ -368,12 +371,13 @@ async function queryDecisionGraph(topic) {
     }
 
     // Join with decision_edges to include relationships
+    // Prepare statement once outside loop for performance
+    const edgesStmt = adapter.prepare(`
+      SELECT * FROM decision_edges
+      WHERE from_id = ?
+        AND (approved_by_user = 1 OR approved_by_user IS NULL)
+    `);
     for (const decision of decisions) {
-      const edgesStmt = adapter.prepare(`
-        SELECT * FROM decision_edges
-        WHERE from_id = ?
-          AND (approved_by_user = 1 OR approved_by_user IS NULL)
-      `);
       decision.edges = await edgesStmt.all(decision.id);
 
       // Parse refined_from JSON if exists

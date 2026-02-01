@@ -66,6 +66,14 @@ jobs:
           RELEASE_TYPE="${{ inputs.release_type }}"
           PACKAGES="${{ inputs.packages }}"
 
+          # Validate all package.json files exist
+          for pkg in packages/mama-core packages/mcp-server packages/standalone packages/claude-code-plugin packages/openclaw-plugin; do
+            if [[ ! -f "$pkg/package.json" ]]; then
+              echo "::error::Package manifest not found: $pkg/package.json"
+              exit 1
+            fi
+          done
+
           bump_version() {
             local current=$1
             local type=$2
@@ -145,7 +153,12 @@ jobs:
         id: changelog
         run: |
           # Extract latest changelog section
-          CHANGELOG=$(awk '/^## \[.*\]/{if(found) exit; found=1} found' CHANGELOG.md | head -100)
+          if [[ ! -f CHANGELOG.md ]]; then
+            echo "::warning::CHANGELOG.md not found, using placeholder"
+            CHANGELOG="No changelog available for this release."
+          else
+            CHANGELOG=$(awk '/^## \[.*\]/{if(found) exit; found=1} found' CHANGELOG.md | head -100)
+          fi
           echo "content<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -192,9 +205,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # Step 3: Publish mama-server
+  # Step 3: Publish mama-server (independent - doesn't depend on mama-core)
   publish-mama-server:
-    needs: [prepare-release, publish-mama-core]
+    needs: [prepare-release]
     if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-server')) }}
     runs-on: ubuntu-latest
     steps:
@@ -328,7 +341,8 @@ jobs:
         run: |
           cd claude-plugins
           VERSION="${{ needs.prepare-release.outputs.mama_plugin_version }}"
-          jq --arg ver "$VERSION" '.plugins[0].version = $ver' .claude-plugin/marketplace.json > tmp.json && mv tmp.json .claude-plugin/marketplace.json
+          # Use name selector instead of hardcoded index [0]
+          jq --arg ver "$VERSION" '(.plugins[] | select(.name == "mama")).version = $ver' .claude-plugin/marketplace.json > tmp.json && mv tmp.json .claude-plugin/marketplace.json
 
       - name: Commit and push
         run: |
@@ -366,7 +380,7 @@ jobs:
 
   # Step 8: Create GitHub Release
   create-release:
-    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, sync-plugin, deploy-pages]
+    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, publish-openclaw, sync-plugin, deploy-pages]
     if: ${{ !inputs.dry_run && always() && needs.prepare-release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
@@ -375,7 +389,7 @@ jobs:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare-release.outputs.release_tag }}
           name: MAMA ${{ needs.prepare-release.outputs.release_tag }}
