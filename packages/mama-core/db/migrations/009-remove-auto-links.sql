@@ -22,7 +22,7 @@ SELECT
   'deprecated',
   'system',
   'Migration 009: Removed auto-generated noise links (refines, contradicts)',
-  unixepoch()
+  unixepoch() * 1000
 FROM decision_edges
 WHERE relationship IN ('refines', 'contradicts');
 

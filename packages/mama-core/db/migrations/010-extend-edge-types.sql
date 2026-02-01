@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS decision_edges_new (
   relationship TEXT NOT NULL,
   reason TEXT,
   weight REAL DEFAULT 1.0,
-  created_at INTEGER DEFAULT (unixepoch()),
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
   created_by TEXT DEFAULT 'user' CHECK (created_by IN ('llm', 'user')),
   approved_by_user INTEGER DEFAULT 1 CHECK (approved_by_user IN (0, 1)),
   decision_id TEXT,
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_edges_relationship ON decision_edges(relationship
 
 -- Update schema version
 INSERT OR REPLACE INTO schema_version (version, description, applied_at)
-VALUES (10, 'Extend edge types: builds_on, debates, synthesizes', unixepoch());
+VALUES (10, 'Extend edge types: builds_on, debates, synthesizes', unixepoch() * 1000);
 
 -- ══════════════════════════════════════════════════════════════
 -- End of Migration 010

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS link_audit_log (
   action TEXT NOT NULL CHECK (action IN ('proposed', 'approved', 'rejected', 'deprecated')),
   actor TEXT NOT NULL, -- 'llm', 'user', 'system'
   reason TEXT,
-  created_at INTEGER DEFAULT (unixepoch()),
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
 
   FOREIGN KEY (from_id) REFERENCES decisions(id),
   FOREIGN KEY (to_id) REFERENCES decisions(id)

@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS error_patterns (
   embedding BLOB,                  -- 384-dim embedding (multilingual-e5-small)
 
   -- Metadata
-  created_at INTEGER DEFAULT (unixepoch()),
-  updated_at INTEGER DEFAULT (unixepoch()),
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000),
 
   -- Constraints
   UNIQUE(error_pattern)            -- One pattern per entry

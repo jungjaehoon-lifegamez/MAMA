@@ -33,7 +33,7 @@ SELECT
   'deprecated',
   'system',
   'Migration 008: Marked as auto-generated link requiring approval',
-  unixepoch()
+  unixepoch() * 1000
 FROM decision_edges
 WHERE created_by = 'llm' AND approved_by_user = 0;
 

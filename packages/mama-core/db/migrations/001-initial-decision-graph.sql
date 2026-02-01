@@ -35,9 +35,9 @@ CREATE TABLE IF NOT EXISTS decisions (
   -- Confidence Evolution
   confidence REAL DEFAULT 0.5,      -- Bayesian updated (0.0-1.0)
 
-  -- Timestamps
-  created_at INTEGER DEFAULT (unixepoch()),
-  updated_at INTEGER DEFAULT (unixepoch()),
+  -- Timestamps (stored in MILLISECONDS - JavaScript Date.now() convention)
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000),
 
   FOREIGN KEY (supersedes) REFERENCES decisions(id),
   FOREIGN KEY (superseded_by) REFERENCES decisions(id),
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS decision_edges (
   relationship TEXT NOT NULL,       -- "supersedes", "refines", "contradicts"
   reason TEXT,                      -- "Learned from performance failure"
   weight REAL DEFAULT 1.0,          -- Strength of relationship
-  created_at INTEGER DEFAULT (unixepoch()),
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
 
   PRIMARY KEY (from_id, to_id, relationship),
   FOREIGN KEY (from_id) REFERENCES decisions(id),
@@ -98,8 +98,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   decision_count INTEGER DEFAULT 0,
 
   -- Timestamps
-  started_at INTEGER DEFAULT (unixepoch()),
-  last_active_at INTEGER DEFAULT (unixepoch()),
+  started_at INTEGER DEFAULT (unixepoch() * 1000),
+  last_active_at INTEGER DEFAULT (unixepoch() * 1000),
   ended_at INTEGER,
 
   CHECK (action_count >= 0),
@@ -128,7 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_last_active ON sessions(last_active_at);
 
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY,
-  applied_at INTEGER DEFAULT (unixepoch()),
+  applied_at INTEGER DEFAULT (unixepoch() * 1000),
   description TEXT
 );
 
