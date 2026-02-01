@@ -33,6 +33,7 @@ import { AgentError } from './types.js';
  */
 export interface DiscordGatewayInterface {
   sendMessage(channelId: string, message: string): Promise<void>;
+  sendFile(channelId: string, filePath: string, caption?: string): Promise<void>;
   sendImage(channelId: string, imagePath: string, caption?: string): Promise<void>;
 }
 
@@ -411,14 +412,16 @@ export class GatewayToolExecutor {
   }
 
   /**
-   * Execute discord_send tool - Send message/image to Discord channel
+   * Execute discord_send tool - Send message/file to Discord channel
+   * Supports images, documents, and any file type
    */
   private async executeDiscordSend(input: {
     channel_id: string;
     message?: string;
     image_path?: string;
+    file_path?: string;
   }): Promise<{ success: boolean; error?: string }> {
-    const { channel_id, message, image_path } = input;
+    const { channel_id, message, image_path, file_path } = input;
 
     if (!channel_id) {
       return { success: false, error: 'channel_id is required' };
@@ -429,12 +432,15 @@ export class GatewayToolExecutor {
     }
 
     try {
-      if (image_path) {
-        await this.discordGateway.sendImage(channel_id, image_path, message);
+      // file_path takes precedence, fallback to image_path for backwards compatibility
+      const filePath = file_path || image_path;
+
+      if (filePath) {
+        await this.discordGateway.sendFile(channel_id, filePath, message);
       } else if (message) {
         await this.discordGateway.sendMessage(channel_id, message);
       } else {
-        return { success: false, error: 'Either message or image_path is required' };
+        return { success: false, error: 'Either message, file_path, or image_path is required' };
       }
 
       return { success: true };
