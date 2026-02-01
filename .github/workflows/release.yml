@@ -157,7 +157,8 @@ jobs:
             echo "::warning::CHANGELOG.md not found, using placeholder"
             CHANGELOG="No changelog available for this release."
           else
-            CHANGELOG=$(awk '/^## \[.*\]/{if(found) exit; found=1} found' CHANGELOG.md | head -100)
+            # Skip [Unreleased] section, get first real version section
+            CHANGELOG=$(awk '/^## \[.*\]/{if(/Unreleased/) next; if(found) exit; found=1} found' CHANGELOG.md | head -100)
           fi
           echo "content<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
