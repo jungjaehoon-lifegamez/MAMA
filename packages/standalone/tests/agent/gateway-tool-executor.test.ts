@@ -311,6 +311,12 @@ describe('GatewayToolExecutor', () => {
         'Write',
         'Bash',
         'discord_send',
+        'browser_navigate',
+        'browser_screenshot',
+        'browser_click',
+        'browser_type',
+        'browser_get_text',
+        'browser_close',
       ]);
     });
 
@@ -323,6 +329,13 @@ describe('GatewayToolExecutor', () => {
       expect(GatewayToolExecutor.isValidTool('Write')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('Bash')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('discord_send')).toBe(true);
+      // Browser tools
+      expect(GatewayToolExecutor.isValidTool('browser_navigate')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_screenshot')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_click')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_type')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_get_text')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_close')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('invalid')).toBe(false);
       // Old names should be invalid
       expect(GatewayToolExecutor.isValidTool('save')).toBe(false);
