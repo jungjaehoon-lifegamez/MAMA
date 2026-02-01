@@ -47,7 +47,7 @@ const os = require('os');
  * @param {string} [params.outcome='pending'] - 'pending', 'success', 'failure', 'partial', 'superseded' (optional)
  * @param {string} [params.failure_reason] - Why this decision failed (optional, used with outcome='failure')
  * @param {string} [params.limitation] - Known limitations of this decision (optional)
- * @returns {Promise<string>} Decision ID
+ * @returns {Promise<{success: boolean, id: string, similar_decisions?: Array, warning?: string, collaboration_hint?: string, reasoning_graph?: Object}>} Save result with decision ID and metadata
  *
  * @example
  * const decisionId = await mama.save({
@@ -1154,6 +1154,11 @@ async function listCheckpoints(limit = 10) {
         c.open_files = JSON.parse(c.open_files);
       } catch (e) {
         c.open_files = [];
+      }
+      try {
+        c.recent_conversation = JSON.parse(c.recent_conversation);
+      } catch (e) {
+        c.recent_conversation = [];
       }
       return c;
     });
