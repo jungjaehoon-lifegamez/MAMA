@@ -5,7 +5,9 @@ on:
     branches: [main]
     paths:
       - 'docs/website/**'
+      - 'docs/**/*.md'
       - '.github/workflows/pages.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
