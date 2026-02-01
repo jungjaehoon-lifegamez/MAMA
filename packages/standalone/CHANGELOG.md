@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-02-02
+
+### Added
+
+- **Browser Automation Tools** - 10 Playwright-based tools for web automation
+  - `browser_navigate` - Navigate to URL
+  - `browser_screenshot` - Take screenshot (viewport or full page)
+  - `browser_click` - Click element by selector
+  - `browser_type` - Type text into element
+  - `browser_get_text` - Extract page text
+  - `browser_scroll` - Scroll page (up/down/top/bottom)
+  - `browser_wait_for` - Wait for element
+  - `browser_evaluate` - Execute JavaScript
+  - `browser_pdf` - Generate PDF
+  - `browser_close` - Close browser
+
+### Changed
+
+- **Migrated from Puppeteer to Playwright** - Better stability, auto-wait, multi-browser support
+
 ## [0.1.5] - 2026-02-02
 
 ### Added

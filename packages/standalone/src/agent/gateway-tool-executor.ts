@@ -29,6 +29,10 @@ import type {
   BrowserScreenshotInput,
   BrowserClickInput,
   BrowserTypeInput,
+  BrowserScrollInput,
+  BrowserWaitForInput,
+  BrowserEvaluateInput,
+  BrowserPdfInput,
 } from './types.js';
 import { AgentError } from './types.js';
 import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
@@ -62,6 +66,10 @@ const VALID_TOOLS: GatewayToolName[] = [
   'browser_click',
   'browser_type',
   'browser_get_text',
+  'browser_scroll',
+  'browser_wait_for',
+  'browser_evaluate',
+  'browser_pdf',
   'browser_close',
 ];
 
@@ -174,6 +182,14 @@ export class GatewayToolExecutor {
           return await this.executeBrowserType(input as BrowserTypeInput);
         case 'browser_get_text':
           return await this.executeBrowserGetText();
+        case 'browser_scroll':
+          return await this.executeBrowserScroll(input as BrowserScrollInput);
+        case 'browser_wait_for':
+          return await this.executeBrowserWaitFor(input as BrowserWaitForInput);
+        case 'browser_evaluate':
+          return await this.executeBrowserEvaluate(input as BrowserEvaluateInput);
+        case 'browser_pdf':
+          return await this.executeBrowserPdf(input as BrowserPdfInput);
         case 'browser_close':
           return await this.executeBrowserClose();
       }
@@ -552,6 +568,62 @@ export class GatewayToolExecutor {
       return { success: true, text: result.text };
     } catch (err) {
       return { success: false, error: `Get text failed: ${err}` };
+    }
+  }
+
+  /**
+   * Scroll the page
+   */
+  private async executeBrowserScroll(
+    input: BrowserScrollInput
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.browserTool.scroll(input.direction, input.amount);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: `Scroll failed: ${err}` };
+    }
+  }
+
+  /**
+   * Wait for element
+   */
+  private async executeBrowserWaitFor(
+    input: BrowserWaitForInput
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.browserTool.waitFor(input.selector, input.timeout);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: `Wait failed: ${err}` };
+    }
+  }
+
+  /**
+   * Evaluate JavaScript in page
+   */
+  private async executeBrowserEvaluate(
+    input: BrowserEvaluateInput
+  ): Promise<{ success: boolean; result?: unknown; error?: string }> {
+    try {
+      const result = await this.browserTool.evaluate(input.script);
+      return { success: true, result: result.result };
+    } catch (err) {
+      return { success: false, error: `Evaluate failed: ${err}` };
+    }
+  }
+
+  /**
+   * Generate PDF of page
+   */
+  private async executeBrowserPdf(
+    input: BrowserPdfInput
+  ): Promise<{ success: boolean; path?: string; error?: string }> {
+    try {
+      const result = await this.browserTool.pdf(input.filename);
+      return { success: true, path: result.path };
+    } catch (err) {
+      return { success: false, error: `PDF failed: ${err}` };
     }
   }
 

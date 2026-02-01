@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [mama-os-0.1.6] - 2026-02-02
+
+### Added
+
+- **Browser Automation Tools** - 10 Playwright-based tools
+  - navigate, screenshot, click, type, get_text, scroll, wait_for, evaluate, pdf, close
+  - Auto-wait for elements, multi-browser support (chromium/firefox/webkit)
+
+### Changed
+
+- **Migrated from Puppeteer to Playwright** - Better stability and features
+
 ## [mama-os-0.1.5] - 2026-02-02
 
 ### Added

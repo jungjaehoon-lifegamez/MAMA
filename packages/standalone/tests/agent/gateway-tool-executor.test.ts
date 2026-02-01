@@ -316,6 +316,10 @@ describe('GatewayToolExecutor', () => {
         'browser_click',
         'browser_type',
         'browser_get_text',
+        'browser_scroll',
+        'browser_wait_for',
+        'browser_evaluate',
+        'browser_pdf',
         'browser_close',
       ]);
     });
@@ -335,6 +339,10 @@ describe('GatewayToolExecutor', () => {
       expect(GatewayToolExecutor.isValidTool('browser_click')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('browser_type')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('browser_get_text')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_scroll')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_wait_for')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_evaluate')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('browser_pdf')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('browser_close')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('invalid')).toBe(false);
       // Old names should be invalid
