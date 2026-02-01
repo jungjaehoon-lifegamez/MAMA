@@ -5,7 +5,16 @@
  * Supports both DM and channel mentions with configurable filtering.
  */
 
-import { Client, GatewayIntentBits, Partials, Message, Events, ChannelType } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  Message,
+  Events,
+  ChannelType,
+  AttachmentBuilder,
+} from 'discord.js';
+import { existsSync } from 'node:fs';
 import { MessageRouter } from './message-router.js';
 import { splitForDiscord } from './message-splitter.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
@@ -153,23 +162,25 @@ export class DiscordGateway implements Gateway {
     const memoryLogger = getMemoryLogger();
     memoryLogger.logMessage('Discord', message.author.tag, message.content, false);
 
-    // Download attachments first (needed for both history and processing)
+    // Download all attachments (images, documents, etc.)
     const attachments: MessageAttachment[] = [];
     for (const [, attachment] of message.attachments) {
-      if (attachment.contentType?.startsWith('image/')) {
-        try {
-          const localPath = await this.downloadAttachment(attachment.url, attachment.name);
-          attachments.push({
-            type: 'image',
-            url: attachment.url,
-            localPath,
-            filename: attachment.name,
-            contentType: attachment.contentType,
-            size: attachment.size,
-          });
-        } catch (err) {
-          console.error(`[Discord] Failed to download attachment: ${err}`);
-        }
+      try {
+        const localPath = await this.downloadAttachment(attachment.url, attachment.name);
+        const isImage = attachment.contentType?.startsWith('image/');
+        attachments.push({
+          type: isImage ? 'image' : 'file',
+          url: attachment.url,
+          localPath,
+          filename: attachment.name,
+          contentType: attachment.contentType || 'application/octet-stream',
+          size: attachment.size,
+        });
+        console.log(
+          `[Discord] Downloaded ${isImage ? 'image' : 'file'}: ${attachment.name} -> ${localPath}`
+        );
+      } catch (err) {
+        console.error(`[Discord] Failed to download attachment: ${err}`);
       }
     }
 
@@ -323,10 +334,9 @@ export class DiscordGateway implements Gateway {
         },
       });
 
-      channelHistory.clearAttachments(message.channel.id);
-      console.log(
-        `[Discord] Cleared attachments after reply, kept text for conversation context: ${message.channel.id}`
-      );
+      // Keep attachments in history for reference in subsequent turns
+      // (localPath allows "that image" references to work)
+      console.log(`[Discord] Kept attachments for future reference: ${message.channel.id}`);
     } finally {
       clearInterval(typingInterval);
     }
@@ -416,24 +426,69 @@ export class DiscordGateway implements Gateway {
   }
 
   /**
-   * Send response to Discord (handling length limits)
+   * Send response to Discord (handling length limits and file attachments)
    */
   private async sendResponse(originalMessage: Message, response: string): Promise<void> {
-    const chunks = splitForDiscord(response);
-
     const memoryLogger = getMemoryLogger();
     memoryLogger.logMessage('Discord', 'MAMA', response, true);
+
+    // Extract file paths from response (outbound files to send)
+    const filePathPattern =
+      /(?:파일 위치|파일 경로|File|Path|saved at|저장됨):\s*\**([\/~][^\s\n*]+)/gi;
+    const outboundPattern = /\/home\/[^\/]+\/\.mama\/workspace\/media\/outbound\/[^\s\n*]+/g;
+
+    const filePaths: string[] = [];
+    let match;
+
+    // Helper to clean markdown/punctuation from file paths
+    const cleanPath = (p: string) =>
+      p.replace(/[\*\`\[\]\(\)]+$/g, '').replace(/^~/, process.env.HOME || '');
+
+    // Find explicit file location markers
+    while ((match = filePathPattern.exec(response)) !== null) {
+      const filePath = cleanPath(match[1]);
+      if (existsSync(filePath)) {
+        filePaths.push(filePath);
+        console.log(`[Discord] Found file via marker: ${filePath}`);
+      }
+    }
+
+    // Find outbound media files
+    while ((match = outboundPattern.exec(response)) !== null) {
+      const filePath = cleanPath(match[0]);
+      if (existsSync(filePath) && !filePaths.includes(filePath)) {
+        filePaths.push(filePath);
+        console.log(`[Discord] Found outbound file: ${filePath}`);
+      }
+    }
+
+    // Build attachments
+    const attachments = filePaths.map((fp) => new AttachmentBuilder(fp));
+
+    if (attachments.length > 0) {
+      console.log(`[Discord] Attaching ${attachments.length} file(s): ${filePaths.join(', ')}`);
+    }
+
+    const chunks = splitForDiscord(response);
 
     for (let i = 0; i < chunks.length; i++) {
       let sentMessage: Message | undefined;
 
+      // Attach files to the first message only
+      const messageOptions =
+        i === 0 && attachments.length > 0
+          ? { content: chunks[i], files: attachments }
+          : { content: chunks[i] };
+
       if (i === 0) {
-        sentMessage = await originalMessage.reply(chunks[i]);
+        sentMessage = await originalMessage.reply(messageOptions);
       } else {
         if ('send' in originalMessage.channel) {
           sentMessage = await (
-            originalMessage.channel as { send: (content: string) => Promise<Message> }
-          ).send(chunks[i]);
+            originalMessage.channel as {
+              send: (options: { content: string; files?: AttachmentBuilder[] }) => Promise<Message>;
+            }
+          ).send(messageOptions);
         }
       }
 
@@ -650,16 +705,18 @@ export class DiscordGateway implements Gateway {
     const SUPPORTED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
     for (const attachment of attachments) {
-      if (attachment.type === 'image' && attachment.localPath) {
-        try {
+      if (!attachment.localPath) continue;
+
+      try {
+        if (attachment.type === 'image') {
+          // Handle images: add path info + base64 content
           const fs = await import('fs/promises');
           let imageBuffer = await fs.readFile(attachment.localPath);
           const originalSize = imageBuffer.length;
           let wasCompressed = false;
 
           // Compress image if needed (Claude limit: ~5MB base64)
-          // Higher quality for text recognition
-          const MAX_RAW_SIZE = 5 * 1024 * 1024; // 5MB raw = ~6.7MB base64 (compressed JPEG is smaller)
+          const MAX_RAW_SIZE = 5 * 1024 * 1024;
           if (imageBuffer.length > MAX_RAW_SIZE) {
             console.log(
               `[Discord] Image too large (${(originalSize / 1024 / 1024).toFixed(2)}MB), compressing...`
@@ -677,17 +734,23 @@ export class DiscordGateway implements Gateway {
 
           // Normalize media type to Claude-supported format
           if (!SUPPORTED_MEDIA_TYPES.includes(mediaType)) {
-            // Convert common types
             if (mediaType.startsWith('image/')) {
-              mediaType = 'image/png'; // Default fallback
+              mediaType = 'image/png';
             } else {
               console.warn(`[Discord] Unsupported media type: ${mediaType}, skipping`);
               continue;
             }
           }
 
+          // Add image path info as text block
+          contentBlocks.push({
+            type: 'text',
+            text: `[Image: ${attachment.filename}, saved at: ${attachment.localPath}]`,
+          });
+
           contentBlocks.push({
             type: 'image',
+            localPath: attachment.localPath, // For formatHistoryAsPrompt()
             source: {
               type: 'base64',
               media_type: mediaType,
@@ -696,11 +759,21 @@ export class DiscordGateway implements Gateway {
           });
 
           console.log(
-            `[Discord] Built content block for image: ${attachment.filename} (${base64Data.length} chars base64)`
+            `[Discord] Built content block for image: ${attachment.filename} at ${attachment.localPath}`
           );
-        } catch (err) {
-          console.error(`[Discord] Failed to build content block: ${err}`);
+        } else {
+          // Handle files: add path info only (Claude can read files via tools)
+          contentBlocks.push({
+            type: 'text',
+            text: `[File: ${attachment.filename}, type: ${attachment.contentType}, saved at: ${attachment.localPath}]`,
+          });
+
+          console.log(
+            `[Discord] Added file reference: ${attachment.filename} at ${attachment.localPath}`
+          );
         }
+      } catch (err) {
+        console.error(`[Discord] Failed to build content block: ${err}`);
       }
     }
 

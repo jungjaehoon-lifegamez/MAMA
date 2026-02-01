@@ -511,12 +511,22 @@ export class AgentLoop {
                   `[Image attached: ${block.localPath}]\nUse the Read tool to view this image.`
                 );
               } else if (block.source?.data) {
-                // Base64 image - save to temp file and reference it
-                const tempPath = `/tmp/mama-image-${Date.now()}.jpg`;
+                // Base64 image - save to workspace and reference it
+                const fs = require('fs');
+                const path = require('path');
+                const mediaDir = path.join(
+                  process.env.HOME || '',
+                  '.mama',
+                  'workspace',
+                  'media',
+                  'inbound'
+                );
+                fs.mkdirSync(mediaDir, { recursive: true });
+                const imagePath = path.join(mediaDir, `${Date.now()}.jpg`);
                 try {
-                  require('fs').writeFileSync(tempPath, Buffer.from(block.source.data, 'base64'));
+                  fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
                   parts.push(
-                    `[Image attached: ${tempPath}]\nUse the Read tool to view this image.`
+                    `[Image attached: ${imagePath}]\nUse the Read tool to view this image.`
                   );
                 } catch {
                   parts.push('[Image attached but could not be processed]');
