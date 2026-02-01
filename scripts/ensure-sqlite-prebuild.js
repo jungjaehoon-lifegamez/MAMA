@@ -4,7 +4,7 @@
  *
  * This script is called by postinstall scripts in both:
  * - packages/mcp-server
- * - packages/clawdbot-plugin
+ * - packages/openclaw-plugin
  *
  * It attempts to load better-sqlite3 and if it fails, runs prebuild-install
  * to download the appropriate prebuilt binary for the current Node.js version.

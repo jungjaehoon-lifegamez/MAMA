@@ -1,0 +1,16 @@
+{
+  "id": "openclaw-mama",
+  "name": "MAMA Memory",
+  "description": "Memory-Augmented MCP Architecture - Semantic decision memory",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dbPath": {
+        "type": "string",
+        "description": "Path to MAMA SQLite database. Defaults to ~/.claude/mama-memory.db"
+      }
+    }
+  }
+}
