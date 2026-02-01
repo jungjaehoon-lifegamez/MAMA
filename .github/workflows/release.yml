@@ -246,7 +246,7 @@ jobs:
   # Step 4: Publish mama-os
   publish-mama-os:
     needs: [prepare-release, publish-mama-core]
-    if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-os')) }}
+    if: ${{ always() && !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-os')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -285,7 +285,7 @@ jobs:
   # Step 5: Publish openclaw-plugin
   publish-openclaw:
     needs: [prepare-release, publish-mama-core]
-    if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'openclaw')) }}
+    if: ${{ always() && !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'openclaw')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
