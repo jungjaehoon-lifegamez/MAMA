@@ -23,17 +23,27 @@
     "./commands/resume.md",
     "./commands/configure.md"
   ],
-  "skills": [
-    "./skills/mama-context"
-  ],
-  "hooks": "../hooks/hooks.json",
+  "skills": ["./skills/mama-context"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/sessionstart-hook.js",
+        "timeout": 15
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/userpromptsubmit-hook.js",
+        "timeout": 10
+      }
+    ]
+  },
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@jungjaehoon/mama-server"
-      ],
+      "args": ["-y", "@jungjaehoon/mama-server"],
       "env": {
         "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-small"
       }
