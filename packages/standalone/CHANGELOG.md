@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - 2026-02-01
+## [0.1.5] - 2026-02-02
+
+### Added
+
+- **Discord File Attachment** - Auto-attach files when response contains outbound paths
+  - Pattern detection: `파일 위치:`, `File:`, `Path:`, `saved at:`
+  - Auto-detect `~/.mama/workspace/media/outbound/` paths
+  - Supports all file types (images, PDFs, documents)
+
+- **Image Path Preservation** - Claude remembers image paths across conversation turns
+  - Added `localPath` property to ContentBlock type
+  - Text blocks with path info now pass through message-router
+  - Files saved to `~/.mama/workspace/media/inbound/` instead of `/tmp/`
+
+## [0.1.4] - 2026-02-01
 
 ### Changed
 
