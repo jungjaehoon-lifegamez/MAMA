@@ -339,7 +339,6 @@ jobs:
           cp -r mama/packages/claude-code-plugin/.claude-plugin claude-plugins/plugins/mama/
           cp -r mama/packages/claude-code-plugin/.mcp.json claude-plugins/plugins/mama/ 2>/dev/null || true
           cp -r mama/packages/claude-code-plugin/commands claude-plugins/plugins/mama/
-          cp -r mama/packages/claude-code-plugin/hooks claude-plugins/plugins/mama/
           cp -r mama/packages/claude-code-plugin/scripts claude-plugins/plugins/mama/
           cp -r mama/packages/claude-code-plugin/skills claude-plugins/plugins/mama/
           cp -r mama/packages/claude-code-plugin/src claude-plugins/plugins/mama/
