@@ -1,22 +1,29 @@
 import { randomUUID } from 'crypto';
 import { ClaudeCLIWrapper } from '../src/agent/claude-cli-wrapper.js';
 
+// Skip in CI - these tests require claude CLI to be installed
+const isCI = process.env.CI === 'true';
+
 describe('ClaudeCLIWrapper', () => {
-  it('should execute a simple prompt and return usage stats', async () => {
-    const wrapper = new ClaudeCLIWrapper({ dangerouslySkipPermissions: true });
+  it.skipIf(isCI)(
+    'should execute a simple prompt and return usage stats',
+    async () => {
+      const wrapper = new ClaudeCLIWrapper({ dangerouslySkipPermissions: true });
 
-    const result = await wrapper.prompt('What is 2+2? Answer with just the number.', {
-      onDelta: (text) => console.log('[Test] Delta:', text),
-    });
+      const result = await wrapper.prompt('What is 2+2? Answer with just the number.', {
+        onDelta: (text) => console.log('[Test] Delta:', text),
+      });
 
-    console.log('[Test] Result:', result);
+      console.log('[Test] Result:', result);
 
-    expect(result.response).toBeTruthy();
-    expect(result.usage.input_tokens).toBeGreaterThan(0);
-    expect(result.usage.output_tokens).toBeGreaterThan(0);
-    expect(result.cost_usd).toBeGreaterThan(0);
-    expect(result.session_id).toBeTruthy();
-  }, 30000);
+      expect(result.response).toBeTruthy();
+      expect(result.usage.input_tokens).toBeGreaterThan(0);
+      expect(result.usage.output_tokens).toBeGreaterThan(0);
+      expect(result.cost_usd).toBeGreaterThan(0);
+      expect(result.session_id).toBeTruthy();
+    },
+    30000
+  );
 
   it.skip('should maintain session continuity across multiple prompts', async () => {
     // SKIPPED: Each prompt() spawns a new claude process, causing "Session ID already in use" errors.
@@ -36,17 +43,21 @@ describe('ClaudeCLIWrapper', () => {
     expect(result2.response.toLowerCase()).toContain('blue');
   }, 60000);
 
-  it('should track cumulative costs across multiple calls', async () => {
-    let totalCost = 0;
+  it.skipIf(isCI)(
+    'should track cumulative costs across multiple calls',
+    async () => {
+      let totalCost = 0;
 
-    for (let i = 0; i < 3; i++) {
-      const wrapper = new ClaudeCLIWrapper({ dangerouslySkipPermissions: true });
-      const result = await wrapper.prompt(`Count to ${i + 1}`);
-      totalCost += result.cost_usd || 0;
-      console.log(`[Test] Call ${i + 1}: $${result.cost_usd?.toFixed(6)}`);
-    }
+      for (let i = 0; i < 3; i++) {
+        const wrapper = new ClaudeCLIWrapper({ dangerouslySkipPermissions: true });
+        const result = await wrapper.prompt(`Count to ${i + 1}`);
+        totalCost += result.cost_usd || 0;
+        console.log(`[Test] Call ${i + 1}: $${result.cost_usd?.toFixed(6)}`);
+      }
 
-    console.log(`[Test] Total cost: $${totalCost.toFixed(6)}`);
-    expect(totalCost).toBeGreaterThan(0);
-  }, 90000);
+      console.log(`[Test] Total cost: $${totalCost.toFixed(6)}`);
+      expect(totalCost).toBeGreaterThan(0);
+    },
+    90000
+  );
 });
