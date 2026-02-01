@@ -18,18 +18,18 @@ MAMA (Memory-Augmented MCP Assistant) provides **4 core tools** for decision tra
   }
   ```
 
-### Clawdbot Plugin
+### OpenClaw Plugin
 
-Clawdbot uses the same 4 tools with `mama_` prefix:
+OpenClaw uses the same 4 tools with `mama_` prefix:
 
-| MCP Server        | Clawdbot Plugin        |
+| MCP Server        | OpenClaw Plugin        |
 | ----------------- | ---------------------- |
 | `save`            | `mama_save`            |
 | `search`          | `mama_search`          |
 | `update`          | `mama_update`          |
 | `load_checkpoint` | `mama_load_checkpoint` |
 
-Clawdbot also provides **auto-recall**: relevant decisions are automatically injected on agent start based on user prompt.
+OpenClaw also provides **auto-recall**: relevant decisions are automatically injected on agent start based on user prompt.
 
 ## Response Format
 
@@ -608,4 +608,4 @@ If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
 ---
 
 **Last Updated:** 2025-11-28
-**Version:** 1.5.0
+**Version:** 1.6.5

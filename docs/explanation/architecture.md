@@ -11,7 +11,7 @@
 │                    MAMA Plugin Ecosystem                     │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  Clawdbot         Claude Code      Claude Desktop   Others  │
+│  OpenClaw         Claude Code      Claude Desktop   Others  │
 │  ┌────────────┐   ┌────────────┐   ┌────────────┐          │
 │  │ Native     │   │ Commands   │   │            │          │
 │  │ Plugin     │   │ Skills     │   │ MCP Client │  (Cursor,│
@@ -70,7 +70,7 @@
 - **Tools:** 4 (save, search, update, load_checkpoint)
 - **Performance:** <100ms p99 latency
 
-### Clawdbot Plugin
+### OpenClaw Plugin
 
 - **Integration:** Direct module import (no HTTP)
 - **Tools:** 4 (mama_search, mama_save, mama_update, mama_load_checkpoint)

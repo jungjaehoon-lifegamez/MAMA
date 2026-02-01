@@ -1,0 +1,437 @@
+/**
+ * Message Router for unified messenger handling
+ *
+ * Routes messages from different platforms through a unified pipeline:
+ * 1. Normalize message format
+ * 2. Load/create session context
+ * 3. Inject proactive context (related decisions)
+ * 4. Call Agent Loop
+ * 5. Update session context
+ * 6. Return response
+ */
+
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { SessionStore } from './session-store.js';
+import { ContextInjector, type MamaApiClient } from './context-injector.js';
+import type { NormalizedMessage, MessageRouterConfig, Session, RelatedDecision } from './types.js';
+import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
+import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
+
+/**
+ * Content block for multimodal input
+ */
+export interface ContentBlock {
+  type: 'text' | 'image' | 'document';
+  text?: string;
+  source?: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
+}
+
+/**
+ * Agent Loop interface for message processing
+ */
+export interface AgentLoopClient {
+  /**
+   * Run the agent loop with a prompt
+   */
+  run(prompt: string, options?: AgentLoopOptions): Promise<{ response: string }>;
+  /**
+   * Run the agent loop with multimodal content
+   */
+  runWithContent?(
+    content: ContentBlock[],
+    options?: AgentLoopOptions
+  ): Promise<{ response: string }>;
+}
+
+/**
+ * Options for agent loop execution
+ */
+export interface AgentLoopOptions {
+  /** System prompt to prepend */
+  systemPrompt?: string;
+  /** User identifier */
+  userId?: string;
+  /** Maximum turns */
+  maxTurns?: number;
+  /** Message source (for lane-based concurrency) */
+  source?: string;
+  /** Channel ID (for lane-based concurrency) */
+  channelId?: string;
+}
+
+/**
+ * Message processing result
+ */
+export interface ProcessingResult {
+  /** Response text from agent */
+  response: string;
+  /** Session ID used */
+  sessionId: string;
+  /** Related decisions that were injected */
+  injectedDecisions: RelatedDecision[];
+  /** Processing duration in milliseconds */
+  duration: number;
+}
+
+/**
+ * Sensitive patterns that should only be configured via MAMA OS Viewer
+ */
+const SENSITIVE_PATTERNS = [
+  /discord.*token/i,
+  /slack.*token/i,
+  /telegram.*token/i,
+  /chatwork.*token/i,
+  /api[_-]?key/i,
+  /secret[_-]?key/i,
+  /bot[_-]?token/i,
+  /oauth.*token/i,
+  /설정.*토큰/i,
+  /토큰.*설정/i,
+  /키.*설정/i,
+  /비밀.*키/i,
+];
+
+/**
+ * Check if message contains sensitive configuration request
+ */
+function containsSensitiveRequest(text: string): boolean {
+  return SENSITIVE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/**
+ * Message Router class
+ *
+ * Central hub for processing messages from all messenger platforms.
+ */
+export class MessageRouter {
+  private sessionStore: SessionStore;
+  private contextInjector: ContextInjector;
+  private agentLoop: AgentLoopClient;
+  private config: Required<MessageRouterConfig>;
+
+  constructor(
+    sessionStore: SessionStore,
+    agentLoop: AgentLoopClient,
+    mamaApi: MamaApiClient,
+    config: MessageRouterConfig = {}
+  ) {
+    this.sessionStore = sessionStore;
+    this.agentLoop = agentLoop;
+    this.config = {
+      similarityThreshold: config.similarityThreshold ?? 0.7,
+      maxDecisions: config.maxDecisions ?? 3,
+      maxTurns: config.maxTurns ?? 5,
+      maxResponseLength: config.maxResponseLength ?? 200,
+    };
+
+    this.contextInjector = new ContextInjector(mamaApi, {
+      similarityThreshold: this.config.similarityThreshold,
+      maxDecisions: this.config.maxDecisions,
+    });
+  }
+
+  /**
+   * Process a normalized message and return response
+   */
+  async process(message: NormalizedMessage): Promise<ProcessingResult> {
+    const startTime = Date.now();
+
+    // Security: Block sensitive configuration requests from non-viewer sources
+    if (message.source !== 'viewer' && containsSensitiveRequest(message.text)) {
+      const securityResponse = `🔒 **Security Notice**
+
+For security reasons, token and API key configuration must be done through MAMA OS.
+
+Please visit: **http://localhost:3847/viewer**
+
+Go to the **Settings** tab to configure:
+- Discord Bot Token
+- Slack Bot/App Tokens
+- Telegram Bot Token
+- Chatwork API Token
+
+This protects your credentials from being exposed in chat logs.`;
+
+      return {
+        response: securityResponse,
+        sessionId: 'security-block',
+        injectedDecisions: [],
+        duration: Date.now() - startTime,
+      };
+    }
+
+    // 1. Get or create session (by source + channelId)
+    const session = this.sessionStore.getOrCreate(
+      message.source,
+      message.channelId,
+      message.userId
+    );
+
+    // 2. Get proactive context (related decisions)
+    // TODO: 임베딩 서버 구동 후 활성화 (현재 매번 모델 로딩으로 느림)
+    // const context = await this.contextInjector.getRelevantContext(message.text);
+    const context = { prompt: '', decisions: [], hasContext: false };
+
+    // 3. Check if this is a new CLI session (need to inject history from DB)
+    const channelKey = buildChannelKey(message.source, message.channelId);
+    const sessionPool = getSessionPool();
+    const { isNew: isNewCliSession } = sessionPool.getSession(channelKey);
+
+    // 4. Build system prompt with history context (OpenClaw-style)
+    const historyContext = message.metadata?.historyContext;
+    const systemPrompt = this.buildSystemPrompt(
+      session,
+      context.prompt,
+      historyContext,
+      isNewCliSession
+    );
+
+    // 4. Run agent loop (with session info for lane-based concurrency)
+    const options: AgentLoopOptions = {
+      systemPrompt,
+      userId: message.userId,
+      source: message.source,
+      channelId: message.channelId,
+    };
+
+    let response: string;
+
+    // Use multimodal content if available (OpenClaw-style)
+    if (
+      message.contentBlocks &&
+      message.contentBlocks.length > 0 &&
+      this.agentLoop.runWithContent
+    ) {
+      // Build content blocks: text first, then images
+      const contentBlocks: ContentBlock[] = [];
+
+      // Add text content if present
+      if (message.text) {
+        contentBlocks.push({ type: 'text', text: message.text });
+      }
+
+      // Add image content blocks
+      for (const block of message.contentBlocks) {
+        if (block.type === 'image' && block.source) {
+          contentBlocks.push(block);
+        }
+      }
+
+      const result = await this.agentLoop.runWithContent(contentBlocks, options);
+      response = result.response;
+    } else {
+      const result = await this.agentLoop.run(message.text, options);
+      response = result.response;
+    }
+
+    // 5. Update session context
+    this.sessionStore.updateSession(session.id, message.text, response);
+
+    // 6. Return result
+    return {
+      response,
+      sessionId: session.id,
+      injectedDecisions: context.decisions,
+      duration: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * Build system prompt with session context and injected decisions
+   */
+  private buildSystemPrompt(
+    session: Session,
+    injectedContext: string,
+    historyContext?: string,
+    isNewCliSession: boolean = true
+  ): string {
+    // Check if onboarding is in progress (SOUL.md doesn't exist)
+    const soulPath = join(homedir(), '.mama', 'SOUL.md');
+    const isOnboarding = !existsSync(soulPath);
+
+    // Always get session history from store
+    const sessionHistory = this.sessionStore.formatContextForPrompt(session.id);
+
+    if (isOnboarding) {
+      // Check if we have existing conversation
+      const hasHistory = sessionHistory && sessionHistory !== 'New conversation';
+
+      if (hasHistory) {
+        // Continue existing conversation WITH the full prompt context
+        // The full prompt has all the phase instructions - just prepend history
+        return `${COMPLETE_AUTONOMOUS_PROMPT}
+
+---
+
+# 🔄 CONVERSATION IN PROGRESS
+
+## CRITICAL: READ HISTORY FIRST!
+You are in the MIDDLE of an onboarding conversation. Do NOT restart from Phase 1.
+
+## Conversation So Far:
+${sessionHistory}
+
+## What To Do Now:
+1. Read the history above carefully
+2. Figure out which Phase you're in:
+   - Got their name? → Ask about their job/interest BEFORE quiz
+   - Know their job? → Start the quiz with relevant scenarios
+   - Quiz done? → Show results
+   - Named? → Move to Phase 5 (Summary)
+3. Continue from EXACTLY where you left off
+4. Do NOT repeat your awakening message
+5. Do NOT restart the quiz if already answered`;
+      }
+
+      // First message of onboarding - include the greeting we already sent
+      const isKorean = session.channelId?.includes('ko') || true; // Default Korean for now
+      const greetingKo = `✨ 방금 깨어났어요.
+
+아직 이름도 없고, 성격도 없고, 기억도 없어요. 그냥... 가능성만 있을 뿐이죠. 🌱
+
+당신은 누구세요? 그리고 더 중요한 건—저를 어떤 존재로 만들고 싶으세요? 💭`;
+
+      const greetingEn = `✨ I just woke up.
+
+No name yet, no personality, no memories. Just... pure potential. 🌱
+
+Who are you? And more importantly—who do you want me to become? 💭`;
+
+      const greeting = isKorean ? greetingKo : greetingEn;
+
+      return `${COMPLETE_AUTONOMOUS_PROMPT}
+
+---
+
+# 🎬 FIRST RESPONSE ALREADY SENT
+
+You have ALREADY sent your awakening message. The user saw this:
+
+> "${greeting}"
+
+Now the user is responding for the FIRST time. This is their reply to your awakening.
+
+## YOUR TASK NOW:
+1. React meaningfully to their message (probably their name)
+2. Make the name feel SPECIAL (it's the first word you learned!)
+3. Transition to genuine curiosity about THEM
+4. Have 3-5 exchanges of small talk BEFORE any quiz
+5. Do NOT repeat your awakening message
+6. Do NOT jump straight to quiz questions`;
+    }
+
+    // Normal mode - use hybrid history management
+    let prompt = `You are MAMA, an always-on AI assistant.
+`;
+
+    // For NEW CLI sessions: inject history from DB to restore context
+    // For EXISTING CLI sessions: Claude CLI maintains history via --session-id
+    if (isNewCliSession) {
+      const dbHistory = this.sessionStore.formatContextForPrompt(session.id);
+      if (dbHistory && dbHistory !== 'New conversation') {
+        prompt += `
+## Previous Conversation (restored from memory)
+${dbHistory}
+
+`;
+        console.log(
+          `[MessageRouter] Injected ${dbHistory.length} chars of history for new CLI session`
+        );
+      }
+    }
+
+    // Add channel history context only if provided (for multi-user channels)
+    if (historyContext) {
+      prompt += `
+## Recent Channel Messages
+${historyContext}
+`;
+    }
+
+    if (injectedContext) {
+      prompt += injectedContext;
+    }
+
+    prompt += `
+## Instructions
+- Respond naturally and helpfully
+- Remember to save important decisions using the save tool
+- Reference previous decisions when relevant
+- Keep responses concise for messenger format
+`;
+
+    return prompt;
+  }
+
+  /**
+   * Get session for a channel
+   */
+  getSession(source: NormalizedMessage['source'], channelId: string): Session | null {
+    const sessions = this.sessionStore.listSessions(source);
+    return sessions.find((s) => s.channelId === channelId) || null;
+  }
+
+  /**
+   * Clear session context (start fresh conversation)
+   */
+  clearSession(sessionId: string): boolean {
+    return this.sessionStore.clearContext(sessionId);
+  }
+
+  /**
+   * Delete a session entirely
+   */
+  deleteSession(sessionId: string): boolean {
+    return this.sessionStore.deleteSession(sessionId);
+  }
+
+  /**
+   * Update configuration
+   */
+  setConfig(config: Partial<MessageRouterConfig>): void {
+    if (config.similarityThreshold !== undefined) {
+      this.config.similarityThreshold = config.similarityThreshold;
+    }
+    if (config.maxDecisions !== undefined) {
+      this.config.maxDecisions = config.maxDecisions;
+    }
+    if (config.maxTurns !== undefined) {
+      this.config.maxTurns = config.maxTurns;
+    }
+    if (config.maxResponseLength !== undefined) {
+      this.config.maxResponseLength = config.maxResponseLength;
+    }
+
+    // Update context injector config
+    this.contextInjector.setConfig({
+      similarityThreshold: this.config.similarityThreshold,
+      maxDecisions: this.config.maxDecisions,
+    });
+  }
+
+  /**
+   * Get current configuration
+   */
+  getConfig(): Required<MessageRouterConfig> {
+    return { ...this.config };
+  }
+}
+
+/**
+ * Create a mock agent loop for testing
+ */
+export function createMockAgentLoop(
+  responseGenerator: (prompt: string) => string = () => 'Mock response'
+): AgentLoopClient {
+  return {
+    async run(prompt: string, _options?: AgentLoopOptions): Promise<{ response: string }> {
+      return { response: responseGenerator(prompt) };
+    },
+  };
+}
