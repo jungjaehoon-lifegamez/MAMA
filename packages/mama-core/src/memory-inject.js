@@ -40,22 +40,32 @@ const ENABLE_VECTOR_SEARCH = true; // Enable vector search for semantic matching
  */
 async function injectDecisionContext(userMessage) {
   const startTime = Date.now();
+  let timeoutId = null;
 
   try {
-    // Task 1.3: Implement timeout wrapper (Promise.race with 200ms timeout)
+    // Task 1.3: Implement timeout wrapper (Promise.race with timeout)
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`Memory injection timeout (${TIMEOUT_MS}ms)`));
+      }, TIMEOUT_MS);
+    });
+
     const context = await Promise.race([
       performMemoryInjection(userMessage, startTime),
-      createTimeout(TIMEOUT_MS),
+      timeoutPromise,
     ]);
 
-    const totalLatency = Date.now() - startTime;
-
-    if (totalLatency > TIMEOUT_MS) {
-      console.warn(`[MAMA] Memory injection exceeded ${TIMEOUT_MS}ms: ${totalLatency}ms`);
+    // Clear timeout on success to prevent timer leak
+    if (timeoutId) {
+      clearTimeout(timeoutId);
     }
 
     return context;
   } catch (error) {
+    // Clear timeout on error to prevent timer leak
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
     // CLAUDE.md Rule #1: NO FALLBACK
     // Errors must be thrown for debugging (including timeout)
     logError(`[MAMA] Memory injection FAILED: ${error.message}`);
@@ -182,24 +192,6 @@ function mergeDecisions(graphDecisions, vectorDecisions) {
 
   return merged;
 }
-
-/**
- * Create timeout promise
- *
- * Task 1.3: Timeout wrapper for Promise.race
- * AC #3: Graceful timeout handling
- *
- * @param {number} ms - Timeout in milliseconds
- * @returns {Promise<never>} Rejects after timeout
- */
-function createTimeout(ms) {
-  return new Promise((_, reject) => {
-    setTimeout(() => {
-      reject(new Error(`Memory injection timeout (${ms}ms)`));
-    }, ms);
-  });
-}
-
 // Export API
 module.exports = {
   injectDecisionContext,

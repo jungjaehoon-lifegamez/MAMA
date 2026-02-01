@@ -113,8 +113,22 @@ async function handleRequest(req, res) {
     console.error('[EmbeddingHTTP] Shutdown requested (Standalone takeover, token validated)');
     res.writeHead(200);
     res.end(JSON.stringify({ status: 'shutting_down' }));
-    // Graceful shutdown after response
+    // Graceful shutdown after response - close WebSocket first, then HTTP
     setTimeout(() => {
+      // Close WebSocket server first to release connections
+      if (_wssInstance) {
+        _wssInstance.clients?.forEach((client) => {
+          try {
+            client.terminate();
+          } catch {
+            // Ignore termination errors
+          }
+        });
+        _wssInstance.close(() => {
+          console.error('[EmbeddingHTTP] WebSocket server closed');
+        });
+      }
+      // Then close HTTP server
       if (_serverInstance) {
         _serverInstance.close(() => {
           console.error('[EmbeddingHTTP] Server closed for Standalone takeover');
@@ -331,7 +345,10 @@ async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
 
     server.listen(port, HOST, () => {
       console.error(`[EmbeddingHTTP] Running at http://${HOST}:${port}`);
-      console.error(`[EmbeddingHTTP] Shutdown token: ${SHUTDOWN_TOKEN}`);
+      // Note: Shutdown token not logged for security (use MAMA_DEBUG=true to enable)
+      if (process.env.MAMA_DEBUG === 'true') {
+        console.error(`[EmbeddingHTTP] Shutdown token: ${SHUTDOWN_TOKEN}`);
+      }
       writePortFile(port);
 
       // Initialize WebSocket server (unless disabled)

@@ -17,6 +17,20 @@ const { info, error: logError } = require('./debug-logger');
 const { formatTopNContext } = require('./relevance-scorer');
 
 /**
+ * Safely parse JSON string, returning fallback on error
+ * @param {string} str - JSON string to parse
+ * @param {*} fallback - Value to return on parse error
+ * @returns {*} Parsed value or fallback
+ */
+function safeParseJson(str, fallback = []) {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * Format decision context for Claude injection with top-N selection
  *
  * Task 6.1-6.2, 8.1-8.5: Build context format template with top-N selection
@@ -884,7 +898,7 @@ ${decision.reasoning || decision.decision}
       const evidenceList = Array.isArray(decision.evidence)
         ? decision.evidence
         : typeof decision.evidence === 'string'
-          ? JSON.parse(decision.evidence)
+          ? safeParseJson(decision.evidence, [decision.evidence])
           : [decision.evidence];
       if (evidenceList.length > 0) {
         output += '\n🔍 Evidence:';
@@ -898,7 +912,7 @@ ${decision.reasoning || decision.decision}
       const altList = Array.isArray(decision.alternatives)
         ? decision.alternatives
         : typeof decision.alternatives === 'string'
-          ? JSON.parse(decision.alternatives)
+          ? safeParseJson(decision.alternatives, [decision.alternatives])
           : [decision.alternatives];
       if (altList.length > 0) {
         output += '\n\n🔀 Alternatives Considered:';
@@ -980,7 +994,7 @@ ${latest.decision}
       const evidenceList = Array.isArray(latest.evidence)
         ? latest.evidence
         : typeof latest.evidence === 'string'
-          ? JSON.parse(latest.evidence)
+          ? safeParseJson(latest.evidence, [latest.evidence])
           : [latest.evidence];
       if (evidenceList.length > 0) {
         output += '\n\n🔍 Evidence:';
@@ -997,7 +1011,7 @@ ${latest.decision}
       const altList = Array.isArray(latest.alternatives)
         ? latest.alternatives
         : typeof latest.alternatives === 'string'
-          ? JSON.parse(latest.alternatives)
+          ? safeParseJson(latest.alternatives, [latest.alternatives])
           : [latest.alternatives];
       if (altList.length > 0) {
         output += '\n\n🔀 Alternatives: ';
