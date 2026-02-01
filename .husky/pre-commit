@@ -1,7 +1,28 @@
 #!/bin/sh
+set -e
 
-# Run lint-staged for staged files
+# Run lint-staged for staged files (ESLint + Prettier)
 npx lint-staged
 
-# Run tests (optional - can be slow)
-# npm test
+# Secret scanning with gitleaks
+echo "Scanning for secrets..."
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --no-banner
+else
+  # Check if gitleaks is available via npx
+  if npx --yes gitleaks --version >/dev/null 2>&1; then
+    # gitleaks available - run scan (will exit non-zero if secrets found)
+    npx --yes gitleaks protect --staged --no-banner
+  else
+    echo "⚠️  gitleaks not installed, skipping secret scan"
+  fi
+fi
+
+# Run typecheck for standalone package
+echo "Running typecheck..."
+pnpm --filter @jungjaehoon/mama-standalone typecheck
+
+# Run tests for changed packages only (faster commits)
+# Set CI=true to skip tests that require external services (claude CLI, APIs)
+echo "Running tests for changed packages..."
+CI=true pnpm --filter "...[HEAD^1]" test

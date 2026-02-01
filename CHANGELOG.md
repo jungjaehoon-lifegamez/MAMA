@@ -7,6 +7,145 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [mama-os-0.1.1] - 2026-02-01
+
+### Fixed
+
+**Code Review Fixes (PR #8)**
+
+- **Schema Timestamp Convention** - Aligned all migration files to use milliseconds (`unixepoch() * 1000`)
+  - Fixed latent bug where schema DEFAULT (seconds) didn't match app code (milliseconds)
+  - Added migration 011 with validation trigger to auto-convert accidental second-based inserts
+  - All 7 migration files updated for consistency
+
+- **Server & Client Improvements**
+  - Added `res.resume()` in `isEmbeddingServerRunning()` to properly drain HTTP response sockets
+  - Made ollama-client error check more specific with regex pattern for model not found errors
+  - Consolidated ollama-client to mama-core (removed duplicate from mcp-server, 388 lines saved)
+  - Fixed WebSocket shutdown sequence - terminate clients before closing HTTP server
+
+- **Code Quality**
+  - Added defensive null checks for IP extraction in WebSocket handler
+  - Fixed timer leak in memory-inject Promise.race pattern
+  - Added safe JSON.parse helper with fallback
+  - Fixed route ordering bug in session API (`/api/sessions/last-active` was unreachable)
+  - Updated relevance-scorer to use 'pending' key instead of null for OUTCOME_WEIGHTS
+
+- **Documentation**
+  - Updated memory-inject AC #1 comment to reflect actual 5s timeout for LLM latency
+  - Removed outdated "Respects process.exit signals" from progress-indicator header
+  - Added explicit timestamp convention comment in db-manager.js
+
+- **CI/Testing**
+  - Fixed pre-commit hook to set `CI=true` for skipping tests requiring external services
+  - Updated Node.js requirement from >=18 to >=22 (native module compatibility)
+
+---
+
+## [mama-os-0.1.0] - 2026-02-01
+
+### Added
+
+**MAMA OS v0.1.0 - Your AI Operating System**
+
+- **New Package: `@jungjaehoon/mama-os` (v0.1.0)** - Your AI Operating System with gateway integrations and autonomous agent capabilities
+  - **CLI Commands**: `mama init`, `mama start`, `mama stop`, `mama status`, `mama run`, `mama setup`
+  - **Agent Loop**: Autonomous conversation loop with Claude API integration
+  - **Gateway Support**: Discord, Slack, Telegram bot integrations
+  - **Skills System**: Pluggable skill architecture with loader and matcher
+  - **Onboarding Wizard**: 9-phase autonomous discovery with personality quiz
+  - **Scheduler**: Cron-based job scheduling with heartbeat monitoring
+  - **OAuth Manager**: Authentication for external services
+  - **MAMA OS Viewer**: Integrated graph viewer and mobile chat interface
+
+- **New Package: `@jungjaehoon/mama-core`** - Shared core functionality
+  - **DB Adapter**: Unified database abstraction layer (SQLite)
+  - **Embedding Server**: HTTP server for fast embedding generation (port 3847)
+  - **Memory Store**: Decision storage and retrieval
+  - **Decision Tracker**: Graph-based decision relationship tracking
+  - **Query Intent**: Natural language query interpretation
+  - **Relevance Scorer**: Semantic similarity scoring
+
+**Onboarding & Discovery**
+
+- **9-Phase Autonomous Onboarding** - Interactive setup wizard for new users
+  - Phase 1-4: Introduction, personality quiz, workspace setup, exploration
+  - Phase 5-7: Features summary, security review, integrations
+  - Phase 8-9: Demo showcase, finalization with ritual
+- **Personality Quiz** - User preference detection for personalized experience
+- **Skills Integration** - Pre-built skills (document-analyze, image-translate, heartbeat-report)
+- **Cron/Heartbeat Features** - Scheduled task execution and health monitoring
+
+**Architecture Improvements**
+
+- **Monorepo Cleanup** - Removed sprint planning files and obsolete documentation
+- **Package Consolidation** - Clear separation of concerns (standalone, core, mcp-server, plugins)
+- **Gateway Architecture** - Message routing, session management, context injection
+- **Concurrency Control** - Lane-based concurrency with session keys
+
+### Changed
+
+- **Project Structure** - Added `packages/standalone` and `packages/mama-core` to monorepo
+- **Documentation** - Removed obsolete MAMA OS planning docs (phase4-8, master plan, vision)
+- **Build System** - Updated to support standalone TypeScript compilation
+
+### Removed
+
+- **Sprint Files** - Deleted `.sisyphus/` directory and temporary planning documents
+- **Test Scripts** - Removed one-time test scripts (luna-bot.js, test-_.js, verify-_.mjs)
+- **Obsolete Docs** - Removed phase implementation plans and mobile chat integration plan
+
+### Notes
+
+- **MAMA OS Initial Release (0.1.0)** - First public release of standalone agent
+- **Package Split** - Core functionality moved to `mama-core` for better reusability
+
+---
+
+## [1.6.0] - 2026-01-30
+
+### Added
+
+- **GitHub Pages Landing Page** - https://jungjaehoon-lifegamez.github.io/MAMA
+  - Mobile-responsive design with quick install guides
+  - Platform-specific installation instructions
+  - Visual feature showcase
+- **`/mama-setup` Wizard Command** - Guided onboarding for first-time users
+  - 5-step validation (Node.js, npm, SQLite, embedding model, database)
+  - Clear progress indicators with emoji status (⏳ loading, ✅ ready)
+  - Automatic remediation suggestions for common issues
+- **Progress Indicators During Setup** - No more silent waits
+  - Model download progress (⏳ Downloading embedding model...)
+  - Database initialization feedback (✅ Database initialized)
+  - Clear status updates throughout first-time setup
+- **`tier-validator.js` Module** - Centralized tier validation logic
+  - Shared validation across setup wizard and configure command
+  - Consistent tier detection and remediation guidance
+- **Installation Verification Script** - `npm run verify`
+  - Detects Tier 1 vs Tier 2 status
+  - Provides remediation guidance for degraded mode
+  - Validates all critical dependencies
+- **Mermaid Flowcharts** - Visual troubleshooting guides
+  - Decision trees for Tier 2 remediation
+  - Flowcharts in troubleshooting documentation
+  - Easier navigation of common issues
+
+### Improved
+
+- **README.md** - Now prominently links to Tier 2 Remediation Guide
+  - Reduced confusion about degraded mode
+  - Clear path to upgrade from Tier 2 to Tier 1
+- **First-Time User Experience** - Significantly enhanced
+  - No more silent 1-2 minute waits during initialization
+  - Clear feedback at every step
+  - Proactive guidance for common setup issues
+
+### Fixed
+
+- **User Confusion About Tier 2 Status** - Guide now prominently linked in README
+  - Users understand what Tier 2 means
+  - Clear steps to remediate and upgrade to Tier 1
+
 ## [1.5.11] - 2026-01-28
 
 ### Fixed
@@ -15,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Changed `./hooks/hooks.json` → `../hooks/hooks.json` (relative to plugin.json in `.claude-plugin/`)
   - Updated `validate-manifests.js` to resolve hooks path correctly
 
-## [clawdbot-plugin-0.2.3] - 2026-01-28
+## [openclaw-plugin-0.2.3] - 2026-01-28
 
 ### Fixed
 
@@ -56,14 +195,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Previously worked only when HTTP embedding server was running on port 3847
   - Now plugin cache survives updates without manual `npm install`
 
-## [clawdbot-plugin-0.2.2] - 2026-01-28
+## [openclaw-plugin-0.2.2] - 2026-01-28
 
 ### Fixed
 
 - **Postinstall Model Download** - Fixed `Cannot find package '@huggingface/transformers'` in postinstall
   - Added `@huggingface/transformers` dependency for postinstall script model pre-download
 
-## [clawdbot-plugin-0.2.1] - 2026-01-27
+## [openclaw-plugin-0.2.1] - 2026-01-27
 
 ### Fixed
 
@@ -72,11 +211,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shows truncated reasoning + separate 🔗 link line if pattern found after truncation point
   - Fixes context loss when reasoning graph connections were cut off
 
-## [clawdbot-plugin-0.2.0] - 2026-01-27
+## [openclaw-plugin-0.2.0] - 2026-01-27
 
 ### Added
 
-- **Clawdbot Plugin** - Native plugin for Clawdbot/Moltbot gateway integration
+- **OpenClaw Plugin** - Native plugin for OpenClaw/Moltbot gateway integration
   - **Auto-recall**: Semantic search on `before_agent_start` based on user prompt
   - **4 native tools**: `mama_search`, `mama_save`, `mama_load_checkpoint`, `mama_update`
   - **Auto-capture detection**: Pattern matching for decision-like messages on `agent_end`
@@ -92,7 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Uses lifecycle hooks (`api.on("before_agent_start")`) instead of bootstrap hooks
 - Direct module integration (no HTTP/REST) via `@jungjaehoon/mama-server` workspace dependency
-- Published to npm as `@jungjaehoon/clawdbot-mama`
+- Published to npm as `@jungjaehoon/openclaw-mama`
 
 ## [1.5.9] - 2026-01-26
 

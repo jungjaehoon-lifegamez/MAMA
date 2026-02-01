@@ -32,11 +32,42 @@ const {
 const { loadCheckpointTool } = require('./tools/checkpoint-tools.js');
 const mama = require('./mama/mama-api.js');
 
-// Import core modules
+// Import core modules from mama-core
 const { initDB } = require('./mama/db-manager.js');
-const { startEmbeddingServer, warmModel } = require('./embedding-http-server.js');
+const embeddingServer = require('@jungjaehoon/mama-core/embedding-server');
+const http = require('http');
 
 const REQUIRED_ENV_VARS = ['MAMA_SERVER_TOKEN', 'MAMA_DB_PATH', 'MAMA_SERVER_PORT'];
+
+/**
+ * Check if embedding server is already running (e.g., started by Standalone)
+ * @param {number} port - Port to check
+ * @returns {Promise<boolean>} - true if server is running
+ */
+async function isEmbeddingServerRunning(port) {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/health',
+        method: 'GET',
+        timeout: 1000,
+      },
+      (res) => {
+        // Drain the response to free up the socket
+        res.resume();
+        resolve(res.statusCode === 200);
+      }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end();
+  });
+}
 
 // Default values for development
 const ENV_DEFAULTS = {
@@ -508,30 +539,42 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       console.error('[MAMA MCP] Ready to accept connections');
 
       // Start HTTP embedding server in background (non-blocking)
-      // This allows Graph Viewer and Mobile Chat without delaying MCP initialization
+      // Architecture: Standalone owns the server with chat, MCP reuses if available
       const embeddingPort = parseInt(
         process.env.MAMA_HTTP_PORT || process.env.MAMA_EMBEDDING_PORT || '3847',
         10
       );
 
-      console.error('[MAMA MCP] Starting HTTP embedding server in background...');
-      startEmbeddingServer(embeddingPort)
-        .then((httpServer) => {
-          if (httpServer) {
-            console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
-            console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
-            // Pre-warm model in background
-            warmModel().catch((err) =>
-              console.error('[MAMA MCP] Model warmup error:', err.message)
-            );
-          } else {
-            console.error('[MAMA MCP] HTTP embedding server skipped (port unavailable or blocked)');
-          }
-        })
-        .catch((err) => {
-          console.error('[MAMA MCP] HTTP embedding server error:', err.message);
-          console.error('[MAMA MCP] MCP tools will continue to work without Graph Viewer');
-        });
+      // Check if Standalone (or another instance) already started the embedding server
+      const serverAlreadyRunning = await isEmbeddingServerRunning(embeddingPort);
+
+      if (serverAlreadyRunning) {
+        console.error(`[MAMA MCP] Embedding server already running on port ${embeddingPort}`);
+        console.error('[MAMA MCP] Using existing server (likely started by Standalone with chat)');
+        console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
+      } else {
+        console.error('[MAMA MCP] Starting HTTP embedding server in background...');
+        embeddingServer
+          .startEmbeddingServer(embeddingPort)
+          .then((httpServer) => {
+            if (httpServer) {
+              console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
+              console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
+              console.error('[MAMA MCP] Note: Chat disabled (start Standalone for full features)');
+              embeddingServer
+                .warmModel()
+                .catch((err) => console.error('[MAMA MCP] Model warmup error:', err.message));
+            } else {
+              console.error(
+                '[MAMA MCP] HTTP embedding server skipped (port unavailable or blocked)'
+              );
+            }
+          })
+          .catch((err) => {
+            console.error('[MAMA MCP] HTTP embedding server error:', err.message);
+            console.error('[MAMA MCP] MCP tools will continue to work without Graph Viewer');
+          });
+      }
     } catch (error) {
       console.error('[MAMA MCP] Failed to start server:', error);
       process.exit(1);
