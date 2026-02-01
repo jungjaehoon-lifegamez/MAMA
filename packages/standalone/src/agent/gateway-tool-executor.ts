@@ -25,8 +25,13 @@ import type {
   LoadCheckpointResult,
   GatewayToolExecutorOptions,
   MAMAApiInterface,
+  BrowserNavigateInput,
+  BrowserScreenshotInput,
+  BrowserClickInput,
+  BrowserTypeInput,
 } from './types.js';
 import { AgentError } from './types.js';
+import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 
 /**
  * Discord gateway interface for sending messages
@@ -52,6 +57,12 @@ const VALID_TOOLS: GatewayToolName[] = [
   'Write',
   'Bash',
   'discord_send',
+  'browser_navigate',
+  'browser_screenshot',
+  'browser_click',
+  'browser_type',
+  'browser_get_text',
+  'browser_close',
 ];
 
 export class GatewayToolExecutor {
@@ -59,10 +70,14 @@ export class GatewayToolExecutor {
   private readonly mamaDbPath?: string;
   private sessionStore?: any;
   private discordGateway: DiscordGatewayInterface | null = null;
+  private browserTool: BrowserTool;
 
   constructor(options: GatewayToolExecutorOptions = {}) {
     this.mamaDbPath = options.mamaDbPath;
     this.sessionStore = options.sessionStore;
+    this.browserTool = getBrowserTool({
+      screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
+    });
 
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
@@ -148,6 +163,19 @@ export class GatewayToolExecutor {
           return await this.executeDiscordSend(
             input as { channel_id: string; message?: string; image_path?: string }
           );
+        // Browser tools
+        case 'browser_navigate':
+          return await this.executeBrowserNavigate(input as BrowserNavigateInput);
+        case 'browser_screenshot':
+          return await this.executeBrowserScreenshot(input as BrowserScreenshotInput);
+        case 'browser_click':
+          return await this.executeBrowserClick(input as BrowserClickInput);
+        case 'browser_type':
+          return await this.executeBrowserType(input as BrowserTypeInput);
+        case 'browser_get_text':
+          return await this.executeBrowserGetText();
+        case 'browser_close':
+          return await this.executeBrowserClose();
       }
 
       // MAMA tools require API
@@ -446,6 +474,96 @@ export class GatewayToolExecutor {
       return { success: true };
     } catch (err) {
       return { success: false, error: `Failed to send to Discord: ${err}` };
+    }
+  }
+
+  // ============================================================================
+  // Browser Tool Execution
+  // ============================================================================
+
+  /**
+   * Navigate to a URL
+   */
+  private async executeBrowserNavigate(
+    input: BrowserNavigateInput
+  ): Promise<{ success: boolean; title?: string; url?: string; error?: string }> {
+    try {
+      const result = await this.browserTool.navigate(input.url);
+      return { success: true, title: result.title, url: result.url };
+    } catch (err) {
+      return { success: false, error: `Navigation failed: ${err}` };
+    }
+  }
+
+  /**
+   * Take a screenshot
+   */
+  private async executeBrowserScreenshot(
+    input: BrowserScreenshotInput
+  ): Promise<{ success: boolean; path?: string; error?: string }> {
+    try {
+      const result = input.full_page
+        ? await this.browserTool.screenshotFullPage(input.filename)
+        : await this.browserTool.screenshot(input.filename);
+      return { success: true, path: result.path };
+    } catch (err) {
+      return { success: false, error: `Screenshot failed: ${err}` };
+    }
+  }
+
+  /**
+   * Click an element
+   */
+  private async executeBrowserClick(
+    input: BrowserClickInput
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.browserTool.click(input.selector);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: `Click failed: ${err}` };
+    }
+  }
+
+  /**
+   * Type text into an element
+   */
+  private async executeBrowserType(
+    input: BrowserTypeInput
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.browserTool.type(input.selector, input.text);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: `Type failed: ${err}` };
+    }
+  }
+
+  /**
+   * Get page text content
+   */
+  private async executeBrowserGetText(): Promise<{
+    success: boolean;
+    text?: string;
+    error?: string;
+  }> {
+    try {
+      const result = await this.browserTool.getText();
+      return { success: true, text: result.text };
+    } catch (err) {
+      return { success: false, error: `Get text failed: ${err}` };
+    }
+  }
+
+  /**
+   * Close the browser
+   */
+  private async executeBrowserClose(): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.browserTool.close();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: `Close failed: ${err}` };
     }
   }
 

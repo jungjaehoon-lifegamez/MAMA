@@ -1,10 +1,11 @@
 /**
  * Browser Tool
  *
- * Puppeteer-based browser automation for MAMA
+ * Playwright-based browser automation for MAMA
+ * Migrated from Puppeteer for better stability and multi-browser support
  */
 
-import type { Browser, Page } from 'puppeteer';
+import type { Browser, Page, BrowserContext } from 'playwright';
 
 export interface BrowserToolConfig {
   /** Headless mode (default: true) */
@@ -15,6 +16,8 @@ export interface BrowserToolConfig {
   viewportHeight?: number;
   /** Screenshot output directory */
   screenshotDir?: string;
+  /** Browser type: chromium, firefox, webkit (default: chromium) */
+  browserType?: 'chromium' | 'firefox' | 'webkit';
 }
 
 const DEFAULT_CONFIG: Required<BrowserToolConfig> = {
@@ -22,11 +25,13 @@ const DEFAULT_CONFIG: Required<BrowserToolConfig> = {
   viewportWidth: 1280,
   viewportHeight: 800,
   screenshotDir: '/tmp/mama-screenshots',
+  browserType: 'chromium',
 };
 
 export class BrowserTool {
   private config: Required<BrowserToolConfig>;
   private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
   private page: Page | null = null;
 
   constructor(config: BrowserToolConfig = {}) {
@@ -42,26 +47,26 @@ export class BrowserTool {
       return;
     }
 
-    console.log('[Browser] Launching...');
+    console.log(`[Browser] Launching ${this.config.browserType}...`);
 
     // Dynamic import to avoid bundling issues
-    const puppeteer = await import('puppeteer');
+    const playwright = await import('playwright');
 
-    this.browser = await puppeteer.default.launch({
+    // Select browser type
+    const browserType = playwright[this.config.browserType];
+
+    this.browser = await browserType.launch({
       headless: this.config.headless,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
     });
 
-    this.page = await this.browser.newPage();
-    await this.page.setViewport({
-      width: this.config.viewportWidth,
-      height: this.config.viewportHeight,
+    this.context = await this.browser.newContext({
+      viewport: {
+        width: this.config.viewportWidth,
+        height: this.config.viewportHeight,
+      },
     });
+
+    this.page = await this.context.newPage();
 
     console.log('[Browser] Ready');
   }
@@ -73,6 +78,7 @@ export class BrowserTool {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
+      this.context = null;
       this.page = null;
       console.log('[Browser] Closed');
     }
@@ -95,7 +101,8 @@ export class BrowserTool {
     const page = await this.ensureBrowser();
     console.log(`[Browser] Navigating to: ${url}`);
 
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    // Playwright auto-waits for page load
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
 
     const title = await page.title();
     const currentUrl = page.url();
@@ -145,6 +152,7 @@ export class BrowserTool {
 
   /**
    * Click element by selector
+   * Playwright auto-waits for element to be actionable
    */
   async click(selector: string): Promise<{ success: boolean }> {
     const page = await this.ensureBrowser();
@@ -156,12 +164,13 @@ export class BrowserTool {
 
   /**
    * Type text into element
+   * Playwright auto-waits for element to be ready
    */
   async type(selector: string, text: string): Promise<{ success: boolean }> {
     const page = await this.ensureBrowser();
     console.log(`[Browser] Typing into: ${selector}`);
 
-    await page.type(selector, text);
+    await page.fill(selector, text);
     return { success: true };
   }
 
@@ -190,8 +199,8 @@ export class BrowserTool {
    */
   async getText(): Promise<{ success: boolean; text: string }> {
     const page = await this.ensureBrowser();
-    const text = await page.evaluate('document.body.innerText');
-    return { success: true, text: text as string };
+    const text = await page.innerText('body');
+    return { success: true, text };
   }
 
   /**
@@ -201,8 +210,7 @@ export class BrowserTool {
     const page = await this.ensureBrowser();
     console.log(`[Browser] Evaluating script...`);
 
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const result = await page.evaluate(new Function(script) as () => unknown);
+    const result = await page.evaluate(script);
     return { success: true, result };
   }
 
@@ -211,7 +219,7 @@ export class BrowserTool {
    */
   async getElementText(selector: string): Promise<{ success: boolean; text: string | null }> {
     const page = await this.ensureBrowser();
-    const text = await page.$eval(selector, (el) => el.textContent);
+    const text = await page.textContent(selector);
     return { success: true, text };
   }
 
@@ -220,11 +228,9 @@ export class BrowserTool {
    */
   async queryAll(selector: string): Promise<{ success: boolean; count: number; texts: string[] }> {
     const page = await this.ensureBrowser();
-    const elements = await page.$$(selector);
-    const texts = await Promise.all(
-      elements.map((el) => el.evaluate((node) => node.textContent || ''))
-    );
-    return { success: true, count: elements.length, texts };
+    const elements = await page.locator(selector).all();
+    const texts = await Promise.all(elements.map((el) => el.textContent() || ''));
+    return { success: true, count: elements.length, texts: texts.filter(Boolean) as string[] };
   }
 
   /**
@@ -259,8 +265,7 @@ export class BrowserTool {
    */
   async press(key: string): Promise<{ success: boolean }> {
     const page = await this.ensureBrowser();
-    // Type assertion for keyboard key type
-    await page.keyboard.press(key as Parameters<typeof page.keyboard.press>[0]);
+    await page.keyboard.press(key);
     return { success: true };
   }
 
@@ -303,6 +308,26 @@ export class BrowserTool {
    */
   isRunning(): boolean {
     return this.browser !== null;
+  }
+
+  /**
+   * Take a PDF of the page (Chromium only)
+   */
+  async pdf(filename?: string): Promise<{ success: boolean; path: string }> {
+    const page = await this.ensureBrowser();
+
+    const { mkdirSync, existsSync } = await import('fs');
+    if (!existsSync(this.config.screenshotDir)) {
+      mkdirSync(this.config.screenshotDir, { recursive: true });
+    }
+
+    const name = filename || `page-${Date.now()}.pdf`;
+    const path = `${this.config.screenshotDir}/${name}`;
+
+    await page.pdf({ path, format: 'A4' });
+    console.log(`[Browser] PDF saved: ${path}`);
+
+    return { success: true, path };
   }
 }
 
