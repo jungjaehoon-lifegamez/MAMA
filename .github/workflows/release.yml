@@ -205,10 +205,10 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # Step 3: Publish mama-server (independent - doesn't depend on mama-core)
+  # Step 3: Publish mama-server (depends on mama-core)
   publish-mama-server:
-    needs: [prepare-release]
-    if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-server')) }}
+    needs: [prepare-release, publish-mama-core]
+    if: ${{ always() && !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-server')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -226,11 +226,19 @@ jobs:
         with:
           version: 9
 
-      - name: Install and publish
+      - name: Install
+        working-directory: packages/mcp-server
+        run: pnpm install --ignore-scripts
+
+      - name: Replace workspace protocol
         working-directory: packages/mcp-server
         run: |
-          pnpm install --ignore-scripts
-          npm publish --access public
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
+
+      - name: Publish
+        working-directory: packages/mcp-server
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
