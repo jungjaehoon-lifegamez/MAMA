@@ -330,6 +330,42 @@ export interface BrowserTypeInput {
 }
 
 /**
+ * Browser scroll input
+ */
+export interface BrowserScrollInput {
+  /** Scroll direction */
+  direction: 'up' | 'down' | 'top' | 'bottom';
+  /** Scroll amount in pixels (default: 500) */
+  amount?: number;
+}
+
+/**
+ * Browser wait for input
+ */
+export interface BrowserWaitForInput {
+  /** CSS selector to wait for */
+  selector: string;
+  /** Timeout in milliseconds (default: 10000) */
+  timeout?: number;
+}
+
+/**
+ * Browser evaluate input
+ */
+export interface BrowserEvaluateInput {
+  /** JavaScript code to evaluate */
+  script: string;
+}
+
+/**
+ * Browser PDF input
+ */
+export interface BrowserPdfInput {
+  /** Optional filename */
+  filename?: string;
+}
+
+/**
  * Union type for all MCP tool inputs
  */
 export type GatewayToolInput =
@@ -341,7 +377,11 @@ export type GatewayToolInput =
   | BrowserNavigateInput
   | BrowserScreenshotInput
   | BrowserClickInput
-  | BrowserTypeInput;
+  | BrowserTypeInput
+  | BrowserScrollInput
+  | BrowserWaitForInput
+  | BrowserEvaluateInput
+  | BrowserPdfInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)
@@ -362,6 +402,10 @@ export type GatewayToolName =
   | 'browser_click'
   | 'browser_type'
   | 'browser_get_text'
+  | 'browser_scroll'
+  | 'browser_wait_for'
+  | 'browser_evaluate'
+  | 'browser_pdf'
   | 'browser_close';
 
 // ============================================================================
