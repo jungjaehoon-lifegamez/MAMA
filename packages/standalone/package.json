@@ -1,0 +1,84 @@
+{
+  "name": "@jungjaehoon/mama-os",
+  "version": "0.1.0",
+  "description": "MAMA OS - Your AI Operating System. Control + Visibility for AI-Powered Automation",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "mama": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "clean": "rm -rf dist node_modules",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/cli/index.js"
+  },
+  "keywords": [
+    "ai",
+    "assistant",
+    "claude",
+    "mcp",
+    "memory",
+    "always-on"
+  ],
+  "author": "Jung Jaehoon",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA.git",
+    "directory": "packages/standalone"
+  },
+  "bugs": {
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA/issues"
+  },
+  "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "dist",
+    "scripts/",
+    "public/",
+    "templates/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@jungjaehoon/mama-core": "workspace:*",
+    "@jungjaehoon/mama-server": "^1.5.11",
+    "@slack/socket-mode": "^2.0.5",
+    "@slack/web-api": "^7.13.0",
+    "better-sqlite3": "^11.10.0",
+    "commander": "^12.0.0",
+    "cron-parser": "^4.9.0",
+    "discord.js": "^14.25.1",
+    "express": "^5.2.1",
+    "js-yaml": "^4.1.0",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.67.0",
+    "puppeteer": "^24.36.1",
+    "sharp": "^0.34.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/node-telegram-bot-api": "^0.64.13",
+    "@types/supertest": "^6.0.3",
+    "@types/ws": "^8.5.10",
+    "supertest": "^7.2.2",
+    "typescript": "^5.4.0",
+    "vitest": "^1.0.0"
+  }
+}

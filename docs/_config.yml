@@ -1,0 +1,100 @@
+title: "MAMA Docs"
+description: "Memory-Augmented AI Assistant - Always-on AI agent with decision evolution tracking"
+url: "https://jungjaehoon-lifegamez.github.io"
+baseurl: "/MAMA"
+markdown: kramdown
+highlighter: rouge
+
+# Theme
+remote_theme: just-the-docs/just-the-docs
+
+# Logo and branding
+logo: "/assets/images/logo.svg"
+favicon_ico: "/assets/images/favicon.ico"
+
+# Search
+search_enabled: true
+search:
+  heading_level: 2
+  previews: 3
+  preview_words_before: 5
+  preview_words_after: 10
+  tokenizer_separator: /[\s/]+/
+
+# Navigation
+nav_sort: case_insensitive
+
+# Plugins
+plugins:
+  - jekyll-relative-links
+  - jekyll-seo-tag
+
+relative_links:
+  enabled: true
+  collections: true
+
+# Collections for docs
+collections:
+  tutorials:
+    output: true
+    permalink: /:collection/:name
+  guides:
+    output: true
+    permalink: /:collection/:name
+  reference:
+    output: true
+    permalink: /:collection/:name
+  explanation:
+    output: true
+    permalink: /:collection/:name
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+  - scope:
+      path: "tutorials"
+    values:
+      nav_order: 1
+      parent: Tutorials
+  - scope:
+      path: "guides"
+    values:
+      nav_order: 2
+      parent: Guides
+  - scope:
+      path: "reference"
+    values:
+      nav_order: 3
+      parent: Reference
+  - scope:
+      path: "explanation"
+    values:
+      nav_order: 4
+      parent: Explanation
+
+# Aux links (top right)
+aux_links:
+  "GitHub":
+    - "https://github.com/jungjaehoon-lifegamez/MAMA"
+  "npm":
+    - "https://www.npmjs.com/package/@jungjaehoon/mama-server"
+
+aux_links_new_tab: true
+
+# Footer
+footer_content: "MIT License &copy; 2024-2026 SpineLift Team"
+
+# Color scheme
+color_scheme: dark
+
+# Kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    block:
+      line_numbers: true

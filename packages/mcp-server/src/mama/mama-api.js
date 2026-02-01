@@ -1039,7 +1039,7 @@ async function listDecisions(options = {}) {
  * @param {string} nextSteps - Next steps to be taken
  * @returns {Promise<number>} Checkpoint ID
  */
-async function saveCheckpoint(summary, openFiles = [], nextSteps = '') {
+async function saveCheckpoint(summary, openFiles = [], nextSteps = '', recentConversation = []) {
   if (!summary) {
     throw new Error('Summary is required for checkpoint');
   }
@@ -1047,11 +1047,17 @@ async function saveCheckpoint(summary, openFiles = [], nextSteps = '') {
   try {
     const adapter = getAdapter();
     const stmt = adapter.prepare(`
-      INSERT INTO checkpoints (timestamp, summary, open_files, next_steps, status)
-      VALUES (?, ?, ?, ?, 'active')
+      INSERT INTO checkpoints (timestamp, summary, open_files, next_steps, recent_conversation, status)
+      VALUES (?, ?, ?, ?, ?, 'active')
     `);
 
-    const result = stmt.run(Date.now(), summary, JSON.stringify(openFiles), nextSteps);
+    const result = stmt.run(
+      Date.now(),
+      summary,
+      JSON.stringify(openFiles),
+      nextSteps,
+      JSON.stringify(recentConversation || [])
+    );
 
     return result.lastInsertRowid;
   } catch (error) {
@@ -1076,15 +1082,32 @@ async function loadCheckpoint() {
 
     const checkpoint = stmt.get();
 
-    if (checkpoint) {
-      try {
-        checkpoint.open_files = JSON.parse(checkpoint.open_files);
-      } catch (e) {
-        checkpoint.open_files = [];
-      }
+    if (!checkpoint) {
+      return null;
     }
 
-    return checkpoint || null;
+    let openFiles = [];
+    try {
+      openFiles = JSON.parse(checkpoint.open_files || '[]');
+    } catch (e) {
+      openFiles = [];
+    }
+
+    let recentConversation = [];
+    try {
+      recentConversation = JSON.parse(checkpoint.recent_conversation || '[]');
+    } catch (e) {
+      recentConversation = [];
+    }
+
+    return {
+      id: checkpoint.id,
+      timestamp: checkpoint.timestamp,
+      summary: checkpoint.summary,
+      openFiles: openFiles,
+      nextSteps: checkpoint.next_steps,
+      recentConversation: recentConversation,
+    };
   } catch (error) {
     throw new Error(`Failed to load checkpoint: ${error.message}`);
   }

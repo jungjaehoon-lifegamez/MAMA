@@ -290,6 +290,14 @@ Lightweight plugin referencing the MCP server. Hooks use HTTP embedding server f
 
 ---
 
+## 📦 Related Packages
+
+- **[@jungjaehoon/mama-os](../standalone/README.md)** - Your AI Operating System with Discord/Slack/Telegram integrations
+- **[@jungjaehoon/mama-server](../mcp-server/README.md)** - MCP server for Claude Desktop and other MCP clients
+- **[@jungjaehoon/mama-core](../mama-core/README.md)** - Core library for building custom integrations
+
+---
+
 ## 🤝 Contributing
 
 We welcome contributions! Please see:

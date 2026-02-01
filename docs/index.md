@@ -1,12 +1,14 @@
 # MAMA Plugin Documentation
 
-**Version:** 1.5.9
+**Version:** 0.1.0 (MAMA OS) | 1.6.5 (MCP Server)
 **MAMA:** Memory-Augmented MCP Assistant
 **Navigation Hub**
 
 > "Remember decision evolution, not just conclusions"
 >
 > "Chat with Claude Code from anywhere - mobile, desktop, or any device"
+>
+> "Autonomous AI agent with gateway integrations - Discord, Slack, Telegram"
 
 ## Quick Links
 
@@ -33,8 +35,11 @@ _Step-by-step lessons for beginners_
 _Step-by-step instructions for specific tasks_
 
 - [Installation Guide](guides/installation.md) - Complete installation process
+- [Standalone Setup](guides/standalone-setup.md) - Set up always-on AI agent
+- [Gateway Configuration](guides/gateway-config.md) - Configure Discord, Slack, Telegram bots
 - [Mobile Access](guides/mobile-access.md) - Access MAMA from any device with mobile chat
 - [Troubleshooting](guides/troubleshooting.md) - Common issues and solutions
+- [Standalone Troubleshooting](guides/standalone-troubleshooting.md) - Fix standalone agent issues
 - [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
 - [Configuration](guides/configuration.md) - Configuration options and setup
 - [Performance Tuning](guides/performance-tuning.md) - Optimize MAMA performance
@@ -45,6 +50,7 @@ _Technical specifications and API documentation_
 
 - [Commands Reference](reference/commands.md) - `/mama-*` commands
 - [MCP Tool API](reference/api.md) - MCP tool interfaces
+- [Skills API](reference/skills-api.md) - Standalone skills system
 - [Hooks Reference](reference/hooks.md) - Hook configuration
 - [Configuration Options](reference/configuration-options.md) - All config settings
 - [FR Mapping](reference/fr-mapping.md) - Functional requirements traceability
@@ -54,6 +60,7 @@ _Technical specifications and API documentation_
 _Conceptual explanations and design decisions_
 
 - [Architecture](explanation/architecture.md) - System architecture overview
+- [MAMA OS](explanation/mama-os.md) - Built-in graph viewer and mobile chat
 - [Tier System](explanation/tier-system.md) - Tier system design and philosophy
 - [Decision Graph](explanation/decision-graph.md) - Decision evolution tracking
 - [Semantic Search](explanation/semantic-search.md) - How semantic search works
@@ -69,16 +76,6 @@ _Contributing, testing, and development guidelines_
 - [Testing Guide](development/testing.md) - Test suite and testing practices
 - [Code Standards](development/code-standards.md) - Coding conventions
 - [Release Process](development/release-process.md) - How releases are created
-
-### 📋 [Project](project/) - Project Management
-
-_Planning documents, PRD, and retrospectives_
-
-- [Product Requirements (PRD)](project/prd.md) - Full product specification
-- [Architecture Decisions](project/architecture-decisions.md) - ADRs and key decisions
-- [Epics](project/epics.md) - Epic breakdown and status
-- [Code Reuse Analysis](project/code-reuse-analysis.md) - Migration from MCP server
-- [Retrospectives](project/retrospectives/) - Sprint retrospectives
 
 ---
 
@@ -111,10 +108,18 @@ _Planning documents, PRD, and retrospectives_
 3. Review [Code Standards](development/code-standards.md)
 4. Check [Testing Guide](development/testing.md)
 
+### 🤖 I Want to Run an Always-On AI Agent
+
+1. Read [MAMA OS Explanation](explanation/mama-os.md)
+2. Follow [Standalone Setup Guide](guides/standalone-setup.md)
+3. Configure [Gateway Integrations](guides/gateway-config.md)
+4. Troubleshoot with [Standalone Troubleshooting](guides/standalone-troubleshooting.md)
+
 ### 📖 I Need API/Command Reference
 
 - [Commands Reference](reference/commands.md) - All `/mama-*` commands
 - [MCP Tool API](reference/api.md) - Tool interfaces
+- [Skills API](reference/skills-api.md) - Standalone skills system
 - [Configuration Options](reference/configuration-options.md) - All settings
 
 ---
@@ -127,5 +132,5 @@ _Planning documents, PRD, and retrospectives_
 
 ---
 
-**Status:** v1.5.9 - Mobile Chat, Graph Viewer & Clawdbot Support
-**Last Updated:** 2026-01-27
+**Status:** MAMA OS v0.1.0 - Standalone Agent, Gateway Integrations & Web Dashboard
+**Last Updated:** 2026-02-01

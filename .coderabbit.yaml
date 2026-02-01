@@ -1,0 +1,57 @@
+# CodeRabbit Configuration
+# https://docs.coderabbit.ai/guides/configure-coderabbit
+
+language: "en-US"
+
+reviews:
+  auto_review:
+    enabled: true
+    drafts: false
+
+  path_filters:
+    # Exclude documentation
+    - "!docs/**"
+    - "!**/*.md"
+    - "!**/README*"
+
+    # Exclude tests
+    - "!**/*.test.ts"
+    - "!**/*.test.js"
+    - "!**/*.spec.ts"
+
+    # Exclude migrations/config
+    - "!**/*.sql"
+    - "!**/migrations/**"
+
+    # Exclude templates/static files
+    - "!**/templates/**"
+    - "!**/public/**"
+
+    # Exclude lock files
+    - "!**/pnpm-lock.yaml"
+    - "!**/package-lock.json"
+
+    # Exclude CI/CD
+    - "!.github/workflows/**"
+
+  path_instructions:
+    - path: "packages/standalone/src/**"
+      instructions: |
+        MAMA Standalone core code.
+        - OAuth token management
+        - Agent Loop (Claude API)
+        - Discord/Slack gateways
+        - Concurrency management (Lane Manager)
+
+    - path: "packages/mama-core/src/**"
+      instructions: |
+        MAMA Core shared modules.
+        - Embeddings (Transformers.js)
+        - SQLite + sqlite-vec
+        - Memory Store
+
+    - path: "packages/openclaw-plugin/**"
+      instructions: |
+        OpenClaw Gateway plugin.
+        - Direct embedding (no HTTP overhead)
+        - 4 native tools
