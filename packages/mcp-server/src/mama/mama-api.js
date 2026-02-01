@@ -968,7 +968,7 @@ async function suggest(userQuestion, options = {}) {
  */
 async function rerankWithLLM(userQuestion, results) {
   try {
-    const { generate } = require('./ollama-client');
+    const { generate } = require('@jungjaehoon/mama-core/ollama-client');
 
     const prompt = `User asked: "${userQuestion}"
 

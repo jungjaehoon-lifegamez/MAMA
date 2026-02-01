@@ -134,7 +134,11 @@ async function generate(prompt, options = {}) {
     return responseText;
   } catch (error) {
     // Task 9.4: Try fallback model if EXAONE fails
-    if (model === DEFAULT_MODEL && error.message.includes('not found')) {
+    // Match Ollama's specific "model 'xxx' not found" error pattern
+    const isModelNotFound =
+      /model ['"].*['"] not found/i.test(error.message) ||
+      (error.message.includes('404') && error.message.toLowerCase().includes('not found'));
+    if (model === DEFAULT_MODEL && isModelNotFound) {
       console.warn(`[MAMA] EXAONE not found, trying fallback (${FALLBACK_MODEL})...`);
 
       return generate(prompt, {

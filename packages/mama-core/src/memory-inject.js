@@ -154,6 +154,9 @@ async function performVectorSearch(userMessage, _topic) {
 
     return vectorResults;
   } catch (error) {
+    // NOTE: Intentionally returns [] instead of throwing for graceful degradation.
+    // Vector search unavailability should not block the main conversation flow.
+    // This is an exception to the "NO FALLBACK" rule for non-critical features.
     logError(`[MAMA] Vector search failed: ${error.message}`);
     return [];
   }

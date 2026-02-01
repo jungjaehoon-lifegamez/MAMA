@@ -55,6 +55,8 @@ async function isEmbeddingServerRunning(port) {
         timeout: 1000,
       },
       (res) => {
+        // Drain the response to free up the socket
+        res.resume();
         resolve(res.statusCode === 200);
       }
     );
