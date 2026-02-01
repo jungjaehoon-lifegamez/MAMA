@@ -346,4 +346,46 @@ export class SlackGateway implements Gateway {
     this.config.channels = this.config.channels || {};
     this.config.channels[channelId] = config;
   }
+
+  // ============================================================================
+  // Message Sending API (for discord_send tool compatibility)
+  // ============================================================================
+
+  /**
+   * Send message to a channel
+   */
+  async sendMessage(channelId: string, text: string): Promise<void> {
+    const chunks = splitForSlack(text);
+    for (const chunk of chunks) {
+      await this.webClient.chat.postMessage({
+        channel: channelId,
+        text: chunk,
+      });
+    }
+  }
+
+  /**
+   * Send file/document to a channel
+   * Supports any file type (documents, images, PDFs, etc.)
+   */
+  async sendFile(channelId: string, filePath: string, caption?: string): Promise<void> {
+    const { createReadStream } = await import('fs');
+    const { basename } = await import('path');
+
+    const filename = basename(filePath);
+
+    await this.webClient.filesUploadV2({
+      channel_id: channelId,
+      file: createReadStream(filePath),
+      filename,
+      initial_comment: caption,
+    });
+  }
+
+  /**
+   * Send image to a channel (alias for sendFile)
+   */
+  async sendImage(channelId: string, imagePath: string, caption?: string): Promise<void> {
+    return this.sendFile(channelId, imagePath, caption);
+  }
 }

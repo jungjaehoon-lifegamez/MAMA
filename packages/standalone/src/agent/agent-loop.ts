@@ -81,7 +81,7 @@ function loadSystemPrompt(verbose = false): string {
  *
  * If persona files are missing, logs warning and continues with CLAUDE.md alone.
  */
-function loadComposedSystemPrompt(verbose = false): string {
+export function loadComposedSystemPrompt(verbose = false): string {
   const { readFileSync, existsSync } = require('fs');
   const { join } = require('path');
   const { homedir } = require('os');
@@ -184,6 +184,7 @@ export class AgentLoop {
    */
   setDiscordGateway(gateway: {
     sendMessage(channelId: string, message: string): Promise<void>;
+    sendFile(channelId: string, filePath: string, caption?: string): Promise<void>;
     sendImage(channelId: string, imagePath: string, caption?: string): Promise<void>;
   }): void {
     this.mcpExecutor.setDiscordGateway(gateway);
@@ -485,6 +486,8 @@ export class AgentLoop {
 
   /**
    * Format conversation history as prompt text for Claude CLI
+   * Note: Claude CLI -p mode only supports text, so images are converted to file paths
+   * that Claude Code can read using the Read tool.
    */
   private formatHistoryAsPrompt(history: Message[]): string {
     return history
@@ -495,10 +498,34 @@ export class AgentLoop {
         if (typeof content === 'string') {
           text = content;
         } else if (Array.isArray(content)) {
-          text = content
-            .filter((c: any) => c.type === 'text')
-            .map((c: any) => c.text)
-            .join('\n');
+          const parts: string[] = [];
+
+          for (const block of content as any[]) {
+            if (block.type === 'text') {
+              parts.push(block.text);
+            } else if (block.type === 'image') {
+              // Convert image to file path instruction for Claude Code
+              // Claude Code can use Read tool to view the image
+              if (block.localPath) {
+                parts.push(
+                  `[Image attached: ${block.localPath}]\nUse the Read tool to view this image.`
+                );
+              } else if (block.source?.data) {
+                // Base64 image - save to temp file and reference it
+                const tempPath = `/tmp/mama-image-${Date.now()}.jpg`;
+                try {
+                  require('fs').writeFileSync(tempPath, Buffer.from(block.source.data, 'base64'));
+                  parts.push(
+                    `[Image attached: ${tempPath}]\nUse the Read tool to view this image.`
+                  );
+                } catch {
+                  parts.push('[Image attached but could not be processed]');
+                }
+              }
+            }
+          }
+
+          text = parts.join('\n');
         } else {
           return '';
         }
