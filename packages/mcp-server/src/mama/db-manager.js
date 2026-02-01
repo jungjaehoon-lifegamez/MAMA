@@ -18,7 +18,7 @@
  */
 
 const { info, warn, error: logError } = require('./debug-logger');
-const { createAdapter } = require('./db-adapter');
+const { createAdapter } = require('@jungjaehoon/mama-core/db-adapter');
 const path = require('path');
 
 // Database adapter instance (singleton)
@@ -62,6 +62,7 @@ async function initDB() {
         summary TEXT NOT NULL,
         open_files TEXT, -- JSON array
         next_steps TEXT,
+        recent_conversation TEXT, -- JSON array (v1.5.11+)
         status TEXT DEFAULT 'active' -- 'active', 'archived'
       )
     `

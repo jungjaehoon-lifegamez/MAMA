@@ -209,6 +209,11 @@ Interactive visualization of your reasoning graph.
 - **Node.js:** >= 18.0.0 required
 - **Disk Space:** ~500MB for embedding model cache
 
+## Related Packages
+
+- **[@jungjaehoon/mama-os](../standalone/README.md)** - Your AI Operating System with Discord/Slack/Telegram gateway integrations
+- **[@jungjaehoon/mama-core](../mama-core/README.md)** - Core library for building custom integrations
+
 ## Links
 
 - [GitHub Repository](https://github.com/jungjaehoon-lifegamez/MAMA)

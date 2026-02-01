@@ -12,7 +12,7 @@
  */
 
 const { info, error: logError } = require('./debug-logger');
-const { generate, DEFAULT_MODEL, FALLBACK_MODEL } = require('./ollama-client');
+const { generate, DEFAULT_MODEL, FALLBACK_MODEL } = require('@jungjaehoon/mama-core/ollama-client');
 
 /**
  * Analyze user message for decision-related intent

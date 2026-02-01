@@ -5,6 +5,11 @@
  * Tasks: 9.2-9.5 (HTTP client, EXAONE wrapper, Error handling, Testing)
  * AC #1: LLM integration ready
  *
+ * NOTE: This is a standalone copy from @jungjaehoon/mama-core v1.0.0
+ * Rationale: Claude Code plugins must be self-contained for marketplace distribution
+ * Maintenance: Update manually when mama-core's ollama-client.js changes
+ * Source of truth: packages/mama-core/src/ollama-client.js
+ *
  * @module ollama-client
  * @version 1.0
  * @date 2025-11-14
