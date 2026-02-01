@@ -616,6 +616,8 @@ export async function runAgentLoop(
       const gatewayInterface = {
         sendMessage: async (channelId: string, message: string) =>
           discordGateway!.sendMessage(channelId, message),
+        sendFile: async (channelId: string, filePath: string, caption?: string) =>
+          discordGateway!.sendFile(channelId, filePath, caption),
         sendImage: async (channelId: string, imagePath: string, caption?: string) =>
           discordGateway!.sendImage(channelId, imagePath, caption),
       };
