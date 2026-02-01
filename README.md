@@ -53,6 +53,11 @@ mama start
 >
 > See [Security Guide](docs/guides/security.md) for details.
 
+> ✅ **ToS Compliance**: MAMA OS uses the official Claude Code CLI via subprocess spawning,
+> NOT OAuth token spoofing. This is a [supported usage pattern](https://code.claude.com/docs/en/sub-agents)
+> per Anthropic's subagent documentation. In January 2026, Anthropic [blocked third-party tools](https://venturebeat.com/technology/anthropic-cracks-down-on-unauthorized-claude-usage-by-third-party-harnesses)
+> that spoofed Claude Code headers—MAMA OS was unaffected because it uses the legitimate CLI approach.
+
 **Requires:** [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated.
 
 ---
