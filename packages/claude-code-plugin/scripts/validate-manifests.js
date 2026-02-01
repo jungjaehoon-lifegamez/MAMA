@@ -156,27 +156,30 @@ function validatePluginJson(pluginConfig) {
 
   // Check hooks (via hooks field in plugin.json or auto-discovered hooks/ directory)
   if (pluginConfig.hooks && typeof pluginConfig.hooks === 'object') {
-    // Inline hooks object (official Claude Code plugin spec)
+    // Inline hooks object (official Claude Code plugin spec with 3-level nesting)
     const hooksConfig = pluginConfig.hooks;
     const hookTypes = Object.keys(hooksConfig);
     success(`Hooks inline in plugin.json: ${hookTypes.join(', ')}`);
 
-    // Validate hook scripts exist
-    Object.entries(hooksConfig).forEach(([hookType, hookConfigs]) => {
-      hookConfigs.forEach((config) => {
-        if (config.command) {
-          // Extract script path from command
-          const match = config.command.match(/scripts\/([a-z-]+\.js)/);
-          if (match) {
-            const scriptName = match[1];
-            const scriptPath = path.join(PLUGIN_ROOT, 'scripts', scriptName);
-            if (!fs.existsSync(scriptPath)) {
-              error(`Hook script not found: ${scriptPath}`);
-            } else {
-              success(`Hook script exists: ${scriptName} (${hookType})`);
+    // Validate hook scripts exist (3-level: event -> matcher groups -> hook handlers)
+    Object.entries(hooksConfig).forEach(([hookType, matcherGroups]) => {
+      matcherGroups.forEach((matcherGroup) => {
+        const hookHandlers = matcherGroup.hooks || [];
+        hookHandlers.forEach((handler) => {
+          if (handler.command) {
+            // Extract script path from command
+            const match = handler.command.match(/scripts\/([a-z-]+\.js)/);
+            if (match) {
+              const scriptName = match[1];
+              const scriptPath = path.join(PLUGIN_ROOT, 'scripts', scriptName);
+              if (!fs.existsSync(scriptPath)) {
+                error(`Hook script not found: ${scriptPath}`);
+              } else {
+                success(`Hook script exists: ${scriptName} (${hookType})`);
+              }
             }
           }
-        }
+        });
       });
     });
   } else if (pluginConfig.hooks && typeof pluginConfig.hooks === 'string') {
