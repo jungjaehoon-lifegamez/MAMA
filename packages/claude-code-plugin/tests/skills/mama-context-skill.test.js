@@ -80,12 +80,13 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
         const userPromptHook = hooksConfig.UserPromptSubmit[0];
         expect(userPromptHook.command).toContain('userpromptsubmit-hook.js');
       } else {
-        // Inline format (legacy)
+        // Inline format with 3-level nesting (event -> matcher groups -> hook handlers)
         expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
 
-        // Verify hooks reference correct scripts
-        const userPromptHook = pluginConfig.hooks.UserPromptSubmit[0];
-        expect(userPromptHook.command).toContain('userpromptsubmit-hook.js');
+        // Verify hooks reference correct scripts (3-level nesting)
+        const matcherGroup = pluginConfig.hooks.UserPromptSubmit[0];
+        const hookHandler = matcherGroup.hooks[0];
+        expect(hookHandler.command).toContain('userpromptsubmit-hook.js');
       }
     });
   });
@@ -333,8 +334,13 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
         hooksConfig = pluginConfig.hooks;
       }
 
-      // Only UserPromptSubmit is active
-      const allHookCommands = hooksConfig.UserPromptSubmit.map((h) => h.command);
+      // Only UserPromptSubmit is active (3-level nesting: event -> matcher groups -> hook handlers)
+      const allHookCommands = [];
+      hooksConfig.UserPromptSubmit.forEach((matcherGroup) => {
+        matcherGroup.hooks.forEach((handler) => {
+          allHookCommands.push(handler.command);
+        });
+      });
 
       allHookCommands.forEach((cmd) => {
         expect(cmd).toContain('${CLAUDE_PLUGIN_ROOT}');

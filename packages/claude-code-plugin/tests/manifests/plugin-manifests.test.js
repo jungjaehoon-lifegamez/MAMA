@@ -92,6 +92,9 @@ describe('M3.3: Plugin Manifests', () => {
       expectedHooks.forEach((hookType) => {
         expect(pluginConfig.hooks[hookType]).toBeDefined();
         expect(Array.isArray(pluginConfig.hooks[hookType])).toBe(true);
+        // Each matcher group should have a hooks array (3-level nesting per Claude Code spec)
+        expect(pluginConfig.hooks[hookType][0].hooks).toBeDefined();
+        expect(Array.isArray(pluginConfig.hooks[hookType][0].hooks)).toBe(true);
       });
 
       // Verify hook scripts exist and are executable
@@ -111,15 +114,18 @@ describe('M3.3: Plugin Manifests', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
       const hooksConfig = pluginConfig.hooks;
 
-      const allHooks = [];
-      Object.values(hooksConfig).forEach((hookConfigs) => {
-        hookConfigs.forEach((config) => {
-          allHooks.push(config);
+      // 3-level nesting: event -> matcher groups -> hook handlers
+      const allHookHandlers = [];
+      Object.values(hooksConfig).forEach((matcherGroups) => {
+        matcherGroups.forEach((matcherGroup) => {
+          matcherGroup.hooks.forEach((handler) => {
+            allHookHandlers.push(handler);
+          });
         });
       });
 
-      allHooks.forEach((hookConfig) => {
-        expect(hookConfig.command).toContain('${CLAUDE_PLUGIN_ROOT}');
+      allHookHandlers.forEach((hookHandler) => {
+        expect(hookHandler.command).toContain('${CLAUDE_PLUGIN_ROOT}');
       });
     });
   });
@@ -140,12 +146,15 @@ describe('M3.3: Plugin Manifests', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
       const hooksConfig = pluginConfig.hooks;
 
-      const userPromptHooks = hooksConfig.UserPromptSubmit;
-      expect(userPromptHooks).toBeDefined();
-      expect(userPromptHooks.length).toBeGreaterThan(0);
+      const userPromptMatcherGroups = hooksConfig.UserPromptSubmit;
+      expect(userPromptMatcherGroups).toBeDefined();
+      expect(userPromptMatcherGroups.length).toBeGreaterThan(0);
 
-      const hook = userPromptHooks[0];
-      expect(hook.command).toContain('userpromptsubmit-hook.js');
+      // 3-level nesting: access hooks array inside matcher group
+      const hookHandlers = userPromptMatcherGroups[0].hooks;
+      expect(hookHandlers).toBeDefined();
+      expect(hookHandlers.length).toBeGreaterThan(0);
+      expect(hookHandlers[0].command).toContain('userpromptsubmit-hook.js');
     });
 
     it('should have PreToolUse/PostToolUse hooks disabled (efficiency decision)', () => {
