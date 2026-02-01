@@ -294,6 +294,42 @@ export interface TranslateImageResult {
 }
 
 /**
+ * Browser navigate input
+ */
+export interface BrowserNavigateInput {
+  /** URL to navigate to */
+  url: string;
+}
+
+/**
+ * Browser screenshot input
+ */
+export interface BrowserScreenshotInput {
+  /** Optional filename (auto-generated if not provided) */
+  filename?: string;
+  /** Take full page screenshot */
+  full_page?: boolean;
+}
+
+/**
+ * Browser click input
+ */
+export interface BrowserClickInput {
+  /** CSS selector to click */
+  selector: string;
+}
+
+/**
+ * Browser type input
+ */
+export interface BrowserTypeInput {
+  /** CSS selector of input element */
+  selector: string;
+  /** Text to type */
+  text: string;
+}
+
+/**
  * Union type for all MCP tool inputs
  */
 export type GatewayToolInput =
@@ -301,7 +337,11 @@ export type GatewayToolInput =
   | SearchInput
   | UpdateInput
   | LoadCheckpointInput
-  | TranslateImageInput;
+  | TranslateImageInput
+  | BrowserNavigateInput
+  | BrowserScreenshotInput
+  | BrowserClickInput
+  | BrowserTypeInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)
@@ -316,7 +356,13 @@ export type GatewayToolName =
   | 'Bash'
   | 'discord_send'
   | 'translate_image'
-  | 'save_integration_token';
+  | 'save_integration_token'
+  | 'browser_navigate'
+  | 'browser_screenshot'
+  | 'browser_click'
+  | 'browser_type'
+  | 'browser_get_text'
+  | 'browser_close';
 
 // ============================================================================
 // MCP Tool Output Types
