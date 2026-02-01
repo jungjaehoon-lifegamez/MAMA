@@ -52,10 +52,12 @@ describe('Story M2.2: PreToolUse Hook', () => {
 
       expect(content.startsWith('#!/usr/bin/env node')).toBe(true);
 
-      // Check file permissions (executable)
-      const stats = fs.statSync(scriptPath);
-      const isExecutable = !!(stats.mode & 0o111);
-      expect(isExecutable).toBe(true);
+      // Check file permissions (executable) - Unix only
+      if (process.platform !== 'win32') {
+        const stats = fs.statSync(scriptPath);
+        const isExecutable = !!(stats.mode & 0o111);
+        expect(isExecutable).toBe(true);
+      }
     });
   });
 

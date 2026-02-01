@@ -104,8 +104,11 @@ describe('M3.3: Plugin Manifests', () => {
         const scriptPath = path.join(PLUGIN_ROOT, script);
         expect(fs.existsSync(scriptPath)).toBe(true);
 
-        const stat = fs.statSync(scriptPath);
-        expect(stat.mode & 0o111).toBeGreaterThan(0); // Has execute bit
+        // Execute bit check only on Unix (Windows doesn't use execute bits)
+        if (process.platform !== 'win32') {
+          const stat = fs.statSync(scriptPath);
+          expect(stat.mode & 0o111).toBeGreaterThan(0); // Has execute bit
+        }
       });
     });
 
@@ -294,8 +297,11 @@ describe('M3.3: Plugin Manifests', () => {
     it('should have validation script', () => {
       expect(fs.existsSync(VALIDATION_SCRIPT)).toBe(true);
 
-      const stat = fs.statSync(VALIDATION_SCRIPT);
-      expect(stat.mode & 0o111).toBeGreaterThan(0); // Executable
+      // Execute bit check only on Unix (Windows doesn't use execute bits)
+      if (process.platform !== 'win32') {
+        const stat = fs.statSync(VALIDATION_SCRIPT);
+        expect(stat.mode & 0o111).toBeGreaterThan(0); // Executable
+      }
     });
 
     it('should pass validation when run', () => {

@@ -26,7 +26,7 @@ const getVersion = (): string => {
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
     return pkg.version;
   } catch {
-    return '0.1.4'; // Fallback
+    return 'unknown'; // Fallback if package.json not found
   }
 };
 const VERSION = getVersion();
