@@ -13,6 +13,7 @@ export type MessageSource = 'discord' | 'slack' | 'telegram' | 'chatwork' | 'mob
 export interface ContentBlock {
   type: 'text' | 'image';
   text?: string;
+  localPath?: string; // For image path reference
   source?: {
     type: 'base64';
     media_type: string;
@@ -329,6 +330,7 @@ export interface AgentLoopInterface {
 export interface ContentBlock {
   type: 'text' | 'image';
   text?: string;
+  localPath?: string; // For image path reference
   source?: {
     type: 'base64';
     media_type: string;

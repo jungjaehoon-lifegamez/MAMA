@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [mama-os-0.1.5] - 2026-02-02
+
+### Added
+
+- **Discord file attachment**: Auto-attach files when response contains outbound file paths
+  - Pattern detection: `파일 위치:`, `File:`, `Path:`, `saved at:`
+  - Auto-detect `~/.mama/workspace/media/outbound/` paths
+  - Supports all file types (images, PDFs, documents)
+
+- **Image path preservation**: Claude now remembers image paths across conversation turns
+  - Added `localPath` property to ContentBlock type
+  - Text blocks with path info now pass through message-router
+  - Files saved to `~/.mama/workspace/media/inbound/` instead of `/tmp/`
+
 ### Fixed
 
 - **mama-os**: CLI `--version` now reads from package.json instead of hardcoded value
