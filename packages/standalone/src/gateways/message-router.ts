@@ -26,6 +26,7 @@ import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
 export interface ContentBlock {
   type: 'text' | 'image' | 'document';
   text?: string;
+  localPath?: string; // For image path reference
   source?: {
     type: 'base64';
     media_type: string;
@@ -217,9 +218,11 @@ This protects your credentials from being exposed in chat logs.`;
         contentBlocks.push({ type: 'text', text: message.text });
       }
 
-      // Add image content blocks
+      // Add all content blocks (text info + images + files)
       for (const block of message.contentBlocks) {
-        if (block.type === 'image' && block.source) {
+        // Include text blocks (contain path info like "[Image: x.jpg, saved at: /path]")
+        // Include image blocks with source (base64 data)
+        if (block.type === 'text' || (block.type === 'image' && block.source)) {
           contentBlocks.push(block);
         }
       }
