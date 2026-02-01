@@ -15,6 +15,6 @@ fi
 echo "Running typecheck..."
 pnpm --filter @jungjaehoon/mama-standalone typecheck
 
-# Run tests for all packages
-echo "Running tests..."
-pnpm test
+# Run tests for changed packages only (faster commits)
+echo "Running tests for changed packages..."
+pnpm --filter "...[HEAD^1]" test
