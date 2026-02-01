@@ -319,7 +319,7 @@ class SQLiteAdapter extends DatabaseAdapter {
             throw new Error(`Migration ${file} failed: ${err.message}`);
           }
           warn(
-            `[sqlite-adapter] Migration ${file} skipped (table not yet created - will be created with column)`
+            `[sqlite-adapter] Migration ${file} skipped: ALTER TABLE on non-existent table (${err.message})`
           );
           this.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (?)').run(version);
           continue;

@@ -32,7 +32,7 @@ reviews:
     - '!**/package-lock.json'
 
     # Exclude CI/CD
-    - '!/.github/workflows/**'
+    - '!.github/workflows/**'
 
   path_instructions:
     - path: 'packages/standalone/src/**'
