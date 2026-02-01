@@ -62,6 +62,8 @@ Thumbs.db
 *.db-shm
 *.db-wal
 .claude/
+# MCP config files (local user settings)
+.mcp.json
 .mcp.json.local
 *.mcp.json.dev
 mama-dev-marketplace.json

@@ -25,8 +25,11 @@
  * @returns {void}
  */
 function logProgress(message, emoji = '⏳') {
-  // Ensure message is a string
+  // Ensure message is a string - warn in development if not
   if (typeof message !== 'string') {
+    if (process.env.NODE_ENV === 'development' || process.env.MAMA_DEBUG) {
+      console.error(`[MAMA] ⚠️ logProgress expected string, got ${typeof message}`);
+    }
     return;
   }
 
