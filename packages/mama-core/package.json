@@ -1,0 +1,68 @@
+{
+  "name": "@jungjaehoon/mama-core",
+  "version": "1.0.0",
+  "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./embeddings": "./src/embeddings.js",
+    "./embedding-cache": "./src/embedding-cache.js",
+    "./embedding-client": "./src/embedding-client.js",
+    "./embedding-server": "./src/embedding-server/index.js",
+    "./memory-store": "./src/memory-store.js",
+    "./db-manager": "./src/db-manager.js",
+    "./db-adapter": "./src/db-adapter/index.js",
+    "./mama-api": "./src/mama-api.js",
+    "./config-loader": "./src/config-loader.js",
+    "./relevance-scorer": "./src/relevance-scorer.js",
+    "./decision-tracker": "./src/decision-tracker.js",
+    "./debug-logger": "./src/debug-logger.js",
+    "./decision-formatter": "./src/decision-formatter.js",
+    "./memory-inject": "./src/memory-inject.js",
+    "./ollama-client": "./src/ollama-client.js"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "clean": "rm -rf node_modules"
+  },
+  "keywords": [
+    "mama",
+    "memory-assistant",
+    "decision-tracking",
+    "semantic-search",
+    "embeddings",
+    "sqlite",
+    "mcp"
+  ],
+  "author": "SpineLift Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA.git",
+    "directory": "packages/mama-core"
+  },
+  "bugs": {
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA/issues"
+  },
+  "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.72.1",
+    "@huggingface/transformers": "^3.8.1",
+    "better-sqlite3": "^11.0.0",
+    "sqlite-vec": "^0.1.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "vitest": "^1.0.0"
+  },
+  "files": [
+    "src/**/*.js",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "name": "@jungjaehoon/openclaw-mama",
+  "version": "0.4.0",
+  "description": "MAMA Memory Plugin for OpenClaw - Semantic decision memory with reasoning graph",
+  "main": "index.ts",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js",
+    "test": "echo 'No tests yet'",
+    "clean": "rm -rf node_modules"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "memory",
+    "semantic-search",
+    "decision-tracking",
+    "mama"
+  ],
+  "author": "SpineLift Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA.git",
+    "directory": "packages/openclaw-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/jungjaehoon-lifegamez/MAMA/issues"
+  },
+  "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
+  "peerDependencies": {
+    "openclaw": ">=2026.1.26"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "@jungjaehoon/mama-core": "workspace:*",
+    "@sinclair/typebox": "^0.32.0"
+  },
+  "optionalDependencies": {
+    "prebuild-install": "^7.1.0"
+  },
+  "files": [
+    "index.ts",
+    "openclaw.plugin.json",
+    "scripts/",
+    "README.md"
+  ]
+}

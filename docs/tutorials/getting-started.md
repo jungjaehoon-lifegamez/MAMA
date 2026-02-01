@@ -6,7 +6,90 @@
 
 ---
 
-## Prerequisites
+## Choose your MAMA
+
+MAMA comes in three flavors. Pick the one that matches your use case:
+
+### 🤖 Standalone: Always-On AI Agent
+
+**Best for:** Discord/Slack/Telegram bots, autonomous agent loops, scheduled tasks
+
+```bash
+npm install -g @jungjaehoon/mama-standalone
+mama init
+mama start
+```
+
+**What you get:**
+
+- Always-on agent with gateway integrations (Discord, Slack, Telegram)
+- Built-in MAMA OS (graph viewer + mobile chat)
+- Autonomous agent loop with heartbeat monitoring
+- Full decision memory across all conversations
+
+**→ [Complete Standalone Setup Guide](../guides/standalone-setup.md)**
+
+---
+
+### 💻 MCP Server: Claude Desktop/Code Integration
+
+**Best for:** Claude Desktop users, Claude Code plugin users, MCP protocol integrations
+
+**For Claude Code:**
+
+```bash
+/plugin marketplace add jungjaehoon-lifegamez/claude-plugins
+/plugin install mama
+```
+
+**For Claude Desktop:**
+
+```json
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": ["-y", "@jungjaehoon/mama-server"]
+    }
+  }
+}
+```
+
+**What you get:**
+
+- Slash commands (`/mama-save`, `/mama-recall`, etc.)
+- Automatic context injection (UserPromptSubmit hook)
+- Session continuity (`/mama-checkpoint`, `/mama-resume`)
+- Full decision memory in Claude conversations
+
+**→ Continue with this tutorial below**
+
+---
+
+### 🔧 Core: Custom Integration
+
+**Best for:** Building your own tools, custom integrations, embedding MAMA in other projects
+
+```bash
+npm install @jungjaehoon/mama-core
+```
+
+**What you get:**
+
+- Embedding & search APIs
+- Decision graph management
+- SQLite + vector storage
+- Full programmatic control
+
+**→ [MAMA Core README](../../packages/mama-core/README.md)**
+
+---
+
+## MCP Server Quick Start
+
+**This tutorial covers the MCP Server path.** If you chose Standalone, see the [Standalone Setup Guide](../guides/standalone-setup.md) instead.
+
+### Prerequisites
 
 Before starting this tutorial, ensure you have:
 

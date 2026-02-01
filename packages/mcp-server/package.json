@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-server",
-  "version": "1.5.11",
+  "version": "1.6.5",
   "description": "MAMA MCP Server - Memory-Augmented MCP Assistant for Claude Code & Desktop",
   "main": "src/server.js",
   "bin": {
@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
+    "@jungjaehoon/mama-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.1",
     "better-sqlite3": "^11.0.0",
     "sqlite-vec": "^0.1.0",

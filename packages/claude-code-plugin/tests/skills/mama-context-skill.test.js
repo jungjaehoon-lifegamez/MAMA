@@ -77,14 +77,14 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
         expect(hooksConfig.UserPromptSubmit).toBeDefined();
 
         // Verify hooks reference correct scripts
-        const userPromptHook = hooksConfig.UserPromptSubmit[0].hooks[0];
+        const userPromptHook = hooksConfig.UserPromptSubmit[0];
         expect(userPromptHook.command).toContain('userpromptsubmit-hook.js');
       } else {
         // Inline format (legacy)
         expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
 
         // Verify hooks reference correct scripts
-        const userPromptHook = pluginConfig.hooks.UserPromptSubmit[0].hooks[0];
+        const userPromptHook = pluginConfig.hooks.UserPromptSubmit[0];
         expect(userPromptHook.command).toContain('userpromptsubmit-hook.js');
       }
     });
@@ -334,7 +334,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       }
 
       // Only UserPromptSubmit is active
-      const allHookCommands = [...hooksConfig.UserPromptSubmit[0].hooks.map((h) => h.command)];
+      const allHookCommands = hooksConfig.UserPromptSubmit.map((h) => h.command);
 
       allHookCommands.forEach((cmd) => {
         expect(cmd).toContain('${CLAUDE_PLUGIN_ROOT}');

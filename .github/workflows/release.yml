@@ -1,0 +1,459 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      packages:
+        description: 'Packages to release (comma-separated or "all")'
+        required: true
+        default: 'all'
+        type: string
+      dry_run:
+        description: 'Dry run (no actual publish)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  # Step 1: Version bump and create tags
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      mama_core_version: ${{ steps.versions.outputs.mama_core }}
+      mama_server_version: ${{ steps.versions.outputs.mama_server }}
+      mama_os_version: ${{ steps.versions.outputs.mama_os }}
+      mama_plugin_version: ${{ steps.versions.outputs.mama_plugin }}
+      openclaw_version: ${{ steps.versions.outputs.openclaw }}
+      release_tag: ${{ steps.versions.outputs.release_tag }}
+      changelog: ${{ steps.changelog.outputs.content }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Configure git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Bump versions
+        id: versions
+        run: |
+          RELEASE_TYPE="${{ inputs.release_type }}"
+          PACKAGES="${{ inputs.packages }}"
+
+          # Validate all package.json files exist
+          for pkg in packages/mama-core packages/mcp-server packages/standalone packages/claude-code-plugin packages/openclaw-plugin; do
+            if [[ ! -f "$pkg/package.json" ]]; then
+              echo "::error::Package manifest not found: $pkg/package.json"
+              exit 1
+            fi
+          done
+
+          bump_version() {
+            local current=$1
+            local type=$2
+            IFS='.' read -r major minor patch <<< "$current"
+            case $type in
+              major) echo "$((major + 1)).0.0" ;;
+              minor) echo "$major.$((minor + 1)).0" ;;
+              patch) echo "$major.$minor.$((patch + 1))" ;;
+            esac
+          }
+
+          # Get current versions
+          CORE_CURRENT=$(jq -r '.version' packages/mama-core/package.json)
+          SERVER_CURRENT=$(jq -r '.version' packages/mcp-server/package.json)
+          OS_CURRENT=$(jq -r '.version' packages/standalone/package.json)
+          PLUGIN_CURRENT=$(jq -r '.version' packages/claude-code-plugin/package.json)
+          OPENCLAW_CURRENT=$(jq -r '.version' packages/openclaw-plugin/package.json)
+
+          # Calculate new versions
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-core"* ]]; then
+            CORE_NEW=$(bump_version "$CORE_CURRENT" "$RELEASE_TYPE")
+            jq --arg v "$CORE_NEW" '.version = $v' packages/mama-core/package.json > tmp.json && mv tmp.json packages/mama-core/package.json
+          else
+            CORE_NEW=$CORE_CURRENT
+          fi
+
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-server"* ]]; then
+            SERVER_NEW=$(bump_version "$SERVER_CURRENT" "$RELEASE_TYPE")
+            jq --arg v "$SERVER_NEW" '.version = $v' packages/mcp-server/package.json > tmp.json && mv tmp.json packages/mcp-server/package.json
+          else
+            SERVER_NEW=$SERVER_CURRENT
+          fi
+
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-os"* ]]; then
+            OS_NEW=$(bump_version "$OS_CURRENT" "$RELEASE_TYPE")
+            jq --arg v "$OS_NEW" '.version = $v' packages/standalone/package.json > tmp.json && mv tmp.json packages/standalone/package.json
+          else
+            OS_NEW=$OS_CURRENT
+          fi
+
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-plugin"* ]]; then
+            PLUGIN_NEW=$(bump_version "$PLUGIN_CURRENT" "$RELEASE_TYPE")
+            jq --arg v "$PLUGIN_NEW" '.version = $v' packages/claude-code-plugin/package.json > tmp.json && mv tmp.json packages/claude-code-plugin/package.json
+            # Also update plugin.json
+            jq --arg v "$PLUGIN_NEW" '.version = $v' packages/claude-code-plugin/.claude-plugin/plugin.json > tmp.json && mv tmp.json packages/claude-code-plugin/.claude-plugin/plugin.json
+          else
+            PLUGIN_NEW=$PLUGIN_CURRENT
+          fi
+
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"openclaw"* ]]; then
+            OPENCLAW_NEW=$(bump_version "$OPENCLAW_CURRENT" "$RELEASE_TYPE")
+            jq --arg v "$OPENCLAW_NEW" '.version = $v' packages/openclaw-plugin/package.json > tmp.json && mv tmp.json packages/openclaw-plugin/package.json
+          else
+            OPENCLAW_NEW=$OPENCLAW_CURRENT
+          fi
+
+          # Determine release tag (use mama-os version as primary)
+          RELEASE_TAG="v${OS_NEW}"
+
+          echo "mama_core=$CORE_NEW" >> $GITHUB_OUTPUT
+          echo "mama_server=$SERVER_NEW" >> $GITHUB_OUTPUT
+          echo "mama_os=$OS_NEW" >> $GITHUB_OUTPUT
+          echo "mama_plugin=$PLUGIN_NEW" >> $GITHUB_OUTPUT
+          echo "openclaw=$OPENCLAW_NEW" >> $GITHUB_OUTPUT
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+
+          echo "### Version Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Current | New |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| mama-core | $CORE_CURRENT | $CORE_NEW |" >> $GITHUB_STEP_SUMMARY
+          echo "| mama-server | $SERVER_CURRENT | $SERVER_NEW |" >> $GITHUB_STEP_SUMMARY
+          echo "| mama-os | $OS_CURRENT | $OS_NEW |" >> $GITHUB_STEP_SUMMARY
+          echo "| mama-plugin | $PLUGIN_CURRENT | $PLUGIN_NEW |" >> $GITHUB_STEP_SUMMARY
+          echo "| openclaw | $OPENCLAW_CURRENT | $OPENCLAW_NEW |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          # Extract latest changelog section
+          if [[ ! -f CHANGELOG.md ]]; then
+            echo "::warning::CHANGELOG.md not found, using placeholder"
+            CHANGELOG="No changelog available for this release."
+          else
+            CHANGELOG=$(awk '/^## \[.*\]/{if(found) exit; found=1} found' CHANGELOG.md | head -100)
+          fi
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Commit version bumps
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git add packages/*/package.json packages/claude-code-plugin/.claude-plugin/plugin.json
+          git commit -m "chore: bump versions for ${{ steps.versions.outputs.release_tag }}" || echo "No changes to commit"
+          git push
+
+      - name: Create release tag
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git tag ${{ steps.versions.outputs.release_tag }}
+          git push origin ${{ steps.versions.outputs.release_tag }}
+
+  # Step 2: Publish mama-core (dependency for others)
+  publish-mama-core:
+    needs: prepare-release
+    if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-core')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install and publish
+        working-directory: packages/mama-core
+        run: |
+          pnpm install --ignore-scripts
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Step 3: Publish mama-server (depends on mama-core)
+  publish-mama-server:
+    needs: [prepare-release, publish-mama-core]
+    if: ${{ always() && !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-server')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install
+        working-directory: packages/mcp-server
+        run: pnpm install --ignore-scripts
+
+      - name: Replace workspace protocol
+        working-directory: packages/mcp-server
+        run: |
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
+
+      - name: Publish
+        working-directory: packages/mcp-server
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Step 4: Publish mama-os
+  publish-mama-os:
+    needs: [prepare-release, publish-mama-core]
+    if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-os')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install and build
+        working-directory: packages/standalone
+        run: |
+          pnpm install
+          pnpm build
+
+      - name: Replace workspace protocol
+        working-directory: packages/standalone
+        run: |
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
+
+      - name: Publish
+        working-directory: packages/standalone
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Step 5: Publish openclaw-plugin
+  publish-openclaw:
+    needs: [prepare-release, publish-mama-core]
+    if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'openclaw')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install and publish
+        working-directory: packages/openclaw-plugin
+        run: |
+          pnpm install --ignore-scripts
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Step 6: Sync Claude plugin to marketplace
+  sync-plugin:
+    needs: [prepare-release, publish-mama-server]
+    if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-plugin')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout MAMA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+          path: mama
+
+      - name: Checkout claude-plugins
+        uses: actions/checkout@v4
+        with:
+          repository: jungjaehoon-lifegamez/claude-plugins
+          token: ${{ secrets.PLUGIN_DEPLOY_TOKEN }}
+          path: claude-plugins
+
+      - name: Sync plugin files
+        run: |
+          rm -rf claude-plugins/plugins/mama
+          mkdir -p claude-plugins/plugins/mama
+          cp -r mama/packages/claude-code-plugin/.claude-plugin claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/.mcp.json claude-plugins/plugins/mama/ 2>/dev/null || true
+          cp -r mama/packages/claude-code-plugin/commands claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/hooks claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/scripts claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/skills claude-plugins/plugins/mama/
+          cp -r mama/packages/claude-code-plugin/src claude-plugins/plugins/mama/
+          cp mama/packages/claude-code-plugin/package.json claude-plugins/plugins/mama/
+          cp mama/packages/claude-code-plugin/README.md claude-plugins/plugins/mama/
+
+      - name: Update marketplace.json
+        run: |
+          cd claude-plugins
+          VERSION="${{ needs.prepare-release.outputs.mama_plugin_version }}"
+          # Use name selector instead of hardcoded index [0]
+          jq --arg ver "$VERSION" '(.plugins[] | select(.name == "mama")).version = $ver' .claude-plugin/marketplace.json > tmp.json && mv tmp.json .claude-plugin/marketplace.json
+
+      - name: Commit and push
+        run: |
+          cd claude-plugins
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "chore: Sync MAMA plugin v${{ needs.prepare-release.outputs.mama_plugin_version }}"
+          git push
+
+  # Step 7: Deploy GitHub Pages
+  deploy-pages:
+    needs: prepare-release
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './docs/website'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # Step 8: Create GitHub Release
+  create-release:
+    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, publish-openclaw, sync-plugin, deploy-pages]
+    if: ${{ !inputs.dry_run && always() && needs.prepare-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.release_tag }}
+          name: MAMA ${{ needs.prepare-release.outputs.release_tag }}
+          body: |
+            ## MAMA ${{ needs.prepare-release.outputs.release_tag }}
+
+            ### Package Versions
+            | Package | Version | npm |
+            |---------|---------|-----|
+            | @jungjaehoon/mama-core | ${{ needs.prepare-release.outputs.mama_core_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-core)](https://www.npmjs.com/package/@jungjaehoon/mama-core) |
+            | @jungjaehoon/mama-server | ${{ needs.prepare-release.outputs.mama_server_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-server)](https://www.npmjs.com/package/@jungjaehoon/mama-server) |
+            | @jungjaehoon/mama-os | ${{ needs.prepare-release.outputs.mama_os_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-os)](https://www.npmjs.com/package/@jungjaehoon/mama-os) |
+            | @jungjaehoon/openclaw-mama | ${{ needs.prepare-release.outputs.openclaw_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/openclaw-mama)](https://www.npmjs.com/package/@jungjaehoon/openclaw-mama) |
+            | mama (Claude Plugin) | ${{ needs.prepare-release.outputs.mama_plugin_version }} | Claude Marketplace |
+
+            ### Installation
+
+            ```bash
+            # MAMA OS (Always-on Agent)
+            npm install -g @jungjaehoon/mama-os
+
+            # MCP Server (Claude Desktop/Code)
+            npx @jungjaehoon/mama-server
+
+            # Claude Code Plugin
+            /plugin marketplace add jungjaehoon-lifegamez/claude-plugins
+            /plugin install mama
+            ```
+
+            ### Changelog
+            ${{ needs.prepare-release.outputs.changelog }}
+
+            ---
+            📚 [Documentation](https://jungjaehoon-lifegamez.github.io/MAMA)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Summary job
+  summary:
+    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, publish-openclaw, sync-plugin, deploy-pages, create-release]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release Summary
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| prepare-release | ${{ needs.prepare-release.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| publish-mama-core | ${{ needs.publish-mama-core.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| publish-mama-server | ${{ needs.publish-mama-server.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| publish-mama-os | ${{ needs.publish-mama-os.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| publish-openclaw | ${{ needs.publish-openclaw.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| sync-plugin | ${{ needs.sync-plugin.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| deploy-pages | ${{ needs.deploy-pages.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| create-release | ${{ needs.create-release.result }} |" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,1535 @@
+<!doctype html>
+<html class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>MAMA - Memory-Augmented Assistant</title>
+
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="MAMA" />
+    <link rel="apple-touch-icon" href="/viewer/icons/icon-192.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <script src="https://unpkg.com/vis-network@9/dist/vis-network.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              background: 'hsl(var(--background))',
+              foreground: 'hsl(var(--foreground))',
+              card: 'hsl(var(--card))',
+              'card-foreground': 'hsl(var(--card-foreground))',
+              border: 'hsl(var(--border))',
+              muted: 'hsl(var(--muted))',
+              'muted-foreground': 'hsl(var(--muted-foreground))',
+              primary: 'hsl(var(--primary))',
+              'primary-foreground': 'hsl(var(--primary-foreground))',
+              secondary: 'hsl(var(--secondary))',
+              'secondary-foreground': 'hsl(var(--secondary-foreground))',
+              destructive: 'hsl(var(--destructive))',
+              'destructive-foreground': 'hsl(var(--destructive-foreground))',
+              success: 'hsl(var(--success))',
+              warning: 'hsl(var(--warning))',
+              info: 'hsl(var(--info))',
+              ring: 'hsl(var(--ring))',
+            },
+            spacing: {
+              'header': 'var(--header-height)',
+              'sidebar': 'var(--sidebar-width)',
+            },
+            borderRadius: {
+              DEFAULT: 'var(--radius)',
+              sm: 'var(--radius-sm)',
+              lg: 'var(--radius-lg)',
+            },
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              mono: ['var(--font-mono)', 'monospace'],
+            },
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --background: 0 0% 100%;
+        --foreground: 0 0% 9%;
+        --card: 0 0% 98%;
+        --card-foreground: 0 0% 9%;
+        --border: 0 0% 89%;
+        --muted: 0 0% 96%;
+        --muted-foreground: 0 0% 45%;
+        --primary: 240 80% 60%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 240 4.8% 95.9%;
+        --secondary-foreground: 240 5.9% 10%;
+        --destructive: 0 84.2% 60.2%;
+        --destructive-foreground: 0 0% 98%;
+        --success: 142 76% 36%;
+        --warning: 38 92% 50%;
+        --info: 199 89% 48%;
+        --ring: 240 80% 60%;
+        --radius: 0.5rem;
+        --radius-sm: 0.375rem;
+        --radius-lg: 0.75rem;
+        --header-height: 56px;
+        --sidebar-width: 280px;
+        --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      }
+      .dark {
+        --background: 222.2 84% 4.9%;
+        --foreground: 210 40% 98%;
+        --card: 222.2 84% 7%;
+        --card-foreground: 210 40% 98%;
+        --border: 217.2 32.6% 17.5%;
+        --muted: 217.2 32.6% 17.5%;
+        --muted-foreground: 215 20.2% 65.1%;
+        --primary: 240 80% 60%;
+        --primary-foreground: 222.2 47.4% 11.2%;
+        --secondary: 217.2 32.6% 17.5%;
+        --secondary-foreground: 210 40% 98%;
+        --destructive: 0 62.8% 30.6%;
+        --destructive-foreground: 210 40% 98%;
+        --success: 142 76% 36%;
+        --warning: 38 92% 50%;
+        --info: 199 89% 48%;
+        --ring: 240 80% 60%;
+      }
+    </style>
+
+    <link rel="stylesheet" href="/viewer/viewer.css" />
+  </head>
+  <body class="bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
+    <div id="app" class="h-screen flex flex-col">
+      <!-- Header -->
+      <header class="fixed top-0 left-0 right-0 h-14 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 z-50">
+        <div class="h-full max-w-[1920px] mx-auto px-4 flex items-center justify-between">
+          <!-- Logo -->
+          <a href="/" class="flex items-center gap-2 text-lg font-semibold hover:opacity-80 transition-opacity">
+            <div class="w-6 h-6 rounded bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm">✦</div>
+            <span class="hidden sm:inline">MAMA</span>
+          </a>
+
+          <!-- Navigation Tabs -->
+          <nav class="flex items-center gap-1" id="nav-tabs">
+            <button
+              class="hidden px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+              data-tab="setup"
+              onclick="window.switchTab && window.switchTab('setup')"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+                />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              <span class="hidden sm:inline">Setup</span>
+            </button>
+            <button class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2" data-tab="dashboard" onclick="window.switchTab && window.switchTab('dashboard')">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+              </svg>
+              <span class="hidden sm:inline">Dashboard</span>
+            </button>
+            <button class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex items-center gap-2" data-tab="chat" onclick="window.switchTab && window.switchTab('chat')">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              <span class="hidden sm:inline">Chat</span>
+            </button>
+            <button class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+                />
+                <polyline points="3.29 7 12 12 20.71 7" />
+                <line x1="12" y1="22" x2="12" y2="12" />
+              </svg>
+              <span class="hidden sm:inline">Memory</span>
+            </button>
+            <button class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              <span class="hidden sm:inline">Settings</span>
+            </button>
+          </nav>
+
+          <!-- Header Actions -->
+          <div class="flex items-center gap-2">
+            <button
+              class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              onclick="toggleTheme()"
+              title="Toggle theme"
+            >
+              <svg
+                id="theme-icon-light"
+                style="display: none"
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2" />
+                <path d="M12 20v2" />
+                <path d="m4.93 4.93 1.41 1.41" />
+                <path d="m17.66 17.66 1.41 1.41" />
+                <path d="M2 12h2" />
+                <path d="M20 12h2" />
+                <path d="m6.34 17.66-1.41 1.41" />
+                <path d="m19.07 4.93-1.41 1.41" />
+              </svg>
+              <svg
+                id="theme-icon-dark"
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+              </svg>
+            </button>
+            <button
+              class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              onclick="showTunnelSetup()"
+              title="External Access"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+                <path
+                  d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <main class="flex-1 pt-14 overflow-hidden flex flex-col">
+        <!-- Setup tab hidden: runs on port 3848 -->
+        <div class="tab-content" id="tab-setup" style="display: none">
+          <div class="setup-container">
+            <div class="progress-section" id="progress-section" style="display: none">
+              <div class="progress-header">
+                <span class="progress-label" id="progress-label">Getting started...</span>
+                <span class="progress-count" id="progress-count">1 / 9</span>
+              </div>
+              <div class="progress-bar" id="progress-bar">
+                <div class="progress-step"></div>
+                <div class="progress-step"></div>
+                <div class="progress-step"></div>
+                <div class="progress-step"></div>
+                <div class="progress-step"></div>
+                <div class="progress-step"></div>
+                <div class="progress-step"></div>
+                <div class="progress-step"></div>
+                <div class="progress-step"></div>
+              </div>
+            </div>
+
+            <div class="chat-container" id="setup-chat">
+              <div class="chat-messages" id="setup-messages"></div>
+
+              <div class="typing-indicator" id="setup-typing">
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+              </div>
+
+              <div class="chat-input-area">
+                <div class="input-row">
+                  <div class="input-wrapper">
+                    <textarea
+                      class="chat-input"
+                      id="setup-input"
+                      placeholder="Type your message..."
+                      rows="1"
+                      disabled
+                    ></textarea>
+                  </div>
+                  <button
+                    class="btn btn-send"
+                    id="setup-send"
+                    onclick="sendSetupMessage()"
+                    disabled
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                    <span>Send</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div class="tab-content" id="tab-dashboard">
+          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+            <!-- Header -->
+            <div class="mb-6">
+              <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">MAMA OS Dashboard</h1>
+              <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">System status and configuration overview</p>
+            </div>
+
+            <!-- Gateway Status Cards -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Gateway Status</h2>
+              <div id="dashboard-gateways" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <!-- Gateway cards will be rendered by JavaScript -->
+                <div class="animate-pulse bg-gray-200 dark:bg-gray-800 rounded-lg h-24"></div>
+                <div class="animate-pulse bg-gray-200 dark:bg-gray-800 rounded-lg h-24"></div>
+                <div class="animate-pulse bg-gray-200 dark:bg-gray-800 rounded-lg h-24"></div>
+                <div class="animate-pulse bg-gray-200 dark:bg-gray-800 rounded-lg h-24"></div>
+              </div>
+            </section>
+
+            <!-- Memory Stats -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Memory Statistics</h2>
+              <div id="dashboard-memory" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <!-- Memory stats will be rendered by JavaScript -->
+                <div class="animate-pulse bg-gray-200 dark:bg-gray-800 rounded-lg h-24"></div>
+                <div class="animate-pulse bg-gray-200 dark:bg-gray-800 rounded-lg h-24"></div>
+                <div class="animate-pulse bg-gray-200 dark:bg-gray-800 rounded-lg h-24"></div>
+                <div class="animate-pulse bg-gray-200 dark:bg-gray-800 rounded-lg h-24"></div>
+              </div>
+            </section>
+
+            <!-- Agent Configuration -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Agent Configuration</h2>
+              <div id="dashboard-agent" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <!-- Agent config will be rendered by JavaScript -->
+                <div class="animate-pulse space-y-2">
+                  <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+                  <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3"></div>
+                  <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Top Topics -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Top Topics</h2>
+              <div id="dashboard-topics" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <!-- Topics will be rendered by JavaScript -->
+                <div class="animate-pulse space-y-2">
+                  <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
+                  <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+                  <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Status Bar -->
+            <div id="dashboard-status" class="text-sm text-gray-500 dark:text-gray-400 text-center py-2">
+              Loading...
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div class="tab-content" id="tab-settings">
+          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+            <!-- Header -->
+            <div class="mb-6">
+              <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
+              <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Configure MAMA gateways and agent settings</p>
+            </div>
+
+            <!-- Gateway Settings -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Gateway Connections</h2>
+              <div class="grid gap-4">
+                <!-- Discord -->
+                <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                  <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xl">💬</span>
+                      <h3 class="font-semibold text-gray-900 dark:text-gray-100">Discord</h3>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" id="settings-discord-enabled" class="sr-only peer">
+                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                  <div class="space-y-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Bot Token</label>
+                      <input type="password" id="settings-discord-token" placeholder="Enter Discord bot token" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Default Channel ID</label>
+                      <input type="text" id="settings-discord-channel" placeholder="Channel ID for notifications" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Slack -->
+                <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                  <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xl">📱</span>
+                      <h3 class="font-semibold text-gray-900 dark:text-gray-100">Slack</h3>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" id="settings-slack-enabled" class="sr-only peer">
+                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                  <div class="space-y-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Bot Token</label>
+                      <input type="password" id="settings-slack-bot-token" placeholder="xoxb-..." class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">App Token</label>
+                      <input type="password" id="settings-slack-app-token" placeholder="xapp-..." class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Telegram -->
+                <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                  <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xl">✈️</span>
+                      <h3 class="font-semibold text-gray-900 dark:text-gray-100">Telegram</h3>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" id="settings-telegram-enabled" class="sr-only peer">
+                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Bot Token</label>
+                    <input type="password" id="settings-telegram-token" placeholder="123456:ABC-DEF..." class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  </div>
+                </div>
+
+                <!-- Chatwork -->
+                <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                  <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xl">💼</span>
+                      <h3 class="font-semibold text-gray-900 dark:text-gray-100">Chatwork</h3>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" id="settings-chatwork-enabled" class="sr-only peer">
+                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">API Token</label>
+                    <input type="password" id="settings-chatwork-token" placeholder="Enter Chatwork API token" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Heartbeat Settings -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Heartbeat Scheduler</h2>
+              <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-4">
+                  <span class="text-sm text-gray-700 dark:text-gray-300">Enable Heartbeat</span>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="settings-heartbeat-enabled" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Interval (minutes)</label>
+                    <input type="number" id="settings-heartbeat-interval" value="30" min="5" max="1440" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Quiet Start (hour)</label>
+                    <input type="number" id="settings-heartbeat-quiet-start" value="23" min="0" max="23" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Quiet End (hour)</label>
+                    <input type="number" id="settings-heartbeat-quiet-end" value="8" min="0" max="23" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Agent Settings -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Agent Configuration</h2>
+              <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Model</label>
+                    <select id="settings-agent-model" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                      <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                      <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                      <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                      <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Max Turns</label>
+                    <input type="number" id="settings-agent-max-turns" value="10" min="1" max="50" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Timeout (seconds)</label>
+                    <input type="number" id="settings-agent-timeout" value="300" min="30" max="600" class="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
+              <button onclick="settingsModule.resetForm()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors">
+                Reset
+              </button>
+              <div class="flex items-center gap-3">
+                <span id="settings-status" class="text-sm text-gray-500 dark:text-gray-400"></span>
+                <button onclick="settingsModule.saveSettings()" class="px-6 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                  </svg>
+                  Save Settings
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-content" id="tab-memory">
+          <div class="flex-1 flex min-h-0">
+            <aside class="w-72 border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 flex flex-col min-h-0">
+              <div class="p-4 border-b border-gray-200 dark:border-gray-800">
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <line x1="3" y1="9" x2="21" y2="9" />
+                    <line x1="9" y1="21" x2="9" y2="9" />
+                  </svg>
+                  Checkpoints
+                </h3>
+              </div>
+              <div class="flex-1 flex flex-col gap-2 p-3 overflow-y-auto" id="checkpoint-list">
+                <div class="flex flex-col items-center justify-center py-8 text-gray-500">
+                  <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                  <span class="mt-2 text-sm">Loading...</span>
+                </div>
+              </div>
+            </aside>
+
+            <div class="flex-1 flex flex-col relative min-h-0" id="graph-container">
+              <!-- Analytics Bar -->
+              <div class="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
+                <div class="flex items-center justify-between px-4 py-2">
+                  <div class="flex items-center gap-4">
+                    <div id="memory-stats-total" class="text-center">
+                      <p class="text-xl font-bold text-gray-900 dark:text-gray-100">-</p>
+                      <p class="text-xs text-gray-500">Total</p>
+                    </div>
+                    <div class="h-8 w-px bg-gray-200 dark:bg-gray-700"></div>
+                    <div id="memory-stats-week" class="text-center">
+                      <p class="text-xl font-bold text-indigo-600 dark:text-indigo-400">-</p>
+                      <p class="text-xs text-gray-500">This Week</p>
+                    </div>
+                    <div class="h-8 w-px bg-gray-200 dark:bg-gray-700"></div>
+                    <div id="memory-stats-outcomes" class="flex items-center gap-2">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                        <span id="outcome-success">0</span> success
+                      </span>
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+                        <span id="outcome-failed">0</span> failed
+                      </span>
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
+                        <span id="outcome-partial">0</span> partial
+                      </span>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button onclick="exportDecisions('json')" class="px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg transition-colors">
+                      Export JSON
+                    </button>
+                    <button onclick="exportDecisions('markdown')" class="px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg transition-colors">
+                      Export MD
+                    </button>
+                    <button onclick="exportDecisions('csv')" class="px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg transition-colors">
+                      Export CSV
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Filters Bar -->
+              <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50">
+                <select
+                  class="px-3 py-1.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[140px]"
+                  id="topic-filter"
+                  onchange="filterByTopic(this.value)"
+                >
+                  <option value="">All Topics</option>
+                </select>
+                <select
+                  class="px-3 py-1.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[120px]"
+                  id="outcome-filter"
+                  onchange="filterByOutcome(this.value)"
+                >
+                  <option value="">All Outcomes</option>
+                  <option value="success">Success</option>
+                  <option value="failed">Failed</option>
+                  <option value="partial">Partial</option>
+                  <option value="pending">Pending</option>
+                </select>
+                <input
+                  type="text"
+                  class="px-3 py-1.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-[180px]"
+                  id="search-input"
+                  placeholder="Search decisions..."
+                  onkeyup="handleGraphSearch(event)"
+                />
+                <button onclick="clearFilters()" class="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                  Clear
+                </button>
+              </div>
+
+              <div class="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950" id="graph-stats">Loading...</div>
+
+              <div id="graph-canvas" class="flex-1 w-full h-full min-h-[400px] bg-white dark:bg-gray-950"></div>
+
+              <div class="absolute inset-0 flex flex-col items-center justify-center bg-white dark:bg-gray-950" id="graph-loading">
+                <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                <span class="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading graph data...</span>
+              </div>
+            </div>
+
+            <div class="legend-panel absolute bottom-16 right-4 w-48 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-lg p-3 z-10" id="legend-panel">
+              <button class="absolute top-2 right-2 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" onclick="toggleLegend()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+              <h4 class="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 mb-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                Legend
+              </h4>
+              <div class="legend-content space-y-3">
+                <div>
+                  <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">Edge Types</div>
+                  <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
+                    <span class="w-6 h-0.5 bg-gray-500"></span>
+                    <span>supersedes</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
+                    <span class="w-6 h-0.5 bg-blue-500 border-dashed"></span>
+                    <span>builds_on</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
+                    <span class="w-6 h-0.5 bg-red-500 border-dashed"></span>
+                    <span>debates</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                    <span class="w-6 h-1 bg-purple-500"></span>
+                    <span>synthesizes</span>
+                  </div>
+                </div>
+                <div>
+                  <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">Node Size</div>
+                  <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
+                    <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+                    <span>1-2 connections</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
+                    <span class="w-3 h-3 rounded-full bg-indigo-500"></span>
+                    <span>3-5 connections</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                    <span class="w-4 h-4 rounded-full bg-indigo-500"></span>
+                    <span>6+ connections</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button class="legend-toggle absolute bottom-4 right-4 px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors flex items-center gap-1.5 z-10" onclick="toggleLegend()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+              Legend
+            </button>
+          </div>
+        </div>
+
+        <div class="floating-panel fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-[600px] max-h-[80vh] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xl z-[1000] flex-col overflow-hidden" id="decision-detail-modal">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100" id="detail-topic">Decision Detail</h3>
+            <button class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" onclick="closeDetailModal()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <div class="flex-1 p-4 overflow-y-auto space-y-4">
+            <div>
+              <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Decision</div>
+              <div class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed markdown-content" id="detail-decision"></div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2 cursor-pointer" onclick="toggleReasoning()">
+                <span id="reasoning-arrow">▶</span> Reasoning
+              </div>
+              <div class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed markdown-content hidden" id="detail-reasoning"></div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Outcome</div>
+              <div class="flex items-center gap-2">
+                <select class="px-2 py-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" id="detail-outcome-select">
+                  <option value="PENDING">PENDING</option>
+                  <option value="SUCCESS">SUCCESS</option>
+                  <option value="FAILED">FAILED</option>
+                  <option value="PARTIAL">PARTIAL</option>
+                </select>
+                <button class="px-2 py-1 text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" onclick="saveOutcome()">Save</button>
+                <span id="outcome-status"></span>
+              </div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Confidence</div>
+              <div class="text-sm text-gray-900 dark:text-gray-100" id="detail-confidence"></div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Created</div>
+              <div class="text-sm text-gray-900 dark:text-gray-100" id="detail-created"></div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Similar Decisions</div>
+              <div class="text-sm text-gray-900 dark:text-gray-100" id="detail-similar">
+                <span class="text-gray-400">Searching...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-content active" id="tab-chat">
+          <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full">
+            <div class="flex-1 flex flex-col bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm min-h-0" id="general-chat">
+              <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-h-0" id="chat-messages">
+                <div class="flex-1 flex flex-col items-center justify-center text-center p-12 text-gray-500">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="48"
+                    height="48"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="mb-4 opacity-50"
+                  >
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">Start a conversation</h3>
+                  <p class="text-sm text-gray-500 dark:text-gray-400 max-w-sm leading-relaxed">
+                    Connect to a Claude session to start chatting. Your conversation will be saved
+                    and can be resumed later.
+                  </p>
+                </div>
+              </div>
+
+              <div class="border-t border-gray-200 dark:border-gray-700 p-4 space-y-3">
+                <div class="flex gap-2">
+                  <textarea
+                    class="flex-1 px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    id="chat-input"
+                    placeholder="Type your message..."
+                    rows="2"
+                    disabled
+                  ></textarea>
+                  <button 
+                    class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors disabled:cursor-not-allowed flex items-center gap-2" 
+                    id="chat-send" 
+                    onclick="sendChatMessage()" 
+                    disabled
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <line x1="22" y1="2" x2="11" y2="13" stroke-width="2" stroke-linecap="round"/>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span>Send</span>
+                  </button>
+                </div>
+
+                  <div class="flex items-center gap-2">
+                    <button
+                      class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      id="chat-tts-toggle"
+                      onclick="toggleTTS()"
+                      title="TTS Off"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </button>
+                    <div class="relative">
+                      <span class="text-xs text-gray-600 dark:text-gray-400 cursor-pointer px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded" id="tts-speed-label" onclick="toggleTTSPopup()">
+                        1.8x
+                      </span>
+                      <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg hidden" id="tts-speed-popup">
+                        <div class="text-center text-sm font-semibold mb-2" id="tts-speed-value">1.8x</div>
+                        <input
+                          type="range"
+                          class="w-full accent-indigo-600"
+                          id="tts-speed-slider"
+                          min="0.5"
+                          max="2.0"
+                          step="0.1"
+                          value="1.8"
+                          oninput="updateTTSSpeed(this.value)"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      id="chat-handsfree-toggle"
+                      onclick="toggleHandsFree()"
+                      title="Hands-free Off"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="2" stroke-width="2"/>
+                        <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </button>
+                    <button
+                      class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors relative"
+                      id="chat-mic"
+                      onclick="toggleVoiceInput()"
+                      title="Voice input"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <line x1="12" y1="19" x2="12" y2="22" stroke-width="2" stroke-linecap="round"/>
+                      </svg>
+                      <span class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"></span>
+                    </button>
+                  </div>
+                  
+                  <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400" id="chat-status">
+                    <span class="status-indicator w-2 h-2 rounded-full bg-red-500"></span>
+                    <span>Not connected</span>
+                    <button
+                      class="ml-2 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      onclick="showTunnelSetup()"
+                      title="External Access"
+                    >
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                        <line x1="2" y1="12" x2="22" y2="12" stroke-width="2"/>
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke-width="2"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" id="save-decision-modal">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xl w-[90%] max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+            <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-gray-100">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              Save Decision
+            </h3>
+            <button class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" onclick="hideSaveDecisionForm()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div class="p-4 space-y-4">
+            <div class="flex flex-col gap-2">
+              <label class="text-sm font-medium text-gray-900 dark:text-gray-100" for="save-topic">Topic</label>
+              <input
+                type="text"
+                class="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+                id="save-topic"
+                placeholder="e.g., auth_strategy"
+                required
+              />
+            </div>
+            <div class="flex flex-col gap-2">
+              <label class="text-sm font-medium text-gray-900 dark:text-gray-100" for="save-decision">Decision</label>
+              <textarea
+                class="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors resize-y min-h-[60px]"
+                id="save-decision"
+                placeholder="What did you decide?"
+                rows="2"
+                required
+              ></textarea>
+            </div>
+            <div class="flex flex-col gap-2">
+              <label class="text-sm font-medium text-gray-900 dark:text-gray-100" for="save-reasoning">Reasoning</label>
+              <textarea
+                class="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors resize-y min-h-[100px]"
+                id="save-reasoning"
+                placeholder="Why did you make this decision?"
+                rows="4"
+                required
+              ></textarea>
+            </div>
+            <div class="flex flex-col gap-2">
+              <label class="text-sm font-medium text-gray-900 dark:text-gray-100" for="save-confidence">Confidence (0.0 - 1.0)</label>
+              <input
+                type="number"
+                class="w-28 px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+                id="save-confidence"
+                min="0"
+                max="1"
+                step="0.1"
+                value="0.8"
+              />
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 px-4 py-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+            <button class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors" onclick="hideSaveDecisionForm()">Cancel</button>
+            <button class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors" onclick="submitSaveDecision()">Save</button>
+          </div>
+          <div id="save-form-status" class="px-5 pb-4 text-center text-sm"></div>
+        </div>
+      </div>
+
+      <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" id="tunnel-setup-modal">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xl w-[90%] max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+            <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-gray-100">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+              </svg>
+              External Access Setup
+            </h3>
+            <button class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" onclick="hideTunnelSetup()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div class="flex-1 p-4 overflow-y-auto space-y-4">
+            <!-- ngrok section -->
+            <div class="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <h4 class="text-sm text-indigo-600 dark:text-indigo-400 mb-2 flex items-center gap-1.5">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+                ngrok (Quick Setup)
+              </h4>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">Tunnel your local server to a public URL</p>
+              <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 flex items-center justify-between gap-2 mb-2">
+                <code id="ngrok-command" class="font-mono text-sm text-green-600 dark:text-green-400">ngrok http 3847</code>
+                <button class="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" onclick="copyNgrokCommand()">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                </button>
+              </div>
+              <a href="https://ngrok.com/download" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Download ngrok
+              </a>
+            </div>
+
+            <!-- Cloudflare section -->
+            <div class="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <h4 class="text-sm text-indigo-600 dark:text-indigo-400 mb-2 flex items-center gap-1.5">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+                </svg>
+                Cloudflare Tunnel (Production)
+              </h4>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">Secure tunnel with custom domain support</p>
+              <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                </svg>
+                Setup Guide
+              </a>
+            </div>
+
+            <!-- Security warning -->
+            <div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 rounded-lg p-3 flex gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-500 flex-shrink-0 mt-0.5">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              <div class="text-xs">
+                <strong class="text-amber-600 dark:text-amber-400 block mb-1">Security Notice</strong>
+                <span class="text-gray-700 dark:text-gray-300">Always set MAMA_AUTH_TOKEN environment variable before exposing your server externally.</span>
+                <pre class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 mt-2 text-[11px] text-green-600 dark:text-green-400 overflow-x-auto">export MAMA_AUTH_TOKEN="your-secure-token-here"</pre>
+              </div>
+            </div>
+
+            <!-- Test connection -->
+            <div class="border-t border-gray-200 dark:border-gray-800 pt-4">
+              <button class="w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center justify-center gap-2" onclick="testConnection()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+                  <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+                  <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                  <line x1="12" y1="20" x2="12.01" y2="20" />
+                </svg>
+                Test Connection
+              </button>
+              <div id="tunnel-test-result" class="mt-3 min-h-[40px]"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="toast" id="toast">
+        <span id="toast-message"></span>
+      </div>
+    </div>
+
+    <script type="module">
+      import { ChatModule } from '/viewer/js/modules/chat.js';
+      import { GraphModule } from '/viewer/js/modules/graph.js';
+      import { MemoryModule } from '/viewer/js/modules/memory.js';
+      import { DashboardModule } from '/viewer/js/modules/dashboard.js';
+      import { SettingsModule } from '/viewer/js/modules/settings.js';
+
+      const memory = new MemoryModule();
+      const chat = new ChatModule(memory);
+      const graph = new GraphModule();
+      const dashboard = new DashboardModule();
+      const settings = new SettingsModule();
+
+      // Expose modules globally for debugging and onclick handlers
+      window.chatModule = chat;
+      window.graphModule = graph;
+      window.memoryModule = memory;
+      window.dashboardModule = dashboard;
+      window.settingsModule = settings;
+
+      // Quiz choice button handler
+      window.sendQuizChoice = (choice) => {
+        chat.sendQuizChoice(choice);
+      };
+
+      const STATE = {
+        currentTab: 'chat',
+        theme: 'dark',
+        graphLoaded: false
+      };
+
+      async function switchTab(tabName) {
+        STATE.currentTab = tabName;
+
+        document.querySelectorAll('[data-tab]').forEach(btn => {
+          const isActive = btn.dataset.tab === tabName;
+          btn.classList.toggle('bg-indigo-100', isActive);
+          btn.classList.toggle('dark:bg-indigo-900/30', isActive);
+          btn.classList.toggle('text-indigo-600', isActive);
+          btn.classList.toggle('dark:text-indigo-400', isActive);
+        });
+
+        document.querySelectorAll('.tab-content').forEach(content => {
+          content.classList.toggle('active', content.id === `tab-${tabName}`);
+        });
+
+        if (tabName === 'chat') {
+          chat.initSession();
+        } else if (tabName === 'dashboard') {
+          dashboard.init();
+        } else if (tabName === 'settings') {
+          settings.init();
+        } else if (tabName === 'memory') {
+          // Load checkpoints
+          loadCheckpoints();
+
+          // Load memory stats for analytics bar
+          updateMemoryStats();
+
+          // Load graph
+          if (!STATE.graphLoaded) {
+            try {
+              const data = await graph.fetchData();
+              graph.init(data);
+              STATE.graphLoaded = true;
+              const loadingEl = document.getElementById('graph-loading');
+              if (loadingEl) loadingEl.style.display = 'none';
+            } catch (error) {
+              console.error('[MAMA] Failed to load graph:', error);
+              const loadingEl = document.getElementById('graph-loading');
+              if (loadingEl) loadingEl.innerHTML = '<span class="text-red-500">Failed to load graph data</span>';
+            }
+          }
+        }
+      }
+
+      function toggleTheme() {
+        const html = document.documentElement;
+        const isDark = html.classList.toggle('dark');
+        STATE.theme = isDark ? 'dark' : 'light';
+
+        const lightIcon = document.getElementById('theme-icon-light');
+        const darkIcon = document.getElementById('theme-icon-dark');
+
+        if (isDark) {
+          lightIcon.style.display = 'none';
+          darkIcon.style.display = 'block';
+        } else {
+          lightIcon.style.display = 'block';
+          darkIcon.style.display = 'none';
+        }
+
+        localStorage.setItem('mama_theme', STATE.theme);
+      }
+
+      function initTheme() {
+        const saved = localStorage.getItem('mama_theme');
+        const html = document.documentElement;
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        const lightIcon = document.getElementById('theme-icon-light');
+        const darkIcon = document.getElementById('theme-icon-dark');
+
+        if (saved === 'dark' || (!saved && prefersDark)) {
+          html.classList.add('dark');
+          STATE.theme = 'dark';
+          lightIcon.style.display = 'none';
+          darkIcon.style.display = 'block';
+        } else {
+          html.classList.remove('dark');
+          STATE.theme = 'light';
+          lightIcon.style.display = 'block';
+          darkIcon.style.display = 'none';
+        }
+      }
+
+      function toggleLegend() {
+        const panel = document.getElementById('legend-panel');
+        panel.classList.toggle('visible');
+      }
+
+      function closeDetailModal() {
+        const modal = document.getElementById('decision-detail-modal');
+        modal.classList.remove('visible');
+      }
+
+      function toggleReasoning() {
+        const reasoning = document.getElementById('detail-reasoning');
+        const arrow = document.getElementById('reasoning-arrow');
+        if (reasoning.classList.contains('hidden')) {
+          reasoning.classList.remove('hidden');
+          arrow.textContent = '▼';
+        } else {
+          reasoning.classList.add('hidden');
+          arrow.textContent = '▶';
+        }
+      }
+
+      function showTunnelSetup() {
+        const modal = document.getElementById('tunnel-setup-modal');
+        modal.classList.add('visible');
+      }
+
+      function hideTunnelSetup() {
+        const modal = document.getElementById('tunnel-setup-modal');
+        modal.classList.remove('visible');
+      }
+
+      function showSaveDecisionForm() {
+        memory.showSaveForm();
+      }
+
+      function hideSaveDecisionForm() {
+        memory.hideSaveForm();
+      }
+
+      function submitSaveDecision() {
+        memory.submitSaveForm();
+      }
+
+      function copyNgrokCommand() {
+        const cmd = document.getElementById('ngrok-command').textContent;
+        navigator.clipboard.writeText(cmd);
+        alert('Copied: ' + cmd);
+      }
+
+      function testConnection() {
+        const result = document.getElementById('tunnel-test-result');
+        result.innerHTML = '<span class="text-gray-500">Testing...</span>';
+        fetch('/health')
+          .then(r => r.ok ? result.innerHTML = '<span class="text-green-500">Connection OK</span>'
+            : result.innerHTML = '<span class="text-red-500">Connection failed</span>')
+          .catch(() => result.innerHTML = '<span class="text-red-500">Connection failed</span>');
+      }
+
+      function sendChatMessage() {
+        chat.send();
+      }
+
+      // Send quiz choice as message
+      window.sendQuizChoice = function(choice) {
+        if (chat && chat.ws && chat.ws.readyState === WebSocket.OPEN) {
+          // Set the input to the choice and send
+          const input = document.getElementById('chat-input');
+          if (input) {
+            input.value = choice;
+            chat.send();
+          }
+        }
+      };
+
+      function toggleTTS() {
+        chat.toggleTTS && chat.toggleTTS();
+      }
+
+      function toggleTTSPopup() {
+        const popup = document.getElementById('tts-speed-popup');
+        popup.classList.toggle('hidden');
+      }
+
+      function updateTTSSpeed(value) {
+        document.getElementById('tts-speed-label').textContent = value + 'x';
+        document.getElementById('tts-speed-value').textContent = value + 'x';
+        chat.setTTSSpeed && chat.setTTSSpeed(parseFloat(value));
+      }
+
+      function toggleHandsFree() {
+        chat.toggleHandsFree && chat.toggleHandsFree();
+      }
+
+      function toggleVoiceInput() {
+        chat.toggleVoiceInput && chat.toggleVoiceInput();
+      }
+
+      function filterByTopic(topic) {
+        graph.filterByTopic && graph.filterByTopic(topic);
+      }
+
+      function filterByOutcome(outcome) {
+        graph.filterByOutcome && graph.filterByOutcome(outcome);
+      }
+
+      function clearFilters() {
+        document.getElementById('topic-filter').value = '';
+        document.getElementById('outcome-filter').value = '';
+        document.getElementById('search-input').value = '';
+        graph.clearFilters && graph.clearFilters();
+      }
+
+      async function exportDecisions(format) {
+        try {
+          const response = await fetch(`/api/memory/export?format=${format}`);
+          if (!response.ok) throw new Error('Export failed');
+
+          const blob = await response.blob();
+          const filename = response.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1]
+            || `mama-export.${format}`;
+
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.error('[Export] Error:', error);
+          alert('Export failed: ' + error.message);
+        }
+      }
+
+      async function updateMemoryStats() {
+        try {
+          const response = await fetch('/api/dashboard/status');
+          if (!response.ok) return;
+
+          const data = await response.json();
+          const memory = data.memory || {};
+
+          document.querySelector('#memory-stats-total p').textContent = memory.total || 0;
+          document.querySelector('#memory-stats-week p').textContent = memory.thisWeek || 0;
+          document.getElementById('outcome-success').textContent = memory.outcomes?.success || 0;
+          document.getElementById('outcome-failed').textContent = memory.outcomes?.failed || 0;
+          document.getElementById('outcome-partial').textContent = memory.outcomes?.partial || 0;
+        } catch (error) {
+          console.error('[MemoryStats] Error:', error);
+        }
+      }
+
+      function handleGraphSearch(event) {
+        if (event.key === 'Enter') {
+          graph.search && graph.search();
+        }
+      }
+
+      function saveOutcome() {
+        const select = document.getElementById('detail-outcome-select');
+        const outcome = select.value;
+        const nodeId = graph.currentNodeId;
+        if (nodeId && outcome) {
+          graph.updateOutcome && graph.updateOutcome(nodeId, outcome);
+        }
+      }
+
+      let checkpointsData = [];
+
+      function renderMarkdown(text) {
+        if (!text) return '';
+        try {
+          if (typeof marked !== 'undefined' && marked.parse) {
+            return marked.parse(text);
+          }
+        } catch (e) {
+          console.error('[MAMA] Markdown parse error:', e);
+        }
+        return text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+      }
+
+      async function loadCheckpoints() {
+        const container = document.getElementById('checkpoint-list');
+        if (!container) {
+          console.error('[MAMA] checkpoint-list container not found');
+          return;
+        }
+
+        console.log('[MAMA] Loading checkpoints...');
+
+        try {
+          const response = await fetch('/api/checkpoints');
+          const data = await response.json();
+          checkpointsData = data.checkpoints || [];
+
+          console.log('[MAMA] Loaded', checkpointsData.length, 'checkpoints');
+
+          if (checkpointsData.length > 0) {
+            container.innerHTML = checkpointsData.map((cp, idx) => {
+              const fullSummary = renderMarkdown(cp.summary || '');
+              return `
+              <div class="checkpoint-item p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors" onclick="toggleCheckpoint(${idx})">
+                <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1">${new Date(cp.timestamp).toLocaleString()}</div>
+                <div class="checkpoint-summary text-sm text-gray-700 dark:text-gray-300 markdown-content line-clamp-3 overflow-hidden">${fullSummary}</div>
+                <div class="checkpoint-details hidden mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                  <div class="text-sm text-gray-700 dark:text-gray-300 markdown-content max-h-64 overflow-y-auto">${fullSummary}</div>
+                </div>
+              </div>
+            `}).join('');
+          } else {
+            container.innerHTML = '<div class="text-center text-sm text-gray-500 py-4">No checkpoints found</div>';
+          }
+        } catch (error) {
+          console.error('[MAMA] Failed to load checkpoints:', error);
+          container.innerHTML = '<div class="text-center text-sm text-red-500 py-4">Failed to load checkpoints</div>';
+        }
+      }
+
+      function toggleCheckpoint(idx) {
+        const items = document.querySelectorAll('.checkpoint-item');
+        items.forEach((item, i) => {
+          const details = item.querySelector('.checkpoint-details');
+          const summary = item.querySelector('.checkpoint-summary');
+          if (i === idx) {
+            const isExpanded = !details.classList.contains('hidden');
+            details.classList.toggle('hidden');
+            summary.classList.toggle('hidden', !isExpanded);
+            item.classList.toggle('border-indigo-500', !isExpanded);
+          } else {
+            details.classList.add('hidden');
+            summary.classList.remove('hidden');
+            item.classList.remove('border-indigo-500');
+          }
+        });
+      }
+
+      // Expose to window for onclick handlers
+      window.switchTab = switchTab;
+      window.toggleTheme = toggleTheme;
+      window.toggleLegend = toggleLegend;
+      window.closeDetailModal = closeDetailModal;
+      window.toggleReasoning = toggleReasoning;
+      window.showTunnelSetup = showTunnelSetup;
+      window.hideTunnelSetup = hideTunnelSetup;
+      window.showSaveDecisionForm = showSaveDecisionForm;
+      window.hideSaveDecisionForm = hideSaveDecisionForm;
+      window.submitSaveDecision = submitSaveDecision;
+      window.copyNgrokCommand = copyNgrokCommand;
+      window.testConnection = testConnection;
+      window.sendChatMessage = sendChatMessage;
+      window.toggleTTS = toggleTTS;
+      window.toggleTTSPopup = toggleTTSPopup;
+      window.updateTTSSpeed = updateTTSSpeed;
+      window.toggleHandsFree = toggleHandsFree;
+      window.toggleVoiceInput = toggleVoiceInput;
+      window.filterByTopic = filterByTopic;
+      window.handleGraphSearch = handleGraphSearch;
+      window.saveOutcome = saveOutcome;
+      window.loadCheckpoints = loadCheckpoints;
+      window.toggleCheckpoint = toggleCheckpoint;
+
+      document.addEventListener('DOMContentLoaded', () => {
+        const userLang = navigator.language || navigator.userLanguage;
+        document.documentElement.lang = userLang.split('-')[0];
+
+        initTheme();
+        switchTab('chat');
+      });
+
+      // Cleanup resources on page unload
+      window.addEventListener('beforeunload', () => {
+        // Cleanup dashboard intervals
+        if (window.dashboardModule?.cleanup) {
+          window.dashboardModule.cleanup();
+        }
+        // Cleanup chat resources
+        if (window.chatModule?.cleanup) {
+          window.chatModule.cleanup();
+        }
+        console.log('[MAMA] Resources cleaned up');
+      });
+    </script>
+  </body>
+</html>

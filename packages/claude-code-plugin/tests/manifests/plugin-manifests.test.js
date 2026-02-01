@@ -97,8 +97,7 @@ describe('M3.3: Plugin Manifests', () => {
       const expectedHooks = ['UserPromptSubmit'];
 
       expectedHooks.forEach((hookType) => {
-        expect(hooksConfig.hooks[hookType]).toBeDefined();
-        expect(Array.isArray(hooksConfig.hooks[hookType])).toBe(true);
+        expect(hooksConfig[hookType]).toBeDefined();
       });
 
       // Verify hook scripts exist and are executable (scripts still exist even if not registered)
@@ -119,16 +118,14 @@ describe('M3.3: Plugin Manifests', () => {
       const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
 
       const allHooks = [];
-      Object.values(hooksConfig.hooks).forEach((hookConfigs) => {
+      Object.values(hooksConfig).forEach((hookConfigs) => {
         hookConfigs.forEach((config) => {
-          config.hooks.forEach((hook) => {
-            allHooks.push(hook.command);
-          });
+          allHooks.push(config);
         });
       });
 
-      allHooks.forEach((command) => {
-        expect(command).toContain('${CLAUDE_PLUGIN_ROOT}');
+      allHooks.forEach((hookConfig) => {
+        expect(hookConfig.command).toContain('${CLAUDE_PLUGIN_ROOT}');
       });
     });
   });
@@ -152,13 +149,12 @@ describe('M3.3: Plugin Manifests', () => {
       const hooksJsonPath = path.join(PLUGIN_ROOT, 'hooks', 'hooks.json');
       const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
 
-      const userPromptHooks = hooksConfig.hooks.UserPromptSubmit;
+      const userPromptHooks = hooksConfig.UserPromptSubmit;
       expect(userPromptHooks).toBeDefined();
       expect(userPromptHooks.length).toBeGreaterThan(0);
 
       const hook = userPromptHooks[0];
-      expect(hook.hooks).toBeDefined();
-      expect(hook.hooks[0].command).toContain('userpromptsubmit-hook.js');
+      expect(hook.command).toContain('userpromptsubmit-hook.js');
     });
 
     it('should have PreToolUse/PostToolUse hooks disabled (efficiency decision)', () => {
@@ -167,8 +163,8 @@ describe('M3.3: Plugin Manifests', () => {
 
       // PreToolUse and PostToolUse are intentionally disabled for efficiency
       // Only UserPromptSubmit provides value with acceptable latency
-      expect(hooksConfig.hooks.PreToolUse).toBeUndefined();
-      expect(hooksConfig.hooks.PostToolUse).toBeUndefined();
+      expect(hooksConfig.PreToolUse).toBeUndefined();
+      expect(hooksConfig.PostToolUse).toBeUndefined();
     });
 
     it('should still have hook scripts available (for future re-enablement)', () => {

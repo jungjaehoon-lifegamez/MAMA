@@ -25,25 +25,73 @@ node --version
 
 ## Quick Install
 
-### For Clawdbot Users (Recommended)
+### MAMA Standalone (v0.1.0)
+
+**Always-on AI agent** with Discord/Slack/Telegram bot support, autonomous loops, and MAMA OS graph viewer.
+
+**Step 1: Install globally**
+
+```bash
+npm install -g @jungjaehoon/mama-standalone
+```
+
+**Step 2: Initialize workspace**
+
+```bash
+mama init
+```
+
+**Step 3: Authenticate Claude CLI**
+
+Run Claude CLI once to authenticate via OAuth:
+
+```bash
+claude
+# Follow browser prompts to authenticate
+```
+
+**Step 4: Start agent**
+
+```bash
+mama start
+```
+
+**What you get:**
+
+- Always-on agent with memory persistence
+- Gateway integrations (Discord, Slack, Telegram)
+- MAMA OS: Web-based graph viewer + mobile chat
+- Autonomous agent loops with heartbeat monitoring
+- Full MCP tool access (search, save, update, load_checkpoint)
+
+**Prerequisites:**
+
+- Node.js >= 22.0.0
+- Claude CLI installed and authenticated (`npm i -g @anthropic-ai/claude-code && claude`)
+
+**See full setup guide:** [Standalone Setup Guide](standalone-setup.md)
+
+---
+
+### For OpenClaw Users
 
 Native plugin with **auto-recall** — memories surface automatically during conversation.
 
 **Step 1: Install Plugin**
 
 ```bash
-clawdbot plugins install @jungjaehoon/clawdbot-mama
+openclaw plugins install @jungjaehoon/openclaw-mama
 ```
 
 **Step 2: Enable in config**
 
-Add to `~/.clawdbot/clawdbot.json`:
+Add to `~/.openclaw/openclaw.json`:
 
 ```json
 {
   "plugins": {
-    "slots": { "memory": "clawdbot-mama" },
-    "entries": { "clawdbot-mama": { "enabled": true } }
+    "slots": { "memory": "openclaw-mama" },
+    "entries": { "openclaw-mama": { "enabled": true } }
   }
 }
 ```
@@ -51,7 +99,7 @@ Add to `~/.clawdbot/clawdbot.json`:
 **Step 3: Restart gateway**
 
 ```bash
-clawdbot gateway restart
+openclaw gateway restart
 ```
 
 **What you get:**
@@ -293,29 +341,41 @@ Then configure with absolute path:
 
 ## Architecture Overview
 
-MAMA uses a **3-package architecture**:
+MAMA uses a **5-package architecture**:
 
-1. **@jungjaehoon/mama-server** (MCP Server)
-   - Independent npm package
+1. **@jungjaehoon/mama-standalone** (Standalone Agent)
+   - Always-on AI agent with gateway support
+   - Built-in MAMA OS (graph viewer + mobile chat)
+   - Autonomous agent loops
+   - Depends on @jungjaehoon/mama-core
+
+2. **@jungjaehoon/mama-core** (Core Library)
+   - Shared core: embeddings, DB, memory management
+   - Used by standalone, MCP server, and plugins
+   - Contains: better-sqlite3, @huggingface/transformers, sqlite-vec
+
+3. **@jungjaehoon/mama-server** (MCP Server)
+   - Independent npm package for Claude Desktop/Code
    - Handles all AI/database operations
-   - Shared across all clients
-   - Contains: better-sqlite3, @huggingface/transformers
+   - Depends on @jungjaehoon/mama-core
 
-2. **mama** (Claude Code Plugin)
+4. **mama** (Claude Code Plugin)
    - Lightweight plugin (Markdown + config)
    - Provides /mama:\* commands
    - Hooks for automatic context injection
    - References the MCP server via .mcp.json
 
-3. **@jungjaehoon/clawdbot-mama** (Clawdbot Plugin)
+5. **@jungjaehoon/openclaw-mama** (OpenClaw Plugin)
    - Native plugin with lifecycle hooks
    - Auto-recall on agent start
    - Direct module integration (no HTTP)
 
 **Benefits:**
 
-- ✅ One MCP server, multiple clients
-- ✅ Clawdbot gets native auto-recall
+- ✅ One core library, multiple distribution channels
+- ✅ Standalone agent for always-on use cases
+- ✅ MCP server for Claude Desktop/Code integration
+- ✅ OpenClaw gets native auto-recall
 - ✅ Platform-specific compilation handled automatically
 - ✅ Shared decision database across all tools
 

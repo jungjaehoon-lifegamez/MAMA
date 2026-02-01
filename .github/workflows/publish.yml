@@ -5,23 +5,29 @@ on:
     tags:
       - 'v*'
       - 'mcp-server-*'
-      - 'clawdbot-v*'
-      - 'clawdbot-plugin-*'
+      - 'core-v*'
+      - 'mama-core-*'
+      - 'os-v*'
+      - 'mama-os-*'
+      - 'standalone-v*'
+      - 'openclaw-v*'
+      - 'openclaw-plugin-*'
 
 jobs:
-  publish-mcp-server:
-    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/mcp-server-')
+  # Publish mama-core first (other packages depend on it)
+  publish-mama-core:
+    if: startsWith(github.ref, 'refs/tags/core-v') || startsWith(github.ref, 'refs/tags/mama-core-')
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/mcp-server
+        working-directory: packages/mama-core
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup pnpm
@@ -37,19 +43,47 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  publish-clawdbot-plugin:
-    if: startsWith(github.ref, 'refs/tags/clawdbot-v') || startsWith(github.ref, 'refs/tags/clawdbot-plugin-')
+  publish-mcp-server:
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/mcp-server-')
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/clawdbot-plugin
+        working-directory: packages/mcp-server
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --ignore-scripts
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-openclaw-plugin:
+    if: startsWith(github.ref, 'refs/tags/openclaw-v') || startsWith(github.ref, 'refs/tags/openclaw-plugin-')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/openclaw-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup pnpm
@@ -65,6 +99,45 @@ jobs:
           # Replace workspace:* with actual version from mcp-server
           MCP_VERSION=$(node -p "require('../mcp-server/package.json').version")
           sed -i "s/\"workspace:\*\"/\"^$MCP_VERSION\"/" package.json
+          cat package.json
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Publish mama-os (standalone)
+  publish-mama-os:
+    if: startsWith(github.ref, 'refs/tags/os-v') || startsWith(github.ref, 'refs/tags/mama-os-') || startsWith(github.ref, 'refs/tags/standalone-v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/standalone
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build
+        run: pnpm build
+
+      - name: Replace workspace protocol
+        run: |
+          # Replace workspace:* with actual version from mama-core
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
           cat package.json
 
       - name: Publish to npm

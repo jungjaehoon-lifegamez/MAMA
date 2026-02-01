@@ -18,7 +18,7 @@ MAMA uses a **3-layer architecture** with **3 packages**:
 │ ├── packages/                                               │
 │ │   ├── mcp-server/           → npm: @jungjaehoon/mama-server│
 │ │   ├── claude-code-plugin/   → Claude Code marketplace     │
-│ │   └── clawdbot-plugin/      → npm: @jungjaehoon/clawdbot-mama│
+│ │   └── openclaw-plugin/      → npm: @jungjaehoon/openclaw-mama│
 │ └── docs/                                                   │
 └─────────────────────────────────────────────────────────────┘
                     ↓                    ↓
@@ -27,14 +27,14 @@ MAMA uses a **3-layer architecture** with **3 packages**:
         │                   │    │ jungjaehoon-lifegamez/│
         │ @jungjaehoon/     │    │ claude-plugins      │
         │ mama-server       │    │                     │
-        │ clawdbot-mama     │    │ └── plugins/mama/   │
+        │ openclaw-mama     │    │ └── plugins/mama/   │
         └───────────────────┘    └─────────────────────┘
                     ↓                    ↓
         ┌───────────────────────────────────────────┐
         │ User Installation                         │
         │                                           │
-        │ Clawdbot (Recommended):                   │
-        │   clawdbot plugins install @jungjaehoon/clawdbot-mama│
+        │ OpenClaw (Recommended):                   │
+        │   openclaw plugins install @jungjaehoon/openclaw-mama│
         │                                           │
         │ Claude Code:                              │
         │   /plugin marketplace add jungjaehoon/...│
@@ -82,10 +82,10 @@ github.com/jungjaehoon-lifegamez/MAMA
 │   │   ├── skills/                  # Auto-context skill
 │   │   └── tests/
 │   │
-│   └── clawdbot-plugin/             # @jungjaehoon/clawdbot-mama
+│   └── openclaw-plugin/             # @jungjaehoon/openclaw-mama
 │       ├── package.json             # npm package
 │       ├── index.ts                 # Plugin entry (lifecycle hooks + tools)
-│       ├── clawdbot.plugin.json     # Plugin metadata
+│       ├── openclaw.plugin.json     # Plugin metadata
 │       └── scripts/                 # Postinstall scripts
 │
 ├── .github/
@@ -93,7 +93,7 @@ github.com/jungjaehoon-lifegamez/MAMA
 │       ├── test.yml                 # CI for all packages
 │       ├── publish-mcp.yml          # npm publish @jungjaehoon/mama-server
 │       ├── sync-plugin.yml          # Claude Code marketplace sync
-│       └── publish-clawdbot.yml     # npm publish @jungjaehoon/clawdbot-mama
+│       └── publish-openclaw.yml     # npm publish @jungjaehoon/openclaw-mama
 │
 └── docs/                            # Shared documentation
     └── ...
@@ -280,14 +280,14 @@ jobs:
 
 - **MCP Server** (@jungjaehoon/mama-server): Heavy dependencies (better-sqlite3, @huggingface/transformers)
 - **Claude Code Plugin** (mama): Lightweight (Markdown + JSON configs)
-- **Clawdbot Plugin** (@jungjaehoon/clawdbot-mama): Native plugin with lifecycle hooks
+- **OpenClaw Plugin** (@jungjaehoon/openclaw-mama): Native plugin with lifecycle hooks
 
 **Benefits:**
 
-- ✅ Share MCP server across Claude Code + Claude Desktop + Clawdbot
+- ✅ Share MCP server across Claude Code + Claude Desktop + OpenClaw
 - ✅ Plugin updates don't require MCP server recompilation
 - ✅ MCP server can be used standalone (API server, CLI tool)
-- ✅ Clawdbot gets native integration with auto-recall
+- ✅ OpenClaw gets native integration with auto-recall
 - ✅ Clear dependency boundaries
 
 ### Decision: npx for MCP Server Distribution

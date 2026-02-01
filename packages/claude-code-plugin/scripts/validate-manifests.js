@@ -154,103 +154,41 @@ function validatePluginJson(pluginConfig) {
     warn('No skills/ directory and no skills in plugin.json');
   }
 
-  // Check hooks (can be object or file path)
-  if (!pluginConfig.hooks) {
-    warn('plugin.json has no hooks');
-  } else if (typeof pluginConfig.hooks === 'string') {
-    // External hooks config file - resolve relative to plugin.json location
-    const pluginJsonDir = path.dirname(PLUGIN_JSON);
-    const hooksConfigPath = path.resolve(pluginJsonDir, pluginConfig.hooks);
-    if (!fs.existsSync(hooksConfigPath)) {
-      error(`Hooks config file not found: ${hooksConfigPath}`);
+  // Check hooks (via hooks field in plugin.json or auto-discovered hooks/ directory)
+  if (pluginConfig.hooks && typeof pluginConfig.hooks === 'string') {
+    // External hooks.json file (recommended pattern)
+    const hooksJsonPath = path.join(PLUGIN_ROOT, '.claude-plugin', pluginConfig.hooks);
+    if (!fs.existsSync(hooksJsonPath)) {
+      error(`Hooks file not found: ${hooksJsonPath}`);
     } else {
-      success(`Hooks config file exists: ${pluginConfig.hooks}`);
       try {
-        const hooksConfig = JSON.parse(fs.readFileSync(hooksConfigPath, 'utf8'));
-        if (hooksConfig.hooks) {
-          const hookTypes = Object.keys(hooksConfig.hooks);
-          success(`Hooks config has ${hookTypes.length} hook type(s): ${hookTypes.join(', ')}`);
+        const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+        success(`Hooks file exists: ${pluginConfig.hooks}`);
 
-          hookTypes.forEach((hookType) => {
-            const hookConfigs = hooksConfig.hooks[hookType];
-            if (!Array.isArray(hookConfigs)) {
-              error(`Hook ${hookType} is not an array`);
-              return;
-            }
-
-            hookConfigs.forEach((hookConfig, idx) => {
-              if (!hookConfig.hooks || !Array.isArray(hookConfig.hooks)) {
-                error(`Hook ${hookType}[${idx}] missing hooks array`);
-                return;
-              }
-
-              hookConfig.hooks.forEach((hook, hookIdx) => {
-                if (!hook.command) {
-                  error(`Hook ${hookType}[${idx}].hooks[${hookIdx}] missing command`);
-                  return;
-                }
-
-                // Check if script exists (resolve ${CLAUDE_PLUGIN_ROOT})
-                const scriptPath = hook.command
-                  .replace('node ${CLAUDE_PLUGIN_ROOT}/', '')
-                  .replace('${CLAUDE_PLUGIN_ROOT}/', '');
-                const fullPath = path.join(PLUGIN_ROOT, scriptPath);
-
-                if (!fs.existsSync(fullPath)) {
-                  error(`Hook script not found: ${fullPath}`);
+        // Validate hook scripts exist
+        Object.entries(hooksConfig).forEach(([_hookType, hookConfigs]) => {
+          hookConfigs.forEach((config) => {
+            if (config.command) {
+              // Extract script path from command
+              const match = config.command.match(/scripts\/([a-z-]+\.js)/);
+              if (match) {
+                const scriptName = match[1];
+                const scriptPath = path.join(PLUGIN_ROOT, 'scripts', scriptName);
+                if (!fs.existsSync(scriptPath)) {
+                  error(`Hook script not found: ${scriptPath}`);
                 } else {
-                  success(`Hook script exists: ${scriptPath}`);
+                  success(`Hook script exists: ${scriptName}`);
                 }
-              });
-            });
+              }
+            }
           });
-        }
+        });
       } catch (err) {
-        error(`Invalid hooks config JSON: ${err.message}`);
+        error(`Invalid hooks.json: ${err.message}`);
       }
     }
-  } else if (typeof pluginConfig.hooks === 'object') {
-    // Inline hooks config (legacy)
-    const hookTypes = Object.keys(pluginConfig.hooks);
-    success(`plugin.json has hooks: ${hookTypes.join(', ')}`);
-
-    hookTypes.forEach((hookType) => {
-      const hookConfigs = pluginConfig.hooks[hookType];
-      if (!Array.isArray(hookConfigs)) {
-        error(`Hook ${hookType} is not an array`);
-        return;
-      }
-
-      hookConfigs.forEach((hookConfig, idx) => {
-        if (!hookConfig.hooks || !Array.isArray(hookConfig.hooks)) {
-          error(`Hook ${hookType}[${idx}] missing hooks array`);
-          return;
-        }
-
-        hookConfig.hooks.forEach((hook, hookIdx) => {
-          if (!hook.command) {
-            error(`Hook ${hookType}[${idx}].hooks[${hookIdx}] missing command`);
-            return;
-          }
-
-          // Check if script exists (resolve ${CLAUDE_PLUGIN_ROOT})
-          const scriptPath = hook.command.replace('${CLAUDE_PLUGIN_ROOT}/', '');
-          const fullPath = path.join(PLUGIN_ROOT, scriptPath);
-
-          if (!fs.existsSync(fullPath)) {
-            error(`Hook script not found: ${fullPath}`);
-          } else {
-            // Check if executable
-            try {
-              fs.accessSync(fullPath, fs.constants.X_OK);
-              success(`Hook script executable: ${scriptPath}`);
-            } catch (err) {
-              warn(`Hook script not executable: ${scriptPath}`);
-            }
-          }
-        });
-      });
-    });
+  } else {
+    warn('No hooks field in plugin.json');
   }
 }
 
