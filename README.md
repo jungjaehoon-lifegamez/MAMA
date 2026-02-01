@@ -1,8 +1,9 @@
 # MAMA - Memory-Augmented MCP Assistant
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-134%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org)
+[![Tests](https://img.shields.io/badge/tests-1097%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://jungjaehoon-lifegamez.github.io/MAMA)
 
 > **MAMA 2.0 Release** - Now with Standalone Agent, Gateway Integrations & MAMA OS
 
@@ -40,8 +41,19 @@ mama init
 mama start
 ```
 
-**Package:** `@jungjaehoon/mama-os` v0.1.0  
+**Package:** `@jungjaehoon/mama-os` v0.1.0
 **Tagline:** _Your AI Operating System_
+
+> ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
+> We strongly recommend running it in an isolated environment:
+>
+> - **Docker container** (recommended)
+> - **VPS/Cloud VM** with limited permissions
+> - **Sandbox** (Firejail, bubblewrap)
+>
+> See [Security Guide](docs/guides/security.md) for details.
+
+**Requires:** [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated.
 
 ---
 
@@ -74,6 +86,33 @@ mama start
 ```
 
 **Package:** `@jungjaehoon/mama-server` v1.6.5
+
+---
+
+### 🦞 Using OpenClaw Gateway?
+
+**→ Direct gateway integration**
+**→ No MCP overhead (~5ms vs ~180ms)**
+**→ Same MAMA features**
+
+**Use:** [OpenClaw MAMA Plugin](packages/openclaw-plugin/README.md)
+
+```bash
+openclaw plugins install @jungjaehoon/openclaw-mama
+```
+
+Add to `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "slots": { "memory": "openclaw-mama" },
+    "entries": { "openclaw-mama": { "enabled": true } }
+  }
+}
+```
+
+**Package:** `@jungjaehoon/openclaw-mama` v0.3.0
 
 ---
 
@@ -150,7 +189,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 ```bash
 # Install globally
-npm install -g @jungjaehoon/mama-standalone
+npm install -g @jungjaehoon/mama-os
 
 # Initialize workspace
 mama init
@@ -197,7 +236,7 @@ This is a monorepo containing five packages:
 ```
 MAMA/
 ├── packages/
-│   ├── standalone/          # @jungjaehoon/mama-standalone (npm)
+│   ├── standalone/          # @jungjaehoon/mama-os (npm)
 │   ├── mama-core/           # @jungjaehoon/mama-core (npm)
 │   ├── mcp-server/          # @jungjaehoon/mama-server (npm)
 │   ├── claude-code-plugin/  # mama (Claude Code marketplace)
@@ -242,18 +281,31 @@ MIT - see [LICENSE](LICENSE) for details
 
 ## 🙏 Acknowledgments
 
+**Memory System:**
 MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While MAMA is a distinct implementation focused on local-first SQLite/MCP architecture for Claude, we appreciate their pioneering work in LLM memory management.
+
+**Agent Architecture:**
+MAMA OS was inspired by [OpenClaw](https://github.com/openclaw/openclaw) (formerly Moltbot), an open-source AI gateway system. We built MAMA OS as a standalone implementation because:
+
+- **Claude-Native**: MAMA OS is optimized specifically for Claude's tool-use patterns and conversation style
+- **Memory-First**: Deep integration with MAMA's decision graph and semantic search
+- **Simplified Setup**: Single `npm install` instead of running a separate gateway server
+- **Direct CLI**: Uses Claude Code CLI directly, avoiding additional abstraction layers
+
+We provide `@jungjaehoon/openclaw-mama` plugin for users who prefer the OpenClaw ecosystem.
 
 ---
 
 ## 🔗 Links
 
+- [**Documentation Site**](https://jungjaehoon-lifegamez.github.io/MAMA) ← Start here!
 - [GitHub Repository](https://github.com/jungjaehoon-lifegamez/MAMA)
 - [Issues](https://github.com/jungjaehoon-lifegamez/MAMA/issues)
-- [Documentation](docs/index.md)
+- [Local Documentation](docs/index.md)
 - [npm: @jungjaehoon/mama-server](https://www.npmjs.com/package/@jungjaehoon/mama-server)
-- [npm: @jungjaehoon/mama-standalone](https://www.npmjs.com/package/@jungjaehoon/mama-standalone)
+- [npm: @jungjaehoon/mama-os](https://www.npmjs.com/package/@jungjaehoon/mama-os)
 - [npm: @jungjaehoon/mama-core](https://www.npmjs.com/package/@jungjaehoon/mama-core)
+- [npm: @jungjaehoon/openclaw-mama](https://www.npmjs.com/package/@jungjaehoon/openclaw-mama)
 
 ---
 

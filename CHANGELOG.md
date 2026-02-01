@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [mama-os-0.1.1] - 2026-02-01
+
+### Fixed
+
+**Code Review Fixes (PR #8)**
+
+- **Schema Timestamp Convention** - Aligned all migration files to use milliseconds (`unixepoch() * 1000`)
+  - Fixed latent bug where schema DEFAULT (seconds) didn't match app code (milliseconds)
+  - Added migration 011 with validation trigger to auto-convert accidental second-based inserts
+  - All 7 migration files updated for consistency
+
+- **Server & Client Improvements**
+  - Added `res.resume()` in `isEmbeddingServerRunning()` to properly drain HTTP response sockets
+  - Made ollama-client error check more specific with regex pattern for model not found errors
+  - Consolidated ollama-client to mama-core (removed duplicate from mcp-server, 388 lines saved)
+  - Fixed WebSocket shutdown sequence - terminate clients before closing HTTP server
+
+- **Code Quality**
+  - Added defensive null checks for IP extraction in WebSocket handler
+  - Fixed timer leak in memory-inject Promise.race pattern
+  - Added safe JSON.parse helper with fallback
+  - Fixed route ordering bug in session API (`/api/sessions/last-active` was unreachable)
+  - Updated relevance-scorer to use 'pending' key instead of null for OUTCOME_WEIGHTS
+
+- **Documentation**
+  - Updated memory-inject AC #1 comment to reflect actual 5s timeout for LLM latency
+  - Removed outdated "Respects process.exit signals" from progress-indicator header
+  - Added explicit timestamp convention comment in db-manager.js
+
+- **CI/Testing**
+  - Fixed pre-commit hook to set `CI=true` for skipping tests requiring external services
+  - Updated Node.js requirement from >=18 to >=22 (native module compatibility)
+
+---
+
 ## [mama-os-0.1.0] - 2026-02-01
 
 ### Added
