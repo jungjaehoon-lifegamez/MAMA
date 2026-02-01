@@ -269,6 +269,9 @@ async function insertDecisionWithEmbedding(decision) {
         decision.superseded_by || null,
         decision.refined_from ? JSON.stringify(decision.refined_from) : null,
         decision.confidence !== undefined ? decision.confidence : 0.5,
+        // IMPORTANT: All timestamps are stored in milliseconds (Date.now()).
+        // The schema DEFAULT uses unixepoch() (seconds) but is never used
+        // since all inserts go through this function which always provides ms.
         decision.created_at || Date.now(),
         decision.updated_at || Date.now(),
         decision.needs_validation !== undefined ? decision.needs_validation : 0,

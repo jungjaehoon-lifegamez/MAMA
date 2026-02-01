@@ -3,7 +3,7 @@
  *
  * UserPromptSubmit hook that injects decision history into Claude's context
  * Tasks: 1.1-1.9 (Hook setup, timeout handling, context injection)
- * AC #1: Query intent → Graph query → Format → Inject (< 200ms)
+ * AC #1: Query intent → Graph query → Format → Inject (5s timeout for LLM latency)
  * AC #2: No history → null (graceful fallback)
  * AC #3: Timeout → graceful fallback
  *

@@ -8,7 +8,6 @@
  * - Logs to stderr (no stdout pollution)
  * - Emoji indicators: ⏳ (loading), ✅ (done), ❌ (error)
  * - Concise messages (<50 chars)
- * - Respects process.exit signals for clean cancellation
  *
  * @module progress-indicator
  * @version 1.0
