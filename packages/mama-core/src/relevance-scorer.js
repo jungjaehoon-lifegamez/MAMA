@@ -59,10 +59,12 @@ function calculateRelevance(decision, queryContext) {
     FAILED: 1.0, // Highest - failures are most valuable (AC #4)
     PARTIAL: 0.7,
     SUCCESS: 0.5,
-    null: 0.3, // Ongoing, lowest
+    pending: 0.3, // Ongoing/pending, lowest
   };
 
-  const importanceScore = OUTCOME_WEIGHTS[decision.outcome] || OUTCOME_WEIGHTS['null'];
+  // Use explicit null check to avoid confusion with object key access
+  const outcomeKey = decision.outcome ?? 'pending';
+  const importanceScore = OUTCOME_WEIGHTS[outcomeKey] ?? OUTCOME_WEIGHTS.pending;
 
   // ═══════════════════════════════════════════════════════════
   // Semantic Score (30%)

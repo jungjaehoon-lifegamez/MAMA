@@ -3,7 +3,7 @@
  *
  * Analyzes user queries to detect decision-related intent using EXAONE 3.5
  * Tasks: 2.1-2.8 (LLM intent analysis with fallback chain)
- * AC #1: Query intent analysis within 100ms
+ * AC #1: Query intent analysis (default 5s timeout for LLM latency)
  * AC #5: LLM fallback (EXAONE → Gemma → Qwen)
  *
  * @module query-intent

@@ -13,7 +13,9 @@
  */
 
 // Use LLM-based intent detection (EXAONE 3.5)
-// NO FALLBACK: Errors must be thrown for debugging (CLAUDE.md Rule #1)
+// Error handling policy:
+// - Timeout errors: thrown (caller handles retry/fallback)
+// - Vector search unavailable: returns empty array (recoverable, not critical)
 const { info, error: logError } = require('./debug-logger');
 // eslint-disable-next-line no-unused-vars
 const { analyzeIntent } = require('./query-intent');

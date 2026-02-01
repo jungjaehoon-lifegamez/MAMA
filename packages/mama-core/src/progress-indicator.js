@@ -86,29 +86,9 @@ function logSearching(message) {
   logProgress(message, '🔍');
 }
 
-/**
- * Setup graceful shutdown handlers
- *
- * Ensures progress logs are flushed before process exit
- * Respects Ctrl+C (SIGINT) and termination signals (SIGTERM)
- *
- * @returns {void}
- */
-function setupGracefulShutdown() {
-  // Flush stderr on exit
-  process.on('SIGINT', () => {
-    // stderr is automatically flushed
-    process.exit(0);
-  });
-
-  process.on('SIGTERM', () => {
-    // stderr is automatically flushed
-    process.exit(0);
-  });
-}
-
-// Setup graceful shutdown on module load
-setupGracefulShutdown();
+// Note: Removed auto-registered SIGINT/SIGTERM handlers that called process.exit(0)
+// This was causing issues with host cleanup in parent processes.
+// If graceful shutdown is needed, the host application should handle it.
 
 // Export API
 module.exports = {

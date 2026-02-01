@@ -27,8 +27,8 @@ const { warn } = require('./debug-logger');
  */
 function formatTimeAgo(timestamp) {
   try {
-    // Handle null/undefined
-    if (!timestamp) {
+    // Handle null/undefined (but allow 0 as valid Unix epoch)
+    if (timestamp === null || timestamp === undefined) {
       warn('[time-formatter] Timestamp is null or undefined, returning "unknown"');
       return 'unknown';
     }
@@ -77,6 +77,10 @@ function formatTimeAgo(timestamp) {
       return `${days}d ago`;
     }
     if (weeks < 4) {
+      return `${weeks}w ago`;
+    }
+    // Guard against "0mo ago" when days are 28-29 (months = Math.floor(days/30) = 0)
+    if (months < 1) {
       return `${weeks}w ago`;
     }
     if (months < 12) {

@@ -163,6 +163,7 @@ class EmbeddingCache {
       const [key] = entries[i];
       this.cache.delete(key);
       this.stats.evictions++;
+      this.stats.totalSize--;
     }
   }
 
