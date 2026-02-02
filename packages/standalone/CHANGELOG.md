@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-02-02
+
+### Fixed
+
+- **Daemon Mode Stability** - Fixed SIGINT propagation issue when running via systemd
+  - Added `detached: true` to Claude CLI subprocess spawn
+  - Prevents parent process signals from terminating Claude sessions
+
 ## [0.1.6] - 2026-02-02
 
 ### Added
