@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [mama-os-0.1.7] - 2026-02-03
+
+### Added
+
+- **Website Redesign** - Complete redesign of GitHub Pages landing page
+  - New MAMA mascot icon with playful design (yellow/lavender color palette)
+  - Modern typography with Fredoka (headings) + Nunito (body) fonts
+  - Animated hero section with bouncing mascot and speech bubble
+  - Floating blob decorations with CSS animations
+  - Documentation section with 6 quick-access cards
+  - Responsive design for mobile devices
+  - White navigation bar with backdrop blur
+
+### Changed
+
+- **Website Language** - All content now in English
+- **README Icon** - Added MAMA mascot icon to repository README
+
+### Fixed
+
+- **Browser Capture Slowness** - Changed `waitUntil` from `networkidle` to `load` for faster page captures
+  - Reduced timeout from 30s to 15s
+  - Fixes slow screenshot capture on heavy sites like Naver
+
 ## [mama-os-0.1.6] - 2026-02-02
 
 ### Added
