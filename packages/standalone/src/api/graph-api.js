@@ -861,6 +861,18 @@ function createGraphHandler() {
       return true; // Request handled
     }
 
+    // Route: GET/HEAD /viewer/icons/*.svg - serve SVG icons
+    if (
+      pathname.startsWith('/viewer/icons/') &&
+      pathname.endsWith('.svg') &&
+      (req.method === 'GET' || req.method === 'HEAD')
+    ) {
+      const fileName = pathname.split('/').pop();
+      const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
+      serveStaticFile(res, filePath, 'image/svg+xml');
+      return true; // Request handled
+    }
+
     // Route: GET/HEAD /viewer/js/utils/*.js - serve utility modules
     if (
       pathname.startsWith('/viewer/js/utils/') &&
@@ -948,6 +960,18 @@ function createGraphHandler() {
       const fileName = pathname.split('/').pop();
       const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
       serveStaticFile(res, filePath, 'image/png');
+      return true; // Request handled
+    }
+
+    // Route: GET /viewer/icons/*.svg - serve SVG icons
+    if (
+      pathname.startsWith('/viewer/icons/') &&
+      pathname.endsWith('.svg') &&
+      req.method === 'GET'
+    ) {
+      const fileName = pathname.split('/').pop();
+      const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
+      serveStaticFile(res, filePath, 'image/svg+xml');
       return true; // Request handled
     }
 

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-02-03
+
+### Changed
+
+- **Viewer Brand Unification** - Complete UI renewal with MAMA brand identity
+  - Typography: Fredoka (headings) + Nunito (body)
+  - Color palette: Yellow #FFCE00, Lavender #EDDBF7, Black #131313, Blush #FF9999
+  - Removed dark mode (light-only design)
+  - Added MAMA mascot icon to header
+
+### Fixed
+
+- **Graph Viewer Text Visibility** - Changed node label color from white to black (#131313)
+- **SVG Icon Serving** - Added route for `/viewer/icons/*.svg` files
+- **Theme Init Error** - Removed dark mode toggle references causing null errors
+- **Agent Model Options** - Updated to current Claude models (Sonnet 4, Opus 4.5, Haiku 3.5)
+
 ## [0.1.7] - 2026-02-02
 
 ### Fixed
