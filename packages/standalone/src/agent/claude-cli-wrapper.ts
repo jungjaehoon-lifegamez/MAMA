@@ -127,6 +127,7 @@ export class ClaudeCLIWrapper {
 
       const claude = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
+        detached: true, // Detach from parent's process group to prevent SIGINT propagation
       });
 
       // Close stdin immediately - we use -p flag, not stdin input
