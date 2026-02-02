@@ -4,23 +4,23 @@
   "description": "Mobile interface for MAMA - Memory-Augmented MCP Assistant",
   "start_url": "/viewer",
   "display": "standalone",
-  "background_color": "#1a1a2e",
-  "theme_color": "#1a1a2e",
+  "background_color": "#EDDBF7",
+  "theme_color": "#FFCE00",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/viewer/icon-192.png",
+      "src": "/viewer/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/viewer/icon-512.png",
+      "src": "/viewer/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
     }
   ],
   "categories": ["productivity", "developer tools"],
-  "lang": "ko"
+  "lang": "en"
 }
