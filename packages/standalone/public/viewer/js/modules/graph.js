@@ -34,34 +34,30 @@ export class GraphModule {
     this.currentSearchIndex = 0;
     this.debouncedSearch = debounce(() => this.search(), 300);
 
-    // Color management
+    // Color management - MAMA Brand Palette
     this.topicColors = {};
     this.colorPalette = [
-      '#6366f1',
-      '#8b5cf6',
-      '#a855f7',
-      '#d946ef',
-      '#ec4899',
-      '#f43f5e',
-      '#ef4444',
-      '#f97316',
-      '#f59e0b',
-      '#eab308',
-      '#84cc16',
-      '#22c55e',
-      '#10b981',
-      '#14b8a6',
-      '#06b6d4',
-      '#0ea5e9',
+      '#FFCE00', // mama yellow (primary)
+      '#E6B800', // mama yellow-hover
+      '#FF9999', // mama blush
+      '#D4C4E0', // mama lavender-dark
+      '#22c55e', // success green
+      '#f97316', // warning orange
+      '#06b6d4', // info cyan
+      '#8b5cf6', // purple accent
+      '#ec4899', // pink accent
+      '#f59e0b', // amber
+      '#10b981', // teal
+      '#0ea5e9', // sky blue
     ];
     this.colorIndex = 0;
 
-    // Edge styles
+    // Edge styles - Brand aligned
     this.edgeStyles = {
-      supersedes: { color: '#848484', dashes: false },
-      builds_on: { color: '#457b9d', dashes: [5, 5] },
-      debates: { color: '#e63946', dashes: [5, 5] },
-      synthesizes: { color: '#9b59b6', width: 3, dashes: false },
+      supersedes: { color: '#888888', dashes: false },
+      builds_on: { color: '#FFCE00', dashes: [5, 5] },
+      debates: { color: '#FF9999', dashes: [5, 5] },
+      synthesizes: { color: '#D4C4E0', width: 3, dashes: false },
     };
   }
 
@@ -128,7 +124,7 @@ export class GraphModule {
         highlight: { background: this.getTopicColor(n.topic), border: '#fff' },
       },
       size: this.getNodeSize(connectionCounts[n.id] || 0),
-      font: { color: '#fff', size: 12 },
+      font: { color: '#131313', size: 12 },
       borderWidth: 3,
       data: n,
     }));
@@ -390,7 +386,7 @@ export class GraphModule {
       this.network.body.data.nodes.update({
         id: node.id,
         opacity: opacity,
-        font: { ...node.font, color: isConnected ? '#fff' : '#666' },
+        font: { ...node.font, color: isConnected ? '#131313' : '#999' },
       });
     });
 
@@ -417,7 +413,7 @@ export class GraphModule {
       this.network.body.data.nodes.update({
         id: node.id,
         opacity: 1.0,
-        font: { ...node.font, color: '#fff' },
+        font: { ...node.font, color: '#131313' },
       });
     });
 
@@ -826,7 +822,7 @@ export class GraphModule {
         id: node.id,
         hidden: false,
         opacity: 1.0,
-        font: { ...node.font, color: '#fff' },
+        font: { ...node.font, color: '#131313' },
       });
     });
 
@@ -957,7 +953,7 @@ export class GraphModule {
       this.network.body.data.nodes.update({
         id: node.id,
         opacity: isMatch ? 1.0 : 0.2,
-        font: { ...node.font, color: isMatch ? '#fff' : '#666' },
+        font: { ...node.font, color: isMatch ? '#131313' : '#999' },
       });
     });
   }
