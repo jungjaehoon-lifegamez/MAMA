@@ -101,8 +101,10 @@ export class BrowserTool {
     const page = await this.ensureBrowser();
     console.log(`[Browser] Navigating to: ${url}`);
 
-    // Playwright auto-waits for page load
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    // Use 'load' instead of 'networkidle' for faster page capture
+    // networkidle waits for ALL network requests to finish (ads, analytics, etc.)
+    // which can take 30+ seconds on heavy sites like Naver
+    await page.goto(url, { waitUntil: 'load', timeout: 15000 });
 
     const title = await page.title();
     const currentUrl = page.url();

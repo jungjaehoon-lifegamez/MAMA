@@ -1,5 +1,9 @@
 # MAMA - Memory-Augmented MCP Assistant
 
+<p align="center">
+  <img src="docs/website/assets/mama-icon.svg" alt="MAMA" width="120" height="120">
+</p>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-1097%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)

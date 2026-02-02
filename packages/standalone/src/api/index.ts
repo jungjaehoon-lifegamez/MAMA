@@ -121,15 +121,27 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
           // SECURITY: Bind to localhost only to prevent remote access
           const host = process.env.MAMA_API_HOST || '127.0.0.1';
           server = app.listen(port, host, () => {
-            actualPort = (server!.address() as { port: number }).port;
-            console.log(`API server listening on http://${host}:${actualPort}`);
-            if (host === '0.0.0.0') {
-              console.warn('⚠️  WARNING: API server exposed to all interfaces!');
-              console.warn('   Set MAMA_API_HOST=127.0.0.1 for local-only access');
+            const addr = server?.address();
+            if (addr && typeof addr === 'object') {
+              actualPort = addr.port;
+              console.log(`API server listening on http://${host}:${actualPort}`);
+              if (host === '0.0.0.0') {
+                console.warn('⚠️  WARNING: API server exposed to all interfaces!');
+                console.warn('   Set MAMA_API_HOST=127.0.0.1 for local-only access');
+              }
+              resolve();
+            } else {
+              reject(new Error(`Failed to bind to port ${port}`));
             }
-            resolve();
           });
-          server.on('error', reject);
+          server.on('error', (err: NodeJS.ErrnoException) => {
+            if (err.code === 'EADDRINUSE') {
+              console.error(
+                `Port ${port} is already in use. Try: lsof -i :${port} | awk 'NR>1 {print $2}' | xargs kill`
+              );
+            }
+            reject(err);
+          });
         } catch (error) {
           reject(error);
         }
