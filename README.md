@@ -45,7 +45,7 @@ mama init
 mama start
 ```
 
-**Package:** `@jungjaehoon/mama-os` v0.1.0
+**Package:** `@jungjaehoon/mama-os` v0.3.0
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -119,7 +119,7 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` v1.6.5
+**Package:** `@jungjaehoon/mama-server` v1.6.6
 
 ---
 
@@ -146,7 +146,7 @@ Add to `~/.openclaw/openclaw.json`:
 }
 ```
 
-**Package:** `@jungjaehoon/openclaw-mama` v0.3.0
+**Package:** `@jungjaehoon/openclaw-mama` v0.4.1
 
 ---
 
@@ -167,7 +167,7 @@ const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
 const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```
 
-**Package:** `@jungjaehoon/mama-core` v1.0.0
+**Package:** `@jungjaehoon/mama-core` v1.0.1
 
 ---
 
