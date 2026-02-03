@@ -34,15 +34,10 @@ interface SessionRow {
 export class SessionStore {
   private db: Database.Database;
   private maxTurns: number;
-  private maxResponseLength: number;
 
-  constructor(
-    db: Database.Database,
-    options: { maxTurns?: number; maxResponseLength?: number } = {}
-  ) {
+  constructor(db: Database.Database, options: { maxTurns?: number } = {}) {
     this.db = db;
-    this.maxTurns = options.maxTurns ?? 50; // Extended from 10 to 50 for better conversation continuity
-    this.maxResponseLength = options.maxResponseLength ?? 500; // Extended from 200 to 500
+    this.maxTurns = options.maxTurns ?? 1000; // Store unlimited turns in DB
     this.runMigration();
   }
 
@@ -169,10 +164,10 @@ export class SessionStore {
       history = [];
     }
 
-    // Add new turn
+    // Add new turn (store full response, truncation only at prompt injection)
     history.push({
       user: userMessage,
-      bot: this.truncate(botResponse, this.maxResponseLength),
+      bot: botResponse,
       timestamp: Date.now(),
     });
 
@@ -315,15 +310,27 @@ export class SessionStore {
 
   /**
    * Format context as readable string for system prompt
+   * Only includes the most recent turns to avoid token bloat
    */
-  formatContextForPrompt(sessionId: string): string {
+  formatContextForPrompt(sessionId: string, maxTurnsToInject: number = 10): string {
     const history = this.getHistory(sessionId);
 
     if (history.length === 0) {
       return 'New conversation';
     }
 
-    return history.map((turn) => `User: ${turn.user}\nAssistant: ${turn.bot}`).join('\n\n');
+    // Only inject the most recent N turns to keep token usage reasonable
+    const recentTurns = history.slice(-maxTurnsToInject);
+
+    // Truncate long messages when injecting to save tokens
+    // User messages: 500 chars, Bot responses: 1500 chars
+    return recentTurns
+      .map((turn) => {
+        const userMsg = turn.user.length > 500 ? turn.user.slice(0, 500) + '...' : turn.user;
+        const botMsg = turn.bot.length > 1500 ? turn.bot.slice(0, 1500) + '...' : turn.bot;
+        return `User: ${userMsg}\nAssistant: ${botMsg}`;
+      })
+      .join('\n\n');
   }
 
   /**
@@ -340,14 +347,6 @@ export class SessionStore {
       createdAt: row.created_at,
       lastActive: row.last_active,
     };
-  }
-
-  /**
-   * Truncate text to specified length
-   */
-  private truncate(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength - 3) + '...';
   }
 
   /**

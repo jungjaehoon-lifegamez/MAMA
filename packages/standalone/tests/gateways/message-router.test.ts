@@ -171,7 +171,7 @@ describe('MessageRouter', () => {
         text: 'Hello',
       });
 
-      // Second message - should resume (no system prompt)
+      // Second message - should resume (with system prompt for safety)
       await customRouter.process({
         source: 'discord',
         channelId: uniqueChannelId,
@@ -183,8 +183,9 @@ describe('MessageRouter', () => {
       expect(receivedOptionsHistory[0].systemPrompt).toBeDefined();
       expect(receivedOptionsHistory[0].resumeSession).toBe(false);
 
-      // Second message: resume session without system prompt
-      expect(receivedOptionsHistory[1].systemPrompt).toBeUndefined();
+      // Second message: resume session, but still includes system prompt
+      // (ensures Gateway Tools and AgentContext are available even if CLI session was lost)
+      expect(receivedOptionsHistory[1].systemPrompt).toBeDefined();
       expect(receivedOptionsHistory[1].resumeSession).toBe(true);
     });
   });

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-02-04
+
+### Fixed
+
+- **Gateway Tools Missing on Resume** - Fixed critical bug where Gateway Tools documentation was not available when resuming CLI sessions
+  - System prompt (including Gateway Tools) is now always injected for safety
+  - CLI uses cached context when available, falls back to provided prompt if session lost
+  - Ensures tools work even after daemon restart or session timeout
+  - Fixes "MAMA 검색 도구에 접근할 수 없어서" error in Viewer
+
+### Changed
+
+- **Session Resumption Safety** - Always inject system prompt even for resumed sessions
+  - Prevents tool unavailability when CLI session is lost
+  - CLI efficiently uses cached context when valid
+  - Minor token overhead for reliability
+
 ## [0.3.2] - 2026-02-03
 
 ### Added

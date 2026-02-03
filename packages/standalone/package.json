@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "MAMA OS - Your AI Operating System. Control + Visibility for AI-Powered Automation",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
-    "build": "tsc && cp src/api/graph-api.js dist/api/",
+    "build": "tsc && cp src/api/graph-api.js dist/api/ && cp src/agent/gateway-tools.md dist/agent/",
     "build:watch": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest watch",

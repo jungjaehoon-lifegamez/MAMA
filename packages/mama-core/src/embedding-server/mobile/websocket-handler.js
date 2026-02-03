@@ -249,7 +249,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           })
         );
 
-        console.log(`[WebSocket] Message processed for ${clientId} (${result.duration}ms)`);
+        console.error(`[WebSocket] Message processed for ${clientId} (${result.duration}ms)`);
       } catch (error) {
         console.error(`[WebSocket] Message processing error:`, error);
         clientInfo.ws.send(
@@ -278,7 +278,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
       clientInfo.osAgentMode = osAgentMode || false;
       clientInfo.language = language || 'en';
 
-      console.log(
+      console.error(
         `[WebSocket] Client ${clientId} attached to session ${sessionId}${osAgentMode ? ' (OS Agent mode)' : ''}`
       );
 
@@ -292,15 +292,20 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
       );
 
       // Send session history if available, or send onboarding greeting
+      console.error(
+        `[WebSocket] Checking sessionStore for history: ${!!sessionStore}, hasMethod: ${!!(sessionStore && sessionStore.getHistoryByChannel)}`
+      );
       if (sessionStore) {
         try {
           // Use channel-based lookup for sessions
           // Use dynamic source based on osAgentMode (viewer vs mobile)
           const channelId = 'mama_os_main';
           const source = clientInfo.osAgentMode ? 'viewer' : 'mobile';
+          console.error(`[WebSocket] Loading history for source=${source}, channelId=${channelId}`);
           const history = sessionStore.getHistoryByChannel
             ? sessionStore.getHistoryByChannel(source, channelId)
             : sessionStore.getHistory(sessionId);
+          console.error(`[WebSocket] History loaded: ${history ? history.length : 0} turns`);
           if (history && history.length > 0) {
             // Convert {user, bot, timestamp} format to {role, content, timestamp} for display
             const formattedMessages = history.flatMap((turn) => {
@@ -327,7 +332,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 messages: formattedMessages,
               })
             );
-            console.log(
+            console.error(
               `[WebSocket] Sent ${formattedMessages.length} history messages to ${clientId}`
             );
           } else {
@@ -359,7 +364,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                   ],
                 })
               );
-              console.log(`[WebSocket] Sent onboarding greeting to ${clientId}`);
+              console.error(`[WebSocket] Sent onboarding greeting to ${clientId}`);
             }
           }
         } catch (error) {

@@ -105,10 +105,17 @@ export class SessionPool {
         console.log(
           `[SessionPool] Context 80% full (${existing.totalInputTokens} tokens) for ${channelKey}, creating fresh session`
         );
+      } else if (existing.inUse) {
+        // Session is currently in use - create a new one to avoid CLI lock conflict
+        this.sessions.delete(channelKey);
+        console.log(
+          `[SessionPool] Session in use for ${channelKey}, creating new one to avoid conflict`
+        );
       } else {
         // Reuse existing session
         existing.lastActive = now;
         existing.messageCount++;
+        existing.inUse = true; // Lock the session
         const usagePercent = Math.round((existing.totalInputTokens / 200000) * 100);
         console.log(
           `[SessionPool] Reusing session for ${channelKey}: ${existing.sessionId} (msg #${existing.messageCount}, ${usagePercent}% context)`
@@ -171,11 +178,15 @@ export class SessionPool {
   }
 
   /**
-   * Release a session after use (no-op since we use fresh sessions)
+   * Release a session after use
+   * This allows the session to be reused by future requests
    */
-  releaseSession(_channelKey: string): void {
-    // No-op: Each request uses a fresh session ID
-    // Claude CLI locks session IDs, preventing reuse
+  releaseSession(channelKey: string): void {
+    const existing = this.sessions.get(channelKey);
+    if (existing) {
+      existing.inUse = false;
+      console.log(`[SessionPool] Released session for ${channelKey}: ${existing.sessionId}`);
+    }
   }
 
   /**
