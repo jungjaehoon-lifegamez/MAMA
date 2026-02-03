@@ -156,6 +156,11 @@ export class MemoryModule {
   renderResults(results, query) {
     const container = document.getElementById('memory-results');
 
+    // Guard: element may not exist if not on Memory tab
+    if (!container) {
+      return;
+    }
+
     if (!results || results.length === 0) {
       container.innerHTML = `
         <div class="memory-placeholder">
@@ -228,6 +233,9 @@ export class MemoryModule {
    */
   setStatus(message, type) {
     const status = document.getElementById('memory-status');
+    if (!status) {
+      return;
+    } // Guard: element may not exist if not on Memory tab
     status.textContent = message;
     status.className = 'memory-status ' + (type || '');
   }
