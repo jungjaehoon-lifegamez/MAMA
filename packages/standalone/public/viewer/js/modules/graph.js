@@ -52,12 +52,12 @@ export class GraphModule {
     ];
     this.colorIndex = 0;
 
-    // Edge styles - Brand aligned
+    // Edge styles - High contrast for lavender background
     this.edgeStyles = {
-      supersedes: { color: '#888888', dashes: false },
-      builds_on: { color: '#FFCE00', dashes: [5, 5] },
-      debates: { color: '#FF9999', dashes: [5, 5] },
-      synthesizes: { color: '#D4C4E0', width: 3, dashes: false },
+      supersedes: { color: '#666666', dashes: false, width: 2 },
+      builds_on: { color: '#B8860B', dashes: [5, 5], width: 2.5 }, // dark goldenrod
+      debates: { color: '#DC143C', dashes: [5, 5], width: 2.5 }, // crimson
+      synthesizes: { color: '#6B4C9A', width: 3, dashes: false }, // dark purple
     };
   }
 
