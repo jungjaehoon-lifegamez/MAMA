@@ -117,15 +117,19 @@ export class ClaudeCLIWrapper {
 
       const args = ['-p', content, '--output-format', 'json'];
 
-      // Session handling: resume existing or start new
+      // Session handling: use --no-session-persistence to avoid session locking
+      // This prevents "Session ID already in use" errors during multi-turn tool loops
+      args.push('--no-session-persistence');
+
+      // Session ID for tracking (not for CLI persistence)
       if (isResume) {
-        // Resume existing session - CLI loads its own context
-        args.push('--resume', this.sessionId);
-        console.log(`[ClaudeCLI] Resuming session: ${this.sessionId}`);
-      } else {
-        // New session - will inject system prompt
+        // Resume existing session - but with no-session-persistence, we inject history manually
         args.push('--session-id', this.sessionId);
-        console.log(`[ClaudeCLI] New session: ${this.sessionId}`);
+        console.log(`[ClaudeCLI] Session: ${this.sessionId} (no-persistence mode)`);
+      } else {
+        // New session
+        args.push('--session-id', this.sessionId);
+        console.log(`[ClaudeCLI] New session: ${this.sessionId} (no-persistence mode)`);
       }
 
       // Add model flag - per-request override takes precedence
