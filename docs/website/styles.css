@@ -406,6 +406,75 @@ a {
   font-weight: bold;
 }
 
+/* Screenshots Section */
+.section-screenshots {
+  background: linear-gradient(180deg, var(--white), var(--lavender-light));
+  padding-bottom: 4rem;
+}
+
+.section-subtitle {
+  text-align: center;
+  color: var(--gray-500);
+  margin-top: -1rem;
+  margin-bottom: 3rem;
+  font-size: 1.1rem;
+}
+
+.screenshots-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+@media (max-width: 1024px) {
+  .screenshots-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 2rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .screenshots-grid {
+    grid-template-columns: 1fr;
+    max-width: 320px;
+  }
+}
+
+.screenshot-card {
+  text-align: center;
+}
+
+.phone-frame {
+  background: var(--black);
+  border-radius: 24px;
+  padding: 8px;
+  box-shadow: var(--shadow-float);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.phone-frame img {
+  width: 100%;
+  height: auto;
+  border-radius: 16px;
+  display: block;
+}
+
+.screenshot-card h3 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  margin-bottom: 0.25rem;
+  color: var(--black);
+}
+
+.screenshot-card p {
+  font-size: 0.85rem;
+  color: var(--gray-500);
+  line-height: 1.4;
+}
+
 /* Packages Section */
 .section-packages {
   background: var(--white);
