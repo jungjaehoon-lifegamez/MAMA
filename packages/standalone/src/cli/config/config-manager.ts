@@ -154,6 +154,8 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
       ...DEFAULT_CONFIG.logging,
       ...config.logging,
     },
+    // Role-based permissions - with safe defaults
+    roles: config.roles ?? DEFAULT_CONFIG.roles,
     // Claude CLI mode (ToS compliance) - with safe default
     use_claude_cli: config.use_claude_cli ?? DEFAULT_CONFIG.use_claude_cli,
     // Optional gateway configs - with safe defaults

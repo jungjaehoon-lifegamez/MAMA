@@ -193,3 +193,120 @@ Execute a bash command.
 | --------- | ------ | -------- | ----------------- |
 | command   | string | Yes      | Command to run    |
 | workdir   | string | No       | Working directory |
+
+---
+
+## OS Management Tools (Viewer Only)
+
+These tools are only available from MAMA OS Viewer and require `systemControl` permission.
+
+### os_add_bot
+
+Add a new bot configuration (Discord, Telegram, Slack, Chatwork).
+
+| Parameter          | Type   | Required | Description                                |
+| ------------------ | ------ | -------- | ------------------------------------------ |
+| platform           | string | Yes      | 'discord', 'telegram', 'slack', 'chatwork' |
+| token              | string | Varies   | Bot token (Discord, Telegram, Chatwork)    |
+| bot_token          | string | Slack    | Slack bot token                            |
+| app_token          | string | Slack    | Slack app token (socket mode)              |
+| default_channel_id | string | No       | Default notification channel               |
+| allowed_chats      | array  | No       | Telegram: allowed chat IDs                 |
+| room_ids           | array  | No       | Chatwork: room IDs to monitor              |
+
+**Example:**
+
+```tool_call
+{"name": "os_add_bot", "input": {"platform": "discord", "token": "YOUR_BOT_TOKEN"}}
+```
+
+### os_set_permissions
+
+Modify role permissions for agent access control.
+
+| Parameter       | Type    | Required | Description                            |
+| --------------- | ------- | -------- | -------------------------------------- |
+| role            | string  | Yes      | Role name to modify/create             |
+| allowedTools    | array   | No       | Tools to allow (wildcards: "mama\_\*") |
+| blockedTools    | array   | No       | Tools to block (takes precedence)      |
+| allowedPaths    | array   | No       | Allowed file paths (glob patterns)     |
+| systemControl   | boolean | No       | Enable system control operations       |
+| sensitiveAccess | boolean | No       | Enable sensitive data access           |
+| mapSource       | string  | No       | Map a source to this role              |
+
+**Example:**
+
+```tool_call
+{"name": "os_set_permissions", "input": {"role": "custom_bot", "allowedTools": ["mama_*", "Read"], "blockedTools": ["Bash"], "mapSource": "telegram"}}
+```
+
+### os_get_config
+
+Get current MAMA configuration (sensitive data masked by default).
+
+| Parameter        | Type    | Required | Description                                    |
+| ---------------- | ------- | -------- | ---------------------------------------------- |
+| section          | string  | No       | Specific section (agent, roles, discord, etc.) |
+| includeSensitive | boolean | No       | Show unmasked tokens (viewer only)             |
+
+**Example:**
+
+```tool_call
+{"name": "os_get_config", "input": {"section": "roles"}}
+```
+
+---
+
+## OS Monitoring Tools (Viewer Only)
+
+These tools monitor and control running bots. They require `systemControl` permission.
+
+### os_list_bots
+
+List all configured bots and their current status.
+
+| Parameter | Type   | Required | Description                   |
+| --------- | ------ | -------- | ----------------------------- |
+| platform  | string | No       | Filter by platform (optional) |
+
+**Returns:** Array of bot status objects with:
+
+- `platform`: Bot platform
+- `enabled`: Whether bot is enabled in config
+- `configured`: Whether bot has configuration
+- `status`: 'running', 'stopped', 'error', or 'not_configured'
+- `error`: Error message if status is 'error'
+
+**Example:**
+
+```tool_call
+{"name": "os_list_bots", "input": {}}
+```
+
+### os_restart_bot
+
+Restart a running bot. Requires `systemControl` permission.
+
+| Parameter | Type   | Required | Description                         |
+| --------- | ------ | -------- | ----------------------------------- |
+| platform  | string | Yes      | Platform to restart (discord, etc.) |
+
+**Example:**
+
+```tool_call
+{"name": "os_restart_bot", "input": {"platform": "discord"}}
+```
+
+### os_stop_bot
+
+Stop a running bot. Requires `systemControl` permission.
+
+| Parameter | Type   | Required | Description                      |
+| --------- | ------ | -------- | -------------------------------- |
+| platform  | string | Yes      | Platform to stop (discord, etc.) |
+
+**Example:**
+
+```tool_call
+{"name": "os_stop_bot", "input": {"platform": "telegram"}}
+```
