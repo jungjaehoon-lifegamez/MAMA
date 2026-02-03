@@ -305,6 +305,13 @@ async function main() {
     return;
   }
 
+  // Skip if running inside MAMA Standalone daemon
+  // MAMA OS uses Gateway Tools for auto-recall, not plugin hooks
+  if (process.env.MAMA_DAEMON === '1') {
+    info('[SessionStart] Running inside MAMA daemon, skipping hook (using Gateway Tools)');
+    return;
+  }
+
   // Check if this is a resume/compact event (not a fresh session start)
   // Claude Code triggers SessionStart on compact/resume - skip full warmup for these
   const isResumeOrCompact =
