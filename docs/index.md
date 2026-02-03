@@ -1,6 +1,6 @@
 # MAMA Plugin Documentation
 
-**Version:** 0.1.0 (MAMA OS) | 1.6.5 (MCP Server)
+**Version:** 0.3.0 (MAMA OS) | 1.6.6 (MCP Server)
 **MAMA:** Memory-Augmented MCP Assistant
 **Navigation Hub**
 
