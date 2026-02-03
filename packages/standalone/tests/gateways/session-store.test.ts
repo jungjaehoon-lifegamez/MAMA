@@ -118,19 +118,15 @@ describe('SessionStore', () => {
       expect(history[2].user).toBe('Message 4'); // Newest
     });
 
-    it('should truncate long responses', () => {
-      const customStore = new SessionStore(db, { maxResponseLength: 20 });
-      const session = customStore.getOrCreate('discord', 'test-channel');
+    it('should store full response without truncation', () => {
+      // Truncation removed - store unlimited in DB, truncate only when injecting to prompt
+      const session = store.getOrCreate('discord', 'test-channel');
+      const longResponse = 'This is a very long response that should NOT be truncated in storage';
 
-      customStore.updateSession(
-        session.id,
-        'Hello',
-        'This is a very long response that should be truncated'
-      );
+      store.updateSession(session.id, 'Hello', longResponse);
 
-      const history = customStore.getHistory(session.id);
-      expect(history[0].bot.length).toBeLessThanOrEqual(20);
-      expect(history[0].bot.endsWith('...')).toBe(true);
+      const history = store.getHistory(session.id);
+      expect(history[0].bot).toBe(longResponse);
     });
 
     it('should return false for non-existent session', () => {
