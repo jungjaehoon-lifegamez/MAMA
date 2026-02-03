@@ -6,8 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MAMA (Memory-Augmented MCP Assistant) is an always-on companion for Claude Code and Claude Desktop that remembers decision evolution. It's a monorepo containing:
 
-1. **@jungjaehoon/mama-server** - MCP server published to npm (packages/mcp-server/)
-2. **MAMA Plugin** - Claude Code plugin distributed via marketplace (packages/claude-code-plugin/)
+1. **@jungjaehoon/mama-os** - Standalone Agent with Discord/Slack/Telegram bots (packages/standalone/)
+2. **@jungjaehoon/mama-server** - MCP server published to npm (packages/mcp-server/)
+3. **@jungjaehoon/mama-core** - Shared core modules (packages/mama-core/)
+4. **MAMA Plugin** - Claude Code plugin distributed via marketplace (packages/claude-code-plugin/)
+5. **@jungjaehoon/openclaw-mama** - OpenClaw Gateway plugin (packages/openclaw-plugin/)
 
 ## Build & Test Commands
 
@@ -333,20 +336,22 @@ Key docs:
 
 ## Monorepo Status
 
-**Current State:** Monorepo migration in progress (2025-11-21)
+**Current State:** Monorepo fully operational (5 packages)
 
-**What's Complete:**
+**Packages:**
 
-- Two-package structure established
+- @jungjaehoon/mama-os v0.3.0 - Standalone Agent
+- @jungjaehoon/mama-server v1.6.6 - MCP Server
+- @jungjaehoon/mama-core v1.0.1 - Shared Core
+- mama v1.6.6 - Claude Code Plugin
+- @jungjaehoon/openclaw-mama v0.4.1 - OpenClaw Plugin
+
+**Infrastructure:**
+
 - pnpm workspaces configured
-- Tests passing (134 tests, 100% pass rate)
+- Tests passing (1000+ tests, 100% pass rate)
 - Build system functional
-
-**What's Next:**
-
-- CI/CD workflows (GitHub Actions)
-- npm publishing workflow
-- Plugin marketplace publishing
+- npm publishing configured
 
 ## Important Constraints
 

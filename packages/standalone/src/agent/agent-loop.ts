@@ -10,7 +10,7 @@
  * - Loops until stop_reason is "end_turn" or max turns reached
  */
 
-// fs imports removed - using minimal system prompt, CLAUDE.md loaded by Claude Code
+import { readFileSync, existsSync } from 'fs';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
@@ -41,6 +41,31 @@ import { AgentError } from './types.js';
  * Default configuration
  */
 const DEFAULT_MAX_TURNS = 10;
+
+/**
+ * Default tools configuration - all tools via Gateway (self-contained)
+ */
+const DEFAULT_TOOLS_CONFIG = {
+  gateway: ['*'],
+  mcp: [] as string[],
+  mcp_config: '~/.mama/mama-mcp-config.json',
+};
+
+/**
+ * Check if a tool name matches a pattern (supports wildcards like "browser_*")
+ * Reserved for future hybrid tool routing
+ */
+function _matchToolPattern(toolName: string, pattern: string): boolean {
+  if (pattern === '*') return true;
+  if (pattern.endsWith('*')) {
+    const prefix = pattern.slice(0, -1);
+    return toolName.startsWith(prefix);
+  }
+  return toolName === pattern;
+}
+
+// _matchToolPattern is reserved for future hybrid routing
+void _matchToolPattern;
 
 /**
  * Load CLAUDE.md system prompt
@@ -107,6 +132,35 @@ export function loadComposedSystemPrompt(verbose = false): string {
   return layers.join('\n\n---\n\n');
 }
 
+/**
+ * Load Gateway Tools prompt from MD file
+ * These tools are executed by GatewayToolExecutor, NOT MCP
+ */
+export function getGatewayToolsPrompt(): string {
+  const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
+
+  if (existsSync(gatewayToolsPath)) {
+    return readFileSync(gatewayToolsPath, 'utf-8');
+  }
+
+  // TODO: Consider generating both gateway-tools.md and this fallback from a single source
+  // to prevent tool list drift (CodeRabbit review suggestion)
+  console.warn('[AgentLoop] gateway-tools.md not found, using minimal prompt');
+  return `
+## Gateway Tools
+
+To call a Gateway Tool, output a JSON block:
+
+\`\`\`tool_call
+{"name": "tool_name", "input": {"param1": "value1"}}
+\`\`\`
+
+**MAMA Memory:** mama_search, mama_save, mama_update, mama_load_checkpoint
+**Browser:** browser_navigate, browser_screenshot, browser_click, browser_type, browser_get_text, browser_scroll, browser_wait_for, browser_evaluate, browser_pdf, browser_close
+**Utility:** discord_send, Read, Write, Bash
+`;
+}
+
 export class AgentLoop {
   private readonly agent: ClaudeCLIWrapper;
   private readonly claudeCLI: ClaudeCLIWrapper | null = null;
@@ -120,6 +174,8 @@ export class AgentLoop {
   private readonly useLanes: boolean;
   private sessionKey: string;
   private readonly sessionPool: SessionPool;
+  private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
+  private readonly isGatewayMode: boolean;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -127,17 +183,65 @@ export class AgentLoop {
     _clientOptions?: ClaudeClientOptions,
     executorOptions?: GatewayToolExecutorOptions
   ) {
-    const mcpConfigPath = join(homedir(), '.mama/mama-mcp-config.json');
+    // Initialize tools config (hybrid Gateway/MCP routing)
+    this.toolsConfig = {
+      ...DEFAULT_TOOLS_CONFIG,
+      ...options.toolsConfig,
+    };
+
+    const mcpConfigPath =
+      this.toolsConfig.mcp_config?.replace('~', homedir()) ||
+      join(homedir(), '.mama/mama-mcp-config.json');
     const sessionId = randomUUID();
-    const defaultSystemPrompt = options.systemPrompt || loadComposedSystemPrompt();
+
+    // Determine tool mode: Gateway (default) or MCP
+    // Currently only '*' (all tools) is supported for mode selection
+    // Partial patterns like 'mama_*' or 'browser_*' are reserved for future hybrid routing
+    const mcpTools = this.toolsConfig.mcp || [];
+    const gatewayTools = this.toolsConfig.gateway || [];
+
+    // Warn if partial patterns are used (not yet supported)
+    const hasPartialPattern = (arr: string[]) => arr.some((t) => t.includes('*') && t !== '*');
+    if (hasPartialPattern(mcpTools) || hasPartialPattern(gatewayTools)) {
+      console.warn(
+        '[AgentLoop] Warning: Partial patterns (e.g., "mama_*") are not yet supported. ' +
+          'Use "*" for all tools or specific tool names. Falling back to Gateway mode.'
+      );
+    }
+
+    const useMCPMode = mcpTools.includes('*');
+    const useGatewayMode = !useMCPMode;
+    this.isGatewayMode = useGatewayMode;
+
+    // Build system prompt
+    const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
+    // Only include Gateway Tools prompt if using Gateway mode
+    const gatewayToolsPrompt = useGatewayMode ? getGatewayToolsPrompt() : '';
+    const defaultSystemPrompt = gatewayToolsPrompt
+      ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
+      : basePrompt;
 
     this.claudeCLI = new ClaudeCLIWrapper({
       model: options.model ?? 'claude-sonnet-4-20250514',
       sessionId,
       systemPrompt: defaultSystemPrompt,
-      mcpConfigPath,
+      mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
       dangerouslySkipPermissions: true,
+      useGatewayTools: useGatewayMode,
     });
+
+    // Log tool mode for transparency
+    if (useMCPMode) {
+      console.log('[AgentLoop] MCP mode enabled - tools via MCP server (' + mcpConfigPath + ')');
+    } else {
+      console.log('[AgentLoop] Gateway mode enabled - tools via GatewayToolExecutor');
+    }
+    console.log(
+      '[AgentLoop] Config: gateway=' +
+        JSON.stringify(this.toolsConfig.gateway) +
+        ' mcp=' +
+        JSON.stringify(this.toolsConfig.mcp)
+    );
     this.agent = this.claudeCLI;
 
     this.mcpExecutor = new GatewayToolExecutor(executorOptions);
@@ -322,13 +426,66 @@ export class AgentLoop {
           );
         }
 
+        // Build content blocks - include tool_use blocks if present
+        const contentBlocks: ContentBlock[] = [];
+        let parsedToolCalls: ToolUseBlock[] = [];
+
+        // Parse tool_call blocks from text response (Gateway Tools mode ONLY)
+        if (this.isGatewayMode) {
+          parsedToolCalls = this.parseToolCallsFromText(piResult.response || '');
+          const textWithoutToolCalls = this.removeToolCallBlocks(piResult.response || '');
+
+          if (textWithoutToolCalls.trim()) {
+            contentBlocks.push({ type: 'text', text: textWithoutToolCalls });
+          }
+
+          // Add parsed tool_use blocks from text (Gateway Tools - prompt-based)
+          if (parsedToolCalls.length > 0) {
+            for (const toolCall of parsedToolCalls) {
+              contentBlocks.push({
+                type: 'tool_use',
+                id: toolCall.id,
+                name: toolCall.name,
+                input: toolCall.input,
+              } as ToolUseBlock);
+            }
+            console.log(
+              `[AgentLoop] Parsed ${parsedToolCalls.length} tool calls from text (Gateway Tools mode)`
+            );
+          }
+        } else {
+          // MCP mode: use response text as-is
+          if (piResult.response?.trim()) {
+            contentBlocks.push({ type: 'text', text: piResult.response });
+          }
+        }
+
+        // Add tool_use blocks from Claude CLI if present (MCP mode)
+        if (piResult.toolUseBlocks && piResult.toolUseBlocks.length > 0) {
+          for (const toolUse of piResult.toolUseBlocks) {
+            contentBlocks.push({
+              type: 'tool_use',
+              id: toolUse.id,
+              name: toolUse.name,
+              input: toolUse.input,
+            } as ToolUseBlock);
+          }
+          console.log(`[AgentLoop] Detected ${piResult.toolUseBlocks.length} tool calls from MCP`);
+        }
+
+        // Set stop_reason based on whether tools were requested
+        // In Gateway mode: check parsed tool calls; in MCP mode: check CLI tool blocks
+        const hasToolUse = this.isGatewayMode
+          ? parsedToolCalls.length > 0
+          : piResult.hasToolUse || false;
+
         response = {
           id: `msg_${Date.now()}`,
           type: 'message' as const,
           role: 'assistant' as const,
-          content: [{ type: 'text', text: piResult.response }],
+          content: contentBlocks,
           model: this.model,
-          stop_reason: 'end_turn' as const,
+          stop_reason: hasToolUse ? ('tool_use' as const) : ('end_turn' as const),
           stop_sequence: null,
           usage: piResult.usage,
         };
@@ -459,6 +616,43 @@ export class AgentLoop {
   }
 
   /**
+   * Parse tool_call blocks from text response (Gateway Tools mode)
+   * Format: ```tool_call\n{"name": "...", "input": {...}}\n```
+   */
+  private parseToolCallsFromText(text: string): ToolUseBlock[] {
+    const toolCalls: ToolUseBlock[] = [];
+    const toolCallRegex = /```tool_call\s*\n([\s\S]*?)\n```/g;
+
+    let match;
+    while ((match = toolCallRegex.exec(text)) !== null) {
+      try {
+        const jsonStr = match[1].trim();
+        const parsed = JSON.parse(jsonStr);
+
+        if (parsed.name && typeof parsed.name === 'string') {
+          toolCalls.push({
+            type: 'tool_use',
+            id: `gateway_tool_${randomUUID()}`,
+            name: parsed.name,
+            input: parsed.input || {},
+          });
+        }
+      } catch (e) {
+        console.warn(`[AgentLoop] Failed to parse tool_call block: ${e}`);
+      }
+    }
+
+    return toolCalls;
+  }
+
+  /**
+   * Remove tool_call blocks from text (to avoid duplication in response)
+   */
+  private removeToolCallBlocks(text: string): string {
+    return text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '').trim();
+  }
+
+  /**
    * Extract text response from the last assistant message
    */
   private extractTextResponse(history: Message[]): string {
@@ -503,6 +697,15 @@ export class AgentLoop {
           for (const block of content as any[]) {
             if (block.type === 'text') {
               parts.push(block.text);
+            } else if (block.type === 'tool_use') {
+              // Format tool_use block for Claude to see its previous tool calls
+              parts.push(
+                `[Tool Call: ${block.name}]\nInput: ${JSON.stringify(block.input, null, 2)}`
+              );
+            } else if (block.type === 'tool_result') {
+              // Format tool_result block for Claude to see tool execution results
+              const status = block.is_error ? 'ERROR' : 'SUCCESS';
+              parts.push(`[Tool Result: ${status}]\n${block.content}`);
             } else if (block.type === 'image') {
               // Convert image to file path instruction for Claude Code
               // Claude Code can use Read tool to view the image

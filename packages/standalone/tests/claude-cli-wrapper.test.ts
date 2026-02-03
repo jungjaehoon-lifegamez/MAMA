@@ -22,7 +22,7 @@ describe('ClaudeCLIWrapper', () => {
       expect(result.cost_usd).toBeGreaterThan(0);
       expect(result.session_id).toBeTruthy();
     },
-    30000
+    60000 // Increased timeout - Claude CLI can take longer on first run
   );
 
   it.skip('should maintain session continuity across multiple prompts', async () => {

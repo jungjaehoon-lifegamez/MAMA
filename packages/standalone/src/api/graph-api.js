@@ -1322,7 +1322,15 @@ async function handleGetConfigRequest(req, res) {
     // Mask sensitive tokens (show only last 4 chars)
     const maskedConfig = {
       version: config.version || 1,
-      agent: config.agent || {},
+      agent: {
+        ...(config.agent || {}),
+        // Expose tools config for transparency (no black box)
+        tools: config.agent?.tools || {
+          gateway: ['*'],
+          mcp: [],
+          mcp_config: '~/.mama/mama-mcp-config.json',
+        },
+      },
       database: config.database || {},
       logging: config.logging || {},
       discord: config.discord

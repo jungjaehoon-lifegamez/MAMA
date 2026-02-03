@@ -184,6 +184,13 @@ async function main() {
     return;
   }
 
+  // Skip when running inside MAMA OS (Standalone)
+  // MAMA OS has its own ContextInjector, so we avoid duplicate injection
+  if (process.env.MAMA_DAEMON === '1') {
+    info('[Hook] MAMA OS detected, skipping (uses built-in context injection)');
+    return;
+  }
+
   const startTime = Date.now();
 
   try {

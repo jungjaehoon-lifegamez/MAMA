@@ -9,30 +9,9 @@ reviews:
     drafts: false
 
   path_filters:
-    # Exclude documentation
-    - '!docs/**'
-    - '!**/*.md'
-    - '!**/README*'
-
-    # Exclude tests
-    - '!**/*.test.ts'
-    - '!**/*.test.js'
-    - '!**/*.spec.ts'
-
-    # Exclude migrations/config
-    - '!**/*.sql'
-    - '!**/migrations/**'
-
-    # Exclude templates/static files
-    - '!**/templates/**'
-    - '!**/public/**'
-
     # Exclude lock files
     - '!**/pnpm-lock.yaml'
     - '!**/package-lock.json'
-
-    # Exclude CI/CD
-    - '!.github/workflows/**'
 
   path_instructions:
     - path: 'packages/standalone/src/**'

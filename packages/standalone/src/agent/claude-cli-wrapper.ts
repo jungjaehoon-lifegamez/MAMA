@@ -30,6 +30,8 @@ export interface ClaudeCLIWrapperOptions {
   systemPrompt?: string;
   mcpConfigPath?: string;
   dangerouslySkipPermissions?: boolean;
+  /** If true, use GatewayToolExecutor instead of MCP (default: false) */
+  useGatewayTools?: boolean;
 }
 
 export interface PromptCallbacks {
@@ -37,6 +39,13 @@ export interface PromptCallbacks {
   onToolUse?: (name: string, input: any) => void;
   onFinal?: (response: any) => void;
   onError?: (error: Error) => void;
+}
+
+export interface ToolUseBlock {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
 }
 
 export interface PromptResult {
@@ -49,6 +58,10 @@ export interface PromptResult {
   };
   session_id: string;
   cost_usd?: number;
+  /** Tool use blocks if Claude requested tools */
+  toolUseBlocks?: ToolUseBlock[];
+  /** True if Claude requested tool use */
+  hasToolUse?: boolean;
 }
 
 /**
@@ -109,9 +122,12 @@ export class ClaudeCLIWrapper {
         args.push('--system-prompt', this.options.systemPrompt);
       }
 
-      if (this.options.mcpConfigPath) {
+      // Use MCP only if mcpConfigPath is set AND useGatewayTools is false
+      if (this.options.mcpConfigPath && !this.options.useGatewayTools) {
         args.push('--mcp-config', this.options.mcpConfigPath);
         args.push('--strict-mcp-config');
+      } else if (this.options.useGatewayTools) {
+        console.log('[ClaudeCLI] Gateway Tools mode - MCP disabled');
       }
 
       if (this.options.dangerouslySkipPermissions) {
@@ -137,6 +153,7 @@ export class ClaudeCLIWrapper {
       let stdout = '';
       let stderr = '';
       let lastDelta = '';
+      const toolUseBlocks: ToolUseBlock[] = [];
 
       claude.stderr.on('data', (chunk) => {
         const text = chunk.toString();
@@ -158,7 +175,15 @@ export class ClaudeCLIWrapper {
               lastDelta += event.delta;
               callbacks?.onDelta?.(lastDelta);
             } else if (event.type === 'tool_use') {
+              // Collect tool_use blocks for GatewayToolExecutor
+              toolUseBlocks.push({
+                type: 'tool_use',
+                id: event.id || `tool_${randomUUID()}`,
+                name: event.name,
+                input: event.input || {},
+              });
               callbacks?.onToolUse?.(event.name, event.input);
+              console.log(`[ClaudeCLI] Tool use detected: ${event.name}`);
             }
           } catch (e) {
             // Not JSON yet, accumulate more
@@ -189,9 +214,15 @@ export class ClaudeCLIWrapper {
                 cache_creation_input_tokens: result.usage?.cache_creation_input_tokens,
                 cache_read_input_tokens: result.usage?.cache_read_input_tokens,
               },
+              toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
+              hasToolUse: toolUseBlocks.length > 0,
             };
 
-            callbacks?.onFinal?.({ content: promptResult.response });
+            if (toolUseBlocks.length > 0) {
+              console.log(`[ClaudeCLI] Returning ${toolUseBlocks.length} tool_use blocks`);
+            }
+
+            callbacks?.onFinal?.({ content: promptResult.response, toolUseBlocks });
             resolve(promptResult);
           } else {
             throw new Error(`Unexpected result type: ${result.type}`);

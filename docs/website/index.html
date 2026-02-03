@@ -12,6 +12,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="styles.css">
+  <link rel="icon" type="image/svg+xml" href="assets/mama-icon.svg">
 </head>
 <body>
   <!-- Floating decorative elements -->
@@ -28,13 +29,18 @@
         <img src="assets/mama-icon.svg" alt="MAMA" class="logo-icon">
         <span>MAMA OS</span>
       </a>
-      <div class="nav-links">
+      <div class="nav-links" id="nav-links">
         <a href="#features">Features</a>
         <a href="#packages">Packages</a>
         <a href="#docs">Docs</a>
         <a href="#install">Install</a>
         <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
       </div>
+      <button class="nav-toggle" aria-label="Toggle menu" aria-controls="nav-links" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </div>
   </nav>
 
@@ -44,7 +50,7 @@
       <div class="hero-mascot">
         <img src="assets/mama-icon.svg" alt="MAMA Mascot" class="mascot-img">
         <div class="speech-bubble">
-          <span>I remember everything for you! ^^</span>
+          <span>I remember everything for you!</span>
         </div>
       </div>
       <h1 class="hero-title">
@@ -88,6 +94,44 @@
             <li>Decision graph visualization</li>
             <li>Semantic search support</li>
           </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Screenshots Section -->
+  <section class="section section-screenshots" id="screenshots">
+    <div class="section-inner">
+      <h2 class="section-title">See MAMA in Action</h2>
+      <p class="section-subtitle">Beautiful, intuitive interface across all your devices</p>
+      <div class="screenshots-grid">
+        <div class="screenshot-card">
+          <div class="phone-frame">
+            <img src="assets/screenshot-chat.png" alt="MAMA Chat Interface" loading="lazy">
+          </div>
+          <h3>💬 AI Chat</h3>
+          <p>Natural conversations with context-aware responses</p>
+        </div>
+        <div class="screenshot-card">
+          <div class="phone-frame">
+            <img src="assets/screenshot-dashboard.png" alt="MAMA Dashboard" loading="lazy">
+          </div>
+          <h3>📊 Dashboard</h3>
+          <p>Monitor memory stats, gateways, and tools at a glance</p>
+        </div>
+        <div class="screenshot-card">
+          <div class="phone-frame">
+            <img src="assets/screenshot-memory.png" alt="MAMA Memory Graph" loading="lazy">
+          </div>
+          <h3>🧠 Memory Graph</h3>
+          <p>Visualize decision evolution and connections</p>
+        </div>
+        <div class="screenshot-card">
+          <div class="phone-frame">
+            <img src="assets/screenshot-settings.png" alt="MAMA Settings" loading="lazy">
+          </div>
+          <h3>⚙️ Settings</h3>
+          <p>Easy gateway and agent configuration</p>
         </div>
       </div>
     </div>
@@ -277,7 +321,7 @@
       <div class="footer-brand">
         <img src="assets/mama-icon.svg" alt="MAMA" class="footer-logo">
         <span>MAMA OS</span>
-        <span class="footer-version">v0.1.8</span>
+        <span class="footer-version">v0.3.0</span>
       </div>
       <div class="footer-links">
         <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
@@ -289,5 +333,26 @@
       </div>
     </div>
   </footer>
+
+  <script>
+    // Mobile navigation toggle
+    const navToggle = document.querySelector('.nav-toggle');
+    const navLinks = document.querySelector('.nav-links');
+
+    navToggle.addEventListener('click', () => {
+      const isOpen = navLinks.classList.toggle('nav-open');
+      navToggle.classList.toggle('nav-toggle-open');
+      navToggle.setAttribute('aria-expanded', isOpen);
+    });
+
+    // Close menu when clicking a link
+    navLinks.querySelectorAll('a').forEach(link => {
+      link.addEventListener('click', () => {
+        navLinks.classList.remove('nav-open');
+        navToggle.classList.remove('nav-toggle-open');
+        navToggle.setAttribute('aria-expanded', 'false');
+      });
+    });
+  </script>
 </body>
 </html>
