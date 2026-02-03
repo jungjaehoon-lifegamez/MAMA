@@ -525,6 +525,18 @@ export interface AgentLoopOptions {
   source?: string;
   /** Channel ID for session pool */
   channelId?: string;
+  /**
+   * Tool routing configuration for hybrid Gateway/MCP mode
+   * If not specified, all tools use Gateway mode (default)
+   */
+  toolsConfig?: {
+    /** Tools executed via GatewayToolExecutor (supports wildcards: "browser_*") */
+    gateway?: string[];
+    /** Tools routed to MCP server (supports wildcards: "mama_*") */
+    mcp?: string[];
+    /** Path to MCP config file */
+    mcp_config?: string;
+  };
 }
 
 /**

@@ -10,11 +10,11 @@ MAMA is a pnpm workspace-based monorepo with five packages:
 
 | Package            | Location                       | Deployment Target  | npm Name                     | Version |
 | ------------------ | ------------------------------ | ------------------ | ---------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`       | 0.1.0   |
-| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server`   | 1.6.5   |
-| MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`     | 0.1.0   |
-| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                       | 1.6.5   |
-| OpenClaw Plugin    | `packages/openclaw-plugin/`    | OpenClaw Plugins   | `@jungjaehoon/openclaw-mama` | 1.0.0   |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`       | 0.3.0   |
+| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server`   | 1.6.6   |
+| MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`     | 1.0.1   |
+| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                       | 1.6.6   |
+| OpenClaw Plugin    | `packages/openclaw-plugin/`    | OpenClaw Plugins   | `@jungjaehoon/openclaw-mama` | 0.4.1   |
 
 ---
 
@@ -59,11 +59,11 @@ Synchronize versions across these files before deployment:
 
 | File                                       | Field     | Current Version |
 | ------------------------------------------ | --------- | --------------- |
-| `packages/standalone/package.json`         | `version` | 0.1.0           |
-| `packages/mcp-server/package.json`         | `version` | 1.6.5           |
-| `packages/mama-core/package.json`          | `version` | 0.1.0           |
-| `packages/claude-code-plugin/package.json` | `version` | 1.6.5           |
-| `packages/openclaw-plugin/package.json`    | `version` | 1.0.0           |
+| `packages/standalone/package.json`         | `version` | 0.3.0           |
+| `packages/mcp-server/package.json`         | `version` | 1.6.6           |
+| `packages/mama-core/package.json`          | `version` | 1.0.1           |
+| `packages/claude-code-plugin/package.json` | `version` | 1.6.6           |
+| `packages/openclaw-plugin/package.json`    | `version` | 0.4.1           |
 
 ### Version Update Example
 
