@@ -17,6 +17,7 @@ interface SessionRow {
   id: string;
   source: string;
   channel_id: string;
+  channel_name: string | null;
   user_id: string | null;
   context: string | null;
   created_at: number;
@@ -49,11 +50,13 @@ export class SessionStore {
    * Run database migration
    */
   private runMigration(): void {
+    // Create table if not exists
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messenger_sessions (
         id TEXT PRIMARY KEY,
         source TEXT NOT NULL,
         channel_id TEXT NOT NULL,
+        channel_name TEXT,
         user_id TEXT,
         context TEXT,
         created_at INTEGER,
@@ -64,12 +67,37 @@ export class SessionStore {
       CREATE INDEX IF NOT EXISTS idx_messenger_source_channel
         ON messenger_sessions(source, channel_id);
     `);
+
+    // Add missing columns for older databases
+    try {
+      const tableInfo = this.db.prepare('PRAGMA table_info(messenger_sessions)').all() as Array<{
+        name: string;
+      }>;
+      const columns = tableInfo.map((col) => col.name);
+
+      if (!columns.includes('created_at')) {
+        this.db.exec('ALTER TABLE messenger_sessions ADD COLUMN created_at INTEGER');
+      }
+      if (!columns.includes('last_active')) {
+        this.db.exec('ALTER TABLE messenger_sessions ADD COLUMN last_active INTEGER');
+      }
+      if (!columns.includes('channel_name')) {
+        this.db.exec('ALTER TABLE messenger_sessions ADD COLUMN channel_name TEXT');
+      }
+    } catch {
+      // Ignore errors - columns might already exist
+    }
   }
 
   /**
    * Get existing session or create new one
    */
-  getOrCreate(source: MessageSource, channelId: string, userId?: string): Session {
+  getOrCreate(
+    source: MessageSource,
+    channelId: string,
+    userId?: string,
+    channelName?: string
+  ): Session {
     const existing = this.db
       .prepare(
         `
@@ -80,6 +108,13 @@ export class SessionStore {
       .get(source, channelId) as SessionRow | undefined;
 
     if (existing) {
+      // Update channel name if provided and different
+      if (channelName && existing.channel_name !== channelName) {
+        this.db
+          .prepare('UPDATE messenger_sessions SET channel_name = ? WHERE id = ?')
+          .run(channelName, existing.id);
+        existing.channel_name = channelName;
+      }
       return this.rowToSession(existing);
     }
 
@@ -90,16 +125,17 @@ export class SessionStore {
     this.db
       .prepare(
         `
-      INSERT INTO messenger_sessions (id, source, channel_id, user_id, context, created_at, last_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messenger_sessions (id, source, channel_id, channel_name, user_id, context, created_at, last_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `
       )
-      .run(id, source, channelId, userId || null, '[]', now, now);
+      .run(id, source, channelId, channelName || null, userId || null, '[]', now, now);
 
     return {
       id,
       source,
       channelId,
+      channelName,
       userId,
       context: '[]',
       createdAt: now,
@@ -158,10 +194,28 @@ export class SessionStore {
   }
 
   /**
-   * Get conversation history for a session
+   * Get conversation history for a session by ID
    */
   getHistory(sessionId: string): ConversationTurn[] {
     const session = this.getById(sessionId);
+    if (!session) return [];
+
+    try {
+      return JSON.parse(session.context || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get conversation history by source and channel
+   * Used by WebSocket handler for viewer sessions
+   */
+  getHistoryByChannel(source: MessageSource, channelId: string): ConversationTurn[] {
+    const session = this.db
+      .prepare('SELECT context FROM messenger_sessions WHERE source = ? AND channel_id = ?')
+      .get(source, channelId) as { context: string | null } | undefined;
+
     if (!session) return [];
 
     try {
@@ -211,6 +265,20 @@ export class SessionStore {
       stmt = this.db.prepare('SELECT * FROM messenger_sessions ORDER BY last_active DESC');
       return (stmt.all() as SessionRow[]).map((row) => this.rowToSession(row));
     }
+  }
+
+  /**
+   * Update channel name for a session by source and channel ID
+   * Used to backfill channel names when gateway connects
+   */
+  updateChannelName(source: MessageSource, channelId: string, channelName: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE messenger_sessions SET channel_name = ? WHERE source = ? AND channel_id = ? AND (channel_name IS NULL OR channel_name = '')`
+      )
+      .run(channelName, source, channelId);
+
+    return result.changes > 0;
   }
 
   /**
@@ -266,6 +334,7 @@ export class SessionStore {
       id: row.id,
       source: row.source as MessageSource,
       channelId: row.channel_id,
+      channelName: row.channel_name || undefined,
       userId: row.user_id || undefined,
       context: row.context || '[]',
       createdAt: row.created_at,

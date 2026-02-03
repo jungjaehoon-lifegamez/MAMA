@@ -113,12 +113,14 @@ describe('MessageRouter', () => {
       expect(history[0].bot).toBe('Agent response');
     });
 
-    it('should pass system prompt to agent loop', async () => {
-      let receivedOptions: { systemPrompt?: string } = {};
+    it('should pass system prompt to agent loop for new sessions', async () => {
+      // Use unique channel ID to ensure new session (not resuming from session pool)
+      const uniqueChannelId = `channel-systemprompt-${Date.now()}`;
+      let receivedOptions: { systemPrompt?: string; resumeSession?: boolean } = {};
       const agentLoop = {
         async run(
           _prompt: string,
-          options?: { systemPrompt?: string }
+          options?: { systemPrompt?: string; resumeSession?: boolean }
         ): Promise<{ response: string }> {
           receivedOptions = options || {};
           return { response: 'Response' };
@@ -130,16 +132,60 @@ describe('MessageRouter', () => {
 
       await customRouter.process({
         source: 'discord',
-        channelId: 'channel-123',
+        channelId: uniqueChannelId,
         userId: 'user-456',
         text: 'Hello',
       });
 
+      // For new sessions: systemPrompt should be defined, resumeSession should be false
+      // For resumed sessions: systemPrompt is undefined, resumeSession is true
+      // With unique channel ID, this should always be a new session
       expect(receivedOptions.systemPrompt).toBeDefined();
-      // System prompt contains either MAMA (onboarding) or memory context (post-onboarding)
-      expect(receivedOptions.systemPrompt).toBeDefined();
+      expect(receivedOptions.resumeSession).toBe(false);
       expect(typeof receivedOptions.systemPrompt).toBe('string');
       expect(receivedOptions.systemPrompt!.length).toBeGreaterThan(0);
+    });
+
+    it('should use resumeSession for subsequent messages to same channel', async () => {
+      // Use unique channel ID for this test
+      const uniqueChannelId = `channel-resume-${Date.now()}`;
+      const receivedOptionsHistory: Array<{ systemPrompt?: string; resumeSession?: boolean }> = [];
+      const agentLoop = {
+        async run(
+          _prompt: string,
+          options?: { systemPrompt?: string; resumeSession?: boolean }
+        ): Promise<{ response: string }> {
+          receivedOptionsHistory.push({ ...options });
+          return { response: 'Response' };
+        },
+      };
+
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+
+      // First message - should inject system prompt
+      await customRouter.process({
+        source: 'discord',
+        channelId: uniqueChannelId,
+        userId: 'user-456',
+        text: 'Hello',
+      });
+
+      // Second message - should resume (no system prompt)
+      await customRouter.process({
+        source: 'discord',
+        channelId: uniqueChannelId,
+        userId: 'user-456',
+        text: 'Follow up',
+      });
+
+      // First message: new session with system prompt
+      expect(receivedOptionsHistory[0].systemPrompt).toBeDefined();
+      expect(receivedOptionsHistory[0].resumeSession).toBe(false);
+
+      // Second message: resume session without system prompt
+      expect(receivedOptionsHistory[1].systemPrompt).toBeUndefined();
+      expect(receivedOptionsHistory[1].resumeSession).toBe(true);
     });
   });
 

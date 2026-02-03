@@ -1,10 +1,52 @@
 /**
  * Formatting Utility Functions
  * @module utils/format
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 /* eslint-env browser */
+
+/**
+ * Known Claude model name mappings
+ */
+const MODEL_NAMES = {
+  'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
+  'claude-opus-4-20250514': 'Claude 4 Opus',
+  'claude-opus-4-5-20251101': 'Claude 4.5 Opus',
+  'claude-3-5-sonnet-20241022': 'Claude 3.5 Sonnet',
+  'claude-3-opus-20240229': 'Claude 3 Opus',
+  'claude-3-sonnet-20240229': 'Claude 3 Sonnet',
+  'claude-3-haiku-20240307': 'Claude 3 Haiku',
+};
+
+/**
+ * Get human-friendly model name from model ID
+ * @param {string} model - Model ID (e.g., 'claude-sonnet-4-20250514')
+ * @returns {string} Human-friendly name (e.g., 'Claude 4 Sonnet')
+ */
+export function formatModelName(model) {
+  if (!model || model === 'default') {
+    return 'Default';
+  }
+
+  // Check known model mappings
+  if (MODEL_NAMES[model]) {
+    return MODEL_NAMES[model];
+  }
+
+  // Try to extract friendly name from model string
+  if (model.includes('opus')) {
+    return 'Claude Opus';
+  }
+  if (model.includes('sonnet')) {
+    return 'Claude Sonnet';
+  }
+  if (model.includes('haiku')) {
+    return 'Claude Haiku';
+  }
+
+  return model;
+}
 
 /**
  * Format message timestamp

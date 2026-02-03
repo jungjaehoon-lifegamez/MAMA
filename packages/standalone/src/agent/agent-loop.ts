@@ -34,8 +34,10 @@ import type {
   ClaudeClientOptions,
   GatewayToolExecutorOptions,
   StreamCallbacks,
+  AgentContext,
 } from './types.js';
 import { AgentError } from './types.js';
+import { buildContextPrompt } from './context-prompt-builder.js';
 
 /**
  * Default configuration
@@ -97,16 +99,20 @@ function loadSystemPrompt(verbose = false): string {
 }
 
 /**
- * Load composed system prompt with persona layers + CLAUDE.md
+ * Load composed system prompt with persona layers + CLAUDE.md + optional context
  * Tries to load persona files from ~/.mama/ in order:
  * 1. SOUL.md (philosophical principles)
  * 2. IDENTITY.md (role and character)
  * 3. USER.md (user preferences)
- * 4. CLAUDE.md (base instructions)
+ * 4. **Context Prompt** (if AgentContext provided - role awareness)
+ * 5. CLAUDE.md (base instructions)
  *
  * If persona files are missing, logs warning and continues with CLAUDE.md alone.
+ *
+ * @param verbose - Enable verbose logging
+ * @param context - Optional AgentContext for role-aware prompt injection
  */
-export function loadComposedSystemPrompt(verbose = false): string {
+export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
   const { readFileSync, existsSync } = require('fs');
   const { join } = require('path');
   const { homedir } = require('os');
@@ -114,6 +120,7 @@ export function loadComposedSystemPrompt(verbose = false): string {
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
 
+  // Load persona files: SOUL.md, IDENTITY.md, USER.md
   const personaFiles = ['SOUL.md', 'IDENTITY.md', 'USER.md'];
   for (const file of personaFiles) {
     const path = join(mamaHome, file);
@@ -126,6 +133,17 @@ export function loadComposedSystemPrompt(verbose = false): string {
     }
   }
 
+  // Add context prompt if AgentContext is provided (role awareness)
+  if (context) {
+    const contextPrompt = buildContextPrompt(context);
+    if (verbose)
+      console.log(
+        `[AgentLoop] Injecting context prompt for ${context.roleName}@${context.platform}`
+      );
+    layers.push(contextPrompt);
+  }
+
+  // Load CLAUDE.md (base instructions)
   const claudeMd = loadSystemPrompt(verbose);
   layers.push(claudeMd);
 
@@ -415,7 +433,11 @@ export class AgentLoop {
         const promptText = this.formatHistoryAsPrompt(history);
         let piResult;
         try {
-          piResult = await this.agent.prompt(promptText, callbacks);
+          // Pass role-specific model and resume flag if provided in options
+          piResult = await this.agent.prompt(promptText, callbacks, {
+            model: options?.model,
+            resumeSession: options?.resumeSession,
+          });
         } catch (error) {
           console.error('[AgentLoop] Claude CLI error:', error);
           throw new AgentError(

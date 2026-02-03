@@ -29,6 +29,8 @@ export interface NormalizedMessage {
   source: MessageSource;
   /** Channel or DM identifier */
   channelId: string;
+  /** Human-readable channel name (e.g., "#general", "DM with User") */
+  channelName?: string;
   /** User identifier on the platform */
   userId: string;
   /** Message text content */
@@ -91,6 +93,8 @@ export interface Session {
   source: MessageSource;
   /** Channel ID */
   channelId: string;
+  /** Human-readable channel name (e.g., "#general", "DM with User") */
+  channelName?: string;
   /** User ID (optional, for DMs) */
   userId?: string;
   /** Rolling conversation context (JSON) */

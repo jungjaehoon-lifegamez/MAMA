@@ -2,6 +2,122 @@
  * Configuration types for MAMA Standalone CLI
  */
 
+// ============================================================================
+// Role-Based Permission Types
+// ============================================================================
+
+/**
+ * Role configuration for agent permissions
+ * Each source (viewer, discord, telegram, etc.) maps to a role
+ */
+export interface RoleConfig {
+  /**
+   * Claude model to use for this role
+   * If not specified, uses the global agent.model setting
+   * @example "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-haiku-20240307"
+   */
+  model?: string;
+
+  /**
+   * Maximum conversation turns for this role
+   * If not specified, uses the global agent.max_turns setting
+   */
+  maxTurns?: number;
+
+  /**
+   * Allowed tools for this role
+   * Supports wildcards: "mama_*", "browser_*"
+   * Use ["*"] to allow all tools
+   * @example ["mama_*", "Read", "discord_send"]
+   */
+  allowedTools: string[];
+
+  /**
+   * Explicitly blocked tools (takes precedence over allowedTools)
+   * @example ["Bash", "Write"]
+   */
+  blockedTools?: string[];
+
+  /**
+   * Allowed file paths (glob patterns)
+   * @example ["~/.mama/workspace/**", "/tmp/**"]
+   */
+  allowedPaths?: string[];
+
+  /**
+   * Whether this role can perform system control operations
+   * (restart, stop, config changes)
+   */
+  systemControl?: boolean;
+
+  /**
+   * Whether this role can access sensitive data
+   * (tokens, credentials, full config)
+   */
+  sensitiveAccess?: boolean;
+}
+
+/**
+ * Source-to-role mapping
+ * Keys: source identifiers (viewer, discord, telegram, slack, chatwork)
+ * Values: role names defined in roles
+ */
+export type SourceRoleMapping = Record<string, string>;
+
+/**
+ * Roles configuration section
+ * Defines all available roles and their permissions
+ */
+export interface RolesConfig {
+  /**
+   * Role definitions
+   * @example { os_agent: { allowedTools: ["*"], systemControl: true } }
+   */
+  definitions: Record<string, RoleConfig>;
+
+  /**
+   * Source-to-role mapping
+   * @example { viewer: "os_agent", discord: "discord_bot" }
+   */
+  sourceMapping: SourceRoleMapping;
+}
+
+/**
+ * Default role configurations
+ */
+export const DEFAULT_ROLES: RolesConfig = {
+  definitions: {
+    os_agent: {
+      model: 'claude-sonnet-4-20250514', // Full-featured model for OS control
+      maxTurns: 20,
+      allowedTools: ['*'],
+      allowedPaths: ['~/**'],
+      systemControl: true,
+      sensitiveAccess: true,
+    },
+    chat_bot: {
+      model: 'claude-sonnet-4-20250514', // Balanced model for chat
+      maxTurns: 10,
+      allowedTools: ['mama_*', 'Read', 'discord_send', 'translate_image'],
+      blockedTools: ['Bash', 'Write', 'save_integration_token'],
+      allowedPaths: ['~/.mama/workspace/**'],
+      systemControl: false,
+      sensitiveAccess: false,
+    },
+  },
+  sourceMapping: {
+    viewer: 'os_agent',
+    discord: 'chat_bot',
+    telegram: 'chat_bot',
+    slack: 'chat_bot',
+    chatwork: 'chat_bot',
+  },
+};
+
+// ============================================================================
+// Tool Routing Types
+// ============================================================================
+
 /**
  * Tool routing configuration
  * Allows hybrid Gateway/MCP tool execution
@@ -173,6 +289,8 @@ export interface MAMAConfig {
   database: DatabaseConfig;
   /** Logging settings */
   logging: LoggingConfig;
+  /** Role-based permission settings (optional) */
+  roles?: RolesConfig;
   /** @deprecated Always uses Claude CLI now (ToS compliance) */
   use_claude_cli?: boolean;
   /** Discord gateway settings (optional) */
@@ -215,6 +333,8 @@ export const DEFAULT_CONFIG: MAMAConfig = {
     level: 'info',
     file: '~/.mama/logs/mama.log',
   },
+  // Role-based permissions (default)
+  roles: DEFAULT_ROLES,
   // Safe defaults for optional fields (used by mergeWithDefaults)
   use_claude_cli: true, // Always use Claude CLI (ToS compliance)
   discord: undefined,

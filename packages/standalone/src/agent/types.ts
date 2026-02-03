@@ -6,7 +6,80 @@
  * - Content blocks (text, tool_use, tool_result)
  * - MCP tool definitions and inputs
  * - Agent loop configuration
+ * - Agent context and role awareness
  */
+
+import type { RoleConfig } from '../cli/config/types.js';
+
+// ============================================================================
+// Agent Context Types (Role Awareness)
+// ============================================================================
+
+/**
+ * Platform identifiers for agent context
+ */
+export type AgentPlatform = 'viewer' | 'discord' | 'telegram' | 'slack' | 'chatwork' | 'cli';
+
+/**
+ * Session information for agent context
+ */
+export interface SessionInfo {
+  /** Unique session identifier */
+  sessionId: string;
+  /** Channel or conversation ID */
+  channelId?: string;
+  /** User ID who initiated the interaction */
+  userId?: string;
+  /** Username for display purposes */
+  userName?: string;
+  /** Timestamp when session started */
+  startedAt: Date;
+}
+
+/**
+ * Agent context for role-aware execution
+ * Provides information about the agent's current operating environment
+ */
+export interface AgentContext {
+  /**
+   * Message source identifier
+   * @example "discord", "viewer", "telegram"
+   */
+  source: string;
+
+  /**
+   * Platform type (normalized)
+   */
+  platform: AgentPlatform;
+
+  /**
+   * Role name for this context
+   * @example "os_agent", "chat_bot"
+   */
+  roleName: string;
+
+  /**
+   * Role configuration with permissions
+   */
+  role: RoleConfig;
+
+  /**
+   * Session information
+   */
+  session: SessionInfo;
+
+  /**
+   * Human-readable capabilities summary
+   * @example ["mama_search", "mama_save", "Read", "discord_send"]
+   */
+  capabilities: string[];
+
+  /**
+   * Human-readable limitations summary
+   * @example ["Cannot execute Bash", "Cannot write files", "Limited path access"]
+   */
+  limitations: string[];
+}
 
 // ============================================================================
 // Claude API Types
@@ -365,6 +438,122 @@ export interface BrowserPdfInput {
   filename?: string;
 }
 
+// ============================================================================
+// OS Management Tool Input Types (viewer-only)
+// ============================================================================
+
+/**
+ * Bot platform types
+ */
+export type BotPlatform = 'discord' | 'telegram' | 'slack' | 'chatwork';
+
+/**
+ * Input for os_add_bot tool
+ */
+export interface AddBotInput {
+  /** Platform to add bot for */
+  platform: BotPlatform;
+  /** Bot token (Discord, Telegram) or API token (Chatwork) */
+  token?: string;
+  /** Slack bot token */
+  bot_token?: string;
+  /** Slack app token (for socket mode) */
+  app_token?: string;
+  /** Default channel ID for notifications (optional) */
+  default_channel_id?: string;
+  /** Allowed chat IDs for Telegram (optional, empty = allow all) */
+  allowed_chats?: string[];
+  /** Room IDs for Chatwork (optional) */
+  room_ids?: string[];
+}
+
+/**
+ * Input for os_set_permissions tool
+ */
+export interface SetPermissionsInput {
+  /** Role name to modify */
+  role: string;
+  /** Tools to allow (supports wildcards) */
+  allowedTools?: string[];
+  /** Tools to block (takes precedence) */
+  blockedTools?: string[];
+  /** Paths to allow (glob patterns) */
+  allowedPaths?: string[];
+  /** Enable system control */
+  systemControl?: boolean;
+  /** Enable access to sensitive data (e.g., tokens) */
+  sensitiveAccess?: boolean;
+  /** Map a source (e.g., 'discord', 'telegram') to this role */
+  mapSource?: string;
+}
+
+/**
+ * Input for os_set_model tool
+ */
+export interface SetModelInput {
+  /** Role to update (e.g., 'os_agent', 'chat_bot'). If not specified, updates global agent model */
+  role?: string;
+  /** Model name to use (e.g., 'claude-opus-4-20250514', 'claude-sonnet-4-20250514') */
+  model: string;
+  /** Optional max turns for this role */
+  maxTurns?: number;
+  /** Optional timeout in milliseconds */
+  timeout?: number;
+}
+
+/**
+ * Input for os_get_config tool
+ */
+export interface GetConfigInput {
+  /** Section to retrieve (optional, returns all if not specified) */
+  section?:
+    | 'agent'
+    | 'database'
+    | 'logging'
+    | 'roles'
+    | 'discord'
+    | 'telegram'
+    | 'slack'
+    | 'chatwork';
+  /** Include sensitive data (tokens) - only works for viewer */
+  includeSensitive?: boolean;
+}
+
+/**
+ * Input for os_list_bots tool
+ */
+export interface ListBotsInput {
+  /** Filter by platform (optional) */
+  platform?: BotPlatform;
+}
+
+/**
+ * Bot status information
+ */
+export interface BotStatus {
+  platform: BotPlatform;
+  enabled: boolean;
+  configured: boolean;
+  status: 'running' | 'stopped' | 'error' | 'not_configured';
+  error?: string;
+}
+
+/**
+ * Input for os_restart_bot tool
+ */
+export interface RestartBotInput {
+  /** Platform to restart */
+  platform: BotPlatform;
+}
+
+/**
+ * Input for os_stop_bot tool
+ */
+export interface StopBotInput {
+  /** Platform to stop */
+  platform: BotPlatform;
+}
+
 /**
  * Union type for all MCP tool inputs
  */
@@ -381,7 +570,16 @@ export type GatewayToolInput =
   | BrowserScrollInput
   | BrowserWaitForInput
   | BrowserEvaluateInput
-  | BrowserPdfInput;
+  | BrowserPdfInput
+  // OS Management tools
+  | AddBotInput
+  | SetPermissionsInput
+  | GetConfigInput
+  | SetModelInput
+  // OS Monitoring tools
+  | ListBotsInput
+  | RestartBotInput
+  | StopBotInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)
@@ -406,7 +604,16 @@ export type GatewayToolName =
   | 'browser_wait_for'
   | 'browser_evaluate'
   | 'browser_pdf'
-  | 'browser_close';
+  | 'browser_close'
+  // OS Management tools (viewer-only)
+  | 'os_add_bot'
+  | 'os_set_permissions'
+  | 'os_get_config'
+  | 'os_set_model'
+  // OS Monitoring tools (viewer-only)
+  | 'os_list_bots'
+  | 'os_restart_bot'
+  | 'os_stop_bot';
 
 // ============================================================================
 // MCP Tool Output Types
@@ -526,6 +733,11 @@ export interface AgentLoopOptions {
   /** Channel ID for session pool */
   channelId?: string;
   /**
+   * Agent context for role-aware execution
+   * Provides platform, role, and permission information
+   */
+  agentContext?: AgentContext;
+  /**
    * Tool routing configuration for hybrid Gateway/MCP mode
    * If not specified, all tools use Gateway mode (default)
    */
@@ -537,6 +749,12 @@ export interface AgentLoopOptions {
     /** Path to MCP config file */
     mcp_config?: string;
   };
+  /**
+   * Resume existing CLI session instead of starting new one
+   * When true, uses --resume flag and skips system prompt injection
+   * (CLI already has context from previous requests)
+   */
+  resumeSession?: boolean;
 }
 
 /**

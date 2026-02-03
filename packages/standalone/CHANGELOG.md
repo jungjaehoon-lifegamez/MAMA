@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-02-03
+
+### Added
+
+- **CLI Session Resumption** - 90%+ token savings via `--resume` flag
+  - First message uses `--session-id` with full system prompt injection
+  - Subsequent messages use `--resume` (CLI maintains its own context)
+  - SessionPool tracks `isNew` flag for session state
+  - Token reduction: ~8,600 → ~3 tokens per message
+
+- **Role-Aware Agent Context** - Platform-specific permissions
+  - `RoleManager` class for role-based permission management
+  - `AgentContext` type captures platform, role, and capabilities
+  - `ContextPromptBuilder` generates role-aware system prompts
+  - Source-based role mapping: viewer=os_agent, discord=chat_bot, etc.
+
+- **Discord Channel Names** - Human-readable session display
+  - Shows `#channel-name (Server Name)` instead of channel IDs
+  - Backfills channel names when Discord bot connects
+  - `channel_name` column added to messenger_sessions table
+
+- **Dashboard Enhancements**
+  - Discord icon for Discord sessions
+  - Display channel names in session list
+  - Session management controls
+  - Memory module improvements
+
+### Changed
+
+- **MessageRouter** - Integrated session resumption logic
+  - Checks `isNewCliSession` from SessionPool
+  - Conditionally skips system prompt for resumed sessions
+  - Passes `resumeSession` option to AgentLoop
+
+- **ClaudeCLIWrapper** - Added `--resume` flag support
+  - New `resumeSession` option in prompt() method
+  - Uses `--resume <session-id>` for continuing sessions
+  - Skips system prompt injection when resuming
+
+### Performance
+
+- **Token Usage** - 99.9% reduction for subsequent messages
+  - Before: ~8,600 tokens/message (system prompt + 50 turn history)
+  - After: ~3 tokens/message (CLI maintains context)
+  - 30-minute session timeout with automatic reset
+
 ## [0.3.0] - 2026-02-03
 
 ### Added
