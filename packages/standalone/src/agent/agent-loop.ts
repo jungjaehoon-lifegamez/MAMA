@@ -108,115 +108,32 @@ export function loadComposedSystemPrompt(verbose = false): string {
 }
 
 /**
- * Generate Gateway Tools definitions for system prompt
+ * Load Gateway Tools prompt from MD file
  * These tools are executed by GatewayToolExecutor, NOT MCP
  */
 export function getGatewayToolsPrompt(): string {
+  const { readFileSync, existsSync } = require('fs');
+  const { join } = require('path');
+
+  const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
+
+  if (existsSync(gatewayToolsPath)) {
+    return readFileSync(gatewayToolsPath, 'utf-8');
+  }
+
+  console.warn('[AgentLoop] gateway-tools.md not found, using minimal prompt');
   return `
-## IMPORTANT: Gateway Tools (NOT Skills!)
+## Gateway Tools
 
-These are **programmatic tools** that execute code. They are different from markdown skills.
-- **Gateway Tools**: Execute immediately, return structured data (this section)
-- **Skills**: Markdown templates triggered by keywords (different system)
-
-### How to Call Gateway Tools
-
-To call a Gateway Tool, output a JSON block in this EXACT format:
+To call a Gateway Tool, output a JSON block:
 
 \`\`\`tool_call
 {"name": "tool_name", "input": {"param1": "value1"}}
 \`\`\`
 
-The system will:
-1. Parse your tool_call block
-2. Execute the tool via GatewayToolExecutor
-3. Return the result in the next message
-
-### Example Tool Call
-
-User: "최근 결정 검색해줘"
-Assistant: 검색해볼게요.
-\`\`\`tool_call
-{"name": "mama_search", "input": {"limit": 10}}
-\`\`\`
-
-[System executes mama_search, returns results]
-
-You have access to the following tools. To use a tool, output a tool_use block in your response.
-
-### MAMA Memory Tools
-
-**mama_search** - Search decisions and checkpoints
-- query (string, optional): Search query for semantic search. Empty = list recent
-- type (string, optional): 'decision', 'checkpoint', or 'all' (default: 'all')
-- limit (number, optional): Max results (default: 10)
-
-**mama_save** - Save decision or checkpoint
-- type (string, required): 'decision' or 'checkpoint'
-- For decision: topic, decision, reasoning (required), confidence (optional, 0-1)
-- For checkpoint: summary (required), next_steps, open_files (optional)
-
-**mama_update** - Update decision outcome
-- id (string, required): Decision ID
-- outcome (string, required): 'success', 'failed', or 'partial'
-- reason (string, optional): Explanation
-
-**mama_load_checkpoint** - Load last checkpoint
-- No parameters
-
-### Browser Tools (Playwright)
-
-**browser_navigate** - Navigate to URL
-- url (string, required): URL to navigate to
-
-**browser_screenshot** - Take screenshot
-- filename (string, optional): Output filename
-- full_page (boolean, optional): Capture full page
-
-**browser_click** - Click element
-- selector (string, required): CSS selector
-
-**browser_type** - Type text into element
-- selector (string, required): CSS selector
-- text (string, required): Text to type
-
-**browser_get_text** - Get page text content
-- No parameters
-
-**browser_scroll** - Scroll the page
-- direction (string, required): 'up', 'down', 'top', 'bottom'
-- amount (number, optional): Pixels to scroll
-
-**browser_wait_for** - Wait for element
-- selector (string, required): CSS selector
-- timeout (number, optional): Timeout in ms
-
-**browser_evaluate** - Execute JavaScript
-- script (string, required): JavaScript code
-
-**browser_pdf** - Generate PDF
-- filename (string, optional): Output filename
-
-**browser_close** - Close browser
-- No parameters
-
-### Utility Tools
-
-**discord_send** - Send message to Discord
-- channel_id (string, required): Discord channel ID
-- message (string, optional): Text message
-- file_path (string, optional): File to send
-
-**Read** - Read file (restricted to ~/.mama/)
-- path (string, required): File path
-
-**Write** - Write file
-- path (string, required): File path
-- content (string, required): File content
-
-**Bash** - Execute bash command
-- command (string, required): Command to run
-- workdir (string, optional): Working directory
+Available: mama_search, mama_save, mama_update, mama_load_checkpoint,
+browser_navigate, browser_screenshot, browser_click, browser_type,
+discord_send, Read, Write, Bash
 `;
 }
 
