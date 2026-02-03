@@ -56,6 +56,42 @@ describe('GatewayToolExecutor', () => {
     }),
   });
 
+  // Shared context helpers (used by multiple test suites)
+  const createViewerContext = () => ({
+    source: 'viewer',
+    platform: 'viewer' as const,
+    roleName: 'os_agent',
+    role: {
+      allowedTools: ['*'],
+      systemControl: true,
+      sensitiveAccess: true,
+    },
+    session: {
+      sessionId: 'test-session',
+      startedAt: new Date(),
+    },
+    capabilities: ['All tools'],
+    limitations: [],
+  });
+
+  const createDiscordContext = () => ({
+    source: 'discord',
+    platform: 'discord' as const,
+    roleName: 'chat_bot',
+    role: {
+      allowedTools: ['mama_*', 'Read'],
+      blockedTools: ['Bash', 'Write'],
+      systemControl: false,
+      sensitiveAccess: false,
+    },
+    session: {
+      sessionId: 'test-session',
+      startedAt: new Date(),
+    },
+    capabilities: ['mama_*', 'Read'],
+    limitations: ['No system control'],
+  });
+
   describe('execute()', () => {
     it('should throw error for unknown tool', async () => {
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
@@ -352,41 +388,6 @@ describe('GatewayToolExecutor', () => {
   });
 
   describe('OS Management tools - permission checks', () => {
-    const createViewerContext = () => ({
-      source: 'viewer',
-      platform: 'viewer' as const,
-      roleName: 'os_agent',
-      role: {
-        allowedTools: ['*'],
-        systemControl: true,
-        sensitiveAccess: true,
-      },
-      session: {
-        sessionId: 'test-session',
-        startedAt: new Date(),
-      },
-      capabilities: ['All tools'],
-      limitations: [],
-    });
-
-    const createDiscordContext = () => ({
-      source: 'discord',
-      platform: 'discord' as const,
-      roleName: 'chat_bot',
-      role: {
-        allowedTools: ['mama_*', 'Read'],
-        blockedTools: ['Bash', 'Write'],
-        systemControl: false,
-        sensitiveAccess: false,
-      },
-      session: {
-        sessionId: 'test-session',
-        startedAt: new Date(),
-      },
-      capabilities: ['mama_*', 'Read'],
-      limitations: ['No system control'],
-    });
-
     it('should deny os_add_bot from non-viewer source', async () => {
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
       executor.setAgentContext(createDiscordContext());
@@ -417,16 +418,31 @@ describe('GatewayToolExecutor', () => {
       });
     });
 
-    it('should allow os_get_config from any source (with masked data)', async () => {
+    it('should deny os_get_config from non-viewer source', async () => {
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
       executor.setAgentContext(createDiscordContext());
 
-      // This should work but return masked config
-      // Note: It may fail if config doesn't exist, which is OK for this test
+      // os_get_config requires os_* tool permission which chat_bot doesn't have
       const result = await executor.execute('os_get_config', {});
 
-      // Either success with masked config or error due to missing config file
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Permission denied'),
+      });
+    });
+
+    it('should allow os_get_config from viewer source', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      // Viewer has all tools allowed
+      const result = await executor.execute('os_get_config', {});
+
+      // Either succeeds with config or fails due to missing config file (not permission)
       expect(result).toHaveProperty('success');
+      if (!result.success && result.error) {
+        expect(result.error).not.toContain('Permission denied');
+      }
     });
 
     it('should require platform for os_add_bot', async () => {
@@ -468,41 +484,6 @@ describe('GatewayToolExecutor', () => {
   });
 
   describe('OS Monitoring tools', () => {
-    const createViewerContext = () => ({
-      source: 'viewer',
-      platform: 'viewer' as const,
-      roleName: 'os_agent',
-      role: {
-        allowedTools: ['*'],
-        systemControl: true,
-        sensitiveAccess: true,
-      },
-      session: {
-        sessionId: 'test-session',
-        startedAt: new Date(),
-      },
-      capabilities: ['All tools'],
-      limitations: [],
-    });
-
-    const createDiscordContext = () => ({
-      source: 'discord',
-      platform: 'discord' as const,
-      roleName: 'chat_bot',
-      role: {
-        allowedTools: ['mama_*', 'Read'],
-        blockedTools: ['Bash', 'Write'],
-        systemControl: false,
-        sensitiveAccess: false,
-      },
-      session: {
-        sessionId: 'test-session',
-        startedAt: new Date(),
-      },
-      capabilities: ['mama_*', 'Read'],
-      limitations: ['No system control'],
-    });
-
     it('should include monitoring tools in valid tools', () => {
       const tools = GatewayToolExecutor.getValidTools();
       expect(tools).toContain('os_list_bots');
@@ -510,15 +491,31 @@ describe('GatewayToolExecutor', () => {
       expect(tools).toContain('os_stop_bot');
     });
 
-    it('should allow os_list_bots from any source', async () => {
+    it('should deny os_list_bots from non-viewer source', async () => {
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
       executor.setAgentContext(createDiscordContext());
 
-      // This should work - os_list_bots doesn't require viewer-only
+      // os_list_bots requires os_* tool permission which chat_bot doesn't have
       const result = await executor.execute('os_list_bots', {});
 
-      // Should either succeed or fail due to missing config (not permission)
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Permission denied'),
+      });
+    });
+
+    it('should allow os_list_bots from viewer source', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      // Viewer has all tools allowed
+      const result = await executor.execute('os_list_bots', {});
+
+      // Either succeeds with bots list or fails due to missing config (not permission)
       expect(result).toHaveProperty('success');
+      if (!result.success && result.error) {
+        expect(result.error).not.toContain('Permission denied');
+      }
     });
 
     it('should deny os_restart_bot from non-viewer source', async () => {
