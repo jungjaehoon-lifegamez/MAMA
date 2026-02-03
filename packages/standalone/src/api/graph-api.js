@@ -1163,22 +1163,27 @@ async function handleDashboardStatusRequest(req, res) {
     const memoryStats = await getMemoryStats();
 
     // Build gateway status from config (simplified: config exists = configured)
+    // Include channel info for each gateway
     const gateways = {
       discord: {
         configured: !!config.discord?.token,
         enabled: config.discord?.enabled ?? false,
+        channel: config.discord?.default_channel_id || null,
       },
       slack: {
         configured: !!config.slack?.bot_token,
         enabled: config.slack?.enabled ?? false,
+        channel: config.slack?.default_channel || null,
       },
       telegram: {
         configured: !!config.telegram?.token,
         enabled: config.telegram?.enabled ?? false,
+        chats: config.telegram?.allowed_chats || [],
       },
       chatwork: {
         configured: !!config.chatwork?.api_token,
         enabled: config.chatwork?.enabled ?? false,
+        rooms: config.chatwork?.room_ids || [],
       },
     };
 
@@ -1192,10 +1197,14 @@ async function handleDashboardStatusRequest(req, res) {
 
     // Agent config
     const agent = {
-      model: config.agent?.model ?? 'claude-sonnet-4-20250514',
+      model: config.agent?.model || 'claude-sonnet-4-20250514',
       maxTurns: config.agent?.max_turns ?? 10,
       timeout: config.agent?.timeout ?? 300000,
+      tools: config.agent?.tools || { gateway: ['*'], mcp: [] },
     };
+
+    // Get session statistics
+    const sessionStats = getSessionStats();
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
@@ -1205,6 +1214,7 @@ async function handleDashboardStatusRequest(req, res) {
         heartbeat,
         agent,
         memory: memoryStats,
+        sessions: sessionStats,
         database: {
           path: config.database?.path ?? '~/.claude/mama-memory.db',
         },
@@ -1325,6 +1335,80 @@ async function getMemoryStats() {
 }
 
 /**
+ * Get session statistics from sessions database
+ * Shows active sessions per source/channel
+ */
+function getSessionStats() {
+  try {
+    // Session DB path is derived from config.database.path
+    // Default: ~/.claude/mama-memory.db → ~/.claude/mama-sessions.db
+    const config = loadMAMAConfig();
+    const memoryDbPath = config.database?.path || '~/.claude/mama-memory.db';
+    const expandedPath = memoryDbPath.startsWith('~/')
+      ? path.join(os.homedir(), memoryDbPath.slice(2))
+      : memoryDbPath;
+    const sessionsDbPath = expandedPath.replace('mama-memory.db', 'mama-sessions.db');
+
+    if (!fs.existsSync(sessionsDbPath)) {
+      return { total: 0, bySource: {}, channels: [] };
+    }
+
+    const Database = require('better-sqlite3');
+    const sessionsDb = new Database(sessionsDbPath);
+
+    // Get session counts by source
+    const bySourceRows = sessionsDb
+      .prepare(
+        `
+        SELECT source, COUNT(*) as count
+        FROM messenger_sessions
+        GROUP BY source
+      `
+      )
+      .all();
+
+    const bySource = {};
+    let total = 0;
+    for (const row of bySourceRows) {
+      bySource[row.source] = row.count;
+      total += row.count;
+    }
+
+    // Get recent active channels with message counts and channel names
+    const channelRows = sessionsDb
+      .prepare(
+        `
+        SELECT
+          source,
+          channel_id,
+          channel_name,
+          last_active,
+          json_array_length(context) as message_count
+        FROM messenger_sessions
+        ORDER BY last_active DESC
+        LIMIT 10
+      `
+      )
+      .all();
+
+    const channels = channelRows.map((row) => ({
+      source: row.source,
+      channelId: row.channel_id,
+      channelName: row.channel_name || null,
+      lastActive: row.last_active,
+      messageCount: row.message_count || 0,
+    }));
+
+    sessionsDb.close();
+
+    return { total, bySource, channels };
+  } catch (error) {
+    console.error('[GraphAPI] Session stats error:', error.message);
+    return { total: 0, bySource: {}, channels: [] };
+  }
+}
+
+/**
  * Handle GET /api/config - get current configuration
  * Phase 5: Settings Management
  */
@@ -1377,6 +1461,33 @@ async function handleGetConfigRequest(req, res) {
         interval: 1800000,
         quiet_start: 23,
         quiet_end: 8,
+      },
+      // Role-based permissions (Phase: Agent Role Awareness)
+      roles: config.roles || {
+        definitions: {
+          os_agent: {
+            model: 'claude-sonnet-4-20250514',
+            maxTurns: 20,
+            allowedTools: ['*'],
+            systemControl: true,
+            sensitiveAccess: true,
+          },
+          chat_bot: {
+            model: 'claude-sonnet-4-20250514',
+            maxTurns: 10,
+            allowedTools: ['mama_*', 'Read', 'discord_send'],
+            blockedTools: ['Bash', 'Write'],
+            systemControl: false,
+            sensitiveAccess: false,
+          },
+        },
+        sourceMapping: {
+          viewer: 'os_agent',
+          discord: 'chat_bot',
+          telegram: 'chat_bot',
+          slack: 'chat_bot',
+          chatwork: 'chat_bot',
+        },
       },
     };
 

@@ -133,9 +133,11 @@ export class MemoryModule {
     if (results.length > 0) {
       this.searchData = results;
 
-      // Update search input with the query
+      // Update search input with the query (if element exists)
       const input = document.getElementById('memory-search-input');
-      input.value = message.substring(0, 50) + (message.length > 50 ? '...' : '');
+      if (input) {
+        input.value = message.substring(0, 50) + (message.length > 50 ? '...' : '');
+      }
 
       // Render results
       this.renderResults(results, message);
