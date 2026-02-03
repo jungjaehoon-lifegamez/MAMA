@@ -59,6 +59,35 @@
 }
 
 /* ============================================================================
+   MAMA BRAND UTILITIES (Custom Tailwind-style classes)
+   ============================================================================ */
+
+/* Background colors */
+.bg-mama-yellow { background-color: #FFCE00; }
+.bg-mama-yellow-hover { background-color: #E6B800; }
+.bg-mama-lavender { background-color: #EDDBF7; }
+.bg-mama-lavender-light { background-color: #F5EBF9; }
+.bg-mama-lavender-dark { background-color: #D4C4E0; }
+.bg-mama-black { background-color: #131313; }
+.bg-mama-blush { background-color: #FF9999; }
+
+/* Text colors */
+.text-mama-yellow { color: #FFCE00; }
+.text-mama-black { color: #131313; }
+.text-mama-blush { color: #FF9999; }
+
+/* Border colors */
+.border-mama-yellow { border-color: #FFCE00; }
+.border-mama-lavender { border-color: #EDDBF7; }
+.border-mama-lavender-dark { border-color: #D4C4E0; }
+.border-mama-blush { border-color: #FF9999; }
+
+/* Graph-specific background with gradient */
+.bg-mama-graph {
+  background: linear-gradient(135deg, #F5EBF9 0%, #EDDBF7 100%);
+}
+
+/* ============================================================================
    MESSENGER-STYLE CHAT - Brand Colors
    ============================================================================ */
 
