@@ -45,7 +45,7 @@ mama init
 mama start
 ```
 
-**Package:** `@jungjaehoon/mama-os` v0.3.0
+**Package:** `@jungjaehoon/mama-os` v0.3.1
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -175,7 +175,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.3.0   | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.3.1   | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.6.6   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.1   | Shared core library (embeddings, DB, memory) | npm                |
 | [mama](packages/claude-code-plugin/README.md)                    | 1.6.6   | Claude Code plugin                           | Claude Marketplace |

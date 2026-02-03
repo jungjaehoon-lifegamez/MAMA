@@ -340,7 +340,7 @@ Key docs:
 
 **Packages:**
 
-- @jungjaehoon/mama-os v0.3.0 - Standalone Agent
+- @jungjaehoon/mama-os v0.3.1 - Standalone Agent
 - @jungjaehoon/mama-server v1.6.6 - MCP Server
 - @jungjaehoon/mama-core v1.0.1 - Shared Core
 - mama v1.6.6 - Claude Code Plugin
