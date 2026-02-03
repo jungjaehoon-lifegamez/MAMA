@@ -169,10 +169,16 @@ function filterEdgesByNodes(edges, nodes) {
  */
 function serveStaticFile(res, filePath, contentType) {
   try {
-    const content = fs.readFileSync(filePath, 'utf8');
+    // Binary content types should be read without encoding
+    const isBinary = contentType.startsWith('image/') || contentType === 'application/octet-stream';
+    const content = isBinary ? fs.readFileSync(filePath) : fs.readFileSync(filePath, 'utf8');
     const etag = `"${Date.now()}"`; // Force browser to reload
+
+    // Only add charset for text content types
+    const fullContentType = isBinary ? contentType : `${contentType}; charset=utf-8`;
+
     res.writeHead(200, {
-      'Content-Type': `${contentType}; charset=utf-8`,
+      'Content-Type': fullContentType,
       'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
       Pragma: 'no-cache',
       Expires: '0',
