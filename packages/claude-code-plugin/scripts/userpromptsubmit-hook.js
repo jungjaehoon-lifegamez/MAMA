@@ -184,6 +184,13 @@ async function main() {
     return;
   }
 
+  // MAMA OS (Standalone) 환경에서는 스킵
+  // MAMA OS는 자체 ContextInjector로 컨텍스트를 주입하므로 중복 방지
+  if (process.env.MAMA_DAEMON === '1') {
+    info('[Hook] MAMA OS detected, skipping (uses built-in context injection)');
+    return;
+  }
+
   const startTime = Date.now();
 
   try {
