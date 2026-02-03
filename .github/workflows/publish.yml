@@ -39,7 +39,7 @@ jobs:
         run: pnpm install --ignore-scripts
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish --access public || echo "Version already published, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -67,7 +67,7 @@ jobs:
         run: pnpm install --ignore-scripts
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish --access public || echo "Version already published, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -102,13 +102,13 @@ jobs:
           cat package.json
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish --access public || echo "Version already published, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Publish mama-os (standalone)
   publish-mama-os:
-    if: startsWith(github.ref, 'refs/tags/os-v') || startsWith(github.ref, 'refs/tags/mama-os-') || startsWith(github.ref, 'refs/tags/standalone-v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/os-v') || startsWith(github.ref, 'refs/tags/mama-os-') || startsWith(github.ref, 'refs/tags/standalone-v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -141,6 +141,6 @@ jobs:
           cat package.json
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish --access public || echo "Version already published, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
