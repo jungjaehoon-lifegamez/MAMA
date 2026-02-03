@@ -178,7 +178,7 @@ export class ClaudeCLIWrapper {
               // Collect tool_use blocks for GatewayToolExecutor
               toolUseBlocks.push({
                 type: 'tool_use',
-                id: event.id || `tool_${Date.now()}_${toolUseBlocks.length}`,
+                id: event.id || `tool_${randomUUID()}`,
                 name: event.name,
                 input: event.input || {},
               });

@@ -554,7 +554,7 @@ export class AgentLoop {
         if (parsed.name && typeof parsed.name === 'string') {
           toolCalls.push({
             type: 'tool_use',
-            id: `gateway_tool_${Date.now()}_${index++}`,
+            id: `gateway_tool_${randomUUID()}`,
             name: parsed.name,
             input: parsed.input || {},
           });
