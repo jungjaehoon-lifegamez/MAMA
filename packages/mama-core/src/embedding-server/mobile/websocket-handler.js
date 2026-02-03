@@ -215,6 +215,26 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           })
         );
 
+        // Keep-alive: Send periodic status updates to prevent WebSocket timeout
+        // Browser may disconnect idle WebSocket after ~30 seconds
+        let processingSeconds = 0;
+        const keepAliveInterval = setInterval(() => {
+          processingSeconds += 10;
+          if (clientInfo.ws.readyState === 1) {
+            // WebSocket.OPEN
+            clientInfo.ws.send(
+              JSON.stringify({
+                type: 'typing',
+                status: 'processing',
+                elapsed: processingSeconds,
+              })
+            );
+            console.error(
+              `[WebSocket] Keep-alive sent to ${clientId} (${processingSeconds}s elapsed)`
+            );
+          }
+        }, 10000); // Every 10 seconds
+
         const normalizedMessage = {
           source: clientInfo.osAgentMode ? 'viewer' : 'mobile',
           channelId: 'mama_os_main', // Fixed channel for all MAMA OS viewers
@@ -229,7 +249,12 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           },
         };
 
-        const result = await messageRouter.process(normalizedMessage);
+        let result;
+        try {
+          result = await messageRouter.process(normalizedMessage);
+        } finally {
+          clearInterval(keepAliveInterval);
+        }
 
         // Send response as stream (for Chat tab compatibility)
         clientInfo.ws.send(
