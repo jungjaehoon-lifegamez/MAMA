@@ -122,7 +122,7 @@ importers:
     dependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.71.2
-        version: 0.71.2(zod@3.25.76)
+        version: 0.71.2(zod@4.3.6)
       '@jungjaehoon/mama-core':
         specifier: workspace:*
         version: link:../mama-core
@@ -153,6 +153,9 @@ importers:
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
+      minimatch:
+        specifier: ^10.1.1
+        version: 10.1.1
       node-cron:
         specifier: ^3.0.3
         version: 3.0.3
@@ -178,6 +181,9 @@ importers:
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
+      '@types/minimatch':
+        specifier: ^6.0.0
+        version: 6.0.0
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.7
@@ -1908,6 +1914,10 @@ packages:
 
   '@types/mime-types@2.1.4':
     resolution: {integrity: sha512-lfU4b34HOri+kAY5UheuFMWPDOI+OPceBSHZKp69gEyTL/mmJ4cnU6Y/rlme3UL3GyOn6Y42hyIEw0/q8sWx5w==}
+
+  '@types/minimatch@6.0.0':
+    resolution: {integrity: sha512-zmPitbQ8+6zNutpwgcQuLcsEpn/Cj54Kbn7L5pX0Os5kdWplB7xPgEh/g+SWOB/qmows2gpuCaPyduq8ZZRnxA==}
+    deprecated: This is a stub types definition. minimatch provides its own type definitions, so you do not need this installed.
 
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
@@ -4985,12 +4995,6 @@ snapshots:
     dependencies:
       zod: 4.3.6
 
-  '@anthropic-ai/sdk@0.71.2(zod@3.25.76)':
-    dependencies:
-      json-schema-to-ts: 3.1.1
-    optionalDependencies:
-      zod: 3.25.76
-
   '@anthropic-ai/sdk@0.71.2(zod@4.3.6)':
     dependencies:
       json-schema-to-ts: 3.1.1
@@ -6844,7 +6848,7 @@ snapshots:
       '@slack/types': 2.19.0
       '@types/node': 22.19.7
       '@types/retry': 0.12.0
-      axios: 1.13.3
+      axios: 1.13.3(debug@4.4.3)
       eventemitter3: 5.0.4
       form-data: 4.0.5
       is-electron: 2.2.2
@@ -7289,6 +7293,10 @@ snapshots:
 
   '@types/mime-types@2.1.4': {}
 
+  '@types/minimatch@6.0.0':
+    dependencies:
+      minimatch: 10.1.1
+
   '@types/ms@2.1.0': {}
 
   '@types/node-cron@3.0.11': {}
@@ -7535,14 +7543,6 @@ snapshots:
   aws-sign2@0.7.0: {}
 
   aws4@1.13.2: {}
-
-  axios@1.13.3:
-    dependencies:
-      follow-redirects: 1.15.11
-      form-data: 4.0.5
-      proxy-from-env: 1.1.0
-    transitivePeerDependencies:
-      - debug
 
   axios@1.13.3(debug@4.4.3):
     dependencies:
@@ -8348,8 +8348,6 @@ snapshots:
   flatbuffers@25.9.23: {}
 
   flatted@3.3.3: {}
-
-  follow-redirects@1.15.11: {}
 
   follow-redirects@1.15.11(debug@4.4.3):
     optionalDependencies:

@@ -217,7 +217,8 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
 
         const normalizedMessage = {
           source: clientInfo.osAgentMode ? 'viewer' : 'mobile',
-          channelId: clientInfo.userId,
+          channelId: 'mama_os_main', // Fixed channel for all MAMA OS viewers
+          channelName: clientInfo.osAgentMode ? 'MAMA OS' : 'Mobile App', // Human-readable channel name
           userId: clientInfo.userId,
           text: content,
           metadata: {
@@ -293,19 +294,41 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
       // Send session history if available, or send onboarding greeting
       if (sessionStore) {
         try {
-          const history = sessionStore.getHistory(sessionId);
+          // Use channel-based lookup for viewer sessions
+          // clientInfo.userId is like "user_127_0_0_1"
+          // Use fixed channel ID for all MAMA OS viewers (shared conversation)
+          const channelId = 'mama_os_main';
+          const history = sessionStore.getHistoryByChannel
+            ? sessionStore.getHistoryByChannel('viewer', channelId)
+            : sessionStore.getHistory(sessionId);
           if (history && history.length > 0) {
+            // Convert {user, bot, timestamp} format to {role, content, timestamp} for display
+            const formattedMessages = [];
+            for (const turn of history) {
+              if (turn.user) {
+                formattedMessages.push({
+                  role: 'user',
+                  content: turn.user,
+                  timestamp: turn.timestamp,
+                });
+              }
+              if (turn.bot) {
+                formattedMessages.push({
+                  role: 'assistant',
+                  content: turn.bot,
+                  timestamp: turn.timestamp,
+                });
+              }
+            }
             clientInfo.ws.send(
               JSON.stringify({
                 type: 'history',
-                messages: history.map((turn) => ({
-                  role: turn.role,
-                  content: turn.content,
-                  timestamp: turn.timestamp,
-                })),
+                messages: formattedMessages,
               })
             );
-            console.log(`[WebSocket] Sent ${history.length} history messages to ${clientId}`);
+            console.log(
+              `[WebSocket] Sent ${formattedMessages.length} history messages to ${clientId}`
+            );
           } else {
             // No history - check if onboarding mode (SOUL.md not found)
             const soulPath = path.join(os.homedir(), '.mama', 'SOUL.md');

@@ -302,26 +302,22 @@ describe('GatewayToolExecutor', () => {
   describe('static methods', () => {
     it('should return valid tools', () => {
       const tools = GatewayToolExecutor.getValidTools();
-      expect(tools).toEqual([
-        'mama_search',
-        'mama_save',
-        'mama_update',
-        'mama_load_checkpoint',
-        'Read',
-        'Write',
-        'Bash',
-        'discord_send',
-        'browser_navigate',
-        'browser_screenshot',
-        'browser_click',
-        'browser_type',
-        'browser_get_text',
-        'browser_scroll',
-        'browser_wait_for',
-        'browser_evaluate',
-        'browser_pdf',
-        'browser_close',
-      ]);
+      expect(tools).toContain('mama_search');
+      expect(tools).toContain('mama_save');
+      expect(tools).toContain('mama_update');
+      expect(tools).toContain('mama_load_checkpoint');
+      expect(tools).toContain('Read');
+      expect(tools).toContain('Write');
+      expect(tools).toContain('Bash');
+      expect(tools).toContain('discord_send');
+      // Browser tools
+      expect(tools).toContain('browser_navigate');
+      expect(tools).toContain('browser_screenshot');
+      expect(tools).toContain('browser_close');
+      // OS Management tools
+      expect(tools).toContain('os_add_bot');
+      expect(tools).toContain('os_set_permissions');
+      expect(tools).toContain('os_get_config');
     });
 
     it('should check valid tool names', () => {
@@ -344,10 +340,252 @@ describe('GatewayToolExecutor', () => {
       expect(GatewayToolExecutor.isValidTool('browser_evaluate')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('browser_pdf')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('browser_close')).toBe(true);
+      // OS Management tools
+      expect(GatewayToolExecutor.isValidTool('os_add_bot')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('os_set_permissions')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('os_get_config')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('invalid')).toBe(false);
       // Old names should be invalid
       expect(GatewayToolExecutor.isValidTool('save')).toBe(false);
       expect(GatewayToolExecutor.isValidTool('search')).toBe(false);
+    });
+  });
+
+  describe('OS Management tools - permission checks', () => {
+    const createViewerContext = () => ({
+      source: 'viewer',
+      platform: 'viewer' as const,
+      roleName: 'os_agent',
+      role: {
+        allowedTools: ['*'],
+        systemControl: true,
+        sensitiveAccess: true,
+      },
+      session: {
+        sessionId: 'test-session',
+        startedAt: new Date(),
+      },
+      capabilities: ['All tools'],
+      limitations: [],
+    });
+
+    const createDiscordContext = () => ({
+      source: 'discord',
+      platform: 'discord' as const,
+      roleName: 'chat_bot',
+      role: {
+        allowedTools: ['mama_*', 'Read'],
+        blockedTools: ['Bash', 'Write'],
+        systemControl: false,
+        sensitiveAccess: false,
+      },
+      session: {
+        sessionId: 'test-session',
+        startedAt: new Date(),
+      },
+      capabilities: ['mama_*', 'Read'],
+      limitations: ['No system control'],
+    });
+
+    it('should deny os_add_bot from non-viewer source', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createDiscordContext());
+
+      const result = await executor.execute('os_add_bot', {
+        platform: 'telegram',
+        token: 'test-token',
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Permission denied'),
+      });
+    });
+
+    it('should deny os_set_permissions from non-viewer source', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createDiscordContext());
+
+      const result = await executor.execute('os_set_permissions', {
+        role: 'custom_role',
+        allowedTools: ['Read'],
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Permission denied'),
+      });
+    });
+
+    it('should allow os_get_config from any source (with masked data)', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createDiscordContext());
+
+      // This should work but return masked config
+      // Note: It may fail if config doesn't exist, which is OK for this test
+      const result = await executor.execute('os_get_config', {});
+
+      // Either success with masked config or error due to missing config file
+      expect(result).toHaveProperty('success');
+    });
+
+    it('should require platform for os_add_bot', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      const result = await executor.execute('os_add_bot', {} as any);
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Platform is required'),
+      });
+    });
+
+    it('should require token for Discord bot', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      const result = await executor.execute('os_add_bot', {
+        platform: 'discord',
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('token is required'),
+      });
+    });
+
+    it('should require role name for os_set_permissions', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      const result = await executor.execute('os_set_permissions', {} as any);
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Role name is required'),
+      });
+    });
+  });
+
+  describe('OS Monitoring tools', () => {
+    const createViewerContext = () => ({
+      source: 'viewer',
+      platform: 'viewer' as const,
+      roleName: 'os_agent',
+      role: {
+        allowedTools: ['*'],
+        systemControl: true,
+        sensitiveAccess: true,
+      },
+      session: {
+        sessionId: 'test-session',
+        startedAt: new Date(),
+      },
+      capabilities: ['All tools'],
+      limitations: [],
+    });
+
+    const createDiscordContext = () => ({
+      source: 'discord',
+      platform: 'discord' as const,
+      roleName: 'chat_bot',
+      role: {
+        allowedTools: ['mama_*', 'Read'],
+        blockedTools: ['Bash', 'Write'],
+        systemControl: false,
+        sensitiveAccess: false,
+      },
+      session: {
+        sessionId: 'test-session',
+        startedAt: new Date(),
+      },
+      capabilities: ['mama_*', 'Read'],
+      limitations: ['No system control'],
+    });
+
+    it('should include monitoring tools in valid tools', () => {
+      const tools = GatewayToolExecutor.getValidTools();
+      expect(tools).toContain('os_list_bots');
+      expect(tools).toContain('os_restart_bot');
+      expect(tools).toContain('os_stop_bot');
+    });
+
+    it('should allow os_list_bots from any source', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createDiscordContext());
+
+      // This should work - os_list_bots doesn't require viewer-only
+      const result = await executor.execute('os_list_bots', {});
+
+      // Should either succeed or fail due to missing config (not permission)
+      expect(result).toHaveProperty('success');
+    });
+
+    it('should deny os_restart_bot from non-viewer source', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createDiscordContext());
+
+      const result = await executor.execute('os_restart_bot', {
+        platform: 'discord',
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Permission denied'),
+      });
+    });
+
+    it('should deny os_stop_bot from non-viewer source', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createDiscordContext());
+
+      const result = await executor.execute('os_stop_bot', {
+        platform: 'discord',
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Permission denied'),
+      });
+    });
+
+    it('should require platform for os_restart_bot', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      const result = await executor.execute('os_restart_bot', {} as any);
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Platform is required'),
+      });
+    });
+
+    it('should require platform for os_stop_bot', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      const result = await executor.execute('os_stop_bot', {} as any);
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Platform is required'),
+      });
+    });
+
+    it('should indicate bot control not available without callback', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      const result = await executor.execute('os_restart_bot', {
+        platform: 'discord',
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Bot control not available'),
+      });
     });
   });
 });

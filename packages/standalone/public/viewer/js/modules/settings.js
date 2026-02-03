@@ -104,6 +104,95 @@ export class SettingsModule {
 
     // Tool Mode
     this.populateToolMode();
+
+    // Role Permissions
+    this.populateRoles();
+  }
+
+  /**
+   * Populate role permissions from config
+   */
+  populateRoles() {
+    const container = document.getElementById('settings-roles-container');
+    if (!container || !this.config.roles) {
+      return;
+    }
+
+    const { definitions, sourceMapping } = this.config.roles;
+    if (!definitions || !sourceMapping) {
+      return;
+    }
+
+    // Build reverse mapping: role -> sources
+    const roleSources = {};
+    for (const [source, role] of Object.entries(sourceMapping)) {
+      if (!roleSources[role]) {
+        roleSources[role] = [];
+      }
+      roleSources[role].push(source);
+    }
+
+    // Render each role
+    const roleColors = {
+      os_agent: { badge: 'green', label: 'Full Access' },
+      chat_bot: { badge: 'yellow', label: 'Limited' },
+    };
+
+    const roleIcons = {
+      os_agent: '🖥️',
+      chat_bot: '🤖',
+    };
+
+    const html = Object.entries(definitions)
+      .map(([roleName, roleConfig]) => {
+        const sources = roleSources[roleName] || [];
+        const color = roleColors[roleName] || { badge: 'gray', label: 'Custom' };
+        const icon = roleIcons[roleName] || '⚙️';
+        const displayName = roleName.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+
+        const allowedTools = roleConfig.allowedTools || [];
+        const blockedTools = roleConfig.blockedTools || [];
+        const hasSystemControl = roleConfig.systemControl;
+        const hasSensitiveAccess = roleConfig.sensitiveAccess;
+        const model = roleConfig.model || 'default';
+        const maxTurns = roleConfig.maxTurns;
+
+        // Format model name for display
+        const displayModel = this.formatModelName(model);
+
+        return `
+          <div class="bg-white border border-gray-200 rounded-lg p-2.5">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-xl">${icon}</span>
+                <h3 class="font-semibold text-gray-900 text-sm">${displayName}</h3>
+                <span class="text-[10px] bg-${color.badge}-100 text-${color.badge}-800 px-1.5 py-0.5 rounded">${color.label}</span>
+              </div>
+            </div>
+            <div class="text-xs text-gray-600 space-y-1">
+              <div class="flex items-center gap-2">
+                <span class="font-medium">Model:</span>
+                <span class="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">${displayModel}</span>
+                ${maxTurns ? `<span class="text-gray-400">| ${maxTurns} turns</span>` : ''}
+              </div>
+              <div><span class="font-medium">Source:</span> ${sources.map((s) => `<code class="bg-gray-100 px-1 rounded">${s}</code>`).join(' ')}</div>
+              <div><span class="font-medium">Allowed:</span> <code class="text-green-600 text-[10px]">${allowedTools.join(', ')}</code></div>
+              ${blockedTools.length > 0 ? `<div><span class="font-medium">Blocked:</span> <code class="text-red-600 text-[10px]">${blockedTools.join(', ')}</code></div>` : ''}
+              ${
+                hasSystemControl || hasSensitiveAccess
+                  ? `<div><span class="font-medium">Permissions:</span>
+                ${hasSystemControl ? '<span class="inline-block bg-blue-100 text-blue-800 text-[10px] px-1 rounded mr-1">systemControl</span>' : ''}
+                ${hasSensitiveAccess ? '<span class="inline-block bg-purple-100 text-purple-800 text-[10px] px-1 rounded">sensitiveAccess</span>' : ''}
+              </div>`
+                  : ''
+              }
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    container.innerHTML = html;
   }
 
   /**
@@ -379,6 +468,38 @@ export class SettingsModule {
   getRadio(id) {
     const el = document.getElementById(id);
     return el ? el.checked : false;
+  }
+
+  /**
+   * Format model name for display
+   */
+  formatModelName(model) {
+    if (!model || model === 'default') {
+      return 'Default';
+    }
+
+    const modelNames = {
+      'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
+      'claude-opus-4-20250514': 'Claude 4 Opus',
+      'claude-3-5-sonnet-20241022': 'Claude 3.5 Sonnet',
+      'claude-3-opus-20240229': 'Claude 3 Opus',
+      'claude-3-sonnet-20240229': 'Claude 3 Sonnet',
+      'claude-3-haiku-20240307': 'Claude 3 Haiku',
+    };
+
+    if (modelNames[model]) {
+      return modelNames[model];
+    }
+    if (model.includes('opus')) {
+      return 'Claude Opus';
+    }
+    if (model.includes('sonnet')) {
+      return 'Claude Sonnet';
+    }
+    if (model.includes('haiku')) {
+      return 'Claude Haiku';
+    }
+    return model;
   }
 
   /**
