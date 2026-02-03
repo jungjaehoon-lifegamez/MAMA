@@ -107,7 +107,23 @@ export class ContextInjector {
     }
 
     try {
-      const results = await this.mamaApi.search(query, this.maxDecisions + 2);
+      const searchResult = await this.mamaApi.search(query, this.maxDecisions + 2);
+
+      // Handle null/empty result
+      if (!searchResult) {
+        return { prompt: '', decisions: [], hasContext: false };
+      }
+
+      // mama-core's suggest() returns { query, results, meta, graph } object
+      // Extract the actual results array - handle both array and object formats
+      let results: SearchResult[];
+      if (Array.isArray(searchResult)) {
+        results = searchResult;
+      } else {
+        // Cast to any to access .results property from mama-core's response format
+        const responseObj = searchResult as { results?: SearchResult[] };
+        results = responseObj.results || [];
+      }
 
       // Filter by similarity threshold
       const relevant = results

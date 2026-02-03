@@ -134,8 +134,10 @@ export class ClaudeCLIWrapper {
         args.push('--model', model);
       }
 
-      // Only inject system prompt for NEW sessions (not resume)
-      if (this.options.systemPrompt && !isResume) {
+      // Always inject system prompt - even for resume sessions
+      // This ensures Gateway Tools are available if CLI session was lost
+      // (CLI will use cached context if available, otherwise use this prompt)
+      if (this.options.systemPrompt) {
         args.push('--system-prompt', this.options.systemPrompt);
       }
 

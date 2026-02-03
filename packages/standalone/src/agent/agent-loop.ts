@@ -395,10 +395,16 @@ export class AgentLoop {
 
     try {
       if (options?.systemPrompt) {
+        // Append Gateway Tools to the provided system prompt
+        // This ensures tools are always available regardless of what MessageRouter provides
+        const gatewayToolsPrompt = this.isGatewayMode ? getGatewayToolsPrompt() : '';
+        const fullPrompt = gatewayToolsPrompt
+          ? `${options.systemPrompt}\n\n---\n\n${gatewayToolsPrompt}`
+          : options.systemPrompt;
         console.log(
-          `[AgentLoop] Setting systemPrompt: ${options.systemPrompt.length} chars, starts with: ${options.systemPrompt.substring(0, 100)}...`
+          `[AgentLoop] Setting systemPrompt: ${fullPrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
         );
-        this.agent.setSystemPrompt(options.systemPrompt);
+        this.agent.setSystemPrompt(fullPrompt);
       } else {
         console.log(`[AgentLoop] No systemPrompt in options, using default`);
       }
@@ -439,13 +445,37 @@ export class AgentLoop {
             resumeSession: options?.resumeSession,
           });
         } catch (error) {
-          console.error('[AgentLoop] Claude CLI error:', error);
-          throw new AgentError(
-            `Claude CLI error: ${error instanceof Error ? error.message : String(error)}`,
-            'CLI_ERROR',
-            error instanceof Error ? error : undefined,
-            true // retryable
-          );
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error('[AgentLoop] Claude CLI error:', errorMessage);
+
+          // Check if this is a "session not found" error when using --resume
+          // This can happen if the CLI session was lost (daemon restart, timeout, etc.)
+          if (
+            options?.resumeSession &&
+            errorMessage.includes('No conversation found with session ID')
+          ) {
+            console.log(
+              '[AgentLoop] Session not found in CLI, retrying with --session-id (new session)'
+            );
+            // Reset session in pool so it creates a new one
+            this.sessionPool.resetSession(channelKey);
+            const newSessionId = this.sessionPool.getSessionId(channelKey);
+            this.claudeCLI?.setSessionId(newSessionId);
+
+            // Retry without resumeSession flag (will use --session-id instead of --resume)
+            piResult = await this.agent.prompt(promptText, callbacks, {
+              model: options?.model,
+              resumeSession: false, // Force new session
+            });
+            console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
+          } else {
+            throw new AgentError(
+              `Claude CLI error: ${errorMessage}`,
+              'CLI_ERROR',
+              error instanceof Error ? error : undefined,
+              true // retryable
+            );
+          }
         }
 
         // Build content blocks - include tool_use blocks if present

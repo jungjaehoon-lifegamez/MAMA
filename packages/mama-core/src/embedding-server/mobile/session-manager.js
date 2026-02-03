@@ -163,10 +163,10 @@ class SessionManager {
     }
 
     const stmt = this.db.prepare(`
-      SELECT id, project_dir, created_at, last_active, status, pid, client_id
+      SELECT id, project_dir, started_at, last_active_at, status, pid, client_id
       FROM sessions
       WHERE status = 'active'
-      ORDER BY created_at DESC
+      ORDER BY started_at DESC
     `);
 
     const rows = stmt.all();
@@ -177,8 +177,8 @@ class SessionManager {
       return {
         id: row.id,
         projectDir: row.project_dir,
-        createdAt: row.created_at,
-        lastActive: row.last_active,
+        createdAt: row.started_at,
+        lastActive: row.last_active_at,
         status: row.status,
         pid: row.pid,
         clientId: row.client_id,
