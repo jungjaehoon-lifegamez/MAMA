@@ -4,10 +4,11 @@
  * Routes messages from different platforms through a unified pipeline:
  * 1. Normalize message format
  * 2. Load/create session context
- * 3. Inject proactive context (related decisions)
- * 4. Call Agent Loop
- * 5. Update session context
- * 6. Return response
+ * 3. Create AgentContext with role permissions
+ * 4. Inject proactive context (related decisions)
+ * 5. Call Agent Loop with context
+ * 6. Update session context
+ * 7. Return response
  */
 
 import { existsSync } from 'node:fs';
@@ -19,6 +20,9 @@ import type { NormalizedMessage, MessageRouterConfig, Session, RelatedDecision }
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
+import { RoleManager, getRoleManager } from '../agent/role-manager.js';
+import { createAgentContext } from '../agent/context-prompt-builder.js';
+import type { AgentContext } from '../agent/types.js';
 
 /**
  * Content block for multimodal input
@@ -61,10 +65,16 @@ export interface AgentLoopOptions {
   userId?: string;
   /** Maximum turns */
   maxTurns?: number;
+  /** Claude model to use (overrides default) */
+  model?: string;
   /** Message source (for lane-based concurrency) */
   source?: string;
   /** Channel ID (for lane-based concurrency) */
   channelId?: string;
+  /** Agent context for role-aware execution */
+  agentContext?: AgentContext;
+  /** Resume existing CLI session (skips system prompt injection) */
+  resumeSession?: boolean;
 }
 
 /**
@@ -116,6 +126,7 @@ export class MessageRouter {
   private contextInjector: ContextInjector;
   private agentLoop: AgentLoopClient;
   private config: Required<MessageRouterConfig>;
+  private roleManager: RoleManager;
 
   constructor(
     sessionStore: SessionStore,
@@ -131,11 +142,36 @@ export class MessageRouter {
       maxTurns: config.maxTurns ?? 5,
       maxResponseLength: config.maxResponseLength ?? 200,
     };
+    this.roleManager = getRoleManager();
 
     this.contextInjector = new ContextInjector(mamaApi, {
       similarityThreshold: this.config.similarityThreshold,
       maxDecisions: this.config.maxDecisions,
     });
+  }
+
+  /**
+   * Create AgentContext for a message
+   * Determines role based on message source and builds context
+   */
+  private createAgentContext(message: NormalizedMessage, sessionId: string): AgentContext {
+    const { roleName, role } = this.roleManager.getRoleForSource(message.source);
+    const capabilities = this.roleManager.getCapabilities(role);
+    const limitations = this.roleManager.getLimitations(role);
+
+    return createAgentContext(
+      message.source,
+      roleName,
+      role,
+      {
+        sessionId,
+        channelId: message.channelId,
+        userId: message.userId,
+        userName: message.metadata?.username,
+      },
+      capabilities,
+      limitations
+    );
   }
 
   /**
@@ -172,7 +208,8 @@ This protects your credentials from being exposed in chat logs.`;
     const session = this.sessionStore.getOrCreate(
       message.source,
       message.channelId,
-      message.userId
+      message.userId,
+      message.channelName
     );
 
     // 2. Check if this is a new CLI session (need to inject history from DB)
@@ -180,31 +217,61 @@ This protects your credentials from being exposed in chat logs.`;
     const sessionPool = getSessionPool();
     const { isNew: isNewCliSession } = sessionPool.getSession(channelKey);
 
-    // 3. Get session startup context (like SessionStart hook)
+    // 3. Create AgentContext for role-aware execution
+    const agentContext = this.createAgentContext(message, session.id);
+    console.log(
+      `[MessageRouter] Created context: ${agentContext.roleName}@${agentContext.platform}`
+    );
+
+    // 4. Get session startup context (like SessionStart hook)
     // Always inject to ensure Claude has context about checkpoint and recent decisions
     const sessionStartupContext = await this.contextInjector.getSessionStartupContext();
 
-    // 4. Get per-message context (related decisions - like UserPromptSubmit hook)
+    // 5. Get per-message context (related decisions - like UserPromptSubmit hook)
     // Embedding server runs on port 3847, model stays in memory
     const context = await this.contextInjector.getRelevantContext(message.text);
 
-    // 5. Build system prompt with all contexts
+    // 6. Build system prompt with all contexts including AgentContext
     const historyContext = message.metadata?.historyContext;
     const systemPrompt = this.buildSystemPrompt(
       session,
       context.prompt,
       historyContext,
-      isNewCliSession,
-      sessionStartupContext
+      sessionStartupContext,
+      agentContext
     );
 
-    // 6. Run agent loop (with session info for lane-based concurrency)
+    // 7. Run agent loop (with session info for lane-based concurrency)
+    // Use role-specific model if configured, otherwise use global model
+    const roleModel = agentContext.role.model;
+    const roleMaxTurns = agentContext.role.maxTurns;
+
+    // Determine if we should resume an existing CLI session
+    // - New CLI session: inject full system prompt + history
+    // - Continuing CLI session: use --resume, CLI already has context (90% token savings!)
+    const shouldResume = !isNewCliSession;
+
     const options: AgentLoopOptions = {
-      systemPrompt,
+      // Only inject system prompt for NEW sessions (CLI already has it when resuming)
+      systemPrompt: shouldResume ? undefined : systemPrompt,
       userId: message.userId,
+      model: roleModel, // Role-specific model override
+      maxTurns: roleMaxTurns, // Role-specific max turns
       source: message.source,
       channelId: message.channelId,
+      agentContext,
+      resumeSession: shouldResume, // Use --resume flag for continuing sessions
     };
+
+    if (shouldResume) {
+      console.log(
+        `[MessageRouter] Resuming CLI session (skipping ${systemPrompt.length} chars of system prompt)`
+      );
+    } else {
+      console.log(
+        `[MessageRouter] New CLI session (injecting ${systemPrompt.length} chars of system prompt)`
+      );
+    }
 
     let response: string;
 
@@ -251,14 +318,14 @@ This protects your credentials from being exposed in chat logs.`;
   }
 
   /**
-   * Build system prompt with session context and injected decisions
+   * Build system prompt with session context, injected decisions, and AgentContext
    */
   private buildSystemPrompt(
     session: Session,
     injectedContext: string,
     historyContext?: string,
-    isNewCliSession: boolean = true,
-    sessionStartupContext: string = ''
+    sessionStartupContext: string = '',
+    agentContext?: AgentContext
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
@@ -336,29 +403,38 @@ Now the user is responding for the FIRST time. This is their reply to your awake
     }
 
     // Normal mode - use hybrid history management with persona
-    // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md)
-    let prompt = loadComposedSystemPrompt() + '\n';
+    // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md) + optional context
+    let prompt = loadComposedSystemPrompt(false, agentContext) + '\n';
+
+    // Check for existing conversation history FIRST
+    const dbHistory = this.sessionStore.formatContextForPrompt(session.id);
+    const hasHistory = dbHistory && dbHistory !== 'New conversation';
 
     // Inject session startup context (checkpoint, recent decisions, greeting instructions)
-    // This replaces the SessionStart hook functionality
-    if (sessionStartupContext) {
+    // ONLY for NEW conversations - continuing conversations should flow naturally
+    if (sessionStartupContext && !hasHistory) {
       prompt += sessionStartupContext + '\n';
     }
 
-    // For NEW CLI sessions: inject history from DB to restore context
-    // For EXISTING CLI sessions: Claude CLI maintains history via --session-id
-    if (isNewCliSession) {
-      const dbHistory = this.sessionStore.formatContextForPrompt(session.id);
-      if (dbHistory && dbHistory !== 'New conversation') {
-        prompt += `
-## Previous Conversation (restored from memory)
+    // Always inject DB history - each CLI spawn is a fresh process with no memory
+    if (hasHistory) {
+      prompt += `
+## 🔄 CONVERSATION IN PROGRESS
+
+**IMPORTANT**: You are in the MIDDLE of an ongoing conversation in this channel.
+- Do NOT greet or introduce yourself again
+- Do NOT summarize what was discussed - just continue naturally
+- Respond as if you just heard the user's message, not as if you're resuming from a log
+- The conversation below is YOUR conversation with this user - you remember it
+
+---
 ${dbHistory}
+---
 
 `;
-        console.log(
-          `[MessageRouter] Injected ${dbHistory.length} chars of history for new CLI session`
-        );
-      }
+      console.log(
+        `[MessageRouter] Injected ${dbHistory.length} chars of history (continuing conversation)`
+      );
     }
 
     // Add channel history context only if provided (for multi-user channels)
@@ -375,13 +451,20 @@ ${historyContext}
 
     prompt += `
 ## Instructions
-- Respond naturally and helpfully
+- Respond naturally and helpfully${hasHistory ? ' - this is a continuing conversation, no need to greet' : ''}
 - Remember to save important decisions using the save tool
 - Reference previous decisions when relevant
 - Keep responses concise for messenger format
 `;
 
     return prompt;
+  }
+
+  /**
+   * List all sessions for a source
+   */
+  listSessions(source: NormalizedMessage['source']): Session[] {
+    return this.sessionStore.listSessions(source);
   }
 
   /**
@@ -435,6 +518,17 @@ ${historyContext}
    */
   getConfig(): Required<MessageRouterConfig> {
     return { ...this.config };
+  }
+
+  /**
+   * Update channel name for a session (used to backfill channel names)
+   */
+  updateChannelName(
+    source: NormalizedMessage['source'],
+    channelId: string,
+    channelName: string
+  ): boolean {
+    return this.sessionStore.updateChannelName(source, channelId, channelName);
   }
 }
 

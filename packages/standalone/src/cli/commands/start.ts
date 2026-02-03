@@ -752,6 +752,42 @@ export async function runAgentLoop(
     },
   });
 
+  // Session API endpoints
+  apiServer.app.get('/api/sessions/last-active', async (_req, res) => {
+    try {
+      // Return the most recently active session from the session store
+      const sessions = messageRouter.listSessions('viewer');
+      if (sessions.length === 0) {
+        res.json({ session: null });
+        return;
+      }
+      // Sort by lastActive descending and return the most recent
+      const sorted = sessions.sort((a, b) => b.lastActive - a.lastActive);
+      res.json({ session: sorted[0] });
+    } catch (error) {
+      console.error('[Sessions API] Error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  apiServer.app.get('/api/sessions', async (_req, res) => {
+    try {
+      const viewerSessions = messageRouter.listSessions('viewer');
+      const discordSessions = messageRouter.listSessions('discord');
+      const telegramSessions = messageRouter.listSessions('telegram');
+      const slackSessions = messageRouter.listSessions('slack');
+      res.json({
+        viewer: viewerSessions,
+        discord: discordSessions,
+        telegram: telegramSessions,
+        slack: slackSessions,
+      });
+    } catch (error) {
+      console.error('[Sessions API] Error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   // Add Discord message sending endpoint
   apiServer.app.post('/api/discord/send', async (req, res) => {
     try {

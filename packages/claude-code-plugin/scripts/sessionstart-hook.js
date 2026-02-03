@@ -305,6 +305,33 @@ async function main() {
     return;
   }
 
+  // Skip if running inside MAMA Standalone daemon
+  // MAMA OS uses Gateway Tools for auto-recall, not plugin hooks
+  if (process.env.MAMA_DAEMON === '1') {
+    info('[SessionStart] Running inside MAMA daemon, skipping hook (using Gateway Tools)');
+    return;
+  }
+
+  // Check if this is a resume/compact event (not a fresh session start)
+  // Claude Code triggers SessionStart on compact/resume - skip full warmup for these
+  // Only skip if: (1) last warmup succeeded AND (2) timestamp is recent (within 30 min)
+  const lastStart = Number(process.env.MAMA_SESSION_START);
+  const isRecentStart = Number.isFinite(lastStart) && Date.now() - lastStart < 30 * 60 * 1000; // Within 30 min
+  const isResumeOrCompact = process.env.MAMA_WARM_STATUS === 'ready' && isRecentStart;
+
+  if (isResumeOrCompact) {
+    // Already warmed up in this session - just output minimal status
+    const response = {
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext: `🔄 MAMA: Session resumed (already initialized)`,
+      },
+    };
+    console.log(JSON.stringify(response));
+    info('[SessionStart] Session already warm, skipping re-initialization');
+    process.exit(0);
+  }
+
   const startTime = Date.now();
   info('[SessionStart] MAMA session initialization starting...');
 
