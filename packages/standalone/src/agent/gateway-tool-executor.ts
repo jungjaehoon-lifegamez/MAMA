@@ -1039,12 +1039,9 @@ export class GatewayToolExecutor {
       );
 
       if (isSensitive && typeof value === 'string' && value.length > 0) {
-        // Mask the value but show first/last chars for verification
-        if (value.length <= 8) {
-          masked[key] = '***';
-        } else {
-          masked[key] = `${value.slice(0, 4)}...${value.slice(-4)}`;
-        }
+        // Fully mask sensitive values - don't expose any characters
+        // Show only length hint for debugging without revealing content
+        masked[key] = `***[${value.length} chars]***`;
       } else if (typeof value === 'object' && !Array.isArray(value)) {
         masked[key] = this.maskSensitiveData(value as Record<string, unknown>, showSensitive);
       } else {

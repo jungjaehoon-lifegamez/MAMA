@@ -226,8 +226,8 @@ export class DashboardModule {
         return `
           <div class="flex items-center justify-between py-1.5 border-b border-gray-100 dark:border-gray-700 last:border-0">
             <div class="flex items-center gap-2">
-              <span class="${info.color} px-1.5 py-0.5 rounded text-[10px] font-medium" title="${info.label}">${info.icon}</span>
-              <span class="text-xs text-gray-700 dark:text-gray-300" title="${ch.channelId}">${channelDisplay}</span>
+              <span class="${info.color} px-1.5 py-0.5 rounded text-[10px] font-medium" title="${escapeHtml(info.label)}">${info.icon}</span>
+              <span class="text-xs text-gray-700 dark:text-gray-300" title="${escapeHtml(ch.channelId)}">${escapeHtml(channelDisplay)}</span>
             </div>
             <div class="flex items-center gap-2">
               <span class="text-[10px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">${ch.messageCount} turns</span>
