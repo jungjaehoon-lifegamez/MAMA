@@ -146,6 +146,8 @@ export function getGatewayToolsPrompt(): string {
     return readFileSync(gatewayToolsPath, 'utf-8');
   }
 
+  // TODO: Consider generating both gateway-tools.md and this fallback from a single source
+  // to prevent tool list drift (CodeRabbit review suggestion)
   console.warn('[AgentLoop] gateway-tools.md not found, using minimal prompt');
   return `
 ## Gateway Tools
@@ -156,9 +158,9 @@ To call a Gateway Tool, output a JSON block:
 {"name": "tool_name", "input": {"param1": "value1"}}
 \`\`\`
 
-Available: mama_search, mama_save, mama_update, mama_load_checkpoint,
-browser_navigate, browser_screenshot, browser_click, browser_type,
-discord_send, Read, Write, Bash
+**MAMA Memory:** mama_search, mama_save, mama_update, mama_load_checkpoint
+**Browser:** browser_navigate, browser_screenshot, browser_click, browser_type, browser_get_text, browser_scroll, browser_wait_for, browser_evaluate, browser_pdf, browser_close
+**Utility:** discord_send, Read, Write, Bash
 `;
 }
 
