@@ -12,6 +12,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="styles.css">
+  <link rel="icon" type="image/svg+xml" href="assets/mama-icon.svg">
 </head>
 <body>
   <!-- Floating decorative elements -->
@@ -35,6 +36,11 @@
         <a href="#install">Install</a>
         <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
       </div>
+      <button class="nav-toggle" aria-label="Toggle menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </div>
   </nav>
 
@@ -44,7 +50,7 @@
       <div class="hero-mascot">
         <img src="assets/mama-icon.svg" alt="MAMA Mascot" class="mascot-img">
         <div class="speech-bubble">
-          <span>I remember everything for you! ^^</span>
+          <span>I remember everything for you!</span>
         </div>
       </div>
       <h1 class="hero-title">
@@ -289,5 +295,24 @@
       </div>
     </div>
   </footer>
+
+  <script>
+    // Mobile navigation toggle
+    const navToggle = document.querySelector('.nav-toggle');
+    const navLinks = document.querySelector('.nav-links');
+
+    navToggle.addEventListener('click', () => {
+      navLinks.classList.toggle('nav-open');
+      navToggle.classList.toggle('nav-toggle-open');
+    });
+
+    // Close menu when clicking a link
+    navLinks.querySelectorAll('a').forEach(link => {
+      link.addEventListener('click', () => {
+        navLinks.classList.remove('nav-open');
+        navToggle.classList.remove('nav-toggle-open');
+      });
+    });
+  </script>
 </body>
 </html>
