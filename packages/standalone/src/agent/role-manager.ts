@@ -150,7 +150,7 @@ export class RoleManager {
       if (pattern === '*') {
         capabilities.push('All tools');
       } else if (pattern.includes('*')) {
-        capabilities.push(`${pattern.replace('*', '').replace('_', ' ')} tools`);
+        capabilities.push(`${pattern.replace('*', '').replaceAll('_', ' ')} tools`);
       } else {
         capabilities.push(pattern);
       }
@@ -220,11 +220,8 @@ export class RoleManager {
    * Uses minimatch for consistent pattern matching with isPathAllowed
    */
   private matchesPattern(value: string, pattern: string): boolean {
-    if (pattern === '*') {
-      return true;
-    }
-
     // Use minimatch for consistent glob pattern matching
+    // minimatch handles '*' pattern correctly (matches everything)
     return minimatch(value, pattern);
   }
 

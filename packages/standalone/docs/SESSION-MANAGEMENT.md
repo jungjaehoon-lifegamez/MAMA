@@ -170,7 +170,7 @@ interface AgentContext {
 | viewer   | os_agent | Full system access     |
 | discord  | chat_bot | Limited tools, no Bash |
 | telegram | chat_bot | Limited tools, no Bash |
-| slack    | chat_bot | Limited tools, no Bash |
+| Slack    | chat_bot | Limited tools, no Bash |
 
 ---
 

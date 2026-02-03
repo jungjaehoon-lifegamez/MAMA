@@ -1078,17 +1078,19 @@ export class GatewayToolExecutor {
       return { success: false, error: 'Model name is required' };
     }
 
-    // Validate model name format (basic validation)
-    const validModelPrefixes = ['claude-', 'gpt-', 'anthropic.'];
-    const isValidModel =
-      validModelPrefixes.some((prefix) => model.toLowerCase().startsWith(prefix)) ||
-      model.includes('/') || // Allow org/model format
-      model.match(/^[a-z0-9-_.]+$/i); // Allow alphanumeric with dashes, underscores, dots
+    // Validate model name format - Claude/Anthropic models only
+    // Valid formats per Anthropic API docs:
+    // - Pinned snapshots: claude-sonnet-4-20250514, claude-3-5-sonnet-20241022
+    // - Rolling aliases: claude-3-7-sonnet-latest, claude-opus-4-latest
+    // - Family aliases: claude-opus-4-5, claude-sonnet-4-0
+    const claudeModelPattern =
+      /^claude-(?:opus|sonnet|haiku|3|3-5|3-7)-?[a-z0-9-]*(?:-\d{8}|-latest)?$/i;
+    const isValidModel = claudeModelPattern.test(model);
 
     if (!isValidModel) {
       return {
         success: false,
-        error: `Invalid model name format: ${model}. Expected formats: claude-xxx, gpt-xxx, or org/model`,
+        error: `Invalid model name format: ${model}. Expected Claude model format (e.g., claude-sonnet-4-20250514, claude-opus-4-latest)`,
       };
     }
 
