@@ -305,6 +305,25 @@ async function main() {
     return;
   }
 
+  // Check if this is a resume/compact event (not a fresh session start)
+  // Claude Code triggers SessionStart on compact/resume - skip full warmup for these
+  const isResumeOrCompact =
+    process.env.MAMA_SESSION_START &&
+    Date.now() - parseInt(process.env.MAMA_SESSION_START, 10) < 30 * 60 * 1000; // Within 30 min
+
+  if (isResumeOrCompact) {
+    // Already warmed up in this session - just output minimal status
+    const response = {
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext: `🔄 MAMA: Session resumed (already initialized)`,
+      },
+    };
+    console.log(JSON.stringify(response));
+    info('[SessionStart] Session already warm, skipping re-initialization');
+    process.exit(0);
+  }
+
   const startTime = Date.now();
   info('[SessionStart] MAMA session initialization starting...');
 
