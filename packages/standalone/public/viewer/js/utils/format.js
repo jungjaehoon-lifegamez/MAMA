@@ -116,6 +116,9 @@ export function formatAssistantMessage(text) {
   // First escape HTML to prevent XSS
   let formatted = escapeHtmlForMarkdown(text);
 
+  // Detect and wrap checkpoint/context sections in collapsible
+  formatted = wrapCheckpointSections(formatted);
+
   // Code blocks with optional language (```js ... ```)
   formatted = formatted.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
     const langClass = lang ? ` class="language-${lang}"` : '';
@@ -189,4 +192,47 @@ function escapeHtmlForMarkdown(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+/**
+ * Wrap checkpoint/context sections in collapsible elements
+ * Detects patterns like "📍 Summary", "🎯 Goal", "Recent decisions", etc.
+ * @param {string} text - Text to process
+ * @returns {string} Text with collapsible sections
+ */
+function wrapCheckpointSections(text) {
+  // Pattern to detect checkpoint section start
+  // Matches: "📍 Summary", "🎯 Goal", "📍 **Last Checkpoint**", etc.
+  const checkpointStartPatterns = [
+    /^(📍\s*\*?\*?Summary of past work|📍\s*\*?\*?Last Checkpoint)/m,
+    /^(🎯\s*Goal)/m,
+  ];
+
+  // Check if this message contains a checkpoint section
+  const hasCheckpoint = checkpointStartPatterns.some((p) => p.test(text));
+  if (!hasCheckpoint) {
+    return text;
+  }
+
+  // Find the checkpoint section boundaries
+  // It typically starts with "📍" and ends before "---" or end of message
+  const checkpointMatch = text.match(/(📍[\s\S]*?)(?=\n---\n🚀|\n---\n\n🚀|---\n\n🚀|$)/);
+
+  if (!checkpointMatch) {
+    return text;
+  }
+
+  const checkpointContent = checkpointMatch[1];
+  const uniqueId = 'cp-' + Math.random().toString(36).substr(2, 9);
+
+  // Create collapsible wrapper
+  const collapsibleHtml = `<details class="checkpoint-collapse" id="${uniqueId}">
+<summary class="checkpoint-summary">📍 Session Context <span class="collapse-hint">(tap to expand)</span></summary>
+<div class="checkpoint-content">
+${checkpointContent}
+</div>
+</details>`;
+
+  // Replace the checkpoint content with collapsible version
+  return text.replace(checkpointContent, collapsibleHtml);
 }

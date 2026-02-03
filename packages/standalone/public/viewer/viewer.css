@@ -82,9 +82,118 @@
 .border-mama-lavender-dark { border-color: #D4C4E0; }
 .border-mama-blush { border-color: #FF9999; }
 
-/* Graph-specific background with gradient */
+/* Graph-specific background - light for edge visibility */
 .bg-mama-graph {
-  background: linear-gradient(135deg, #F5EBF9 0%, #EDDBF7 100%);
+  background: #FAFAFA;
+}
+
+/* ============================================================================
+   COLLAPSIBLE CHECKPOINT SECTION
+   ============================================================================ */
+
+.checkpoint-collapse {
+  background: #F8F4FB;
+  border: 1px solid #D4C4E0;
+  border-radius: 12px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.checkpoint-summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  color: #131313;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  list-style: none;
+}
+
+.checkpoint-summary::-webkit-details-marker {
+  display: none;
+}
+
+.checkpoint-summary::before {
+  content: '▶';
+  font-size: 10px;
+  transition: transform 0.2s ease;
+}
+
+.checkpoint-collapse[open] .checkpoint-summary::before {
+  transform: rotate(90deg);
+}
+
+.collapse-hint {
+  font-size: 11px;
+  color: #888;
+  font-weight: 400;
+}
+
+.checkpoint-collapse[open] .collapse-hint {
+  display: none;
+}
+
+.checkpoint-content {
+  padding: 0 14px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #333;
+  border-top: 1px solid #E8DFF0;
+}
+
+/* ============================================================================
+   CHECKPOINT SIDEBAR - Collapsible & Resizable
+   ============================================================================ */
+
+.checkpoint-sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding: 0;
+  border: none;
+  overflow: hidden;
+}
+
+.checkpoint-sidebar.collapsed > * {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.checkpoint-sidebar.collapsed + #sidebar-resize-handle {
+  display: none;
+}
+
+#sidebar-resize-handle {
+  width: 4px;
+  background: transparent;
+  cursor: col-resize;
+  transition: background 0.15s ease;
+  position: relative;
+}
+
+#sidebar-resize-handle:hover {
+  background: #FFCE00;
+}
+
+#sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 24px;
+  background: #ccc;
+  border-radius: 1px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#sidebar-resize-handle:hover::after {
+  opacity: 1;
+  background: #888;
 }
 
 /* ============================================================================
@@ -261,6 +370,22 @@
 }
 .floating-panel.visible {
   display: flex;
+}
+
+/* Decision detail modal - resizable */
+#decision-detail-modal {
+  resize: both;
+  overflow: auto;
+}
+#decision-detail-modal::-webkit-resizer {
+  background: linear-gradient(135deg, transparent 50%, #ccc 50%);
+  border-radius: 0 0 8px 0;
+}
+#detail-modal-header {
+  cursor: move;
+}
+#detail-modal-header:active {
+  cursor: grabbing;
 }
 
 /* Legend panel collapse */

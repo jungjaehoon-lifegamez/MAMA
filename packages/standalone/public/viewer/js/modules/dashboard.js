@@ -140,10 +140,10 @@ export class DashboardModule {
     const html = stats
       .map(
         (stat) => `
-        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-center">
-          <span class="text-2xl">${stat.icon}</span>
-          <p class="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-2">${stat.value}</p>
-          <p class="text-xs text-gray-500 dark:text-gray-400">${stat.label}</p>
+        <div class="bg-white border border-gray-200 rounded-lg p-2.5 text-center">
+          <span class="text-lg">${stat.icon}</span>
+          <p class="text-xl font-bold text-gray-900 mt-1">${stat.value}</p>
+          <p class="text-[10px] text-gray-500">${stat.label}</p>
         </div>
       `
       )
@@ -165,22 +165,22 @@ export class DashboardModule {
     const heartbeat = this.data.heartbeat || {};
 
     container.innerHTML = `
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Model</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-1">${escapeHtml(agent.model || 'N/A')}</p>
+          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Model</p>
+          <p class="font-semibold text-gray-900 text-xs mt-0.5">${escapeHtml(agent.model || 'N/A')}</p>
         </div>
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Max Turns</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-1">${agent.maxTurns || 'N/A'}</p>
+          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Max Turns</p>
+          <p class="font-semibold text-gray-900 text-xs mt-0.5">${agent.maxTurns || 'N/A'}</p>
         </div>
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Timeout</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-1">${this.formatTimeout(agent.timeout)}</p>
+          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Timeout</p>
+          <p class="font-semibold text-gray-900 text-xs mt-0.5">${this.formatTimeout(agent.timeout)}</p>
         </div>
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Heartbeat</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-1">
+          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Heartbeat</p>
+          <p class="font-semibold text-gray-900 text-xs mt-0.5">
             ${heartbeat.enabled ? `Every ${Math.round((heartbeat.interval || 1800000) / 60000)}min` : 'Disabled'}
           </p>
         </div>
@@ -188,8 +188,8 @@ export class DashboardModule {
       ${
         heartbeat.enabled
           ? `
-        <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-          <p class="text-xs text-gray-500 dark:text-gray-400">
+        <div class="mt-2 pt-2 border-t border-gray-200">
+          <p class="text-[10px] text-gray-500">
             Quiet hours: ${heartbeat.quietStart || 23}:00 - ${heartbeat.quietEnd || 8}:00
           </p>
         </div>
