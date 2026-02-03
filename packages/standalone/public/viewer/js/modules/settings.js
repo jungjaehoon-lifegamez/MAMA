@@ -101,6 +101,98 @@ export class SettingsModule {
       'settings-agent-timeout',
       Math.round((this.config.agent?.timeout || 300000) / 1000)
     );
+
+    // Tool Mode
+    this.populateToolMode();
+  }
+
+  /**
+   * Populate tool selection checkboxes
+   */
+  populateToolMode() {
+    const tools = this.config.agent?.tools || { gateway: ['*'], mcp: [] };
+    const gatewayTools = tools.gateway || ['*'];
+    const mcpTools = tools.mcp || [];
+
+    // Set Gateway tool checkboxes
+    const gatewayCheckboxes = document.querySelectorAll('.gateway-tool');
+    const isGatewayAll = gatewayTools.includes('*');
+
+    gatewayCheckboxes.forEach((cb) => {
+      if (isGatewayAll) {
+        cb.checked = true;
+      } else {
+        cb.checked = gatewayTools.includes(cb.value);
+      }
+    });
+
+    // Set Select All checkbox
+    const gatewaySelectAll = document.getElementById('gateway-select-all');
+    if (gatewaySelectAll) {
+      gatewaySelectAll.checked = isGatewayAll || this.allChecked('.gateway-tool');
+    }
+
+    // Set MCP tool checkboxes
+    const mcpCheckboxes = document.querySelectorAll('.mcp-tool');
+    const isMCPAll = mcpTools.includes('*');
+
+    mcpCheckboxes.forEach((cb) => {
+      if (isMCPAll) {
+        cb.checked = true;
+      } else {
+        cb.checked = mcpTools.includes(cb.value);
+      }
+    });
+
+    // Set Select All checkbox
+    const mcpSelectAll = document.getElementById('mcp-select-all');
+    if (mcpSelectAll) {
+      mcpSelectAll.checked = isMCPAll || this.allChecked('.mcp-tool');
+    }
+
+    // Update summary
+    this.updateToolSummary();
+  }
+
+  /**
+   * Check if all checkboxes of a class are checked
+   */
+  allChecked(selector) {
+    const checkboxes = document.querySelectorAll(selector);
+    return Array.from(checkboxes).every((cb) => cb.checked);
+  }
+
+  /**
+   * Toggle all Gateway tools
+   */
+  toggleAllGateway(checked) {
+    document.querySelectorAll('.gateway-tool').forEach((cb) => {
+      cb.checked = checked;
+    });
+    this.updateToolSummary();
+  }
+
+  /**
+   * Toggle all MCP tools
+   */
+  toggleAllMCP(checked) {
+    document.querySelectorAll('.mcp-tool').forEach((cb) => {
+      cb.checked = checked;
+    });
+    this.updateToolSummary();
+  }
+
+  /**
+   * Update tool summary display
+   */
+  updateToolSummary() {
+    const gatewayCount = document.querySelectorAll('.gateway-tool:checked').length;
+    const mcpCount = document.querySelectorAll('.mcp-tool:checked').length;
+
+    const summaryEl = document.getElementById('tool-summary');
+    if (summaryEl) {
+      summaryEl.textContent = `Gateway: ${gatewayCount} tools | MCP: ${mcpCount} tools`;
+    }
   }
 
   /**
@@ -169,7 +261,42 @@ export class SettingsModule {
         model: this.getSelectValue('settings-agent-model'),
         max_turns: parseInt(this.getValue('settings-agent-max-turns') || '10', 10),
         timeout: parseInt(this.getValue('settings-agent-timeout') || '300', 10) * 1000,
+        tools: this.collectToolModeData(),
       },
+    };
+  }
+
+  /**
+   * Collect tool selection data from checkboxes
+   */
+  collectToolModeData() {
+    const gatewayTools = [];
+    const mcpTools = [];
+
+    // Collect selected Gateway tools
+    document.querySelectorAll('.gateway-tool:checked').forEach((cb) => {
+      gatewayTools.push(cb.value);
+    });
+
+    // Collect selected MCP tools
+    document.querySelectorAll('.mcp-tool:checked').forEach((cb) => {
+      mcpTools.push(cb.value);
+    });
+
+    // If all Gateway tools are selected, use wildcard
+    const allGateway = document.querySelectorAll('.gateway-tool');
+    if (gatewayTools.length === allGateway.length && gatewayTools.length > 0) {
+      return {
+        gateway: ['*'],
+        mcp: mcpTools,
+        mcp_config: '~/.mama/mama-mcp-config.json',
+      };
+    }
+
+    return {
+      gateway: gatewayTools,
+      mcp: mcpTools,
+      mcp_config: '~/.mama/mama-mcp-config.json',
     };
   }
 
@@ -234,6 +361,24 @@ export class SettingsModule {
   getSelectValue(id) {
     const el = document.getElementById(id);
     return el ? el.value : '';
+  }
+
+  /**
+   * Helper: Set radio button
+   */
+  setRadio(id, checked) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.checked = !!checked;
+    }
+  }
+
+  /**
+   * Helper: Get radio button value
+   */
+  getRadio(id) {
+    const el = document.getElementById(id);
+    return el ? el.checked : false;
   }
 
   /**

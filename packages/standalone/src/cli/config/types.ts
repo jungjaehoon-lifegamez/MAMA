@@ -3,6 +3,30 @@
  */
 
 /**
+ * Tool routing configuration
+ * Allows hybrid Gateway/MCP tool execution
+ */
+export interface ToolsConfig {
+  /**
+   * Tools executed directly via GatewayToolExecutor
+   * Supports wildcards: "browser_*", "mama_*"
+   * @example ["browser_*", "Bash", "Read", "Write"]
+   */
+  gateway?: string[];
+  /**
+   * Tools routed to MCP server
+   * Supports wildcards: "mama_*"
+   * @example ["mama_*"]
+   */
+  mcp?: string[];
+  /**
+   * Path to MCP config file (required if mcp tools are defined)
+   * @default "~/.mama/mama-mcp-config.json"
+   */
+  mcp_config?: string;
+}
+
+/**
  * Agent configuration
  */
 export interface AgentConfig {
@@ -12,6 +36,11 @@ export interface AgentConfig {
   max_turns: number;
   /** Request timeout in milliseconds */
   timeout: number;
+  /**
+   * Tool routing configuration
+   * If not specified, all tools use Gateway mode (default)
+   */
+  tools?: ToolsConfig;
 }
 
 /**
@@ -172,6 +201,12 @@ export const DEFAULT_CONFIG: MAMAConfig = {
     model: 'claude-sonnet-4-20250514',
     max_turns: 10,
     timeout: 300000, // 5 minutes
+    tools: {
+      // Default: all tools via Gateway (self-contained, no MCP dependency)
+      gateway: ['*'],
+      mcp: [],
+      mcp_config: '~/.mama/mama-mcp-config.json',
+    },
   },
   database: {
     path: '~/.claude/mama-memory.db',

@@ -406,6 +406,75 @@ a {
   font-weight: bold;
 }
 
+/* Screenshots Section */
+.section-screenshots {
+  background: linear-gradient(180deg, var(--white), var(--lavender-light));
+  padding-bottom: 4rem;
+}
+
+.section-subtitle {
+  text-align: center;
+  color: var(--gray-500);
+  margin-top: -1rem;
+  margin-bottom: 3rem;
+  font-size: 1.1rem;
+}
+
+.screenshots-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+@media (max-width: 1024px) {
+  .screenshots-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 2rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .screenshots-grid {
+    grid-template-columns: 1fr;
+    max-width: 320px;
+  }
+}
+
+.screenshot-card {
+  text-align: center;
+}
+
+.phone-frame {
+  background: var(--black);
+  border-radius: 24px;
+  padding: 8px;
+  box-shadow: var(--shadow-float);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.phone-frame img {
+  width: 100%;
+  height: auto;
+  border-radius: 16px;
+  display: block;
+}
+
+.screenshot-card h3 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  margin-bottom: 0.25rem;
+  color: var(--black);
+}
+
+.screenshot-card p {
+  font-size: 0.85rem;
+  color: var(--gray-500);
+  line-height: 1.4;
+}
+
 /* Packages Section */
 .section-packages {
   background: var(--white);
@@ -738,10 +807,70 @@ a {
   color: var(--gray-500);
 }
 
+/* Mobile Navigation Toggle */
+.nav-toggle {
+  display: none;
+  flex-direction: column;
+  gap: 5px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  z-index: 101;
+}
+
+.nav-toggle span {
+  display: block;
+  width: 24px;
+  height: 3px;
+  background: var(--black);
+  border-radius: 2px;
+  transition: transform 0.3s, opacity 0.3s;
+}
+
+.nav-toggle-open span:nth-child(1) {
+  transform: rotate(45deg) translate(5px, 6px);
+}
+
+.nav-toggle-open span:nth-child(2) {
+  opacity: 0;
+}
+
+.nav-toggle-open span:nth-child(3) {
+  transform: rotate(-45deg) translate(5px, -6px);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
+  .nav-toggle {
+    display: flex;
+  }
+
   .nav-links {
     display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--white);
+    flex-direction: column;
+    padding: 1rem 1.5rem;
+    gap: 0;
+    box-shadow: var(--shadow-medium);
+    border-top: 1px solid var(--gray-200);
+  }
+
+  .nav-links.nav-open {
+    display: flex;
+  }
+
+  .nav-links a {
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--gray-100);
+  }
+
+  .nav-links a:last-child {
+    border-bottom: none;
   }
 
   .hero {

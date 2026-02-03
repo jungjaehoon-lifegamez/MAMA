@@ -175,26 +175,30 @@ This protects your credentials from being exposed in chat logs.`;
       message.userId
     );
 
-    // 2. Get proactive context (related decisions)
-    // TODO: 임베딩 서버 구동 후 활성화 (현재 매번 모델 로딩으로 느림)
-    // const context = await this.contextInjector.getRelevantContext(message.text);
-    const context = { prompt: '', decisions: [], hasContext: false };
-
-    // 3. Check if this is a new CLI session (need to inject history from DB)
+    // 2. Check if this is a new CLI session (need to inject history from DB)
     const channelKey = buildChannelKey(message.source, message.channelId);
     const sessionPool = getSessionPool();
     const { isNew: isNewCliSession } = sessionPool.getSession(channelKey);
 
-    // 4. Build system prompt with history context (OpenClaw-style)
+    // 3. Get session startup context (like SessionStart hook)
+    // Always inject to ensure Claude has context about checkpoint and recent decisions
+    const sessionStartupContext = await this.contextInjector.getSessionStartupContext();
+
+    // 4. Get per-message context (related decisions - like UserPromptSubmit hook)
+    // Embedding server runs on port 3847, model stays in memory
+    const context = await this.contextInjector.getRelevantContext(message.text);
+
+    // 5. Build system prompt with all contexts
     const historyContext = message.metadata?.historyContext;
     const systemPrompt = this.buildSystemPrompt(
       session,
       context.prompt,
       historyContext,
-      isNewCliSession
+      isNewCliSession,
+      sessionStartupContext
     );
 
-    // 4. Run agent loop (with session info for lane-based concurrency)
+    // 6. Run agent loop (with session info for lane-based concurrency)
     const options: AgentLoopOptions = {
       systemPrompt,
       userId: message.userId,
@@ -253,7 +257,8 @@ This protects your credentials from being exposed in chat logs.`;
     session: Session,
     injectedContext: string,
     historyContext?: string,
-    isNewCliSession: boolean = true
+    isNewCliSession: boolean = true,
+    sessionStartupContext: string = ''
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
@@ -333,6 +338,12 @@ Now the user is responding for the FIRST time. This is their reply to your awake
     // Normal mode - use hybrid history management with persona
     // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md)
     let prompt = loadComposedSystemPrompt() + '\n';
+
+    // Inject session startup context (checkpoint, recent decisions, greeting instructions)
+    // This replaces the SessionStart hook functionality
+    if (sessionStartupContext) {
+      prompt += sessionStartupContext + '\n';
+    }
 
     // For NEW CLI sessions: inject history from DB to restore context
     // For EXISTING CLI sessions: Claude CLI maintains history via --session-id

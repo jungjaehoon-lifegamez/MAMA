@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [mama-os-0.3.0] - 2026-02-03
+
+### Added
+
+- **Self-contained Context Injection** - MAMA Standalone now operates independently without MCP server
+  - Checkpoint summary injection with last session state
+  - Recent decisions (last 5) for quick context
+  - Semantic search for related decisions based on user query
+  - Configurable via `agent.contextInjection` in config
+
+- **Hybrid Gateway/MCP Tool Routing** - Flexible tool execution modes
+  - Gateway mode (default): Tools executed via GatewayToolExecutor with text-based parsing
+  - MCP mode: Tools routed through MCP server for Claude Desktop compatibility
+  - Configuration via `agent.tools.gateway` and `agent.tools.mcp` arrays
+
+- **Gateway Tools Documentation** - New `gateway-tools.md` defines all available tools
+  - MAMA Memory tools (search, save, update, load_checkpoint)
+  - Browser automation tools (10 Playwright-based tools)
+  - Utility tools (discord_send, Read, Write, Bash)
+
+- **Website Screenshots Gallery** - "See MAMA in Action" section with phone mockups
+
+### Changed
+
+- **Version Bump** - Major version increase to reflect architectural changes
+- **Plugin Conflict Prevention** - Claude Code plugin now skips hooks when running in MAMA OS environment
+
+### Fixed
+
+- **Tool ID Collision** - Changed from `Date.now()` to `crypto.randomUUID()` for unique IDs
+- **SIGINT Propagation** - Fixed daemon mode signal handling with `detached: true`
+
 ## [mama-os-0.1.7] - 2026-02-03
 
 ### Added

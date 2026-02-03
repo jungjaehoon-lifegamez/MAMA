@@ -69,6 +69,7 @@ export class DashboardModule {
     this.renderGateways();
     this.renderMemoryStats();
     this.renderAgentConfig();
+    this.renderToolStatus();
     this.renderTopTopics();
   }
 
@@ -139,10 +140,10 @@ export class DashboardModule {
     const html = stats
       .map(
         (stat) => `
-        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-center">
-          <span class="text-2xl">${stat.icon}</span>
-          <p class="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-2">${stat.value}</p>
-          <p class="text-xs text-gray-500 dark:text-gray-400">${stat.label}</p>
+        <div class="bg-white border border-gray-200 rounded-lg p-2.5 text-center">
+          <span class="text-lg">${stat.icon}</span>
+          <p class="text-xl font-bold text-gray-900 mt-1">${stat.value}</p>
+          <p class="text-[10px] text-gray-500">${stat.label}</p>
         </div>
       `
       )
@@ -164,22 +165,22 @@ export class DashboardModule {
     const heartbeat = this.data.heartbeat || {};
 
     container.innerHTML = `
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Model</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-1">${escapeHtml(agent.model || 'N/A')}</p>
+          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Model</p>
+          <p class="font-semibold text-gray-900 text-xs mt-0.5">${escapeHtml(agent.model || 'N/A')}</p>
         </div>
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Max Turns</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-1">${agent.maxTurns || 'N/A'}</p>
+          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Max Turns</p>
+          <p class="font-semibold text-gray-900 text-xs mt-0.5">${agent.maxTurns || 'N/A'}</p>
         </div>
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Timeout</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-1">${this.formatTimeout(agent.timeout)}</p>
+          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Timeout</p>
+          <p class="font-semibold text-gray-900 text-xs mt-0.5">${this.formatTimeout(agent.timeout)}</p>
         </div>
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Heartbeat</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-1">
+          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Heartbeat</p>
+          <p class="font-semibold text-gray-900 text-xs mt-0.5">
             ${heartbeat.enabled ? `Every ${Math.round((heartbeat.interval || 1800000) / 60000)}min` : 'Disabled'}
           </p>
         </div>
@@ -187,8 +188,8 @@ export class DashboardModule {
       ${
         heartbeat.enabled
           ? `
-        <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-          <p class="text-xs text-gray-500 dark:text-gray-400">
+        <div class="mt-2 pt-2 border-t border-gray-200">
+          <p class="text-[10px] text-gray-500">
             Quiet hours: ${heartbeat.quietStart || 23}:00 - ${heartbeat.quietEnd || 8}:00
           </p>
         </div>
@@ -196,6 +197,104 @@ export class DashboardModule {
           : ''
       }
     `;
+  }
+
+  /**
+   * Render tool execution status
+   */
+  renderToolStatus() {
+    const container = document.getElementById('dashboard-tools');
+    if (!container) {
+      return;
+    }
+
+    const tools = this.data.agent?.tools || { gateway: ['*'], mcp: [] };
+    const gatewayTools = tools.gateway || ['*'];
+    const mcpTools = tools.mcp || [];
+
+    // Define all available tools by category
+    const categories = {
+      memory: {
+        name: 'MAMA Memory',
+        icon: '🧠',
+        tools: ['mama_search', 'mama_save', 'mama_update', 'mama_load_checkpoint'],
+      },
+      browser: {
+        name: 'Browser',
+        icon: '🌐',
+        tools: [
+          'browser_navigate',
+          'browser_screenshot',
+          'browser_click',
+          'browser_type',
+          'browser_get_text',
+          'browser_scroll',
+          'browser_wait_for',
+          'browser_evaluate',
+          'browser_pdf',
+          'browser_close',
+        ],
+      },
+      utility: {
+        name: 'Utility',
+        icon: '🛠️',
+        tools: ['discord_send', 'Read', 'Write', 'Bash'],
+      },
+    };
+
+    const isWildcard = gatewayTools.includes('*');
+
+    const html = Object.entries(categories)
+      .map(([_key, cat]) => {
+        const enabledCount = isWildcard
+          ? cat.tools.length
+          : cat.tools.filter((t) => gatewayTools.includes(t)).length;
+
+        return `
+          <div class="mb-3">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1">
+                ${cat.icon} ${cat.name}
+              </span>
+              <span class="text-xs px-2 py-0.5 rounded-full ${
+                enabledCount > 0 ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'
+              }">
+                ${enabledCount}/${cat.tools.length}
+              </span>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              ${cat.tools
+                .map(
+                  (tool) => `
+                <span class="text-xs px-2 py-0.5 rounded ${
+                  isWildcard || gatewayTools.includes(tool)
+                    ? 'bg-green-50 text-green-700 border border-green-200'
+                    : 'bg-gray-50 text-gray-400 border border-gray-200'
+                }">
+                  ${escapeHtml(tool.replace('browser_', '').replace('mama_', ''))}
+                </span>
+              `
+                )
+                .join('')}
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    const mcpSection =
+      mcpTools.length > 0
+        ? `
+        <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <p class="text-xs text-gray-500 flex items-center gap-1">
+            <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
+            MCP Tools: ${mcpTools.includes('*') ? 'All via MCP' : mcpTools.join(', ')}
+          </p>
+        </div>
+      `
+        : '';
+
+    container.innerHTML = html + mcpSection;
   }
 
   /**
