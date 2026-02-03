@@ -382,6 +382,18 @@
               </div>
             </section>
 
+            <!-- Tool Status -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 text-mama-black mb-3">Tool Execution</h2>
+              <div id="dashboard-tools" class="bg-white bg-white border border-gray-200 border-mama-lavender-dark rounded-lg p-4">
+                <!-- Tool status will be rendered by JavaScript -->
+                <div class="animate-pulse space-y-2">
+                  <div class="h-4 bg-gray-200 bg-mama-lavender-light rounded w-1/2"></div>
+                  <div class="h-4 bg-gray-200 bg-mama-lavender-light rounded w-3/4"></div>
+                </div>
+              </div>
+            </section>
+
             <!-- Top Topics -->
             <section class="mb-6">
               <h2 class="text-lg font-semibold text-gray-900 text-mama-black mb-3">Top Topics</h2>
@@ -554,34 +566,141 @@
               </div>
             </section>
 
-            <!-- Tool Mode Settings -->
+            <!-- Tool Selection Settings -->
             <section class="mb-6">
-              <h2 class="text-lg font-semibold text-gray-900 text-mama-black mb-3">Tool Execution Mode</h2>
+              <h2 class="text-lg font-semibold text-gray-900 text-mama-black mb-3">Tool Selection</h2>
               <div class="bg-white bg-white border border-gray-200 border-mama-lavender-dark rounded-lg p-4">
-                <p class="text-sm text-gray-600 mb-4">Choose how MAMA executes tools. Gateway mode runs tools directly (self-contained), MCP mode uses external MCP servers.</p>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <label class="flex items-start gap-3 p-3 border border-gray-200 border-mama-lavender-dark rounded-lg cursor-pointer hover:bg-mama-lavender-light transition-colors" id="tool-mode-gateway-label">
-                    <input type="radio" name="tool-mode" value="gateway" id="settings-tool-mode-gateway" class="mt-1" checked>
-                    <div>
-                      <span class="font-medium text-sm text-mama-black">Gateway Mode</span>
-                      <span class="ml-2 text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Default</span>
-                      <p class="text-xs text-gray-500 mt-1">Self-contained tool execution. No external dependencies. Includes: browser, file, bash, MAMA memory tools.</p>
+                <p class="text-sm text-gray-600 mb-4">Select which tools to enable. Gateway tools run directly (self-contained), MCP tools use external servers.</p>
+
+                <!-- Gateway Tools -->
+                <div class="mb-4">
+                  <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-semibold text-mama-black flex items-center gap-2">
+                      <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                      Gateway Tools (Self-contained)
+                    </h3>
+                    <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
+                      <input type="checkbox" id="gateway-select-all" onchange="settingsModule.toggleAllGateway(this.checked)" checked>
+                      Select All
+                    </label>
+                  </div>
+
+                  <!-- MAMA Memory Category -->
+                  <div class="mb-3">
+                    <div class="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+                      <span>🧠</span> MAMA Memory
                     </div>
-                  </label>
-                  <label class="flex items-start gap-3 p-3 border border-gray-200 border-mama-lavender-dark rounded-lg cursor-pointer hover:bg-mama-lavender-light transition-colors" id="tool-mode-mcp-label">
-                    <input type="radio" name="tool-mode" value="mcp" id="settings-tool-mode-mcp" class="mt-1">
-                    <div>
-                      <span class="font-medium text-sm text-mama-black">MCP Mode</span>
-                      <p class="text-xs text-gray-500 mt-1">Route tools to MCP servers. Requires MCP config at ~/.mama/mama-mcp-config.json</p>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="mama_search" checked> mama_search
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="mama_save" checked> mama_save
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="mama_update" checked> mama_update
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="mama_load_checkpoint" checked> mama_load_checkpoint
+                      </label>
                     </div>
-                  </label>
+                  </div>
+
+                  <!-- Browser Category -->
+                  <div class="mb-3">
+                    <div class="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+                      <span>🌐</span> Browser (Playwright)
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_navigate" checked> navigate
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_screenshot" checked> screenshot
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_click" checked> click
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_type" checked> type
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_get_text" checked> get_text
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_scroll" checked> scroll
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_wait_for" checked> wait_for
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_evaluate" checked> evaluate
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_pdf" checked> pdf
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="browser_close" checked> close
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- Utility Category -->
+                  <div class="mb-3">
+                    <div class="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+                      <span>🛠️</span> Utility
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="discord_send" checked> discord_send
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="Read" checked> Read
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="Write" checked> Write
+                      </label>
+                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                        <input type="checkbox" class="gateway-tool" value="Bash" checked> Bash
+                      </label>
+                    </div>
+                  </div>
                 </div>
+
+                <!-- MCP Tools -->
+                <div class="mb-4">
+                  <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-semibold text-mama-black flex items-center gap-2">
+                      <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
+                      MCP Tools (External Server)
+                    </h3>
+                    <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
+                      <input type="checkbox" id="mcp-select-all" onchange="settingsModule.toggleAllMCP(this.checked)">
+                      Select All
+                    </label>
+                  </div>
+                  <div class="grid grid-cols-2 md:grid-cols-4 gap-2" id="mcp-tools-list">
+                    <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                      <input type="checkbox" class="mcp-tool" value="mcp__plugin_mama_mama__save"> mcp_save
+                    </label>
+                    <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                      <input type="checkbox" class="mcp-tool" value="mcp__plugin_mama_mama__search"> mcp_search
+                    </label>
+                    <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                      <input type="checkbox" class="mcp-tool" value="mcp__plugin_mama_mama__update"> mcp_update
+                    </label>
+                    <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
+                      <input type="checkbox" class="mcp-tool" value="mcp__plugin_mama_mama__load_checkpoint"> mcp_load_checkpoint
+                    </label>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-2">MCP config path: ~/.mama/mama-mcp-config.json</p>
+                </div>
+
+                <!-- Status Display -->
                 <div class="mt-4 p-3 bg-mama-lavender-light rounded-lg" id="tool-mode-status">
                   <div class="flex items-center gap-2">
-                    <span class="w-2 h-2 bg-green-500 rounded-full"></span>
-                    <span class="text-sm font-medium text-mama-black">Current: Gateway Mode</span>
+                    <span class="text-sm font-medium text-mama-black" id="tool-summary">Gateway: 18 tools | MCP: 0 tools</span>
                   </div>
-                  <p class="text-xs text-gray-600 mt-1" id="tool-mode-details">Tools: * (all tools via GatewayToolExecutor)</p>
                 </div>
               </div>
             </section>

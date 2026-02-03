@@ -107,34 +107,91 @@ export class SettingsModule {
   }
 
   /**
-   * Populate tool mode settings
+   * Populate tool selection checkboxes
    */
   populateToolMode() {
     const tools = this.config.agent?.tools || { gateway: ['*'], mcp: [] };
-    const isMCPMode = (tools.mcp || []).includes('*');
-    const isGatewayMode = !isMCPMode;
+    const gatewayTools = tools.gateway || ['*'];
+    const mcpTools = tools.mcp || [];
 
-    // Set radio buttons
-    this.setRadio('settings-tool-mode-gateway', isGatewayMode);
-    this.setRadio('settings-tool-mode-mcp', isMCPMode);
+    // Set Gateway tool checkboxes
+    const gatewayCheckboxes = document.querySelectorAll('.gateway-tool');
+    const isGatewayAll = gatewayTools.includes('*');
 
-    // Update status display
-    const statusEl = document.getElementById('tool-mode-status');
-    const detailsEl = document.getElementById('tool-mode-details');
-
-    if (statusEl && detailsEl) {
-      const indicator = statusEl.querySelector('span:first-child');
-      const modeLabel = statusEl.querySelector('span.font-medium');
-
-      if (isGatewayMode) {
-        indicator.className = 'w-2 h-2 bg-green-500 rounded-full';
-        modeLabel.textContent = 'Current: Gateway Mode';
-        detailsEl.textContent = `Tools: ${(tools.gateway || ['*']).join(', ')} (via GatewayToolExecutor)`;
+    gatewayCheckboxes.forEach((cb) => {
+      if (isGatewayAll) {
+        cb.checked = true;
       } else {
-        indicator.className = 'w-2 h-2 bg-blue-500 rounded-full';
-        modeLabel.textContent = 'Current: MCP Mode';
-        detailsEl.textContent = `Tools: ${(tools.mcp || ['*']).join(', ')} (via MCP server)`;
+        cb.checked = gatewayTools.includes(cb.value);
       }
+    });
+
+    // Set Select All checkbox
+    const gatewaySelectAll = document.getElementById('gateway-select-all');
+    if (gatewaySelectAll) {
+      gatewaySelectAll.checked = isGatewayAll || this.allChecked('.gateway-tool');
+    }
+
+    // Set MCP tool checkboxes
+    const mcpCheckboxes = document.querySelectorAll('.mcp-tool');
+    const isMCPAll = mcpTools.includes('*');
+
+    mcpCheckboxes.forEach((cb) => {
+      if (isMCPAll) {
+        cb.checked = true;
+      } else {
+        cb.checked = mcpTools.includes(cb.value);
+      }
+    });
+
+    // Set Select All checkbox
+    const mcpSelectAll = document.getElementById('mcp-select-all');
+    if (mcpSelectAll) {
+      mcpSelectAll.checked = isMCPAll || this.allChecked('.mcp-tool');
+    }
+
+    // Update summary
+    this.updateToolSummary();
+  }
+
+  /**
+   * Check if all checkboxes of a class are checked
+   */
+  allChecked(selector) {
+    const checkboxes = document.querySelectorAll(selector);
+    return Array.from(checkboxes).every((cb) => cb.checked);
+  }
+
+  /**
+   * Toggle all Gateway tools
+   */
+  toggleAllGateway(checked) {
+    document.querySelectorAll('.gateway-tool').forEach((cb) => {
+      cb.checked = checked;
+    });
+    this.updateToolSummary();
+  }
+
+  /**
+   * Toggle all MCP tools
+   */
+  toggleAllMCP(checked) {
+    document.querySelectorAll('.mcp-tool').forEach((cb) => {
+      cb.checked = checked;
+    });
+    this.updateToolSummary();
+  }
+
+  /**
+   * Update tool summary display
+   */
+  updateToolSummary() {
+    const gatewayCount = document.querySelectorAll('.gateway-tool:checked').length;
+    const mcpCount = document.querySelectorAll('.mcp-tool:checked').length;
+
+    const summaryEl = document.getElementById('tool-summary');
+    if (summaryEl) {
+      summaryEl.textContent = `Gateway: ${gatewayCount} tools | MCP: ${mcpCount} tools`;
     }
   }
 
@@ -210,20 +267,35 @@ export class SettingsModule {
   }
 
   /**
-   * Collect tool mode data
+   * Collect tool selection data from checkboxes
    */
   collectToolModeData() {
-    const isMCPMode = this.getRadio('settings-tool-mode-mcp');
-    if (isMCPMode) {
+    const gatewayTools = [];
+    const mcpTools = [];
+
+    // Collect selected Gateway tools
+    document.querySelectorAll('.gateway-tool:checked').forEach((cb) => {
+      gatewayTools.push(cb.value);
+    });
+
+    // Collect selected MCP tools
+    document.querySelectorAll('.mcp-tool:checked').forEach((cb) => {
+      mcpTools.push(cb.value);
+    });
+
+    // If all Gateway tools are selected, use wildcard
+    const allGateway = document.querySelectorAll('.gateway-tool');
+    if (gatewayTools.length === allGateway.length && gatewayTools.length > 0) {
       return {
-        gateway: [],
-        mcp: ['*'],
+        gateway: ['*'],
+        mcp: mcpTools,
         mcp_config: '~/.mama/mama-mcp-config.json',
       };
     }
+
     return {
-      gateway: ['*'],
-      mcp: [],
+      gateway: gatewayTools,
+      mcp: mcpTools,
       mcp_config: '~/.mama/mama-mcp-config.json',
     };
   }
