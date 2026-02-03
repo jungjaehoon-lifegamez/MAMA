@@ -271,7 +271,7 @@ export class DashboardModule {
                     ? 'bg-green-50 text-green-700 border border-green-200'
                     : 'bg-gray-50 text-gray-400 border border-gray-200'
                 }">
-                  ${tool.replace('browser_', '').replace('mama_', '')}
+                  ${escapeHtml(tool.replace('browser_', '').replace('mama_', ''))}
                 </span>
               `
                 )

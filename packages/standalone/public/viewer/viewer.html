@@ -767,6 +767,8 @@
                 class="w-7 h-7 bg-white border border-gray-200 rounded flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-700"
                 onclick="toggleCheckpointSidebar()"
                 title="Toggle Checkpoints"
+                aria-controls="checkpoint-sidebar"
+                aria-expanded="true"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
@@ -1393,15 +1395,22 @@
 
         if (!sidebar) return;
 
-        if (sidebar.classList.contains('collapsed')) {
+        const isExpanding = sidebar.classList.contains('collapsed');
+        if (isExpanding) {
           sidebar.classList.remove('collapsed');
           sidebar.style.width = '224px'; // w-56 = 14rem = 224px
-          if (toggleBtn) toggleBtn.title = 'Hide Checkpoints';
+          if (toggleBtn) {
+            toggleBtn.title = 'Hide Checkpoints';
+            toggleBtn.setAttribute('aria-expanded', 'true');
+          }
           if (handle) handle.style.display = '';
         } else {
           sidebar.classList.add('collapsed');
           sidebar.style.width = '0';
-          if (toggleBtn) toggleBtn.title = 'Show Checkpoints';
+          if (toggleBtn) {
+            toggleBtn.title = 'Show Checkpoints';
+            toggleBtn.setAttribute('aria-expanded', 'false');
+          }
           if (handle) handle.style.display = 'none';
         }
       }
@@ -1409,6 +1418,7 @@
       // Auto-collapse/expand checkpoint sidebar based on screen width
       function updateCheckpointSidebarForScreenSize() {
         const sidebar = document.getElementById('checkpoint-sidebar');
+        const toggleBtn = document.getElementById('checkpoint-sidebar-toggle');
         const handle = document.getElementById('sidebar-resize-handle');
         if (!sidebar) return;
 
@@ -1417,12 +1427,14 @@
           sidebar.classList.add('collapsed');
           sidebar.style.width = '0';
           if (handle) handle.style.display = 'none';
+          if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
         } else {
           // Desktop: expand if was collapsed due to mobile
           if (sidebar.classList.contains('collapsed')) {
             sidebar.classList.remove('collapsed');
             sidebar.style.width = '224px';
             if (handle) handle.style.display = '';
+            if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
           }
         }
       }

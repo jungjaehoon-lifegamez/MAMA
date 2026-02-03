@@ -225,13 +225,12 @@ function wrapCheckpointSections(text) {
   const checkpointContent = checkpointMatch[1];
   const uniqueId = 'cp-' + Math.random().toString(36).substr(2, 9);
 
-  // Create collapsible wrapper
-  const collapsibleHtml = `<details class="checkpoint-collapse" id="${uniqueId}">
-<summary class="checkpoint-summary">📍 Session Context <span class="collapse-hint">(tap to expand)</span></summary>
-<div class="checkpoint-content">
-${checkpointContent}
-</div>
-</details>`;
+  // Create collapsible wrapper - summary must be first child (no newlines before it)
+  const collapsibleHtml =
+    `<details class="checkpoint-collapse" id="${uniqueId}">` +
+    `<summary class="checkpoint-summary">📍 Session Context <span class="collapse-hint">(tap to expand)</span></summary>` +
+    `<div class="checkpoint-content">${checkpointContent}</div>` +
+    `</details>`;
 
   // Replace the checkpoint content with collapsible version
   return text.replace(checkpointContent, collapsibleHtml);

@@ -29,14 +29,14 @@
         <img src="assets/mama-icon.svg" alt="MAMA" class="logo-icon">
         <span>MAMA OS</span>
       </a>
-      <div class="nav-links">
+      <div class="nav-links" id="nav-links">
         <a href="#features">Features</a>
         <a href="#packages">Packages</a>
         <a href="#docs">Docs</a>
         <a href="#install">Install</a>
         <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
       </div>
-      <button class="nav-toggle" aria-label="Toggle menu">
+      <button class="nav-toggle" aria-label="Toggle menu" aria-controls="nav-links" aria-expanded="false">
         <span></span>
         <span></span>
         <span></span>
@@ -340,8 +340,9 @@
     const navLinks = document.querySelector('.nav-links');
 
     navToggle.addEventListener('click', () => {
-      navLinks.classList.toggle('nav-open');
+      const isOpen = navLinks.classList.toggle('nav-open');
       navToggle.classList.toggle('nav-toggle-open');
+      navToggle.setAttribute('aria-expanded', isOpen);
     });
 
     // Close menu when clicking a link
@@ -349,6 +350,7 @@
       link.addEventListener('click', () => {
         navLinks.classList.remove('nav-open');
         navToggle.classList.remove('nav-toggle-open');
+        navToggle.setAttribute('aria-expanded', 'false');
       });
     });
   </script>

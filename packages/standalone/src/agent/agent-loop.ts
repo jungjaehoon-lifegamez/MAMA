@@ -10,7 +10,7 @@
  * - Loops until stop_reason is "end_turn" or max turns reached
  */
 
-// fs imports removed - using minimal system prompt, CLAUDE.md loaded by Claude Code
+import { readFileSync, existsSync } from 'fs';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
@@ -137,9 +137,6 @@ export function loadComposedSystemPrompt(verbose = false): string {
  * These tools are executed by GatewayToolExecutor, NOT MCP
  */
 export function getGatewayToolsPrompt(): string {
-  const { readFileSync, existsSync } = require('fs');
-  const { join } = require('path');
-
   const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
 
   if (existsSync(gatewayToolsPath)) {
@@ -198,9 +195,21 @@ export class AgentLoop {
     const sessionId = randomUUID();
 
     // Determine tool mode: Gateway (default) or MCP
-    // Note: Partial patterns (e.g., 'mama_*') are not supported for mode selection
-    // Use '*' for all tools in that mode, or specific tool names
-    const useMCPMode = (this.toolsConfig.mcp || []).includes('*');
+    // Currently only '*' (all tools) is supported for mode selection
+    // Partial patterns like 'mama_*' or 'browser_*' are reserved for future hybrid routing
+    const mcpTools = this.toolsConfig.mcp || [];
+    const gatewayTools = this.toolsConfig.gateway || [];
+
+    // Warn if partial patterns are used (not yet supported)
+    const hasPartialPattern = (arr: string[]) => arr.some((t) => t.includes('*') && t !== '*');
+    if (hasPartialPattern(mcpTools) || hasPartialPattern(gatewayTools)) {
+      console.warn(
+        '[AgentLoop] Warning: Partial patterns (e.g., "mama_*") are not yet supported. ' +
+          'Use "*" for all tools or specific tool names. Falling back to Gateway mode.'
+      );
+    }
+
+    const useMCPMode = mcpTools.includes('*');
     const useGatewayMode = !useMCPMode;
     this.isGatewayMode = useGatewayMode;
 
