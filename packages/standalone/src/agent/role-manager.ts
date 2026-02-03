@@ -216,23 +216,16 @@ export class RoleManager {
 
   /**
    * Match a string against a wildcard pattern
-   * Supports simple wildcards: "mama_*" matches "mama_search", "mama_save"
+   * Supports glob patterns: "mama_*" matches "mama_search", "mama_save"
+   * Uses minimatch for consistent pattern matching with isPathAllowed
    */
   private matchesPattern(value: string, pattern: string): boolean {
     if (pattern === '*') {
       return true;
     }
 
-    if (pattern.includes('*')) {
-      // Convert simple wildcard to regex
-      const regexPattern = pattern
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape special regex chars
-        .replace(/\*/g, '.*'); // Convert * to .*
-      const regex = new RegExp(`^${regexPattern}$`);
-      return regex.test(value);
-    }
-
-    return value === pattern;
+    // Use minimatch for consistent glob pattern matching
+    return minimatch(value, pattern);
   }
 
   /**

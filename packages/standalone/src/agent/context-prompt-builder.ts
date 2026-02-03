@@ -8,6 +8,18 @@
 import type { AgentContext, AgentPlatform } from './types.js';
 
 /**
+ * Valid agent platforms (Set for O(1) lookup)
+ */
+const VALID_PLATFORMS = new Set<AgentPlatform>([
+  'viewer',
+  'discord',
+  'telegram',
+  'slack',
+  'chatwork',
+  'cli',
+]);
+
+/**
  * Platform-specific guidelines for message formatting
  */
 const PLATFORM_GUIDELINES: Record<AgentPlatform, string> = {
@@ -198,16 +210,8 @@ export function createAgentContext(
  */
 function normalizePlatform(source: string): AgentPlatform {
   const normalized = source.toLowerCase();
-  const validPlatforms: AgentPlatform[] = [
-    'viewer',
-    'discord',
-    'telegram',
-    'slack',
-    'chatwork',
-    'cli',
-  ];
 
-  if (validPlatforms.includes(normalized as AgentPlatform)) {
+  if (VALID_PLATFORMS.has(normalized as AgentPlatform)) {
     return normalized as AgentPlatform;
   }
 

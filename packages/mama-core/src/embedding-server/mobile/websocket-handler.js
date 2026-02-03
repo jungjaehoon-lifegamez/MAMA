@@ -294,32 +294,33 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
       // Send session history if available, or send onboarding greeting
       if (sessionStore) {
         try {
-          // Use channel-based lookup for viewer sessions
-          // clientInfo.userId is like "user_127_0_0_1"
-          // Use fixed channel ID for all MAMA OS viewers (shared conversation)
+          // Use channel-based lookup for sessions
+          // Use dynamic source based on osAgentMode (viewer vs mobile)
           const channelId = 'mama_os_main';
+          const source = clientInfo.osAgentMode ? 'viewer' : 'mobile';
           const history = sessionStore.getHistoryByChannel
-            ? sessionStore.getHistoryByChannel('viewer', channelId)
+            ? sessionStore.getHistoryByChannel(source, channelId)
             : sessionStore.getHistory(sessionId);
           if (history && history.length > 0) {
             // Convert {user, bot, timestamp} format to {role, content, timestamp} for display
-            const formattedMessages = [];
-            for (const turn of history) {
+            const formattedMessages = history.flatMap((turn) => {
+              const messages = [];
               if (turn.user) {
-                formattedMessages.push({
+                messages.push({
                   role: 'user',
                   content: turn.user,
                   timestamp: turn.timestamp,
                 });
               }
               if (turn.bot) {
-                formattedMessages.push({
+                messages.push({
                   role: 'assistant',
                   content: turn.bot,
                   timestamp: turn.timestamp,
                 });
               }
-            }
+              return messages;
+            });
             clientInfo.ws.send(
               JSON.stringify({
                 type: 'history',

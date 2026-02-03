@@ -237,7 +237,6 @@ This protects your credentials from being exposed in chat logs.`;
       session,
       context.prompt,
       historyContext,
-      isNewCliSession,
       sessionStartupContext,
       agentContext
     );
@@ -325,7 +324,6 @@ This protects your credentials from being exposed in chat logs.`;
     session: Session,
     injectedContext: string,
     historyContext?: string,
-    _isNewCliSession: boolean = true, // Unused: always inject history since each CLI spawn is fresh
     sessionStartupContext: string = '',
     agentContext?: AgentContext
   ): string {
