@@ -8,6 +8,30 @@
 import type { RelatedDecision, MessageRouterConfig } from './types.js';
 
 /**
+ * Checkpoint data from MAMA
+ */
+export interface Checkpoint {
+  id: number;
+  timestamp: number;
+  summary: string;
+  next_steps?: string;
+  open_files?: string[];
+}
+
+/**
+ * Decision data from MAMA
+ */
+export interface Decision {
+  id: string;
+  topic: string;
+  decision: string;
+  reasoning?: string;
+  outcome?: string;
+  confidence?: number;
+  created_at?: string;
+}
+
+/**
  * MAMA API interface for context injection
  *
  * This interface abstracts the MAMA API calls,
@@ -18,6 +42,16 @@ export interface MamaApiClient {
    * Search for decisions related to a query
    */
   search(query: string, limit?: number): Promise<SearchResult[]>;
+
+  /**
+   * Load the last active checkpoint
+   */
+  loadCheckpoint?(): Promise<Checkpoint | null>;
+
+  /**
+   * List recent decisions
+   */
+  listDecisions?(options?: { limit?: number }): Promise<Decision[]>;
 }
 
 /**
@@ -155,6 +189,96 @@ Consider these previous decisions when responding. Reference them if relevant.
     if (config.maxDecisions !== undefined) {
       this.maxDecisions = config.maxDecisions;
     }
+  }
+
+  /**
+   * Get session startup context (equivalent to SessionStart hook)
+   * Includes checkpoint, recent decisions, and greeting instructions
+   */
+  async getSessionStartupContext(): Promise<string> {
+    try {
+      let contextText = '';
+
+      // Load checkpoint if available
+      if (this.mamaApi.loadCheckpoint) {
+        const checkpoint = await this.mamaApi.loadCheckpoint();
+        if (checkpoint) {
+          const timeAgo = this.formatTimeAgo(Date.now() - checkpoint.timestamp);
+          contextText += `\n📍 **Last Checkpoint** (${timeAgo}):\n`;
+          contextText += `   ${this.truncate(checkpoint.summary, 80)}\n`;
+          if (checkpoint.next_steps) {
+            contextText += `   Next: ${this.truncate(checkpoint.next_steps, 60)}\n`;
+          }
+        }
+      }
+
+      // Load recent decisions if available
+      if (this.mamaApi.listDecisions) {
+        const decisions = await this.mamaApi.listDecisions({ limit: 5 });
+        if (decisions && decisions.length > 0) {
+          contextText += `\n🧠 **Recent Decisions** (${decisions.length}):\n`;
+          decisions.forEach((d, idx) => {
+            const timeAgo = d.created_at
+              ? this.formatTimeAgo(Date.now() - new Date(d.created_at).getTime())
+              : '';
+            const outcomeEmoji =
+              d.outcome === 'success' ? '✅' : d.outcome === 'failed' ? '❌' : '⏳';
+            contextText += `   ${idx + 1}. ${outcomeEmoji} ${d.topic}: ${this.truncate(d.decision, 60)} (${timeAgo})\n`;
+          });
+        }
+      }
+
+      if (!contextText) {
+        return '';
+      }
+
+      // Add proactive greeting instructions
+      return `
+🧠 **MAMA Session initialized**
+${contextText}
+
+🤖 **PROACTIVE GREETING INSTRUCTION:**
+   If the user's first message is a simple greeting ("hi", "hello", "hey") or lacks specific task instructions,
+   YOU MUST proactively initiate a contextual conversation:
+
+   1. Greet the user warmly in their language
+   2. Summarize what was being worked on from the last checkpoint (if exists)
+   3. Highlight 1-2 recent key decisions that might be relevant
+   4. Ask if they want to continue previous work or start something new
+   5. Suggest specific next steps based on checkpoint's next_steps
+
+💡 **Proactive Partner Mode:**
+   Save important decisions without being asked.
+   Example: "Let's use PostgreSQL" → save(topic="database_choice", ...)
+`;
+    } catch (error) {
+      console.error('Failed to get session startup context:', error);
+      return '';
+    }
+  }
+
+  /**
+   * Format milliseconds to human-readable time ago
+   */
+  private formatTimeAgo(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `${days}d ago`;
+    if (hours > 0) return `${hours}h ago`;
+    if (minutes > 0) return `${minutes}m ago`;
+    return `${seconds}s ago`;
+  }
+
+  /**
+   * Truncate text to max length
+   */
+  private truncate(text: string, maxLen: number): string {
+    if (!text) return '';
+    if (text.length <= maxLen) return text;
+    return text.substring(0, maxLen - 3) + '...';
   }
 }
 

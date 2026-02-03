@@ -561,7 +561,13 @@ export async function runAgentLoop(
 
   // Initialize message router with MAMA database
   const { initDB } = require('@jungjaehoon/mama-core/db-manager');
-  const { search, save, update, loadCheckpoint } = require('@jungjaehoon/mama-core');
+  const {
+    suggest,
+    save,
+    update,
+    loadCheckpoint,
+    list: listDecisions,
+  } = require('@jungjaehoon/mama-core');
 
   // Initialize MAMA database first
   await initDB();
@@ -569,11 +575,13 @@ export async function runAgentLoop(
   console.log('✓ MAMA memory API available (loaded directly in auto-recall)');
 
   // Create MAMA API client for context injection
+  // Provides both SessionStart (checkpoint + recent decisions) and UserPromptSubmit (related decisions) functionality
   const mamaApiClient = {
-    search,
+    search: suggest, // mama-core exports 'suggest' for semantic search
     save,
     update,
     loadCheckpoint,
+    listDecisions, // For SessionStart-like functionality
   };
 
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);

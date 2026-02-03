@@ -107,6 +107,119 @@ export function loadComposedSystemPrompt(verbose = false): string {
   return layers.join('\n\n---\n\n');
 }
 
+/**
+ * Generate Gateway Tools definitions for system prompt
+ * These tools are executed by GatewayToolExecutor, NOT MCP
+ */
+export function getGatewayToolsPrompt(): string {
+  return `
+## IMPORTANT: Gateway Tools (NOT Skills!)
+
+These are **programmatic tools** that execute code. They are different from markdown skills.
+- **Gateway Tools**: Execute immediately, return structured data (this section)
+- **Skills**: Markdown templates triggered by keywords (different system)
+
+### How to Call Gateway Tools
+
+To call a Gateway Tool, output a JSON block in this EXACT format:
+
+\`\`\`tool_call
+{"name": "tool_name", "input": {"param1": "value1"}}
+\`\`\`
+
+The system will:
+1. Parse your tool_call block
+2. Execute the tool via GatewayToolExecutor
+3. Return the result in the next message
+
+### Example Tool Call
+
+User: "최근 결정 검색해줘"
+Assistant: 검색해볼게요.
+\`\`\`tool_call
+{"name": "mama_search", "input": {"limit": 10}}
+\`\`\`
+
+[System executes mama_search, returns results]
+
+You have access to the following tools. To use a tool, output a tool_use block in your response.
+
+### MAMA Memory Tools
+
+**mama_search** - Search decisions and checkpoints
+- query (string, optional): Search query for semantic search. Empty = list recent
+- type (string, optional): 'decision', 'checkpoint', or 'all' (default: 'all')
+- limit (number, optional): Max results (default: 10)
+
+**mama_save** - Save decision or checkpoint
+- type (string, required): 'decision' or 'checkpoint'
+- For decision: topic, decision, reasoning (required), confidence (optional, 0-1)
+- For checkpoint: summary (required), next_steps, open_files (optional)
+
+**mama_update** - Update decision outcome
+- id (string, required): Decision ID
+- outcome (string, required): 'success', 'failed', or 'partial'
+- reason (string, optional): Explanation
+
+**mama_load_checkpoint** - Load last checkpoint
+- No parameters
+
+### Browser Tools (Playwright)
+
+**browser_navigate** - Navigate to URL
+- url (string, required): URL to navigate to
+
+**browser_screenshot** - Take screenshot
+- filename (string, optional): Output filename
+- full_page (boolean, optional): Capture full page
+
+**browser_click** - Click element
+- selector (string, required): CSS selector
+
+**browser_type** - Type text into element
+- selector (string, required): CSS selector
+- text (string, required): Text to type
+
+**browser_get_text** - Get page text content
+- No parameters
+
+**browser_scroll** - Scroll the page
+- direction (string, required): 'up', 'down', 'top', 'bottom'
+- amount (number, optional): Pixels to scroll
+
+**browser_wait_for** - Wait for element
+- selector (string, required): CSS selector
+- timeout (number, optional): Timeout in ms
+
+**browser_evaluate** - Execute JavaScript
+- script (string, required): JavaScript code
+
+**browser_pdf** - Generate PDF
+- filename (string, optional): Output filename
+
+**browser_close** - Close browser
+- No parameters
+
+### Utility Tools
+
+**discord_send** - Send message to Discord
+- channel_id (string, required): Discord channel ID
+- message (string, optional): Text message
+- file_path (string, optional): File to send
+
+**Read** - Read file (restricted to ~/.mama/)
+- path (string, required): File path
+
+**Write** - Write file
+- path (string, required): File path
+- content (string, required): File content
+
+**Bash** - Execute bash command
+- command (string, required): Command to run
+- workdir (string, optional): Working directory
+`;
+}
+
 export class AgentLoop {
   private readonly agent: ClaudeCLIWrapper;
   private readonly claudeCLI: ClaudeCLIWrapper | null = null;
@@ -129,15 +242,21 @@ export class AgentLoop {
   ) {
     const mcpConfigPath = join(homedir(), '.mama/mama-mcp-config.json');
     const sessionId = randomUUID();
-    const defaultSystemPrompt = options.systemPrompt || loadComposedSystemPrompt();
+
+    // Build system prompt with Gateway Tools definitions
+    const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
+    const gatewayToolsPrompt = getGatewayToolsPrompt();
+    const defaultSystemPrompt = `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`;
 
     this.claudeCLI = new ClaudeCLIWrapper({
       model: options.model ?? 'claude-sonnet-4-20250514',
       sessionId,
       systemPrompt: defaultSystemPrompt,
-      mcpConfigPath,
+      mcpConfigPath, // Keep for fallback, but useGatewayTools takes precedence
       dangerouslySkipPermissions: true,
+      useGatewayTools: true, // Use GatewayToolExecutor instead of MCP
     });
+    console.log('[AgentLoop] Gateway Tools mode enabled - tools executed via GatewayToolExecutor');
     this.agent = this.claudeCLI;
 
     this.mcpExecutor = new GatewayToolExecutor(executorOptions);
@@ -322,13 +441,55 @@ export class AgentLoop {
           );
         }
 
+        // Build content blocks - include tool_use blocks if present
+        const contentBlocks: ContentBlock[] = [];
+
+        // Parse tool_call blocks from text response (Gateway Tools mode)
+        const parsedToolCalls = this.parseToolCallsFromText(piResult.response || '');
+        const textWithoutToolCalls = this.removeToolCallBlocks(piResult.response || '');
+
+        if (textWithoutToolCalls.trim()) {
+          contentBlocks.push({ type: 'text', text: textWithoutToolCalls });
+        }
+
+        // Add parsed tool_use blocks from text (Gateway Tools - prompt-based)
+        if (parsedToolCalls.length > 0) {
+          for (const toolCall of parsedToolCalls) {
+            contentBlocks.push({
+              type: 'tool_use',
+              id: toolCall.id,
+              name: toolCall.name,
+              input: toolCall.input,
+            } as ToolUseBlock);
+          }
+          console.log(
+            `[AgentLoop] Parsed ${parsedToolCalls.length} tool calls from text (Gateway Tools mode)`
+          );
+        }
+
+        // Also add tool_use blocks from Claude CLI if present (MCP fallback)
+        if (piResult.toolUseBlocks && piResult.toolUseBlocks.length > 0) {
+          for (const toolUse of piResult.toolUseBlocks) {
+            contentBlocks.push({
+              type: 'tool_use',
+              id: toolUse.id,
+              name: toolUse.name,
+              input: toolUse.input,
+            } as ToolUseBlock);
+          }
+          console.log(`[AgentLoop] Detected ${piResult.toolUseBlocks.length} tool calls from MCP`);
+        }
+
+        // Set stop_reason based on whether tools were requested
+        const hasToolUse = piResult.hasToolUse || parsedToolCalls.length > 0;
+
         response = {
           id: `msg_${Date.now()}`,
           type: 'message' as const,
           role: 'assistant' as const,
-          content: [{ type: 'text', text: piResult.response }],
+          content: contentBlocks,
           model: this.model,
-          stop_reason: 'end_turn' as const,
+          stop_reason: hasToolUse ? ('tool_use' as const) : ('end_turn' as const),
           stop_sequence: null,
           usage: piResult.usage,
         };
@@ -459,6 +620,44 @@ export class AgentLoop {
   }
 
   /**
+   * Parse tool_call blocks from text response (Gateway Tools mode)
+   * Format: ```tool_call\n{"name": "...", "input": {...}}\n```
+   */
+  private parseToolCallsFromText(text: string): ToolUseBlock[] {
+    const toolCalls: ToolUseBlock[] = [];
+    const toolCallRegex = /```tool_call\s*\n([\s\S]*?)\n```/g;
+
+    let match;
+    let index = 0;
+    while ((match = toolCallRegex.exec(text)) !== null) {
+      try {
+        const jsonStr = match[1].trim();
+        const parsed = JSON.parse(jsonStr);
+
+        if (parsed.name && typeof parsed.name === 'string') {
+          toolCalls.push({
+            type: 'tool_use',
+            id: `gateway_tool_${Date.now()}_${index++}`,
+            name: parsed.name,
+            input: parsed.input || {},
+          });
+        }
+      } catch (e) {
+        console.warn(`[AgentLoop] Failed to parse tool_call block: ${e}`);
+      }
+    }
+
+    return toolCalls;
+  }
+
+  /**
+   * Remove tool_call blocks from text (to avoid duplication in response)
+   */
+  private removeToolCallBlocks(text: string): string {
+    return text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '').trim();
+  }
+
+  /**
    * Extract text response from the last assistant message
    */
   private extractTextResponse(history: Message[]): string {
@@ -503,6 +702,15 @@ export class AgentLoop {
           for (const block of content as any[]) {
             if (block.type === 'text') {
               parts.push(block.text);
+            } else if (block.type === 'tool_use') {
+              // Format tool_use block for Claude to see its previous tool calls
+              parts.push(
+                `[Tool Call: ${block.name}]\nInput: ${JSON.stringify(block.input, null, 2)}`
+              );
+            } else if (block.type === 'tool_result') {
+              // Format tool_result block for Claude to see tool execution results
+              const status = block.is_error ? 'ERROR' : 'SUCCESS';
+              parts.push(`[Tool Result: ${status}]\n${block.content}`);
             } else if (block.type === 'image') {
               // Convert image to file path instruction for Claude Code
               // Claude Code can use Read tool to view the image
