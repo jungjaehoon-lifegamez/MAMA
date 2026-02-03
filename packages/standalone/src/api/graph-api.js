@@ -30,6 +30,7 @@ const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
 const VIEWER_JS_PATH = path.join(VIEWER_DIR, 'viewer.js');
 const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
+const FAVICON_PATH = path.join(__dirname, '../../public/favicon.ico');
 
 /**
  * Get all decisions as graph nodes
@@ -852,6 +853,12 @@ function createGraphHandler() {
     // Route: GET/HEAD /viewer/manifest.json - serve PWA manifest
     if (pathname === '/viewer/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
+      return true; // Request handled
+    }
+
+    // Route: GET/HEAD /favicon.ico - serve favicon
+    if (pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
+      serveStaticFile(res, FAVICON_PATH, 'image/x-icon');
       return true; // Request handled
     }
 
