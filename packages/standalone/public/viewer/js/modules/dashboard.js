@@ -13,6 +13,7 @@
 /* eslint-env browser */
 
 import { escapeHtml } from '../utils/dom.js';
+import { formatModelName } from '../utils/format.js';
 
 /**
  * Dashboard Module Class
@@ -314,42 +315,6 @@ export class DashboardModule {
   }
 
   /**
-   * Get human-friendly model name
-   */
-  formatModelName(model) {
-    if (!model) {
-      return 'Not Set';
-    }
-
-    // Known model mappings
-    const modelNames = {
-      'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
-      'claude-opus-4-20250514': 'Claude 4 Opus',
-      'claude-3-5-sonnet-20241022': 'Claude 3.5 Sonnet',
-      'claude-3-opus-20240229': 'Claude 3 Opus',
-      'claude-3-sonnet-20240229': 'Claude 3 Sonnet',
-      'claude-3-haiku-20240307': 'Claude 3 Haiku',
-    };
-
-    if (modelNames[model]) {
-      return modelNames[model];
-    }
-
-    // Try to extract friendly name from model string
-    if (model.includes('opus')) {
-      return 'Claude Opus';
-    }
-    if (model.includes('sonnet')) {
-      return 'Claude Sonnet';
-    }
-    if (model.includes('haiku')) {
-      return 'Claude Haiku';
-    }
-
-    return model;
-  }
-
-  /**
    * Render agent configuration
    */
   renderAgentConfig() {
@@ -360,7 +325,7 @@ export class DashboardModule {
 
     const agent = this.data.agent;
     const heartbeat = this.data.heartbeat || {};
-    const friendlyModel = this.formatModelName(agent.model);
+    const friendlyModel = formatModelName(agent.model) || 'Not Set';
 
     container.innerHTML = `
       <div class="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">

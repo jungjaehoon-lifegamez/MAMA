@@ -13,6 +13,7 @@
 /* eslint-env browser */
 
 import { showToast } from '../utils/dom.js';
+import { formatModelName } from '../utils/format.js';
 
 /**
  * Settings Module Class
@@ -180,7 +181,7 @@ export class SettingsModule {
         const maxTurns = roleConfig.maxTurns;
 
         // Format model name for display (and escape)
-        const displayModel = this.escapeHtml(this.formatModelName(model));
+        const displayModel = this.escapeHtml(formatModelName(model));
 
         return `
           <div class="bg-white border border-gray-200 rounded-lg p-2.5">
@@ -490,38 +491,6 @@ export class SettingsModule {
   getRadio(id) {
     const el = document.getElementById(id);
     return el ? el.checked : false;
-  }
-
-  /**
-   * Format model name for display
-   */
-  formatModelName(model) {
-    if (!model || model === 'default') {
-      return 'Default';
-    }
-
-    const modelNames = {
-      'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
-      'claude-opus-4-20250514': 'Claude 4 Opus',
-      'claude-3-5-sonnet-20241022': 'Claude 3.5 Sonnet',
-      'claude-3-opus-20240229': 'Claude 3 Opus',
-      'claude-3-sonnet-20240229': 'Claude 3 Sonnet',
-      'claude-3-haiku-20240307': 'Claude 3 Haiku',
-    };
-
-    if (modelNames[model]) {
-      return modelNames[model];
-    }
-    if (model.includes('opus')) {
-      return 'Claude Opus';
-    }
-    if (model.includes('sonnet')) {
-      return 'Claude Sonnet';
-    }
-    if (model.includes('haiku')) {
-      return 'Claude Haiku';
-    }
-    return model;
   }
 
   /**
