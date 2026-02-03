@@ -13,6 +13,7 @@
 /* eslint-env browser */
 
 import { escapeHtml } from '../utils/dom.js';
+import { formatModelName } from '../utils/format.js';
 
 /**
  * Dashboard Module Class
@@ -67,6 +68,7 @@ export class DashboardModule {
     }
 
     this.renderGateways();
+    this.renderSessions();
     this.renderMemoryStats();
     this.renderAgentConfig();
     this.renderToolStatus();
@@ -89,6 +91,16 @@ export class DashboardModule {
       { key: 'chatwork', name: 'Chatwork', icon: '💼', color: 'orange' },
     ];
 
+    // Count active bots
+    const enabledCount = gateways.filter((gw) => this.data.gateways[gw.key]?.enabled).length;
+    const configuredCount = gateways.filter((gw) => this.data.gateways[gw.key]?.configured).length;
+
+    // Update header with bot count
+    const header = container.previousElementSibling;
+    if (header && header.tagName === 'H2') {
+      header.innerHTML = `Gateway Status <span class="text-sm font-normal text-gray-500">(${enabledCount}/${configuredCount} active)</span>`;
+    }
+
     const html = gateways
       .map((gw) => {
         const status = this.data.gateways[gw.key] || {};
@@ -101,6 +113,20 @@ export class DashboardModule {
             : `<span class="text-xs px-2 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400">Disabled</span>`
           : `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500">Not Configured</span>`;
 
+        // Get channel info based on gateway type
+        let channelInfo = '';
+        if (isConfigured) {
+          if (gw.key === 'discord' && status.channel) {
+            channelInfo = `<span class="text-[10px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">#${escapeHtml(status.channel)}</span>`;
+          } else if (gw.key === 'telegram' && status.chats?.length > 0) {
+            channelInfo = `<span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">${status.chats.length} chat(s)</span>`;
+          } else if (gw.key === 'slack' && status.channel) {
+            channelInfo = `<span class="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">#${escapeHtml(status.channel)}</span>`;
+          } else if (gw.key === 'chatwork' && status.rooms?.length > 0) {
+            channelInfo = `<span class="text-[10px] bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded">${status.rooms.length} room(s)</span>`;
+          }
+        }
+
         return `
           <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow">
             <div class="flex items-center justify-between mb-2">
@@ -108,15 +134,151 @@ export class DashboardModule {
               ${statusBadge}
             </div>
             <h3 class="font-semibold text-gray-900 dark:text-gray-100">${gw.name}</h3>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              ${isConfigured ? 'Token configured' : 'No token set'}
-            </p>
+            <div class="flex items-center gap-2 mt-1">
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                ${isConfigured ? 'Token ✓' : 'No token'}
+              </p>
+              ${channelInfo}
+            </div>
           </div>
         `;
       })
       .join('');
 
     container.innerHTML = html;
+  }
+
+  /**
+   * Render session statistics
+   */
+  renderSessions() {
+    const container = document.getElementById('dashboard-sessions');
+    if (!container) {
+      return;
+    }
+
+    const sessions = this.data.sessions || { total: 0, bySource: {}, channels: [] };
+
+    if (sessions.total === 0) {
+      container.innerHTML = `
+        <p class="text-gray-500 dark:text-gray-400 text-sm text-center py-4">
+          No active sessions yet. Start chatting to create sessions.
+        </p>
+      `;
+      return;
+    }
+
+    // Source icons and labels
+    const sourceInfo = {
+      discord: { icon: '🎮', label: 'Discord', color: 'bg-indigo-100 text-indigo-700' },
+      telegram: { icon: '✈️', label: 'Telegram', color: 'bg-sky-100 text-sky-700' },
+      slack: { icon: '📱', label: 'Slack', color: 'bg-purple-100 text-purple-700' },
+      chatwork: { icon: '💼', label: 'Chatwork', color: 'bg-green-100 text-green-700' },
+      viewer: { icon: '🖥️', label: 'OS Viewer', color: 'bg-gray-100 text-gray-700' },
+      mobile: { icon: '📲', label: 'Mobile', color: 'bg-orange-100 text-orange-700' },
+    };
+
+    // Build source summary
+    const sourceSummary = Object.entries(sessions.bySource)
+      .map(([source, count]) => {
+        const info = sourceInfo[source] || {
+          icon: '📝',
+          label: source,
+          color: 'bg-gray-100 text-gray-700',
+        };
+        return `<span class="inline-flex items-center gap-1 ${info.color} px-2 py-1 rounded text-xs font-medium">
+          ${info.icon} ${info.label}: ${count}
+        </span>`;
+      })
+      .join('');
+
+    // Build recent channels list
+    const channelList = sessions.channels
+      .slice(0, 5)
+      .map((ch) => {
+        const info = sourceInfo[ch.source] || {
+          icon: '📝',
+          label: ch.source,
+          color: 'bg-gray-100 text-gray-700',
+        };
+        const lastActive = this.formatRelativeTime(ch.lastActive);
+
+        // Use channel name if available, otherwise use meaningful fallbacks
+        let channelDisplay;
+        if (ch.channelName) {
+          // Show channel name (already human-readable)
+          channelDisplay =
+            ch.channelName.length > 25 ? ch.channelName.slice(0, 22) + '...' : ch.channelName;
+        } else if (ch.source === 'viewer' || ch.channelId === 'mama_os_main') {
+          // OS Viewer - shared channel
+          channelDisplay = 'MAMA OS';
+        } else if (ch.source === 'mobile') {
+          // Mobile app - show user-friendly name
+          channelDisplay = 'Mobile App';
+        } else {
+          // Fallback: truncate channel ID (Discord channels before update)
+          channelDisplay =
+            ch.channelId.length > 12
+              ? ch.channelId.slice(0, 6) + '...' + ch.channelId.slice(-4)
+              : ch.channelId;
+        }
+
+        return `
+          <div class="flex items-center justify-between py-1.5 border-b border-gray-100 dark:border-gray-700 last:border-0">
+            <div class="flex items-center gap-2">
+              <span class="${info.color} px-1.5 py-0.5 rounded text-[10px] font-medium" title="${escapeHtml(info.label)}">${info.icon}</span>
+              <span class="text-xs text-gray-700 dark:text-gray-300" title="${escapeHtml(ch.channelId)}">${escapeHtml(channelDisplay)}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">${ch.messageCount} turns</span>
+              <span class="text-[10px] text-gray-400">${lastActive}</span>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    container.innerHTML = `
+      <div class="mb-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-medium text-gray-900 dark:text-gray-100">Sessions by Platform</span>
+          <span class="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full">${sessions.total} total</span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          ${sourceSummary}
+        </div>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 mb-2">Recent Channels:</p>
+        ${channelList || '<p class="text-xs text-gray-400">No recent activity</p>'}
+      </div>
+    `;
+  }
+
+  /**
+   * Format relative time (e.g., "2h ago", "3d ago")
+   */
+  formatRelativeTime(timestamp) {
+    if (!timestamp) {
+      return 'Never';
+    }
+
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) {
+      return 'Just now';
+    }
+    if (minutes < 60) {
+      return `${minutes}m ago`;
+    }
+    if (hours < 24) {
+      return `${hours}h ago`;
+    }
+    return `${days}d ago`;
   }
 
   /**
@@ -163,32 +325,39 @@ export class DashboardModule {
 
     const agent = this.data.agent;
     const heartbeat = this.data.heartbeat || {};
+    const friendlyModel = formatModelName(agent.model) || 'Not Set';
 
     container.innerHTML = `
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div>
-          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Model</p>
-          <p class="font-semibold text-gray-900 text-xs mt-0.5">${escapeHtml(agent.model || 'N/A')}</p>
+      <div class="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-[10px] text-gray-500 uppercase tracking-wide">Current Model</p>
+            <p class="font-bold text-gray-900 dark:text-gray-100 text-lg">${escapeHtml(friendlyModel)}</p>
+            <p class="text-[10px] text-gray-400 font-mono">${escapeHtml(agent.model || 'Not configured')}</p>
+          </div>
+          <span class="text-3xl">🤖</span>
         </div>
+      </div>
+      <div class="grid grid-cols-3 gap-3">
         <div>
           <p class="text-[10px] text-gray-500 uppercase tracking-wide">Max Turns</p>
-          <p class="font-semibold text-gray-900 text-xs mt-0.5">${agent.maxTurns || 'N/A'}</p>
+          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-0.5">${agent.maxTurns || 'N/A'}</p>
         </div>
         <div>
           <p class="text-[10px] text-gray-500 uppercase tracking-wide">Timeout</p>
-          <p class="font-semibold text-gray-900 text-xs mt-0.5">${this.formatTimeout(agent.timeout)}</p>
+          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-0.5">${this.formatTimeout(agent.timeout)}</p>
         </div>
         <div>
           <p class="text-[10px] text-gray-500 uppercase tracking-wide">Heartbeat</p>
-          <p class="font-semibold text-gray-900 text-xs mt-0.5">
-            ${heartbeat.enabled ? `Every ${Math.round((heartbeat.interval || 1800000) / 60000)}min` : 'Disabled'}
+          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-0.5">
+            ${heartbeat.enabled ? `${Math.round((heartbeat.interval || 1800000) / 60000)}min` : 'Off'}
           </p>
         </div>
       </div>
       ${
         heartbeat.enabled
           ? `
-        <div class="mt-2 pt-2 border-t border-gray-200">
+        <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
           <p class="text-[10px] text-gray-500">
             Quiet hours: ${heartbeat.quietStart || 23}:00 - ${heartbeat.quietEnd || 8}:00
           </p>

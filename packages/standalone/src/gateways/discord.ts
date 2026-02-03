@@ -101,6 +101,9 @@ export class DiscordGateway implements Gateway {
         timestamp: new Date(),
         data: { username: client.user.tag },
       });
+
+      // Backfill channel names for existing sessions
+      this.backfillChannelNames();
     });
 
     // Message event
@@ -297,10 +300,14 @@ export class DiscordGateway implements Gateway {
     // Convert attachments to content blocks (OpenClaw-style)
     const contentBlocks: ContentBlock[] = await this.buildContentBlocks(effectiveAttachments);
 
+    // Get channel name for session display
+    const channelName = this.getChannelDisplayName(message);
+
     // Normalize message for router - ALL messages go to Claude
     const normalizedMessage: NormalizedMessage = {
       source: 'discord',
       channelId: message.channel.id,
+      channelName,
       userId: message.author.id,
       text: cleanContent,
       contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
@@ -516,6 +523,74 @@ export class DiscordGateway implements Gateway {
       } catch (error) {
         console.error('Error in gateway event handler:', error);
       }
+    }
+  }
+
+  /**
+   * Get human-readable channel name for session display
+   */
+  private getChannelDisplayName(message: Message): string {
+    const channel = message.channel;
+
+    // DM channel
+    if (channel.isDMBased()) {
+      const recipient = message.author.username;
+      return `DM with ${recipient}`;
+    }
+
+    // Guild channel - try to get the name
+    if ('name' in channel && channel.name) {
+      const guildName = message.guild?.name;
+      return guildName ? `#${channel.name} (${guildName})` : `#${channel.name}`;
+    }
+
+    // Fallback to channel ID
+    return `Channel ${channel.id}`;
+  }
+
+  /**
+   * Backfill channel names for existing sessions when Discord connects
+   * This updates sessions created before the channel_name feature was added
+   */
+  private backfillChannelNames(): void {
+    try {
+      // Get all Discord sessions
+      const sessions = this.messageRouter.listSessions('discord');
+      let updated = 0;
+
+      for (const session of sessions) {
+        // Skip if already has a channel name
+        if (session.channelName) continue;
+
+        // Try to find the channel in the client cache
+        const channel = this.client.channels.cache.get(session.channelId);
+        if (!channel) continue;
+
+        let channelName: string;
+
+        // DM channel
+        if (channel.isDMBased()) {
+          channelName = 'DM';
+        } else if ('name' in channel && channel.name) {
+          // Guild channel
+          const guild =
+            'guild' in channel ? (channel as { guild?: { name: string } }).guild : undefined;
+          channelName = guild ? `#${channel.name} (${guild.name})` : `#${channel.name}`;
+        } else {
+          continue; // Can't determine name
+        }
+
+        // Update session with channel name
+        if (this.messageRouter.updateChannelName('discord', session.channelId, channelName)) {
+          updated++;
+        }
+      }
+
+      if (updated > 0) {
+        console.log(`[Discord] Backfilled ${updated} channel names`);
+      }
+    } catch (error) {
+      console.error('[Discord] Failed to backfill channel names:', error);
     }
   }
 

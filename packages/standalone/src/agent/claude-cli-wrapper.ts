@@ -104,21 +104,38 @@ export class ClaudeCLIWrapper {
    *
    * @param content - Prompt text (images not yet supported)
    * @param callbacks - Streaming callbacks
+   * @param options - Optional per-request overrides (model, etc.)
    * @returns PromptResult with response and usage
    */
-  async prompt(content: string, callbacks?: PromptCallbacks): Promise<PromptResult> {
+  async prompt(
+    content: string,
+    callbacks?: PromptCallbacks,
+    options?: { model?: string; resumeSession?: boolean }
+  ): Promise<PromptResult> {
     return new Promise((resolve, reject) => {
-      const args = [
-        '-p',
-        content,
-        '--output-format',
-        'json',
-        '--session-id',
-        this.sessionId,
-        '--no-session-persistence', // Prevent "session already in use" errors
-      ];
+      const isResume = options?.resumeSession === true;
 
-      if (this.options.systemPrompt) {
+      const args = ['-p', content, '--output-format', 'json'];
+
+      // Session handling: resume existing or start new
+      if (isResume) {
+        // Resume existing session - CLI loads its own context
+        args.push('--resume', this.sessionId);
+        console.log(`[ClaudeCLI] Resuming session: ${this.sessionId}`);
+      } else {
+        // New session - will inject system prompt
+        args.push('--session-id', this.sessionId);
+        console.log(`[ClaudeCLI] New session: ${this.sessionId}`);
+      }
+
+      // Add model flag - per-request override takes precedence
+      const model = options?.model || this.options.model;
+      if (model) {
+        args.push('--model', model);
+      }
+
+      // Only inject system prompt for NEW sessions (not resume)
+      if (this.options.systemPrompt && !isResume) {
         args.push('--system-prompt', this.options.systemPrompt);
       }
 
