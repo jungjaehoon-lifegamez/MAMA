@@ -232,6 +232,7 @@ This protects your credentials from being exposed in chat logs.`;
     const context = await this.contextInjector.getRelevantContext(message.text);
 
     // 6. Build system prompt with all contexts including AgentContext
+    // Note: With --no-session-persistence, history is always injected
     const historyContext = message.metadata?.historyContext;
     const systemPrompt = this.buildSystemPrompt(
       session,
@@ -327,6 +328,8 @@ This protects your credentials from being exposed in chat logs.`;
 
   /**
    * Build system prompt with session context, injected decisions, and AgentContext
+   * Note: With --no-session-persistence mode, history is ALWAYS injected
+   * because CLI doesn't persist sessions between calls.
    */
   private buildSystemPrompt(
     session: Session,
@@ -424,7 +427,9 @@ Now the user is responding for the FIRST time. This is their reply to your awake
       prompt += sessionStartupContext + '\n';
     }
 
-    // Always inject DB history - each CLI spawn is a fresh process with no memory
+    // Always inject DB history when using --no-session-persistence mode
+    // CLI doesn't persist sessions, so it has no memory between calls
+    // We MUST inject history every time to maintain conversation continuity
     if (hasHistory) {
       prompt += `
 ## 🔄 CONVERSATION IN PROGRESS
@@ -441,7 +446,7 @@ ${dbHistory}
 
 `;
       console.log(
-        `[MessageRouter] Injected ${dbHistory.length} chars of history (continuing conversation)`
+        `[MessageRouter] Injected ${dbHistory.length} chars of history (--no-session-persistence mode)`
       );
     }
 
@@ -459,7 +464,7 @@ ${historyContext}
 
     prompt += `
 ## Instructions
-- Respond naturally and helpfully${hasHistory ? ' - this is a continuing conversation, no need to greet' : ''}
+- Respond naturally and helpfully${hasHistory ? ' - continuing conversation, no need to greet' : ''}
 - Remember to save important decisions using the save tool
 - Reference previous decisions when relevant
 - Keep responses concise for messenger format

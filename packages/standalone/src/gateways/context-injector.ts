@@ -107,10 +107,12 @@ export class ContextInjector {
     }
 
     try {
+      console.log(`[ContextInjector] Searching for: "${query.substring(0, 50)}..."`);
       const searchResult = await this.mamaApi.search(query, this.maxDecisions + 2);
 
       // Handle null/empty result
       if (!searchResult) {
+        console.log(`[ContextInjector] Search returned null/empty`);
         return { prompt: '', decisions: [], hasContext: false };
       }
 
@@ -126,9 +128,20 @@ export class ContextInjector {
       }
 
       // Filter by similarity threshold
+      console.log(
+        `[ContextInjector] Found ${results.length} results, threshold: ${this.similarityThreshold}`
+      );
+      if (results.length > 0) {
+        console.log(
+          `[ContextInjector] Top result: ${results[0].topic} (similarity: ${results[0].similarity})`
+        );
+      }
+
       const relevant = results
         .filter((r) => r.similarity >= this.similarityThreshold)
         .slice(0, this.maxDecisions);
+
+      console.log(`[ContextInjector] After filtering: ${relevant.length} relevant decisions`);
 
       if (relevant.length === 0) {
         return { prompt: '', decisions: [], hasContext: false };

@@ -106,11 +106,24 @@ export class SessionPool {
           `[SessionPool] Context 80% full (${existing.totalInputTokens} tokens) for ${channelKey}, creating fresh session`
         );
       } else if (existing.inUse) {
-        // Session is currently in use - create a new one to avoid CLI lock conflict
-        this.sessions.delete(channelKey);
+        // Session is currently in use - DON'T delete it!
+        // Create a temporary unique session to avoid CLI lock conflict
+        // Use a unique key so it doesn't overwrite the existing session
+        const tempKey = `${channelKey}:temp:${randomUUID()}`;
+        const tempSessionId = randomUUID();
+        const entry: SessionEntry = {
+          sessionId: tempSessionId,
+          lastActive: now,
+          messageCount: 1,
+          createdAt: now,
+          inUse: true,
+          totalInputTokens: 0,
+        };
+        this.sessions.set(tempKey, entry);
         console.log(
-          `[SessionPool] Session in use for ${channelKey}, creating new one to avoid conflict`
+          `[SessionPool] Session in use for ${channelKey}, using temp session: ${tempSessionId}`
         );
+        return { sessionId: tempSessionId, isNew: true };
       } else {
         // Reuse existing session
         existing.lastActive = now;

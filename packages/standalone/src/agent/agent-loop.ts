@@ -42,7 +42,7 @@ import { buildContextPrompt } from './context-prompt-builder.js';
 /**
  * Default configuration
  */
-const DEFAULT_MAX_TURNS = 10;
+const DEFAULT_MAX_TURNS = 20; // Increased from 10 to allow more complex tool chains
 
 /**
  * Default tools configuration - all tools via Gateway (self-contained)
@@ -448,21 +448,22 @@ export class AgentLoop {
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error('[AgentLoop] Claude CLI error:', errorMessage);
 
-          // Check if this is a "session not found" error when using --resume
-          // This can happen if the CLI session was lost (daemon restart, timeout, etc.)
-          if (
-            options?.resumeSession &&
-            errorMessage.includes('No conversation found with session ID')
-          ) {
-            console.log(
-              '[AgentLoop] Session not found in CLI, retrying with --session-id (new session)'
-            );
+          // Check if this is a recoverable session error
+          // 1. "No conversation found" - CLI session was lost (daemon restart, timeout)
+          // 2. "Session ID already in use" - concurrent request conflict
+          const isSessionNotFound = errorMessage.includes('No conversation found with session ID');
+          const isSessionInUse = errorMessage.includes('is already in use');
+
+          if (isSessionNotFound || isSessionInUse) {
+            const reason = isSessionNotFound ? 'not found in CLI' : 'already in use';
+            console.log(`[AgentLoop] Session ${reason}, retrying with new session`);
+
             // Reset session in pool so it creates a new one
             this.sessionPool.resetSession(channelKey);
             const newSessionId = this.sessionPool.getSessionId(channelKey);
             this.claudeCLI?.setSessionId(newSessionId);
 
-            // Retry without resumeSession flag (will use --session-id instead of --resume)
+            // Retry with new session (--session-id instead of --resume)
             piResult = await this.agent.prompt(promptText, callbacks, {
               model: options?.model,
               resumeSession: false, // Force new session
