@@ -554,6 +554,38 @@
               </div>
             </section>
 
+            <!-- Tool Mode Settings -->
+            <section class="mb-6">
+              <h2 class="text-lg font-semibold text-gray-900 text-mama-black mb-3">Tool Execution Mode</h2>
+              <div class="bg-white bg-white border border-gray-200 border-mama-lavender-dark rounded-lg p-4">
+                <p class="text-sm text-gray-600 mb-4">Choose how MAMA executes tools. Gateway mode runs tools directly (self-contained), MCP mode uses external MCP servers.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label class="flex items-start gap-3 p-3 border border-gray-200 border-mama-lavender-dark rounded-lg cursor-pointer hover:bg-mama-lavender-light transition-colors" id="tool-mode-gateway-label">
+                    <input type="radio" name="tool-mode" value="gateway" id="settings-tool-mode-gateway" class="mt-1" checked>
+                    <div>
+                      <span class="font-medium text-sm text-mama-black">Gateway Mode</span>
+                      <span class="ml-2 text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Default</span>
+                      <p class="text-xs text-gray-500 mt-1">Self-contained tool execution. No external dependencies. Includes: browser, file, bash, MAMA memory tools.</p>
+                    </div>
+                  </label>
+                  <label class="flex items-start gap-3 p-3 border border-gray-200 border-mama-lavender-dark rounded-lg cursor-pointer hover:bg-mama-lavender-light transition-colors" id="tool-mode-mcp-label">
+                    <input type="radio" name="tool-mode" value="mcp" id="settings-tool-mode-mcp" class="mt-1">
+                    <div>
+                      <span class="font-medium text-sm text-mama-black">MCP Mode</span>
+                      <p class="text-xs text-gray-500 mt-1">Route tools to MCP servers. Requires MCP config at ~/.mama/mama-mcp-config.json</p>
+                    </div>
+                  </label>
+                </div>
+                <div class="mt-4 p-3 bg-mama-lavender-light rounded-lg" id="tool-mode-status">
+                  <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                    <span class="text-sm font-medium text-mama-black">Current: Gateway Mode</span>
+                  </div>
+                  <p class="text-xs text-gray-600 mt-1" id="tool-mode-details">Tools: * (all tools via GatewayToolExecutor)</p>
+                </div>
+              </div>
+            </section>
+
             <!-- Action Buttons -->
             <div class="flex items-center justify-between pt-4 border-t border-gray-200 border-mama-lavender-dark">
               <button onclick="settingsModule.resetForm()" class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-mama-lavender-light hover:bg-gray-200 hover:bg-mama-lavender-light rounded-lg transition-colors">

@@ -43,6 +43,31 @@ import { AgentError } from './types.js';
 const DEFAULT_MAX_TURNS = 10;
 
 /**
+ * Default tools configuration - all tools via Gateway (self-contained)
+ */
+const DEFAULT_TOOLS_CONFIG = {
+  gateway: ['*'],
+  mcp: [] as string[],
+  mcp_config: '~/.mama/mama-mcp-config.json',
+};
+
+/**
+ * Check if a tool name matches a pattern (supports wildcards like "browser_*")
+ * Reserved for future hybrid tool routing
+ */
+function _matchToolPattern(toolName: string, pattern: string): boolean {
+  if (pattern === '*') return true;
+  if (pattern.endsWith('*')) {
+    const prefix = pattern.slice(0, -1);
+    return toolName.startsWith(prefix);
+  }
+  return toolName === pattern;
+}
+
+// _matchToolPattern is reserved for future hybrid routing
+void _matchToolPattern;
+
+/**
  * Load CLAUDE.md system prompt
  * Tries multiple paths: project root, ~/.mama, /etc/mama
  */
@@ -150,6 +175,7 @@ export class AgentLoop {
   private readonly useLanes: boolean;
   private sessionKey: string;
   private readonly sessionPool: SessionPool;
+  private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -157,23 +183,50 @@ export class AgentLoop {
     _clientOptions?: ClaudeClientOptions,
     executorOptions?: GatewayToolExecutorOptions
   ) {
-    const mcpConfigPath = join(homedir(), '.mama/mama-mcp-config.json');
+    // Initialize tools config (hybrid Gateway/MCP routing)
+    this.toolsConfig = {
+      ...DEFAULT_TOOLS_CONFIG,
+      ...options.toolsConfig,
+    };
+
+    const mcpConfigPath =
+      this.toolsConfig.mcp_config?.replace('~', homedir()) ||
+      join(homedir(), '.mama/mama-mcp-config.json');
     const sessionId = randomUUID();
 
-    // Build system prompt with Gateway Tools definitions
+    // Determine tool mode: Gateway (default) or MCP
+    const useMCPMode = (this.toolsConfig.mcp || []).includes('*');
+    const useGatewayMode = !useMCPMode;
+
+    // Build system prompt
     const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
-    const gatewayToolsPrompt = getGatewayToolsPrompt();
-    const defaultSystemPrompt = `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`;
+    // Only include Gateway Tools prompt if using Gateway mode
+    const gatewayToolsPrompt = useGatewayMode ? getGatewayToolsPrompt() : '';
+    const defaultSystemPrompt = gatewayToolsPrompt
+      ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
+      : basePrompt;
 
     this.claudeCLI = new ClaudeCLIWrapper({
       model: options.model ?? 'claude-sonnet-4-20250514',
       sessionId,
       systemPrompt: defaultSystemPrompt,
-      mcpConfigPath, // Keep for fallback, but useGatewayTools takes precedence
+      mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
       dangerouslySkipPermissions: true,
-      useGatewayTools: true, // Use GatewayToolExecutor instead of MCP
+      useGatewayTools: useGatewayMode,
     });
-    console.log('[AgentLoop] Gateway Tools mode enabled - tools executed via GatewayToolExecutor');
+
+    // Log tool mode for transparency
+    if (useMCPMode) {
+      console.log('[AgentLoop] MCP mode enabled - tools via MCP server (' + mcpConfigPath + ')');
+    } else {
+      console.log('[AgentLoop] Gateway mode enabled - tools via GatewayToolExecutor');
+    }
+    console.log(
+      '[AgentLoop] Config: gateway=' +
+        JSON.stringify(this.toolsConfig.gateway) +
+        ' mcp=' +
+        JSON.stringify(this.toolsConfig.mcp)
+    );
     this.agent = this.claudeCLI;
 
     this.mcpExecutor = new GatewayToolExecutor(executorOptions);

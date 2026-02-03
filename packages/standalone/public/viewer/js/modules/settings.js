@@ -101,6 +101,41 @@ export class SettingsModule {
       'settings-agent-timeout',
       Math.round((this.config.agent?.timeout || 300000) / 1000)
     );
+
+    // Tool Mode
+    this.populateToolMode();
+  }
+
+  /**
+   * Populate tool mode settings
+   */
+  populateToolMode() {
+    const tools = this.config.agent?.tools || { gateway: ['*'], mcp: [] };
+    const isMCPMode = (tools.mcp || []).includes('*');
+    const isGatewayMode = !isMCPMode;
+
+    // Set radio buttons
+    this.setRadio('settings-tool-mode-gateway', isGatewayMode);
+    this.setRadio('settings-tool-mode-mcp', isMCPMode);
+
+    // Update status display
+    const statusEl = document.getElementById('tool-mode-status');
+    const detailsEl = document.getElementById('tool-mode-details');
+
+    if (statusEl && detailsEl) {
+      const indicator = statusEl.querySelector('span:first-child');
+      const modeLabel = statusEl.querySelector('span.font-medium');
+
+      if (isGatewayMode) {
+        indicator.className = 'w-2 h-2 bg-green-500 rounded-full';
+        modeLabel.textContent = 'Current: Gateway Mode';
+        detailsEl.textContent = `Tools: ${(tools.gateway || ['*']).join(', ')} (via GatewayToolExecutor)`;
+      } else {
+        indicator.className = 'w-2 h-2 bg-blue-500 rounded-full';
+        modeLabel.textContent = 'Current: MCP Mode';
+        detailsEl.textContent = `Tools: ${(tools.mcp || ['*']).join(', ')} (via MCP server)`;
+      }
+    }
   }
 
   /**
@@ -169,7 +204,27 @@ export class SettingsModule {
         model: this.getSelectValue('settings-agent-model'),
         max_turns: parseInt(this.getValue('settings-agent-max-turns') || '10', 10),
         timeout: parseInt(this.getValue('settings-agent-timeout') || '300', 10) * 1000,
+        tools: this.collectToolModeData(),
       },
+    };
+  }
+
+  /**
+   * Collect tool mode data
+   */
+  collectToolModeData() {
+    const isMCPMode = this.getRadio('settings-tool-mode-mcp');
+    if (isMCPMode) {
+      return {
+        gateway: [],
+        mcp: ['*'],
+        mcp_config: '~/.mama/mama-mcp-config.json',
+      };
+    }
+    return {
+      gateway: ['*'],
+      mcp: [],
+      mcp_config: '~/.mama/mama-mcp-config.json',
     };
   }
 
@@ -234,6 +289,24 @@ export class SettingsModule {
   getSelectValue(id) {
     const el = document.getElementById(id);
     return el ? el.value : '';
+  }
+
+  /**
+   * Helper: Set radio button
+   */
+  setRadio(id, checked) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.checked = !!checked;
+    }
+  }
+
+  /**
+   * Helper: Get radio button value
+   */
+  getRadio(id) {
+    const el = document.getElementById(id);
+    return el ? el.checked : false;
   }
 
   /**
