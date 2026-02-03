@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [mama-os-0.3.1] - 2026-02-03
+
+### Fixed
+
+- **PWA Favicon** - Convert favicon.ico from PNG to proper ICO format (16x16, 32x32, 48x48)
+- **Favicon Route** - Add `/favicon.ico` endpoint to graph-api.js
+
 ## [mama-os-0.3.0] - 2026-02-03
 
 ### Added
