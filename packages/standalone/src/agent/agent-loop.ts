@@ -176,6 +176,7 @@ export class AgentLoop {
   private sessionKey: string;
   private readonly sessionPool: SessionPool;
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
+  private readonly isGatewayMode: boolean;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -195,8 +196,11 @@ export class AgentLoop {
     const sessionId = randomUUID();
 
     // Determine tool mode: Gateway (default) or MCP
+    // Note: Partial patterns (e.g., 'mama_*') are not supported for mode selection
+    // Use '*' for all tools in that mode, or specific tool names
     const useMCPMode = (this.toolsConfig.mcp || []).includes('*');
     const useGatewayMode = !useMCPMode;
+    this.isGatewayMode = useGatewayMode;
 
     // Build system prompt
     const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
@@ -413,31 +417,39 @@ export class AgentLoop {
 
         // Build content blocks - include tool_use blocks if present
         const contentBlocks: ContentBlock[] = [];
+        let parsedToolCalls: ToolUseBlock[] = [];
 
-        // Parse tool_call blocks from text response (Gateway Tools mode)
-        const parsedToolCalls = this.parseToolCallsFromText(piResult.response || '');
-        const textWithoutToolCalls = this.removeToolCallBlocks(piResult.response || '');
+        // Parse tool_call blocks from text response (Gateway Tools mode ONLY)
+        if (this.isGatewayMode) {
+          parsedToolCalls = this.parseToolCallsFromText(piResult.response || '');
+          const textWithoutToolCalls = this.removeToolCallBlocks(piResult.response || '');
 
-        if (textWithoutToolCalls.trim()) {
-          contentBlocks.push({ type: 'text', text: textWithoutToolCalls });
-        }
-
-        // Add parsed tool_use blocks from text (Gateway Tools - prompt-based)
-        if (parsedToolCalls.length > 0) {
-          for (const toolCall of parsedToolCalls) {
-            contentBlocks.push({
-              type: 'tool_use',
-              id: toolCall.id,
-              name: toolCall.name,
-              input: toolCall.input,
-            } as ToolUseBlock);
+          if (textWithoutToolCalls.trim()) {
+            contentBlocks.push({ type: 'text', text: textWithoutToolCalls });
           }
-          console.log(
-            `[AgentLoop] Parsed ${parsedToolCalls.length} tool calls from text (Gateway Tools mode)`
-          );
+
+          // Add parsed tool_use blocks from text (Gateway Tools - prompt-based)
+          if (parsedToolCalls.length > 0) {
+            for (const toolCall of parsedToolCalls) {
+              contentBlocks.push({
+                type: 'tool_use',
+                id: toolCall.id,
+                name: toolCall.name,
+                input: toolCall.input,
+              } as ToolUseBlock);
+            }
+            console.log(
+              `[AgentLoop] Parsed ${parsedToolCalls.length} tool calls from text (Gateway Tools mode)`
+            );
+          }
+        } else {
+          // MCP mode: use response text as-is
+          if (piResult.response?.trim()) {
+            contentBlocks.push({ type: 'text', text: piResult.response });
+          }
         }
 
-        // Also add tool_use blocks from Claude CLI if present (MCP fallback)
+        // Add tool_use blocks from Claude CLI if present (MCP mode)
         if (piResult.toolUseBlocks && piResult.toolUseBlocks.length > 0) {
           for (const toolUse of piResult.toolUseBlocks) {
             contentBlocks.push({
@@ -451,7 +463,10 @@ export class AgentLoop {
         }
 
         // Set stop_reason based on whether tools were requested
-        const hasToolUse = piResult.hasToolUse || parsedToolCalls.length > 0;
+        // In Gateway mode: check parsed tool calls; in MCP mode: check CLI tool blocks
+        const hasToolUse = this.isGatewayMode
+          ? parsedToolCalls.length > 0
+          : piResult.hasToolUse || false;
 
         response = {
           id: `msg_${Date.now()}`,

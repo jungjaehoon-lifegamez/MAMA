@@ -564,7 +564,7 @@ export async function runAgentLoop(
   const {
     suggest,
     save,
-    update,
+    updateOutcome,
     loadCheckpoint,
     list: listDecisions,
   } = require('@jungjaehoon/mama-core');
@@ -579,7 +579,7 @@ export async function runAgentLoop(
   const mamaApiClient = {
     search: suggest, // mama-core exports 'suggest' for semantic search
     save,
-    update,
+    update: updateOutcome, // mama-core exports 'updateOutcome' for decision updates
     loadCheckpoint,
     listDecisions, // For SessionStart-like functionality
   };

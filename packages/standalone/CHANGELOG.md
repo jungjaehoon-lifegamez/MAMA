@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-03
+
+### Added
+
+- **Self-Contained Context Injection** - MAMA Standalone now includes built-in context injection
+  - `ContextInjector` class for session startup and per-message context
+  - Automatic checkpoint loading and recent decisions retrieval
+  - Replaces dependency on Claude Code plugin hooks
+  - Environment variable `MAMA_DAEMON=1` prevents duplicate injection
+
+- **Gateway Tools Mode** - Direct tool execution without MCP dependency
+  - 18 built-in tools: MAMA Memory (4), Browser (10), Utility (4)
+  - `tool_call` block format for LLM tool invocation
+  - `GatewayToolExecutor` for self-contained execution
+
+- **Hybrid Tool Routing** - Configurable Gateway/MCP tool selection
+  - Per-tool selection via dashboard settings
+  - Category-based organization (Memory, Browser, Utility)
+  - Visual tool status in Dashboard tab
+
+- **Gateway Tools Documentation** - Extracted to `gateway-tools.md`
+  - Comprehensive parameter documentation
+  - Usage examples and format specification
+
+### Changed
+
+- **Tool ID Generation** - Switched from `Date.now()` to `randomUUID()`
+  - Prevents ID collisions in high-throughput scenarios
+  - Addresses Gemini Code Assist security review
+
+- **Version Bump** - Major version to 0.3.0 for new features
+
+### Fixed
+
+- **Plugin Hook Duplication** - Skip injection when `MAMA_DAEMON=1` is set
+- **Test Timeout** - Increased Claude CLI wrapper test timeout to 60s
+
 ## [0.1.8] - 2026-02-03
 
 ### Changed

@@ -198,7 +198,7 @@ This protects your credentials from being exposed in chat logs.`;
       sessionStartupContext
     );
 
-    // 4. Run agent loop (with session info for lane-based concurrency)
+    // 6. Run agent loop (with session info for lane-based concurrency)
     const options: AgentLoopOptions = {
       systemPrompt,
       userId: message.userId,

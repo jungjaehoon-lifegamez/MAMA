@@ -218,9 +218,8 @@ Consider these previous decisions when responding. Reference them if relevant.
         if (decisions && decisions.length > 0) {
           contextText += `\n🧠 **Recent Decisions** (${decisions.length}):\n`;
           decisions.forEach((d, idx) => {
-            const timeAgo = d.created_at
-              ? this.formatTimeAgo(Date.now() - new Date(d.created_at).getTime())
-              : '';
+            const createdTime = d.created_at ? new Date(d.created_at).getTime() : NaN;
+            const timeAgo = !isNaN(createdTime) ? this.formatTimeAgo(Date.now() - createdTime) : '';
             const outcomeEmoji =
               d.outcome === 'success' ? '✅' : d.outcome === 'failed' ? '❌' : '⏳';
             contextText += `   ${idx + 1}. ${outcomeEmoji} ${d.topic}: ${this.truncate(d.decision, 60)} (${timeAgo})\n`;
