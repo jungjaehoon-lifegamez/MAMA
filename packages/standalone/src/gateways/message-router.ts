@@ -247,13 +247,16 @@ This protects your credentials from being exposed in chat logs.`;
     const roleMaxTurns = agentContext.role.maxTurns;
 
     // Determine if we should resume an existing CLI session
-    // - New CLI session: inject full system prompt + history
-    // - Continuing CLI session: use --resume, CLI already has context (90% token savings!)
+    // - New CLI session: start with --session-id
+    // - Continuing CLI session: use --resume flag
+    // Note: Always inject system prompt to ensure Gateway Tools and AgentContext
+    // are available even if CLI session was lost (daemon restart, timeout, etc.)
     const shouldResume = !isNewCliSession;
 
     const options: AgentLoopOptions = {
-      // Only inject system prompt for NEW sessions (CLI already has it when resuming)
-      systemPrompt: shouldResume ? undefined : systemPrompt,
+      // Always inject system prompt - ensures Gateway Tools and AgentContext
+      // are available even if CLI session was lost
+      systemPrompt,
       userId: message.userId,
       model: roleModel, // Role-specific model override
       maxTurns: roleMaxTurns, // Role-specific max turns
@@ -265,7 +268,7 @@ This protects your credentials from being exposed in chat logs.`;
 
     if (shouldResume) {
       console.log(
-        `[MessageRouter] Resuming CLI session (skipping ${systemPrompt.length} chars of system prompt)`
+        `[MessageRouter] Resuming CLI session (injecting ${systemPrompt.length} chars for safety)`
       );
     } else {
       console.log(
@@ -275,34 +278,39 @@ This protects your credentials from being exposed in chat logs.`;
 
     let response: string;
 
-    // Use multimodal content if available (OpenClaw-style)
-    if (
-      message.contentBlocks &&
-      message.contentBlocks.length > 0 &&
-      this.agentLoop.runWithContent
-    ) {
-      // Build content blocks: text first, then images
-      const contentBlocks: ContentBlock[] = [];
+    try {
+      // Use multimodal content if available (OpenClaw-style)
+      if (
+        message.contentBlocks &&
+        message.contentBlocks.length > 0 &&
+        this.agentLoop.runWithContent
+      ) {
+        // Build content blocks: text first, then images
+        const contentBlocks: ContentBlock[] = [];
 
-      // Add text content if present
-      if (message.text) {
-        contentBlocks.push({ type: 'text', text: message.text });
-      }
-
-      // Add all content blocks (text info + images + files)
-      for (const block of message.contentBlocks) {
-        // Include text blocks (contain path info like "[Image: x.jpg, saved at: /path]")
-        // Include image blocks with source (base64 data)
-        if (block.type === 'text' || (block.type === 'image' && block.source)) {
-          contentBlocks.push(block);
+        // Add text content if present
+        if (message.text) {
+          contentBlocks.push({ type: 'text', text: message.text });
         }
-      }
 
-      const result = await this.agentLoop.runWithContent(contentBlocks, options);
-      response = result.response;
-    } else {
-      const result = await this.agentLoop.run(message.text, options);
-      response = result.response;
+        // Add all content blocks (text info + images + files)
+        for (const block of message.contentBlocks) {
+          // Include text blocks (contain path info like "[Image: x.jpg, saved at: /path]")
+          // Include image blocks with source (base64 data)
+          if (block.type === 'text' || (block.type === 'image' && block.source)) {
+            contentBlocks.push(block);
+          }
+        }
+
+        const result = await this.agentLoop.runWithContent(contentBlocks, options);
+        response = result.response;
+      } else {
+        const result = await this.agentLoop.run(message.text, options);
+        response = result.response;
+      }
+    } finally {
+      // Release the session lock so subsequent requests can reuse it
+      sessionPool.releaseSession(channelKey);
     }
 
     // 5. Update session context

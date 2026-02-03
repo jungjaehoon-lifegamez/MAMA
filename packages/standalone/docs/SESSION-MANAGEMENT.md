@@ -38,7 +38,7 @@ MAMA Standalone uses Claude CLI as its LLM interface. Each CLI process maintains
 │       ├── shouldResume = !isNew                                  │
 │       │                                                          │
 │       └── AgentLoop.run(prompt, {                                │
-│               systemPrompt: shouldResume ? undefined : fullPrompt│
+│               systemPrompt: fullPrompt,  // Always inject        │
 │               resumeSession: shouldResume                        │
 │           })                                                     │
 │               ↓                                                  │
@@ -47,7 +47,7 @@ MAMA Standalone uses Claude CLI as its LLM interface. Each CLI process maintains
 │               │           --system-prompt "..."                  │
 │               │                                                  │
 │               └── resume: claude -p "..." --resume UUID          │
-│                           (no --system-prompt)                   │
+│                           --system-prompt "..." (for safety)     │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -104,14 +104,16 @@ Every message spawned a fresh CLI process with:
 
 ### After (v0.3.2)
 
-First message only injects full context. Subsequent messages use `--resume`:
+First message uses `--session-id`, subsequent messages use `--resume`:
 
-| Message | Flags               | System Prompt | Tokens |
-| ------- | ------------------- | ------------- | ------ |
-| 1st     | `--session-id UUID` | Full          | ~8,600 |
-| 2nd+    | `--resume UUID`     | None          | ~3     |
+| Message | Flags               | System Prompt | Notes                    |
+| ------- | ------------------- | ------------- | ------------------------ |
+| 1st     | `--session-id UUID` | Full          | Creates new CLI session  |
+| 2nd+    | `--resume UUID`     | Full (safety) | CLI uses cached if valid |
 
-**Result:** 99.9% token savings on subsequent messages
+**Note:** System prompt is always passed for safety (ensures Gateway Tools and AgentContext are available even if CLI session was lost due to daemon restart, timeout, etc.). CLI will use cached context when available, only falling back to the provided prompt if needed.
+
+**Result:** Token savings depend on CLI session validity. Best case maintains 90%+ savings when CLI cache hits.
 
 ---
 
@@ -132,6 +134,8 @@ Resumes an existing session. Claude CLI:
 1. Loads conversation history from disk
 2. Maintains all previous context
 3. Continues from where it left off
+
+**Note:** We also pass `--system-prompt` with `--resume` for safety. If the CLI session is still valid, it uses cached context. If the session was lost (timeout, daemon restart), it uses the provided system prompt.
 
 ### `--no-session-persistence` (Not Used)
 
