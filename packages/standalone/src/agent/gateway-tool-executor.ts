@@ -558,6 +558,15 @@ export class GatewayToolExecutor {
       return { success: false, error: pathPermission.error };
     }
 
+    // Fallback security for contexts without path restrictions:
+    // Only allow writing to ~/.mama/ directory
+    if (!this.currentContext?.role.allowedPaths?.length) {
+      const mamaDir = join(homeDir, '.mama');
+      if (!expandedPath.startsWith(mamaDir)) {
+        return { success: false, error: `Access denied: Can only write files to ${mamaDir}` };
+      }
+    }
+
     try {
       const dir = dirname(expandedPath);
       mkdirSync(dir, { recursive: true });

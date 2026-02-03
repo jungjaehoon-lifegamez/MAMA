@@ -110,6 +110,26 @@ export class SettingsModule {
   }
 
   /**
+   * Escape HTML to prevent XSS attacks
+   * @param {string} value - Value to escape
+   * @returns {string} Escaped HTML string
+   */
+  escapeHtml(value) {
+    const str = String(value);
+    return str.replace(
+      /[&<>"']/g,
+      (ch) =>
+        ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        })[ch]
+    );
+  }
+
+  /**
    * Populate role permissions from config
    */
   populateRoles() {
@@ -148,7 +168,9 @@ export class SettingsModule {
         const sources = roleSources[roleName] || [];
         const color = roleColors[roleName] || { badge: 'gray', label: 'Custom' };
         const icon = roleIcons[roleName] || '⚙️';
-        const displayName = roleName.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+        const displayName = this.escapeHtml(
+          roleName.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
+        );
 
         const allowedTools = roleConfig.allowedTools || [];
         const blockedTools = roleConfig.blockedTools || [];
@@ -157,8 +179,8 @@ export class SettingsModule {
         const model = roleConfig.model || 'default';
         const maxTurns = roleConfig.maxTurns;
 
-        // Format model name for display
-        const displayModel = this.formatModelName(model);
+        // Format model name for display (and escape)
+        const displayModel = this.escapeHtml(this.formatModelName(model));
 
         return `
           <div class="bg-white border border-gray-200 rounded-lg p-2.5">
@@ -173,11 +195,11 @@ export class SettingsModule {
               <div class="flex items-center gap-2">
                 <span class="font-medium">Model:</span>
                 <span class="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">${displayModel}</span>
-                ${maxTurns ? `<span class="text-gray-400">| ${maxTurns} turns</span>` : ''}
+                ${maxTurns ? `<span class="text-gray-400">| ${this.escapeHtml(maxTurns)} turns</span>` : ''}
               </div>
-              <div><span class="font-medium">Source:</span> ${sources.map((s) => `<code class="bg-gray-100 px-1 rounded">${s}</code>`).join(' ')}</div>
-              <div><span class="font-medium">Allowed:</span> <code class="text-green-600 text-[10px]">${allowedTools.join(', ')}</code></div>
-              ${blockedTools.length > 0 ? `<div><span class="font-medium">Blocked:</span> <code class="text-red-600 text-[10px]">${blockedTools.join(', ')}</code></div>` : ''}
+              <div><span class="font-medium">Source:</span> ${sources.map((s) => `<code class="bg-gray-100 px-1 rounded">${this.escapeHtml(s)}</code>`).join(' ')}</div>
+              <div><span class="font-medium">Allowed:</span> <code class="text-green-600 text-[10px]">${this.escapeHtml(allowedTools.join(', '))}</code></div>
+              ${blockedTools.length > 0 ? `<div><span class="font-medium">Blocked:</span> <code class="text-red-600 text-[10px]">${this.escapeHtml(blockedTools.join(', '))}</code></div>` : ''}
               ${
                 hasSystemControl || hasSensitiveAccess
                   ? `<div><span class="font-medium">Permissions:</span>

@@ -314,9 +314,10 @@ async function main() {
 
   // Check if this is a resume/compact event (not a fresh session start)
   // Claude Code triggers SessionStart on compact/resume - skip full warmup for these
-  const isResumeOrCompact =
-    process.env.MAMA_SESSION_START &&
-    Date.now() - parseInt(process.env.MAMA_SESSION_START, 10) < 30 * 60 * 1000; // Within 30 min
+  // Only skip if: (1) last warmup succeeded AND (2) timestamp is recent (within 30 min)
+  const lastStart = Number(process.env.MAMA_SESSION_START);
+  const isRecentStart = Number.isFinite(lastStart) && Date.now() - lastStart < 30 * 60 * 1000; // Within 30 min
+  const isResumeOrCompact = process.env.MAMA_WARM_STATUS === 'ready' && isRecentStart;
 
   if (isResumeOrCompact) {
     // Already warmed up in this session - just output minimal status

@@ -90,12 +90,12 @@ interface RoleConfig {
 
 ```typescript
 {
+  model: 'claude-sonnet-4-20250514',
   allowedTools: ['*'],
-  blockedTools: [],
   allowedPaths: ['~/**'],
   systemControl: true,
   sensitiveAccess: true,
-  maxTurns: 50,
+  maxTurns: 20,
 }
 ```
 
@@ -110,8 +110,9 @@ Full system access. Used by MAMA OS Viewer for:
 
 ```typescript
 {
-  allowedTools: ['mama_*', 'discord_send', 'Read'],
-  blockedTools: ['Bash', 'Write', 'Edit'],
+  model: 'claude-sonnet-4-20250514',
+  allowedTools: ['mama_*', 'Read', 'discord_send', 'translate_image'],
+  blockedTools: ['Bash', 'Write', 'save_integration_token'],
   allowedPaths: ['~/.mama/workspace/**'],
   systemControl: false,
   sensitiveAccess: false,
@@ -125,26 +126,6 @@ Limited access for external messengers:
 - Platform-specific send tools
 - Read-only file access in workspace
 - No system commands
-
-#### scheduler (Cron)
-
-```typescript
-{
-  allowedTools: ['mama_*', 'Read', 'Write', 'Bash'],
-  blockedTools: [],
-  allowedPaths: ['~/.mama/**'],
-  systemControl: true,
-  sensitiveAccess: false,
-  maxTurns: 20,
-}
-```
-
-Background task execution:
-
-- Full MAMA access
-- File operations in MAMA directory
-- Can run system commands
-- No sensitive config access
 
 ---
 
