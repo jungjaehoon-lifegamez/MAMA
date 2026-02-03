@@ -545,7 +545,6 @@ export class AgentLoop {
     const toolCallRegex = /```tool_call\s*\n([\s\S]*?)\n```/g;
 
     let match;
-    let index = 0;
     while ((match = toolCallRegex.exec(text)) !== null) {
       try {
         const jsonStr = match[1].trim();
