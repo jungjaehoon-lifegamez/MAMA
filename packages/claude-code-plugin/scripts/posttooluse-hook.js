@@ -36,8 +36,7 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 // const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
-// MAMA v2: Contract extraction and auto-save
-const { extractContracts } = require(path.join(CORE_PATH, 'contract-extractor'));
+// MAMA v2: No imports needed - Haiku will analyze diff directly
 
 // Configuration
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
@@ -181,83 +180,62 @@ function extractReasoning(conversationContext) {
 }
 
 /**
- * Format contract candidates as template for Task tool
- * MAMA v2: Provide templates for sub-agent to analyze and save
+ * Format contract analysis template for Haiku
+ * MAMA v2: Simple template - let Haiku analyze the diff directly
  *
- * @param {Object} contractCandidates - Contract candidates data
+ * @param {string} filePath - File being edited
+ * @param {string} diffContent - Code changes
+ * @param {string} toolName - Tool used (Edit, Write, etc)
  * @returns {string} Formatted template for Task tool
  */
-function formatContractTemplate(contractCandidates) {
-  if (
-    !contractCandidates ||
-    !contractCandidates.candidates ||
-    contractCandidates.candidates.length === 0
-  ) {
+function formatContractTemplate(filePath, diffContent, toolName) {
+  if (!diffContent || diffContent.trim().length === 0) {
     return '';
   }
 
-  const { candidates, filePath } = contractCandidates;
+  // Truncate very long diffs
+  const maxDiffLength = 2000;
+  const truncatedDiff =
+    diffContent.length > maxDiffLength
+      ? diffContent.substring(0, maxDiffLength) + '\n\n... (truncated)'
+      : diffContent;
 
   let output = '\n\n---\n';
-  output += '🔌 **MAMA v2: Contract Candidates Detected**\n\n';
+  output += '🔌 **MAMA v2: Code Change Detected**\n\n';
   output += `**File:** \`${filePath}\`\n`;
-  output += `**Candidates:** ${candidates.length}\n\n`;
+  output += `**Tool:** ${toolName}\n`;
+  output += `**Diff Size:** ${diffContent.length} characters\n\n`;
 
-  candidates.forEach((contract, idx) => {
-    output += `### ${idx + 1}. ${contract.type}\n`;
-
-    if (contract.type === 'api_endpoint') {
-      output += `- **Method:** ${contract.method}\n`;
-      output += `- **Path:** ${contract.path}\n`;
-      output += `- **Request:** ${contract.request}\n`;
-      output += `- **Response:** ${contract.response}\n`;
-      output += `- **Confidence:** ${Math.round(contract.confidence * 100)}%\n`;
-      output += `- **Template:**\n`;
-      output += '  ```\n';
-      output += `  topic: contract_${contract.method.toLowerCase()}_${contract.path.replace(/[^a-z0-9]/gi, '_')}\n`;
-      output += `  decision: "${contract.method} ${contract.path} expects ${contract.request}, returns ${contract.response}"\n`;
-      output += `  reasoning: "Auto-extracted from ${contract.file} for frontend/backend consistency"\n`;
-      output += '  ```\n\n';
-    } else if (contract.type === 'function_signature') {
-      output += `- **Name:** ${contract.name}\n`;
-      output += `- **Parameters:** ${contract.params.join(', ')}\n`;
-      output += `- **Confidence:** ${Math.round(contract.confidence * 100)}%\n`;
-      output += `- **Template:**\n`;
-      output += '  ```\n';
-      output += `  topic: contract_function_${contract.name}\n`;
-      output += `  decision: "${contract.name}(${contract.params.join(', ')}) defined in ${contract.file}"\n`;
-      output += `  reasoning: "Auto-extracted function signature for consistency"\n`;
-      output += '  ```\n\n';
-    } else if (contract.type === 'type_definition') {
-      output += `- **Kind:** ${contract.kind}\n`;
-      output += `- **Name:** ${contract.name}\n`;
-      output += `- **Fields:** ${contract.fields.slice(0, 3).join('; ')}...\n`;
-      output += `- **Confidence:** ${Math.round(contract.confidence * 100)}%\n`;
-      output += `- **Template:**\n`;
-      output += '  ```\n';
-      output += `  topic: contract_type_${contract.name}\n`;
-      output += `  decision: "${contract.kind} ${contract.name} { ${contract.fields.join('; ')} }"\n`;
-      output += `  reasoning: "Auto-extracted type definition from ${contract.file}"\n`;
-      output += '  ```\n\n';
-    }
-  });
+  output += '### Code Changes:\n';
+  output += '```\n';
+  output += truncatedDiff;
+  output += '\n```\n\n';
 
   output += '---\n\n';
-  output += '💡 **Next Steps:**\n\n';
-  output += 'Use Task tool to analyze and save these contracts:\n\n';
+  output += '💡 **Action Required:**\n\n';
+  output += 'Use Task tool to analyze this diff and extract contracts:\n\n';
   output += '```javascript\n';
   output += 'Task({\n';
   output += '  subagent_type: "general-purpose",\n';
-  output += '  model: "haiku",  // Fast & cheap for contract analysis\n';
-  output += '  description: "Analyze and save contracts",\n';
+  output += '  model: "haiku",  // Fast & cheap\n';
+  output += '  description: "Extract and save contracts",\n';
   output += '  prompt: `\n';
-  output += '    Review the contract candidates above.\n';
-  output += '    For each valid contract (not test/comment/example):\n';
+  output += `    Analyze this code change from ${filePath}:\n`;
   output += '    \n';
-  output += "    1. Verify it's a real contract\n";
-  output += '    2. Use /mama:decision to save\n';
+  output += '    ${diffContent}\n';
   output += '    \n';
-  output += '    Format: /mama:decision <topic> <decision> <reasoning> --confidence=0.9\n';
+  output += '    Extract contracts:\n';
+  output += '    1. API endpoints (method, path, request/response schema)\n';
+  output += '    2. Function signatures (name, parameters, return type)\n';
+  output += '    3. Type definitions (interfaces, types)\n';
+  output += '    \n';
+  output += '    Skip:\n';
+  output += '    - Test files\n';
+  output += '    - Comments and examples\n';
+  output += '    - Mock/fake code\n';
+  output += '    \n';
+  output += '    Save valid contracts to MAMA:\n';
+  output += '    /mama:decision <topic> "<decision>" "<reasoning>" --confidence=0.8\n';
   output += '  `\n';
   output += '});\n';
   output += '```\n';
@@ -487,43 +465,15 @@ async function main() {
 
     info(`[Hook] Auto-save candidate: "${decision}"`);
 
-    // 6.5. MAMA v2: Extract contract candidates (no auto-save)
-    let contractCandidates = null;
-    if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent) {
-      try {
-        info('[Hook] Extracting contract candidates from code...');
-        const extracted = extractContracts(diffContent, filePath);
-        const allContracts = [
-          ...extracted.apiEndpoints,
-          ...extracted.functionSignatures,
-          ...extracted.typeDefinitions,
-        ];
-
-        if (allContracts.length > 0) {
-          info(`[Hook] Found ${allContracts.length} contract candidates`);
-
-          // Filter out likely noise
-          const filtered = allContracts.filter((c) => {
-            // Skip test files
-            if (filePath && (filePath.includes('test/') || filePath.includes('.test.'))) {
-              return false;
-            }
-            // Only include high confidence
-            return c.confidence >= 0.7;
-          });
-
-          if (filtered.length > 0) {
-            info(`[Hook] ${filtered.length} high-confidence candidates after filtering`);
-            contractCandidates = {
-              candidates: filtered,
-              filePath,
-              diffContent: diffContent.substring(0, 500), // First 500 chars for context
-            };
-          }
-        }
-      } catch (error) {
-        warn(`[Hook] Contract extraction failed: ${error.message}`);
-        // Don't fail the entire hook if contract extraction fails
+    // 6.5. MAMA v2: Prepare diff for Haiku analysis (no Regex extraction)
+    let hasCodeChange = false;
+    if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent && diffContent.trim().length > 0) {
+      // Skip test files
+      if (!filePath || (!filePath.includes('test/') && !filePath.includes('.test.'))) {
+        info('[Hook] Code change detected, preparing for Haiku analysis');
+        hasCodeChange = true;
+      } else {
+        info('[Hook] Test file detected, skipping contract analysis');
       }
     }
 
@@ -545,9 +495,9 @@ async function main() {
     // AC: When diff resembles existing decision, suggest auto-save
     let additionalContext = '';
 
-    // Add contract results if available
-    if (contractCandidates && contractCandidates.saved.length > 0) {
-      additionalContext += formatContractTemplate(contractCandidates);
+    // Add contract template if code changes detected
+    if (hasCodeChange) {
+      additionalContext += formatContractTemplate(filePath, diffContent, toolName);
     }
 
     // Add auto-save suggestion
@@ -559,10 +509,9 @@ async function main() {
     );
 
     // Correct Claude Code JSON format with hookSpecificOutput
-    const systemMessage =
-      contractCandidates && contractCandidates.saved.length > 0
-        ? `🔌 MAMA v2: ${contractCandidates.saved.length} contract(s) saved | 💾 Suggestion: ${topic} (${latencyMs}ms)`
-        : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
+    const systemMessage = hasCodeChange
+      ? `🔌 MAMA v2: Contract candidates detected | 💾 Suggestion: ${topic} (${latencyMs}ms)`
+      : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
 
     const response = {
       decision: null,
@@ -575,10 +524,8 @@ async function main() {
     };
     console.log(JSON.stringify(response));
 
-    // Log suggestion (will be logged again when user responds)
-    const contractInfo = contractCandidates
-      ? `, ${contractCandidates.saved.length} contracts saved`
-      : '';
+    // Log suggestion
+    const contractInfo = hasCodeChange ? ', contract candidates detected' : '';
     info(
       `[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar${contractInfo})`
     );
