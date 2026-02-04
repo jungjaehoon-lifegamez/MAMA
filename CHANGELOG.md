@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-02-04
+
+### Fixed - claude-code-plugin@1.7.3
+
+- **PostToolUse Hook Auto-Injection**: PostToolUse hooks now properly display output to Claude
+  - Changed exit code from 0 to 2 (blocking error mode)
+  - Changed output from stdout to stderr (console.error)
+  - MAMA v2 contract extraction prompts now automatically injected after Write/Edit
+  - Per GitHub issue #11224: exit code 2 + stderr = visible to Claude
+  - Note: Displays as "blocking error" in UI but functionality works correctly
+
+### Changed - claude-code-plugin@1.7.3
+
+- PostToolUse hook output visibility mechanism
+- Auto-Save suggestions now appear immediately after code changes
+- Hooks moved inline to plugin.json (official Claude Code spec)
+
 ## [claude-code-plugin-1.7.0] + [mama-server-1.7.0] - 2026-02-04
 
 ### Added - MAMA v2: AI Agent Consistency Engine
