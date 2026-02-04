@@ -63,21 +63,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Package Impact Analysis
 
-| Package              | Version  | Impact                                  |
-| -------------------- | -------- | --------------------------------------- |
-| claude-code-plugin   | 1.7.0 ⬆️ | Major: MAMA v2 features, documentation  |
-| mama-server (MCP)    | 1.7.0 ⬆️ | Minor: Documentation only               |
-| mama-core            | 1.0.1 ➡️ | None: No changes                        |
-| openclaw-mama        | 0.4.1 ➡️ | None: No changes                        |
-| mama-os (standalone) | 0.3.4 ➡️ | None: Unrelated auto-translation change |
+| Package              | Version  | Impact                                            |
+| -------------------- | -------- | ------------------------------------------------- |
+| claude-code-plugin   | 1.7.0 ⬆️ | Major: MAMA v2 features, documentation            |
+| mama-server (MCP)    | 1.7.0 ⬆️ | Minor: Documentation only                         |
+| mama-core            | 1.0.1 ➡️ | None: No changes                                  |
+| openclaw-mama        | 0.4.1 ➡️ | None: No changes                                  |
+| mama-os (standalone) | 0.3.4 ➡️ | Changed: Image auto-translation (unrelated to v2) |
 
 **Breaking Changes:** None - MAMA v2 features are additive
+
+**Standalone (MAMA OS) Changes:**
+
+- **Image Auto-Translation** (unrelated to v2): Added automatic translation prompt injection for image messages
+  - Detects short messages with images (<15 chars) or image keywords
+  - Auto-adds "이미지의 모든 텍스트를 한국어로 번역해주세요" prompt
+  - File: `packages/standalone/src/gateways/message-router.ts`
 
 **Migration Notes:**
 
 - PostToolUse and PreToolUse hooks now active by default
 - No user action required - contracts automatically tracked
 - Existing MCP server installations compatible (no API changes)
+- Standalone image auto-translation: No migration needed (additive feature)
 
 ## [mama-os-0.3.1] - 2026-02-03
 
