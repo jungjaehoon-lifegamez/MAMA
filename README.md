@@ -18,6 +18,59 @@ Regular memory: "Likes morning meetings"
 MAMA:           "Prefers morning meetings (tried afternoons but energy was low) → worked well for 3 months"
 ```
 
+## 🚀 Why MAMA for Development?
+
+**Stop debugging the same bugs. Stop explaining the same context. Let Claude remember.**
+
+### The Problem: AI Agents Lose Context
+
+When AI agents build software across multiple sessions, they create inconsistencies:
+
+```typescript
+// Frontend (Session 1)
+const response = await fetch('/api/auth/login');
+const { userId, token } = await response.json();
+
+// Backend (Session 2 - Different agent, no context)
+res.json({ id: user.id, authToken: token }); // ❌ Mismatch!
+```
+
+Result: Hours of debugging contract mismatches between frontend/backend/database.
+
+### MAMA v2: AI Agent Consistency Engine
+
+MAMA tracks **API contracts, function signatures, and architectural decisions** so Claude never forgets:
+
+- **Contract Detection**: Automatically extracts API schemas from code changes
+- **Cross-Session Memory**: Frontend knows what Backend promised (even weeks later)
+- **Conflict Prevention**: Claude warns you before writing incompatible code
+- **Decision Evolution**: Track why you chose JWT over sessions (and whether it worked)
+
+**Real Example:**
+
+```typescript
+// MAMA saves this contract automatically
+Decision: POST /api/auth/login returns { userId: string, token: string }
+
+// 3 days later, frontend developer asks:
+// "Add login page"
+//
+// Claude recalls: "Backend expects { email, password }, returns { userId, token }"
+// → Writes correct integration, first try ✅
+```
+
+### How It Works
+
+1. **MCP Server** (`@jungjaehoon/mama-server`)
+   - Semantic search across decisions
+   - Contract database with vector similarity
+   - Works with Claude Desktop & Claude Code
+
+2. **Claude Code Plugin** (`mama`)
+   - Auto-detects code changes (PostToolUse hook)
+   - Injects relevant contracts before edits (PreToolUse hook)
+   - Suggests saving new contracts via Haiku agent
+
 **What you get:**
 
 - Claude remembers your past choices and whether they worked
@@ -91,17 +144,18 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 
 ---
 
-### 💻 Want Memory in Claude Desktop/Code?
+### 💻 Building Software with Claude Code/Desktop?
 
-**→ MCP protocol integration**  
-**→ Slash commands & auto-context**  
-**→ Session continuity**
+**→ Stop frontend/backend mismatches**
+**→ Auto-track API contracts & function signatures**
+**→ Claude remembers your architecture decisions**
 
-**Use:** [MAMA MCP Server](packages/mcp-server/README.md)
+**Use:** [MAMA MCP Server](packages/mcp-server/README.md) + [Claude Code Plugin](packages/claude-code-plugin/README.md)
 
-**For Claude Code:**
+#### For Claude Code (Recommended for Development):
 
 ```bash
+# Install both MCP server and plugin
 /plugin marketplace add jungjaehoon-lifegamez/claude-plugins
 /plugin install mama
 ```
@@ -120,6 +174,37 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 ```
 
 **Package:** `@jungjaehoon/mama-server` v1.6.6
+
+**What happens after installation:**
+
+1. **PostToolUse Hook** (Claude Code only)
+   - Detects when you write/edit code
+   - Extracts API contracts automatically
+   - Suggests saving via `/mama:decision`
+
+2. **MCP Tools** (Both Desktop & Code)
+   - `/mama:search` - Find past decisions
+   - `/mama:decision` - Save contracts/choices
+   - `/mama:checkpoint` - Resume sessions
+
+3. **Auto-Context Injection**
+   - Before editing: Claude sees related contracts
+   - Before API calls: Recalls correct schemas
+   - Cross-session: Remembers your architecture
+
+**Example workflow:**
+
+```bash
+# Day 1: Build backend
+You: "Create login API"
+Claude: [Writes code]
+MAMA: Saved contract - POST /api/auth/login returns { userId, token }
+
+# Day 3: Build frontend (new session)
+You: "Add login form"
+Claude: "I see you have POST /api/auth/login that returns { userId, token }"
+       [Writes correct fetch() call, first try]
+```
 
 ---
 
