@@ -194,18 +194,22 @@ function formatContractTemplate(filePath, diffContent, toolName) {
     return '';
   }
 
-  // Truncate very long diffs
-  const maxDiffLength = 2000;
-  const truncatedDiff =
-    diffContent.length > maxDiffLength
-      ? diffContent.substring(0, maxDiffLength) + '\n\n... (truncated)'
-      : diffContent;
+  // Chunk long diffs to reduce omission risk
+  const maxChunkLength = 800;
+  const maxTotalLength = 2000;
+  const chunks = [];
+  for (let i = 0; i < diffContent.length; i += maxChunkLength) {
+    chunks.push(diffContent.slice(i, i + maxChunkLength));
+  }
+  const maxChunks = Math.max(1, Math.floor(maxTotalLength / maxChunkLength));
+  const limitedChunks = chunks.slice(0, maxChunks);
+  const wasTruncated = chunks.length > limitedChunks.length;
 
   // Sanitize filePath and toolName (user-controlled data)
   const safeFilePath = sanitizeForPrompt(filePath || 'unknown');
   const safeToolName = sanitizeForPrompt(toolName || 'unknown');
   // Sanitize diff content for safe injection
-  const safeDiff = sanitizeForPrompt(truncatedDiff);
+  const safeChunks = limitedChunks.map((chunk) => sanitizeForPrompt(chunk));
 
   let output = '\n\n---\n';
   output += '🔌 **MAMA v2: Code Change Detected**\n\n';
@@ -215,7 +219,14 @@ function formatContractTemplate(filePath, diffContent, toolName) {
 
   output += '### Code Changes:\n';
   output += '```\n';
-  output += safeDiff;
+  safeChunks.forEach((chunk, index) => {
+    output += `--- chunk ${index + 1}/${safeChunks.length} ---\n`;
+    output += chunk;
+    output += '\n';
+  });
+  if (wasTruncated) {
+    output += '\n... (truncated: additional chunks omitted)\n';
+  }
   output += '\n```\n\n';
 
   output += '---\n\n';
@@ -229,7 +240,10 @@ function formatContractTemplate(filePath, diffContent, toolName) {
   output += '  prompt: `\n';
   output += `    Analyze this code change from ${safeFilePath}:\n`;
   output += '    \n';
-  output += `    ${safeDiff}\n`;
+  output += safeChunks
+    .map((chunk, index) => `    --- chunk ${index + 1}/${safeChunks.length} ---\n    ${chunk}`)
+    .join('\n');
+  output += '\n';
   output += '    \n';
   output += '    Extract contracts:\n';
   output += '    1. API endpoints (method, path, request/response schema)\n';
