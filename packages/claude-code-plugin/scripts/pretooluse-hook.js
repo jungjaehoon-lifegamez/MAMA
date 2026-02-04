@@ -36,9 +36,6 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 const { formatContext } = require(path.join(CORE_PATH, 'decision-formatter'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
-// MAMA v2: Contract search
-const { searchDecisions } = require(path.join(CORE_PATH, 'mcp-client'));
-
 // Configuration
 const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
 const SIMILARITY_THRESHOLD = 0.7; // AC: Lower than M2.1 (70% vs 75%)
@@ -258,23 +255,25 @@ async function searchRelatedContracts(filePath, toolName) {
   }
 
   try {
+    // Lazy load DB access
+    const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
+    const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+
     // Search for contracts related to this file
     const basename = path.basename(filePath, ext);
-    const query = `contract ${basename}`;
+
+    // Extract keywords from filename (auth-service → auth, service)
+    const keywords = basename.split(/[-_]/);
+    const query = `contract api ${keywords.join(' ')}`;
 
     info(`[Hook] Searching contracts: "${query}"`);
 
-    const result = await searchDecisions(query, 5);
+    // Generate embedding and search
+    const queryEmbedding = await generateEmbedding(query);
+    const results = await vectorSearch(queryEmbedding, 10, 0.6); // Lower threshold
 
-    if (!result || !result.results) {
-      return [];
-    }
-
-    // Filter for high-confidence contracts
-    const contracts = result.results
-      .filter((r) => r.topic && r.topic.startsWith('contract_'))
-      .filter((r) => r.similarity >= 0.65) // Lower threshold for contracts
-      .slice(0, 3);
+    // Filter for contracts only
+    const contracts = results.filter((r) => r.topic && r.topic.startsWith('contract_')).slice(0, 3);
 
     info(`[Hook] Found ${contracts.length} related contracts`);
 
@@ -507,37 +506,31 @@ async function main() {
  * @returns {Promise<Object>} {context, count, contractCount}
  */
 async function injectPreToolContext(query, filePath, toolName) {
-  // Lazy load embeddings and vector search (only on Tier 1)
+  // Initialize DB and embeddings (lazy load for performance)
+  const { initDB } = require(path.join(CORE_PATH, 'db-manager'));
   const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
   const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 
-  // MAMA v2: Search decisions AND contracts in parallel
+  // Initialize DB first
+  await initDB();
+
+  // MAMA v2: Search decisions AND contracts in parallel via direct DB
   const [decisionResults, contractResults] = await Promise.all([
-    // 1. Regular decision search
+    // 1. Regular decision search via direct DB
     (async () => {
-      // Generate query embedding
-      const queryEmbedding = await generateEmbedding(query);
+      try {
+        // Generate query embedding
+        const queryEmbedding = await generateEmbedding(query);
 
-      // Vector search with lower threshold (70% vs 75%)
-      let results = await vectorSearch(queryEmbedding, 10, SIMILARITY_THRESHOLD);
+        // Vector search with lower threshold (70% vs 75%)
+        const results = await vectorSearch(queryEmbedding, 5, SIMILARITY_THRESHOLD);
 
-      // AC: Weight recency higher for file operations
-      // Apply Gaussian decay: score = similarity * exp(-age_days / 30)
-      const now = Date.now();
-      results = results.map((r) => {
-        const ageDays = (now - r.created_at) / (1000 * 60 * 60 * 24);
-        const recencyBoost = Math.exp(-ageDays / 30); // 30-day half-life
-        return {
-          ...r,
-          adjustedScore: r.similarity * 0.7 + recencyBoost * 0.3, // 70% similarity, 30% recency
-        };
-      });
-
-      // Sort by adjusted score
-      results.sort((a, b) => b.adjustedScore - a.adjustedScore);
-
-      // Take top 3
-      return results.slice(0, 3);
+        // Take top 3
+        return results.slice(0, 3);
+      } catch (error) {
+        warn(`[Hook] Decision search failed: ${error.message}`);
+        return [];
+      }
     })(),
 
     // 2. MAMA v2: Contract search
