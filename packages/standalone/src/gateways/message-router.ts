@@ -110,6 +110,25 @@ const SENSITIVE_PATTERNS = [
 ];
 
 /**
+ * Sanitize user-supplied text before injecting into prompts.
+ * Escapes characters that can alter prompt structure.
+ */
+function sanitizeForPrompt(text: string): string {
+  if (text === null || text === undefined) {
+    return '';
+  }
+
+  const str = typeof text === 'string' ? text : String(text);
+
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\$/g, '\\$')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}');
+}
+
+/**
  * Check if message contains sensitive configuration request
  */
 function containsSensitiveRequest(text: string): boolean {
@@ -331,8 +350,9 @@ This protects your credentials from being exposed in chat logs.`;
               ? '이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.'
               : `Translate all text in the image to ${targetLanguage}. Output only the translation without explanation.`;
 
+            const safeUserText = message.text ? sanitizeForPrompt(message.text) : '';
             messageText = message.text
-              ? `${message.text}\n\n${translationInstruction}`
+              ? `${safeUserText}\n\n${translationInstruction}`
               : translationInstruction;
 
             console.log(`[MessageRouter] Auto-injected translation prompt for image`);
