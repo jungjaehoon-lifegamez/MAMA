@@ -87,6 +87,39 @@ function normalizeDecisionText(text) {
   return text.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+function extractFileHint(decision, reasoning) {
+  const sources = [decision, reasoning].filter(Boolean);
+  for (const source of sources) {
+    const match = source.match(/defined in\s+([^\s,]+)/i) || source.match(/from\s+([^\s,]+)/i);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function buildContractTrustContext(decision, reasoning) {
+  const fileHint = extractFileHint(decision, reasoning);
+  return {
+    source: {
+      file: fileHint || 'unknown',
+      line: '?',
+      author: 'haiku',
+      timestamp: Date.now(),
+    },
+    causality: {
+      impact: 'Auto-extracted by LLM from code changes; verify before use.',
+    },
+    verification: {
+      test_file: null,
+      result: 'not_verified',
+    },
+    context_match: {
+      user_intent: 'contract extraction',
+    },
+  };
+}
+
 /**
  * Save decision tool definition
  */
@@ -164,6 +197,7 @@ const saveDecisionTool = {
 
       let contractWarning = null;
       let contractSkipId = null;
+      let trustContext = null;
 
       if (isContractTopic(topic)) {
         const validation = validateContractDecision(topic, decision, reasoning);
@@ -175,6 +209,8 @@ const saveDecisionTool = {
             )})`,
           };
         }
+
+        trustContext = buildContractTrustContext(decision, reasoning);
 
         try {
           const recallResult = await mama.recall(topic);
@@ -214,6 +250,7 @@ const saveDecisionTool = {
         confidence,
         type, // Pass type instead of user_involvement
         outcome,
+        trust_context: trustContext,
       });
 
       return {

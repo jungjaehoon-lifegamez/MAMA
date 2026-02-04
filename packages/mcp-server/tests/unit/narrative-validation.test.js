@@ -123,6 +123,9 @@ describe('Narrative Input Validation', () => {
         expect.objectContaining({
           topic: 'contract_get_users',
           decision: 'GET /users expects none, returns User[] defined in users.ts',
+          trust_context: expect.objectContaining({
+            verification: expect.objectContaining({ result: 'not_verified' }),
+          }),
         })
       );
     });
