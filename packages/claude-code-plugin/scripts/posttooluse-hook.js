@@ -37,10 +37,7 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // MAMA v2: Contract extraction and auto-save
-const { extractContracts, formatContractForMama } = require(
-  path.join(CORE_PATH, 'contract-extractor')
-);
-const { batchSaveContracts } = require(path.join(CORE_PATH, 'mcp-client'));
+const { extractContracts } = require(path.join(CORE_PATH, 'contract-extractor'));
 
 // Configuration
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
@@ -184,48 +181,86 @@ function extractReasoning(conversationContext) {
 }
 
 /**
- * Format contract auto-save results
- * MAMA v2: Show what contracts were automatically saved
+ * Format contract candidates as template for Task tool
+ * MAMA v2: Provide templates for sub-agent to analyze and save
  *
- * @param {Object} contractResults - Batch save results
- * @returns {string} Formatted contract report
+ * @param {Object} contractCandidates - Contract candidates data
+ * @returns {string} Formatted template for Task tool
  */
-function formatContractResults(contractResults) {
-  if (!contractResults || contractResults.saved.length === 0) {
+function formatContractTemplate(contractCandidates) {
+  if (
+    !contractCandidates ||
+    !contractCandidates.candidates ||
+    contractCandidates.candidates.length === 0
+  ) {
     return '';
   }
 
+  const { candidates, filePath } = contractCandidates;
+
   let output = '\n\n---\n';
-  output += '🔌 **MAMA v2: Contracts Auto-Saved**\n\n';
+  output += '🔌 **MAMA v2: Contract Candidates Detected**\n\n';
+  output += `**File:** \`${filePath}\`\n`;
+  output += `**Candidates:** ${candidates.length}\n\n`;
 
-  // Show saved contracts
-  if (contractResults.saved.length > 0) {
-    output += `✅ **Saved ${contractResults.saved.length} contract(s):**\n`;
-    contractResults.saved.forEach((item, idx) => {
-      const c = item.contract;
-      if (c.topic) {
-        output += `${idx + 1}. \`${c.topic}\`: ${c.decision.substring(0, 80)}...\n`;
-      }
-    });
-    output += '\n';
-  }
+  candidates.forEach((contract, idx) => {
+    output += `### ${idx + 1}. ${contract.type}\n`;
 
-  // Show skipped contracts
-  if (contractResults.skipped.length > 0) {
-    output += `⚠️  **Skipped ${contractResults.skipped.length} low-confidence contract(s)**\n\n`;
-  }
+    if (contract.type === 'api_endpoint') {
+      output += `- **Method:** ${contract.method}\n`;
+      output += `- **Path:** ${contract.path}\n`;
+      output += `- **Request:** ${contract.request}\n`;
+      output += `- **Response:** ${contract.response}\n`;
+      output += `- **Confidence:** ${Math.round(contract.confidence * 100)}%\n`;
+      output += `- **Template:**\n`;
+      output += '  ```\n';
+      output += `  topic: contract_${contract.method.toLowerCase()}_${contract.path.replace(/[^a-z0-9]/gi, '_')}\n`;
+      output += `  decision: "${contract.method} ${contract.path} expects ${contract.request}, returns ${contract.response}"\n`;
+      output += `  reasoning: "Auto-extracted from ${contract.file} for frontend/backend consistency"\n`;
+      output += '  ```\n\n';
+    } else if (contract.type === 'function_signature') {
+      output += `- **Name:** ${contract.name}\n`;
+      output += `- **Parameters:** ${contract.params.join(', ')}\n`;
+      output += `- **Confidence:** ${Math.round(contract.confidence * 100)}%\n`;
+      output += `- **Template:**\n`;
+      output += '  ```\n';
+      output += `  topic: contract_function_${contract.name}\n`;
+      output += `  decision: "${contract.name}(${contract.params.join(', ')}) defined in ${contract.file}"\n`;
+      output += `  reasoning: "Auto-extracted function signature for consistency"\n`;
+      output += '  ```\n\n';
+    } else if (contract.type === 'type_definition') {
+      output += `- **Kind:** ${contract.kind}\n`;
+      output += `- **Name:** ${contract.name}\n`;
+      output += `- **Fields:** ${contract.fields.slice(0, 3).join('; ')}...\n`;
+      output += `- **Confidence:** ${Math.round(contract.confidence * 100)}%\n`;
+      output += `- **Template:**\n`;
+      output += '  ```\n';
+      output += `  topic: contract_type_${contract.name}\n`;
+      output += `  decision: "${contract.kind} ${contract.name} { ${contract.fields.join('; ')} }"\n`;
+      output += `  reasoning: "Auto-extracted type definition from ${contract.file}"\n`;
+      output += '  ```\n\n';
+    }
+  });
 
-  // Show errors
-  if (contractResults.errors.length > 0) {
-    output += `❌ **Failed to save ${contractResults.errors.length} contract(s)**\n`;
-    contractResults.errors.forEach((item, idx) => {
-      output += `${idx + 1}. ${item.error}\n`;
-    });
-    output += '\n';
-  }
-
-  output += '💡 *These contracts are now available for frontend/backend consistency checks.*\n';
-  output += '🔍 *Use `/mama:search contract_` to view saved contracts.*\n';
+  output += '---\n\n';
+  output += '💡 **Next Steps:**\n\n';
+  output += 'Use Task tool to analyze and save these contracts:\n\n';
+  output += '```javascript\n';
+  output += 'Task({\n';
+  output += '  subagent_type: "general-purpose",\n';
+  output += '  model: "haiku",  // Fast & cheap for contract analysis\n';
+  output += '  description: "Analyze and save contracts",\n';
+  output += '  prompt: `\n';
+  output += '    Review the contract candidates above.\n';
+  output += '    For each valid contract (not test/comment/example):\n';
+  output += '    \n';
+  output += "    1. Verify it's a real contract\n";
+  output += '    2. Use /mama:decision to save\n';
+  output += '    \n';
+  output += '    Format: /mama:decision <topic> <decision> <reasoning> --confidence=0.9\n';
+  output += '  `\n';
+  output += '});\n';
+  output += '```\n';
   output += '---\n';
 
   return output;
@@ -452,11 +487,11 @@ async function main() {
 
     info(`[Hook] Auto-save candidate: "${decision}"`);
 
-    // 6.5. MAMA v2: Extract and auto-save contracts
-    let contractResults = null;
+    // 6.5. MAMA v2: Extract contract candidates (no auto-save)
+    let contractCandidates = null;
     if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent) {
       try {
-        info('[Hook] Extracting contracts from code...');
+        info('[Hook] Extracting contract candidates from code...');
         const extracted = extractContracts(diffContent, filePath);
         const allContracts = [
           ...extracted.apiEndpoints,
@@ -465,17 +500,25 @@ async function main() {
         ];
 
         if (allContracts.length > 0) {
-          info(`[Hook] Found ${allContracts.length} contracts, formatting for MAMA...`);
-          const formattedContracts = allContracts
-            .map(formatContractForMama)
-            .filter((c) => c !== null);
+          info(`[Hook] Found ${allContracts.length} contract candidates`);
 
-          if (formattedContracts.length > 0) {
-            info(`[Hook] Saving ${formattedContracts.length} contracts to MAMA...`);
-            contractResults = await batchSaveContracts(formattedContracts);
-            info(
-              `[Hook] Contracts saved: ${contractResults.saved.length}, skipped: ${contractResults.skipped.length}, errors: ${contractResults.errors.length}`
-            );
+          // Filter out likely noise
+          const filtered = allContracts.filter((c) => {
+            // Skip test files
+            if (filePath && (filePath.includes('test/') || filePath.includes('.test.'))) {
+              return false;
+            }
+            // Only include high confidence
+            return c.confidence >= 0.7;
+          });
+
+          if (filtered.length > 0) {
+            info(`[Hook] ${filtered.length} high-confidence candidates after filtering`);
+            contractCandidates = {
+              candidates: filtered,
+              filePath,
+              diffContent: diffContent.substring(0, 500), // First 500 chars for context
+            };
           }
         }
       } catch (error) {
@@ -503,8 +546,8 @@ async function main() {
     let additionalContext = '';
 
     // Add contract results if available
-    if (contractResults && contractResults.saved.length > 0) {
-      additionalContext += formatContractResults(contractResults);
+    if (contractCandidates && contractCandidates.saved.length > 0) {
+      additionalContext += formatContractTemplate(contractCandidates);
     }
 
     // Add auto-save suggestion
@@ -517,8 +560,8 @@ async function main() {
 
     // Correct Claude Code JSON format with hookSpecificOutput
     const systemMessage =
-      contractResults && contractResults.saved.length > 0
-        ? `🔌 MAMA v2: ${contractResults.saved.length} contract(s) saved | 💾 Suggestion: ${topic} (${latencyMs}ms)`
+      contractCandidates && contractCandidates.saved.length > 0
+        ? `🔌 MAMA v2: ${contractCandidates.saved.length} contract(s) saved | 💾 Suggestion: ${topic} (${latencyMs}ms)`
         : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
 
     const response = {
@@ -533,7 +576,9 @@ async function main() {
     console.log(JSON.stringify(response));
 
     // Log suggestion (will be logged again when user responds)
-    const contractInfo = contractResults ? `, ${contractResults.saved.length} contracts saved` : '';
+    const contractInfo = contractCandidates
+      ? `, ${contractCandidates.saved.length} contracts saved`
+      : '';
     info(
       `[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar${contractInfo})`
     );
@@ -564,7 +609,7 @@ module.exports = {
   extractTopic,
   extractReasoning,
   formatAutoSaveSuggestion,
-  formatContractResults,
+  formatContractTemplate,
   generateDecisionSummary,
   logAudit,
   checkSimilarDecision,
