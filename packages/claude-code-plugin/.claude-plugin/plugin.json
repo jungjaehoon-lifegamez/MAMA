@@ -1,6 +1,6 @@
 {
   "name": "mama",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Memory-Augmented MCP Assistant - Chat from anywhere, track decisions, never repeat mistakes.",
   "author": {
     "name": "SpineLift Team",
@@ -23,7 +23,9 @@
     "./commands/resume.md",
     "./commands/configure.md"
   ],
-  "skills": ["./skills/mama-context"],
+  "skills": [
+    "./skills/mama-context"
+  ],
   "hooks": {
     "SessionStart": [
       {
@@ -73,7 +75,10 @@
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon/mama-server"],
+      "args": [
+        "-y",
+        "@jungjaehoon/mama-server"
+      ],
       "env": {
         "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-small"
       }
