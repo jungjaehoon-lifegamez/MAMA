@@ -36,6 +36,12 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 // const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
+// MAMA v2: Contract extraction and auto-save
+const { extractContracts, formatContractForMama } = require(
+  path.join(CORE_PATH, 'contract-extractor')
+);
+const { batchSaveContracts } = require(path.join(CORE_PATH, 'mcp-client'));
+
 // Configuration
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
 const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
@@ -175,6 +181,54 @@ function extractReasoning(conversationContext) {
   }
 
   return conversationContext.substring(0, 200);
+}
+
+/**
+ * Format contract auto-save results
+ * MAMA v2: Show what contracts were automatically saved
+ *
+ * @param {Object} contractResults - Batch save results
+ * @returns {string} Formatted contract report
+ */
+function formatContractResults(contractResults) {
+  if (!contractResults || contractResults.saved.length === 0) {
+    return '';
+  }
+
+  let output = '\n\n---\n';
+  output += '🔌 **MAMA v2: Contracts Auto-Saved**\n\n';
+
+  // Show saved contracts
+  if (contractResults.saved.length > 0) {
+    output += `✅ **Saved ${contractResults.saved.length} contract(s):**\n`;
+    contractResults.saved.forEach((item, idx) => {
+      const c = item.contract;
+      if (c.topic) {
+        output += `${idx + 1}. \`${c.topic}\`: ${c.decision.substring(0, 80)}...\n`;
+      }
+    });
+    output += '\n';
+  }
+
+  // Show skipped contracts
+  if (contractResults.skipped.length > 0) {
+    output += `⚠️  **Skipped ${contractResults.skipped.length} low-confidence contract(s)**\n\n`;
+  }
+
+  // Show errors
+  if (contractResults.errors.length > 0) {
+    output += `❌ **Failed to save ${contractResults.errors.length} contract(s)**\n`;
+    contractResults.errors.forEach((item, idx) => {
+      output += `${idx + 1}. ${item.error}\n`;
+    });
+    output += '\n';
+  }
+
+  output += '💡 *These contracts are now available for frontend/backend consistency checks.*\n';
+  output += '🔍 *Use `/mama:search contract_` to view saved contracts.*\n';
+  output += '---\n';
+
+  return output;
 }
 
 /**
@@ -398,6 +452,38 @@ async function main() {
 
     info(`[Hook] Auto-save candidate: "${decision}"`);
 
+    // 6.5. MAMA v2: Extract and auto-save contracts
+    let contractResults = null;
+    if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent) {
+      try {
+        info('[Hook] Extracting contracts from code...');
+        const extracted = extractContracts(diffContent, filePath);
+        const allContracts = [
+          ...extracted.apiEndpoints,
+          ...extracted.functionSignatures,
+          ...extracted.typeDefinitions,
+        ];
+
+        if (allContracts.length > 0) {
+          info(`[Hook] Found ${allContracts.length} contracts, formatting for MAMA...`);
+          const formattedContracts = allContracts
+            .map(formatContractForMama)
+            .filter((c) => c !== null);
+
+          if (formattedContracts.length > 0) {
+            info(`[Hook] Saving ${formattedContracts.length} contracts to MAMA...`);
+            contractResults = await batchSaveContracts(formattedContracts);
+            info(
+              `[Hook] Contracts saved: ${contractResults.saved.length}, skipped: ${contractResults.skipped.length}, errors: ${contractResults.errors.length}`
+            );
+          }
+        }
+      } catch (error) {
+        warn(`[Hook] Contract extraction failed: ${error.message}`);
+        // Don't fail the entire hook if contract extraction fails
+      }
+    }
+
     // 7. Check for similar existing decisions
     let similarCheck = { hasSimilar: false, decisions: [] };
 
@@ -412,24 +498,45 @@ async function main() {
 
     const latencyMs = Date.now() - startTime;
 
-    // 8. Output auto-save suggestion
+    // 8. Output auto-save suggestion and contract results
     // AC: When diff resembles existing decision, suggest auto-save
-    const suggestion = formatAutoSaveSuggestion(topic, decision, reasoning, similarCheck.decisions);
+    let additionalContext = '';
+
+    // Add contract results if available
+    if (contractResults && contractResults.saved.length > 0) {
+      additionalContext += formatContractResults(contractResults);
+    }
+
+    // Add auto-save suggestion
+    additionalContext += formatAutoSaveSuggestion(
+      topic,
+      decision,
+      reasoning,
+      similarCheck.decisions
+    );
 
     // Correct Claude Code JSON format with hookSpecificOutput
+    const systemMessage =
+      contractResults && contractResults.saved.length > 0
+        ? `🔌 MAMA v2: ${contractResults.saved.length} contract(s) saved | 💾 Suggestion: ${topic} (${latencyMs}ms)`
+        : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
+
     const response = {
       decision: null,
       reason: '',
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
-        systemMessage: `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`,
-        additionalContext: suggestion,
+        systemMessage,
+        additionalContext,
       },
     };
     console.log(JSON.stringify(response));
 
     // Log suggestion (will be logged again when user responds)
-    info(`[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar)`);
+    const contractInfo = contractResults ? `, ${contractResults.saved.length} contracts saved` : '';
+    info(
+      `[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar${contractInfo})`
+    );
 
     // Note: Actual save happens when user selects action
     // This would be handled by Claude Code's interaction system
@@ -457,6 +564,7 @@ module.exports = {
   extractTopic,
   extractReasoning,
   formatAutoSaveSuggestion,
+  formatContractResults,
   generateDecisionSummary,
   logAudit,
   checkSimilarDecision,

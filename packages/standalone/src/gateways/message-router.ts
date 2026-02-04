@@ -175,6 +175,25 @@ export class MessageRouter {
   }
 
   /**
+   * Check if message should trigger auto-translation
+   * Returns true for short messages or image-related text
+   */
+  private shouldAutoTranslate(text: string): boolean {
+    if (!text) return true; // Empty text = just image
+
+    const trimmed = text.trim();
+
+    // Short messages (< 15 chars) are likely simple statements like "이이미지야"
+    if (trimmed.length < 15) return true;
+
+    // Common image-related phrases
+    const imageKeywords = ['이미지', '사진', 'image', 'picture', 'pic', 'screenshot', '스샷'];
+    const hasImageKeyword = imageKeywords.some((kw) => trimmed.toLowerCase().includes(kw));
+
+    return hasImageKeyword;
+  }
+
+  /**
    * Process a normalized message and return response
    */
   async process(message: NormalizedMessage): Promise<ProcessingResult> {
@@ -289,9 +308,30 @@ This protects your credentials from being exposed in chat logs.`;
         // Build content blocks: text first, then images
         const contentBlocks: ContentBlock[] = [];
 
-        // Add text content if present
-        if (message.text) {
-          contentBlocks.push({ type: 'text', text: message.text });
+        // Check if message contains images
+        const hasImages = message.contentBlocks.some((b) => b.type === 'image');
+
+        // Auto-inject translation prompt for images
+        let messageText = message.text;
+        if (hasImages && this.shouldAutoTranslate(message.text)) {
+          const translationKeywords = ['번역', '뭐라고', '뭐라는', '무슨말', '읽어줘', 'translate'];
+          const hasTranslationKeyword = translationKeywords.some((kw) =>
+            message.text.toLowerCase().includes(kw)
+          );
+
+          if (!hasTranslationKeyword) {
+            // Auto-add translation instruction
+            messageText = message.text
+              ? `${message.text}\n\n이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.`
+              : '이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.';
+
+            console.log(`[MessageRouter] Auto-injected translation prompt for image`);
+          }
+        }
+
+        // Add text content
+        if (messageText) {
+          contentBlocks.push({ type: 'text', text: messageText });
         }
 
         // Add all content blocks (text info + images + files)
