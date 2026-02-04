@@ -147,6 +147,8 @@ export interface MessageRouterConfig {
   maxTurns?: number;
   /** Maximum response length for context storage (default: 200) */
   maxResponseLength?: number;
+  /** Target language for auto-translation prompts (default: Korean) */
+  translationTargetLanguage?: string;
 }
 
 /**
