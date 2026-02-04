@@ -30,6 +30,26 @@ MAMA:           "Prefers morning meetings (tried afternoons but energy was low) 
 
 **Why?** Claude forgot everything from yesterday.
 
+### The Root Cause
+
+Here's what actually happens inside Claude's "brain":
+
+**Same session, switching languages:**
+TypeScript → Python → SQL → back to TypeScript
+
+- **Writes frontend:** `userId` (camelCase)
+- **Writes backend:** `user_id` (snake_case)
+- **Writes SQL:** `userID` (mixed case)
+- **Result:** Nothing connects. Three different names for the same field.
+
+**Different sessions:**
+No memory of what was built before. Every session starts from zero.
+
+**The debugging loop:**
+Writes code → Error → Fixes it → Forgets the fix → Same error next time
+
+**It's not you. It's me (Claude).** I lose context switching between languages, and I forget solutions I already found.
+
 ### The Real Problem
 
 When you ask Claude to build fullstack:
@@ -38,32 +58,37 @@ When you ask Claude to build fullstack:
 - **Session 2**: Backend creates `/api/signup` expecting `{ username, pwd }`
 - **Session 3**: You spend 2 hours debugging why they don't connect
 
-**It's not you. It's not Claude. It's amnesia.**
-
-Each session starts from zero. No memory of what was built before.
+You're not debugging your code. You're debugging my amnesia.
 
 ### What MAMA Does
 
-Saves the "contracts" between your code layers:
+Gives Claude external memory. When I write code, MAMA saves the "contracts":
 
 ```
-Day 1: Frontend built → MAMA remembers: "POST /api/register expects X, returns Y"
-Day 3: Backend task → Claude sees: "Frontend already expects POST /api/register"
-       → Writes matching code automatically
+Day 1: You ask for frontend → I write: POST /api/register { email, password }
+       → MAMA saves: "Frontend expects POST /api/register with email, password"
+
+Day 3: You ask for backend → I check MAMA first
+       → I see: "Frontend already expects POST /api/register"
+       → I write matching code automatically
 ```
 
-**That's it.** No more mismatches. No more debugging.
+**That's it.** I remember what I built. No more mismatches. No more debugging.
+
+MAMA solves MY context loss problem. You benefit from consistent code.
 
 ### Does This Actually Work?
 
 Real timeline from our testing:
 
-- **11:00am**: Built backend login (Python FastAPI)
-- **2:00pm**: Switched to frontend work (TypeScript React)
+- **11:00am**: Built backend login (Python FastAPI) - snake_case fields
+- **2:00pm**: Switched to frontend work (TypeScript React) - camelCase expected
 - **2:05pm**: Asked "add login form"
-- **Result**: Worked first try. Zero debugging.
+- **Result**: Worked first try. Zero debugging. Correct casing.
 
-Different session. Different language. Same contract.
+Different session. Different language. Different naming convention. Same contract.
+
+**The fix:** MAMA reminded me what I wrote in Python, so I wrote matching TypeScript.
 
 ### Who This Helps
 
@@ -73,12 +98,15 @@ You know you need MAMA if you've said:
 - "I literally told it the endpoint name yesterday"
 - "Do I have to paste the API spec every time?"
 - "Claude keeps guessing wrong field names"
+- "Why is it snake_case in Python but camelCase in TypeScript?"
 
-**Before MAMA:**  
+**The problem:** Claude (me) loses context. Between sessions. Between languages. Even between files.
+
+**Before MAMA:**
 Paste API docs every session → Hope Claude remembers → Debug for hours
 
-**With MAMA:**  
-Build once → MAMA remembers → Everything connects
+**With MAMA:**
+Build once → Claude checks memory first → Everything connects
 
 ## 🤔 Which MAMA Do You Need?
 
