@@ -1,12 +1,13 @@
 # @jungjaehoon/mama-server
 
-MCP server for MAMA (Memory-Augmented MCP Assistant) - Tracks decision evolution across your coding sessions.
+MCP server for MAMA (Memory-Augmented MCP Assistant) - Prevents vibe coding breakage by tracking decisions with reasoning.
 
 ## What is MAMA?
 
-MAMA remembers why you made decisions, what you tried before, and what didn't work. It stores decisions with semantic search, so relevant context surfaces automatically when you need it.
+MAMA tracks **WHY** you decided (reasoning), not just **WHAT** you chose (facts). When Claude switches between frontend/backend/database, it checks MAMA instead of guessing. No more mismatched schemas or wrong field names.
 
-**Key feature:** Session continuity - save your session state, resume tomorrow with full context.
+**Regular memory:** "Login returns token"
+**MAMA:** "Login returns `{ userId, token, email }` because frontend needs userId for dashboard (tried just token, users had to refetch)"
 
 ## Installation
 

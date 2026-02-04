@@ -4,9 +4,9 @@
 **License:** MIT
 **Author:** SpineLift Team
 
-> "Remember decision evolution, not just conclusions"
+> "Tracks WHY you decided, not just WHAT you chose"
 
-MAMA is an always-on companion for Claude Code that remembers how you think. It preserves the evolution of your decisions—from failed attempts to successful solutions—preventing you from repeating the same mistakes.
+MAMA prevents vibe coding breakage by tracking your decisions with reasoning. When Claude switches between frontend/backend/database, it checks MAMA instead of guessing. No more mismatched schemas, wrong field names, or forgotten contracts.
 
 ---
 

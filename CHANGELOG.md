@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [mama-server-1.7.0] - 2026-02-04
+
+### Changed
+
+- **Documentation Rewrite** - Focused on decision tracking differentiation
+  - Main value proposition: Tracks WHY (reasoning), not just WHAT (facts)
+  - New hook: "Why Vibe Coding Breaks After Session 2"
+  - Added workflow section: Auto-tracking, manual save, next session
+  - Reduced README from 100+ lines to ~60 lines
+  - Differentiation from regular memory systems emphasized
+
+- **Messaging Updates** - Aligned with decision tracking focus
+  - Opening example: API contract with reasoning (not generic preferences)
+  - Root cause explanation: Memory loss + Context loss + Hallucination
+  - Solution: Claude checks MAMA before guessing
+  - Workflow: Build → Save → Claude remembers
+
+### Documentation
+
+- **README.md** - Complete rewrite for clarity and focus
+- **Consistency** - All examples now coding/development-related
+- **Brevity** - Removed lengthy technical explanations
+
 ## [mama-os-0.3.1] - 2026-02-03
 
 ### Fixed
