@@ -224,11 +224,11 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 # Day 1: Build backend
 You: "Create login API"
 Claude: [Writes code]
-MAMA: Saved contract - POST /api/auth/login returns { userId, token }
+MAMA: Saved contract - POST /api/auth/login returns { userId, token, email }
 
 # Day 3: Build frontend (new session)
 You: "Add login form"
-Claude: "I see you have POST /api/auth/login that returns { userId, token }"
+Claude: "I see you have POST /api/auth/login that returns { userId, token, email }"
        [Writes correct fetch() call, first try]
 ```
 
