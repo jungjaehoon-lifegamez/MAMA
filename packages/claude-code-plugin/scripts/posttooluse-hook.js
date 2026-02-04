@@ -38,6 +38,7 @@ const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // MAMA v2: Contract extraction
 const { extractContracts } = require(path.join(CORE_PATH, 'contract-extractor'));
+const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 
 // Configuration
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
@@ -178,25 +179,6 @@ function extractReasoning(conversationContext) {
   }
 
   return conversationContext.substring(0, 200);
-}
-
-/**
- * Sanitize untrusted data for prompt injection
- * Escapes special characters that could break prompt structure
- *
- * @param {string} text - Text to sanitize
- * @returns {string} Sanitized text
- */
-function sanitizeForPrompt(text) {
-  if (!text) {
-    return '';
-  }
-  return text
-    .replace(/\\/g, '\\\\') // Escape backslashes
-    .replace(/`/g, '\\`') // Escape backticks (code blocks)
-    .replace(/\$/g, '\\$') // Escape dollar signs (template literals)
-    .replace(/\{/g, '\\{') // Escape braces (template literals)
-    .replace(/\}/g, '\\}');
 }
 
 /**

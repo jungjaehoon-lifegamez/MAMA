@@ -20,6 +20,7 @@ const { info, warn } = require('./debug-logger');
 const { embeddingCache } = require('./embedding-cache');
 const { loadConfig, getModelName, getEmbeddingDim } = require('./config-loader');
 const { isServerRunning, getEmbeddingFromServer } = require('./embedding-client');
+const { sanitizeForPrompt } = require('./prompt-sanitizer');
 
 // Singleton pattern for model loading (fallback only)
 let embeddingPipeline = null;
@@ -176,10 +177,11 @@ async function generateEmbedding(text) {
  */
 async function generateEnhancedEmbedding(decision) {
   // Construct enriched text representation
+  // Note: Sanitization added for consistency, though embeddings don't directly inject into LLM prompts
   const enrichedText = `
-Topic: ${decision.topic}
-Decision: ${decision.decision}
-Reasoning: ${decision.reasoning || 'N/A'}
+Topic: ${sanitizeForPrompt(decision.topic)}
+Decision: ${sanitizeForPrompt(decision.decision)}
+Reasoning: ${sanitizeForPrompt(decision.reasoning || 'N/A')}
 Outcome: ${decision.outcome || 'ONGOING'}
 Confidence: ${decision.confidence !== undefined ? decision.confidence : 0.5}
 User Involvement: ${decision.user_involvement || 'N/A'}

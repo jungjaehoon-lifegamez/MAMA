@@ -35,6 +35,7 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 // const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 const { formatContext } = require(path.join(CORE_PATH, 'decision-formatter'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
+const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 
 // Configuration
 const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
@@ -282,25 +283,6 @@ async function searchRelatedContracts(filePath, toolName) {
     warn(`[Hook] Contract search failed: ${error.message}`);
     return [];
   }
-}
-
-/**
- * Sanitize untrusted data for prompt injection
- * Escapes special characters that could break prompt structure
- *
- * @param {string} text - Text to sanitize
- * @returns {string} Sanitized text
- */
-function sanitizeForPrompt(text) {
-  if (!text) {
-    return '';
-  }
-  return text
-    .replace(/\\/g, '\\\\') // Escape backslashes
-    .replace(/`/g, '\\`') // Escape backticks (code blocks)
-    .replace(/\$/g, '\\$') // Escape dollar signs (template literals)
-    .replace(/\{/g, '\\{') // Escape braces (template literals)
-    .replace(/\}/g, '\\}');
 }
 
 /**

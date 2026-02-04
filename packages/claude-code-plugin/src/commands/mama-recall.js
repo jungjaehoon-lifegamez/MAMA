@@ -12,6 +12,7 @@
 
 const mama = require('../core/mama-api');
 const { info, error: logError } = require('../core/debug-logger');
+const { sanitizeForPrompt } = require('../core/prompt-sanitizer');
 
 /**
  * Recall decision history for a topic
@@ -81,23 +82,23 @@ function formatHistoryMessage(topic, history, markdown) {
   }
 
   // Fallback: format manually
-  let message = `## 📋 Decision History: ${topic}\n\n`;
+  let message = `## 📋 Decision History: ${sanitizeForPrompt(topic)}\n\n`;
   message += `Found ${history.length} decision(s)\n\n`;
   message += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
   history.forEach((decision, index) => {
-    message += `### ${index + 1}. ${decision.decision || 'No decision text'}\n\n`;
-    message += `**Reasoning:** ${decision.reasoning || 'No reasoning provided'}\n\n`;
+    message += `### ${index + 1}. ${sanitizeForPrompt(decision.decision || 'No decision text')}\n\n`;
+    message += `**Reasoning:** ${sanitizeForPrompt(decision.reasoning || 'No reasoning provided')}\n\n`;
     message += `**Created:** ${decision.created_at || 'Unknown'}\n`;
     message += `**Confidence:** ${decision.confidence || 0.5}\n`;
     message += `**Outcome:** ${decision.outcome || 'pending'}\n`;
 
     if (decision.failure_reason) {
-      message += `**Failure Reason:** ${decision.failure_reason}\n`;
+      message += `**Failure Reason:** ${sanitizeForPrompt(decision.failure_reason)}\n`;
     }
 
     if (decision.limitation) {
-      message += `**Limitations:** ${decision.limitation}\n`;
+      message += `**Limitations:** ${sanitizeForPrompt(decision.limitation)}\n`;
     }
 
     message += '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
