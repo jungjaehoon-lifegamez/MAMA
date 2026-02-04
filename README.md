@@ -21,106 +21,62 @@ MAMA:           "Login returns { userId, token, email } (tried just token, but f
 ## 🚀 Why Vibe Coding Breaks After Session 2
 
 **Session 1:** "Claude, make me a login API"
-→ Works great. You test it. Perfect. Vibe coding success.
+→ Works great. You test it. Perfect.
 
 **Session 2:** "Claude, add the frontend login form"
 → 404 error. Wrong endpoint. Wrong fields. Nothing connects.
 
-**Why?** No contracts between layers. Claude forgot what Claude built.
+**Why?** Claude forgot the decisions from Session 1.
 
-### The Root Cause
+### Why Regular Memory Doesn't Help
 
-Here's what actually happens inside Claude's "brain":
+**Regular memory tracks WHAT:**
 
-**Same session, switching languages:**
-TypeScript → Python → SQL → back to TypeScript
+- "Login endpoint exists"
+- "Returns a token"
 
-- **Writes frontend:** `userId` (camelCase)
-- **Writes backend:** `user_id` (snake_case)
-- **Writes SQL:** `userID` (mixed case)
-- **Result:** Nothing connects. Three different names for the same field.
+**MAMA tracks WHY:**
 
-**Different sessions:**
-No memory of what was built before. Every session starts from zero.
+- "Login returns `{ userId, token, email }` because frontend needs userId for dashboard"
+- "Tried just `token`, but users complained they had to fetch profile separately"
 
-**Hallucination (the worst part):**
-Instead of checking what you built before, I **guess**:
+**The difference:** Claude remembers your reasoning, not just facts. No more guessing.
 
-- "It's probably `username` and `password`" (actually `email` and `password`)
-- "Token is probably just `{ token }` " (actually `{ userId, token, email }`)
-- "Endpoint is probably `/login`" (actually `/api/auth/login`)
+### What MAMA Does
 
-**The debugging loop:**
-Writes code → Error → Fixes it → Forgets the fix → Same error next time
-
-**It's not you. It's me (Claude).** I lose context, forget solutions, and guess instead of checking.
-
-### The Real Problem: Vibe Coding Has No Contracts
-
-When you vibe code fullstack:
-
-- **Session 1**: Frontend calls `/api/register` with `{ email, password, name }`
-- **Session 2**: Backend creates `/api/signup` expecting `{ username, pwd }`
-- **Session 3**: You spend 2 hours debugging why they don't connect
-
-**Vibe coding = fast iteration without written contracts.**
-
-You're not debugging your code. You're debugging my amnesia.
-
-### What MAMA Does: Vibe Coding With Contracts
-
-Gives Claude external memory. When I write code, MAMA saves the "contracts":
+Tracks your decisions with reasoning:
 
 ```
-Session 1: You vibe → I write: POST /api/register { email, password }
-           → MAMA saves: "Frontend expects POST /api/register with email, password"
+Session 1: You decide → "Login needs { userId, token, email }"
+           MAMA saves → "Returns userId because dashboard needs it (tried without, users had to refetch)"
 
-Session 2: You vibe → I check MAMA first (instead of guessing)
-           → I see: "Frontend already expects POST /api/register"
-           → I write matching code automatically (no hallucination)
-
-Same session, complex codebase: I check MAMA when switching between files
-                                 → Stay consistent across 50+ files
-                                 → No more "it's probably like this" guessing
+Session 2: You ask for backend → Claude checks MAMA
+           Claude sees → Your reasoning, writes matching code
 ```
 
-**That's it.** You keep vibe coding. I keep contracts. Everything connects.
+**Result:** Claude follows your decisions. No guessing. No mismatches.
 
-MAMA solves MY hallucination problem. You benefit from consistent vibe coding.
+### Does This Work?
 
-### Does This Actually Work?
+Real test:
 
-Real example from our testing:
+- **Session 1:** Backend (Python, snake_case)
+- **Session 2:** Frontend (TypeScript, camelCase)
+- **Result:** Worked first try. Claude remembered the decision, matched the casing.
 
-- **Session 1**: Built backend login (Python FastAPI) - snake_case fields
-- **Session 2** (3 hours later): Frontend work (TypeScript React) - camelCase expected
-- **Asked:** "add login form"
-- **Result**: Worked first try. Zero debugging. Correct casing.
+MAMA reminded Claude of the reasoning, not just the endpoint name.
 
-Different session. Different language. Different naming convention. Same contract.
+### Who Needs This
 
-**Same session, 50+ file codebase:** MAMA prevents confusion when I'm editing auth.ts, then api.py, then schema.sql, then back to auth.ts. I check MAMA instead of guessing.
-
-**The fix:** MAMA reminded me what I wrote in Python, so I wrote matching TypeScript.
-
-### Who This Helps
-
-You know you need MAMA if you've said:
+You need MAMA if you've said:
 
 - "Why doesn't frontend connect to backend?"
-- "I literally told it the endpoint name yesterday"
-- "Do I have to paste the API spec every time?"
 - "Claude keeps guessing wrong field names"
-- "Why is it snake_case in Python but camelCase in TypeScript?"
-- "It just assumed the wrong schema instead of checking"
+- "I told it yesterday, why did it forget?"
 
-**The problem:** Claude (me) loses context AND hallucinates. Between sessions. Between languages. Even between files. I guess instead of checking.
+**Without MAMA:** Paste docs → Hope Claude remembers → Claude guesses → Debug
 
-**Before MAMA:**
-Paste API docs every session → Hope Claude remembers → Claude guesses anyway → Debug for hours
-
-**With MAMA:**
-Build once → Claude checks memory first → No guessing → Everything connects
+**With MAMA:** Claude remembers your reasoning → No guessing → Everything connects
 
 ## 🤔 Which MAMA Do You Need?
 
