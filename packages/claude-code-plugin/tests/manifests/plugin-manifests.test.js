@@ -166,14 +166,14 @@ describe('M3.3: Plugin Manifests', () => {
 
       // MAMA v2: PostToolUse hook enabled for contract detection
       // - Detects code changes and extracts API contracts
-      // - Suggests Haiku Task for automated contract saving
+      // - Auto-injection to Claude via exit code 2 + stderr
       // - Enables frontend/backend consistency checking
       expect(hooksConfig.PostToolUse).toBeDefined();
       expect(Array.isArray(hooksConfig.PostToolUse)).toBe(true);
       expect(hooksConfig.PostToolUse[0].hooks[0].command).toContain('posttooluse-hook.js');
 
       // PreToolUse remains disabled for efficiency (contract injection via MCP server)
-      expect(hooksConfig.PreToolUse).toBeDefined(); // Script exists but may have rate limiting
+      expect(hooksConfig.PreToolUse).toBeUndefined();
     });
 
     it('should still have hook scripts available (for future re-enablement)', () => {
