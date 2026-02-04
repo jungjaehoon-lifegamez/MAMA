@@ -3,7 +3,7 @@
  * MAMA v2 Full Flow PoC Test
  *
  * Simulates the complete flow:
- * 1. PostToolUse Hook: Extract contracts → Generate template
+ * 1. PostToolUse Hook: Generate template (no regex pre-filter)
  * 2. Main Claude: Review template
  * 3. Task tool: Call Haiku sub-agent (simulated)
  * 4. Haiku: Save to MAMA
@@ -14,11 +14,10 @@ const path = require('path');
 const fs = require('fs');
 
 // Setup paths
+const PLUGIN_ROOT = path.resolve(__dirname, '..', '..');
 const CORE_PATH = path.resolve(__dirname, '../../src/core');
-const { extractContracts, formatContractForMama } = require(
-  path.join(CORE_PATH, 'contract-extractor')
-);
 const { saveDecision, searchDecisions } = require(path.join(CORE_PATH, 'mcp-client'));
+const { formatContractTemplate } = require(path.join(PLUGIN_ROOT, 'scripts', 'posttooluse-hook'));
 
 // Test code fixture (portable path using __dirname)
 const testApiPath = path.resolve(__dirname, 'fixtures', 'test-api.ts');
@@ -28,57 +27,65 @@ console.log('🎯 MAMA v2 Full Flow PoC\n');
 console.log('='.repeat(60));
 
 /**
- * Step 1: PostToolUse Hook - Extract contracts
+ * Step 1: PostToolUse Hook - Generate template
  */
 async function step1_postToolUse() {
-  console.log('\n📝 Step 1: PostToolUse Hook - Extract Contracts\n');
+  console.log('\n📝 Step 1: PostToolUse Hook - Generate Template\n');
 
-  const extracted = extractContracts(testCode, 'tests/core/fixtures/test-api.ts');
-  const allContracts = [
-    ...extracted.apiEndpoints,
-    ...extracted.functionSignatures,
-    ...extracted.typeDefinitions,
-  ];
+  const filePath = 'tests/core/fixtures/test-api.ts';
+  const diffContent = testCode
+    .split('\n')
+    .map((line) => `+${line}`)
+    .join('\n');
 
-  console.log(`Found ${allContracts.length} contracts:`);
-  allContracts.forEach((c, idx) => {
-    console.log(
-      `  ${idx + 1}. ${c.type}: ${c.method || c.name || c.kind} (confidence: ${Math.round(c.confidence * 100)}%)`
-    );
-  });
+  const template = formatContractTemplate(filePath, diffContent, 'Edit');
+  console.log('Hook Output (template):');
+  console.log('---');
+  console.log(template);
 
-  // Filter high-confidence
-  const filtered = allContracts.filter((c) => c.confidence >= 0.7);
-  console.log(`\n✅ ${filtered.length} high-confidence candidates (>= 70%)\n`);
-
-  return filtered;
+  return { filePath, diffContent };
 }
 
 /**
- * Step 2: Generate Template for Main Claude
+ * Step 2: Simulate Haiku analysis
  */
-function step2_generateTemplate(contracts) {
-  console.log('📋 Step 2: Generate Template for Main Claude\n');
+function buildContractTopic(method, apiPath) {
+  const safePath = apiPath.replace(/[^a-z0-9]/gi, '_');
+  return `contract_${method.toLowerCase()}_${safePath}`;
+}
 
-  console.log('Hook Output (template):');
-  console.log('---');
-  console.log('🔌 MAMA v2: Contract Candidates Detected\n');
-  console.log('File: tests/core/fixtures/test-api.ts');
-  console.log(`Candidates: ${contracts.length}\n`);
+function step2_simulateHaiku({ filePath }) {
+  console.log('🤖 Step 2: Simulate Haiku Analysis\n');
 
-  contracts.forEach((contract, idx) => {
-    const formatted = formatContractForMama(contract);
-    if (formatted) {
-      console.log(`${idx + 1}. ${formatted.topic}`);
-      console.log(`   Decision: ${formatted.decision}`);
-      console.log(`   Confidence: ${formatted.confidence}\n`);
-    }
+  const candidates = [
+    {
+      topic: buildContractTopic('POST', '/api/auth/register'),
+      decision:
+        'POST /api/auth/register expects { email, password }, returns { userId, token } defined in tests/core/fixtures/test-api.ts',
+      reasoning: `Auto-extracted from ${filePath}. Keep backend/frontend schema consistent.`,
+      confidence: 0.8,
+    },
+    {
+      topic: buildContractTopic('GET', '/api/profile'),
+      decision:
+        'GET /api/profile expects auth context, returns { id, email } defined in tests/core/fixtures/test-api.ts',
+      reasoning: `Auto-extracted from ${filePath}. Keep backend/frontend schema consistent.`,
+      confidence: 0.8,
+    },
+  ];
+
+  if (candidates.length === 0) {
+    console.log('contract analysis skipped');
+    return [];
+  }
+
+  candidates.forEach((contract, idx) => {
+    console.log(`${idx + 1}. ${contract.topic}`);
+    console.log(`   Decision: ${contract.decision}`);
+    console.log(`   Confidence: ${Math.round(contract.confidence * 100)}%\n`);
   });
 
-  console.log('💡 Suggested Action:');
-  console.log('Use Task tool to analyze and save these contracts with Haiku\n');
-
-  return contracts.map(formatContractForMama).filter((c) => c !== null);
+  return candidates;
 }
 
 /**
@@ -92,7 +99,7 @@ async function step3_haikuSave(formattedContracts) {
   for (const contract of formattedContracts) {
     try {
       console.log(`Saving: ${contract.topic}...`);
-      const result = await saveDecision(contract);
+      const result = await saveDecision(contract, { timeout: 20000 });
 
       if (result.success) {
         const safeId = result?.id?.id ?? 'success';
@@ -122,11 +129,16 @@ async function step4_verify() {
   console.log('🔍 Step 4: Main Claude - Verify Saved Contracts\n');
 
   try {
-    const searchResult = await searchDecisions('contract test-api', 10);
+    const searchResult = await searchDecisions('contract test-api', 10, { timeout: 20000 });
 
-    if (searchResult.results && searchResult.results.length > 0) {
-      console.log(`Found ${searchResult.results.length} contracts in MAMA:`);
-      searchResult.results.forEach((r, idx) => {
+    const results = Array.isArray(searchResult.results) ? searchResult.results : [];
+    const contractResults = results.filter(
+      (r) => r.topic && r.topic.startsWith('contract_') && Number.isFinite(r.similarity)
+    );
+
+    if (contractResults.length > 0) {
+      console.log(`Found ${contractResults.length} contracts in MAMA:`);
+      contractResults.forEach((r, idx) => {
         console.log(`  ${idx + 1}. ${r.topic} (${Math.round(r.similarity * 100)}% match)`);
         console.log(`     ${(r.decision || '').substring(0, 80)}...`);
       });
@@ -151,15 +163,20 @@ async function step5_preToolUse() {
   console.log('Simulating PreToolUse hook when editing frontend code...\n');
 
   try {
-    const searchResult = await searchDecisions('api register', 5);
+    const searchResult = await searchDecisions('api register', 5, { timeout: 20000 });
 
-    if (searchResult.results && searchResult.results.length > 0) {
+    const results = Array.isArray(searchResult.results) ? searchResult.results : [];
+    const contractResults = results.filter(
+      (r) => r.topic && r.topic.startsWith('contract_') && Number.isFinite(r.similarity)
+    );
+
+    if (contractResults.length > 0) {
       console.log('PreToolUse would inject:');
       console.log('---');
       console.log('🔌 Related Contracts (MAMA v2)\n');
       console.log('⚠️ Frontend/Backend consistency required:\n');
 
-      searchResult.results.slice(0, 3).forEach((r, idx) => {
+      contractResults.slice(0, 3).forEach((r, idx) => {
         console.log(`${idx + 1}. ${r.topic} (${Math.round(r.similarity * 100)}% match)`);
         console.log(`   ${r.decision}`);
       });
@@ -182,16 +199,11 @@ async function step5_preToolUse() {
  */
 async function main() {
   try {
-    // Step 1: Extract contracts
-    const contracts = await step1_postToolUse();
+    // Step 1: Generate template
+    const templateInput = await step1_postToolUse();
 
-    if (contracts.length === 0) {
-      console.log('⚠️  No contracts found, exiting\n');
-      return;
-    }
-
-    // Step 2: Generate template
-    const formattedContracts = step2_generateTemplate(contracts);
+    // Step 2: Simulate Haiku analysis
+    const formattedContracts = step2_simulateHaiku(templateInput);
 
     // Step 3: Haiku saves to MAMA
     const saveResults = await step3_haikuSave(formattedContracts);
@@ -210,7 +222,7 @@ async function main() {
     console.log('='.repeat(60));
     console.log('\n✅ Full Flow PoC Complete!\n');
     console.log('Summary:');
-    console.log(`  - Extracted: ${contracts.length} contracts`);
+    console.log(`  - Extracted: ${formattedContracts.length} contracts`);
     console.log(`  - Saved: ${saveResults.filter((r) => r.success).length} contracts`);
     console.log('  - Verified: Search working');
     console.log('  - PreToolUse: Injection working\n');

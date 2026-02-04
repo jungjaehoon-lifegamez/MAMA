@@ -180,11 +180,16 @@ async function callMamaTool(toolName, params, timeout = 5000) {
  * @param {Object} decision - Decision data
  * @returns {Promise<Object>} Save result
  */
-async function saveDecision(decision) {
-  return callMamaTool('save', {
-    type: 'decision',
-    ...decision,
-  });
+async function saveDecision(decision, options = {}) {
+  const timeout = Number.isFinite(options.timeout) ? options.timeout : undefined;
+  return callMamaTool(
+    'save',
+    {
+      type: 'decision',
+      ...decision,
+    },
+    timeout
+  );
 }
 
 /**
@@ -194,11 +199,16 @@ async function saveDecision(decision) {
  * @param {number} limit - Max results (default: 5)
  * @returns {Promise<Object>} Search results
  */
-async function searchDecisions(query, limit = 5) {
-  return callMamaTool('search', {
-    query,
-    limit,
-  });
+async function searchDecisions(query, limit = 5, options = {}) {
+  const timeout = Number.isFinite(options.timeout) ? options.timeout : undefined;
+  return callMamaTool(
+    'search',
+    {
+      query,
+      limit,
+    },
+    timeout
+  );
 }
 
 /**
@@ -211,12 +221,12 @@ async function searchDecisions(query, limit = 5) {
  * @returns {Promise<Object>} { decisionResults, contractResults }
  */
 async function searchDecisionsAndContracts(query, filePath, toolName, options = {}) {
-  return callMamaTool('search_decisions_and_contracts', {
-    query,
-    filePath,
-    toolName,
-    ...options,
-  });
+  const timeout = Number.isFinite(options.timeout) ? options.timeout : undefined;
+  const payload = { query, filePath, toolName, ...options };
+  if ('timeout' in payload) {
+    delete payload.timeout;
+  }
+  return callMamaTool('search_decisions_and_contracts', payload, timeout);
 }
 
 /**
