@@ -13,19 +13,98 @@
 
 A memory system for Claude that remembers **why** you made choices, not just what you chose.
 
+```text
+Regular memory: "Login returns token"
+MAMA:           "Login returns { userId, token, email } (tried just token, but frontend needs userId for dashboard) → this schema used by 3 endpoints"
 ```
-Regular memory: "Likes morning meetings"
-MAMA:           "Prefers morning meetings (tried afternoons but energy was low) → worked well for 3 months"
+
+## 🚀 Why Vibe Coding Breaks After Session 2
+
+**Session 1:** "Claude, make me a login API"
+→ Works great. You test it. Perfect.
+
+**Session 2:** "Claude, add the frontend login form"
+→ 404 error. Wrong endpoint. Wrong fields. Nothing connects.
+
+**Why?** Claude forgot the decisions from Session 1.
+
+### Why Regular Memory Doesn't Help
+
+**Regular memory tracks WHAT:**
+
+- "Login endpoint exists"
+- "Returns a token"
+
+**MAMA tracks WHY:**
+
+- "Login returns `{ userId, token, email }` because frontend needs userId for dashboard"
+- "Tried just `token`, but users complained they had to fetch profile separately"
+
+**The difference:** Claude remembers your reasoning, not just facts. No more guessing.
+
+### What MAMA Does
+
+Tracks your decisions with reasoning:
+
+```text
+Session 1: You decide → "Login needs { userId, token, email }"
+           MAMA saves → "Returns userId because dashboard needs it (tried without, users had to refetch)"
+
+Session 2: You ask for backend → Claude checks MAMA
+           Claude sees → Your reasoning, writes matching code
 ```
 
-**What you get:**
+**Result:** Claude follows your decisions. No guessing. No mismatches.
 
-- Claude remembers your past choices and whether they worked
-- Pick up conversations without re-explaining everything
-- See how your preferences evolved over time
-- Free, private, all data stays on your machine
+### How It Works
 
----
+**Auto-tracking (Claude Code Plugin):**
+
+```text
+You: "Add login API"
+Claude: [writes code]
+MAMA: Detected contract → Suggests save
+You: Accept → Saved with reasoning
+```
+
+**Manual save:**
+
+```text
+You: /mama:decision topic="auth" decision="JWT with refresh tokens"
+     reasoning="Tried simple JWT, users complained about frequent logouts"
+```
+
+**Next session:**
+
+```text
+You: "Add logout endpoint"
+Claude: [checks MAMA] "I see you use JWT with refresh tokens..."
+        [writes matching code]
+```
+
+**That's it.** Three steps: Build → Save → Claude remembers.
+
+### Does This Work?
+
+Real test:
+
+- **Session 1:** Backend (Python, snake_case)
+- **Session 2:** Frontend (TypeScript, camelCase)
+- **Result:** Worked first try. Claude remembered the decision, matched the casing.
+
+MAMA reminded Claude of the reasoning, not just the endpoint name.
+
+### Who Needs This
+
+You need MAMA if you've said:
+
+- "Why doesn't frontend connect to backend?"
+- "Claude keeps guessing wrong field names"
+- "I told it yesterday, why did it forget?"
+
+**Without MAMA:** Paste docs → Hope Claude remembers → Claude guesses → Debug
+
+**With MAMA:** Claude remembers your reasoning → No guessing → Everything connects
 
 ## 🤔 Which MAMA Do You Need?
 
@@ -64,7 +143,7 @@ MAMA OS deliberately uses **Claude Code CLI as a subprocess** rather than direct
 
 **How it works:**
 
-```
+```text
 MAMA OS → spawn('claude', [...args]) → Official Claude CLI → Anthropic API
 ```
 
@@ -91,17 +170,18 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 
 ---
 
-### 💻 Want Memory in Claude Desktop/Code?
+### 💻 Building Software with Claude Code/Desktop?
 
-**→ MCP protocol integration**  
-**→ Slash commands & auto-context**  
-**→ Session continuity**
+**→ Stop frontend/backend mismatches**
+**→ Auto-track API contracts & function signatures**
+**→ Claude remembers your architecture decisions**
 
-**Use:** [MAMA MCP Server](packages/mcp-server/README.md)
+**Use:** [MAMA MCP Server](packages/mcp-server/README.md) + [Claude Code Plugin](packages/claude-code-plugin/README.md)
 
-**For Claude Code:**
+#### For Claude Code (Recommended for Development):
 
 ```bash
+# Install both MCP server and plugin
 /plugin marketplace add jungjaehoon-lifegamez/claude-plugins
 /plugin install mama
 ```
@@ -119,7 +199,38 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` v1.6.6
+**Package:** `@jungjaehoon/mama-server` v1.7.0
+
+**What happens after installation:**
+
+1. **PostToolUse Hook** (Claude Code only)
+   - Detects when you write/edit code
+   - Extracts API contracts automatically (TypeScript, Python, Java, Go, Rust, SQL, GraphQL)
+   - Suggests saving via `/mama:decision`
+
+2. **MCP Tools** (Both Desktop & Code)
+   - `/mama:search` - Find past decisions
+   - `/mama:decision` - Save contracts/choices
+   - `/mama:checkpoint` - Resume sessions
+
+3. **Auto-Context Injection**
+   - Before editing: Claude sees related contracts
+   - Before API calls: Recalls correct schemas
+   - Cross-session: Remembers your architecture
+
+**Example workflow:**
+
+```bash
+# Day 1: Build backend
+You: "Create login API"
+Claude: [Writes code]
+MAMA: Saved contract - POST /api/auth/login returns { userId, token, email }
+
+# Day 3: Build frontend (new session)
+You: "Add login form"
+Claude: "I see you have POST /api/auth/login that returns { userId, token, email }"
+       [Writes correct fetch() call, first try]
+```
 
 ---
 
@@ -176,9 +287,9 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
 | [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.3.1   | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.6.6   | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.0   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.1   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.6.6   | Claude Code plugin                           | Claude Marketplace |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.0   | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1   | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.

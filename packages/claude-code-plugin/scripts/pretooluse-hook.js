@@ -35,6 +35,8 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 // const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 const { formatContext } = require(path.join(CORE_PATH, 'decision-formatter'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
+const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
+const { searchDecisionsAndContracts } = require(path.join(CORE_PATH, 'mcp-client'));
 
 // Configuration
 const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
@@ -230,6 +232,86 @@ function generateQuery(toolName, filePath, grepPattern) {
 }
 
 /**
+ * Search for related contracts based on file path
+ * MAMA v2: Contract-aware PreToolUse
+ *
+ * @param {string} filePath - File path being edited
+ * @param {string} toolName - Tool name (Edit, Write, etc.)
+ * @returns {Promise<Array>} Related contracts
+ */
+async function searchRelatedContracts(filePath, toolName) {
+  if (!filePath) {
+    return [];
+  }
+
+  // Skip non-code files
+  const codeExtensions = ['.js', '.ts', '.jsx', '.tsx', '.py', '.go', '.rs', '.java'];
+  const ext = path.extname(filePath);
+  if (!codeExtensions.includes(ext)) {
+    return [];
+  }
+
+  // Only search contracts for Edit/Write tools
+  if (!['Edit', 'Write', 'apply_patch'].includes(toolName)) {
+    return [];
+  }
+
+  try {
+    const result = await searchDecisionsAndContracts('', filePath, toolName, {
+      decisionLimit: 0,
+      contractLimit: 3,
+      similarityThreshold: SIMILARITY_THRESHOLD,
+    });
+
+    const contracts = result.contractResults || [];
+    info(`[Hook] Found ${contracts.length} related contracts`);
+
+    return contracts;
+  } catch (error) {
+    warn(`[Hook] Contract search failed: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Format contract results for injection
+ *
+ * @param {Array} contracts - Contract list
+ * @returns {string} Formatted contract context
+ */
+function formatContractContext(contracts) {
+  if (!contracts || contracts.length === 0) {
+    return '';
+  }
+
+  let output = '\n\n---\n';
+  output += '🔌 **Related Contracts (MAMA v2)**\n\n';
+  output += '⚠️ **Frontend/Backend consistency required:**\n\n';
+
+  contracts.forEach((contract, idx) => {
+    const match = Math.round(contract.similarity * 100);
+    // Sanitize all untrusted data from contracts
+    const safeTopic = sanitizeForPrompt(contract.topic || 'unknown');
+    const safeDecision = sanitizeForPrompt(contract.decision || '');
+    const safeReasoning = contract.reasoning
+      ? sanitizeForPrompt(contract.reasoning.substring(0, 80))
+      : '';
+
+    output += `${idx + 1}. **${safeTopic}** (${match}% match)\n`;
+    output += `   ${safeDecision}\n`;
+    if (safeReasoning) {
+      output += `   _${safeReasoning}..._\n`;
+    }
+    output += '\n';
+  });
+
+  output += '💡 *Use exact schema from these contracts to prevent API mismatches.*\n';
+  output += '---\n';
+
+  return output;
+}
+
+/**
  * Read input from stdin
  */
 async function readStdin() {
@@ -325,11 +407,12 @@ async function main() {
     // 8. Inject decision context
     let context = null;
     let resultCount = 0;
+    let contractCount = 0;
 
     try {
       // AC: Hook runtime stays <500ms
       const result = await Promise.race([
-        injectPreToolContext(query, filePath),
+        injectPreToolContext(query, filePath, toolName),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Hook timeout')), MAX_RUNTIME_MS)
         ),
@@ -337,6 +420,7 @@ async function main() {
 
       context = result.context;
       resultCount = result.count;
+      contractCount = result.contractCount || 0;
 
       // Update rate limit on successful execution
       updateRateLimit();
@@ -355,18 +439,33 @@ async function main() {
     if (context) {
       const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, resultCount, toolName);
 
+      // Build system message
+      const parts = [];
+      if (contractCount > 0) {
+        parts.push(`🔌 ${contractCount} contract${contractCount > 1 ? 's' : ''}`);
+      }
+      if (resultCount > 0) {
+        parts.push(`💡 ${resultCount} decision${resultCount > 1 ? 's' : ''}`);
+      }
+      const systemMessage =
+        parts.length > 0
+          ? `MAMA v2: ${parts.join(', ')} related to ${toolName} (${latencyMs}ms)`
+          : `MAMA: No context found (${latencyMs}ms)`;
+
       // Correct Claude Code JSON format with hookSpecificOutput
       const response = {
         decision: null,
         reason: '',
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
-          systemMessage: `💡 MAMA: ${resultCount} decision${resultCount > 1 ? 's' : ''} related to ${toolName} (${latencyMs}ms)`,
+          systemMessage,
           additionalContext: context + transparencyLine,
         },
       };
       console.log(JSON.stringify(response));
-      info(`[Hook] Injected ${resultCount} decisions (${latencyMs}ms)`);
+      info(
+        `[Hook] Injected ${resultCount} decisions + ${contractCount} contracts (${latencyMs}ms)`
+      );
     } else {
       // No results - output transparency line only
       const transparencyLine = formatTransparencyLine(tierInfo, latencyMs, 0, toolName);
@@ -395,56 +494,61 @@ async function main() {
 /**
  * Inject context for PreToolUse
  * AC: Relevance scoring with higher recency weight
+ * MAMA v2: Also searches for related contracts
  *
  * @param {string} query - Query text
  * @param {string} filePath - File path
- * @returns {Promise<Object>} {context, count}
+ * @param {string} toolName - Tool name
+ * @returns {Promise<Object>} {context, count, contractCount}
  */
-async function injectPreToolContext(query, filePath) {
-  // Lazy load embeddings and vector search (only on Tier 1)
-  const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
-  const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+async function injectPreToolContext(query, filePath, toolName) {
+  let decisionResults = [];
+  let contractResults = [];
 
-  // 1. Generate query embedding
-  const queryEmbedding = await generateEmbedding(query);
+  try {
+    const result = await searchDecisionsAndContracts(query, filePath, toolName, {
+      decisionLimit: 5,
+      contractLimit: 3,
+      similarityThreshold: SIMILARITY_THRESHOLD,
+    });
 
-  // 2. Vector search with lower threshold (70% vs 75%)
-  let results = await vectorSearch(queryEmbedding, 10, SIMILARITY_THRESHOLD);
-
-  // 3. AC: Weight recency higher for file operations
-  // Apply Gaussian decay: score = similarity * exp(-age_days / 30)
-  const now = Date.now();
-  results = results.map((r) => {
-    const ageDays = (now - r.created_at) / (1000 * 60 * 60 * 24);
-    const recencyBoost = Math.exp(-ageDays / 30); // 30-day half-life
-    return {
-      ...r,
-      adjustedScore: r.similarity * 0.7 + recencyBoost * 0.3, // 70% similarity, 30% recency
-    };
-  });
-
-  // 4. Sort by adjusted score
-  results.sort((a, b) => b.adjustedScore - a.adjustedScore);
-
-  // 5. Take top 3
-  results = results.slice(0, 3);
-
-  if (results.length === 0) {
-    return { context: null, count: 0 };
+    decisionResults = result.decisionResults || [];
+    contractResults = result.contractResults || [];
+  } catch (error) {
+    warn(`[Hook] Search failed: ${error.message}`);
   }
 
-  // 6. AC: Add file hints
-  results = extractFileHints(results, filePath);
+  // Check if we have any results
+  if (decisionResults.length === 0 && contractResults.length === 0) {
+    return { context: null, count: 0, contractCount: 0 };
+  }
 
-  // 7. Format context (shorter for file operations)
-  const formattedContext = formatContext(results, {
-    maxTokens: TOKEN_BUDGET,
-    includeFileHints: true,
-  });
+  // Format context
+  let formattedContext = '';
+
+  // Add contracts first (higher priority for Edit/Write tools)
+  if (contractResults.length > 0) {
+    formattedContext += formatContractContext(contractResults);
+  }
+
+  // Add regular decisions
+  if (decisionResults.length > 0) {
+    // AC: Add file hints
+    const resultsWithHints = extractFileHints(decisionResults, filePath);
+
+    // Format context (shorter for file operations)
+    const decisionContext = formatContext(resultsWithHints, {
+      maxTokens: TOKEN_BUDGET - (contractResults.length > 0 ? 150 : 0), // Reserve tokens for contracts
+      includeFileHints: true,
+    });
+
+    formattedContext += decisionContext;
+  }
 
   return {
     context: formattedContext,
-    count: results.length,
+    count: decisionResults.length,
+    contractCount: contractResults.length,
   };
 }
 
@@ -463,4 +567,8 @@ module.exports = {
   checkRateLimit,
   generateQuery,
   extractFileHints,
+  searchRelatedContracts,
+  formatContractContext,
+  injectPreToolContext,
+  sanitizeForPrompt,
 };

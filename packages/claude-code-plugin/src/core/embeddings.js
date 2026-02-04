@@ -176,6 +176,7 @@ async function generateEmbedding(text) {
  */
 async function generateEnhancedEmbedding(decision) {
   // Construct enriched text representation
+  // Note: Use raw text to preserve semantic signal for embeddings.
   const enrichedText = `
 Topic: ${decision.topic}
 Decision: ${decision.decision}
