@@ -19,13 +19,18 @@ const { spawn } = require('child_process');
  */
 async function callMamaTool(toolName, params, timeout = 5000) {
   return new Promise((resolve, reject) => {
+    // Declare mcp variable before using it in timeout
+    let mcp = null;
+
     const timeoutId = setTimeout(() => {
-      mcp.kill();
+      if (mcp) {
+        mcp.kill();
+      }
       reject(new Error(`MCP call timeout after ${timeout}ms`));
     }, timeout);
 
     // Spawn MAMA MCP server
-    const mcp = spawn('npx', ['-y', '@jungjaehoon/mama-server'], {
+    mcp = spawn('npx', ['-y', '@jungjaehoon/mama-server'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

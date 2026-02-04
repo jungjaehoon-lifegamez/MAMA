@@ -20,8 +20,9 @@ const { extractContracts, formatContractForMama } = require(
 );
 const { saveDecision, searchDecisions } = require(path.join(CORE_PATH, 'mcp-client'));
 
-// Test code from test-api.ts
-const testCode = fs.readFileSync('/home/deck/project/MAMA/test-api.ts', 'utf8');
+// Test code from test-api.ts (portable path using __dirname)
+const testApiPath = path.resolve(__dirname, '../../../../test-api.ts');
+const testCode = fs.readFileSync(testApiPath, 'utf8');
 
 console.log('🎯 MAMA v2 Full Flow PoC\n');
 console.log('='.repeat(60));

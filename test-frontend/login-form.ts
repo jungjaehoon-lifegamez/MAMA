@@ -13,7 +13,11 @@ class RegistrationForm {
   private formElement: HTMLFormElement;
 
   constructor(formId: string) {
-    this.formElement = document.getElementById(formId) as HTMLFormElement;
+    const element = document.getElementById(formId);
+    if (!element || !(element instanceof HTMLFormElement)) {
+      throw new Error(`Form element with id '${formId}' not found or not a form`);
+    }
+    this.formElement = element;
     this.setupEventListeners();
   }
 
@@ -62,10 +66,19 @@ class RegistrationForm {
   private getFormData(): RegisterFormData {
     const formData = new FormData(this.formElement);
 
+    // Validate FormData results with null checks
+    const email = formData.get('email');
+    const password = formData.get('password');
+    const name = formData.get('name');
+
+    if (!email || !password || !name) {
+      throw new Error('Missing required form fields');
+    }
+
     return {
-      email: formData.get('email') as string,
-      password: formData.get('password') as string,
-      name: formData.get('name') as string,
+      email: email.toString(),
+      password: password.toString(),
+      name: name.toString(),
     };
   }
 }

@@ -285,6 +285,25 @@ async function searchRelatedContracts(filePath, toolName) {
 }
 
 /**
+ * Sanitize untrusted data for prompt injection
+ * Escapes special characters that could break prompt structure
+ *
+ * @param {string} text - Text to sanitize
+ * @returns {string} Sanitized text
+ */
+function sanitizeForPrompt(text) {
+  if (!text) {
+    return '';
+  }
+  return text
+    .replace(/\\/g, '\\\\') // Escape backslashes
+    .replace(/`/g, '\\`') // Escape backticks (code blocks)
+    .replace(/\$/g, '\\$') // Escape dollar signs (template literals)
+    .replace(/\{/g, '\\{') // Escape braces (template literals)
+    .replace(/\}/g, '\\}');
+}
+
+/**
  * Format contract results for injection
  *
  * @param {Array} contracts - Contract list
@@ -301,10 +320,17 @@ function formatContractContext(contracts) {
 
   contracts.forEach((contract, idx) => {
     const match = Math.round(contract.similarity * 100);
-    output += `${idx + 1}. **${contract.topic}** (${match}% match)\n`;
-    output += `   ${contract.decision}\n`;
-    if (contract.reasoning) {
-      output += `   _${contract.reasoning.substring(0, 80)}..._\n`;
+    // Sanitize all untrusted data from contracts
+    const safeTopic = sanitizeForPrompt(contract.topic || 'unknown');
+    const safeDecision = sanitizeForPrompt(contract.decision || '');
+    const safeReasoning = contract.reasoning
+      ? sanitizeForPrompt(contract.reasoning.substring(0, 80))
+      : '';
+
+    output += `${idx + 1}. **${safeTopic}** (${match}% match)\n`;
+    output += `   ${safeDecision}\n`;
+    if (safeReasoning) {
+      output += `   _${safeReasoning}..._\n`;
     }
     output += '\n';
   });
@@ -589,4 +615,5 @@ module.exports = {
   searchRelatedContracts,
   formatContractContext,
   injectPreToolContext,
+  sanitizeForPrompt,
 };

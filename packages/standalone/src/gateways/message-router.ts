@@ -315,8 +315,9 @@ This protects your credentials from being exposed in chat logs.`;
         let messageText = message.text;
         if (hasImages && this.shouldAutoTranslate(message.text)) {
           const translationKeywords = ['번역', '뭐라고', '뭐라는', '무슨말', '읽어줘', 'translate'];
+          // Handle falsy message.text before toLowerCase()
           const hasTranslationKeyword = translationKeywords.some((kw) =>
-            message.text.toLowerCase().includes(kw)
+            (message.text ?? '').toLowerCase().includes(kw)
           );
 
           if (!hasTranslationKeyword) {
