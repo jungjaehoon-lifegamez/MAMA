@@ -152,7 +152,7 @@ CREATE TABLE users (
 
 **The difference:** MAMA creates a **shared contract database** that survives across sessions, languages, and AI agents.
 
-### MAMA v2: AI Agent Consistency Engine
+### MAMA: AI Agent Consistency Engine
 
 **The Meta-Problem:** AI agents operate in **episodic amnesia** — each session starts from scratch. They don't remember:
 
@@ -343,7 +343,7 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` v1.6.6
+**Package:** `@jungjaehoon/mama-server` v1.7.0
 
 **What happens after installation:**
 
@@ -431,7 +431,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
 | [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.3.1   | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.6.6   | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.0   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.1   | Shared core library (embeddings, DB, memory) | npm                |
 | [mama](packages/claude-code-plugin/README.md)                    | 1.6.6   | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1   | OpenClaw plugin                              | npm                |
