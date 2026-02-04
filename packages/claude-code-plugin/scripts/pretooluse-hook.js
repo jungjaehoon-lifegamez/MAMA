@@ -338,6 +338,22 @@ async function readStdin() {
 async function main() {
   const startTime = Date.now();
 
+  // ALWAYS log hook execution to file for debugging
+  const hookLogFile = path.join(PLUGIN_ROOT, '.hook-execution.log');
+  try {
+    const timestamp = new Date().toISOString();
+    const logEntry =
+      JSON.stringify({
+        timestamp,
+        hook: 'PreToolUse',
+        toolName: process.env.TOOL_NAME || 'unknown',
+        filePath: process.env.FILE_PATH || 'unknown',
+      }) + '\n';
+    fs.appendFileSync(hookLogFile, logEntry, 'utf8');
+  } catch (err) {
+    // Ignore logging errors
+  }
+
   // DEBUG: Confirm hook is executing (only if MAMA_DEBUG enabled)
   if (process.env.MAMA_DEBUG === 'true') {
     console.error('🔍 [MAMA DEBUG] PreToolUse hook STARTED');
