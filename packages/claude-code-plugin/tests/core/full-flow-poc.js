@@ -20,8 +20,8 @@ const { extractContracts, formatContractForMama } = require(
 );
 const { saveDecision, searchDecisions } = require(path.join(CORE_PATH, 'mcp-client'));
 
-// Test code from test-api.ts (portable path using __dirname)
-const testApiPath = path.resolve(__dirname, '../../../../test-api.ts');
+// Test code fixture (portable path using __dirname)
+const testApiPath = path.resolve(__dirname, 'fixtures', 'test-api.ts');
 const testCode = fs.readFileSync(testApiPath, 'utf8');
 
 console.log('🎯 MAMA v2 Full Flow PoC\n');
@@ -33,7 +33,7 @@ console.log('='.repeat(60));
 async function step1_postToolUse() {
   console.log('\n📝 Step 1: PostToolUse Hook - Extract Contracts\n');
 
-  const extracted = extractContracts(testCode, 'test-api.ts');
+  const extracted = extractContracts(testCode, 'tests/core/fixtures/test-api.ts');
   const allContracts = [
     ...extracted.apiEndpoints,
     ...extracted.functionSignatures,
@@ -63,7 +63,7 @@ function step2_generateTemplate(contracts) {
   console.log('Hook Output (template):');
   console.log('---');
   console.log('🔌 MAMA v2: Contract Candidates Detected\n');
-  console.log('File: test-api.ts');
+  console.log('File: tests/core/fixtures/test-api.ts');
   console.log(`Candidates: ${contracts.length}\n`);
 
   contracts.forEach((contract, idx) => {
@@ -95,7 +95,8 @@ async function step3_haikuSave(formattedContracts) {
       const result = await saveDecision(contract);
 
       if (result.success) {
-        console.log(`  ✅ Saved: ${result.id.id || 'success'}`);
+        const safeId = result?.id?.id ?? 'success';
+        console.log(`  ✅ Saved: ${safeId}`);
         results.push({ success: true, contract, result });
       } else {
         console.log(`  ❌ Failed: ${result.error || 'unknown error'}`);
@@ -127,7 +128,7 @@ async function step4_verify() {
       console.log(`Found ${searchResult.results.length} contracts in MAMA:`);
       searchResult.results.forEach((r, idx) => {
         console.log(`  ${idx + 1}. ${r.topic} (${Math.round(r.similarity * 100)}% match)`);
-        console.log(`     ${r.decision.substring(0, 80)}...`);
+        console.log(`     ${(r.decision || '').substring(0, 80)}...`);
       });
       console.log('\n✅ Contracts successfully saved and searchable!\n');
       return true;

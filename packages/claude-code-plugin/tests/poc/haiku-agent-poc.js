@@ -88,6 +88,11 @@ async function testWithTempFile() {
 
     child.on('error', (err) => {
       console.error(`❌ Failed to spawn Claude CLI: ${err.message}`);
+      try {
+        fs.unlinkSync(tempFile);
+      } catch (_cleanupError) {
+        // ignore cleanup errors
+      }
       reject(err);
     });
   });
@@ -154,12 +159,17 @@ async function testBackgroundMode() {
   console.log(`📝 Output will be in: ${outputFile}\n`);
 
   // Spawn in background
+  const outFd = fs.openSync(outputFile, 'w');
+  const errFd = fs.openSync(outputFile, 'a');
   const child = spawn('claude', ['--model', 'haiku', '--file', tempFile], {
     detached: true,
-    stdio: ['ignore', fs.openSync(outputFile, 'w'), fs.openSync(outputFile, 'a')],
+    stdio: ['ignore', outFd, errFd],
   });
 
   child.unref();
+
+  fs.closeSync(outFd);
+  fs.closeSync(errFd);
 
   console.log(`🚀 Spawned background Claude CLI (PID: ${child.pid})`);
   console.log(`⏳ Waiting for output...\n`);
@@ -246,6 +256,7 @@ async function verifyMamaSave() {
   return new Promise((resolve, reject) => {
     exec(
       'npx -y @jungjaehoon/mama-server search "contract_auth_register"',
+      { timeout: 30000 },
       (error, stdout, _stderr) => {
         if (error) {
           console.error(`❌ MAMA search failed: ${error.message}`);

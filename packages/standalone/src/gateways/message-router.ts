@@ -109,6 +109,8 @@ const SENSITIVE_PATTERNS = [
   /비밀.*키/i,
 ];
 
+const KOREAN_TARGETS = new Set(['korean', '한국어']);
+
 /**
  * Sanitize user-supplied text before injecting into prompts.
  * Escapes characters that can alter prompt structure.
@@ -343,8 +345,7 @@ This protects your credentials from being exposed in chat logs.`;
           if (!hasTranslationKeyword) {
             // Auto-add translation instruction
             const targetLanguage = this.config.translationTargetLanguage;
-            const koreanTargets = new Set(['korean', '한국어']);
-            const translationInstruction = koreanTargets.has(
+            const translationInstruction = KOREAN_TARGETS.has(
               String(targetLanguage).trim().toLowerCase()
             )
               ? '이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.'

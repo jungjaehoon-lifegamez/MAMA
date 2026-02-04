@@ -121,7 +121,7 @@ function formatWithTopN(decisions, topN) {
   const { full, summary } = formatTopNContext(decisions, topN);
 
   const current = full[0]; // Highest relevance
-  const topic = current.topic;
+  const topic = sanitizeForPrompt(current.topic);
 
   // Task 8.2: Full detail for top 3 decisions
   let context = `
@@ -598,14 +598,14 @@ function formatTrustContext(trustCtx) {
   // 3. Verifiability
   if (trustCtx.verification) {
     const { test_file, result } = trustCtx.verification;
-    const status = result === 'success' ? 'passed' : result;
-    lines.push(`✅ Verified: ${test_file} ${status}`);
+    const status = result === 'success' ? 'passed' : sanitizeForPrompt(result);
+    lines.push(`✅ Verified: ${sanitizeForPrompt(test_file || 'Verified')} ${status}`);
     hasContent = true;
   }
 
   // 4. Context relevance
   if (trustCtx.context_match && trustCtx.context_match.user_intent) {
-    lines.push(`🎯 Applies to: ${trustCtx.context_match.user_intent}`);
+    lines.push(`🎯 Applies to: ${sanitizeForPrompt(trustCtx.context_match.user_intent)}`);
     hasContent = true;
   }
 
@@ -868,8 +868,9 @@ ${sanitizeForPrompt(decision.reasoning || decision.decision)}
 
     if (trustCtx.verification) {
       const { test_file, result } = trustCtx.verification;
-      const status = result === 'success' ? '✅ passed' : `⚠️ ${result}`;
-      output += `\n${status}: ${test_file || 'Verified'}`;
+      const safeResult = sanitizeForPrompt(result);
+      const status = result === 'success' ? '✅ passed' : `⚠️ ${safeResult}`;
+      output += `\n${status}: ${sanitizeForPrompt(test_file || 'Verified')}`;
     }
 
     if (trustCtx.track_record) {

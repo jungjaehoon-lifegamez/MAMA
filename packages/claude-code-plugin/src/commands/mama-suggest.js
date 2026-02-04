@@ -124,10 +124,11 @@ function formatSuggestionsMessage(query, suggestions, markdown) {
  * @returns {string} Formatted message
  */
 function formatNoResultsMessage(query) {
+  const safeQuery = sanitizeForPrompt(query);
   return `
 ## 🔍 No Results Found
 
-No decisions found matching: "${query}"
+No decisions found matching: "${safeQuery}"
 
 ### Possible Reasons
 

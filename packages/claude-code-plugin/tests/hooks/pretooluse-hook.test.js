@@ -2,7 +2,8 @@
  * Tests for PreToolUse Hook
  *
  * Story M2.2: PreToolUse Hook (Context before Read/Edit/Grep)
- * Tests AC #1-5: Tool subscription, recency weighting, file hints, tier awareness, similarity threshold
+ * Tests AC #1, 3-5: Tool subscription, file hints, tier awareness, similarity threshold
+ * Note: AC #2 (Recency Weighting) is handled server-side in mama-api.js
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

@@ -552,10 +552,14 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
 
     // Decision search
     if (decisionLimit > 0 && query) {
-      const queryEmbedding = await generateEmbedding(query);
-      const results = await vectorSearch(queryEmbedding, decisionLimit, similarityThreshold);
-      if (Array.isArray(results)) {
-        decisionResults = results.slice(0, decisionLimit);
+      try {
+        const queryEmbedding = await generateEmbedding(query);
+        const results = await vectorSearch(queryEmbedding, decisionLimit, similarityThreshold);
+        if (Array.isArray(results)) {
+          decisionResults = results.slice(0, decisionLimit);
+        }
+      } catch (err) {
+        console.error('[MAMA MCP] Decision search failed:', err.message);
       }
     }
 
@@ -575,12 +579,16 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       const contractQuery = `contract api ${keywords.join(' ')}`.trim();
 
       if (contractQuery) {
-        const contractEmbedding = await generateEmbedding(contractQuery);
-        const contractMatches = await vectorSearch(contractEmbedding, 10, similarityThreshold);
-        if (Array.isArray(contractMatches)) {
-          contractResults = contractMatches
-            .filter((r) => r.topic && r.topic.startsWith('contract_'))
-            .slice(0, contractLimit);
+        try {
+          const contractEmbedding = await generateEmbedding(contractQuery);
+          const contractMatches = await vectorSearch(contractEmbedding, 10, similarityThreshold);
+          if (Array.isArray(contractMatches)) {
+            contractResults = contractMatches
+              .filter((r) => r.topic && r.topic.startsWith('contract_'))
+              .slice(0, contractLimit);
+          }
+        } catch (err) {
+          console.error('[MAMA MCP] Contract search failed:', err.message);
         }
       }
     }

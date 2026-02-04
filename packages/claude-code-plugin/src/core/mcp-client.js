@@ -147,13 +147,17 @@ async function callMamaTool(toolName, params, timeout = 5000) {
 
       // Extract result from content array
       if (toolResponse.result && toolResponse.result.content) {
-        const content = toolResponse.result.content[0];
-        if (content && content.type === 'text') {
-          try {
-            const result = JSON.parse(content.text);
-            resolve(result);
-          } catch (err) {
-            resolve({ raw: content.text });
+        if (Array.isArray(toolResponse.result.content) && toolResponse.result.content.length > 0) {
+          const content = toolResponse.result.content[0];
+          if (content && content.type === 'text') {
+            try {
+              const result = JSON.parse(content.text);
+              resolve(result);
+            } catch (err) {
+              resolve({ raw: content.text });
+            }
+          } else {
+            resolve(toolResponse.result);
           }
         } else {
           resolve(toolResponse.result);

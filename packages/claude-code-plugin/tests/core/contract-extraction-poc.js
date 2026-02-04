@@ -202,7 +202,9 @@ function runTests() {
       const sample = formatContractForMama(allContracts[0]);
       if (sample) {
         console.log(`     Topic: ${sample.topic}`);
-        console.log(`     Decision: ${sample.decision.substring(0, 80)}...`);
+        const preview =
+          typeof sample.decision === 'string' ? sample.decision.substring(0, 80) : '[no decision]';
+        console.log(`     Decision: ${preview}...`);
         console.log(`     Confidence: ${sample.confidence}`);
       }
     }
