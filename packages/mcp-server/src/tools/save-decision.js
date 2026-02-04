@@ -11,6 +11,115 @@
 
 const mama = require('../mama/mama-api.js');
 
+const CONTRACT_TOPIC_PREFIXES = [
+  'contract_get_',
+  'contract_post_',
+  'contract_put_',
+  'contract_patch_',
+  'contract_delete_',
+  'contract_head_',
+  'contract_options_',
+  'contract_function_',
+  'contract_type_',
+  'contract_sql_',
+  'contract_graphql_',
+];
+
+const CONTRACT_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+
+function isContractTopic(topic) {
+  if (!topic) {
+    return false;
+  }
+  return CONTRACT_TOPIC_PREFIXES.some((prefix) => topic.startsWith(prefix));
+}
+
+function validateContractDecision(topic, decision, reasoning) {
+  const issues = [];
+  const safeDecision = decision || '';
+  const safeReasoning = reasoning || '';
+  const decisionUpper = safeDecision.toUpperCase();
+
+  if (safeDecision.trim().length < 10) {
+    issues.push('decision too short');
+  }
+
+  if (safeReasoning.trim().length < 10) {
+    issues.push('reasoning too short');
+  }
+
+  if (topic.startsWith('contract_function_')) {
+    if (!safeDecision.includes('(') || !safeDecision.includes(')')) {
+      issues.push('function signature missing parentheses');
+    }
+    if (!safeDecision.includes('defined in')) {
+      issues.push('function signature missing file context');
+    }
+  } else if (topic.startsWith('contract_sql_')) {
+    if (!decisionUpper.includes('CREATE TABLE') && !decisionUpper.includes('ALTER TABLE')) {
+      issues.push('sql schema missing CREATE TABLE or ALTER TABLE');
+    }
+  } else if (topic.startsWith('contract_type_') || topic.startsWith('contract_graphql_')) {
+    if (!safeDecision.includes('{') || !safeDecision.includes('}')) {
+      issues.push('type definition missing braces');
+    }
+  } else if (
+    CONTRACT_HTTP_METHODS.some((method) => topic.startsWith(`contract_${method.toLowerCase()}_`))
+  ) {
+    if (!CONTRACT_HTTP_METHODS.some((method) => decisionUpper.includes(method))) {
+      issues.push('api endpoint missing HTTP method');
+    }
+    if (!safeDecision.includes('/')) {
+      issues.push('api endpoint missing path');
+    }
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues,
+  };
+}
+
+function normalizeDecisionText(text) {
+  if (!text) {
+    return '';
+  }
+  return text.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function extractFileHint(decision, reasoning) {
+  const sources = [decision, reasoning].filter(Boolean);
+  for (const source of sources) {
+    const match = source.match(/defined in\s+([^\s,]+)/i) || source.match(/from\s+([^\s,]+)/i);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function buildContractTrustContext(decision, reasoning) {
+  const fileHint = extractFileHint(decision, reasoning);
+  return {
+    source: {
+      file: fileHint || 'unknown',
+      line: '?',
+      author: 'haiku',
+      timestamp: Date.now(),
+    },
+    causality: {
+      impact: 'Auto-extracted by LLM from code changes; verify before use.',
+    },
+    verification: {
+      test_file: null,
+      result: 'not_verified',
+    },
+    context_match: {
+      user_intent: 'contract extraction',
+    },
+  };
+}
+
 /**
  * Create save decision tool with dependencies
  * @param {Object} mamaApi - MAMA API instance
@@ -136,6 +245,53 @@ Structure your reasoning with these layers for maximum value:
         };
       }
 
+      let contractWarning = null;
+      let contractSkipId = null;
+      let trustContext = null;
+
+      if (isContractTopic(topic)) {
+        const validation = validateContractDecision(topic, decision, reasoning);
+        if (!validation.valid) {
+          return {
+            success: false,
+            message: `❌ Validation error: contract decision seems malformed (${validation.issues.join(
+              ', '
+            )})`,
+          };
+        }
+
+        trustContext = buildContractTrustContext(decision, reasoning);
+
+        try {
+          const recallResult = await mamaApi.recall(topic);
+          const existing = recallResult?.supersedes_chain?.[0];
+          if (existing?.decision) {
+            const incoming = normalizeDecisionText(decision);
+            const current = normalizeDecisionText(existing.decision);
+            if (incoming && incoming === current) {
+              contractSkipId = existing.id;
+              contractWarning = 'Duplicate contract detected; skipping save.';
+            } else if (incoming && current) {
+              contractWarning =
+                'Existing contract with same topic differs; verify this is an intentional update.';
+            }
+          }
+        } catch (error) {
+          // Non-fatal: proceed without dedupe if recall fails
+        }
+      }
+
+      if (contractSkipId) {
+        return {
+          success: true,
+          decision_id: contractSkipId,
+          topic: topic,
+          message: `⚠️ Duplicate contract detected; skipping save (ID: ${contractSkipId})`,
+          recall_command: `To recall: mama.recall('${topic}')`,
+          warning: contractWarning,
+        };
+      }
+
       // Call MAMA API (mama.save will handle outcome mapping to DB format)
       // Story 1.1/1.2: save() now returns enhanced response object
       const result = await mamaApi.save({
@@ -148,6 +304,7 @@ Structure your reasoning with these layers for maximum value:
         evidence,
         alternatives,
         risks,
+        trust_context: trustContext,
       });
 
       // Story 1.2: Return enhanced response with collaborative fields
@@ -159,7 +316,9 @@ Structure your reasoning with these layers for maximum value:
         recall_command: `To recall: mama.recall('${topic}')`,
         // Story 1.1/1.2: Collaborative fields (optional)
         ...(result.similar_decisions && { similar_decisions: result.similar_decisions }),
-        ...(result.warning && { warning: result.warning }),
+        ...((result.warning || contractWarning) && {
+          warning: [result.warning, contractWarning].filter(Boolean).join(' '),
+        }),
         ...(result.collaboration_hint && { collaboration_hint: result.collaboration_hint }),
         ...(result.reasoning_graph && { reasoning_graph: result.reasoning_graph }),
       };

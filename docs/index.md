@@ -1,14 +1,14 @@
 # MAMA Plugin Documentation
 
-**Version:** 0.3.0 (MAMA OS) | 1.6.6 (MCP Server)
+**Version:** 0.3.1 (MAMA OS) | 1.7.0 (MCP Server)
 **MAMA:** Memory-Augmented MCP Assistant
 **Navigation Hub**
 
-> "Remember decision evolution, not just conclusions"
+> "Tracks WHY you decided, not just WHAT you chose"
 >
-> "Chat with Claude Code from anywhere - mobile, desktop, or any device"
+> "Prevents vibe coding breakage by remembering your reasoning"
 >
-> "Autonomous AI agent with gateway integrations - Discord, Slack, Telegram"
+> "Always-on AI agent with Discord, Slack, Telegram integrations"
 
 ## Quick Links
 

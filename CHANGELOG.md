@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [claude-code-plugin-1.7.0] + [mama-server-1.7.0] - 2026-02-04
+
+### Added - MAMA v2: AI Agent Consistency Engine
+
+- **PostToolUse Hook** - Automatic contract detection and tracking
+  - Detects API endpoints, function signatures, request/response schemas
+  - Extracts database schemas and relationships
+  - Spawns Haiku task agent for contract analysis
+  - Auto-saves contracts to prevent vibe coding breakage
+
+- **PreToolUse Hook** - Contract injection before code edits
+  - Direct DB access for fast context retrieval
+  - Injects relevant contracts before Read/Edit operations
+  - Prevents Claude from guessing schemas
+
+- **Contract Extractor** (`src/core/contract-extractor.js`)
+  - Pattern-based contract detection
+  - Multi-language support: JavaScript/TypeScript, Python, Java (Spring), Go, Rust, SQL, GraphQL
+  - Similarity checking to prevent duplicates
+  - Cross-language semantic matching via vector embeddings
+
+### Fixed
+
+- **DB Initialization** - Fixed `posttooluse-hook.js` calling vectorSearch without initDB
+- **Test Cleanup** - Removed obsolete recency weighting tests (moved to MCP server)
+- **Hook Enablement** - Re-enabled PreToolUse and PostToolUse for v2 features
+
+### Changed
+
+- **Documentation Rewrite** - Focused on decision tracking differentiation
+  - Main value proposition: Tracks WHY (reasoning), not just WHAT (facts)
+  - New hook: "Why Vibe Coding Breaks After Session 2"
+  - Added workflow section: Auto-tracking, manual save, next session
+  - Reduced README from 100+ lines to ~60 lines
+  - Differentiation from regular memory systems emphasized
+
+- **Messaging Updates** - Aligned with decision-tracking focus
+  - Opening example: API contract with reasoning (not generic preferences)
+  - Root cause explanation: Memory loss + Context loss + Hallucination
+  - Solution: Claude checks MAMA before guessing
+  - Workflow: Build → Save → Claude remembers
+
+### Removed
+
+- **setup.md** - Unused command file (unregistered, no tests)
+  - Setup Hooks are the official pattern (not command-based wizards)
+
+### Documentation
+
+- **README.md** - Complete rewrite for clarity and focus
+- **Package READMEs** - Updated claude-code-plugin and mcp-server
+- **Supporting Docs** - Updated docs/index.md, developer-playbook.md
+- **Consistency** - All examples now coding/development-related
+- **Brevity** - Removed lengthy technical explanations
+
+### Package Impact Analysis
+
+| Package              | Version  | Impact                                            |
+| -------------------- | -------- | ------------------------------------------------- |
+| claude-code-plugin   | 1.7.0 ⬆️ | Major: MAMA v2 features, documentation            |
+| mama-server (MCP)    | 1.7.0 ⬆️ | Minor: Documentation only                         |
+| mama-core            | 1.0.1 ➡️ | None: No changes                                  |
+| openclaw-mama        | 0.4.1 ➡️ | None: No changes                                  |
+| mama-os (standalone) | 0.3.4 ➡️ | Changed: Image auto-translation (unrelated to v2) |
+
+**Breaking Changes:** None - MAMA v2 features are additive
+
+**Standalone (MAMA OS) Changes:**
+
+- **Image Auto-Translation** (unrelated to v2): Added automatic translation prompt injection for image messages
+  - Detects short messages with images (<15 chars) or image keywords
+  - Auto-adds "이미지의 모든 텍스트를 한국어로 번역해주세요" prompt
+  - File: `packages/standalone/src/gateways/message-router.ts`
+
+**Migration Notes:**
+
+- PostToolUse and PreToolUse hooks now active by default
+- No user action required - contracts automatically tracked
+- Existing MCP server installations compatible (no API changes)
+- Standalone image auto-translation: No migration needed (additive feature)
+
 ## [mama-os-0.3.1] - 2026-02-03
 
 ### Fixed

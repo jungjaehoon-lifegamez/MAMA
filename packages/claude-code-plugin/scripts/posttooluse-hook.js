@@ -36,13 +36,62 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 // const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
+// MAMA v2: Contract extraction
+const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
+
 // Configuration
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
 const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
 const AUDIT_LOG_FILE = path.join(PLUGIN_ROOT, '.posttooluse-audit.log');
+const CONTRACT_RATE_LIMIT_MS = Number(process.env.MAMA_CONTRACT_RATE_LIMIT_MS || 15000);
+const CONTRACT_RATE_LIMIT_FILE = path.join(PLUGIN_ROOT, '.posttooluse-contract-rate.json');
 
 // Tools that trigger auto-save consideration
 const EDIT_TOOLS = ['write_file', 'apply_patch', 'Edit', 'Write', 'test', 'build'];
+
+function isLowPriorityPath(filePath) {
+  if (!filePath) {
+    return false;
+  }
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+  return (
+    normalized.includes('/docs/') ||
+    normalized.includes('/examples/') ||
+    normalized.includes('/example/') ||
+    normalized.includes('/demo/') ||
+    normalized.includes('/stories/') ||
+    normalized.includes('/storybook/')
+  );
+}
+
+function checkContractRateLimit() {
+  if (!Number.isFinite(CONTRACT_RATE_LIMIT_MS) || CONTRACT_RATE_LIMIT_MS <= 0) {
+    return { allowed: true, waitMs: 0 };
+  }
+
+  try {
+    if (fs.existsSync(CONTRACT_RATE_LIMIT_FILE)) {
+      const raw = fs.readFileSync(CONTRACT_RATE_LIMIT_FILE, 'utf8');
+      const parsed = JSON.parse(raw || '{}');
+      const last = Number(parsed.last_ts || 0);
+      const now = Date.now();
+      const elapsed = now - last;
+      if (last && elapsed < CONTRACT_RATE_LIMIT_MS) {
+        return { allowed: false, waitMs: CONTRACT_RATE_LIMIT_MS - elapsed };
+      }
+    }
+  } catch (error) {
+    warn(`[Hook] Contract rate-limit read failed: ${error.message}`);
+  }
+
+  try {
+    fs.writeFileSync(CONTRACT_RATE_LIMIT_FILE, JSON.stringify({ last_ts: Date.now() }), 'utf8');
+  } catch (error) {
+    warn(`[Hook] Contract rate-limit write failed: ${error.message}`);
+  }
+
+  return { allowed: true, waitMs: 0 };
+}
 
 /**
  * Get tier information from config
@@ -178,6 +227,95 @@ function extractReasoning(conversationContext) {
 }
 
 /**
+ * Format contract analysis template for Haiku
+ * MAMA v2: Simple template - let Haiku analyze the diff directly
+ *
+ * @param {string} filePath - File being edited
+ * @param {string} diffContent - Code changes
+ * @param {string} toolName - Tool used (Edit, Write, etc)
+ * @returns {string} Formatted template for Task tool
+ */
+function formatContractTemplate(filePath, diffContent, toolName) {
+  if (!diffContent || diffContent.trim().length === 0) {
+    return '';
+  }
+
+  // Chunk long diffs to reduce omission risk
+  const maxChunkLength = 800;
+  const maxTotalLength = 2000;
+  const chunks = [];
+  for (let i = 0; i < diffContent.length; i += maxChunkLength) {
+    chunks.push(diffContent.slice(i, i + maxChunkLength));
+  }
+  const maxChunks = Math.max(1, Math.floor(maxTotalLength / maxChunkLength));
+  const limitedChunks = chunks.slice(0, maxChunks);
+  const wasTruncated = chunks.length > limitedChunks.length;
+
+  // Sanitize filePath and toolName (user-controlled data)
+  const safeFilePath = sanitizeForPrompt(filePath || 'unknown');
+  const safeToolName = sanitizeForPrompt(toolName || 'unknown');
+  // Sanitize diff content for safe injection
+  const safeChunks = limitedChunks.map((chunk) => sanitizeForPrompt(chunk));
+
+  let output = '\n\n---\n';
+  output += '🔌 **MAMA v2: Code Change Detected**\n\n';
+  output += `**File:** \`${safeFilePath}\`\n`;
+  output += `**Tool:** ${safeToolName}\n`;
+  output += `**Diff Size:** ${diffContent.length} characters\n\n`;
+
+  output += '### Code Changes:\n';
+  output += '```\n';
+  safeChunks.forEach((chunk, index) => {
+    output += `--- chunk ${index + 1}/${safeChunks.length} ---\n`;
+    output += chunk;
+    output += '\n';
+  });
+  if (wasTruncated) {
+    output += '\n... (truncated: additional chunks omitted)\n';
+  }
+  output += '\n```\n\n';
+
+  output += '---\n\n';
+  output += '💡 **Action Required:**\n\n';
+  output += 'Use Task tool to analyze this diff and extract contracts:\n\n';
+  output += '```javascript\n';
+  output += 'Task({\n';
+  output += '  subagent_type: "general-purpose",\n';
+  output += '  model: "haiku",  // Fast & cheap\n';
+  output += '  description: "Extract and save contracts",\n';
+  output += '  prompt: `\n';
+  output += `    Analyze this code change from ${safeFilePath}:\n`;
+  output += '    \n';
+  output += safeChunks
+    .map((chunk, index) => `    --- chunk ${index + 1}/${safeChunks.length} ---\n    ${chunk}`)
+    .join('\n');
+  output += '\n';
+  output += '    \n';
+  output += '    Extract contracts:\n';
+  output += '    1. API endpoints (method, path, request/response schema)\n';
+  output += '    2. Function signatures (name, parameters, return type)\n';
+  output += '    3. Type definitions (interfaces, types)\n';
+  output += '    \n';
+  output += '    Skip:\n';
+  output += '    - Test files\n';
+  output += '    - Comments and examples\n';
+  output += '    - Mock/fake code\n';
+  output += '    \n';
+  output += '    If analysis fails or times out:\n';
+  output += '    - Reply: "contract analysis skipped"\n';
+  output += '    - Do NOT save any contract\n';
+  output += '    \n';
+  output += '    Save valid contracts to MAMA:\n';
+  output += '    /mama:decision <topic> "<decision>" "<reasoning>" --confidence=0.8\n';
+  output += '  `\n';
+  output += '});\n';
+  output += '```\n';
+  output += '---\n';
+
+  return output;
+}
+
+/**
  * Format auto-save suggestion
  * AC: User can Accept/Modify/Dismiss
  *
@@ -191,14 +329,20 @@ function formatAutoSaveSuggestion(topic, decision, reasoning, similarDecisions) 
   let output = '\n\n---\n';
   output += '💾 **MAMA Auto-Save Suggestion**\n\n';
 
-  output += `**Topic:** ${topic}\n`;
-  output += `**Decision:** ${decision}\n`;
-  output += `**Reasoning:** ${reasoning}\n\n`;
+  // Sanitize all untrusted data
+  const safeTopic = sanitizeForPrompt(topic || 'unknown');
+  const safeDecision = sanitizeForPrompt(decision || '');
+  const safeReasoning = sanitizeForPrompt(reasoning || '');
+
+  output += `**Topic:** ${safeTopic}\n`;
+  output += `**Decision:** ${safeDecision}\n`;
+  output += `**Reasoning:** ${safeReasoning}\n\n`;
 
   if (similarDecisions && similarDecisions.length > 0) {
     output += '**Similar existing decisions:**\n';
     similarDecisions.slice(0, 2).forEach((d, i) => {
-      output += `${i + 1}. ${d.decision} (${Math.round(d.similarity * 100)}% match)\n`;
+      const safeSimDecision = sanitizeForPrompt(d.decision || '');
+      output += `${i + 1}. ${safeSimDecision} (${Math.round(d.similarity * 100)}% match)\n`;
     });
     output += '\n';
   }
@@ -242,6 +386,21 @@ function logAudit(action, topic, decision) {
   }
 }
 
+function logContractAnalysis(action, details = {}) {
+  try {
+    const timestamp = new Date().toISOString();
+    const entry = {
+      timestamp,
+      action,
+      ...details,
+    };
+    const logLine = JSON.stringify(entry) + '\n';
+    fs.appendFileSync(AUDIT_LOG_FILE, logLine, 'utf8');
+  } catch (error) {
+    warn(`[Hook] Failed to write contract audit: ${error.message}`);
+  }
+}
+
 /**
  * Check if similar decision exists
  * AC: Semantic similarity above threshold
@@ -252,8 +411,12 @@ function logAudit(action, topic, decision) {
 async function checkSimilarDecision(decision) {
   try {
     // Lazy load embeddings and vector search (only on Tier 1)
+    const { initDB } = require(path.join(CORE_PATH, 'db-manager'));
     const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
     const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+
+    // Initialize DB first
+    await initDB();
 
     const embedding = await generateEmbedding(decision);
     const results = await vectorSearch(embedding, 5, SIMILARITY_THRESHOLD);
@@ -398,6 +561,53 @@ async function main() {
 
     info(`[Hook] Auto-save candidate: "${decision}"`);
 
+    // 6.5. MAMA v2: Use Haiku for contract analysis (no regex pre-filter)
+    let hasCodeChange = false;
+
+    if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent && diffContent.trim().length > 0) {
+      // Skip test files
+      const normalizedPath = filePath ? filePath.replace(/\\/g, '/') : '';
+      if (
+        !normalizedPath ||
+        (!normalizedPath.includes('test/') &&
+          !normalizedPath.includes('__tests__/') &&
+          !normalizedPath.includes('.test.') &&
+          !normalizedPath.includes('.spec.') &&
+          !normalizedPath.includes('_test.'))
+      ) {
+        if (isLowPriorityPath(filePath)) {
+          info('[Hook] Low-priority file detected, skipping contract analysis');
+          logContractAnalysis('skipped_low_priority', {
+            file: filePath || 'unknown',
+            diff_size: diffContent.length,
+          });
+        } else {
+          const rateLimit = checkContractRateLimit();
+          if (!rateLimit.allowed) {
+            info(`[Hook] Contract analysis rate-limited (${rateLimit.waitMs}ms remaining)`);
+            logContractAnalysis('skipped_rate_limit', {
+              file: filePath || 'unknown',
+              diff_size: diffContent.length,
+              wait_ms: rateLimit.waitMs,
+            });
+          } else {
+            hasCodeChange = true;
+            logContractAnalysis('suggested', {
+              file: filePath || 'unknown',
+              diff_size: diffContent.length,
+            });
+            info('[Hook] Code change detected; delegating contract analysis to Haiku');
+          }
+        }
+      } else {
+        info('[Hook] Test file detected, skipping contract analysis');
+        logContractAnalysis('skipped_test_file', {
+          file: filePath || 'unknown',
+          diff_size: diffContent.length,
+        });
+      }
+    }
+
     // 7. Check for similar existing decisions
     let similarCheck = { hasSimilar: false, decisions: [] };
 
@@ -412,24 +622,44 @@ async function main() {
 
     const latencyMs = Date.now() - startTime;
 
-    // 8. Output auto-save suggestion
+    // 8. Output auto-save suggestion and contract results
     // AC: When diff resembles existing decision, suggest auto-save
-    const suggestion = formatAutoSaveSuggestion(topic, decision, reasoning, similarCheck.decisions);
+    let additionalContext = '';
+
+    // Add contract template if code changes detected
+    if (hasCodeChange) {
+      additionalContext += formatContractTemplate(filePath, diffContent, toolName);
+    }
+
+    // Add auto-save suggestion
+    additionalContext += formatAutoSaveSuggestion(
+      topic,
+      decision,
+      reasoning,
+      similarCheck.decisions
+    );
 
     // Correct Claude Code JSON format with hookSpecificOutput
+    const systemMessage = hasCodeChange
+      ? `🔌 MAMA v2: Contract analysis required | 💾 Suggestion: ${topic} (${latencyMs}ms)`
+      : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
+
     const response = {
       decision: null,
       reason: '',
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
-        systemMessage: `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`,
-        additionalContext: suggestion,
+        systemMessage,
+        additionalContext,
       },
     };
     console.log(JSON.stringify(response));
 
-    // Log suggestion (will be logged again when user responds)
-    info(`[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar)`);
+    // Log suggestion
+    const contractInfo = hasCodeChange ? ', contract analysis required' : '';
+    info(
+      `[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar${contractInfo})`
+    );
 
     // Note: Actual save happens when user selects action
     // This would be handled by Claude Code's interaction system
@@ -457,7 +687,9 @@ module.exports = {
   extractTopic,
   extractReasoning,
   formatAutoSaveSuggestion,
+  formatContractTemplate,
   generateDecisionSummary,
   logAudit,
   checkSimilarDecision,
+  sanitizeForPrompt,
 };

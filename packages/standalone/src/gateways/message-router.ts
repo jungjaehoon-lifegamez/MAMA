@@ -109,11 +109,43 @@ const SENSITIVE_PATTERNS = [
   /비밀.*키/i,
 ];
 
+const KOREAN_TARGETS = new Set(['korean', '한국어']);
+
+/**
+ * Sanitize user-supplied text before injecting into prompts.
+ * Escapes characters that can alter prompt structure.
+ */
+function sanitizeForPrompt(text: string): string {
+  if (text === null || text === undefined) {
+    return '';
+  }
+
+  const str = typeof text === 'string' ? text : String(text);
+
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\$/g, '\\$')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}');
+}
+
 /**
  * Check if message contains sensitive configuration request
  */
 function containsSensitiveRequest(text: string): boolean {
   return SENSITIVE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function normalizeTranslationTargetLanguage(
+  value: MessageRouterConfig['translationTargetLanguage'],
+  fallback: string
+): string {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : fallback;
 }
 
 /**
@@ -141,6 +173,10 @@ export class MessageRouter {
       maxDecisions: config.maxDecisions ?? 3,
       maxTurns: config.maxTurns ?? 5,
       maxResponseLength: config.maxResponseLength ?? 200,
+      translationTargetLanguage: normalizeTranslationTargetLanguage(
+        config.translationTargetLanguage,
+        'Korean'
+      ),
     };
     this.roleManager = getRoleManager();
 
@@ -172,6 +208,25 @@ export class MessageRouter {
       capabilities,
       limitations
     );
+  }
+
+  /**
+   * Check if message should trigger auto-translation
+   * Returns true for short messages or image-related text
+   */
+  private shouldAutoTranslate(text: string): boolean {
+    if (!text) return true; // Empty text = just image
+
+    const trimmed = text.trim();
+
+    // Very short messages (< 5 chars) are likely just acknowledgments
+    if (trimmed.length < 5) return true;
+
+    // Common image-related phrases
+    const imageKeywords = ['이미지', '사진', 'image', 'picture', 'pic', 'screenshot', '스샷'];
+    const hasImageKeyword = imageKeywords.some((kw) => trimmed.toLowerCase().includes(kw));
+
+    return hasImageKeyword;
   }
 
   /**
@@ -289,9 +344,39 @@ This protects your credentials from being exposed in chat logs.`;
         // Build content blocks: text first, then images
         const contentBlocks: ContentBlock[] = [];
 
-        // Add text content if present
-        if (message.text) {
-          contentBlocks.push({ type: 'text', text: message.text });
+        // Check if message contains images
+        const hasImages = message.contentBlocks.some((b) => b.type === 'image');
+
+        // Auto-inject translation prompt for images
+        let messageText = message.text;
+        if (hasImages && this.shouldAutoTranslate(message.text)) {
+          const translationKeywords = ['번역', '뭐라고', '뭐라는', '무슨말', '읽어줘', 'translate'];
+          // Handle falsy message.text before toLowerCase()
+          const hasTranslationKeyword = translationKeywords.some((kw) =>
+            (message.text ?? '').toLowerCase().includes(kw)
+          );
+
+          if (!hasTranslationKeyword) {
+            // Auto-add translation instruction
+            const targetLanguage = this.config.translationTargetLanguage;
+            const translationInstruction = KOREAN_TARGETS.has(
+              String(targetLanguage).trim().toLowerCase()
+            )
+              ? '이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.'
+              : `Translate all text in the image to ${targetLanguage}. Output only the translation without explanation.`;
+
+            const safeUserText = message.text ? sanitizeForPrompt(message.text) : '';
+            messageText = message.text
+              ? `${safeUserText}\n\n${translationInstruction}`
+              : translationInstruction;
+
+            console.log(`[MessageRouter] Auto-injected translation prompt for image`);
+          }
+        }
+
+        // Add text content
+        if (messageText) {
+          contentBlocks.push({ type: 'text', text: messageText });
         }
 
         // Add all content blocks (text info + images + files)
@@ -517,6 +602,12 @@ ${historyContext}
     }
     if (config.maxResponseLength !== undefined) {
       this.config.maxResponseLength = config.maxResponseLength;
+    }
+    if (config.translationTargetLanguage !== undefined) {
+      this.config.translationTargetLanguage = normalizeTranslationTargetLanguage(
+        config.translationTargetLanguage,
+        this.config.translationTargetLanguage
+      );
     }
 
     // Update context injector config
