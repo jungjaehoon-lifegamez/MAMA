@@ -302,7 +302,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       expect(pluginConfig.hooks).toBeDefined();
     });
 
-    it('should have required hook configurations (UserPromptSubmit + PostToolUse for MAMA v2)', () => {
+    it('should have required hook configurations (UserPromptSubmit + PreToolUse + PostToolUse for MAMA v2)', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
 
       // Handle external reference or inline format
@@ -312,13 +312,14 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
         const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
         const hooksConfig = hooksFile.hooks || hooksFile; // Support both nested and flat structure
 
-        // MAMA v2: UserPromptSubmit (context) + PostToolUse (contract extraction)
+        // MAMA v2: UserPromptSubmit (context) + PreToolUse (contract injection) + PostToolUse (contract extraction)
         expect(hooksConfig.UserPromptSubmit).toBeDefined();
+        expect(hooksConfig.PreToolUse).toBeDefined();
         expect(hooksConfig.PostToolUse).toBeDefined();
-        expect(hooksConfig.PreToolUse).toBeUndefined(); // Disabled for efficiency
       } else {
         // Inline format
         expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
+        expect(pluginConfig.hooks.PreToolUse).toBeDefined();
         expect(pluginConfig.hooks.PostToolUse).toBeDefined();
       }
     });
