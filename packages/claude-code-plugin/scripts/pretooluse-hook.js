@@ -421,8 +421,11 @@ async function main() {
           additionalContext: transparencyLine,
         },
       };
-      console.log(JSON.stringify(response));
-      process.exit(0);
+      // Output to stderr for exit code 2 (blocking error mode - visible to Claude)
+      console.error(JSON.stringify(response));
+      // Exit with code 2 to make output visible to Claude (not just user)
+      // Per GitHub #11224: exit code 2 = blocking error = visible to Claude
+      process.exit(2);
     }
 
     // 7. Generate query from context (variables already declared above)
@@ -488,7 +491,8 @@ async function main() {
           additionalContext: context + transparencyLine,
         },
       };
-      console.log(JSON.stringify(response));
+      // Output to stderr for exit code 2 (blocking error mode - visible to Claude)
+      console.error(JSON.stringify(response));
       info(
         `[Hook] Injected ${resultCount} decisions + ${contractCount} contracts (${latencyMs}ms)`
       );
@@ -505,11 +509,14 @@ async function main() {
           additionalContext: transparencyLine,
         },
       };
-      console.log(JSON.stringify(response));
+      // Output to stderr for exit code 2 (blocking error mode - visible to Claude)
+      console.error(JSON.stringify(response));
       info(`[Hook] No relevant decisions found (${latencyMs}ms)`);
     }
 
-    process.exit(0);
+    // Exit with code 2 to make output visible to Claude (not just user)
+    // Per GitHub #11224: exit code 2 = blocking error = visible to Claude
+    process.exit(2);
   } catch (error) {
     logError(`[Hook] Fatal error: ${error.message}`);
     console.error(`❌ MAMA PreToolUse Hook Error: ${error.message}`);
