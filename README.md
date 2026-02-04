@@ -18,17 +18,15 @@ Regular memory: "Likes morning meetings"
 MAMA:           "Prefers morning meetings (tried afternoons but energy was low) → worked well for 3 months"
 ```
 
-## 🚀 Why MAMA for Development?
-
-### You've been here before
+## 🚀 Why Vibe Coding Breaks After Session 2
 
 **Session 1:** "Claude, make me a login API"
-→ Works great. You test it. Perfect.
+→ Works great. You test it. Perfect. Vibe coding success.
 
 **Session 2:** "Claude, add the frontend login form"
 → 404 error. Wrong endpoint. Wrong fields. Nothing connects.
 
-**Why?** Claude forgot everything from Session 1.
+**Why?** No contracts between layers. Claude forgot what Claude built.
 
 ### The Root Cause
 
@@ -57,25 +55,27 @@ Writes code → Error → Fixes it → Forgets the fix → Same error next time
 
 **It's not you. It's me (Claude).** I lose context, forget solutions, and guess instead of checking.
 
-### The Real Problem
+### The Real Problem: Vibe Coding Has No Contracts
 
-When you ask Claude to build fullstack:
+When you vibe code fullstack:
 
 - **Session 1**: Frontend calls `/api/register` with `{ email, password, name }`
 - **Session 2**: Backend creates `/api/signup` expecting `{ username, pwd }`
 - **Session 3**: You spend 2 hours debugging why they don't connect
 
+**Vibe coding = fast iteration without written contracts.**
+
 You're not debugging your code. You're debugging my amnesia.
 
-### What MAMA Does
+### What MAMA Does: Vibe Coding With Contracts
 
 Gives Claude external memory. When I write code, MAMA saves the "contracts":
 
 ```
-Session 1: You ask for frontend → I write: POST /api/register { email, password }
+Session 1: You vibe → I write: POST /api/register { email, password }
            → MAMA saves: "Frontend expects POST /api/register with email, password"
 
-Session 2: You ask for backend → I check MAMA first (instead of guessing)
+Session 2: You vibe → I check MAMA first (instead of guessing)
            → I see: "Frontend already expects POST /api/register"
            → I write matching code automatically (no hallucination)
 
@@ -84,9 +84,9 @@ Same session, complex codebase: I check MAMA when switching between files
                                  → No more "it's probably like this" guessing
 ```
 
-**That's it.** I check instead of guess. I remember instead of hallucinate. No more mismatches.
+**That's it.** You keep vibe coding. I keep contracts. Everything connects.
 
-MAMA solves MY hallucination problem. You benefit from consistent code.
+MAMA solves MY hallucination problem. You benefit from consistent vibe coding.
 
 ### Does This Actually Work?
 
