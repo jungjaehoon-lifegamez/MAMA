@@ -37,7 +37,6 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // MAMA v2: Contract extraction
-const { extractContracts } = require(path.join(CORE_PATH, 'contract-extractor'));
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 
 // Configuration
@@ -483,9 +482,8 @@ async function main() {
 
     info(`[Hook] Auto-save candidate: "${decision}"`);
 
-    // 6.5. MAMA v2: Extract contracts and check if any exist
+    // 6.5. MAMA v2: Use Haiku for contract analysis (no regex pre-filter)
     let hasCodeChange = false;
-    let extractedContracts = null;
 
     if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent && diffContent.trim().length > 0) {
       // Skip test files
@@ -497,35 +495,8 @@ async function main() {
           !filePath.includes('.spec.') &&
           !filePath.includes('_test.'))
       ) {
-        try {
-          // Extract contracts from diff
-          extractedContracts = extractContracts(diffContent, filePath);
-
-          // Check if any contracts were found
-          const hasContracts =
-            (extractedContracts.apiEndpoints && extractedContracts.apiEndpoints.length > 0) ||
-            (extractedContracts.functionSignatures &&
-              extractedContracts.functionSignatures.length > 0) ||
-            (extractedContracts.typeDefinitions && extractedContracts.typeDefinitions.length > 0) ||
-            (extractedContracts.sqlSchemas && extractedContracts.sqlSchemas.length > 0) ||
-            (extractedContracts.graphqlSchemas && extractedContracts.graphqlSchemas.length > 0);
-
-          if (hasContracts) {
-            const totalContracts =
-              (extractedContracts.apiEndpoints?.length || 0) +
-              (extractedContracts.functionSignatures?.length || 0) +
-              (extractedContracts.typeDefinitions?.length || 0) +
-              (extractedContracts.sqlSchemas?.length || 0) +
-              (extractedContracts.graphqlSchemas?.length || 0);
-
-            info(`[Hook] Contracts detected: ${totalContracts} items`);
-            hasCodeChange = true;
-          } else {
-            info('[Hook] No contracts detected in diff, skipping');
-          }
-        } catch (error) {
-          warn(`[Hook] Contract extraction failed: ${error.message}`);
-        }
+        hasCodeChange = true;
+        info('[Hook] Code change detected; delegating contract analysis to Haiku');
       } else {
         info('[Hook] Test file detected, skipping contract analysis');
       }
@@ -564,7 +535,7 @@ async function main() {
 
     // Correct Claude Code JSON format with hookSpecificOutput
     const systemMessage = hasCodeChange
-      ? `🔌 MAMA v2: Contract candidates detected | 💾 Suggestion: ${topic} (${latencyMs}ms)`
+      ? `🔌 MAMA v2: Contract analysis required | 💾 Suggestion: ${topic} (${latencyMs}ms)`
       : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
 
     const response = {
@@ -579,7 +550,7 @@ async function main() {
     console.log(JSON.stringify(response));
 
     // Log suggestion
-    const contractInfo = hasCodeChange ? ', contract candidates detected' : '';
+    const contractInfo = hasCodeChange ? ', contract analysis required' : '';
     info(
       `[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar${contractInfo})`
     );
