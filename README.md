@@ -14,8 +14,8 @@
 A memory system for Claude that remembers **why** you made choices, not just what you chose.
 
 ```
-Regular memory: "Likes morning meetings"
-MAMA:           "Prefers morning meetings (tried afternoons but energy was low) → worked well for 3 months"
+Regular memory: "Login returns token"
+MAMA:           "Login returns { userId, token, email } (tried just token, but frontend needs userId for dashboard) → this schema used by 3 endpoints"
 ```
 
 ## 🚀 Why Vibe Coding Breaks After Session 2
