@@ -523,9 +523,19 @@ async function readStdin() {
 async function main() {
   const startTime = Date.now();
 
+  // DEBUG: Confirm hook is executing (only if MAMA_DEBUG enabled)
+  if (process.env.MAMA_DEBUG === 'true') {
+    console.error('🔍 [MAMA DEBUG] PostToolUse hook STARTED');
+    console.error(`🔍 [MAMA DEBUG] TOOL_NAME: ${process.env.TOOL_NAME}`);
+    console.error(`🔍 [MAMA DEBUG] FILE_PATH: ${process.env.FILE_PATH}`);
+  }
+
   try {
     // 1. Check opt-out flags
     if (process.env.MAMA_DISABLE_HOOKS === 'true') {
+      if (process.env.MAMA_DEBUG === 'true') {
+        console.error('🔍 [MAMA DEBUG] Hooks DISABLED via env var');
+      }
       info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
       process.exit(0);
     }
@@ -685,6 +695,15 @@ async function main() {
         additionalContext,
       },
     };
+
+    // DEBUG: Confirm output (only if MAMA_DEBUG enabled)
+    if (process.env.MAMA_DEBUG === 'true') {
+      console.error('🔍 [MAMA DEBUG] Hook outputting response:');
+      console.error(`🔍 [MAMA DEBUG] - hasCodeChange: ${hasCodeChange}`);
+      console.error(`🔍 [MAMA DEBUG] - systemMessage: ${systemMessage}`);
+      console.error(`🔍 [MAMA DEBUG] - additionalContext length: ${additionalContext.length}`);
+    }
+
     console.log(JSON.stringify(response));
 
     // Log suggestion
