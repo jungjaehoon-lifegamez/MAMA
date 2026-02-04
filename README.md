@@ -22,42 +22,212 @@ MAMA:           "Prefers morning meetings (tried afternoons but energy was low) 
 
 **Stop debugging the same bugs. Stop explaining the same context. Let Claude remember.**
 
-### The Problem: AI Agents Lose Context
+### The Problem: Fullstack Development Chaos
 
-When AI agents build software across multiple sessions, they create inconsistencies:
+**You:** _"Create a user registration feature"_
+
+Without MAMA, AI agents build each layer in isolation, creating cascading failures:
+
+<details>
+<summary><strong>❌ Without MAMA: 3 Hours of Debugging</strong></summary>
+
+**Session 1 - Frontend (React):**
 
 ```typescript
-// Frontend (Session 1)
-const response = await fetch('/api/auth/login');
-const { userId, token } = await response.json();
-
-// Backend (Session 2 - Different agent, no context)
-res.json({ id: user.id, authToken: token }); // ❌ Mismatch!
+// You: "Create registration form"
+// Claude imagines the API contract:
+const response = await fetch('/api/register', {
+  method: 'POST',
+  body: JSON.stringify({ email, password, name }), // ⚠️ Assumed schema
+});
+const { userId, token } = await response.json(); // ⚠️ Assumed response
 ```
 
-Result: Hours of debugging contract mismatches between frontend/backend/database.
+**Session 2 - Backend (Node.js/Python):**
+
+```typescript
+// You: "Create registration endpoint"
+// Claude has zero knowledge of frontend:
+app.post('/api/signup', async (req, res) => {
+  // ❌ Different path!
+  const { username, pwd } = req.body; // ❌ Different field names!
+  const user = await db.createUser(username, pwd);
+  res.json({ id: user.id, authToken: token }); // ❌ Different response!
+});
+```
+
+**Session 3 - Database (PostgreSQL):**
+
+```sql
+-- You: "Create users table"
+-- Claude guesses the schema:
+CREATE TABLE users (
+  user_id SERIAL PRIMARY KEY,  -- ❌ Frontend expects 'userId'
+  username VARCHAR(255),       -- ❌ Backend sent 'username', frontend sent 'name'
+  password_hash TEXT
+);
+```
+
+**Session 4 - Integration Hell:**
+
+```
+Frontend calls: POST /api/register { email, password, name }
+Backend expects: POST /api/signup { username, pwd }
+Database stores: user_id, username, password_hash
+
+Result: 404 error → Field mismatch → NULL constraint violation
+Time wasted: 3+ hours debugging across 3 languages
+```
+
+**Why this happens:**
+
+- Each session starts with **zero context** from previous work
+- AI agents **imagine** contracts instead of reading actual implementations
+- Different naming conventions (camelCase JS → snake_case Python → snake_case SQL)
+- No single source of truth for API schemas
+
+</details>
+
+<details open>
+<summary><strong>✅ With MAMA: First-Try Success</strong></summary>
+
+**Session 1 - Frontend (React):**
+
+```typescript
+// You: "Create registration form"
+const response = await fetch('/api/auth/register', {
+  body: JSON.stringify({ email, password, name }),
+});
+const { userId, token } = await response.json();
+
+// 🔌 MAMA PostToolUse Hook detects code change:
+// → Saved contract: POST /api/auth/register
+//   Request: { email: string, password: string, name: string }
+//   Response: { userId: string, token: string }
+```
+
+**Session 2 - Backend (Node.js/Python):**
+
+```typescript
+// You: "Create registration endpoint"
+
+// 🧠 MAMA PreToolUse Hook injects context:
+// "⚠️ Frontend expects POST /api/auth/register with { email, password, name }"
+
+// Claude writes matching code:
+app.post('/api/auth/register', async (req, res) => {
+  // ✅ Correct path
+  const { email, password, name } = req.body; // ✅ Exact fields
+  const user = await db.createUser(email, password, name);
+  res.json({ userId: user.id, token }); // ✅ Matching response
+});
+
+// 🔌 MAMA saves backend contract
+```
+
+**Session 3 - Database (PostgreSQL):**
+
+```sql
+-- You: "Create users table"
+
+-- 🧠 MAMA recalls backend contract:
+-- "Backend needs: email, password, name fields"
+
+CREATE TABLE users (
+  user_id SERIAL PRIMARY KEY,    -- ✅ Maps to userId in code
+  email VARCHAR(255) UNIQUE,     -- ✅ From contract
+  password_hash TEXT,            -- ✅ Matches backend
+  name VARCHAR(255)              -- ✅ From contract
+);
+```
+
+**Result:**
+
+- ✅ Works on first try
+- ✅ No field mismatches
+- ✅ Consistent naming across stack
+- ⏱️ Time saved: 3 hours → 0 debugging
+
+</details>
+
+**The difference:** MAMA creates a **shared contract database** that survives across sessions, languages, and AI agents.
 
 ### MAMA v2: AI Agent Consistency Engine
 
-MAMA tracks **API contracts, function signatures, and architectural decisions** so Claude never forgets:
+**The Meta-Problem:** AI agents operate in **episodic amnesia** — each session starts from scratch. They don't remember:
 
-- **Contract Detection**: Automatically extracts API schemas from code changes
-- **Cross-Session Memory**: Frontend knows what Backend promised (even weeks later)
-- **Conflict Prevention**: Claude warns you before writing incompatible code
-- **Decision Evolution**: Track why you chose JWT over sessions (and whether it worked)
+- What contracts other agents agreed to
+- Which implementations actually exist (vs imagined)
+- Why certain architectural choices were made
+- Whether those choices worked in production
 
-**Real Example:**
+**MAMA's Solution:** A **persistent contract database** that acts as the single source of truth.
+
+**How MAMA prevents the chaos above:**
+
+| Problem                      | Without MAMA                                                                  | With MAMA                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **Endpoint mismatch**        | Frontend: `/api/register`<br>Backend: `/api/signup`                           | Contract saved: `POST /api/auth/register`<br>Both layers use exact path           |
+| **Field name drift**         | Frontend: `name`<br>Backend: `username`<br>DB: `user_name`                    | Contract defines: `{ email, password, name }`<br>All layers use consistent naming |
+| **Response schema guessing** | Frontend assumes: `{ userId, token }`<br>Backend returns: `{ id, authToken }` | Contract specifies response schema<br>Claude generates matching code              |
+| **Language barriers**        | JS camelCase → Python snake_case<br>No translation rules                      | MAMA stores canonical names<br>Claude adapts per language convention              |
+| **Cross-session amnesia**    | Day 1 frontend work forgotten by Day 3                                        | Contract persists indefinitely<br>Available to all future sessions                |
+
+**Key Features:**
+
+- 🔍 **Contract Detection**: Automatically extracts API schemas from code changes
+- 🧠 **Cross-Session Memory**: Frontend knows what Backend promised (even weeks later)
+- ⚠️ **Conflict Prevention**: Claude warns you before writing incompatible code
+- 📊 **Decision Evolution**: Track why you chose JWT over sessions (and whether it worked)
+- 🌐 **Language-Agnostic**: Works across TypeScript, Python, Go, SQL, etc.
+
+### Real-World Timeline
+
+**Monday 10am - Backend Development:**
+
+```python
+# You: "Create login API"
+@app.post("/api/auth/login")
+def login(email: str, password: str):
+    user = verify_user(email, password)
+    return {"userId": user.id, "token": generate_token(user)}
+
+# 🔌 MAMA Auto-saves:
+# Contract: POST /api/auth/login
+#   Input: { email: string, password: string }
+#   Output: { userId: string, token: string }
+#   Language: Python (FastAPI)
+```
+
+**Wednesday 3pm - Frontend Work (New session, different developer):**
 
 ```typescript
-// MAMA saves this contract automatically
-Decision: POST /api/auth/login returns { userId: string, token: string }
+// You: "Add login form"
 
-// 3 days later, frontend developer asks:
-// "Add login page"
-//
-// Claude recalls: "Backend expects { email, password }, returns { userId, token }"
-// → Writes correct integration, first try ✅
+// 🧠 MAMA injects before you write code:
+// "Backend contract found: POST /api/auth/login
+//  expects { email, password }, returns { userId, token }"
+
+// Claude writes perfect integration:
+const login = async (email: string, password: string) => {
+  const response = await fetch('/api/auth/login', {
+    // ✅ Exact path
+    method: 'POST',
+    body: JSON.stringify({ email, password }), // ✅ Exact fields
+  });
+  const { userId, token } = await response.json(); // ✅ Exact response
+  return { userId, token };
+};
+
+// Works on first try. No 404, no field errors, no type mismatches.
 ```
+
+**Why this matters:**
+
+- Different sessions (2 days apart)
+- Different languages (Python → TypeScript)
+- Different developers (backend specialist → frontend specialist)
+- **Same contract** - MAMA bridged the gap
 
 ### How It Works
 
