@@ -168,6 +168,8 @@ async function step5_preToolUse() {
 
       return true;
     }
+    console.log('⚠️ No related contracts found for injection\n');
+    return false;
   } catch (error) {
     console.error(`❌ PreToolUse injection failed: ${error.message}\n`);
     return false;

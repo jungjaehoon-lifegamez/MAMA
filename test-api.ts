@@ -37,6 +37,6 @@ async function createUser(email: string, password: string, name?: string) {
   return { id: '123', email, name };
 }
 
-function generateToken(user: any): string {
+function generateToken(user: { id: string; email: string }): string {
   return 'token_' + user.id;
 }

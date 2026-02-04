@@ -36,6 +36,7 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 const { formatContext } = require(path.join(CORE_PATH, 'decision-formatter'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
+const { searchDecisionsAndContracts } = require(path.join(CORE_PATH, 'mcp-client'));
 
 // Configuration
 const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
@@ -256,26 +257,13 @@ async function searchRelatedContracts(filePath, toolName) {
   }
 
   try {
-    // Lazy load DB access
-    const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
-    const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+    const result = await searchDecisionsAndContracts('', filePath, toolName, {
+      decisionLimit: 0,
+      contractLimit: 3,
+      similarityThreshold: SIMILARITY_THRESHOLD,
+    });
 
-    // Search for contracts related to this file
-    const basename = path.basename(filePath, ext);
-
-    // Extract keywords from filename (auth-service → auth, service)
-    const keywords = basename.split(/[-_]/);
-    const query = `contract api ${keywords.join(' ')}`;
-
-    info(`[Hook] Searching contracts: "${query}"`);
-
-    // Generate embedding and search
-    const queryEmbedding = await generateEmbedding(query);
-    const results = await vectorSearch(queryEmbedding, 10, 0.6); // Lower threshold
-
-    // Filter for contracts only
-    const contracts = results.filter((r) => r.topic && r.topic.startsWith('contract_')).slice(0, 3);
-
+    const contracts = result.contractResults || [];
     info(`[Hook] Found ${contracts.length} related contracts`);
 
     return contracts;
@@ -514,36 +502,21 @@ async function main() {
  * @returns {Promise<Object>} {context, count, contractCount}
  */
 async function injectPreToolContext(query, filePath, toolName) {
-  // Initialize DB and embeddings (lazy load for performance)
-  const { initDB } = require(path.join(CORE_PATH, 'db-manager'));
-  const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
-  const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+  let decisionResults = [];
+  let contractResults = [];
 
-  // Initialize DB first
-  await initDB();
+  try {
+    const result = await searchDecisionsAndContracts(query, filePath, toolName, {
+      decisionLimit: 5,
+      contractLimit: 3,
+      similarityThreshold: SIMILARITY_THRESHOLD,
+    });
 
-  // MAMA v2: Search decisions AND contracts in parallel via direct DB
-  const [decisionResults, contractResults] = await Promise.all([
-    // 1. Regular decision search via direct DB
-    (async () => {
-      try {
-        // Generate query embedding
-        const queryEmbedding = await generateEmbedding(query);
-
-        // Vector search with lower threshold (70% vs 75%)
-        const results = await vectorSearch(queryEmbedding, 5, SIMILARITY_THRESHOLD);
-
-        // Take top 3
-        return results.slice(0, 3);
-      } catch (error) {
-        warn(`[Hook] Decision search failed: ${error.message}`);
-        return [];
-      }
-    })(),
-
-    // 2. MAMA v2: Contract search
-    searchRelatedContracts(filePath, toolName),
-  ]);
+    decisionResults = result.decisionResults || [];
+    contractResults = result.contractResults || [];
+  } catch (error) {
+    warn(`[Hook] Search failed: ${error.message}`);
+  }
 
   // Check if we have any results
   if (decisionResults.length === 0 && contractResults.length === 0) {

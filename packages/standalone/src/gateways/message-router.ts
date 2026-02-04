@@ -141,6 +141,7 @@ export class MessageRouter {
       maxDecisions: config.maxDecisions ?? 3,
       maxTurns: config.maxTurns ?? 5,
       maxResponseLength: config.maxResponseLength ?? 200,
+      translationTargetLanguage: config.translationTargetLanguage ?? 'Korean',
     };
     this.roleManager = getRoleManager();
 
@@ -183,8 +184,8 @@ export class MessageRouter {
 
     const trimmed = text.trim();
 
-    // Short messages (< 15 chars) are likely simple statements like "이이미지야"
-    if (trimmed.length < 15) return true;
+    // Very short messages (< 5 chars) are likely just acknowledgments
+    if (trimmed.length < 5) return true;
 
     // Common image-related phrases
     const imageKeywords = ['이미지', '사진', 'image', 'picture', 'pic', 'screenshot', '스샷'];
@@ -322,9 +323,17 @@ This protects your credentials from being exposed in chat logs.`;
 
           if (!hasTranslationKeyword) {
             // Auto-add translation instruction
+            const targetLanguage = this.config.translationTargetLanguage;
+            const koreanTargets = new Set(['korean', '한국어']);
+            const translationInstruction = koreanTargets.has(
+              String(targetLanguage).trim().toLowerCase()
+            )
+              ? '이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.'
+              : `Translate all text in the image to ${targetLanguage}. Output only the translation without explanation.`;
+
             messageText = message.text
-              ? `${message.text}\n\n이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.`
-              : '이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.';
+              ? `${message.text}\n\n${translationInstruction}`
+              : translationInstruction;
 
             console.log(`[MessageRouter] Auto-injected translation prompt for image`);
           }
@@ -558,6 +567,9 @@ ${historyContext}
     }
     if (config.maxResponseLength !== undefined) {
       this.config.maxResponseLength = config.maxResponseLength;
+    }
+    if (config.translationTargetLanguage !== undefined) {
+      this.config.translationTargetLanguage = config.translationTargetLanguage;
     }
 
     // Update context injector config

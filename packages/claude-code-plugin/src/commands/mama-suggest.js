@@ -95,7 +95,9 @@ function formatSuggestionsMessage(query, suggestions, markdown) {
   suggestions.forEach((suggestion, index) => {
     const similarity = Math.round((suggestion.similarity || 0) * 100);
     const recency = suggestion.recency_info || '';
-    const safeTopic = sanitizeForPrompt(suggestion.topic || 'Unknown topic');
+    const rawTopic = suggestion.topic || 'Unknown topic';
+    const safeTopic = sanitizeForPrompt(rawTopic);
+    const recallTopic = String(rawTopic).replace(/`/g, '\\`');
 
     message += `### ${index + 1}. ${safeTopic} (${similarity}% match)\n\n`;
     message += `**Decision:** ${sanitizeForPrompt(suggestion.decision || 'No decision text')}\n\n`;
@@ -108,7 +110,7 @@ function formatSuggestionsMessage(query, suggestions, markdown) {
 
     message += `\n**Confidence:** ${suggestion.confidence || 0.5}\n`;
     message += `**Outcome:** ${suggestion.outcome || 'pending'}\n\n`;
-    message += `🔍 Recall full history: \`/mama-recall ${safeTopic}\`\n\n`;
+    message += `🔍 Recall full history: \`/mama-recall ${recallTopic}\`\n\n`;
     message += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
   });
 

@@ -45,7 +45,10 @@ class RegistrationForm {
       });
 
       if (!response.ok) {
-        throw new Error('Registration failed');
+        const errorBody = await response.text().catch(() => '');
+        throw new Error(
+          `Registration failed (${response.status}): ${errorBody || response.statusText}`
+        );
       }
 
       const result = await response.json();
@@ -75,10 +78,14 @@ class RegistrationForm {
       throw new Error('Missing required form fields');
     }
 
+    if (typeof email !== 'string' || typeof password !== 'string' || typeof name !== 'string') {
+      throw new Error('Invalid form field types');
+    }
+
     return {
-      email: email.toString(),
-      password: password.toString(),
-      name: name.toString(),
+      email,
+      password,
+      name,
     };
   }
 }

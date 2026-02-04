@@ -162,24 +162,74 @@ async function testBackgroundMode() {
   child.unref();
 
   console.log(`🚀 Spawned background Claude CLI (PID: ${child.pid})`);
-  console.log(`⏳ Waiting 5 seconds for completion...\n`);
+  console.log(`⏳ Waiting for output...\n`);
 
-  // Wait a bit for background process
-  await new Promise((resolve) => setTimeout(resolve, 5000));
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) {
+      return;
+    }
+    cleaned = true;
+    if (child?.pid) {
+      try {
+        process.kill(child.pid);
+      } catch (_err) {
+        // ignore
+      }
+    }
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
+    }
+    if (fs.existsSync(outputFile)) {
+      fs.unlinkSync(outputFile);
+    }
+  };
+
+  process.once('exit', cleanup);
+  process.once('SIGINT', () => {
+    cleanup();
+    process.exit(1);
+  });
+  process.once('SIGTERM', () => {
+    cleanup();
+    process.exit(1);
+  });
+
+  const waitForOutput = (filePath, timeoutMs = 15000, intervalMs = 500) =>
+    new Promise((resolve) => {
+      const start = Date.now();
+      const interval = setInterval(() => {
+        if (fs.existsSync(filePath)) {
+          const stats = fs.statSync(filePath);
+          if (stats.size > 0) {
+            clearInterval(interval);
+            resolve(true);
+            return;
+          }
+        }
+
+        if (Date.now() - start > timeoutMs) {
+          clearInterval(interval);
+          resolve(false);
+        }
+      }, intervalMs);
+    });
+
+  const hasOutput = await waitForOutput(outputFile);
 
   // Check output
-  if (fs.existsSync(outputFile)) {
+  if (hasOutput && fs.existsSync(outputFile)) {
     const output = fs.readFileSync(outputFile, 'utf8');
     console.log(`📄 Output file contents:\n${output}\n`);
 
     // Clean up
-    fs.unlinkSync(tempFile);
-    fs.unlinkSync(outputFile);
+    cleanup();
     console.log(`🗑️  Cleaned up temp files`);
 
     return { output };
   } else {
     console.warn(`⚠️  Output file not created yet`);
+    cleanup();
     return { output: null };
   }
 }

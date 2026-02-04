@@ -737,7 +737,7 @@ function formatTeaserList(decisions, topN = 3) {
       }
     }
 
-    output += `\n   🔍 mama.recall('${sanitizeForPrompt(d.topic)}')`;
+    output += `\n   🔍 mama.recall(${JSON.stringify(d.topic)})`;
 
     if (i < topDecisions.length - 1) {
       output += '\n';
@@ -791,7 +791,7 @@ function formatTeaser(decision) {
 📁 Files: ${files}
 ⏰ Updated: ${timeAgo}
 
-🔍 Read more: mama.recall('${sanitizeForPrompt(decision.topic)}')
+🔍 Read more: mama.recall(${JSON.stringify(decision.topic)})
   `.trim();
 
   return teaser;

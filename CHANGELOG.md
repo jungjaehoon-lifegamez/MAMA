@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Reduced README from 100+ lines to ~60 lines
   - Differentiation from regular memory systems emphasized
 
-- **Messaging Updates** - Aligned with decision tracking focus
+- **Messaging Updates** - Aligned with decision-tracking focus
   - Opening example: API contract with reasoning (not generic preferences)
   - Root cause explanation: Memory loss + Context loss + Hallucination
   - Solution: Claude checks MAMA before guessing

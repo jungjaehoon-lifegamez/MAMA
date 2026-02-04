@@ -1,6 +1,7 @@
 /**
  * Prompt Sanitizer
  *
+ * Source of truth: packages/claude-code-plugin/src/core/prompt-sanitizer.js
  * Sanitizes untrusted data before injection into LLM prompts.
  * Prevents prompt injection attacks by escaping special characters.
  *
@@ -37,7 +38,7 @@
  * const output = `Decision: ${safeDecision}`;
  */
 function sanitizeForPrompt(text) {
-  if (!text) {
+  if (text === null || text === undefined) {
     return '';
   }
 
@@ -71,7 +72,10 @@ function sanitizeFields(obj, fields) {
 
   const sanitized = { ...obj };
   for (const field of fields) {
-    if (sanitized[field]) {
+    if (Object.prototype.hasOwnProperty.call(sanitized, field)) {
+      if (sanitized[field] === null || sanitized[field] === undefined) {
+        continue;
+      }
       sanitized[field] = sanitizeForPrompt(sanitized[field]);
     }
   }

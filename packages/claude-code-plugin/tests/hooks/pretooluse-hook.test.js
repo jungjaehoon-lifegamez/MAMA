@@ -37,6 +37,9 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(hook).toHaveProperty('checkRateLimit');
       expect(hook).toHaveProperty('generateQuery');
       expect(hook).toHaveProperty('extractFileHints');
+      expect(hook).toHaveProperty('searchRelatedContracts');
+      expect(hook).toHaveProperty('formatContractContext');
+      expect(hook).toHaveProperty('injectPreToolContext');
 
       expect(typeof hook.main).toBe('function');
       expect(typeof hook.getTierInfo).toBe('function');
@@ -44,6 +47,9 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(typeof hook.checkRateLimit).toBe('function');
       expect(typeof hook.generateQuery).toBe('function');
       expect(typeof hook.extractFileHints).toBe('function');
+      expect(typeof hook.searchRelatedContracts).toBe('function');
+      expect(typeof hook.formatContractContext).toBe('function');
+      expect(typeof hook.injectPreToolContext).toBe('function');
     });
 
     it('should be executable script with shebang', async () => {

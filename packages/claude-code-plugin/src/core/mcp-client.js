@@ -21,6 +21,9 @@ async function callMamaTool(toolName, params, timeout = 5000) {
   return new Promise((resolve, reject) => {
     // Declare mcp variable before using it in timeout
     let mcp = null;
+    let initialized = false;
+    let toolResponse = null;
+    let stdoutBuffer = '';
 
     const timeoutId = setTimeout(() => {
       if (mcp) {
@@ -34,11 +37,62 @@ async function callMamaTool(toolName, params, timeout = 5000) {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    let stdout = '';
     let stderr = '';
 
     mcp.stdout.on('data', (data) => {
-      stdout += data.toString();
+      const chunk = data.toString();
+      stdoutBuffer += chunk;
+
+      let newlineIndex;
+      while ((newlineIndex = stdoutBuffer.indexOf('\n')) !== -1) {
+        const line = stdoutBuffer.slice(0, newlineIndex).trim();
+        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+
+        if (!line) {
+          continue;
+        }
+
+        let message = null;
+        try {
+          message = JSON.parse(line);
+        } catch (_err) {
+          continue;
+        }
+
+        if (message.id === 1) {
+          if (message.error) {
+            clearTimeout(timeoutId);
+            reject(new Error(`MCP init error: ${message.error.message}`));
+            return;
+          }
+
+          if (!initialized) {
+            initialized = true;
+
+            const initializedMessage = {
+              jsonrpc: '2.0',
+              method: 'notifications/initialized',
+              params: {},
+            };
+            mcp.stdin.write(JSON.stringify(initializedMessage) + '\n');
+
+            const toolCallMessage = {
+              jsonrpc: '2.0',
+              id: 2,
+              method: 'tools/call',
+              params: {
+                name: toolName,
+                arguments: params,
+              },
+            };
+
+            mcp.stdin.write(JSON.stringify(toolCallMessage) + '\n');
+            mcp.stdin.end();
+          }
+        } else if (message.id === 2) {
+          toolResponse = message;
+        }
+      }
     });
 
     mcp.stderr.on('data', (data) => {
@@ -62,23 +116,6 @@ async function callMamaTool(toolName, params, timeout = 5000) {
 
     mcp.stdin.write(JSON.stringify(initMessage) + '\n');
 
-    // Wait a bit for init (reduce to 200ms for speed)
-    setTimeout(() => {
-      // MCP protocol: Call tool
-      const toolCallMessage = {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: {
-          name: toolName,
-          arguments: params,
-        },
-      };
-
-      mcp.stdin.write(JSON.stringify(toolCallMessage) + '\n');
-      mcp.stdin.end();
-    }, 200);
-
     mcp.on('close', (code) => {
       clearTimeout(timeoutId);
 
@@ -87,20 +124,16 @@ async function callMamaTool(toolName, params, timeout = 5000) {
         return;
       }
 
-      // Parse responses
-      const lines = stdout.split('\n').filter((line) => line.trim());
-      const responses = lines
-        .map((line) => {
-          try {
-            return JSON.parse(line);
-          } catch (err) {
-            return null;
+      if (!toolResponse && stdoutBuffer.trim()) {
+        try {
+          const pending = JSON.parse(stdoutBuffer.trim());
+          if (pending && pending.id === 2) {
+            toolResponse = pending;
           }
-        })
-        .filter((r) => r !== null);
-
-      // Find tool call response (id: 2)
-      const toolResponse = responses.find((r) => r.id === 2);
+        } catch (_err) {
+          // Ignore parse errors for trailing buffers
+        }
+      }
 
       if (!toolResponse) {
         reject(new Error('No tool response received from MCP'));
@@ -165,6 +198,24 @@ async function searchDecisions(query, limit = 5) {
 }
 
 /**
+ * Search decisions and contracts (PreToolUse context)
+ *
+ * @param {string} query - Search query
+ * @param {string} filePath - File path context
+ * @param {string} toolName - Tool name context
+ * @param {Object} options - Optional limits/thresholds
+ * @returns {Promise<Object>} { decisionResults, contractResults }
+ */
+async function searchDecisionsAndContracts(query, filePath, toolName, options = {}) {
+  return callMamaTool('search_decisions_and_contracts', {
+    query,
+    filePath,
+    toolName,
+    ...options,
+  });
+}
+
+/**
  * Batch save multiple contracts
  *
  * Saves contracts sequentially to avoid overwhelming MCP server.
@@ -212,5 +263,6 @@ module.exports = {
   callMamaTool,
   saveDecision,
   searchDecisions,
+  searchDecisionsAndContracts,
   batchSaveContracts,
 };

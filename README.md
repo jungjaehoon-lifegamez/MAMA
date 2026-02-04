@@ -13,7 +13,7 @@
 
 A memory system for Claude that remembers **why** you made choices, not just what you chose.
 
-```
+```text
 Regular memory: "Login returns token"
 MAMA:           "Login returns { userId, token, email } (tried just token, but frontend needs userId for dashboard) → this schema used by 3 endpoints"
 ```
@@ -46,7 +46,7 @@ MAMA:           "Login returns { userId, token, email } (tried just token, but f
 
 Tracks your decisions with reasoning:
 
-```
+```text
 Session 1: You decide → "Login needs { userId, token, email }"
            MAMA saves → "Returns userId because dashboard needs it (tried without, users had to refetch)"
 
@@ -60,7 +60,7 @@ Session 2: You ask for backend → Claude checks MAMA
 
 **Auto-tracking (Claude Code Plugin):**
 
-```
+```text
 You: "Add login API"
 Claude: [writes code]
 MAMA: Detected contract → Suggests save
@@ -69,14 +69,14 @@ You: Accept → Saved with reasoning
 
 **Manual save:**
 
-```
+```text
 You: /mama:decision topic="auth" decision="JWT with refresh tokens"
      reasoning="Tried simple JWT, users complained about frequent logouts"
 ```
 
 **Next session:**
 
-```
+```text
 You: "Add logout endpoint"
 Claude: [checks MAMA] "I see you use JWT with refresh tokens..."
         [writes matching code]
@@ -143,7 +143,7 @@ MAMA OS deliberately uses **Claude Code CLI as a subprocess** rather than direct
 
 **How it works:**
 
-```
+```text
 MAMA OS → spawn('claude', [...args]) → Official Claude CLI → Anthropic API
 ```
 
@@ -289,7 +289,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 | [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.3.1   | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.0   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.1   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.6.6   | Claude Code plugin                           | Claude Marketplace |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.0   | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1   | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.

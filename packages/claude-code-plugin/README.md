@@ -53,6 +53,10 @@ Add to `claude_desktop_config.json`:
 
 **Configuration:** See `.mcp.json` for MCP server settings.
 
+**Feature flags:**
+
+- `MAMA_V2_CONTRACTS=false` to disable contract detection (enabled by default)
+
 **Detailed guide:** [Installation Guide](../../docs/guides/installation.md)
 
 ---

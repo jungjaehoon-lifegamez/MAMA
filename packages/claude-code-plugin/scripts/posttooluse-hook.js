@@ -230,7 +230,7 @@ function formatContractTemplate(filePath, diffContent, toolName) {
   output += '  prompt: `\n';
   output += `    Analyze this code change from ${safeFilePath}:\n`;
   output += '    \n';
-  output += '    ${diffContent}\n';
+  output += `    ${safeDiff}\n`;
   output += '    \n';
   output += '    Extract contracts:\n';
   output += '    1. API endpoints (method, path, request/response schema)\n';
@@ -489,7 +489,14 @@ async function main() {
 
     if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent && diffContent.trim().length > 0) {
       // Skip test files
-      if (!filePath || (!filePath.includes('test/') && !filePath.includes('.test.'))) {
+      if (
+        !filePath ||
+        (!filePath.includes('test/') &&
+          !filePath.includes('__tests__/') &&
+          !filePath.includes('.test.') &&
+          !filePath.includes('.spec.') &&
+          !filePath.includes('_test.'))
+      ) {
         try {
           // Extract contracts from diff
           extractedContracts = extractContracts(diffContent, filePath);
