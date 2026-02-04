@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [mama-server-1.7.0] - 2026-02-04
+## [claude-code-plugin-1.7.0] + [mama-server-1.7.0] - 2026-02-04
+
+### Added - MAMA v2: AI Agent Consistency Engine
+
+- **PostToolUse Hook** - Automatic contract detection and tracking
+  - Detects API endpoints, function signatures, request/response schemas
+  - Extracts database schemas and relationships
+  - Spawns Haiku task agent for contract analysis
+  - Auto-saves contracts to prevent vibe coding breakage
+
+- **PreToolUse Hook** - Contract injection before code edits
+  - Direct DB access for fast context retrieval
+  - Injects relevant contracts before Read/Edit operations
+  - Prevents Claude from guessing schemas
+
+- **Contract Extractor** (`src/core/contract-extractor.js`)
+  - Pattern-based contract detection
+  - Multi-language support (TypeScript, Python, SQL)
+  - Similarity checking to prevent duplicates
+
+### Fixed
+
+- **DB Initialization** - Fixed `posttooluse-hook.js` calling vectorSearch without initDB
+- **Test Cleanup** - Removed obsolete recency weighting tests (moved to MCP server)
+- **Hook Enablement** - Re-enabled PreToolUse and PostToolUse for v2 features
 
 ### Changed
 
@@ -24,11 +48,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Solution: Claude checks MAMA before guessing
   - Workflow: Build → Save → Claude remembers
 
+### Removed
+
+- **setup.md** - Unused command file (unregistered, no tests)
+  - Setup Hooks are the official pattern (not command-based wizards)
+
 ### Documentation
 
 - **README.md** - Complete rewrite for clarity and focus
+- **Package READMEs** - Updated claude-code-plugin and mcp-server
+- **Supporting Docs** - Updated docs/index.md, developer-playbook.md
 - **Consistency** - All examples now coding/development-related
 - **Brevity** - Removed lengthy technical explanations
+
+### Package Impact Analysis
+
+| Package              | Version  | Impact                                  |
+| -------------------- | -------- | --------------------------------------- |
+| claude-code-plugin   | 1.7.0 ⬆️ | Major: MAMA v2 features, documentation  |
+| mama-server (MCP)    | 1.7.0 ⬆️ | Minor: Documentation only               |
+| mama-core            | 1.0.1 ➡️ | None: No changes                        |
+| openclaw-mama        | 0.4.1 ➡️ | None: No changes                        |
+| mama-os (standalone) | 0.3.4 ➡️ | None: Unrelated auto-translation change |
+
+**Breaking Changes:** None - MAMA v2 features are additive
+
+**Migration Notes:**
+
+- PostToolUse and PreToolUse hooks now active by default
+- No user action required - contracts automatically tracked
+- Existing MCP server installations compatible (no API changes)
 
 ## [mama-os-0.3.1] - 2026-02-03
 
