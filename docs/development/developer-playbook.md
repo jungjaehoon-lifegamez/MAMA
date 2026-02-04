@@ -26,7 +26,7 @@
 
 ## Introduction
 
-MAMA (Memory-Augmented MCP Assistant) is a **consciousness flow companion** that remembers how you think, not just what you concluded. This developer playbook helps contributors understand the architecture, code layout, and contribution rules to safely extend the plugin without reintroducing the mistakes we learned from.
+MAMA (Memory-Augmented MCP Assistant) is a **decision tracking system** that remembers WHY you decided (reasoning), not just WHAT you chose (facts). It prevents vibe coding breakage by tracking contracts between code layers with their reasoning. This developer playbook helps contributors understand the architecture, code layout, and contribution rules to safely extend the plugin without reintroducing the mistakes we learned from.
 
 ### Purpose of This Document
 
