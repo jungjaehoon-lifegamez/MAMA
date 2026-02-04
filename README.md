@@ -22,13 +22,13 @@ MAMA:           "Prefers morning meetings (tried afternoons but energy was low) 
 
 ### You've been here before
 
-**Yesterday:** "Claude, make me a login API"  
+**Session 1:** "Claude, make me a login API"
 → Works great. You test it. Perfect.
 
-**Today:** "Claude, add the frontend login form"  
+**Session 2:** "Claude, add the frontend login form"
 → 404 error. Wrong endpoint. Wrong fields. Nothing connects.
 
-**Why?** Claude forgot everything from yesterday.
+**Why?** Claude forgot everything from Session 1.
 
 ### The Root Cause
 
@@ -65,12 +65,15 @@ You're not debugging your code. You're debugging my amnesia.
 Gives Claude external memory. When I write code, MAMA saves the "contracts":
 
 ```
-Day 1: You ask for frontend → I write: POST /api/register { email, password }
-       → MAMA saves: "Frontend expects POST /api/register with email, password"
+Session 1: You ask for frontend → I write: POST /api/register { email, password }
+           → MAMA saves: "Frontend expects POST /api/register with email, password"
 
-Day 3: You ask for backend → I check MAMA first
-       → I see: "Frontend already expects POST /api/register"
-       → I write matching code automatically
+Session 2: You ask for backend → I check MAMA first
+           → I see: "Frontend already expects POST /api/register"
+           → I write matching code automatically
+
+Same session, complex codebase: I check MAMA when switching between files
+                                 → Stay consistent across 50+ files
 ```
 
 **That's it.** I remember what I built. No more mismatches. No more debugging.
@@ -79,14 +82,16 @@ MAMA solves MY context loss problem. You benefit from consistent code.
 
 ### Does This Actually Work?
 
-Real timeline from our testing:
+Real example from our testing:
 
-- **11:00am**: Built backend login (Python FastAPI) - snake_case fields
-- **2:00pm**: Switched to frontend work (TypeScript React) - camelCase expected
-- **2:05pm**: Asked "add login form"
+- **Session 1**: Built backend login (Python FastAPI) - snake_case fields
+- **Session 2** (3 hours later): Frontend work (TypeScript React) - camelCase expected
+- **Asked:** "add login form"
 - **Result**: Worked first try. Zero debugging. Correct casing.
 
 Different session. Different language. Different naming convention. Same contract.
+
+**Same session, 50+ file codebase:** MAMA prevents confusion when I'm editing auth.ts, then api.py, then schema.sql, then back to auth.ts. I check MAMA instead of guessing.
 
 **The fix:** MAMA reminded me what I wrote in Python, so I wrote matching TypeScript.
 
