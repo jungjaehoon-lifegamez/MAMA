@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PostToolUse hook output visibility mechanism
 - Auto-Save suggestions now appear immediately after code changes
 - Hooks moved inline to plugin.json (official Claude Code spec)
+- **PreToolUse hook re-enabled**: Contract injection before Read/Grep operations (was mistakenly removed)
 
 ## [claude-code-plugin-1.7.0] + [mama-server-1.7.0] - 2026-02-04
 
