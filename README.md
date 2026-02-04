@@ -56,6 +56,34 @@ Session 2: You ask for backend → Claude checks MAMA
 
 **Result:** Claude follows your decisions. No guessing. No mismatches.
 
+### How It Works
+
+**Auto-tracking (Claude Code Plugin):**
+
+```
+You: "Add login API"
+Claude: [writes code]
+MAMA: Detected contract → Suggests save
+You: Accept → Saved with reasoning
+```
+
+**Manual save:**
+
+```
+You: /mama:decision topic="auth" decision="JWT with refresh tokens"
+     reasoning="Tried simple JWT, users complained about frequent logouts"
+```
+
+**Next session:**
+
+```
+You: "Add logout endpoint"
+Claude: [checks MAMA] "I see you use JWT with refresh tokens..."
+        [writes matching code]
+```
+
+**That's it.** Three steps: Build → Save → Claude remembers.
+
 ### Does This Work?
 
 Real test:
