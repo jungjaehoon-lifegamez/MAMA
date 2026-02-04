@@ -205,7 +205,7 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 
 1. **PostToolUse Hook** (Claude Code only)
    - Detects when you write/edit code
-   - Extracts API contracts automatically
+   - Extracts API contracts automatically (TypeScript, Python, Java, Go, Rust, SQL, GraphQL)
    - Suggests saving via `/mama:decision`
 
 2. **MCP Tools** (Both Desktop & Code)

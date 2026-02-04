@@ -34,9 +34,14 @@ function extractApiContracts(code, filePath = '') {
     const method = match[1].toUpperCase();
     const path = match[2];
 
-    // Try to extract request/response schema
-    const bodyMatch = code.match(/req\.body\s*[=:]\s*{([^}]+)}/);
-    const responseMatch = code.match(/res\.json\s*\(\s*{([^}]+)}/);
+    // Try to extract request/response schema (scope to this endpoint's code block)
+    // Look for req.body and res.json near this match position
+    const contextStart = Math.max(0, match.index - 200);
+    const contextEnd = Math.min(code.length, match.index + 500);
+    const contextCode = code.substring(contextStart, contextEnd);
+
+    const bodyMatch = contextCode.match(/req\.body\s*[=:]\s*{([^}]+)}/);
+    const responseMatch = contextCode.match(/res\.json\s*\(\s*{([^}]+)}/);
 
     contracts.push({
       type: 'api_endpoint',
@@ -208,6 +213,185 @@ function extractTypeDefinitions(code, filePath = '') {
 }
 
 /**
+ * Extract SQL schemas from code
+ *
+ * Detects patterns like:
+ * - CREATE TABLE users (id INT, email VARCHAR(255), ...)
+ * - ALTER TABLE users ADD COLUMN name VARCHAR(255)
+ *
+ * @param {string} code - Code snippet to analyze
+ * @param {string} filePath - File path for context
+ * @returns {Array<Object>} Extracted SQL schemas
+ */
+function extractSqlSchemas(code, filePath = '') {
+  const schemas = [];
+
+  // CREATE TABLE pattern
+  const createTablePattern = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\(([^)]+)\)/gi;
+  let match;
+
+  while ((match = createTablePattern.exec(code)) !== null) {
+    const tableName = match[1];
+    const columnsText = match[2];
+    const columns = columnsText
+      .split(',')
+      .map((c) => c.trim())
+      .filter((c) => c && !c.match(/^(PRIMARY|FOREIGN|UNIQUE|CHECK|CONSTRAINT)/i))
+      .slice(0, 10); // Limit to 10 columns for brevity
+
+    schemas.push({
+      type: 'sql_schema',
+      operation: 'CREATE_TABLE',
+      table: tableName,
+      columns,
+      file: filePath,
+      confidence: 0.9,
+    });
+  }
+
+  // ALTER TABLE ADD COLUMN pattern
+  const alterTablePattern =
+    /ALTER\s+TABLE\s+(\w+)\s+ADD\s+(?:COLUMN\s+)?(\w+\s+[A-Z]+(?:\([^)]+\))?)/gi;
+
+  while ((match = alterTablePattern.exec(code)) !== null) {
+    const tableName = match[1];
+    const columnDef = match[2].trim();
+
+    schemas.push({
+      type: 'sql_schema',
+      operation: 'ALTER_TABLE',
+      table: tableName,
+      columns: [columnDef],
+      file: filePath,
+      confidence: 0.8,
+    });
+  }
+
+  return schemas;
+}
+
+/**
+ * Extract GraphQL schemas from code
+ *
+ * Detects patterns like:
+ * - type User { id: ID!, email: String!, ... }
+ * - input CreateUserInput { email: String!, password: String! }
+ * - interface Node { id: ID! }
+ *
+ * @param {string} code - Code snippet to analyze
+ * @param {string} filePath - File path for context
+ * @returns {Array<Object>} Extracted GraphQL schemas
+ */
+function extractGraphQLSchemas(code, filePath = '') {
+  const schemas = [];
+
+  // GraphQL type definitions
+  const typePattern = /(type|input|interface)\s+(\w+)\s*(?:implements\s+\w+\s*)?{([^}]+)}/gi;
+  let match;
+
+  while ((match = typePattern.exec(code)) !== null) {
+    const kind = match[1];
+    const name = match[2];
+    const fieldsText = match[3];
+    const fields = fieldsText
+      .split(/\n/)
+      .map((f) => f.trim())
+      .filter((f) => f && !f.startsWith('#'))
+      .slice(0, 10); // Limit to 10 fields
+
+    schemas.push({
+      type: 'graphql_schema',
+      kind,
+      name,
+      fields,
+      file: filePath,
+      confidence: 0.9,
+    });
+  }
+
+  return schemas;
+}
+
+/**
+ * Extract Go function signatures from code
+ *
+ * Detects patterns like:
+ * - func CreateUser(email string, password string) (*User, error)
+ * - func (s *Server) HandleLogin(w http.ResponseWriter, r *http.Request)
+ *
+ * @param {string} code - Code snippet to analyze
+ * @param {string} filePath - File path for context
+ * @returns {Array<Object>} Extracted Go function signatures
+ */
+function extractGoSignatures(code, filePath = '') {
+  const signatures = [];
+
+  // Go function pattern (including receiver methods)
+  const goFuncPattern =
+    /func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(([^)]*)\)(?:\s*\(([^)]*)\)|\s+([^{]+))?/gi;
+  let match;
+
+  while ((match = goFuncPattern.exec(code)) !== null) {
+    const name = match[1];
+    const paramsText = match[2];
+    const params = paramsText
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => p);
+
+    signatures.push({
+      type: 'function_signature',
+      language: 'go',
+      name,
+      params,
+      file: filePath,
+      confidence: 0.8,
+    });
+  }
+
+  return signatures;
+}
+
+/**
+ * Extract Rust function signatures from code
+ *
+ * Detects patterns like:
+ * - fn create_user(email: String, password: String) -> Result<User, Error>
+ * - pub async fn login(credentials: LoginCredentials) -> Result<Token>
+ *
+ * @param {string} code - Code snippet to analyze
+ * @param {string} filePath - File path for context
+ * @returns {Array<Object>} Extracted Rust function signatures
+ */
+function extractRustSignatures(code, filePath = '') {
+  const signatures = [];
+
+  // Rust function pattern
+  const rustFuncPattern = /(?:pub\s+)?(?:async\s+)?fn\s+(\w+)\s*\(([^)]*)\)/gi;
+  let match;
+
+  while ((match = rustFuncPattern.exec(code)) !== null) {
+    const name = match[1];
+    const paramsText = match[2];
+    const params = paramsText
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => p);
+
+    signatures.push({
+      type: 'function_signature',
+      language: 'rust',
+      name,
+      params,
+      file: filePath,
+      confidence: 0.8,
+    });
+  }
+
+  return signatures;
+}
+
+/**
  * Extract all contracts from code
  *
  * @param {string} code - Code snippet to analyze
@@ -217,8 +401,14 @@ function extractTypeDefinitions(code, filePath = '') {
 function extractContracts(code, filePath = '') {
   return {
     apiEndpoints: extractApiContracts(code, filePath),
-    functionSignatures: extractFunctionSignatures(code, filePath),
+    functionSignatures: [
+      ...extractFunctionSignatures(code, filePath),
+      ...extractGoSignatures(code, filePath),
+      ...extractRustSignatures(code, filePath),
+    ],
     typeDefinitions: extractTypeDefinitions(code, filePath),
+    sqlSchemas: extractSqlSchemas(code, filePath),
+    graphqlSchemas: extractGraphQLSchemas(code, filePath),
   };
 }
 
@@ -271,6 +461,35 @@ function formatContractForMama(contract) {
     };
   }
 
+  if (contract.type === 'sql_schema') {
+    const topic = `contract_sql_${contract.table}`;
+    const operation = contract.operation === 'CREATE_TABLE' ? 'CREATE TABLE' : 'ALTER TABLE';
+    const decision = `${operation} ${contract.table} (${contract.columns.join(', ')})`;
+    const reasoning = `Auto-extracted SQL schema from ${contract.file}. Database operations must match exact schema.`;
+
+    return {
+      type: 'decision',
+      topic,
+      decision,
+      reasoning,
+      confidence: contract.confidence,
+    };
+  }
+
+  if (contract.type === 'graphql_schema') {
+    const topic = `contract_graphql_${contract.name}`;
+    const decision = `${contract.kind} ${contract.name} { ${contract.fields.join(', ')} }`;
+    const reasoning = `Auto-extracted GraphQL schema from ${contract.file}. GraphQL queries/mutations must match schema.`;
+
+    return {
+      type: 'decision',
+      topic,
+      decision,
+      reasoning,
+      confidence: contract.confidence,
+    };
+  }
+
   return null;
 }
 
@@ -278,6 +497,10 @@ module.exports = {
   extractApiContracts,
   extractFunctionSignatures,
   extractTypeDefinitions,
+  extractSqlSchemas,
+  extractGraphQLSchemas,
+  extractGoSignatures,
+  extractRustSignatures,
   extractContracts,
   formatContractForMama,
 };

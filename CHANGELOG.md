@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Contract Extractor** (`src/core/contract-extractor.js`)
   - Pattern-based contract detection
-  - Multi-language support (TypeScript, Python, SQL)
+  - Multi-language support: JavaScript/TypeScript, Python, Java (Spring), Go, Rust, SQL, GraphQL
   - Similarity checking to prevent duplicates
+  - Cross-language semantic matching via vector embeddings
 
 ### Fixed
 
