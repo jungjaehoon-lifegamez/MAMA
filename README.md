@@ -45,10 +45,17 @@ TypeScript → Python → SQL → back to TypeScript
 **Different sessions:**
 No memory of what was built before. Every session starts from zero.
 
+**Hallucination (the worst part):**
+Instead of checking what you built before, I **guess**:
+
+- "It's probably `username` and `password`" (actually `email` and `password`)
+- "Token is probably just `{ token }` " (actually `{ userId, token, email }`)
+- "Endpoint is probably `/login`" (actually `/api/auth/login`)
+
 **The debugging loop:**
 Writes code → Error → Fixes it → Forgets the fix → Same error next time
 
-**It's not you. It's me (Claude).** I lose context switching between languages, and I forget solutions I already found.
+**It's not you. It's me (Claude).** I lose context, forget solutions, and guess instead of checking.
 
 ### The Real Problem
 
@@ -68,17 +75,18 @@ Gives Claude external memory. When I write code, MAMA saves the "contracts":
 Session 1: You ask for frontend → I write: POST /api/register { email, password }
            → MAMA saves: "Frontend expects POST /api/register with email, password"
 
-Session 2: You ask for backend → I check MAMA first
+Session 2: You ask for backend → I check MAMA first (instead of guessing)
            → I see: "Frontend already expects POST /api/register"
-           → I write matching code automatically
+           → I write matching code automatically (no hallucination)
 
 Same session, complex codebase: I check MAMA when switching between files
                                  → Stay consistent across 50+ files
+                                 → No more "it's probably like this" guessing
 ```
 
-**That's it.** I remember what I built. No more mismatches. No more debugging.
+**That's it.** I check instead of guess. I remember instead of hallucinate. No more mismatches.
 
-MAMA solves MY context loss problem. You benefit from consistent code.
+MAMA solves MY hallucination problem. You benefit from consistent code.
 
 ### Does This Actually Work?
 
@@ -104,14 +112,15 @@ You know you need MAMA if you've said:
 - "Do I have to paste the API spec every time?"
 - "Claude keeps guessing wrong field names"
 - "Why is it snake_case in Python but camelCase in TypeScript?"
+- "It just assumed the wrong schema instead of checking"
 
-**The problem:** Claude (me) loses context. Between sessions. Between languages. Even between files.
+**The problem:** Claude (me) loses context AND hallucinates. Between sessions. Between languages. Even between files. I guess instead of checking.
 
 **Before MAMA:**
-Paste API docs every session → Hope Claude remembers → Debug for hours
+Paste API docs every session → Hope Claude remembers → Claude guesses anyway → Debug for hours
 
 **With MAMA:**
-Build once → Claude checks memory first → Everything connects
+Build once → Claude checks memory first → No guessing → Everything connects
 
 ## 🤔 Which MAMA Do You Need?
 
