@@ -36,7 +36,8 @@ const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logg
 // const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
-// MAMA v2: No imports needed - Haiku will analyze diff directly
+// MAMA v2: Contract extraction
+const { extractContracts } = require(path.join(CORE_PATH, 'contract-extractor'));
 
 // Configuration
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
@@ -180,6 +181,25 @@ function extractReasoning(conversationContext) {
 }
 
 /**
+ * Sanitize untrusted data for prompt injection
+ * Escapes special characters that could break prompt structure
+ *
+ * @param {string} text - Text to sanitize
+ * @returns {string} Sanitized text
+ */
+function sanitizeForPrompt(text) {
+  if (!text) {
+    return '';
+  }
+  return text
+    .replace(/\\/g, '\\\\') // Escape backslashes
+    .replace(/`/g, '\\`') // Escape backticks (code blocks)
+    .replace(/\$/g, '\\$') // Escape dollar signs (template literals)
+    .replace(/\{/g, '\\{') // Escape braces (template literals)
+    .replace(/\}/g, '\\}');
+}
+
+/**
  * Format contract analysis template for Haiku
  * MAMA v2: Simple template - let Haiku analyze the diff directly
  *
@@ -200,15 +220,21 @@ function formatContractTemplate(filePath, diffContent, toolName) {
       ? diffContent.substring(0, maxDiffLength) + '\n\n... (truncated)'
       : diffContent;
 
+  // Sanitize filePath and toolName (user-controlled data)
+  const safeFilePath = sanitizeForPrompt(filePath || 'unknown');
+  const safeToolName = sanitizeForPrompt(toolName || 'unknown');
+  // Sanitize diff content for safe injection
+  const safeDiff = sanitizeForPrompt(truncatedDiff);
+
   let output = '\n\n---\n';
   output += '🔌 **MAMA v2: Code Change Detected**\n\n';
-  output += `**File:** \`${filePath}\`\n`;
-  output += `**Tool:** ${toolName}\n`;
+  output += `**File:** \`${safeFilePath}\`\n`;
+  output += `**Tool:** ${safeToolName}\n`;
   output += `**Diff Size:** ${diffContent.length} characters\n\n`;
 
   output += '### Code Changes:\n';
   output += '```\n';
-  output += truncatedDiff;
+  output += safeDiff;
   output += '\n```\n\n';
 
   output += '---\n\n';
@@ -220,7 +246,7 @@ function formatContractTemplate(filePath, diffContent, toolName) {
   output += '  model: "haiku",  // Fast & cheap\n';
   output += '  description: "Extract and save contracts",\n';
   output += '  prompt: `\n';
-  output += `    Analyze this code change from ${filePath}:\n`;
+  output += `    Analyze this code change from ${safeFilePath}:\n`;
   output += '    \n';
   output += '    ${diffContent}\n';
   output += '    \n';
@@ -258,14 +284,20 @@ function formatAutoSaveSuggestion(topic, decision, reasoning, similarDecisions) 
   let output = '\n\n---\n';
   output += '💾 **MAMA Auto-Save Suggestion**\n\n';
 
-  output += `**Topic:** ${topic}\n`;
-  output += `**Decision:** ${decision}\n`;
-  output += `**Reasoning:** ${reasoning}\n\n`;
+  // Sanitize all untrusted data
+  const safeTopic = sanitizeForPrompt(topic || 'unknown');
+  const safeDecision = sanitizeForPrompt(decision || '');
+  const safeReasoning = sanitizeForPrompt(reasoning || '');
+
+  output += `**Topic:** ${safeTopic}\n`;
+  output += `**Decision:** ${safeDecision}\n`;
+  output += `**Reasoning:** ${safeReasoning}\n\n`;
 
   if (similarDecisions && similarDecisions.length > 0) {
     output += '**Similar existing decisions:**\n';
     similarDecisions.slice(0, 2).forEach((d, i) => {
-      output += `${i + 1}. ${d.decision} (${Math.round(d.similarity * 100)}% match)\n`;
+      const safeSimDecision = sanitizeForPrompt(d.decision || '');
+      output += `${i + 1}. ${safeSimDecision} (${Math.round(d.similarity * 100)}% match)\n`;
     });
     output += '\n';
   }
@@ -469,13 +501,42 @@ async function main() {
 
     info(`[Hook] Auto-save candidate: "${decision}"`);
 
-    // 6.5. MAMA v2: Prepare diff for Haiku analysis (no Regex extraction)
+    // 6.5. MAMA v2: Extract contracts and check if any exist
     let hasCodeChange = false;
+    let extractedContracts = null;
+
     if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent && diffContent.trim().length > 0) {
       // Skip test files
       if (!filePath || (!filePath.includes('test/') && !filePath.includes('.test.'))) {
-        info('[Hook] Code change detected, preparing for Haiku analysis');
-        hasCodeChange = true;
+        try {
+          // Extract contracts from diff
+          extractedContracts = extractContracts(diffContent, filePath);
+
+          // Check if any contracts were found
+          const hasContracts =
+            (extractedContracts.apiEndpoints && extractedContracts.apiEndpoints.length > 0) ||
+            (extractedContracts.functionSignatures &&
+              extractedContracts.functionSignatures.length > 0) ||
+            (extractedContracts.typeDefinitions && extractedContracts.typeDefinitions.length > 0) ||
+            (extractedContracts.sqlSchemas && extractedContracts.sqlSchemas.length > 0) ||
+            (extractedContracts.graphqlSchemas && extractedContracts.graphqlSchemas.length > 0);
+
+          if (hasContracts) {
+            const totalContracts =
+              (extractedContracts.apiEndpoints?.length || 0) +
+              (extractedContracts.functionSignatures?.length || 0) +
+              (extractedContracts.typeDefinitions?.length || 0) +
+              (extractedContracts.sqlSchemas?.length || 0) +
+              (extractedContracts.graphqlSchemas?.length || 0);
+
+            info(`[Hook] Contracts detected: ${totalContracts} items`);
+            hasCodeChange = true;
+          } else {
+            info('[Hook] No contracts detected in diff, skipping');
+          }
+        } catch (error) {
+          warn(`[Hook] Contract extraction failed: ${error.message}`);
+        }
       } else {
         info('[Hook] Test file detected, skipping contract analysis');
       }
@@ -564,4 +625,5 @@ module.exports = {
   generateDecisionSummary,
   logAudit,
   checkSimilarDecision,
+  sanitizeForPrompt,
 };
