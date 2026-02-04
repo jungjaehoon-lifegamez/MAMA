@@ -85,26 +85,11 @@ describe('Story M2.2: PreToolUse Hook', () => {
     });
   });
 
-  describe('AC #2: Recency Weighting', () => {
-    it('should implement Gaussian decay for recency', () => {
-      const scriptPath = path.join(__dirname, '../../scripts/pretooluse-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
-
-      // Check for recency boost calculation
-      expect(content).toContain('recencyBoost');
-      expect(content).toContain('Math.exp');
-      expect(content).toContain('ageDays');
-    });
-
-    it('should weight recency higher than UserPromptSubmit', () => {
-      const scriptPath = path.join(__dirname, '../../scripts/pretooluse-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
-
-      // Check for adjusted score calculation
-      expect(content).toContain('adjustedScore');
-      expect(content).toContain('similarity');
-    });
-  });
+  // AC #2: Recency Weighting - REMOVED
+  // Recency scoring is implemented in MCP server (mama-api.js) using Gaussian Decay.
+  // PreToolUse hook uses simple vectorSearch for fast response (<500ms target).
+  // This follows MAMA's architecture: MCP server handles complex scoring,
+  // hooks provide quick context injection.
 
   describe('AC #3: File Hints', () => {
     it('should extract file hints from decisions', async () => {

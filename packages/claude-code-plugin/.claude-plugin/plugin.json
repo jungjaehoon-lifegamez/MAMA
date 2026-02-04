@@ -57,6 +57,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   },
   "mcpServers": {

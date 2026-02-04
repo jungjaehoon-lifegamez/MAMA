@@ -319,8 +319,12 @@ function logAudit(action, topic, decision) {
 async function checkSimilarDecision(decision) {
   try {
     // Lazy load embeddings and vector search (only on Tier 1)
+    const { initDB } = require(path.join(CORE_PATH, 'db-manager'));
     const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
     const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+
+    // Initialize DB first
+    await initDB();
 
     const embedding = await generateEmbedding(decision);
     const results = await vectorSearch(embedding, 5, SIMILARITY_THRESHOLD);
