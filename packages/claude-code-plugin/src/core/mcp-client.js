@@ -246,8 +246,14 @@ async function batchSaveContracts(contracts) {
   };
 
   // Filter high-confidence contracts
-  const highConfidence = contracts.filter((c) => c.confidence >= 0.7);
-  const lowConfidence = contracts.filter((c) => c.confidence < 0.7);
+  const highConfidence = contracts.filter((c) => {
+    const confidence = Number(c.confidence);
+    return Number.isFinite(confidence) ? confidence >= 0.7 : false;
+  });
+  const lowConfidence = contracts.filter((c) => {
+    const confidence = Number(c.confidence);
+    return Number.isFinite(confidence) ? confidence < 0.7 : true;
+  });
 
   results.skipped = lowConfidence.map((c) => ({
     ...c,

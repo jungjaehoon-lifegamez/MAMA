@@ -566,13 +566,14 @@ async function main() {
 
     if (process.env.MAMA_V2_CONTRACTS !== 'false' && diffContent && diffContent.trim().length > 0) {
       // Skip test files
+      const normalizedPath = filePath ? filePath.replace(/\\/g, '/') : '';
       if (
-        !filePath ||
-        (!filePath.includes('test/') &&
-          !filePath.includes('__tests__/') &&
-          !filePath.includes('.test.') &&
-          !filePath.includes('.spec.') &&
-          !filePath.includes('_test.'))
+        !normalizedPath ||
+        (!normalizedPath.includes('test/') &&
+          !normalizedPath.includes('__tests__/') &&
+          !normalizedPath.includes('.test.') &&
+          !normalizedPath.includes('.spec.') &&
+          !normalizedPath.includes('_test.'))
       ) {
         if (isLowPriorityPath(filePath)) {
           info('[Hook] Low-priority file detected, skipping contract analysis');

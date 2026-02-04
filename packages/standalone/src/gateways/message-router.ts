@@ -137,6 +137,17 @@ function containsSensitiveRequest(text: string): boolean {
   return SENSITIVE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+function normalizeTranslationTargetLanguage(
+  value: MessageRouterConfig['translationTargetLanguage'],
+  fallback: string
+): string {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : fallback;
+}
+
 /**
  * Message Router class
  *
@@ -162,7 +173,10 @@ export class MessageRouter {
       maxDecisions: config.maxDecisions ?? 3,
       maxTurns: config.maxTurns ?? 5,
       maxResponseLength: config.maxResponseLength ?? 200,
-      translationTargetLanguage: config.translationTargetLanguage ?? 'Korean',
+      translationTargetLanguage: normalizeTranslationTargetLanguage(
+        config.translationTargetLanguage,
+        'Korean'
+      ),
     };
     this.roleManager = getRoleManager();
 
@@ -590,7 +604,10 @@ ${historyContext}
       this.config.maxResponseLength = config.maxResponseLength;
     }
     if (config.translationTargetLanguage !== undefined) {
-      this.config.translationTargetLanguage = config.translationTargetLanguage;
+      this.config.translationTargetLanguage = normalizeTranslationTargetLanguage(
+        config.translationTargetLanguage,
+        this.config.translationTargetLanguage
+      );
     }
 
     // Update context injector config
