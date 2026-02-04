@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - PostToolUse hook output visibility mechanism
 - Auto-Save suggestions now appear immediately after code changes
+- **PreToolUse hook re-enabled**: Contract injection before Read/Grep operations (was mistakenly removed)
 
 ## [1.6.5] - 2026-02-01
 
