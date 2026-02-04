@@ -43,9 +43,55 @@ const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
 const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
 const AUDIT_LOG_FILE = path.join(PLUGIN_ROOT, '.posttooluse-audit.log');
+const CONTRACT_RATE_LIMIT_MS = Number(process.env.MAMA_CONTRACT_RATE_LIMIT_MS || 15000);
+const CONTRACT_RATE_LIMIT_FILE = path.join(PLUGIN_ROOT, '.posttooluse-contract-rate.json');
 
 // Tools that trigger auto-save consideration
 const EDIT_TOOLS = ['write_file', 'apply_patch', 'Edit', 'Write', 'test', 'build'];
+
+function isLowPriorityPath(filePath) {
+  if (!filePath) {
+    return false;
+  }
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+  return (
+    normalized.includes('/docs/') ||
+    normalized.includes('/examples/') ||
+    normalized.includes('/example/') ||
+    normalized.includes('/demo/') ||
+    normalized.includes('/stories/') ||
+    normalized.includes('/storybook/')
+  );
+}
+
+function checkContractRateLimit() {
+  if (!Number.isFinite(CONTRACT_RATE_LIMIT_MS) || CONTRACT_RATE_LIMIT_MS <= 0) {
+    return { allowed: true, waitMs: 0 };
+  }
+
+  try {
+    if (fs.existsSync(CONTRACT_RATE_LIMIT_FILE)) {
+      const raw = fs.readFileSync(CONTRACT_RATE_LIMIT_FILE, 'utf8');
+      const parsed = JSON.parse(raw || '{}');
+      const last = Number(parsed.last_ts || 0);
+      const now = Date.now();
+      const elapsed = now - last;
+      if (last && elapsed < CONTRACT_RATE_LIMIT_MS) {
+        return { allowed: false, waitMs: CONTRACT_RATE_LIMIT_MS - elapsed };
+      }
+    }
+  } catch (error) {
+    warn(`[Hook] Contract rate-limit read failed: ${error.message}`);
+  }
+
+  try {
+    fs.writeFileSync(CONTRACT_RATE_LIMIT_FILE, JSON.stringify({ last_ts: Date.now() }), 'utf8');
+  } catch (error) {
+    warn(`[Hook] Contract rate-limit write failed: ${error.message}`);
+  }
+
+  return { allowed: true, waitMs: 0 };
+}
 
 /**
  * Get tier information from config
@@ -255,6 +301,10 @@ function formatContractTemplate(filePath, diffContent, toolName) {
   output += '    - Comments and examples\n';
   output += '    - Mock/fake code\n';
   output += '    \n';
+  output += '    If analysis fails or times out:\n';
+  output += '    - Reply: "contract analysis skipped"\n';
+  output += '    - Do NOT save any contract\n';
+  output += '    \n';
   output += '    Save valid contracts to MAMA:\n';
   output += '    /mama:decision <topic> "<decision>" "<reasoning>" --confidence=0.8\n';
   output += '  `\n';
@@ -333,6 +383,21 @@ function logAudit(action, topic, decision) {
     info(`[Hook] Audit logged: ${action} - ${topic}`);
   } catch (error) {
     warn(`[Hook] Failed to write audit log: ${error.message}`);
+  }
+}
+
+function logContractAnalysis(action, details = {}) {
+  try {
+    const timestamp = new Date().toISOString();
+    const entry = {
+      timestamp,
+      action,
+      ...details,
+    };
+    const logLine = JSON.stringify(entry) + '\n';
+    fs.appendFileSync(AUDIT_LOG_FILE, logLine, 'utf8');
+  } catch (error) {
+    warn(`[Hook] Failed to write contract audit: ${error.message}`);
   }
 }
 
@@ -509,10 +574,36 @@ async function main() {
           !filePath.includes('.spec.') &&
           !filePath.includes('_test.'))
       ) {
-        hasCodeChange = true;
-        info('[Hook] Code change detected; delegating contract analysis to Haiku');
+        if (isLowPriorityPath(filePath)) {
+          info('[Hook] Low-priority file detected, skipping contract analysis');
+          logContractAnalysis('skipped_low_priority', {
+            file: filePath || 'unknown',
+            diff_size: diffContent.length,
+          });
+        } else {
+          const rateLimit = checkContractRateLimit();
+          if (!rateLimit.allowed) {
+            info(`[Hook] Contract analysis rate-limited (${rateLimit.waitMs}ms remaining)`);
+            logContractAnalysis('skipped_rate_limit', {
+              file: filePath || 'unknown',
+              diff_size: diffContent.length,
+              wait_ms: rateLimit.waitMs,
+            });
+          } else {
+            hasCodeChange = true;
+            logContractAnalysis('suggested', {
+              file: filePath || 'unknown',
+              diff_size: diffContent.length,
+            });
+            info('[Hook] Code change detected; delegating contract analysis to Haiku');
+          }
+        }
       } else {
         info('[Hook] Test file detected, skipping contract analysis');
+        logContractAnalysis('skipped_test_file', {
+          file: filePath || 'unknown',
+          diff_size: diffContent.length,
+        });
       }
     }
 
