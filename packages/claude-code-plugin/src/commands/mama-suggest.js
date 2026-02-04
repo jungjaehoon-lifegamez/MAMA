@@ -12,6 +12,7 @@
 
 const mama = require('../core/mama-api');
 const { info, error: logError } = require('../core/debug-logger');
+const { sanitizeForPrompt } = require('../core/prompt-sanitizer');
 
 /**
  * Search decisions by semantic similarity
@@ -87,17 +88,20 @@ function formatSuggestionsMessage(query, suggestions, markdown) {
   }
 
   // Fallback: format manually
-  let message = `## 🔍 Search Results: "${query}"\n\n`;
+  let message = `## 🔍 Search Results: "${sanitizeForPrompt(query)}"\n\n`;
   message += `Found ${suggestions.length} related decision(s)\n\n`;
   message += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
   suggestions.forEach((suggestion, index) => {
     const similarity = Math.round((suggestion.similarity || 0) * 100);
     const recency = suggestion.recency_info || '';
+    const rawTopic = suggestion.topic || 'Unknown topic';
+    const safeTopic = sanitizeForPrompt(rawTopic);
+    const recallTopic = String(rawTopic).replace(/`/g, '\\`');
 
-    message += `### ${index + 1}. ${suggestion.topic || 'Unknown topic'} (${similarity}% match)\n\n`;
-    message += `**Decision:** ${suggestion.decision || 'No decision text'}\n\n`;
-    message += `**Reasoning:** ${(suggestion.reasoning || 'No reasoning').substring(0, 200)}...\n\n`;
+    message += `### ${index + 1}. ${safeTopic} (${similarity}% match)\n\n`;
+    message += `**Decision:** ${sanitizeForPrompt(suggestion.decision || 'No decision text')}\n\n`;
+    message += `**Reasoning:** ${sanitizeForPrompt((suggestion.reasoning || 'No reasoning').substring(0, 200))}...\n\n`;
     message += `**Created:** ${suggestion.created_at || 'Unknown'}`;
 
     if (recency) {
@@ -106,7 +110,7 @@ function formatSuggestionsMessage(query, suggestions, markdown) {
 
     message += `\n**Confidence:** ${suggestion.confidence || 0.5}\n`;
     message += `**Outcome:** ${suggestion.outcome || 'pending'}\n\n`;
-    message += `🔍 Recall full history: \`/mama-recall ${suggestion.topic}\`\n\n`;
+    message += `🔍 Recall full history: \`/mama-recall ${recallTopic}\`\n\n`;
     message += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
   });
 
@@ -120,10 +124,11 @@ function formatSuggestionsMessage(query, suggestions, markdown) {
  * @returns {string} Formatted message
  */
 function formatNoResultsMessage(query) {
+  const safeQuery = sanitizeForPrompt(query);
   return `
 ## 🔍 No Results Found
 
-No decisions found matching: "${query}"
+No decisions found matching: "${safeQuery}"
 
 ### Possible Reasons
 

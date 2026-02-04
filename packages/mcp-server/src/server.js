@@ -26,6 +26,7 @@ const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } = require('@modelcontextprotocol/sdk/types.js');
+const path = require('path');
 
 // Import MAMA tools - Simplified to 4 core tools (2025-11-25 refactor)
 // Rationale: LLM can infer relationships from search results, fewer tools = more flexibility
@@ -34,6 +35,8 @@ const mama = require('./mama/mama-api.js');
 
 // Import core modules from mama-core
 const { initDB } = require('./mama/db-manager.js');
+const { generateEmbedding } = require('./mama/embeddings.js');
+const { vectorSearch } = require('./mama/memory-store.js');
 const embeddingServer = require('@jungjaehoon/mama-core/embedding-server');
 const http = require('http');
 
@@ -326,7 +329,42 @@ Cross-lingual: Works in Korean and English.
             required: ['id', 'outcome'],
           },
         },
-        // 4. LOAD_CHECKPOINT - Resume previous session
+        // 4. SEARCH_DECISIONS_AND_CONTRACTS - PreToolUse RPC for hooks
+        {
+          name: 'search_decisions_and_contracts',
+          description:
+            'Search decisions and related contracts for PreToolUse injection (MAMA v2 hooks).',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Search query for decisions.',
+              },
+              filePath: {
+                type: 'string',
+                description: 'File path context for contract search.',
+              },
+              toolName: {
+                type: 'string',
+                description: 'Tool name context (Edit/Write/apply_patch).',
+              },
+              decisionLimit: {
+                type: 'number',
+                description: 'Max decision results (default: 5).',
+              },
+              contractLimit: {
+                type: 'number',
+                description: 'Max contract results (default: 3).',
+              },
+              similarityThreshold: {
+                type: 'number',
+                description: 'Similarity threshold for vector search (default: 0.7).',
+              },
+            },
+          },
+        },
+        // 5. LOAD_CHECKPOINT - Resume previous session
         {
           name: 'load_checkpoint',
           description: `🔄 Resume a previous session with full context.
@@ -368,6 +406,9 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
             break;
           case 'update':
             result = await this.handleUpdate(args);
+            break;
+          case 'search_decisions_and_contracts':
+            result = await this.handleSearchDecisionsAndContracts(args);
             break;
           case 'load_checkpoint':
             result = await loadCheckpointTool.handler(args);
@@ -488,6 +529,74 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       success: true,
       count: limited.length,
       results: limited,
+    };
+  }
+
+  /**
+   * Handle PreToolUse search for decisions + contracts
+   */
+  async handleSearchDecisionsAndContracts(args = {}) {
+    const {
+      query = '',
+      filePath = '',
+      toolName = '',
+      decisionLimit = 5,
+      contractLimit = 3,
+      similarityThreshold = 0.7,
+    } = args;
+
+    await initDB();
+
+    let decisionResults = [];
+    let contractResults = [];
+
+    // Decision search
+    if (decisionLimit > 0 && query) {
+      try {
+        const queryEmbedding = await generateEmbedding(query);
+        const results = await vectorSearch(queryEmbedding, decisionLimit, similarityThreshold);
+        if (Array.isArray(results)) {
+          decisionResults = results.slice(0, decisionLimit);
+        }
+      } catch (err) {
+        console.error('[MAMA MCP] Decision search failed:', err.message);
+      }
+    }
+
+    // Contract search (file-specific)
+    const contractTools = ['Edit', 'Write', 'apply_patch'];
+    const codeExtensions = ['.js', '.ts', '.jsx', '.tsx', '.py', '.go', '.rs', '.java'];
+    const ext = filePath ? path.extname(filePath) : '';
+
+    if (
+      contractLimit > 0 &&
+      filePath &&
+      contractTools.includes(toolName) &&
+      codeExtensions.includes(ext)
+    ) {
+      const basename = path.basename(filePath, ext);
+      const keywords = basename.split(/[-_]/).filter(Boolean);
+      const contractQuery = `contract api ${keywords.join(' ')}`.trim();
+
+      if (contractQuery) {
+        try {
+          const contractEmbedding = await generateEmbedding(contractQuery);
+          const contractMatches = await vectorSearch(contractEmbedding, 10, similarityThreshold);
+          if (Array.isArray(contractMatches)) {
+            contractResults = contractMatches
+              .filter((r) => r.topic && r.topic.startsWith('contract_'))
+              .slice(0, contractLimit);
+          }
+        } catch (err) {
+          console.error('[MAMA MCP] Contract search failed:', err.message);
+        }
+      }
+    }
+
+    return {
+      success: true,
+      decisionResults,
+      contractResults,
     };
   }
 

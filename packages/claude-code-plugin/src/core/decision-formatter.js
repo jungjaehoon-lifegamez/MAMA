@@ -14,6 +14,7 @@
 
 const { info } = require('./debug-logger');
 const { formatTopNContext } = require('./relevance-scorer');
+const { sanitizeForPrompt } = require('./prompt-sanitizer');
 
 /**
  * Format decision context for Claude injection with top-N selection
@@ -120,7 +121,7 @@ function formatWithTopN(decisions, topN) {
   const { full, summary } = formatTopNContext(decisions, topN);
 
   const current = full[0]; // Highest relevance
-  const topic = current.topic;
+  const topic = sanitizeForPrompt(current.topic);
 
   // Task 8.2: Full detail for top 3 decisions
   let context = `
@@ -135,11 +136,11 @@ Top ${full.length} Most Relevant Decisions:
     const outcomeEmoji = getOutcomeEmoji(d.outcome);
     const relevancePercent = Math.round((d.relevanceScore || 0) * 100);
 
-    context += `\n\n${i + 1}. ${d.decision} (${duration}, relevance: ${relevancePercent}%) ${outcomeEmoji}`;
-    context += `\n   Reasoning: ${d.reasoning || 'N/A'}`;
+    context += `\n\n${i + 1}. ${sanitizeForPrompt(d.decision)} (${duration}, relevance: ${relevancePercent}%) ${outcomeEmoji}`;
+    context += `\n   Reasoning: ${sanitizeForPrompt(d.reasoning || 'N/A')}`;
 
     if (d.outcome === 'FAILED') {
-      context += `\n   ⚠️ Failure: ${d.failure_reason || 'Unknown reason'}`;
+      context += `\n   ⚠️ Failure: ${sanitizeForPrompt(d.failure_reason || 'Unknown reason')}`;
     }
   }
 
@@ -151,7 +152,7 @@ Top ${full.length} Most Relevant Decisions:
     if (summary.failures && summary.failures.length > 0) {
       context += `\n\n⚠️ Other Failures:`;
       for (const failure of summary.failures) {
-        context += `\n- ${failure.decision}: ${failure.reason || 'Unknown'}`;
+        context += `\n- ${sanitizeForPrompt(failure.decision)}: ${sanitizeForPrompt(failure.reason || 'Unknown')}`;
       }
     }
   }
@@ -170,10 +171,10 @@ function formatSmallHistory(current, history) {
   const duration = calculateDuration(current.created_at);
 
   let context = `
-🧠 DECISION HISTORY: ${current.topic}
+🧠 DECISION HISTORY: ${sanitizeForPrompt(current.topic)}
 
-Current: ${current.decision} (${duration}, confidence: ${current.confidence})
-Reasoning: ${current.reasoning || 'N/A'}
+Current: ${sanitizeForPrompt(current.decision)} (${duration}, confidence: ${current.confidence})
+Reasoning: ${sanitizeForPrompt(current.reasoning || 'N/A')}
 `.trim();
 
   // Add history details
@@ -187,10 +188,10 @@ Reasoning: ${current.reasoning || 'N/A'}
       );
       const outcomeEmoji = getOutcomeEmoji(decision.outcome);
 
-      context += `- ${decision.decision} (${durationDays} days) ${outcomeEmoji}\n`;
+      context += `- ${sanitizeForPrompt(decision.decision)} (${durationDays} days) ${outcomeEmoji}\n`;
 
       if (decision.outcome === 'FAILED') {
-        context += `  Reason: ${decision.failure_reason || 'Unknown'}\n`;
+        context += `  Reason: ${sanitizeForPrompt(decision.failure_reason || 'Unknown')}\n`;
       }
     }
   }
@@ -221,10 +222,10 @@ function formatLargeHistory(current, history) {
   const lastEvolution = history.length > 0 ? history[0] : null;
 
   let context = `
-🧠 DECISION HISTORY: ${current.topic}
+🧠 DECISION HISTORY: ${sanitizeForPrompt(current.topic)}
 
-Current: ${current.decision} (confidence: ${current.confidence})
-Reasoning: ${current.reasoning || 'N/A'}
+Current: ${sanitizeForPrompt(current.decision)} (confidence: ${current.confidence})
+Reasoning: ${sanitizeForPrompt(current.reasoning || 'N/A')}
 
 History: ${history.length + 1} decisions over ${totalDuration}
 `.trim();
@@ -234,16 +235,16 @@ History: ${history.length + 1} decisions over ${totalDuration}
     context += '\n\n⚠️ Key Failures (avoid these):\n';
 
     for (const failure of topFailures) {
-      context += `- ${failure.decision}: ${failure.failure_reason || 'Unknown reason'}\n`;
+      context += `- ${sanitizeForPrompt(failure.decision)}: ${sanitizeForPrompt(failure.failure_reason || 'Unknown reason')}\n`;
     }
   }
 
   // Add last evolution
   if (lastEvolution) {
-    context += `\nLast evolution: ${lastEvolution.decision} → ${current.decision}`;
+    context += `\nLast evolution: ${sanitizeForPrompt(lastEvolution.decision)} → ${sanitizeForPrompt(current.decision)}`;
 
     if (current.reasoning) {
-      const reasonSummary = current.reasoning.substring(0, 100);
+      const reasonSummary = sanitizeForPrompt(current.reasoning.substring(0, 100));
       context += ` (${reasonSummary}${current.reasoning.length > 100 ? '...' : ''})`;
     }
   }
@@ -582,27 +583,29 @@ function formatTrustContext(trustCtx) {
   if (trustCtx.source) {
     const { file, line, author, timestamp } = trustCtx.source;
     const timeAgo = calculateDuration(timestamp);
-    lines.push(`📍 Source: ${file}:${line} (${timeAgo}, by ${author})`);
+    lines.push(
+      `📍 Source: ${sanitizeForPrompt(file)}:${line} (${timeAgo}, by ${sanitizeForPrompt(author)})`
+    );
     hasContent = true;
   }
 
   // 2. Causality
   if (trustCtx.causality && trustCtx.causality.impact) {
-    lines.push(`🔗 Reason: ${trustCtx.causality.impact}`);
+    lines.push(`🔗 Reason: ${sanitizeForPrompt(trustCtx.causality.impact)}`);
     hasContent = true;
   }
 
   // 3. Verifiability
   if (trustCtx.verification) {
     const { test_file, result } = trustCtx.verification;
-    const status = result === 'success' ? 'passed' : result;
-    lines.push(`✅ Verified: ${test_file} ${status}`);
+    const status = result === 'success' ? 'passed' : sanitizeForPrompt(result);
+    lines.push(`✅ Verified: ${sanitizeForPrompt(test_file || 'Verified')} ${status}`);
     hasContent = true;
   }
 
   // 4. Context relevance
   if (trustCtx.context_match && trustCtx.context_match.user_intent) {
-    lines.push(`🎯 Applies to: ${trustCtx.context_match.user_intent}`);
+    lines.push(`🎯 Applies to: ${sanitizeForPrompt(trustCtx.context_match.user_intent)}`);
     hasContent = true;
   }
 
@@ -718,8 +721,8 @@ function formatTeaserList(decisions, topN = 3) {
     // Preview (max 60 chars)
     const preview = d.decision.length > 60 ? d.decision.substring(0, 60) + '...' : d.decision;
 
-    output += `\n${i + 1}. ${d.topic} (${relevance}% match)`;
-    output += `\n   "${preview}"`;
+    output += `\n${i + 1}. ${sanitizeForPrompt(d.topic)} (${relevance}% match)`;
+    output += `\n   "${sanitizeForPrompt(preview)}"`;
 
     // Recency metadata (NEW - Gaussian Decay)
     // Shows age and recency impact to help Claude adjust parameters
@@ -734,7 +737,7 @@ function formatTeaserList(decisions, topN = 3) {
       }
     }
 
-    output += `\n   🔍 mama.recall('${d.topic}')`;
+    output += `\n   🔍 mama.recall(${JSON.stringify(d.topic)})`;
 
     if (i < topDecisions.length - 1) {
       output += '\n';
@@ -783,12 +786,12 @@ function formatTeaser(decision) {
   const teaser = `
 💡 MAMA has related info
 
-📚 Topic: ${decision.topic}
-📖 Preview: "${preview}"
+📚 Topic: ${sanitizeForPrompt(decision.topic)}
+📖 Preview: "${sanitizeForPrompt(preview)}"
 📁 Files: ${files}
 ⏰ Updated: ${timeAgo}
 
-🔍 Read more: mama.recall('${decision.topic}')
+🔍 Read more: mama.recall(${JSON.stringify(decision.topic)})
   `.trim();
 
   return teaser;
@@ -832,10 +835,10 @@ function formatSingleDecision(decision) {
   const outcomeText = decision.outcome || 'Not yet tracked';
 
   let output = `
-📋 Decision: ${decision.topic}
+📋 Decision: ${sanitizeForPrompt(decision.topic)}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${decision.reasoning || decision.decision}
+${sanitizeForPrompt(decision.reasoning || decision.decision)}
 `.trim();
 
   // Metadata section
@@ -845,7 +848,7 @@ ${decision.reasoning || decision.decision}
   output += `\n${outcomeEmoji} Outcome: ${outcomeText}`;
 
   if (decision.outcome === 'FAILED' && decision.failure_reason) {
-    output += `\n⚠️  Failure reason: ${decision.failure_reason}`;
+    output += `\n⚠️  Failure reason: ${sanitizeForPrompt(decision.failure_reason)}`;
   }
 
   // Trust context section (if available)
@@ -856,17 +859,18 @@ ${decision.reasoning || decision.decision}
 
     if (trustCtx.source) {
       const { file, line, author } = trustCtx.source;
-      output += `\n📍 Source: ${file}${line ? ':' + line : ''} (by ${author || 'unknown'})`;
+      output += `\n📍 Source: ${sanitizeForPrompt(file)}${line ? ':' + line : ''} (by ${sanitizeForPrompt(author || 'unknown')})`;
     }
 
     if (trustCtx.causality?.impact) {
-      output += `\n🔗 Impact: ${trustCtx.causality.impact}`;
+      output += `\n🔗 Impact: ${sanitizeForPrompt(trustCtx.causality.impact)}`;
     }
 
     if (trustCtx.verification) {
       const { test_file, result } = trustCtx.verification;
-      const status = result === 'success' ? '✅ passed' : `⚠️ ${result}`;
-      output += `\n${status}: ${test_file || 'Verified'}`;
+      const safeResult = sanitizeForPrompt(result);
+      const status = result === 'success' ? '✅ passed' : `⚠️ ${safeResult}`;
+      output += `\n${status}: ${sanitizeForPrompt(test_file || 'Verified')}`;
     }
 
     if (trustCtx.track_record) {
@@ -894,17 +898,17 @@ function formatDecisionHistory(decisions, semanticEdges = null) {
   const older = decisions.slice(1);
 
   let output = `
-📋 Decision History: ${topic}
+📋 Decision History: ${sanitizeForPrompt(topic)}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Latest Decision (${calculateDuration(latest.created_at)}):
-${latest.decision}
+${sanitizeForPrompt(latest.decision)}
 `.trim();
 
   // Show brief reasoning if available
   if (latest.reasoning) {
     const briefReasoning = latest.reasoning.split('\n')[0].substring(0, 150);
-    output += `\n\nReasoning: ${briefReasoning}${latest.reasoning.length > 150 ? '...' : ''}`;
+    output += `\n\nReasoning: ${sanitizeForPrompt(briefReasoning)}${latest.reasoning.length > 150 ? '...' : ''}`;
   }
 
   output += `\n\nConfidence: ${Math.round(latest.confidence * 100)}%`;
@@ -918,10 +922,10 @@ ${latest.decision}
       const d = older[i];
       const timeAgo = calculateDuration(d.created_at);
       const emoji = getOutcomeEmoji(d.outcome);
-      output += `\n${i + 2}. ${d.decision} (${timeAgo}) ${emoji}`;
+      output += `\n${i + 2}. ${sanitizeForPrompt(d.decision)} (${timeAgo}) ${emoji}`;
 
       if (d.outcome === 'FAILED' && d.failure_reason) {
-        output += `\n   ⚠️ ${d.failure_reason}`;
+        output += `\n   ⚠️ ${sanitizeForPrompt(d.failure_reason)}`;
       }
     }
 
@@ -947,7 +951,7 @@ ${latest.decision}
         output += '\n✨ Refines (builds upon):';
         semanticEdges.refines.slice(0, 3).forEach((e) => {
           const preview = e.decision.substring(0, 60);
-          output += `\n   • ${e.topic}: ${preview}${e.decision.length > 60 ? '...' : ''}`;
+          output += `\n   • ${sanitizeForPrompt(e.topic)}: ${sanitizeForPrompt(preview)}${e.decision.length > 60 ? '...' : ''}`;
         });
         if (semanticEdges.refines.length > 3) {
           output += `\n   ... and ${semanticEdges.refines.length - 3} more`;
@@ -959,7 +963,7 @@ ${latest.decision}
         output += '\n\n🔄 Refined by (later improvements):';
         semanticEdges.refined_by.slice(0, 3).forEach((e) => {
           const preview = e.decision.substring(0, 60);
-          output += `\n   • ${e.topic}: ${preview}${e.decision.length > 60 ? '...' : ''}`;
+          output += `\n   • ${sanitizeForPrompt(e.topic)}: ${sanitizeForPrompt(preview)}${e.decision.length > 60 ? '...' : ''}`;
         });
         if (semanticEdges.refined_by.length > 3) {
           output += `\n   ... and ${semanticEdges.refined_by.length - 3} more`;
@@ -971,7 +975,7 @@ ${latest.decision}
         output += '\n\n⚡ Contradicts:';
         semanticEdges.contradicts.forEach((e) => {
           const preview = e.decision.substring(0, 60);
-          output += `\n   • ${e.topic}: ${preview}${e.decision.length > 60 ? '...' : ''}`;
+          output += `\n   • ${sanitizeForPrompt(e.topic)}: ${sanitizeForPrompt(preview)}${e.decision.length > 60 ? '...' : ''}`;
         });
       }
 
@@ -980,7 +984,7 @@ ${latest.decision}
         output += '\n\n❌ Contradicted by:';
         semanticEdges.contradicted_by.forEach((e) => {
           const preview = e.decision.substring(0, 60);
-          output += `\n   • ${e.topic}: ${preview}${e.decision.length > 60 ? '...' : ''}`;
+          output += `\n   • ${sanitizeForPrompt(e.topic)}: ${sanitizeForPrompt(preview)}${e.decision.length > 60 ? '...' : ''}`;
         });
       }
     }
@@ -1054,8 +1058,8 @@ function formatList(decisions, options = {}) {
     const preview = d.decision.length > 60 ? d.decision.substring(0, 60) + '...' : d.decision;
 
     output += `\n${i + 1}. [${timeAgo}] ${type}\n`;
-    output += `   📚 ${d.topic}\n`;
-    output += `   💡 ${preview}\n`;
+    output += `   📚 ${sanitizeForPrompt(d.topic)}\n`;
+    output += `   💡 ${sanitizeForPrompt(preview)}\n`;
     output += `   📊 ${confidence}% confidence | ${status}\n`;
   }
 

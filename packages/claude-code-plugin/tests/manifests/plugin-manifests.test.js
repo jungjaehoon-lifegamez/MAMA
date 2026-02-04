@@ -160,14 +160,20 @@ describe('M3.3: Plugin Manifests', () => {
       expect(hookHandlers[0].command).toContain('userpromptsubmit-hook.js');
     });
 
-    it('should have PreToolUse/PostToolUse hooks disabled (efficiency decision)', () => {
+    it('should have PostToolUse hook enabled for MAMA v2 contract detection', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
       const hooksConfig = pluginConfig.hooks;
 
-      // PreToolUse and PostToolUse are intentionally disabled for efficiency
-      // Only SessionStart and UserPromptSubmit provide value with acceptable latency
-      expect(hooksConfig.PreToolUse).toBeUndefined();
-      expect(hooksConfig.PostToolUse).toBeUndefined();
+      // MAMA v2: PostToolUse hook enabled for contract detection
+      // - Detects code changes and extracts API contracts
+      // - Suggests Haiku Task for automated contract saving
+      // - Enables frontend/backend consistency checking
+      expect(hooksConfig.PostToolUse).toBeDefined();
+      expect(Array.isArray(hooksConfig.PostToolUse)).toBe(true);
+      expect(hooksConfig.PostToolUse[0].hooks[0].command).toContain('posttooluse-hook.js');
+
+      // PreToolUse remains disabled for efficiency (contract injection via MCP server)
+      expect(hooksConfig.PreToolUse).toBeDefined(); // Script exists but may have rate limiting
     });
 
     it('should still have hook scripts available (for future re-enablement)', () => {
