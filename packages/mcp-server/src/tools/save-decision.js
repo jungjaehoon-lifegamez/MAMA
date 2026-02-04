@@ -80,6 +80,13 @@ function validateContractDecision(topic, decision, reasoning) {
   };
 }
 
+function normalizeDecisionText(text) {
+  if (!text) {
+    return '';
+  }
+  return text.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 /**
  * Create save decision tool with dependencies
  * @param {Object} mamaApi - MAMA API instance
@@ -205,6 +212,9 @@ Structure your reasoning with these layers for maximum value:
         };
       }
 
+      let contractWarning = null;
+      let contractSkipId = null;
+
       if (isContractTopic(topic)) {
         const validation = validateContractDecision(topic, decision, reasoning);
         if (!validation.valid) {
@@ -215,6 +225,35 @@ Structure your reasoning with these layers for maximum value:
             )})`,
           };
         }
+
+        try {
+          const recallResult = await mamaApi.recall(topic);
+          const existing = recallResult?.supersedes_chain?.[0];
+          if (existing?.decision) {
+            const incoming = normalizeDecisionText(decision);
+            const current = normalizeDecisionText(existing.decision);
+            if (incoming && incoming === current) {
+              contractSkipId = existing.id;
+              contractWarning = 'Duplicate contract detected; skipping save.';
+            } else if (incoming && current) {
+              contractWarning =
+                'Existing contract with same topic differs; verify this is an intentional update.';
+            }
+          }
+        } catch (error) {
+          // Non-fatal: proceed without dedupe if recall fails
+        }
+      }
+
+      if (contractSkipId) {
+        return {
+          success: true,
+          decision_id: contractSkipId,
+          topic: topic,
+          message: `⚠️ Duplicate contract detected; skipping save (ID: ${contractSkipId})`,
+          recall_command: `To recall: mama.recall('${topic}')`,
+          warning: contractWarning,
+        };
       }
 
       // Call MAMA API (mama.save will handle outcome mapping to DB format)
@@ -240,7 +279,9 @@ Structure your reasoning with these layers for maximum value:
         recall_command: `To recall: mama.recall('${topic}')`,
         // Story 1.1/1.2: Collaborative fields (optional)
         ...(result.similar_decisions && { similar_decisions: result.similar_decisions }),
-        ...(result.warning && { warning: result.warning }),
+        ...((result.warning || contractWarning) && {
+          warning: [result.warning, contractWarning].filter(Boolean).join(' '),
+        }),
         ...(result.collaboration_hint && { collaboration_hint: result.collaboration_hint }),
         ...(result.reasoning_graph && { reasoning_graph: result.reasoning_graph }),
       };

@@ -12,6 +12,7 @@ describe('Narrative Input Validation', () => {
     mamaMock = {
       save: vi.fn(),
       updateOutcome: vi.fn(),
+      recall: vi.fn(),
     };
 
     // Inject mock using factory function
@@ -92,6 +93,10 @@ describe('Narrative Input Validation', () => {
         reasoning: 'Needs to be added',
       };
 
+      mamaMock.recall.mockResolvedValue({
+        supersedes_chain: [],
+      });
+
       const result = await saveDecisionTool.handler(params);
 
       expect(result.success).toBe(false);
@@ -105,6 +110,10 @@ describe('Narrative Input Validation', () => {
         reasoning: 'Represents API contract from users.ts and must be stable.',
       };
 
+      mamaMock.recall.mockResolvedValue({
+        supersedes_chain: [],
+      });
+
       mamaMock.save.mockResolvedValue({ success: true, id: 'decision_456' });
 
       const result = await saveDecisionTool.handler(params);
@@ -116,6 +125,30 @@ describe('Narrative Input Validation', () => {
           decision: 'GET /users expects none, returns User[] defined in users.ts',
         })
       );
+    });
+
+    it('should skip duplicate contract decisions', async () => {
+      const params = {
+        topic: 'contract_get_users',
+        decision: 'GET /users expects none, returns User[] defined in users.ts',
+        reasoning: 'Same as existing contract.',
+      };
+
+      mamaMock.recall.mockResolvedValue({
+        supersedes_chain: [
+          {
+            id: 'decision_existing',
+            decision: 'GET /users expects none, returns User[] defined in users.ts',
+          },
+        ],
+      });
+
+      const result = await saveDecisionTool.handler(params);
+
+      expect(result.success).toBe(true);
+      expect(result.decision_id).toBe('decision_existing');
+      expect(result.message).toContain('Duplicate contract');
+      expect(mamaMock.save).not.toHaveBeenCalled();
     });
   });
 });

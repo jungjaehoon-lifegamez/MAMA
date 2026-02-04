@@ -80,6 +80,13 @@ function validateContractDecision(topic, decision, reasoning) {
   };
 }
 
+function normalizeDecisionText(text) {
+  if (!text) {
+    return '';
+  }
+  return text.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 /**
  * Save decision tool definition
  */
@@ -155,6 +162,9 @@ const saveDecisionTool = {
         };
       }
 
+      let contractWarning = null;
+      let contractSkipId = null;
+
       if (isContractTopic(topic)) {
         const validation = validateContractDecision(topic, decision, reasoning);
         if (!validation.valid) {
@@ -165,6 +175,35 @@ const saveDecisionTool = {
             )})`,
           };
         }
+
+        try {
+          const recallResult = await mama.recall(topic);
+          const existing = recallResult?.supersedes_chain?.[0];
+          if (existing?.decision) {
+            const incoming = normalizeDecisionText(decision);
+            const current = normalizeDecisionText(existing.decision);
+            if (incoming && incoming === current) {
+              contractSkipId = existing.id;
+              contractWarning = 'Duplicate contract detected; skipping save.';
+            } else if (incoming && current) {
+              contractWarning =
+                'Existing contract with same topic differs; verify this is an intentional update.';
+            }
+          }
+        } catch (error) {
+          // Non-fatal: proceed without dedupe if recall fails
+        }
+      }
+
+      if (contractSkipId) {
+        return {
+          success: true,
+          decision_id: contractSkipId,
+          topic: topic,
+          message: `⚠️ Duplicate contract detected; skipping save (ID: ${contractSkipId})`,
+          recall_command: `To recall: mama.recall('${topic}')`,
+          warning: contractWarning,
+        };
       }
 
       // Call MAMA API (mama.save returns decision ID as string, not object)
@@ -183,6 +222,7 @@ const saveDecisionTool = {
         topic: topic,
         message: `✅ Decision saved successfully (ID: ${decisionId})`,
         recall_command: `To recall: mama.recall('${topic}')`,
+        ...(contractWarning && { warning: contractWarning }),
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
