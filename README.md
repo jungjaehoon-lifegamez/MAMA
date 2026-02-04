@@ -20,235 +20,65 @@ MAMA:           "Prefers morning meetings (tried afternoons but energy was low) 
 
 ## 🚀 Why MAMA for Development?
 
-**Stop debugging the same bugs. Stop explaining the same context. Let Claude remember.**
+### You've been here before
 
-### The Problem: Fullstack Development Chaos
+**Yesterday:** "Claude, make me a login API"  
+→ Works great. You test it. Perfect.
 
-**You:** _"Create a user registration feature"_
+**Today:** "Claude, add the frontend login form"  
+→ 404 error. Wrong endpoint. Wrong fields. Nothing connects.
 
-Without MAMA, AI agents build each layer in isolation, creating cascading failures:
+**Why?** Claude forgot everything from yesterday.
 
-<details>
-<summary><strong>❌ Without MAMA: 3 Hours of Debugging</strong></summary>
+### The Real Problem
 
-**Session 1 - Frontend (React):**
+When you ask Claude to build fullstack:
 
-```typescript
-// You: "Create registration form"
-// Claude imagines the API contract:
-const response = await fetch('/api/register', {
-  method: 'POST',
-  body: JSON.stringify({ email, password, name }), // ⚠️ Assumed schema
-});
-const { userId, token } = await response.json(); // ⚠️ Assumed response
-```
+- **Session 1**: Frontend calls `/api/register` with `{ email, password, name }`
+- **Session 2**: Backend creates `/api/signup` expecting `{ username, pwd }`
+- **Session 3**: You spend 2 hours debugging why they don't connect
 
-**Session 2 - Backend (Node.js/Python):**
+**It's not you. It's not Claude. It's amnesia.**
 
-```typescript
-// You: "Create registration endpoint"
-// Claude has zero knowledge of frontend:
-app.post('/api/signup', async (req, res) => {
-  // ❌ Different path!
-  const { username, pwd } = req.body; // ❌ Different field names!
-  const user = await db.createUser(username, pwd);
-  res.json({ id: user.id, authToken: token }); // ❌ Different response!
-});
-```
+Each session starts from zero. No memory of what was built before.
 
-**Session 3 - Database (PostgreSQL):**
+### What MAMA Does
 
-```sql
--- You: "Create users table"
--- Claude guesses the schema:
-CREATE TABLE users (
-  user_id SERIAL PRIMARY KEY,  -- ❌ Frontend expects 'userId'
-  username VARCHAR(255),       -- ❌ Backend sent 'username', frontend sent 'name'
-  password_hash TEXT
-);
-```
-
-**Session 4 - Integration Hell:**
+Saves the "contracts" between your code layers:
 
 ```
-Frontend calls: POST /api/register { email, password, name }
-Backend expects: POST /api/signup { username, pwd }
-Database stores: user_id, username, password_hash
-
-Result: 404 error → Field mismatch → NULL constraint violation
-Time wasted: 3+ hours debugging across 3 languages
+Day 1: Frontend built → MAMA remembers: "POST /api/register expects X, returns Y"
+Day 3: Backend task → Claude sees: "Frontend already expects POST /api/register"
+       → Writes matching code automatically
 ```
 
-**Why this happens:**
+**That's it.** No more mismatches. No more debugging.
 
-- Each session starts with **zero context** from previous work
-- AI agents **imagine** contracts instead of reading actual implementations
-- Different naming conventions (camelCase JS → snake_case Python → snake_case SQL)
-- No single source of truth for API schemas
+### Does This Actually Work?
 
-</details>
+Real timeline from our testing:
 
-<details open>
-<summary><strong>✅ With MAMA: First-Try Success</strong></summary>
+- **11:00am**: Built backend login (Python FastAPI)
+- **2:00pm**: Switched to frontend work (TypeScript React)
+- **2:05pm**: Asked "add login form"
+- **Result**: Worked first try. Zero debugging.
 
-**Session 1 - Frontend (React):**
+Different session. Different language. Same contract.
 
-```typescript
-// You: "Create registration form"
-const response = await fetch('/api/auth/register', {
-  body: JSON.stringify({ email, password, name }),
-});
-const { userId, token } = await response.json();
+### Who This Helps
 
-// 🔌 MAMA PostToolUse Hook detects code change:
-// → Saved contract: POST /api/auth/register
-//   Request: { email: string, password: string, name: string }
-//   Response: { userId: string, token: string }
-```
+You know you need MAMA if you've said:
 
-**Session 2 - Backend (Node.js/Python):**
+- "Why doesn't frontend connect to backend?"
+- "I literally told it the endpoint name yesterday"
+- "Do I have to paste the API spec every time?"
+- "Claude keeps guessing wrong field names"
 
-```typescript
-// You: "Create registration endpoint"
+**Before MAMA:**  
+Paste API docs every session → Hope Claude remembers → Debug for hours
 
-// 🧠 MAMA PreToolUse Hook injects context:
-// "⚠️ Frontend expects POST /api/auth/register with { email, password, name }"
-
-// Claude writes matching code:
-app.post('/api/auth/register', async (req, res) => {
-  // ✅ Correct path
-  const { email, password, name } = req.body; // ✅ Exact fields
-  const user = await db.createUser(email, password, name);
-  res.json({ userId: user.id, token }); // ✅ Matching response
-});
-
-// 🔌 MAMA saves backend contract
-```
-
-**Session 3 - Database (PostgreSQL):**
-
-```sql
--- You: "Create users table"
-
--- 🧠 MAMA recalls backend contract:
--- "Backend needs: email, password, name fields"
-
-CREATE TABLE users (
-  user_id SERIAL PRIMARY KEY,    -- ✅ Maps to userId in code
-  email VARCHAR(255) UNIQUE,     -- ✅ From contract
-  password_hash TEXT,            -- ✅ Matches backend
-  name VARCHAR(255)              -- ✅ From contract
-);
-```
-
-**Result:**
-
-- ✅ Works on first try
-- ✅ No field mismatches
-- ✅ Consistent naming across stack
-- ⏱️ Time saved: 3 hours → 0 debugging
-
-</details>
-
-**The difference:** MAMA creates a **shared contract database** that survives across sessions, languages, and AI agents.
-
-### MAMA: AI Agent Consistency Engine
-
-**The Meta-Problem:** AI agents operate in **episodic amnesia** — each session starts from scratch. They don't remember:
-
-- What contracts other agents agreed to
-- Which implementations actually exist (vs imagined)
-- Why certain architectural choices were made
-- Whether those choices worked in production
-
-**MAMA's Solution:** A **persistent contract database** that acts as the single source of truth.
-
-**How MAMA prevents the chaos above:**
-
-| Problem                      | Without MAMA                                                                  | With MAMA                                                                         |
-| ---------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| **Endpoint mismatch**        | Frontend: `/api/register`<br>Backend: `/api/signup`                           | Contract saved: `POST /api/auth/register`<br>Both layers use exact path           |
-| **Field name drift**         | Frontend: `name`<br>Backend: `username`<br>DB: `user_name`                    | Contract defines: `{ email, password, name }`<br>All layers use consistent naming |
-| **Response schema guessing** | Frontend assumes: `{ userId, token }`<br>Backend returns: `{ id, authToken }` | Contract specifies response schema<br>Claude generates matching code              |
-| **Language barriers**        | JS camelCase → Python snake_case<br>No translation rules                      | MAMA stores canonical names<br>Claude adapts per language convention              |
-| **Cross-session amnesia**    | Day 1 frontend work forgotten by Day 3                                        | Contract persists indefinitely<br>Available to all future sessions                |
-
-**Key Features:**
-
-- 🔍 **Contract Detection**: Automatically extracts API schemas from code changes
-- 🧠 **Cross-Session Memory**: Frontend knows what Backend promised (even weeks later)
-- ⚠️ **Conflict Prevention**: Claude warns you before writing incompatible code
-- 📊 **Decision Evolution**: Track why you chose JWT over sessions (and whether it worked)
-- 🌐 **Language-Agnostic**: Works across TypeScript, Python, Go, SQL, etc.
-
-### Real-World Timeline
-
-**Monday 10am - Backend Development:**
-
-```python
-# You: "Create login API"
-@app.post("/api/auth/login")
-def login(email: str, password: str):
-    user = verify_user(email, password)
-    return {"userId": user.id, "token": generate_token(user)}
-
-# 🔌 MAMA Auto-saves:
-# Contract: POST /api/auth/login
-#   Input: { email: string, password: string }
-#   Output: { userId: string, token: string }
-#   Language: Python (FastAPI)
-```
-
-**Wednesday 3pm - Frontend Work (New session, different developer):**
-
-```typescript
-// You: "Add login form"
-
-// 🧠 MAMA injects before you write code:
-// "Backend contract found: POST /api/auth/login
-//  expects { email, password }, returns { userId, token }"
-
-// Claude writes perfect integration:
-const login = async (email: string, password: string) => {
-  const response = await fetch('/api/auth/login', {
-    // ✅ Exact path
-    method: 'POST',
-    body: JSON.stringify({ email, password }), // ✅ Exact fields
-  });
-  const { userId, token } = await response.json(); // ✅ Exact response
-  return { userId, token };
-};
-
-// Works on first try. No 404, no field errors, no type mismatches.
-```
-
-**Why this matters:**
-
-- Different sessions (2 days apart)
-- Different languages (Python → TypeScript)
-- Different developers (backend specialist → frontend specialist)
-- **Same contract** - MAMA bridged the gap
-
-### How It Works
-
-1. **MCP Server** (`@jungjaehoon/mama-server`)
-   - Semantic search across decisions
-   - Contract database with vector similarity
-   - Works with Claude Desktop & Claude Code
-
-2. **Claude Code Plugin** (`mama`)
-   - Auto-detects code changes (PostToolUse hook)
-   - Injects relevant contracts before edits (PreToolUse hook)
-   - Suggests saving new contracts via Haiku agent
-
-**What you get:**
-
-- Claude remembers your past choices and whether they worked
-- Pick up conversations without re-explaining everything
-- See how your preferences evolved over time
-- Free, private, all data stays on your machine
-
----
+**With MAMA:**  
+Build once → MAMA remembers → Everything connects
 
 ## 🤔 Which MAMA Do You Need?
 
