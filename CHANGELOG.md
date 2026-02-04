@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed - claude-code-plugin@1.7.3
 
-- PostToolUse hook output visibility mechanism
+- **PreToolUse hook visibility**: Now uses exit code 2 + stderr (visible to Claude)
+- **PostToolUse hook visibility**: exit code 2 + stderr (visible to Claude)
 - Auto-Save suggestions now appear immediately after code changes
 - Hooks moved inline to plugin.json (official Claude Code spec)
 - **PreToolUse hook re-enabled**: Contract injection before Read/Grep operations (was mistakenly removed)
