@@ -276,37 +276,69 @@ function formatContractTemplate(filePath, diffContent, toolName) {
   output += '\n```\n\n';
 
   output += '---\n\n';
-  output += '💡 **Action Required:**\n\n';
-  output += 'Use Task tool to analyze this diff and extract contracts:\n\n';
+  output += '⚠️ **CRITICAL: Contract Analysis Required**\n\n';
+  output += '**YOU MUST execute the Task tool below to prevent vibe coding breakage.**\n\n';
+  output +=
+    'Without contract extraction, future sessions will hallucinate schemas and break consistency.\n';
+  output += 'This is the PRIMARY purpose of MAMA v2 - DO NOT skip this step.\n\n';
+  output += '**Execute this Task tool call NOW:**\n\n';
   output += '```javascript\n';
   output += 'Task({\n';
   output += '  subagent_type: "general-purpose",\n';
   output += '  model: "haiku",  // Fast & cheap\n';
   output += '  description: "Extract and save contracts",\n';
   output += '  prompt: `\n';
-  output += `    Analyze this code change from ${safeFilePath}:\n`;
+  output += `    CRITICAL TASK: Extract API contracts from code changes in ${safeFilePath}\n`;
   output += '    \n';
+  output += '    WHY THIS MATTERS:\n';
+  output += '    - Prevents schema mismatches between frontend/backend\n';
+  output += '    - Stops Claude from hallucinating field names in future sessions\n';
+  output += '    - Maintains consistency across multi-session development\n';
+  output += '    \n';
+  output += '    CODE CHANGES TO ANALYZE:\n';
   output += safeChunks
     .map((chunk, index) => `    --- chunk ${index + 1}/${safeChunks.length} ---\n    ${chunk}`)
     .join('\n');
   output += '\n';
   output += '    \n';
-  output += '    Extract contracts:\n';
-  output += '    1. API endpoints (method, path, request/response schema)\n';
-  output += '    2. Function signatures (name, parameters, return type)\n';
-  output += '    3. Type definitions (interfaces, types)\n';
+  output += '    REQUIRED: Extract ALL contracts found:\n';
   output += '    \n';
-  output += '    Skip:\n';
-  output += '    - Test files\n';
-  output += '    - Comments and examples\n';
-  output += '    - Mock/fake code\n';
+  output += '    1. API ENDPOINTS:\n';
+  output += '       - Method: GET/POST/PUT/DELETE\n';
+  output += '       - Path: /api/users/:id\n';
+  output += '       - Request schema: { email: string, password: string }\n';
+  output += '       - Success response: { userId: string, token: string }\n';
+  output += '       - Error responses: { error: string } with status codes\n';
   output += '    \n';
-  output += '    If analysis fails or times out:\n';
-  output += '    - Reply: "contract analysis skipped"\n';
-  output += '    - Do NOT save any contract\n';
+  output += '    2. FUNCTION SIGNATURES:\n';
+  output += '       - Name, parameters with types, return type\n';
+  output += '       - Async/sync specification\n';
   output += '    \n';
-  output += '    Save valid contracts to MAMA:\n';
-  output += '    /mama:decision <topic> "<decision>" "<reasoning>" --confidence=0.8\n';
+  output += '    3. TYPE DEFINITIONS:\n';
+  output += '       - Interfaces, types, schemas\n';
+  output += '       - Field names and types\n';
+  output += '    \n';
+  output += '    SKIP these (not contracts):\n';
+  output += '    - Test files, mock data, examples, comments\n';
+  output += '    \n';
+  output += '    FOR EACH CONTRACT FOUND:\n';
+  output += '    \n';
+  output += '    Use /mama:decision to save with this format:\n';
+  output += '    \n';
+  output += '    Topic: contract_[method]_[path] (e.g., contract_post_api_users)\n';
+  output += '    Decision: Complete schema with request AND response\n';
+  output +=
+    '    Reasoning: Explain what this contract does, what depends on it, why consistency matters\n';
+  output += '    Confidence: 0.8-0.9 for clear contracts\n';
+  output += '    \n';
+  output += '    Example:\n';
+  output +=
+    '    /mama:decision contract_post_api_auth_login "POST /api/auth/login. Request: { email: string, password: string }. Response 200: { userId: string, token: string, email: string }. Response 401: { error: \\"Invalid credentials\\" }" "Authentication endpoint. Frontend must send exact email/password schema. Backend returns userId + token for session. Critical for login flow consistency." --confidence=0.9\n';
+  output += '    \n';
+  output += '    If NO valid contracts found (test files, config, docs):\n';
+  output += '    - Reply: "contract analysis skipped - no production contracts found"\n';
+  output += '    \n';
+  output += '    DO NOT skip contracts that exist. This is CRITICAL for preventing bugs.\n';
   output += '  `\n';
   output += '});\n';
   output += '```\n';
@@ -641,7 +673,7 @@ async function main() {
 
     // Correct Claude Code JSON format with hookSpecificOutput
     const systemMessage = hasCodeChange
-      ? `🔌 MAMA v2: Contract analysis required | 💾 Suggestion: ${topic} (${latencyMs}ms)`
+      ? `⚠️ MAMA v2 CRITICAL: Execute Task tool below to extract contracts and prevent future bugs | ${topic} (${latencyMs}ms)`
       : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
 
     const response = {
