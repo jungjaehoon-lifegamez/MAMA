@@ -523,6 +523,23 @@ async function readStdin() {
 async function main() {
   const startTime = Date.now();
 
+  // ALWAYS log hook execution to file for debugging
+  const hookLogFile = path.join(PLUGIN_ROOT, '.hook-execution.log');
+  try {
+    const timestamp = new Date().toISOString();
+    const logEntry =
+      JSON.stringify({
+        timestamp,
+        hook: 'PostToolUse',
+        toolName: process.env.TOOL_NAME || 'unknown',
+        filePath: process.env.FILE_PATH || 'unknown',
+        diffSize: process.env.DIFF_CONTENT ? process.env.DIFF_CONTENT.length : 0,
+      }) + '\n';
+    fs.appendFileSync(hookLogFile, logEntry, 'utf8');
+  } catch (err) {
+    // Ignore logging errors
+  }
+
   // DEBUG: Confirm hook is executing (only if MAMA_DEBUG enabled)
   if (process.env.MAMA_DEBUG === 'true') {
     console.error('🔍 [MAMA DEBUG] PostToolUse hook STARTED');
@@ -549,14 +566,19 @@ async function main() {
     let toolName, filePath, diffContent, conversationContext;
     try {
       const inputData = await readStdin();
-      toolName = inputData.toolName || inputData.tool || process.env.TOOL_NAME || '';
+      // Parse Claude Code project-level hook format
+      toolName =
+        inputData.tool_name || inputData.toolName || inputData.tool || process.env.TOOL_NAME || '';
       filePath =
+        (inputData.tool_input && inputData.tool_input.file_path) ||
         inputData.filePath ||
         inputData.file_path ||
         inputData.FILE_PATH ||
         process.env.FILE_PATH ||
         '';
       diffContent =
+        (inputData.tool_input && inputData.tool_input.content) ||
+        (inputData.tool_response && inputData.tool_response.content) ||
         inputData.diffContent ||
         inputData.diff ||
         inputData.content ||
@@ -687,13 +709,8 @@ async function main() {
       : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
 
     const response = {
-      decision: null,
-      reason: '',
-      hookSpecificOutput: {
-        hookEventName: 'PostToolUse',
-        systemMessage,
-        additionalContext,
-      },
+      decision: 'allow',
+      message: additionalContext,
     };
 
     // DEBUG: Confirm output (only if MAMA_DEBUG enabled)
@@ -704,7 +721,8 @@ async function main() {
       console.error(`🔍 [MAMA DEBUG] - additionalContext length: ${additionalContext.length}`);
     }
 
-    console.log(JSON.stringify(response));
+    // Output to stderr for exit code 2 (blocking error)
+    console.error(JSON.stringify(response));
 
     // Log suggestion
     const contractInfo = hasCodeChange ? ', contract analysis required' : '';
@@ -716,7 +734,9 @@ async function main() {
     // This would be handled by Claude Code's interaction system
     // For now, we just output the suggestion
 
-    process.exit(0);
+    // Exit with code 2 to make output visible to Claude (not just user)
+    // Per GitHub #11224: exit code 2 = blocking error = visible to Claude
+    process.exit(2);
   } catch (error) {
     logError(`[Hook] Fatal error: ${error.message}`);
     console.error(`❌ MAMA PostToolUse Hook Error: ${error.message}`);
