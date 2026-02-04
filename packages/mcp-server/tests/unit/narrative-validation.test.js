@@ -84,5 +84,38 @@ describe('Narrative Input Validation', () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain('Validation error');
     });
+
+    it('should reject malformed contract decisions', async () => {
+      const params = {
+        topic: 'contract_get_users',
+        decision: 'Add endpoint',
+        reasoning: 'Needs to be added',
+      };
+
+      const result = await saveDecisionTool.handler(params);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('contract decision seems malformed');
+    });
+
+    it('should accept well-formed contract decisions', async () => {
+      const params = {
+        topic: 'contract_get_users',
+        decision: 'GET /users expects none, returns User[] defined in users.ts',
+        reasoning: 'Represents API contract from users.ts and must be stable.',
+      };
+
+      mamaMock.save.mockResolvedValue({ success: true, id: 'decision_456' });
+
+      const result = await saveDecisionTool.handler(params);
+
+      expect(result.success).toBe(true);
+      expect(mamaMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          topic: 'contract_get_users',
+          decision: 'GET /users expects none, returns User[] defined in users.ts',
+        })
+      );
+    });
   });
 });

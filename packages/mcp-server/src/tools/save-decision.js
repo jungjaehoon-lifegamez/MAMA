@@ -11,6 +11,75 @@
 
 const mama = require('../mama/mama-api.js');
 
+const CONTRACT_TOPIC_PREFIXES = [
+  'contract_get_',
+  'contract_post_',
+  'contract_put_',
+  'contract_patch_',
+  'contract_delete_',
+  'contract_head_',
+  'contract_options_',
+  'contract_function_',
+  'contract_type_',
+  'contract_sql_',
+  'contract_graphql_',
+];
+
+const CONTRACT_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+
+function isContractTopic(topic) {
+  if (!topic) {
+    return false;
+  }
+  return CONTRACT_TOPIC_PREFIXES.some((prefix) => topic.startsWith(prefix));
+}
+
+function validateContractDecision(topic, decision, reasoning) {
+  const issues = [];
+  const safeDecision = decision || '';
+  const safeReasoning = reasoning || '';
+  const decisionUpper = safeDecision.toUpperCase();
+
+  if (safeDecision.trim().length < 10) {
+    issues.push('decision too short');
+  }
+
+  if (safeReasoning.trim().length < 10) {
+    issues.push('reasoning too short');
+  }
+
+  if (topic.startsWith('contract_function_')) {
+    if (!safeDecision.includes('(') || !safeDecision.includes(')')) {
+      issues.push('function signature missing parentheses');
+    }
+    if (!safeDecision.includes('defined in')) {
+      issues.push('function signature missing file context');
+    }
+  } else if (topic.startsWith('contract_sql_')) {
+    if (!decisionUpper.includes('CREATE TABLE') && !decisionUpper.includes('ALTER TABLE')) {
+      issues.push('sql schema missing CREATE TABLE or ALTER TABLE');
+    }
+  } else if (topic.startsWith('contract_type_') || topic.startsWith('contract_graphql_')) {
+    if (!safeDecision.includes('{') || !safeDecision.includes('}')) {
+      issues.push('type definition missing braces');
+    }
+  } else if (
+    CONTRACT_HTTP_METHODS.some((method) => topic.startsWith(`contract_${method.toLowerCase()}_`))
+  ) {
+    if (!CONTRACT_HTTP_METHODS.some((method) => decisionUpper.includes(method))) {
+      issues.push('api endpoint missing HTTP method');
+    }
+    if (!safeDecision.includes('/')) {
+      issues.push('api endpoint missing path');
+    }
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues,
+  };
+}
+
 /**
  * Create save decision tool with dependencies
  * @param {Object} mamaApi - MAMA API instance
@@ -134,6 +203,18 @@ Structure your reasoning with these layers for maximum value:
           message:
             '❌ Validation error: Field length exceeded (topic≤200, decision≤2000, reasoning≤5000)',
         };
+      }
+
+      if (isContractTopic(topic)) {
+        const validation = validateContractDecision(topic, decision, reasoning);
+        if (!validation.valid) {
+          return {
+            success: false,
+            message: `❌ Validation error: contract decision seems malformed (${validation.issues.join(
+              ', '
+            )})`,
+          };
+        }
       }
 
       // Call MAMA API (mama.save will handle outcome mapping to DB format)
