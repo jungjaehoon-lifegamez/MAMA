@@ -75,6 +75,8 @@ export interface AgentLoopOptions {
   agentContext?: AgentContext;
   /** Resume existing CLI session (skips system prompt injection) */
   resumeSession?: boolean;
+  /** CLI session ID from session pool (prevents double-locking) */
+  cliSessionId?: string;
 }
 
 /**
@@ -270,7 +272,7 @@ This protects your credentials from being exposed in chat logs.`;
     // 2. Check if this is a new CLI session (need to inject history from DB)
     const channelKey = buildChannelKey(message.source, message.channelId);
     const sessionPool = getSessionPool();
-    const { isNew: isNewCliSession } = sessionPool.getSession(channelKey);
+    const { sessionId: cliSessionId, isNew: isNewCliSession } = sessionPool.getSession(channelKey);
 
     // 3. Create AgentContext for role-aware execution
     const agentContext = this.createAgentContext(message, session.id);
@@ -287,7 +289,7 @@ This protects your credentials from being exposed in chat logs.`;
     const context = await this.contextInjector.getRelevantContext(message.text);
 
     // 6. Build system prompt with all contexts including AgentContext
-    // Note: With --no-session-persistence, history is always injected
+    // Always inject DB history for reliable memory (CLI --resume is unreliable)
     const historyContext = message.metadata?.historyContext;
     const systemPrompt = this.buildSystemPrompt(
       session,
@@ -320,6 +322,7 @@ This protects your credentials from being exposed in chat logs.`;
       channelId: message.channelId,
       agentContext,
       resumeSession: shouldResume, // Use --resume flag for continuing sessions
+      cliSessionId, // Pass CLI session ID to avoid double-locking
     };
 
     if (shouldResume) {
@@ -512,9 +515,8 @@ Now the user is responding for the FIRST time. This is their reply to your awake
       prompt += sessionStartupContext + '\n';
     }
 
-    // Always inject DB history when using --no-session-persistence mode
-    // CLI doesn't persist sessions, so it has no memory between calls
-    // We MUST inject history every time to maintain conversation continuity
+    // Always inject DB history to ensure Claude has conversation context
+    // CLI --resume is unreliable, so we can't depend on it for memory
     if (hasHistory) {
       prompt += `
 ## 🔄 CONVERSATION IN PROGRESS
@@ -530,9 +532,7 @@ ${dbHistory}
 ---
 
 `;
-      console.log(
-        `[MessageRouter] Injected ${dbHistory.length} chars of history (--no-session-persistence mode)`
-      );
+      console.log(`[MessageRouter] Injected ${dbHistory.length} chars of history`);
     }
 
     // Add channel history context only if provided (for multi-user channels)
