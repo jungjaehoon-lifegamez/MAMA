@@ -1,0 +1,42 @@
+/**
+ * Multi-Agent Discord Chat System
+ *
+ * Enables multiple AI agents (personas) to interact in Discord channels,
+ * with automatic conversation flow and loop prevention.
+ *
+ * @module multi-agent
+ */
+
+// Types
+export type {
+  AgentPersonaConfig,
+  MultiAgentConfig,
+  LoopPreventionConfig,
+  ChainState,
+  AgentSelectionResult,
+  MessageContext,
+  AgentResponseRecord,
+} from './types.js';
+
+export { DEFAULT_LOOP_PREVENTION, DEFAULT_MULTI_AGENT_CONFIG } from './types.js';
+
+// Orchestrator
+export { MultiAgentOrchestrator } from './orchestrator.js';
+
+// Process Manager
+export { AgentProcessManager } from './agent-process-manager.js';
+
+// Shared Context
+export type { SharedMessage, ChannelContext } from './shared-context.js';
+export {
+  SharedContextManager,
+  getSharedContextManager,
+  resetSharedContextManager,
+} from './shared-context.js';
+
+// Discord Integration
+export type { AgentResponse, MultiAgentResponse } from './multi-agent-discord.js';
+export { MultiAgentDiscordHandler } from './multi-agent-discord.js';
+
+// Multi-Bot Manager
+export { MultiBotManager } from './multi-bot-manager.js';
