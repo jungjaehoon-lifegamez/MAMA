@@ -48,8 +48,7 @@ const { shouldShowLong, markSeen } = require(path.join(CORE_PATH, 'session-utils
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
 const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
 const AUDIT_LOG_FILE = path.join(PLUGIN_ROOT, '.posttooluse-audit.log');
-const CONTRACT_RATE_LIMIT_MS = Number(process.env.MAMA_CONTRACT_RATE_LIMIT_MS || 15000);
-const CONTRACT_RATE_LIMIT_FILE = path.join(PLUGIN_ROOT, '.posttooluse-contract-rate.json');
+// Rate limit removed - all code edits should capture contracts (Feb 2025)
 
 // Tools that trigger auto-save consideration
 const EDIT_TOOLS = ['write_file', 'apply_patch', 'Edit', 'Write', 'test', 'build'];
@@ -91,35 +90,6 @@ function isLowPriorityPath(filePath) {
   }
 
   return false;
-}
-
-function checkContractRateLimit() {
-  if (!Number.isFinite(CONTRACT_RATE_LIMIT_MS) || CONTRACT_RATE_LIMIT_MS <= 0) {
-    return { allowed: true, waitMs: 0 };
-  }
-
-  try {
-    if (fs.existsSync(CONTRACT_RATE_LIMIT_FILE)) {
-      const raw = fs.readFileSync(CONTRACT_RATE_LIMIT_FILE, 'utf8');
-      const parsed = JSON.parse(raw || '{}');
-      const last = Number(parsed.last_ts || 0);
-      const now = Date.now();
-      const elapsed = now - last;
-      if (last && elapsed < CONTRACT_RATE_LIMIT_MS) {
-        return { allowed: false, waitMs: CONTRACT_RATE_LIMIT_MS - elapsed };
-      }
-    }
-  } catch (error) {
-    warn(`[Hook] Contract rate-limit read failed: ${error.message}`);
-  }
-
-  try {
-    fs.writeFileSync(CONTRACT_RATE_LIMIT_FILE, JSON.stringify({ last_ts: Date.now() }), 'utf8');
-  } catch (error) {
-    warn(`[Hook] Contract rate-limit write failed: ${error.message}`);
-  }
-
-  return { allowed: true, waitMs: 0 };
 }
 
 function formatContractsCompact(contracts, filePath) {
@@ -783,22 +753,13 @@ async function main() {
             diff_size: diffContent.length,
           });
         } else {
-          const rateLimit = checkContractRateLimit();
-          if (!rateLimit.allowed) {
-            info(`[Hook] Contract analysis rate-limited (${rateLimit.waitMs}ms remaining)`);
-            logContractAnalysis('skipped_rate_limit', {
-              file: filePath || 'unknown',
-              diff_size: diffContent.length,
-              wait_ms: rateLimit.waitMs,
-            });
-          } else {
-            hasCodeChange = true;
-            logContractAnalysis('suggested', {
-              file: filePath || 'unknown',
-              diff_size: diffContent.length,
-            });
-            info('[Hook] Code change detected; delegating contract analysis to Haiku');
-          }
+          // Rate limit removed - all code edits should capture contracts
+          hasCodeChange = true;
+          logContractAnalysis('suggested', {
+            file: filePath || 'unknown',
+            diff_size: diffContent.length,
+          });
+          info('[Hook] Code change detected; extracting contracts');
         }
       } else {
         info('[Hook] Test file detected, skipping contract analysis');
@@ -859,13 +820,26 @@ async function main() {
                   .replace(/^_/, '');
                 contractName = `${method}_${pathPart}`;
                 contractDecision = `${contract.method || 'UNKNOWN'} ${contract.path || '/unknown'} expects ${contract.request || '{...}'}, returns ${contract.response || '{...}'}`;
-              } else {
-                // Function signature, type def, etc.
+              } else if (contract.type === 'function_signature') {
+                // Function signature: include full params
                 contractName = contract.name || 'unknown';
-                contractDecision = contract.signature || contract.name || 'unknown';
+                const params = Array.isArray(contract.params) ? contract.params.join(', ') : '';
+                const returnType = contract.returnType || 'unknown';
+                contractDecision = `${contract.name}(${params}) → ${returnType}`;
+              } else {
+                // Type def, SQL schema, etc.
+                contractName = contract.name || 'unknown';
+                contractDecision =
+                  contract.signature || contract.definition || contract.name || 'unknown';
               }
               const contractTopic = `contract_${contractName}`.replace(/[^a-zA-Z0-9_]/g, '_');
-              const contractReasoning = `Auto-extracted from ${filePath}. Source: ${contract.source || 'code analysis'}`;
+
+              // Search for existing contract with same topic (creates supersedes edge)
+              // Using topic match is fast and creates automatic versioning
+              const contractReasoning = `Auto-extracted from ${filePath}:${contract.line || 'unknown'}. Source: ${contract.source || 'code analysis'}.`;
+
+              // Note: Same topic automatically creates supersedes edge in MAMA
+              // For explicit builds_on edges, would need embedding search (adds ~50ms latency)
 
               // insertDecisionWithEmbedding generates embedding internally
               await insertDecisionWithEmbedding({
