@@ -210,12 +210,11 @@ function buildReasoningSummary(queryTokens, results, safeFilePath) {
 }
 
 async function main() {
-  // Debug: Log hook invocation
+  // Debug: Log hook invocation (cross-platform path)
   const fs = require('fs');
-  fs.appendFileSync(
-    '/tmp/pretooluse-debug.log',
-    `[${new Date().toISOString()}] PreToolUse hook called\n`
-  );
+  const os = require('os');
+  const debugLogPath = path.join(PLUGIN_ROOT || os.tmpdir(), '.pretooluse-debug.log');
+  fs.appendFileSync(debugLogPath, `[${new Date().toISOString()}] PreToolUse hook called\n`);
 
   // Check opt-out flag (consistent with posttooluse-hook.js)
   if (process.env.MAMA_DISABLE_HOOKS === 'true') {

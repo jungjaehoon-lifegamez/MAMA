@@ -22,7 +22,7 @@ function getSessionId() {
     process.env.MAMA_SESSION_ID ||
     process.env.CLAUDE_SESSION_ID ||
     process.env.SESSION_ID ||
-    new Date().toISOString().slice(0, 10)
+    new Date().toISOString() // Full timestamp as unique fallback
   );
 }
 

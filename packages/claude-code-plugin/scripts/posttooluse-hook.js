@@ -924,6 +924,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  handler: main,
   main,
   getTierInfo,
   extractTopic,
