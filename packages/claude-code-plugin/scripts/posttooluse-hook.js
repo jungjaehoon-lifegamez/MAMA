@@ -33,7 +33,7 @@ require('module').globalPaths.push(CORE_PATH);
 
 const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
 // Memory store for DB initialization and direct contract saving
-const { initDB, getDB, insertDecisionWithEmbedding } = require(
+const { initDB, getDB, insertDecisionWithEmbedding, queryVectorSearch } = require(
   path.join(CORE_PATH, 'memory-store')
 );
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
@@ -128,6 +128,45 @@ function isDuplicateContract(topic, decision) {
   } catch (err) {
     warn(`[Hook] Duplicate check failed: ${err.message}`);
     return false; // Allow save on error
+  }
+}
+
+/**
+ * Find a related contract to link with builds_on edge.
+ * Searches for semantically similar contracts with different topics.
+ *
+ * @param {string} decision - The contract decision text to search for
+ * @param {string} currentTopic - Current topic to exclude from results
+ * @returns {Promise<string|null>} - Related decision ID or null
+ */
+async function findRelatedContract(decision, currentTopic) {
+  try {
+    // Search for similar contracts (fast - ~50ms)
+    const results = await queryVectorSearch({
+      query: decision,
+      limit: 3,
+      threshold: 0.8, // High threshold for strong relevance
+    });
+
+    if (!results || results.length === 0) {
+      return null;
+    }
+
+    // Find first result with different topic (not supersedes, but builds_on)
+    for (const result of results) {
+      if (result.topic && result.topic !== currentTopic && result.topic.startsWith('contract_')) {
+        info(
+          `[Hook] Found related contract: ${result.topic} (${Math.round(result.similarity * 100)}% match)`
+        );
+        return result.id || result.topic; // Return ID or topic as fallback
+      }
+    }
+
+    return null;
+  } catch (err) {
+    // Silently fail - builds_on is optional enhancement
+    info(`[Hook] Related contract search skipped: ${err.message}`);
+    return null;
   }
 }
 
@@ -873,20 +912,23 @@ async function main() {
               }
               const contractTopic = `contract_${contractName}`.replace(/[^a-zA-Z0-9_]/g, '_');
 
-              // Search for existing contract with same topic (creates supersedes edge)
-              // Using topic match is fast and creates automatic versioning
-              const contractReasoning = `Auto-extracted from ${filePath}:${contract.line || 'unknown'}. Source: ${contract.source || 'code analysis'}.`;
-
-              // Note: Same topic automatically creates supersedes edge in MAMA
-              // For explicit builds_on edges, would need embedding search (adds ~50ms latency)
-
               // Skip duplicate contracts (same topic + identical decision)
               if (isDuplicateContract(contractTopic, contractDecision)) {
                 info(`[Hook] Skipped duplicate: ${contractTopic}`);
                 continue;
               }
 
+              // Build reasoning with optional builds_on edge
+              let contractReasoning = `Auto-extracted from ${filePath}:${contract.line || 'unknown'}. Source: ${contract.source || 'code analysis'}.`;
+
+              // Find related contracts to create builds_on edges (enhances graph connectivity)
+              const relatedId = await findRelatedContract(contractDecision, contractTopic);
+              if (relatedId) {
+                contractReasoning += ` builds_on: ${relatedId}`;
+              }
+
               // insertDecisionWithEmbedding generates embedding internally
+              // Same topic automatically creates supersedes edge in MAMA
               await insertDecisionWithEmbedding({
                 topic: contractTopic,
                 decision: contractDecision,
