@@ -14,6 +14,7 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 
 // Resolve core path for mcp-client
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
@@ -113,10 +114,10 @@ function extractFunctionCalls(content) {
   }
 
   const calls = new Set();
+  let match;
 
   // Pattern 1: method calls - obj.method( or Class.method(
   const methodPattern = /(\w+)\.(\w+)\s*\(/g;
-  let match;
   while ((match = methodPattern.exec(content)) !== null) {
     const [, obj, method] = match;
     // Skip common non-API patterns
@@ -147,6 +148,38 @@ function extractFunctionCalls(content) {
     calls.add(match[1]);
   }
 
+  // Pattern 4: Function DEFINITIONS - function funcName( or async function funcName(
+  const funcDefPattern = /(?:async\s+)?function\s+(\w+)\s*\(/g;
+  while ((match = funcDefPattern.exec(content)) !== null) {
+    calls.add(match[1]);
+  }
+
+  // Pattern 5: Arrow function definitions - const funcName = ( or const funcName = async (
+  const arrowPattern = /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(/g;
+  while ((match = arrowPattern.exec(content)) !== null) {
+    calls.add(match[1]);
+  }
+
+  // Pattern 6: Import statements - import { funcA, funcB } from or import funcName from
+  const importPattern = /import\s+(?:\{([^}]+)\}|(\w+))\s+from/g;
+  while ((match = importPattern.exec(content)) !== null) {
+    if (match[1]) {
+      // Named imports: { funcA, funcB }
+      match[1].split(',').forEach((name) => {
+        const cleaned = name
+          .trim()
+          .split(/\s+as\s+/)[0]
+          .trim();
+        if (cleaned && cleaned.length > 2) {
+          calls.add(cleaned);
+        }
+      });
+    } else if (match[2]) {
+      // Default import
+      calls.add(match[2]);
+    }
+  }
+
   return Array.from(calls);
 }
 
@@ -157,10 +190,25 @@ function isContractResult(result) {
 
 function extractExpectReturns(text) {
   const clean = (text || '').replace(/\s+/g, ' ').trim();
+
+  // Format 1: API style - "expects {fields}, returns {fields}"
   const expectsMatch = clean.match(/expects\s*\{([^}]+)\}/i);
   const returnsMatch = clean.match(/returns\s*([\s\S]+?)(?:$| on \d{3}| or \d{3}|,? or \d{3})/i);
-  const expects = expectsMatch ? `{${expectsMatch[1].trim()}}` : 'unknown';
-  const returns = returnsMatch ? returnsMatch[1].trim() : 'unknown';
+
+  // Format 2: Function signature style - "funcName(params) → ReturnType"
+  const arrowMatch = clean.match(/→\s*(.+)$/);
+  const paramsMatch = clean.match(/\(([^)]*)\)/);
+
+  const expects = expectsMatch
+    ? `{${expectsMatch[1].trim()}}`
+    : paramsMatch && paramsMatch[1].trim()
+      ? paramsMatch[1].trim()
+      : 'unknown';
+  const returns = returnsMatch
+    ? returnsMatch[1].trim()
+    : arrowMatch
+      ? arrowMatch[1].trim()
+      : 'unknown';
   return { expects, returns };
 }
 
@@ -333,18 +381,36 @@ async function main() {
     process.exit(0);
   }
 
-  // Extract search query from file path AND new_string content
+  // Extract search query from file path AND content
   const fileName = filePath.split('/').pop() || '';
   const newContent = input.tool_input?.new_string || input.tool_input?.content || '';
+  const oldContent = input.tool_input?.old_string || '';
 
-  // Extract function/method calls from new_string for more accurate search
-  const extractedCalls = extractFunctionCalls(newContent);
+  // Extract function/method calls from new_string and old_string
+  let extractedCalls = extractFunctionCalls(newContent);
+
+  // For Edit operations, also check old_string (the context being replaced)
+  if (extractedCalls.length < 2 && oldContent) {
+    const oldCalls = extractFunctionCalls(oldContent);
+    extractedCalls = [...new Set([...extractedCalls, ...oldCalls])];
+  }
+
+  // If still not enough tokens, try reading the actual file for context
+  if (extractedCalls.length < 2 && filePath && fs.existsSync(filePath)) {
+    try {
+      const fileContent = fs.readFileSync(filePath, 'utf-8').slice(0, 5000); // First 5KB
+      const fileCalls = extractFunctionCalls(fileContent);
+      extractedCalls = [...new Set([...extractedCalls, ...fileCalls])].slice(0, 10);
+    } catch {
+      // Ignore file read errors
+    }
+  }
 
   // Build search query: prioritize extracted calls, fallback to filename
   let searchQuery;
   if (extractedCalls.length > 0) {
     // Use extracted function/method names for search
-    searchQuery = extractedCalls.slice(0, 3).join(' ');
+    searchQuery = extractedCalls.slice(0, 5).join(' ');
   } else {
     // Fallback to filename tokens
     searchQuery = fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
