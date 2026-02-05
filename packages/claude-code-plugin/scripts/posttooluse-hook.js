@@ -696,10 +696,15 @@ async function main() {
       // DEBUG: Log raw stdin for debugging (only if MAMA_DEBUG enabled)
       if (process.env.MAMA_DEBUG === 'true') {
         const debugLogFile = path.join(PLUGIN_ROOT, '.posttooluse-stdin-debug.log');
-        fs.appendFileSync(
-          debugLogFile,
-          `\n[${new Date().toISOString()}] stdin: ${JSON.stringify(inputData).slice(0, 2000)}\n`
-        );
+        try {
+          fs.appendFileSync(
+            debugLogFile,
+            `\n[${new Date().toISOString()}] stdin: ${JSON.stringify(inputData).slice(0, 2000)}\n`
+          );
+        } catch (debugErr) {
+          // Swallow filesystem errors - debug logging should never interrupt main flow
+          console.error(`[MAMA DEBUG] Failed to write debug log: ${debugErr.message}`);
+        }
       }
       // Parse Claude Code project-level hook format
       toolName =

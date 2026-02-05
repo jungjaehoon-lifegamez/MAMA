@@ -358,18 +358,18 @@
 
 ## Coverage Summary
 
-| FR Range | Implementation Status                        | Reference                                            |
-| -------- | -------------------------------------------- | ---------------------------------------------------- |
-| FR1-7    | 60% (CRUD operations, export/import pending) | [Commands](commands.md)                              |
-| FR8-12   | 100% (Semantic search fully implemented)     | [Semantic Search](../explanation/semantic-search.md) |
-| FR13-18  | 100% (Decision evolution complete)           | [Decision Graph](../explanation/decision-graph.md)   |
-| FR19-24  | 80% (PreToolUse done, PostToolUse pending)   | [Hooks](hooks.md)                                    |
-| FR25-29  | 100% (Tier system complete)                  | [Tier System](../explanation/tier-system.md)         |
-| FR30-35  | 100% (Korean + English supported)            | [Multilingual](../explanation/semantic-search.md)    |
-| FR36-40  | 100% (All targets exceeded)                  | [Performance](../explanation/performance.md)         |
-| FR41-44  | 100% (Architecture complete)                 | [Architecture](../explanation/architecture.md)       |
-| FR45-49  | 100% (Privacy fully implemented)             | [Data Privacy](../explanation/data-privacy.md)       |
-| FR50-55  | 100% (Configuration complete)                | [Configuration](../guides/configuration.md)          |
+| FR Range | Implementation Status                         | Reference                                            |
+| -------- | --------------------------------------------- | ---------------------------------------------------- |
+| FR1-7    | 60% (CRUD operations, export/import pending)  | [Commands](commands.md)                              |
+| FR8-12   | 100% (Semantic search fully implemented)      | [Semantic Search](../explanation/semantic-search.md) |
+| FR13-18  | 100% (Decision evolution complete)            | [Decision Graph](../explanation/decision-graph.md)   |
+| FR19-24  | 100% (PreToolUse and PostToolUse implemented) | [Hooks](hooks.md)                                    |
+| FR25-29  | 100% (Tier system complete)                   | [Tier System](../explanation/tier-system.md)         |
+| FR30-35  | 100% (Korean + English supported)             | [Multilingual](../explanation/semantic-search.md)    |
+| FR36-40  | 100% (All targets exceeded)                   | [Performance](../explanation/performance.md)         |
+| FR41-44  | 100% (Architecture complete)                  | [Architecture](../explanation/architecture.md)       |
+| FR45-49  | 100% (Privacy fully implemented)              | [Data Privacy](../explanation/data-privacy.md)       |
+| FR50-55  | 100% (Configuration complete)                 | [Configuration](../guides/configuration.md)          |
 
 **Overall Coverage:** 94% (52 out of 55 FRs implemented in v1.0)
 
