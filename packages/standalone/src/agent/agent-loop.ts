@@ -385,12 +385,27 @@ export class AgentLoop {
       options?.channelId ?? this.sessionKey
     );
 
-    // Use session pool for conversation continuity (instead of resetting each time)
-    // This allows Claude CLI to maintain its own conversation history
+    // Use session pool for conversation continuity
+    // IMPORTANT: If caller passes cliSessionId, use it directly to avoid double-locking
+    // MessageRouter already calls getSession() and passes the result via options
+    let sessionIsNew = options?.resumeSession === undefined ? true : !options.resumeSession;
     if (this.claudeCLI) {
-      const cliSessionId = this.sessionPool.getSessionId(channelKey);
-      this.claudeCLI.setSessionId(cliSessionId);
-      console.log(`[AgentLoop] Using session pool: ${channelKey} → ${cliSessionId}`);
+      // Use session ID from caller (MessageRouter) if provided
+      // This prevents double-locking (MessageRouter already locked the session)
+      if (options?.cliSessionId) {
+        this.claudeCLI.setSessionId(options.cliSessionId);
+        console.log(
+          `[AgentLoop] Using caller session: ${channelKey} → ${options.cliSessionId} (${sessionIsNew ? 'NEW' : 'RESUME'})`
+        );
+      } else {
+        // Fallback: get session from pool (for direct AgentLoop usage)
+        const { sessionId: cliSessionId, isNew } = this.sessionPool.getSession(channelKey);
+        sessionIsNew = isNew;
+        this.claudeCLI.setSessionId(cliSessionId);
+        console.log(
+          `[AgentLoop] Session pool: ${channelKey} → ${cliSessionId} (${isNew ? 'NEW' : 'RESUME'})`
+        );
+      }
     }
 
     try {
@@ -439,11 +454,16 @@ export class AgentLoop {
         const promptText = this.formatHistoryAsPrompt(history);
         let piResult;
         try {
-          // Pass role-specific model and resume flag if provided in options
+          // Pass role-specific model and resume flag based on session state
+          // First turn of new session: --session-id (inject system prompt)
+          // Subsequent turns (tool loop) or resumed sessions: --resume (skip system prompt)
+          const shouldResume = !sessionIsNew || turn > 1;
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
-            resumeSession: options?.resumeSession,
+            resumeSession: shouldResume,
           });
+          // After first successful call, mark session as not new for subsequent turns
+          if (turn === 1) sessionIsNew = false;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error('[AgentLoop] Claude CLI error:', errorMessage);
