@@ -115,7 +115,15 @@ export class ClaudeCLIWrapper {
     return new Promise((resolve, reject) => {
       const isResume = options?.resumeSession === true;
 
-      const args = ['-p', content, '--output-format', 'json'];
+      // Use stdin for large content to avoid E2BIG error (ARG_MAX exceeded)
+      const useStdin = content.length > 50000; // 50KB threshold
+      const args = useStdin
+        ? ['--output-format', 'json']
+        : ['-p', content, '--output-format', 'json'];
+
+      if (useStdin) {
+        console.log(`[ClaudeCLI] Using stdin mode (content: ${content.length} chars)`);
+      }
 
       // Session handling: use --no-session-persistence to avoid session locking
       // This prevents "Session ID already in use" errors during multi-turn tool loops
@@ -169,9 +177,17 @@ export class ClaudeCLIWrapper {
         detached: true, // Detach from parent's process group to prevent SIGINT propagation
       });
 
-      // Close stdin immediately - we use -p flag, not stdin input
-      // Without this, Claude CLI hangs waiting for stdin input
-      claude.stdin.end();
+      // Handle stdin: write content if using stdin mode, otherwise close immediately
+      if (useStdin) {
+        // Write content to stdin and close
+        claude.stdin.write(content);
+        claude.stdin.end();
+        console.log(`[ClaudeCLI] Content written to stdin`);
+      } else {
+        // Close stdin immediately - we use -p flag, not stdin input
+        // Without this, Claude CLI hangs waiting for stdin input
+        claude.stdin.end();
+      }
 
       let stdout = '';
       let stderr = '';
