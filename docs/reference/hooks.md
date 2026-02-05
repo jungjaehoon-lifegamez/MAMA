@@ -176,11 +176,22 @@ curl http://127.0.0.1:3847/health
 {
   "PostToolUse": [
     {
-      "matcher": "Write|Edit",
+      "matcher": "Write",
       "hooks": [
         {
           "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js"
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "matcher": "Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js",
+          "timeout": 5
         }
       ]
     }
