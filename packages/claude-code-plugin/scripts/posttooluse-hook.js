@@ -889,9 +889,18 @@ async function main() {
         ];
         if (allContracts.length > 0) {
           info(`[Hook] Auto-extracted ${allContracts.length} contracts`);
-          additionalContext += showLong
+          const formatted = showLong
             ? formatExtractedContracts(allContracts, filePath)
             : formatContractsCompact(allContracts, filePath);
+          // Fallback if formatted output is empty (e.g., no API endpoints)
+          if (formatted && formatted.trim()) {
+            additionalContext += formatted;
+          } else {
+            info('[Hook] Extracted contracts produced empty output, using template');
+            additionalContext += showLong
+              ? formatContractTemplate(filePath, diffContent, toolName)
+              : formatContractTemplateCompact(filePath, toolName);
+          }
         } else {
           // Fallback to Haiku template if extraction found nothing
           info('[Hook] No contracts auto-extracted, using Haiku template');

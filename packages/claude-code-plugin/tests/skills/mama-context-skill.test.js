@@ -231,8 +231,8 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
 
         expect(typeof output).toBe('string');
       } catch (err) {
-        // Acceptable if DB not initialized
-        expect(err.code).toBeDefined();
+        // Acceptable if hook exits with non-zero code (e.g., exit(2) for message injection)
+        expect(err.status).toBeDefined();
       }
     });
 

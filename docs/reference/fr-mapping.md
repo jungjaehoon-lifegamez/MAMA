@@ -138,16 +138,16 @@
 ### FR19: UserPromptSubmit Hook
 
 - **Trigger:** User sends message to Claude
-- **Timeout:** 500ms
-- **Implementation:** `scripts/hooks/user-prompt-submit`
+- **Timeout:** 10s
+- **Implementation:** `scripts/userpromptsubmit-hook.js`
 - **Reference:** [Hooks Reference](hooks.md#userpromptsubmit)
 
 ### FR20: PreToolUse Hook
 
-- **Trigger:** Before Read/Edit/Grep tools
-- **Implementation:** `scripts/hooks/pre-tool-use`
+- **Trigger:** Before Read/Grep tools
+- **Implementation:** `scripts/pretooluse-hook.js`
 - **Output:** Context injection (file-specific)
-- **Reference:** [Hook Setup Tutorial](../tutorials/hook-setup.md)
+- **Reference:** [Hooks Reference](hooks.md#pretooluse-hook)
 
 ### FR21: PostToolUse Hook
 

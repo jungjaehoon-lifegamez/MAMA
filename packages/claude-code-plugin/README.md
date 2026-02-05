@@ -1,6 +1,6 @@
 # MAMA Plugin - Memory-Augmented MCP Assistant
 
-**Version:** 1.7.3
+**Version:** 1.7.4
 **License:** MIT
 **Author:** SpineLift Team
 

@@ -15,7 +15,7 @@ const { searchDecisions } = require(path.join(CORE_PATH, 'mcp-client'));
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 
 const SEARCH_LIMIT = 5;
-const SEARCH_TIMEOUT_MS = 20000;
+const SEARCH_TIMEOUT_MS = 1800;
 const SESSION_STATE_FILE = path.join(PLUGIN_ROOT, '.hook-session-state.json');
 
 // Code file extensions that should trigger contract search
@@ -144,7 +144,7 @@ function isContractResult(result) {
 function extractExpectReturns(text) {
   const clean = (text || '').replace(/\s+/g, ' ').trim();
   const expectsMatch = clean.match(/expects\s*\{([^}]+)\}/i);
-  const returnsMatch = clean.match(/returns\s*([^]+?)(?:$| on \d{3}| or \d{3}|,? or \d{3})/i);
+  const returnsMatch = clean.match(/returns\s*([\s\S]+?)(?:$| on \d{3}| or \d{3}|,? or \d{3})/i);
   const expects = expectsMatch ? `{${expectsMatch[1].trim()}}` : 'unknown';
   const returns = returnsMatch ? returnsMatch[1].trim() : 'unknown';
   return { expects, returns };
@@ -303,6 +303,7 @@ async function main() {
   try {
     const searchRes = await searchDecisions(searchQuery, SEARCH_LIMIT, {
       timeout: SEARCH_TIMEOUT_MS,
+      similarityThreshold: 0.7,
     });
     if (searchRes && Array.isArray(searchRes.results)) {
       const queryTokens = tokenize(searchQuery);

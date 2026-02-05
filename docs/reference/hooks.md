@@ -124,7 +124,16 @@ curl http://127.0.0.1:3847/health
       "hooks": [
         {
           "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
+        }
+      ]
+    },
+    {
+      "matcher": "Grep",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
         }
       ]
     }
