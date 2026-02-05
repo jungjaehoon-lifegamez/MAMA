@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-02-06
+
+### Fixed - mama-os@0.3.8
+
+- **Discord image reading**: Strengthened image instruction format to MANDATORY
+  - Claude CLI `-p` mode only supports text, not multimodal
+  - Previous soft instruction "Use the Read tool" was often ignored
+  - Now uses `**[MANDATORY IMAGE]**` format requiring Read tool before responding
+
+### Fixed - claude-code-plugin@1.7.6
+
+- **PreToolUse function extraction**: Now extracts function DEFINITIONS, not just calls
+  - Added patterns for `function name()`, `const name = () =>`, and imports
+  - Reads file content when edit content is insufficient
+  - Fixed `→` format parsing in extractExpectReturns()
+
+### Added - claude-code-plugin@1.7.6
+
+- **PostToolUse duplicate filtering**: Prevents identical contracts from polluting DB
+- **PostToolUse builds_on edges**: Auto-connects similar contracts (>80% similarity)
+- **Return type extraction**: From JSDoc `@returns`, TypeScript `: ReturnType`, Python `-> Type`
+
 ## [0.3.7] - 2026-02-05
 
 ### Fixed - claude-code-plugin@1.7.5
