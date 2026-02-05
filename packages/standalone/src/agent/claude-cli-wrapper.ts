@@ -23,6 +23,7 @@
 
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
+import path from 'path';
 
 export interface ClaudeCLIWrapperOptions {
   model?: string;
@@ -164,6 +165,10 @@ export class ClaudeCLIWrapper {
       if (this.options.dangerouslySkipPermissions) {
         args.push('--dangerously-skip-permissions');
       }
+
+      // Add MAMA workspace to allowed directories for image/file access
+      const mamaWorkspace = path.join(process.env.HOME || '', '.mama', 'workspace');
+      args.push('--add-dir', mamaWorkspace);
 
       console.log(`[ClaudeCLI] Spawning: claude ${args.join(' ')}`);
       console.log(`[ClaudeCLI] Args count: ${args.length}`);
