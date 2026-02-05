@@ -32,9 +32,8 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 
 const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
-// Memory store for direct contract saving
-const { initDB, saveDecision } = require(path.join(CORE_PATH, 'memory-store'));
-const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
+// Memory store for DB initialization and direct contract saving
+const { initDB, insertDecisionWithEmbedding } = require(path.join(CORE_PATH, 'memory-store'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // MAMA v2: Contract extraction
@@ -856,18 +855,15 @@ async function main() {
               const contractDecision = contract.signature || contract.name;
               const contractReasoning = `Auto-extracted from ${filePath}. Source: ${contract.source || 'code analysis'}`;
 
-              const embedding = await generateEmbedding(`${contractTopic} ${contractDecision}`);
-              if (embedding) {
-                await saveDecision({
-                  topic: contractTopic,
-                  decision: contractDecision,
-                  reasoning: contractReasoning,
-                  confidence: 0.8,
-                  embedding,
-                });
-                savedCount++;
-                info(`[Hook] Auto-saved contract: ${contractTopic}`);
-              }
+              // insertDecisionWithEmbedding generates embedding internally
+              await insertDecisionWithEmbedding({
+                topic: contractTopic,
+                decision: contractDecision,
+                reasoning: contractReasoning,
+                confidence: 0.8,
+              });
+              savedCount++;
+              info(`[Hook] Auto-saved contract: ${contractTopic}`);
             }
           } catch (saveErr) {
             warn(`[Hook] Auto-save failed: ${saveErr.message}`);
