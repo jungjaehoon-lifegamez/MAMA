@@ -1235,6 +1235,22 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  // Ignore SIGHUP (sent when terminal closes) - daemon should keep running
+  process.on('SIGHUP', () => {
+    console.log('[MAMA] Received SIGHUP - ignoring (daemon mode)');
+  });
+
+  // Handle uncaught errors to prevent crashes
+  process.on('uncaughtException', (error) => {
+    console.error('[MAMA] Uncaught exception:', error);
+    // Don't exit - try to keep running
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('[MAMA] Unhandled rejection:', reason);
+    // Don't exit - try to keep running
+  });
+
   console.log('MAMA agent is waiting...\n');
 
   // Keep process alive using setInterval
