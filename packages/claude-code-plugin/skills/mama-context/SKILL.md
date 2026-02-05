@@ -11,26 +11,39 @@ This skill provides **automatic background context injection** using MAMA's hook
 
 **Philosophy:** Gentle hints, not intrusive walls of text. Claude sees topic + time, decides if relevant.
 
-> **Note (Nov 2025):** PreToolUse and PostToolUse hooks have been disabled for efficiency. Only UserPromptSubmit remains active. See `mama.recall('hook_optimization_nov2025')` for decision rationale.
+> **Note (Feb 2025):** All hooks are now active. PreToolUse provides contract-aware context injection for Read/Grep operations. PostToolUse tracks Write/Edit outcomes.
 
 ---
 
 ## How It Works
 
-The skill wraps the **UserPromptSubmit hook** which handles context injection:
+The skill uses a **multi-hook system** for comprehensive context injection:
+
+**SessionStart Hook** (`scripts/sessionstart-hook.js`)
+
+- Triggers: Once per session
+- Purpose: Initialize MAMA, pre-warm embedding model
+- Timeout: 15s
 
 **UserPromptSubmit Hook** (`scripts/userpromptsubmit-hook.js`)
 
 - Triggers: Every user prompt
 - Similarity threshold: 75%
 - Token budget: 40 tokens (teaser format)
-- Timeout: 1200ms (optimized with SessionStart pre-warming)
+- Timeout: 10s
 - Output: Topic + similarity + time
 
-**Disabled Hooks** (retained for future use):
+**PreToolUse Hook** (`scripts/pretooluse-hook.js`)
 
-- PreToolUse: Was too intrusive, fired on every tool call
-- PostToolUse: Auto-save suggestions were disruptive
+- Triggers: Before Read, Grep operations
+- Purpose: Inject relevant contracts before file access
+- Timeout: 5s
+
+**PostToolUse Hook** (`scripts/posttooluse-hook.js`)
+
+- Triggers: After Write, Edit operations
+- Purpose: Track code changes, suggest decision saves
+- Timeout: 5s
 
 ---
 
@@ -122,9 +135,11 @@ export MAMA_DISABLE_HOOKS=true
 
 **Hook Integration:**
 
-- UserPromptSubmit: `scripts/userpromptsubmit-hook.js`
+- SessionStart: `scripts/sessionstart-hook.js` (initialization)
+- UserPromptSubmit: `scripts/userpromptsubmit-hook.js` (context teaser)
+- PreToolUse: `scripts/pretooluse-hook.js` (contract injection for Read/Grep)
+- PostToolUse: `scripts/posttooluse-hook.js` (outcome tracking for Write/Edit)
 - Shared core: `src/core/memory-inject.js`
-- Disabled: PreToolUse, PostToolUse (scripts exist but not registered in hooks.json)
 
 **Performance:**
 
@@ -212,7 +227,7 @@ Claude sees context
 3. **Non-intrusive:** Hints, not walls of text
 4. **Opt-out:** User control via config (MAMA_DISABLE_HOOKS)
 5. **Graceful degradation:** Tier 2 fallback if embeddings unavailable
-6. **Single hook:** Only UserPromptSubmit active (best value/latency ratio)
+6. **Multi-hook system:** SessionStart + UserPromptSubmit + PreToolUse + PostToolUse
 
 ---
 

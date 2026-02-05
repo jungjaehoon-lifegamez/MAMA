@@ -99,8 +99,8 @@
 ### Hooks
 
 - **UserPromptSubmit:** Automatic semantic search via HTTP embedding server
-- **PreToolUse:** File-specific context (planned)
-- **PostToolUse:** Auto-save suggestions (planned)
+- **PreToolUse:** MCP search + contract-only injection + Reasoning Summary
+- **PostToolUse:** Contract extraction + save guidance with structured reasoning
 
 ---
 
@@ -128,6 +128,16 @@ Gentle Context Hints
 
 - Hook latency: ~150ms (model stays in memory)
 - Embedding requests: ~50ms via HTTP
+
+---
+
+## ✨ Key Strengths
+
+- **Contract-first flow:** PreToolUse enforces search before edits; no contract → no guessing.
+- **Grounded reasoning:** Reasoning Summary is computed from actual matches; unknowns are explicit.
+- **Cross-session memory:** MCP-stored contracts prevent schema drift across sessions and repos.
+- **Noise control:** Per-session long/short output reduces repeated guidance.
+- **Safety by default:** Sanitized contract injection mitigates prompt-injection risk.
 
 **Tier 1 (Without HTTP Server):**
 

@@ -108,6 +108,11 @@ Once configured, use MAMA through your MCP client:
 # Search for related decisions
 /mama-suggest "How should I handle authentication?"
 
+**Reasoning Summary (required when presenting search results):**
+- Explain *why* results match (tokens/endpoint/field overlap)
+- Mark unknowns explicitly (avoid false reasoning)
+- State next action (use contract fields; do not guess)
+
 # View decision history
 /mama-recall auth_strategy
 
@@ -233,4 +238,4 @@ MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While 
 ---
 
 **Author:** SpineLift Team
-**Version:** 1.7.0
+**Version:** 1.7.1

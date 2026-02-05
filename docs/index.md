@@ -10,6 +10,14 @@
 >
 > "Always-on AI agent with Discord, Slack, Telegram integrations"
 
+## ✨ Key Strengths
+
+- **Contract-first coding:** PreToolUse searches contracts before edits and blocks guessing when none exist.
+- **Grounded reasoning:** Reasoning Summary is derived from actual matches (unknowns are explicit).
+- **Persistence across sessions:** Contracts saved in MCP prevent schema drift over time.
+- **Low-noise guidance:** Per-session long/short output reduces repetition.
+- **Safer outputs:** Prompt-sanitized contract injection reduces prompt-injection risk.
+
 ## Quick Links
 
 - **[Main README](../README.md)** - Quick overview, installation, and key features

@@ -270,7 +270,13 @@ type='checkpoint': session state for resumption (ALSO requires search first!)`,
 • Understand decision evolution (time-ordered results)
 
 Cross-lingual: Works in Korean and English.
-⚠️ High similarity (>0.8) = MUST link with builds_on/debates/synthesizes.`,
+⚠️ High similarity (>0.8) = MUST link with builds_on/debates/synthesizes.
+
+🧠 OUTPUT EXPECTATION:
+When presenting search results to the user or agent, include a brief **Reasoning Summary** grounded in the actual results:
+- Why these results match (tokens/endpoint/field overlap)
+- What is known vs unknown (explicitly mark unknowns)
+- What to do next (use contract fields, avoid guessing)`,
           inputSchema: {
             type: 'object',
             properties: {

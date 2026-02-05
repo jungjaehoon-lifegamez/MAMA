@@ -11,19 +11,19 @@
 
 > **MAMA 2.0 Release** - Now with Standalone Agent, Gateway Integrations & MAMA OS
 
-A memory system for Claude that remembers **why** you made choices, not just what you chose.
+A contract‑first memory system for Claude: it enforces **why** before code, not just what after.
 
 ```text
 Regular memory: "Login returns token"
-MAMA:           "Login returns { userId, token, email } (tried just token, but frontend needs userId for dashboard) → this schema used by 3 endpoints"
+MAMA:           "Contract: login returns { userId, token, email }. Reasoning: userId needed for dashboard (confirmed in code)."
 ```
 
 ## 🚀 Why Vibe Coding Breaks After Session 2
 
-**Session 1:** "Claude, make me a login API"
+**Session 1:** "Claude, make me a login API"  
 → Works great. You test it. Perfect.
 
-**Session 2:** "Claude, add the frontend login form"
+**Session 2:** "Claude, add the frontend login form"  
 → 404 error. Wrong endpoint. Wrong fields. Nothing connects.
 
 **Why?** Claude forgot the decisions from Session 1.
@@ -42,7 +42,7 @@ MAMA:           "Login returns { userId, token, email } (tried just token, but f
 
 **The difference:** Claude remembers your reasoning, not just facts. No more guessing.
 
-### What MAMA Does
+### What MAMA Does (Now)
 
 Tracks your decisions with reasoning:
 
@@ -56,15 +56,20 @@ Session 2: You ask for backend → Claude checks MAMA
 
 **Result:** Claude follows your decisions. No guessing. No mismatches.
 
-### How It Works
+### How It Works (Contract-First)
 
-**Auto-tracking (Claude Code Plugin):**
+**PreToolUse (Before you read/edit):**
+
+```text
+MAMA searches contracts → shows Reasoning Summary → blocks guessing if none exist
+```
+
+**PostToolUse (After you write/edit):**
 
 ```text
 You: "Add login API"
 Claude: [writes code]
-MAMA: Detected contract → Suggests save
-You: Accept → Saved with reasoning
+MAMA: Detected contract → Requires structured reasoning → Save to MCP
 ```
 
 **Manual save:**
@@ -82,7 +87,7 @@ Claude: [checks MAMA] "I see you use JWT with refresh tokens..."
         [writes matching code]
 ```
 
-**That's it.** Three steps: Build → Save → Claude remembers.
+**That's it.** Search → Save → Claude remembers.
 
 ### Does This Work?
 
@@ -203,20 +208,36 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 
 **What happens after installation:**
 
-1. **PostToolUse Hook** (Claude Code only)
+1. **PreToolUse Hook** (Claude Code only)
+   - Executes MCP search before Read/Edit/Grep
+   - Injects contract-only results + Reasoning Summary (grounded in matches)
+   - Blocks guessing when no contract exists (shows save template)
+
+2. **PostToolUse Hook** (Claude Code only)
    - Detects when you write/edit code
    - Extracts API contracts automatically (TypeScript, Python, Java, Go, Rust, SQL, GraphQL)
-   - Suggests saving via `/mama:decision`
+   - Requires structured reasoning (Context/Evidence/Why/Unknowns) for contract saves
+   - Uses per-session long/short output to reduce repeated guidance
 
-2. **MCP Tools** (Both Desktop & Code)
+3. **MCP Tools** (Both Desktop & Code)
    - `/mama:search` - Find past decisions
    - `/mama:decision` - Save contracts/choices
    - `/mama:checkpoint` - Resume sessions
 
-3. **Auto-Context Injection**
+4. **Auto-Context Injection**
    - Before editing: Claude sees related contracts
    - Before API calls: Recalls correct schemas
    - Cross-session: Remembers your architecture
+
+---
+
+## ✨ Key Strengths
+
+- **Contract-first coding:** PreToolUse searches contracts before edits and blocks guessing when none exist.
+- **Grounded reasoning:** Reasoning Summary is derived from actual matches (unknowns are explicit).
+- **Persistence across sessions:** Contracts saved in MCP prevent schema drift over time.
+- **Low-noise guidance:** Per-session long/short output reduces repetition.
+- **Safer outputs:** Prompt-sanitized contract injection reduces prompt-injection risk.
 
 **Example workflow:**
 

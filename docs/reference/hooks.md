@@ -11,8 +11,8 @@ MAMA provides hooks that integrate with Claude Code's hook system. Hooks use an 
 **Active hooks:**
 
 1. **UserPromptSubmit** - Semantic search on every prompt (~150ms latency)
-
-**Disabled hooks (scripts retained):** 2. **PreToolUse** - Context before Read/Edit/Grep 3. **PostToolUse** - Auto-save after Write/Edit
+2. **PreToolUse** - MCP search + contract-only injection + Reasoning Summary
+3. **PostToolUse** - Contract extraction + save guidance with structured reasoning
 
 **FR Reference:** [FR19-24 (Hook Integration)](fr-mapping.md)
 
@@ -88,27 +88,52 @@ curl http://127.0.0.1:3847/health
 
 ---
 
-## PreToolUse Hook (Disabled)
+## PreToolUse Hook
 
-**Status:** Disabled for efficiency (scripts retained)
+**Status:** Enabled
 
-**Trigger:** Before Read/Edit/Grep tools
+**Trigger:** Before Read/Grep tools
 
-**Purpose:** Show file-specific decisions
+**Purpose:** Contract-first context injection
 
-**Why disabled:** UserPromptSubmit provides better value/latency ratio. PreToolUse added overhead without proportional benefit.
+**Exit Code:** 2 (blocking error) - ensures Claude receives context
 
-**Configuration (if re-enabled):**
+**Behavior:**
+
+- Executes MCP search automatically
+- Filters to contract-only results
+- Emits **Reasoning Summary** grounded in actual matches
+- **MANDATORY:** Shows contract creation template when no contracts exist
+- Uses `exit(2) + message` to inject context to Claude
+- Per-session long/short output to reduce noise
+
+**Output Visibility:**
+
+| Target        | Visible                       |
+| ------------- | ----------------------------- |
+| Claude        | ✅ (as error context)         |
+| User terminal | Varies by Claude Code version |
+
+**Configuration:**
 
 ```json
 {
   "PreToolUse": [
     {
-      "matcher": "Read|Edit|Grep|Glob",
+      "matcher": "Read",
       "hooks": [
         {
           "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
+        }
+      ]
+    },
+    {
+      "matcher": "Grep",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
         }
       ]
     }
@@ -118,33 +143,84 @@ curl http://127.0.0.1:3847/health
 
 ---
 
-## PostToolUse Hook (Disabled)
+## PostToolUse Hook
 
-**Status:** Disabled for efficiency (scripts retained)
+**Status:** Enabled
 
 **Trigger:** After Write/Edit tools
 
-**Purpose:** Suggest saving decisions based on code changes
+**Purpose:** Extract contracts and guide explicit saves
 
-**Why disabled:** UserPromptSubmit provides better value/latency ratio. PostToolUse added overhead without proportional benefit.
+**Exit Code:** 2 (blocking error) - ensures Claude receives context
 
-**Configuration (if re-enabled):**
+**Behavior:**
+
+- Reads entire file after Write/Edit (fixes partial content bug)
+- Extracts API contracts from code changes
+- **MANDATORY:** Shows "Save API Contract NOW" with code template
+- Provides save instructions with structured reasoning
+- Requires Context/Evidence/Why/Unknowns in reasoning template
+- Uses `exit(2) + stderr` to inject context to Claude
+- Per-session long/short output to reduce noise
+
+**Output Visibility:**
+
+| Target        | Visible                      |
+| ------------- | ---------------------------- |
+| Claude        | ✅ (as error context)        |
+| User terminal | ✅ (shows as blocking error) |
+
+**Configuration:**
 
 ```json
 {
   "PostToolUse": [
     {
-      "matcher": "Write|Edit",
+      "matcher": "Write",
       "hooks": [
         {
           "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js"
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "matcher": "Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js",
+          "timeout": 5
         }
       ]
     }
   ]
 }
 ```
+
+---
+
+## Hook Output Visibility
+
+**Claude Code handles hook output differently by hook type:**
+
+| Hook                 | Exit Code | Output Method       | Claude Receives    | User Terminal |
+| -------------------- | --------- | ------------------- | ------------------ | ------------- |
+| **UserPromptSubmit** | 0         | `additionalContext` | ✅ Quiet injection | ❌ Hidden     |
+| **SessionStart**     | 0         | `additionalContext` | ✅ Quiet injection | ❌ Hidden     |
+| **PreToolUse**       | 2         | `message` + stderr  | ✅ As error        | Varies        |
+| **PostToolUse**      | 2         | `message` + stderr  | ✅ As error        | ✅ Visible    |
+
+**Key differences:**
+
+- **UserPromptSubmit/SessionStart**: Special exceptions in Claude Code that allow quiet context injection via `hookSpecificOutput.additionalContext`
+- **PreToolUse/PostToolUse**: Must use `exit(2)` to pass context to Claude; output appears as "blocking error"
+
+**Why exit(2)?**
+
+- `exit(0)`: Claude doesn't receive output (except UserPromptSubmit/SessionStart)
+- `exit(2)`: Claude receives stderr as error context (only way to pass info)
 
 ---
 
