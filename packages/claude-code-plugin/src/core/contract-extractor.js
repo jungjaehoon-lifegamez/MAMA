@@ -34,23 +34,30 @@ function extractApiContracts(code, filePath = '') {
     const method = match[1].toUpperCase();
     const path = match[2];
 
-    // Try to extract request/response schema (scope to this endpoint's code block)
-    // Look for req.body and res.json near this match position
-    const contextStart = Math.max(0, match.index - 200);
-    const contextEnd = Math.min(code.length, match.index + 500);
+    // Extract wider context for Claude to analyze
+    const contextStart = Math.max(0, match.index - 100);
+    const contextEnd = Math.min(code.length, match.index + 1000);
     const contextCode = code.substring(contextStart, contextEnd);
 
-    const bodyMatch = contextCode.match(/req\.body\s*[=:]\s*{([^}]+)}/);
-    const responseMatch = contextCode.match(/res\.json\s*\(\s*{([^}]+)}/);
+    // Try to extract request schema from destructuring pattern
+    // Pattern: const { x, y } = req.body
+    const destructuringMatch = contextCode.match(/const\s*{\s*([^}]+)\s*}\s*=\s*req\.body/);
+
+    // Try to extract response schema
+    const responseMatch = contextCode.match(/res\.(?:status\(\d+\)\.)?json\s*\(\s*{([^}]+)}/);
+
+    const requestSchema = destructuringMatch ? destructuringMatch[1].trim() : 'unknown';
+    const responseSchema = responseMatch ? responseMatch[1].trim() : 'unknown';
 
     contracts.push({
       type: 'api_endpoint',
       method,
       path,
-      request: bodyMatch ? `{${bodyMatch[1]}}` : 'unknown',
-      response: responseMatch ? `{${responseMatch[1]}}` : 'unknown',
+      request: requestSchema !== 'unknown' ? `{${requestSchema}}` : 'unknown',
+      response: responseSchema !== 'unknown' ? `{${responseSchema}}` : 'unknown',
+      snippet: contextCode.trim(), // Include code snippet for Claude analysis
       file: filePath,
-      confidence: bodyMatch && responseMatch ? 0.9 : 0.6,
+      confidence: requestSchema !== 'unknown' && responseSchema !== 'unknown' ? 0.9 : 0.6,
     });
   }
 
