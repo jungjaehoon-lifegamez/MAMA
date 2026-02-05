@@ -1,0 +1,59 @@
+name: Publish to GitHub Packages
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Package to publish (mcp-server, mama-core, or all)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - mcp-server
+          - mama-core
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@jungjaehoon'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build || true
+
+      - name: Publish mcp-server
+        if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mcp-server'
+        working-directory: packages/mcp-server
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish mama-core
+        if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mama-core'
+        working-directory: packages/mama-core
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
