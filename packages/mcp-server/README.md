@@ -238,4 +238,4 @@ MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While 
 ---
 
 **Author:** SpineLift Team
-**Version:** 1.7.0
+**Version:** 1.7.1
