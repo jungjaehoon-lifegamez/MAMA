@@ -185,10 +185,32 @@ export class ClaudeCLIWrapper {
 
       // Handle stdin: write content if using stdin mode, otherwise close immediately
       if (useStdin) {
-        // Write content to stdin and close
-        claude.stdin.write(content);
-        claude.stdin.end();
-        console.log(`[ClaudeCLI] Content written to stdin`);
+        // Write content to stdin with backpressure handling
+        // For large content (150KB+), synchronous write can block due to buffer pressure
+        // Solution: check write() return value and wait for 'drain' if needed
+        const writeContent = () => {
+          const canContinue = claude.stdin.write(content);
+          if (canContinue) {
+            // Buffer had space, content written, close stdin
+            claude.stdin.end();
+            console.log(`[ClaudeCLI] Content written to stdin (immediate)`);
+          } else {
+            // Buffer was full, wait for drain before closing
+            console.log(`[ClaudeCLI] Stdin buffer full, waiting for drain...`);
+            claude.stdin.once('drain', () => {
+              claude.stdin.end();
+              console.log(`[ClaudeCLI] Content written to stdin (after drain)`);
+            });
+          }
+        };
+
+        // Handle stdin errors to prevent unhandled exceptions
+        claude.stdin.on('error', (err) => {
+          console.error(`[ClaudeCLI] stdin error:`, err.message);
+          // Don't reject here - let the close handler deal with it
+        });
+
+        writeContent();
       } else {
         // Close stdin immediately - we use -p flag, not stdin input
         // Without this, Claude CLI hangs waiting for stdin input
