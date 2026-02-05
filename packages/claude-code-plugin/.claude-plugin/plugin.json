@@ -49,7 +49,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Read",
+        "matcher": "Edit",
         "hooks": [
           {
             "type": "command",
@@ -59,7 +59,17 @@
         ]
       },
       {
-        "matcher": "Grep",
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "NotebookEdit",
         "hooks": [
           {
             "type": "command",
