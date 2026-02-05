@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 /**
- * Smart PreToolUse Hook - Searches MAMA before read/edit to avoid hallucination
+ * Smart PreToolUse Hook - Contract-First Development Enforcement
+ *
+ * DESIGN PRINCIPLE:
+ * - Read/Grep: ALLOW freely (need to read code to learn interfaces)
+ * - Edit/Write: CHECK for contracts (prevent hallucinated interfaces)
+ *
+ * FLOW:
+ * 1. Edit/Write detected → extract tokens from file path
+ * 2. Search MAMA for contract_* entries
+ * 3. Found: Show contracts as reference
+ * 4. Not found: Strong warning to read source first
  */
 
 const path = require('path');
@@ -16,7 +26,13 @@ const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 const { shouldShowLong, markSeen } = require(path.join(CORE_PATH, 'session-utils'));
 
 const SEARCH_LIMIT = 5;
-const SIMILARITY_THRESHOLD = 0.7;
+const SIMILARITY_THRESHOLD = 0.6; // Lowered for better contract discovery
+
+// Tools that WRITE code - need contract check
+const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
+
+// Tools that READ code - allow freely
+const READ_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
 // Code file extensions that should trigger contract search
 const CODE_EXTENSIONS = new Set([
@@ -238,11 +254,29 @@ async function main() {
     // No input, use env vars
   }
 
+  // Get tool name to determine behavior
+  const toolName = input.tool_name || process.env.TOOL_NAME || '';
+
+  // READ TOOLS: Allow freely without contract check
+  // We WANT Claude to read code to learn interfaces
+  if (READ_TOOLS.has(toolName)) {
+    console.error(JSON.stringify({ decision: 'allow', reason: '' }));
+    process.exit(0);
+  }
+
+  // WRITE TOOLS: Check for contracts before allowing
+  if (!WRITE_TOOLS.has(toolName)) {
+    // Unknown tool - allow silently
+    console.error(JSON.stringify({ decision: 'allow', reason: '' }));
+    process.exit(0);
+  }
+
+  // --- From here: Edit/Write/NotebookEdit only ---
+
   // Sanitize filePath immediately to prevent prompt injection
   const rawFilePath = input.tool_input?.file_path || input.file_path || process.env.FILE_PATH || '';
   const filePath = rawFilePath; // Keep raw for file operations
   const safeFilePath = sanitizeForPrompt(rawFilePath); // Use this for output messages
-  const pattern = input.tool_input?.pattern || input.pattern || process.env.GREP_PATTERN || '';
 
   // Skip non-code files (docs, config, etc.) - reduces noise
   if (!shouldProcessFile(filePath)) {
@@ -254,7 +288,9 @@ async function main() {
 
   // Extract search query from file path
   const fileName = filePath.split('/').pop() || '';
-  const searchQuery = pattern || fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+  // Future: analyze new_string content to find interface calls
+  // const _newContent = input.tool_input?.new_string || input.tool_input?.content || '';
+  const searchQuery = fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
 
   let searchSummary = '';
   let hasContracts = false;
@@ -291,51 +327,46 @@ async function main() {
   const session = shouldShowLong('pre');
   const showLong = session.showLong;
 
-  // Contract가 있으면 사용 안내, 없으면 강제 생성 지시
-  const contractWarning = hasContracts
-    ? ''
-    : '\n🚨 **MANDATORY: Create contract BEFORE coding.**\n\n' +
-      '⛔ **No existing contract found for this file.**\n' +
-      'You MUST call mcp__plugin_mama_mama__save to create a contract FIRST.\n' +
-      'Do NOT write API code without a saved contract.\n\n' +
+  // Build message based on whether contracts were found
+  let messageContent;
+
+  if (hasContracts) {
+    // Contracts found - show them as reference
+    const intro = showLong
+      ? `\n📋 **MAMA Contract Reference** (Edit: ${safeFilePath})\n` +
+        `Use these contracts. Do NOT guess fields.\n\n`
+      : `\n📋 Contracts for ${fileName}:\n`;
+
+    messageContent = intro + `${searchSummary}\n\n` + `${reasoningSummary}`;
+  } else {
+    // No contracts - strong warning
+    const warning =
+      `\n⚠️ **No Contract Found** (Edit: ${safeFilePath})\n\n` +
+      `Before writing code that calls external interfaces:\n` +
+      `1. READ the source file first to understand the interface\n` +
+      `2. SAVE the contract using:\n\n` +
       '```javascript\n' +
       'mcp__plugin_mama_mama__save({\n' +
       "  type: 'decision',\n" +
-      "  topic: 'contract_<method>_<path>',\n" +
-      "  decision: '<METHOD> <PATH> expects {...}, returns {...}',\n" +
-      "  reasoning: 'Context: ... Evidence: from spec/design. Unknowns: ...',\n" +
+      "  topic: 'contract_ClassName_methodName',\n" +
+      "  decision: 'ClassName.methodName(param: Type) → ReturnType',\n" +
+      "  reasoning: 'Source: filepath:linenum. Evidence: read from source.',\n" +
       '  confidence: 0.9\n' +
       '});\n' +
-      '```\n';
+      '```\n\n' +
+      `3. THEN write your code using the saved contract\n\n` +
+      `This prevents hallucinated interfaces.`;
 
-  const intro = showLong
-    ? `\n🚨 **MAMA Contract Check**\n` +
-      `You MUST use existing contracts. Do NOT guess API fields.\n\n`
-    : `\nMAMA: Use contracts below. Do NOT guess fields.\n\n`;
+    messageContent = warning;
+  }
 
   markSeen(session.state, 'pre');
 
-  // PreToolUse: exit(2) + message로 상세 내용 표시
-  // decision: "allow"로 파일 읽기는 허용 요청
-  const messageContent = hasContracts
-    ? intro +
-      `**Search executed. Results:**\n` +
-      `${searchSummary}\n` +
-      `\n${reasoningSummary}\n` +
-      `File: ${safeFilePath || 'unknown'}`
-    : intro +
-      `**Search executed. Results:**\n` +
-      `${searchSummary}\n` +
-      `${contractWarning}\n` +
-      `File: ${safeFilePath || 'unknown'}`;
-
-  // PreToolUse: Same format as PostToolUse for message visibility
-  // exit(2) + stderr JSON {"decision":"allow","message":"..."} shows message and allows tool
+  // PreToolUse: exit(2) + stderr JSON to show message and allow tool
   const response = {
     decision: 'allow',
     message: messageContent,
   };
-  // Must use stderr (not stdout) for Claude Code hook message visibility
   console.error(JSON.stringify(response));
   process.exit(2);
 }
