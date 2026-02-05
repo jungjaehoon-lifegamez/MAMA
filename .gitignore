@@ -73,6 +73,7 @@ API_CONTRACT_VERIFICATION_REPORT.md
 *.before-direct-extraction
 # MCP config files (local user settings)
 .mcp.json
+!packages/claude-code-plugin/.mcp.json
 .mcp.json.local
 *.mcp.json.dev
 mama-dev-marketplace.json

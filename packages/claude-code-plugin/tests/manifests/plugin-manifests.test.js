@@ -330,8 +330,8 @@ describe('M3.3: Plugin Manifests', () => {
 
       // Should validate plugin.json successfully
       expect(output).toContain('plugin.json: Valid JSON');
-      // .mcp.json is expected to fail
-      expect(output).toContain('❌ Errors: 1');
+      // .mcp.json should also pass now that it's restored
+      expect(output).toContain('❌ Errors: 0');
     });
 
     it('should validate plugin.json structure', () => {

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "mama": {
+      "command": "npx",
+      "args": ["-y", "@jungjaehoon/mama-server"],
+      "env": {
+        "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-small"
+      },
+      "description": "MAMA - Memory-Augmented MCP Assistant"
+    }
+  }
+}
