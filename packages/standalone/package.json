@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "description": "MAMA OS - Your AI Operating System. Control + Visibility for AI-Powered Automation",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
