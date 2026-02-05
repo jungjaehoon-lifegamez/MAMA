@@ -1,0 +1,16 @@
+# Generated files
+node_modules/
+
+# Hook execution logs
+.hook-execution.log
+.posttooluse-audit.log
+.hook-session-state.json
+
+# Backup files
+*.backup
+
+# Contract rate limiting
+.posttooluse-contract-rate.json
+
+# OS files
+.DS_Store

@@ -38,6 +38,9 @@ const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // MAMA v2: Contract extraction
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
+// Contract extraction for direct saving
+const { extractContracts } = require(path.join(CORE_PATH, 'contract-extractor'));
+// Note: searchDecisionsAndContracts and formatContractForMama available for future use
 
 // Configuration
 const SIMILARITY_THRESHOLD = 0.75; // AC: Above threshold for auto-save suggestion
@@ -45,23 +48,48 @@ const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
 const AUDIT_LOG_FILE = path.join(PLUGIN_ROOT, '.posttooluse-audit.log');
 const CONTRACT_RATE_LIMIT_MS = Number(process.env.MAMA_CONTRACT_RATE_LIMIT_MS || 15000);
 const CONTRACT_RATE_LIMIT_FILE = path.join(PLUGIN_ROOT, '.posttooluse-contract-rate.json');
+const SESSION_STATE_FILE = path.join(PLUGIN_ROOT, '.hook-session-state.json');
 
 // Tools that trigger auto-save consideration
 const EDIT_TOOLS = ['write_file', 'apply_patch', 'Edit', 'Write', 'test', 'build'];
+
+// Files/paths that don't need contract tracking (expanded Feb 2025)
+const LOW_PRIORITY_PATTERNS = [
+  /\/docs?\//i, // docs/ or doc/
+  /\/examples?\//i, // examples/ or example/
+  /\/demo\//i, // demo/
+  /\/stories\//i, // storybook stories
+  /\/storybook\//i, // storybook config
+  /\/test[s]?\//i, // test/ or tests/
+  /\.test\.[jt]sx?$/i, // .test.js, .test.ts, etc.
+  /\.spec\.[jt]sx?$/i, // .spec.js, .spec.ts, etc.
+  /node_modules\//i, // dependencies
+  /\.md$/i, // markdown docs
+  /\.txt$/i, // text files
+  /\.ya?ml$/i, // YAML config
+  /\.json$/i, // JSON config
+  /\.toml$/i, // TOML config
+  /\.gitignore$/i, // git ignore
+  /\.env/i, // environment files
+  /LICENSE/i, // license files
+  /README/i, // readme files
+  /CHANGELOG/i, // changelog files
+  /\.lock$/i, // lock files
+  /\.log$/i, // log files
+];
 
 function isLowPriorityPath(filePath) {
   if (!filePath) {
     return false;
   }
-  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
-  return (
-    normalized.includes('/docs/') ||
-    normalized.includes('/examples/') ||
-    normalized.includes('/example/') ||
-    normalized.includes('/demo/') ||
-    normalized.includes('/stories/') ||
-    normalized.includes('/storybook/')
-  );
+
+  for (const pattern of LOW_PRIORITY_PATTERNS) {
+    if (pattern.test(filePath)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function checkContractRateLimit() {
@@ -91,6 +119,87 @@ function checkContractRateLimit() {
   }
 
   return { allowed: true, waitMs: 0 };
+}
+
+function getSessionId() {
+  return (
+    process.env.MAMA_SESSION_ID ||
+    process.env.CLAUDE_SESSION_ID ||
+    process.env.SESSION_ID ||
+    new Date().toISOString().slice(0, 10)
+  );
+}
+
+function loadSessionState() {
+  try {
+    if (fs.existsSync(SESSION_STATE_FILE)) {
+      const raw = fs.readFileSync(SESSION_STATE_FILE, 'utf8');
+      return JSON.parse(raw || '{}');
+    }
+  } catch (_err) {
+    // Ignore state read errors
+  }
+  return {};
+}
+
+function saveSessionState(state) {
+  try {
+    fs.writeFileSync(SESSION_STATE_FILE, JSON.stringify(state), 'utf8');
+  } catch (_err) {
+    // Ignore state write errors
+  }
+}
+
+function shouldShowLong(hookName) {
+  const sessionId = getSessionId();
+  const state = loadSessionState();
+  if (state.sessionId !== sessionId) {
+    state.sessionId = sessionId;
+    state.seen = {};
+  }
+  const seen = state.seen || {};
+  const showLong = !seen[hookName];
+  return { showLong, state };
+}
+
+function markSeen(state, hookName) {
+  if (!state.seen) {
+    state.seen = {};
+  }
+  state.seen[hookName] = true;
+  saveSessionState(state);
+}
+
+function formatContractsCompact(contracts, filePath) {
+  if (!contracts || contracts.length === 0) {
+    // Fallback message when no contracts detected
+    return `\n\n---\n⚠️ **Code change detected**\n\n**File:** \`${filePath}\`\n\nNo API contracts auto-detected. If this file has API calls, save contracts manually.\n`;
+  }
+  const apiContracts = contracts.filter((c) => c.type === 'api_endpoint');
+  if (apiContracts.length === 0) {
+    return `\n\n---\n⚠️ **Code change detected**\n\n**File:** \`${filePath}\`\n\n${contracts.length} non-API contracts found. Check if API contracts need to be saved.\n`;
+  }
+
+  let output = '\n\n---\n';
+  output += '✅ **Contracts Detected (Short)**\n\n';
+  output += `**File:** \`${filePath}\`\n`;
+  output += `**Endpoints:** ${apiContracts.length}\n\n`;
+  apiContracts.slice(0, 3).forEach((c, i) => {
+    output += `${i + 1}. ${c.method} ${c.path}\n`;
+  });
+  output += '\n**Action:** Save exact request/response fields to MAMA. Use code evidence only.\n';
+  output += 'If unsure, mark `unknown`.\n';
+  return output;
+}
+
+function formatContractTemplateCompact(filePath, toolName) {
+  let output = '\n\n---\n';
+  output += '⚠️ **Code change detected (Short)**\n\n';
+  output += `**File:** \`${filePath}\`\n`;
+  output += `**Tool:** ${toolName}\n\n`;
+  output +=
+    'No contracts auto-extracted. If this is a new endpoint, create a contract before coding.\n';
+  return output;
 }
 
 /**
@@ -235,6 +344,78 @@ function extractReasoning(conversationContext) {
  * @param {string} toolName - Tool used (Edit, Write, etc)
  * @returns {string} Formatted template for Task tool
  */
+/**
+ * Format extracted contracts for Main Claude to save
+ */
+function formatExtractedContracts(contracts, filePath) {
+  if (!contracts || contracts.length === 0) {
+    return '';
+  }
+
+  // Filter BEFORE formatting: Only API endpoints with snippets
+  const apiContracts = contracts.filter(
+    (c) => c.type === 'api_endpoint' && c.snippet && c.snippet.trim().length > 50 // Skip tiny snippets
+  );
+
+  if (apiContracts.length === 0) {
+    return ''; // No useful contracts to show
+  }
+
+  let output = '\n\n---\n';
+  output += '✅ **MAMA v2: API Contracts Detected**\n\n';
+  output += `**File:** \`${filePath}\`\n`;
+  output += `**Found:** ${apiContracts.length} API endpoint(s)\n\n`;
+
+  // WHY: Explain the purpose clearly
+  output += '## 🎯 Why Save These?\n\n';
+  output += 'Save exact schemas now so future sessions reuse the same fields (prevents drift).\n\n';
+
+  // WHAT: Show snippets for Claude to analyze
+  output += '## 📝 Code Snippets:\n\n';
+  apiContracts.forEach((contract, idx) => {
+    output += `### ${idx + 1}. ${contract.method} ${contract.path}\n\n`;
+    output += '```javascript\n';
+    const snippet = contract.snippet.trim();
+    output += snippet.substring(0, 500);
+    if (snippet.length > 500) {
+      output += '\n// ... (truncated)';
+    }
+    output += '\n```\n\n';
+  });
+
+  // HOW: Clear step-by-step instruction
+  output += '---\n';
+  output += '## ⚡ Your Task:\n\n';
+  output += 'For each snippet above:\n';
+  output += '1. **Extract request schema**: `req.body` / destructuring\n';
+  output += '2. **Extract response schema**: `res.json({ ... })`\n';
+  output += '3. **Save to MAMA** using MCP tool:\n';
+  output += '   ```javascript\n';
+  output += '   mcp__plugin_mama_mama__save({\n';
+  output += "     type: 'decision',\n";
+  output += "     topic: 'contract_post_api_orders_create',  // Use actual method + path\n";
+  output +=
+    "     decision: 'POST /api/orders/create expects {customerId, items, shippingAddress}, returns {success, orderId, total}',\n";
+  output +=
+    "     reasoning: 'Context: Added order create endpoint. Evidence: req.body has {customerId, items, shippingAddress}; res.json returns {success, orderId, total}. Why it matters: prevents FE/BE schema drift. Unknowns: none.',\n";
+  output += '     confidence: 0.95\n';
+  output += '   });\n';
+  output += '   ```\n\n';
+  output += '**Time budget**: < 3 seconds total\n';
+  output += '**Start now**: Analyze and save.\n\n';
+  output += '## 🧠 Reasoning (Required)\n\n';
+  output += 'Ground in code evidence. If unsure, mark `unknown`.\n\n';
+  output += '**Reasoning Template (fill with real evidence):**\n';
+  output += '```\n';
+  output += 'Context: <what part of code changed>\n';
+  output += 'Evidence: <exact fields from req.body / res.json>\n';
+  output += 'Why it matters: <prevents schema drift / keeps FE-BE aligned>\n';
+  output += "Unknowns: <explicitly list unknowns or 'none'>\n";
+  output += '```\n';
+
+  return output;
+}
+
 function formatContractTemplate(filePath, diffContent, toolName) {
   if (!diffContent || diffContent.trim().length === 0) {
     return '';
@@ -275,73 +456,8 @@ function formatContractTemplate(filePath, diffContent, toolName) {
   }
   output += '\n```\n\n';
 
-  output += '---\n\n';
-  output += '⚠️ **CRITICAL: Contract Analysis Required**\n\n';
-  output += '**YOU MUST execute the Task tool below to prevent vibe coding breakage.**\n\n';
-  output +=
-    'Without contract extraction, future sessions will hallucinate schemas and break consistency.\n';
-  output += 'This is the PRIMARY purpose of MAMA v2 - DO NOT skip this step.\n\n';
-  output += '**Execute this Task tool call NOW:**\n\n';
-  output += '```javascript\n';
-  output += 'Task({\n';
-  output += '  subagent_type: "general-purpose",\n';
-  output += '  model: "haiku",  // Fast & cheap\n';
-  output += '  description: "Extract and save contracts",\n';
-  output += '  prompt: `\n';
-  output += `    CRITICAL TASK: Extract API contracts from code changes in ${safeFilePath}\n`;
-  output += '    \n';
-  output += '    WHY THIS MATTERS:\n';
-  output += '    - Prevents schema mismatches between frontend/backend\n';
-  output += '    - Stops Claude from hallucinating field names in future sessions\n';
-  output += '    - Maintains consistency across multi-session development\n';
-  output += '    \n';
-  output += '    CODE CHANGES TO ANALYZE:\n';
-  output += safeChunks
-    .map((chunk, index) => `    --- chunk ${index + 1}/${safeChunks.length} ---\n    ${chunk}`)
-    .join('\n');
-  output += '\n';
-  output += '    \n';
-  output += '    REQUIRED: Extract ALL contracts found:\n';
-  output += '    \n';
-  output += '    1. API ENDPOINTS:\n';
-  output += '       - Method: GET/POST/PUT/DELETE\n';
-  output += '       - Path: /api/users/:id\n';
-  output += '       - Request schema: { email: string, password: string }\n';
-  output += '       - Success response: { userId: string, token: string }\n';
-  output += '       - Error responses: { error: string } with status codes\n';
-  output += '    \n';
-  output += '    2. FUNCTION SIGNATURES:\n';
-  output += '       - Name, parameters with types, return type\n';
-  output += '       - Async/sync specification\n';
-  output += '    \n';
-  output += '    3. TYPE DEFINITIONS:\n';
-  output += '       - Interfaces, types, schemas\n';
-  output += '       - Field names and types\n';
-  output += '    \n';
-  output += '    SKIP these (not contracts):\n';
-  output += '    - Test files, mock data, examples, comments\n';
-  output += '    \n';
-  output += '    FOR EACH CONTRACT FOUND:\n';
-  output += '    \n';
-  output += '    Use /mama:decision to save with this format:\n';
-  output += '    \n';
-  output += '    Topic: contract_[method]_[path] (e.g., contract_post_api_users)\n';
-  output += '    Decision: Complete schema with request AND response\n';
-  output +=
-    '    Reasoning: Explain what this contract does, what depends on it, why consistency matters\n';
-  output += '    Confidence: 0.8-0.9 for clear contracts\n';
-  output += '    \n';
-  output += '    Example:\n';
-  output +=
-    '    /mama:decision contract_post_api_auth_login "POST /api/auth/login. Request: { email: string, password: string }. Response 200: { userId: string, token: string, email: string }. Response 401: { error: \\"Invalid credentials\\" }" "Authentication endpoint. Frontend must send exact email/password schema. Backend returns userId + token for session. Critical for login flow consistency." --confidence=0.9\n';
-  output += '    \n';
-  output += '    If NO valid contracts found (test files, config, docs):\n';
-  output += '    - Reply: "contract analysis skipped - no production contracts found"\n';
-  output += '    \n';
-  output += '    DO NOT skip contracts that exist. This is CRITICAL for preventing bugs.\n';
-  output += '  `\n';
-  output += '});\n';
-  output += '```\n';
+  // Simplified output - no verbose Task template (Feb 2025)
+  // Just remind Claude to check for contracts, don't overwhelm with instructions
   output += '---\n';
 
   return output;
@@ -564,8 +680,17 @@ async function main() {
 
     // 2. Get tool information from stdin
     let toolName, filePath, diffContent, conversationContext;
+    let inputData = {};
     try {
-      const inputData = await readStdin();
+      inputData = await readStdin();
+
+      // DEBUG: Log raw stdin for debugging
+      const fs = require('fs');
+      const debugLogFile = path.join(PLUGIN_ROOT, '.posttooluse-stdin-debug.log');
+      fs.appendFileSync(
+        debugLogFile,
+        `\n[${new Date().toISOString()}] stdin: ${JSON.stringify(inputData).slice(0, 2000)}\n`
+      );
       // Parse Claude Code project-level hook format
       toolName =
         inputData.tool_name || inputData.toolName || inputData.tool || process.env.TOOL_NAME || '';
@@ -576,9 +701,14 @@ async function main() {
         inputData.FILE_PATH ||
         process.env.FILE_PATH ||
         '';
+      // Parse content based on tool type
+      // Edit: tool_input has old_string/new_string, tool_response has originalFile
+      // Write: tool_input has content
       diffContent =
-        (inputData.tool_input && inputData.tool_input.content) ||
-        (inputData.tool_response && inputData.tool_response.content) ||
+        (inputData.tool_response && inputData.tool_response.originalFile) || // Edit: full file
+        (inputData.tool_input && inputData.tool_input.new_string) || // Edit: new content
+        (inputData.tool_input && inputData.tool_input.content) || // Write: content
+        (inputData.tool_response && inputData.tool_response.content) || // Write: response
         inputData.diffContent ||
         inputData.diff ||
         inputData.content ||
@@ -595,6 +725,30 @@ async function main() {
       filePath = process.env.FILE_PATH || '';
       diffContent = process.env.DIFF_CONTENT || '';
       conversationContext = process.env.CONVERSATION_CONTEXT || '';
+    }
+
+    // DEBUG: Check what we received
+    if (process.env.MAMA_DEBUG) {
+      console.error(`[DEBUG] toolName: ${toolName}`);
+      console.error(`[DEBUG] filePath: ${filePath}`);
+      console.error(`[DEBUG] diffContent length: ${diffContent?.length || 0}`);
+      console.error(
+        `[DEBUG] tool_input keys: ${Object.keys(inputData.tool_input || {}).join(', ')}`
+      );
+    }
+
+    // Fix: For Edit tool, ALWAYS read entire file for contract extraction
+    // (Edit only sends old_string/new_string, not full file)
+    if (toolName === 'Edit' && filePath) {
+      try {
+        const fs = require('fs');
+        if (fs.existsSync(filePath)) {
+          diffContent = fs.readFileSync(filePath, 'utf8');
+          info(`[Hook] Read full file for Edit tool (${diffContent.length} bytes)`);
+        }
+      } catch (readErr) {
+        warn(`[Hook] Failed to read file for Edit: ${readErr.message}`);
+      }
     }
 
     if (!toolName || !EDIT_TOOLS.some((tool) => toolName.includes(tool))) {
@@ -624,6 +778,9 @@ async function main() {
     const reasoning = extractReasoning(conversationContext);
 
     info(`[Hook] Auto-save candidate: "${decision}"`);
+
+    const session = shouldShowLong('post');
+    const showLong = session.showLong;
 
     // 6.5. MAMA v2: Use Haiku for contract analysis (no regex pre-filter)
     let hasCodeChange = false;
@@ -689,19 +846,48 @@ async function main() {
     // 8. Output auto-save suggestion and contract results
     // AC: When diff resembles existing decision, suggest auto-save
     let additionalContext = '';
-
+    // Add contract template if code changes detected
     // Add contract template if code changes detected
     if (hasCodeChange) {
-      additionalContext += formatContractTemplate(filePath, diffContent, toolName);
+      // MAMA v2: Try auto-extraction first (fast path)
+      try {
+        const extracted = extractContracts(diffContent, filePath);
+        // Flatten all contract types into single array
+        const allContracts = [
+          ...(extracted.apiEndpoints || []),
+          ...(extracted.functionSignatures || []),
+          ...(extracted.typeDefinitions || []),
+          ...(extracted.sqlSchemas || []),
+          ...(extracted.graphqlSchemas || []),
+        ];
+        if (allContracts.length > 0) {
+          info(`[Hook] Auto-extracted ${allContracts.length} contracts`);
+          additionalContext += showLong
+            ? formatExtractedContracts(allContracts, filePath)
+            : formatContractsCompact(allContracts, filePath);
+        } else {
+          // Fallback to Haiku template if extraction found nothing
+          info('[Hook] No contracts auto-extracted, using Haiku template');
+          additionalContext += showLong
+            ? formatContractTemplate(filePath, diffContent, toolName)
+            : formatContractTemplateCompact(filePath, toolName);
+        }
+      } catch (err) {
+        warn(`[Hook] Auto-extraction failed: ${err.message}, using Haiku template`);
+        additionalContext += showLong
+          ? formatContractTemplate(filePath, diffContent, toolName)
+          : formatContractTemplateCompact(filePath, toolName);
+      }
     }
-
     // Add auto-save suggestion
-    additionalContext += formatAutoSaveSuggestion(
-      topic,
-      decision,
-      reasoning,
-      similarCheck.decisions
-    );
+    if (showLong) {
+      additionalContext += formatAutoSaveSuggestion(
+        topic,
+        decision,
+        reasoning,
+        similarCheck.decisions
+      );
+    }
 
     // Correct Claude Code JSON format with hookSpecificOutput
     const systemMessage = hasCodeChange
@@ -721,7 +907,9 @@ async function main() {
       console.error(`🔍 [MAMA DEBUG] - additionalContext length: ${additionalContext.length}`);
     }
 
-    // Output to stderr for exit code 2 (blocking error)
+    // PostToolUse uses exit(2) + stderr to ensure Claude sees contract analysis
+    // Write/Edit results are just "success" messages, so overwriting is OK
+    // (Unlike PreToolUse which preserves file content with exit(0))
     console.error(JSON.stringify(response));
 
     // Log suggestion
@@ -730,12 +918,7 @@ async function main() {
       `[Hook] Auto-save suggested (${latencyMs}ms, ${similarCheck.decisions.length} similar${contractInfo})`
     );
 
-    // Note: Actual save happens when user selects action
-    // This would be handled by Claude Code's interaction system
-    // For now, we just output the suggestion
-
-    // Exit with code 2 to make output visible to Claude (not just user)
-    // Per GitHub #11224: exit code 2 = blocking error = visible to Claude
+    markSeen(session.state, 'post');
     process.exit(2);
   } catch (error) {
     logError(`[Hook] Fatal error: ${error.message}`);

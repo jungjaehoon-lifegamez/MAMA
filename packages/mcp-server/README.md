@@ -108,6 +108,11 @@ Once configured, use MAMA through your MCP client:
 # Search for related decisions
 /mama-suggest "How should I handle authentication?"
 
+**Reasoning Summary (required when presenting search results):**
+- Explain *why* results match (tokens/endpoint/field overlap)
+- Mark unknowns explicitly (avoid false reasoning)
+- State next action (use contract fields; do not guess)
+
 # View decision history
 /mama-recall auth_strategy
 

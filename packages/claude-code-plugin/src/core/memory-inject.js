@@ -112,9 +112,10 @@ async function performMemoryInjection(userMessage, startTime) {
   const embeddingLatency = Date.now() - startTime;
   info(`[MAMA] Embedding generation: ${embeddingLatency}ms`);
 
-  // 2. Adaptive threshold (shorter queries need higher confidence)
+  // 2. Adaptive threshold - RAISED to reduce noise (Feb 2025)
+  // Short queries need very high confidence, longer queries need high confidence
   const wordCount = userMessage.split(/\s+/).length;
-  const adaptiveThreshold = wordCount < 3 ? 0.7 : 0.6;
+  const adaptiveThreshold = wordCount < 3 ? 0.92 : 0.88;
 
   // 3. Vector search
   let results = await vectorSearch(queryEmbedding, 10, 0.5); // Get more candidates

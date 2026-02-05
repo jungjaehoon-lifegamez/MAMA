@@ -11,8 +11,8 @@ MAMA provides hooks that integrate with Claude Code's hook system. Hooks use an 
 **Active hooks:**
 
 1. **UserPromptSubmit** - Semantic search on every prompt (~150ms latency)
-
-**Disabled hooks (scripts retained):** 2. **PreToolUse** - Context before Read/Edit/Grep 3. **PostToolUse** - Auto-save after Write/Edit
+2. **PreToolUse** - MCP search + contract-only injection + Reasoning Summary
+3. **PostToolUse** - Contract extraction + save guidance with structured reasoning
 
 **FR Reference:** [FR19-24 (Hook Integration)](fr-mapping.md)
 
@@ -88,17 +88,23 @@ curl http://127.0.0.1:3847/health
 
 ---
 
-## PreToolUse Hook (Disabled)
+## PreToolUse Hook
 
-**Status:** Disabled for efficiency (scripts retained)
+**Status:** Enabled
 
 **Trigger:** Before Read/Edit/Grep tools
 
-**Purpose:** Show file-specific decisions
+**Purpose:** Contract-first context injection
 
-**Why disabled:** UserPromptSubmit provides better value/latency ratio. PreToolUse added overhead without proportional benefit.
+**Behavior:**
 
-**Configuration (if re-enabled):**
+- Executes MCP search automatically
+- Filters to contract-only results
+- Emits **Reasoning Summary** grounded in actual matches
+- Blocks guessing when no contract exists (shows save template)
+- Per-session long/short output to reduce noise
+
+**Configuration:**
 
 ```json
 {
@@ -118,17 +124,22 @@ curl http://127.0.0.1:3847/health
 
 ---
 
-## PostToolUse Hook (Disabled)
+## PostToolUse Hook
 
-**Status:** Disabled for efficiency (scripts retained)
+**Status:** Enabled
 
 **Trigger:** After Write/Edit tools
 
-**Purpose:** Suggest saving decisions based on code changes
+**Purpose:** Extract contracts and guide explicit saves
 
-**Why disabled:** UserPromptSubmit provides better value/latency ratio. PostToolUse added overhead without proportional benefit.
+**Behavior:**
 
-**Configuration (if re-enabled):**
+- Extracts API contracts from code changes
+- Provides save instructions with structured reasoning
+- Requires Context/Evidence/Why/Unknowns in reasoning template
+- Per-session long/short output to reduce noise
+
+**Configuration:**
 
 ```json
 {
