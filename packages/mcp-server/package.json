@@ -33,6 +33,9 @@
     "url": "https://github.com/jungjaehoon-lifegamez/MAMA/issues"
   },
   "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
