@@ -435,6 +435,7 @@ export async function runAgentLoop(
     model: config.agent.model,
     maxTurns: config.agent.max_turns,
     useLanes: true, // Enable lane-based concurrency for Discord
+    usePersistentCLI: config.agent.use_persistent_cli ?? false, // 🚀 Fast mode when enabled
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
     // Collect reasoning for Discord display
