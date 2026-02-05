@@ -39,19 +39,14 @@ function extractApiContracts(code, filePath = '') {
     const contextEnd = Math.min(code.length, match.index + 1000);
     const contextCode = code.substring(contextStart, contextEnd);
 
-    // Try to extract request schema
-    // Support: const { x, y } = req.body AND req.body destructuring
+    // Try to extract request schema from destructuring pattern
+    // Pattern: const { x, y } = req.body
     const destructuringMatch = contextCode.match(/const\s*{\s*([^}]+)\s*}\s*=\s*req\.body/);
-    const bodyMatch = contextCode.match(/req\.body\s*[=:]\s*{([^}]+)}/);
 
     // Try to extract response schema
     const responseMatch = contextCode.match(/res\.(?:status\(\d+\)\.)?json\s*\(\s*{([^}]+)}/);
 
-    const requestSchema = destructuringMatch
-      ? destructuringMatch[1].trim()
-      : bodyMatch
-        ? bodyMatch[1].trim()
-        : 'unknown';
+    const requestSchema = destructuringMatch ? destructuringMatch[1].trim() : 'unknown';
     const responseSchema = responseMatch ? responseMatch[1].trim() : 'unknown';
 
     contracts.push({

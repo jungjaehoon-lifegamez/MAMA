@@ -4,7 +4,6 @@
  */
 
 const path = require('path');
-const fs = require('fs');
 
 // Resolve core path for mcp-client
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
@@ -13,10 +12,10 @@ require('module').globalPaths.push(CORE_PATH);
 
 const { searchDecisions } = require(path.join(CORE_PATH, 'mcp-client'));
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
+const { shouldShowLong, markSeen } = require(path.join(CORE_PATH, 'session-utils'));
 
 const SEARCH_LIMIT = 5;
 const SEARCH_TIMEOUT_MS = 1800;
-const SESSION_STATE_FILE = path.join(PLUGIN_ROOT, '.hook-session-state.json');
 
 // Code file extensions that should trigger contract search
 const CODE_EXTENSIONS = new Set([
@@ -85,55 +84,6 @@ function shouldProcessFile(filePath) {
   // Check if it's a code file
   const ext = path.extname(filePath).toLowerCase();
   return CODE_EXTENSIONS.has(ext);
-}
-
-function getSessionId() {
-  return (
-    process.env.MAMA_SESSION_ID ||
-    process.env.CLAUDE_SESSION_ID ||
-    process.env.SESSION_ID ||
-    new Date().toISOString().slice(0, 10)
-  );
-}
-
-function loadSessionState() {
-  try {
-    if (fs.existsSync(SESSION_STATE_FILE)) {
-      const raw = fs.readFileSync(SESSION_STATE_FILE, 'utf8');
-      return JSON.parse(raw || '{}');
-    }
-  } catch (_err) {
-    // Ignore state read errors
-  }
-  return {};
-}
-
-function saveSessionState(state) {
-  try {
-    fs.writeFileSync(SESSION_STATE_FILE, JSON.stringify(state), 'utf8');
-  } catch (_err) {
-    // Ignore state write errors
-  }
-}
-
-function shouldShowLong(hookName) {
-  const sessionId = getSessionId();
-  const state = loadSessionState();
-  if (state.sessionId !== sessionId) {
-    state.sessionId = sessionId;
-    state.seen = {};
-  }
-  const seen = state.seen || {};
-  const showLong = !seen[hookName];
-  return { showLong, state };
-}
-
-function markSeen(state, hookName) {
-  if (!state.seen) {
-    state.seen = {};
-  }
-  state.seen[hookName] = true;
-  saveSessionState(state);
 }
 
 function isContractResult(result) {
@@ -376,15 +326,21 @@ async function main() {
   process.exit(2);
 }
 
-main().catch((err) => {
-  // Error handler - still allow operation, just log the error
-  console.log(
-    JSON.stringify({
-      decision: 'allow',
-      reason: '',
-    })
-  );
-  // Log error to stderr for debugging (won't affect hook result)
-  console.error(`[MAMA PreToolUse Error] ${err.message}`);
-  process.exit(0);
-});
+// CLI execution
+if (require.main === module) {
+  main().catch((err) => {
+    // Error handler - still allow operation, just log the error
+    console.log(
+      JSON.stringify({
+        decision: 'allow',
+        reason: '',
+      })
+    );
+    // Log error to stderr for debugging (won't affect hook result)
+    console.error(`[MAMA PreToolUse Error] ${err.message}`);
+    process.exit(0);
+  });
+}
+
+// Export handler for hook spec compliance
+module.exports = { handler: main, main };

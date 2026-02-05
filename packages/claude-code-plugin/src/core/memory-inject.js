@@ -113,7 +113,9 @@ async function performMemoryInjection(userMessage, startTime) {
   info(`[MAMA] Embedding generation: ${embeddingLatency}ms`);
 
   // 2. Adaptive threshold - RAISED to reduce noise (Feb 2025)
-  // Short queries need very high confidence, longer queries need high confidence
+  // Plugin hooks use stricter thresholds (0.92/0.88) than MCP server (0.7/0.6)
+  // because hooks inject context automatically without user request,
+  // so we need higher confidence to avoid false positives and noise
   const wordCount = userMessage.split(/\s+/).length;
   const adaptiveThreshold = wordCount < 3 ? 0.92 : 0.88;
 

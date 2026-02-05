@@ -40,6 +40,8 @@ const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 // Contract extraction for direct saving
 const { extractContracts } = require(path.join(CORE_PATH, 'contract-extractor'));
+// Shared session utilities (DRY principle - Feb 2025)
+const { shouldShowLong, markSeen } = require(path.join(CORE_PATH, 'session-utils'));
 // Note: searchDecisionsAndContracts and formatContractForMama available for future use
 
 // Configuration
@@ -48,7 +50,6 @@ const MAX_RUNTIME_MS = 3000; // Increased for embedding model loading
 const AUDIT_LOG_FILE = path.join(PLUGIN_ROOT, '.posttooluse-audit.log');
 const CONTRACT_RATE_LIMIT_MS = Number(process.env.MAMA_CONTRACT_RATE_LIMIT_MS || 15000);
 const CONTRACT_RATE_LIMIT_FILE = path.join(PLUGIN_ROOT, '.posttooluse-contract-rate.json');
-const SESSION_STATE_FILE = path.join(PLUGIN_ROOT, '.hook-session-state.json');
 
 // Tools that trigger auto-save consideration
 const EDIT_TOOLS = ['write_file', 'apply_patch', 'Edit', 'Write', 'test', 'build'];
@@ -119,55 +120,6 @@ function checkContractRateLimit() {
   }
 
   return { allowed: true, waitMs: 0 };
-}
-
-function getSessionId() {
-  return (
-    process.env.MAMA_SESSION_ID ||
-    process.env.CLAUDE_SESSION_ID ||
-    process.env.SESSION_ID ||
-    new Date().toISOString().slice(0, 10)
-  );
-}
-
-function loadSessionState() {
-  try {
-    if (fs.existsSync(SESSION_STATE_FILE)) {
-      const raw = fs.readFileSync(SESSION_STATE_FILE, 'utf8');
-      return JSON.parse(raw || '{}');
-    }
-  } catch (_err) {
-    // Ignore state read errors
-  }
-  return {};
-}
-
-function saveSessionState(state) {
-  try {
-    fs.writeFileSync(SESSION_STATE_FILE, JSON.stringify(state), 'utf8');
-  } catch (_err) {
-    // Ignore state write errors
-  }
-}
-
-function shouldShowLong(hookName) {
-  const sessionId = getSessionId();
-  const state = loadSessionState();
-  if (state.sessionId !== sessionId) {
-    state.sessionId = sessionId;
-    state.seen = {};
-  }
-  const seen = state.seen || {};
-  const showLong = !seen[hookName];
-  return { showLong, state };
-}
-
-function markSeen(state, hookName) {
-  if (!state.seen) {
-    state.seen = {};
-  }
-  state.seen[hookName] = true;
-  saveSessionState(state);
 }
 
 function formatContractsCompact(contracts, filePath) {
