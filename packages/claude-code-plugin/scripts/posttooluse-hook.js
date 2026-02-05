@@ -848,11 +848,23 @@ async function main() {
             await initDB();
             for (const contract of allContracts.slice(0, 3)) {
               // Limit to 3 contracts per edit
-              const contractTopic = `contract_${contract.type}_${contract.name}`.replace(
-                /[^a-zA-Z0-9_]/g,
-                '_'
-              );
-              const contractDecision = contract.signature || contract.name;
+              // Build name based on contract type
+              let contractName;
+              let contractDecision;
+              if (contract.type === 'api_endpoint') {
+                // API endpoint: use method + path
+                const method = (contract.method || 'unknown').toLowerCase();
+                const pathPart = (contract.path || '/unknown')
+                  .replace(/[/:]/g, '_')
+                  .replace(/^_/, '');
+                contractName = `${method}_${pathPart}`;
+                contractDecision = `${contract.method || 'UNKNOWN'} ${contract.path || '/unknown'} expects ${contract.request || '{...}'}, returns ${contract.response || '{...}'}`;
+              } else {
+                // Function signature, type def, etc.
+                contractName = contract.name || 'unknown';
+                contractDecision = contract.signature || contract.name || 'unknown';
+              }
+              const contractTopic = `contract_${contractName}`.replace(/[^a-zA-Z0-9_]/g, '_');
               const contractReasoning = `Auto-extracted from ${filePath}. Source: ${contract.source || 'code analysis'}`;
 
               // insertDecisionWithEmbedding generates embedding internally
