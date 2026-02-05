@@ -23,6 +23,7 @@
 
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
+import os from 'os';
 import path from 'path';
 
 export interface ClaudeCLIWrapperOptions {
@@ -167,7 +168,7 @@ export class ClaudeCLIWrapper {
       }
 
       // Add MAMA workspace to allowed directories for image/file access
-      const mamaWorkspace = path.join(process.env.HOME || '', '.mama', 'workspace');
+      const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
       args.push('--add-dir', mamaWorkspace);
 
       console.log(`[ClaudeCLI] Spawning: claude ${args.join(' ')}`);
