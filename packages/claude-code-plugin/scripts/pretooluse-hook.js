@@ -10,12 +10,13 @@ const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 
-const { searchDecisions } = require(path.join(CORE_PATH, 'mcp-client'));
+const { vectorSearch, initDB } = require(path.join(CORE_PATH, 'memory-store'));
+const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 const { shouldShowLong, markSeen } = require(path.join(CORE_PATH, 'session-utils'));
 
 const SEARCH_LIMIT = 5;
-const SEARCH_TIMEOUT_MS = 1800;
+const SIMILARITY_THRESHOLD = 0.7;
 
 // Code file extensions that should trigger contract search
 const CODE_EXTENSIONS = new Set([
@@ -209,9 +210,16 @@ function buildReasoningSummary(queryTokens, results, safeFilePath) {
 }
 
 async function main() {
+  // Debug: Log hook invocation
+  const fs = require('fs');
+  fs.appendFileSync(
+    '/tmp/pretooluse-debug.log',
+    `[${new Date().toISOString()}] PreToolUse hook called\n`
+  );
+
   // Check opt-out flag (consistent with posttooluse-hook.js)
   if (process.env.MAMA_DISABLE_HOOKS === 'true') {
-    console.log(JSON.stringify({ decision: 'allow', reason: 'MAMA hooks disabled' }));
+    console.error(JSON.stringify({ decision: 'allow', reason: 'MAMA hooks disabled' }));
     return process.exit(0);
   }
 
@@ -239,8 +247,8 @@ async function main() {
   if (!shouldProcessFile(filePath)) {
     // Silent allow - no contract check needed for non-code files
     const response = { decision: 'allow', reason: '' };
-    console.log(JSON.stringify(response));
-    return;
+    console.error(JSON.stringify(response));
+    process.exit(0);
   }
 
   // Extract search query from file path
@@ -251,20 +259,28 @@ async function main() {
   let hasContracts = false;
   let reasoningSummary = '';
   try {
-    const searchRes = await searchDecisions(searchQuery, SEARCH_LIMIT, {
-      timeout: SEARCH_TIMEOUT_MS,
-      similarityThreshold: 0.7,
-    });
-    if (searchRes && Array.isArray(searchRes.results)) {
-      const queryTokens = tokenize(searchQuery);
-      formatResults.tokens = queryTokens;
-      const formatted = formatResults(searchRes.results);
-      searchSummary = formatted.text;
-      hasContracts = formatted.hasContracts;
-      reasoningSummary = buildReasoningSummary(queryTokens, formatted.top, safeFilePath);
+    // Initialize DB and generate embedding
+    await initDB();
+    const queryEmbedding = await generateEmbedding(searchQuery);
+
+    if (!queryEmbedding) {
+      searchSummary = 'Embedding generation failed.';
+      reasoningSummary = 'Reasoning Summary:\n- Embedding generation failed.';
     } else {
-      searchSummary = 'Search returned no parsable results.';
-      reasoningSummary = 'Reasoning Summary:\n- Search returned no parsable results.';
+      // Direct vectorSearch (no MCP spawn)
+      const results = await vectorSearch(queryEmbedding, SEARCH_LIMIT, SIMILARITY_THRESHOLD);
+
+      if (results && Array.isArray(results) && results.length > 0) {
+        const queryTokens = tokenize(searchQuery);
+        formatResults.tokens = queryTokens;
+        const formatted = formatResults(results);
+        searchSummary = formatted.text;
+        hasContracts = formatted.hasContracts;
+        reasoningSummary = buildReasoningSummary(queryTokens, formatted.top, safeFilePath);
+      } else {
+        searchSummary = 'No matching contracts found.';
+        reasoningSummary = 'Reasoning Summary:\n- No matching contracts found.';
+      }
     }
   } catch (err) {
     searchSummary = `Search failed: ${err.message}`;
@@ -312,17 +328,14 @@ async function main() {
       `${contractWarning}\n` +
       `File: ${safeFilePath || 'unknown'}`;
 
-  const outputResponse = {
+  // PreToolUse: Same format as PostToolUse for message visibility
+  // exit(2) + stderr JSON {"decision":"allow","message":"..."} shows message and allows tool
+  const response = {
     decision: 'allow',
     message: messageContent,
   };
-
-  // stdout으로 출력 (Claude Code가 터미널에 표시하도록)
-  console.log(JSON.stringify(outputResponse));
-  // stderr에도 사용자가 볼 수 있도록 짧은 메시지 출력
-  console.error(
-    `\n🔍 MAMA PreToolUse: ${hasContracts ? 'Contracts found' : 'No contracts'} for ${safeFilePath || 'unknown'}`
-  );
+  // Must use stderr (not stdout) for Claude Code hook message visibility
+  console.error(JSON.stringify(response));
   process.exit(2);
 }
 
@@ -330,14 +343,12 @@ async function main() {
 if (require.main === module) {
   main().catch((err) => {
     // Error handler - still allow operation, just log the error
-    console.log(
+    console.error(
       JSON.stringify({
         decision: 'allow',
-        reason: '',
+        reason: `PreToolUse error: ${err.message}`,
       })
     );
-    // Log error to stderr for debugging (won't affect hook result)
-    console.error(`[MAMA PreToolUse Error] ${err.message}`);
     process.exit(0);
   });
 }
