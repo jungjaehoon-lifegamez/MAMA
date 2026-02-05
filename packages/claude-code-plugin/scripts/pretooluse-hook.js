@@ -222,16 +222,16 @@ function formatResults(results) {
   return { text: lines.join('\n'), hasContracts: true, top: filtered.slice(0, SEARCH_LIMIT) };
 }
 
-function buildReasoningSummary(queryTokens, results, filePath) {
+function buildReasoningSummary(queryTokens, results, safeFilePath) {
   if (!results || results.length === 0) {
     return [
       'Reasoning Summary:',
       '- No contracts found, cannot ground fields.',
-      `- File context: ${filePath || 'unknown'}`,
+      `- File context: ${safeFilePath || 'unknown'}`,
     ].join('\n');
   }
 
-  const tokensUsed = queryTokens.length > 0 ? queryTokens.join(', ') : 'none';
+  const tokensUsed = queryTokens.length > 0 ? sanitizeForPrompt(queryTokens.join(', ')) : 'none';
   const lines = ['Reasoning Summary:'];
   lines.push(`- Matched contracts using tokens: ${tokensUsed}`);
 
@@ -239,7 +239,10 @@ function buildReasoningSummary(queryTokens, results, filePath) {
   const { expects, returns } = extractExpectReturns(first.decision || '');
   if (expects !== 'unknown') {
     const fields = extractFieldsFromExpect(expects).map(normalizeField);
-    lines.push(`- Expected request fields (normalized): ${fields.join(', ') || 'none'}`);
+    // Sanitize each field to prevent prompt injection from stored contracts
+    lines.push(
+      `- Expected request fields (normalized): ${fields.map((f) => sanitizeForPrompt(f)).join(', ') || 'none'}`
+    );
   } else {
     lines.push('- Expected request fields: unknown (not present in contract)');
   }
@@ -251,11 +254,17 @@ function buildReasoningSummary(queryTokens, results, filePath) {
     lines.push('- Expected response shape: unknown (not present in contract)');
   }
 
-  lines.push(`- File context: ${filePath || 'unknown'}`);
+  lines.push(`- File context: ${safeFilePath || 'unknown'}`);
   return lines.join('\n');
 }
 
 async function main() {
+  // Check opt-out flag (consistent with posttooluse-hook.js)
+  if (process.env.MAMA_DISABLE_HOOKS === 'true') {
+    console.log(JSON.stringify({ decision: 'allow', reason: 'MAMA hooks disabled' }));
+    return process.exit(0);
+  }
+
   const stdin = process.stdin;
   let data = '';
 
@@ -270,7 +279,10 @@ async function main() {
     // No input, use env vars
   }
 
-  const filePath = input.tool_input?.file_path || input.file_path || process.env.FILE_PATH || '';
+  // Sanitize filePath immediately to prevent prompt injection
+  const rawFilePath = input.tool_input?.file_path || input.file_path || process.env.FILE_PATH || '';
+  const filePath = rawFilePath; // Keep raw for file operations
+  const safeFilePath = sanitizeForPrompt(rawFilePath); // Use this for output messages
   const pattern = input.tool_input?.pattern || input.pattern || process.env.GREP_PATTERN || '';
 
   // Skip non-code files (docs, config, etc.) - reduces noise
@@ -298,7 +310,7 @@ async function main() {
       const formatted = formatResults(searchRes.results);
       searchSummary = formatted.text;
       hasContracts = formatted.hasContracts;
-      reasoningSummary = buildReasoningSummary(queryTokens, formatted.top, filePath);
+      reasoningSummary = buildReasoningSummary(queryTokens, formatted.top, safeFilePath);
     } else {
       searchSummary = 'Search returned no parsable results.';
       reasoningSummary = 'Reasoning Summary:\n- Search returned no parsable results.';
@@ -342,12 +354,12 @@ async function main() {
       `**Search executed. Results:**\n` +
       `${searchSummary}\n` +
       `\n${reasoningSummary}\n` +
-      `File: ${filePath || 'unknown'}`
+      `File: ${safeFilePath || 'unknown'}`
     : intro +
       `**Search executed. Results:**\n` +
       `${searchSummary}\n` +
       `${contractWarning}\n` +
-      `File: ${filePath || 'unknown'}`;
+      `File: ${safeFilePath || 'unknown'}`;
 
   const outputResponse = {
     decision: 'allow',
@@ -358,7 +370,7 @@ async function main() {
   console.log(JSON.stringify(outputResponse));
   // stderr에도 사용자가 볼 수 있도록 짧은 메시지 출력
   console.error(
-    `\n🔍 MAMA PreToolUse: ${hasContracts ? 'Contracts found' : 'No contracts'} for ${filePath || 'unknown'}`
+    `\n🔍 MAMA PreToolUse: ${hasContracts ? 'Contracts found' : 'No contracts'} for ${safeFilePath || 'unknown'}`
   );
   process.exit(2);
 }

@@ -180,20 +180,30 @@ function formatContractsCompact(contracts, filePath) {
     return `\n\n---\n⚠️ **Code change detected**\n\n**File:** \`${filePath}\`\n\n${contracts.length} non-API contracts found. Check if API contracts need to be saved.\n`;
   }
 
+  // Sanitize all user-controlled data to prevent prompt injection
+  const safeFilePath = sanitizeForPrompt(filePath || 'unknown');
+  const firstContract = apiContracts[0] || {};
+  const safeMethod = sanitizeForPrompt(firstContract.method?.toLowerCase() || 'api');
+  const safePath = sanitizeForPrompt(
+    (firstContract.path || '/api/endpoint').replace(/[/:]/g, '_').replace(/^_/, '')
+  );
+  const safeMethodUpper = sanitizeForPrompt(firstContract.method || 'METHOD');
+  const safePathDisplay = sanitizeForPrompt(firstContract.path || '/path');
+
   let output = '\n\n---\n';
   output += '🚨 **MANDATORY: Save API Contract NOW**\n\n';
-  output += `**File:** \`${filePath}\`\n`;
+  output += `**File:** \`${safeFilePath}\`\n`;
   output += `**Endpoints:** ${apiContracts.length}\n\n`;
   apiContracts.slice(0, 3).forEach((c, i) => {
-    output += `${i + 1}. ${c.method} ${c.path}\n`;
+    output += `${i + 1}. ${sanitizeForPrompt(c.method || 'UNKNOWN')} ${sanitizeForPrompt(c.path || '/unknown')}\n`;
   });
   output += '\n⛔ **YOU MUST call mcp__plugin_mama_mama__save before continuing.**\n';
   output += 'Extract request/response from code above. Do NOT skip this step.\n\n';
   output += '```javascript\n';
   output += 'mcp__plugin_mama_mama__save({\n';
   output += `  type: "decision",\n`;
-  output += `  topic: "contract_${apiContracts[0]?.method?.toLowerCase() || 'api'}_${(apiContracts[0]?.path || '/api/endpoint').replace(/[/:]/g, '_').replace(/^_/, '')}",\n`;
-  output += `  decision: "${apiContracts[0]?.method || 'METHOD'} ${apiContracts[0]?.path || '/path'} expects {...}, returns {...}",\n`;
+  output += `  topic: "contract_${safeMethod}_${safePath}",\n`;
+  output += `  decision: "${safeMethodUpper} ${safePathDisplay} expects {...}, returns {...}",\n`;
   output += '  reasoning: "Context: ... Evidence: req.body/res.json fields. Unknowns: none.",\n';
   output += '  confidence: 0.9\n';
   output += '});\n';
@@ -382,10 +392,14 @@ function formatExtractedContracts(contracts, filePath) {
   // WHAT: Show snippets for Claude to analyze
   output += '## 📝 Code Snippets:\n\n';
   apiContracts.forEach((contract, idx) => {
-    output += `### ${idx + 1}. ${contract.method} ${contract.path}\n\n`;
+    // Sanitize method and path to prevent prompt injection
+    const safeMethod = sanitizeForPrompt(contract.method || 'UNKNOWN');
+    const safePath = sanitizeForPrompt(contract.path || '/unknown');
+    output += `### ${idx + 1}. ${safeMethod} ${safePath}\n\n`;
     output += '```javascript\n';
     const snippet = contract.snippet.trim();
-    output += snippet.substring(0, 500);
+    // Sanitize snippet to prevent markdown breakout and prompt injection
+    output += sanitizeForPrompt(snippet.substring(0, 500));
     if (snippet.length > 500) {
       output += '\n// ... (truncated)';
     }
