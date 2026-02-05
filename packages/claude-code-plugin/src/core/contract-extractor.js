@@ -94,11 +94,53 @@ function extractApiContracts(code, filePath = '') {
  * @param {string} filePath - File path for context
  * @returns {Array<Object>} Extracted function signatures
  */
+/**
+ * Extract return type from JSDoc comment
+ * Looks for @returns {Type} or @return {Type}
+ *
+ * @param {string} code - Code to search
+ * @param {number} funcIndex - Index where function starts
+ * @returns {string|null} Return type or null
+ */
+function extractJsDocReturnType(code, funcIndex) {
+  // Look back up to 500 chars for JSDoc comment before function
+  const lookbackStart = Math.max(0, funcIndex - 500);
+  const beforeFunc = code.substring(lookbackStart, funcIndex);
+
+  // Find the closest JSDoc comment (/** ... */)
+  const jsDocMatch = beforeFunc.match(/\/\*\*[\s\S]*?\*\/\s*$/);
+  if (!jsDocMatch) {
+    return null;
+  }
+
+  const jsDoc = jsDocMatch[0];
+  // Match @returns {Type} or @return {Type}
+  const returnMatch = jsDoc.match(/@returns?\s*\{([^}]+)\}/i);
+  if (returnMatch) {
+    return returnMatch[1].trim();
+  }
+
+  return null;
+}
+
+/**
+ * Calculate line number from string index
+ *
+ * @param {string} code - Full code string
+ * @param {number} index - Character index
+ * @returns {number} Line number (1-based)
+ */
+function getLineNumber(code, index) {
+  const upToIndex = code.substring(0, index);
+  return (upToIndex.match(/\n/g) || []).length + 1;
+}
+
 function extractFunctionSignatures(code, filePath = '') {
   const signatures = [];
 
-  // JavaScript/TypeScript function declarations
-  const jsFuncPattern = /(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/gi;
+  // JavaScript/TypeScript function declarations (including TS return types)
+  // Match: function name(params): ReturnType or function name(params)
+  const jsFuncPattern = /(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)(?:\s*:\s*([^{]+))?/gi;
   let match;
 
   while ((match = jsFuncPattern.exec(code)) !== null) {
@@ -108,17 +150,29 @@ function extractFunctionSignatures(code, filePath = '') {
       .map((p) => p.trim())
       .filter((p) => p);
 
+    // Get return type from TS annotation or JSDoc
+    let returnType = match[3] ? match[3].trim() : null;
+    if (!returnType) {
+      returnType = extractJsDocReturnType(code, match.index);
+    }
+
+    const line = getLineNumber(code, match.index);
+
     signatures.push({
       type: 'function_signature',
       name,
       params,
+      returnType: returnType || 'unknown',
+      line,
       file: filePath,
-      confidence: 0.8,
+      confidence: returnType ? 0.9 : 0.7,
     });
   }
 
-  // Arrow functions
-  const arrowPattern = /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(([^)]*)\)\s*=>/gi;
+  // Arrow functions (including TS return types)
+  // Match: const name = (params): ReturnType => or const name = (params) =>
+  const arrowPattern =
+    /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(([^)]*)\)(?:\s*:\s*([^=]+))?\s*=>/gi;
 
   while ((match = arrowPattern.exec(code)) !== null) {
     const name = match[1];
@@ -127,17 +181,28 @@ function extractFunctionSignatures(code, filePath = '') {
       .map((p) => p.trim())
       .filter((p) => p);
 
+    // Get return type from TS annotation or JSDoc
+    let returnType = match[3] ? match[3].trim() : null;
+    if (!returnType) {
+      returnType = extractJsDocReturnType(code, match.index);
+    }
+
+    const line = getLineNumber(code, match.index);
+
     signatures.push({
       type: 'function_signature',
       name,
       params,
+      returnType: returnType || 'unknown',
+      line,
       file: filePath,
-      confidence: 0.8,
+      confidence: returnType ? 0.9 : 0.7,
     });
   }
 
-  // Python function definitions
-  const pyFuncPattern = /(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)/gi;
+  // Python function definitions (with type hints)
+  // Match: def name(params) -> ReturnType: or def name(params):
+  const pyFuncPattern = /(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*([^:]+))?:/gi;
 
   while ((match = pyFuncPattern.exec(code)) !== null) {
     const name = match[1];
@@ -146,12 +211,17 @@ function extractFunctionSignatures(code, filePath = '') {
       .map((p) => p.trim())
       .filter((p) => p);
 
+    const returnType = match[3] ? match[3].trim() : null;
+    const line = getLineNumber(code, match.index);
+
     signatures.push({
       type: 'function_signature',
       name,
       params,
+      returnType: returnType || 'unknown',
+      line,
       file: filePath,
-      confidence: 0.8,
+      confidence: returnType ? 0.9 : 0.7,
     });
   }
 
