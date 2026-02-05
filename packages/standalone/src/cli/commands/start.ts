@@ -620,6 +620,7 @@ export async function runAgentLoop(
         token: config.discord.token,
         messageRouter,
         config: discordConfig.guilds ? { guilds: discordConfig.guilds } : undefined,
+        multiAgentConfig: config.multi_agent,
       });
 
       const gatewayInterface = {
