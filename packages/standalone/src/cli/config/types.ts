@@ -157,6 +157,13 @@ export interface AgentConfig {
    * If not specified, all tools use Gateway mode (default)
    */
   tools?: ToolsConfig;
+  /**
+   * Use persistent CLI process for faster responses (experimental)
+   * When true, keeps Claude CLI process alive for multi-turn conversations
+   * Response time: ~2-3s instead of ~16-30s
+   * @default false
+   */
+  use_persistent_cli?: boolean;
 }
 
 /**
