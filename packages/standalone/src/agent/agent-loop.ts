@@ -761,10 +761,12 @@ export class AgentLoop {
               parts.push(`[Tool Result: ${status}]\n${block.content}`);
             } else if (block.type === 'image') {
               // Convert image to file path instruction for Claude Code
-              // Claude Code can use Read tool to view the image
+              // MANDATORY: Claude MUST use Read tool to view the image before responding
               if (block.localPath) {
                 parts.push(
-                  `[Image attached: ${block.localPath}]\nUse the Read tool to view this image.`
+                  `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
+                    `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.\n` +
+                    `Do NOT respond without first reading the image. The user expects you to see and analyze the image content.`
                 );
               } else if (block.source?.data) {
                 // Base64 image - save to workspace and reference it
@@ -782,7 +784,9 @@ export class AgentLoop {
                 try {
                   fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
                   parts.push(
-                    `[Image attached: ${imagePath}]\nUse the Read tool to view this image.`
+                    `**[MANDATORY IMAGE]** The user has attached an image at: ${imagePath}\n` +
+                      `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.\n` +
+                      `Do NOT respond without first reading the image. The user expects you to see and analyze the image content.`
                   );
                 } catch {
                   parts.push('[Image attached but could not be processed]');
