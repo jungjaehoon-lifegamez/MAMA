@@ -33,7 +33,9 @@ require('module').globalPaths.push(CORE_PATH);
 
 const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
 // Memory store for DB initialization and direct contract saving
-const { initDB, insertDecisionWithEmbedding } = require(path.join(CORE_PATH, 'memory-store'));
+const { initDB, getDB, insertDecisionWithEmbedding } = require(
+  path.join(CORE_PATH, 'memory-store')
+);
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // MAMA v2: Contract extraction
@@ -90,6 +92,43 @@ function isLowPriorityPath(filePath) {
   }
 
   return false;
+}
+
+/**
+ * Check if a contract with the same topic and identical decision already exists.
+ * This prevents noise from repeatedly saving the same unchanged contract.
+ *
+ * @param {string} topic - The contract topic (e.g., 'contract_fetchUserData')
+ * @param {string} decision - The contract decision text
+ * @returns {boolean} - true if duplicate exists (should skip), false otherwise
+ */
+function isDuplicateContract(topic, decision) {
+  try {
+    const db = getDB();
+    if (!db) {
+      return false; // Can't check, allow save
+    }
+    // Query for existing decision with same topic
+    const existing = db
+      .prepare('SELECT decision FROM decisions WHERE topic = ? ORDER BY created_at DESC LIMIT 1')
+      .get(topic);
+
+    if (!existing) {
+      return false; // No existing contract with this topic
+    }
+
+    // Exact match = duplicate
+    if (existing.decision === decision) {
+      info(`[Hook] Skipping duplicate contract: ${topic} (exact match)`);
+      return true;
+    }
+
+    // Not a duplicate - will create supersedes edge automatically
+    return false;
+  } catch (err) {
+    warn(`[Hook] Duplicate check failed: ${err.message}`);
+    return false; // Allow save on error
+  }
 }
 
 function formatContractsCompact(contracts, filePath) {
@@ -840,6 +879,12 @@ async function main() {
 
               // Note: Same topic automatically creates supersedes edge in MAMA
               // For explicit builds_on edges, would need embedding search (adds ~50ms latency)
+
+              // Skip duplicate contracts (same topic + identical decision)
+              if (isDuplicateContract(contractTopic, contractDecision)) {
+                info(`[Hook] Skipped duplicate: ${contractTopic}`);
+                continue;
+              }
 
               // insertDecisionWithEmbedding generates embedding internally
               await insertDecisionWithEmbedding({
