@@ -362,13 +362,18 @@ async function main() {
 
   markSeen(session.state, 'pre');
 
-  // PreToolUse: exit(2) + stderr JSON to show message and allow tool
+  // PreToolUse: exit(0) + stdout JSON with hookSpecificOutput to show message and allow tool
+  // exit(2) blocks the tool, exit(0) allows it
   const response = {
-    decision: 'allow',
-    message: messageContent,
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      permissionDecisionReason: 'Contract reference provided',
+      additionalContext: messageContent,
+    },
   };
-  console.error(JSON.stringify(response));
-  process.exit(2);
+  console.log(JSON.stringify(response));
+  process.exit(0);
 }
 
 // CLI execution
