@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.16] - 2026-02-06
+
+### Fixed - mama-os@0.3.16
+
+- **stdin backpressure for large content**: Fixed Claude CLI hanging on 150KB+ content
+  - `stdin.write()` now checks return value and waits for `drain` event if buffer full
+  - Prevents zombie processes when processing Discord images with large context
+
+- **Viewer TTS/microphone methods**: Fixed method name mismatches
+  - `chat.toggleVoiceInput()` → `chat.toggleVoice()` (microphone toggle)
+  - `chat.setTTSSpeed()` → `chat.setTTSRate()` (TTS speed control)
+
+- **Discord guilds config structure**: Fixed mention-free config not being applied
+  - Config must use `discord.guilds.'*'.requireMention: false` (not top-level `discord.requireMention`)
+  - Gateway now correctly reads guild-based configuration
+
 ## [0.3.8] - 2026-02-06
 
 ### Fixed - mama-os@0.3.8
