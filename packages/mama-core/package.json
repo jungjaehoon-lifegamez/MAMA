@@ -47,7 +47,8 @@
   },
   "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "engines": {
     "node": ">=18.0.0"
