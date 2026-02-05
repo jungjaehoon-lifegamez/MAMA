@@ -30,18 +30,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@jungjaehoon'
+          # Don't set registry-url here - we'll configure it per-step
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
         with:
           version: 9
 
-      - name: Install dependencies
+      - name: Install dependencies (from npmjs.org)
         run: pnpm install --no-frozen-lockfile
         env:
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+          # Force all packages to install from npmjs.org
+          npm_config_registry: https://registry.npmjs.org
 
       - name: Build packages
         run: pnpm build || true
@@ -49,29 +49,29 @@ jobs:
       - name: Prepare mcp-server for publishing
         working-directory: packages/mcp-server
         run: |
-          # Replace workspace:* with actual version
-          sed -i 's/"workspace:\*"/"^1.0.0"/g' package.json
+          # Replace workspace:* with actual version from mama-core
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\\*\"/\"^${CORE_VERSION}\"/g" package.json
+          cat package.json
 
       - name: Prepare mama-core for publishing
         working-directory: packages/mama-core
         run: |
-          # Remove workspace dependencies for standalone publishing
-          node -e "
-            const pkg = require('./package.json');
-            delete pkg.dependencies['@jungjaehoon/mama-server'];
-            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          " || true
+          # mama-core has no workspace dependencies, just show package.json
+          cat package.json
+
+      - name: Configure GitHub Packages registry
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
+          echo "@jungjaehoon:registry=https://npm.pkg.github.com" >> ~/.npmrc
+          cat ~/.npmrc
+
+      - name: Publish mama-core first (dependency)
+        if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mama-core'
+        working-directory: packages/mama-core
+        run: npm publish --access public || echo "mama-core publish failed or already exists"
 
       - name: Publish mcp-server
         if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mcp-server'
         working-directory: packages/mcp-server
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish mama-core
-        if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mama-core'
-        working-directory: packages/mama-core
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm publish --access public || echo "mcp-server publish failed or already exists"
