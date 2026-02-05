@@ -39,10 +39,28 @@ jobs:
           version: 9
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
 
       - name: Build packages
         run: pnpm build || true
+
+      - name: Prepare mcp-server for publishing
+        working-directory: packages/mcp-server
+        run: |
+          # Replace workspace:* with actual version
+          sed -i 's/"workspace:\*"/"^1.0.0"/g' package.json
+
+      - name: Prepare mama-core for publishing
+        working-directory: packages/mama-core
+        run: |
+          # Remove workspace dependencies for standalone publishing
+          node -e "
+            const pkg = require('./package.json');
+            delete pkg.dependencies['@jungjaehoon/mama-server'];
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          " || true
 
       - name: Publish mcp-server
         if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mcp-server'
