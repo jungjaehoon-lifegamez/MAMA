@@ -761,6 +761,12 @@ export interface AgentLoopOptions {
    * This prevents double-locking of the session pool
    */
   cliSessionId?: string;
+  /**
+   * Use persistent CLI process for faster responses (experimental)
+   * When true, keeps Claude CLI process alive for multi-turn conversations
+   * Response time: ~2-3s instead of ~16-30s
+   */
+  usePersistentCLI?: boolean;
 }
 
 /**
