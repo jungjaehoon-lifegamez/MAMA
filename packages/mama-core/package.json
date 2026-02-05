@@ -66,6 +66,7 @@
   },
   "files": [
     "src/**/*.js",
+    "db/**/*.sql",
     "README.md",
     "LICENSE"
   ]
