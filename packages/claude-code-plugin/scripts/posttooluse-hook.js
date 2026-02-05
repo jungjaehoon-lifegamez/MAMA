@@ -693,13 +693,14 @@ async function main() {
     try {
       inputData = await readStdin();
 
-      // DEBUG: Log raw stdin for debugging
-      const fs = require('fs');
-      const debugLogFile = path.join(PLUGIN_ROOT, '.posttooluse-stdin-debug.log');
-      fs.appendFileSync(
-        debugLogFile,
-        `\n[${new Date().toISOString()}] stdin: ${JSON.stringify(inputData).slice(0, 2000)}\n`
-      );
+      // DEBUG: Log raw stdin for debugging (only if MAMA_DEBUG enabled)
+      if (process.env.MAMA_DEBUG === 'true') {
+        const debugLogFile = path.join(PLUGIN_ROOT, '.posttooluse-stdin-debug.log');
+        fs.appendFileSync(
+          debugLogFile,
+          `\n[${new Date().toISOString()}] stdin: ${JSON.stringify(inputData).slice(0, 2000)}\n`
+        );
+      }
       // Parse Claude Code project-level hook format
       toolName =
         inputData.tool_name || inputData.toolName || inputData.tool || process.env.TOOL_NAME || '';
@@ -750,7 +751,6 @@ async function main() {
     // (Edit only sends old_string/new_string, Write sends content but may be incomplete)
     if ((toolName === 'Edit' || toolName === 'Write') && filePath) {
       try {
-        const fs = require('fs');
         if (fs.existsSync(filePath)) {
           diffContent = fs.readFileSync(filePath, 'utf8');
           info(`[Hook] Read full file for ${toolName} tool (${diffContent.length} bytes)`);
@@ -855,7 +855,6 @@ async function main() {
     // 8. Output auto-save suggestion and contract results
     // AC: When diff resembles existing decision, suggest auto-save
     let additionalContext = '';
-    // Add contract template if code changes detected
     // Add contract template if code changes detected
     if (hasCodeChange) {
       // MAMA v2: Try auto-extraction first (fast path)
