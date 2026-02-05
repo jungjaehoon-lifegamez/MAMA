@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-02-05
+
+### Fixed - claude-code-plugin@1.7.5
+
+- **PreToolUse MCP timeout**: Replaced MCP spawn with direct SQLite + embeddings (instant search)
+- **Cross-platform debug path**: Uses `os.tmpdir()` fallback instead of hardcoded `/tmp`
+- **Session ID fallback**: Full ISO timestamp prevents same-day session grouping
+
+### Changed - claude-code-plugin@1.7.5
+
+- **Debug logging gated**: Requires `MAMA_DEBUG=true` (no production overhead)
+- **Hook configuration unified**: All hooks in `plugin.json` only (removed `hooks/hooks.json`)
+- **handler export added**: `posttooluse-hook.js` exports `handler` for hook spec compliance
+
+### Security - claude-code-plugin@1.7.5
+
+- Input sanitization via `prompt-sanitizer.js`
+- CodeRabbit review findings addressed
+
 ## [0.3.6] - 2026-02-05
 
 ### Fixed - claude-code-plugin@1.7.4
