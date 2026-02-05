@@ -92,17 +92,27 @@ curl http://127.0.0.1:3847/health
 
 **Status:** Enabled
 
-**Trigger:** Before Read/Edit/Grep tools
+**Trigger:** Before Read/Grep tools
 
 **Purpose:** Contract-first context injection
+
+**Exit Code:** 2 (blocking error) - ensures Claude receives context
 
 **Behavior:**
 
 - Executes MCP search automatically
 - Filters to contract-only results
 - Emits **Reasoning Summary** grounded in actual matches
-- Blocks guessing when no contract exists (shows save template)
+- **MANDATORY:** Shows contract creation template when no contracts exist
+- Uses `exit(2) + message` to inject context to Claude
 - Per-session long/short output to reduce noise
+
+**Output Visibility:**
+
+| Target        | Visible                       |
+| ------------- | ----------------------------- |
+| Claude        | ✅ (as error context)         |
+| User terminal | Varies by Claude Code version |
 
 **Configuration:**
 
@@ -110,7 +120,7 @@ curl http://127.0.0.1:3847/health
 {
   "PreToolUse": [
     {
-      "matcher": "Read|Edit|Grep|Glob",
+      "matcher": "Read",
       "hooks": [
         {
           "type": "command",
@@ -132,12 +142,24 @@ curl http://127.0.0.1:3847/health
 
 **Purpose:** Extract contracts and guide explicit saves
 
+**Exit Code:** 2 (blocking error) - ensures Claude receives context
+
 **Behavior:**
 
+- Reads entire file after Write/Edit (fixes partial content bug)
 - Extracts API contracts from code changes
+- **MANDATORY:** Shows "Save API Contract NOW" with code template
 - Provides save instructions with structured reasoning
 - Requires Context/Evidence/Why/Unknowns in reasoning template
+- Uses `exit(2) + stderr` to inject context to Claude
 - Per-session long/short output to reduce noise
+
+**Output Visibility:**
+
+| Target        | Visible                      |
+| ------------- | ---------------------------- |
+| Claude        | ✅ (as error context)        |
+| User terminal | ✅ (shows as blocking error) |
 
 **Configuration:**
 
@@ -156,6 +178,29 @@ curl http://127.0.0.1:3847/health
   ]
 }
 ```
+
+---
+
+## Hook Output Visibility
+
+**Claude Code handles hook output differently by hook type:**
+
+| Hook                 | Exit Code | Output Method       | Claude Receives    | User Terminal |
+| -------------------- | --------- | ------------------- | ------------------ | ------------- |
+| **UserPromptSubmit** | 0         | `additionalContext` | ✅ Quiet injection | ❌ Hidden     |
+| **SessionStart**     | 0         | `additionalContext` | ✅ Quiet injection | ❌ Hidden     |
+| **PreToolUse**       | 2         | `message` + stderr  | ✅ As error        | Varies        |
+| **PostToolUse**      | 2         | `message` + stderr  | ✅ As error        | ✅ Visible    |
+
+**Key differences:**
+
+- **UserPromptSubmit/SessionStart**: Special exceptions in Claude Code that allow quiet context injection via `hookSpecificOutput.additionalContext`
+- **PreToolUse/PostToolUse**: Must use `exit(2)` to pass context to Claude; output appears as "blocking error"
+
+**Why exit(2)?**
+
+- `exit(0)`: Claude doesn't receive output (except UserPromptSubmit/SessionStart)
+- `exit(2)`: Claude receives stderr as error context (only way to pass info)
 
 ---
 

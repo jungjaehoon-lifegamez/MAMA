@@ -308,58 +308,59 @@ async function main() {
     reasoningSummary = `Reasoning Summary:\n- Search failed: ${err.message}`;
   }
 
+  const session = shouldShowLong('pre');
+  const showLong = session.showLong;
+
+  // Contract가 있으면 사용 안내, 없으면 강제 생성 지시
   const contractWarning = hasContracts
     ? ''
-    : '\n⛔ **BLOCKER: No contract found. Do NOT guess fields.**\n' +
-      'If this is a new endpoint, you MUST first create and save a contract grounded in a real spec/design (not guesses).\n' +
-      'Use mcp__plugin_mama_mama__save with topic like `contract_<method>_<path>` and include exact request/response.\n' +
-      '\n**Template (fill in real values only):**\n' +
+    : '\n🚨 **MANDATORY: Create contract BEFORE coding.**\n\n' +
+      '⛔ **No existing contract found for this file.**\n' +
+      'You MUST call mcp__plugin_mama_mama__save to create a contract FIRST.\n' +
+      'Do NOT write API code without a saved contract.\n\n' +
       '```javascript\n' +
       'mcp__plugin_mama_mama__save({\n' +
       "  type: 'decision',\n" +
-      "  topic: 'contract_post_api_example',\n" +
-      "  decision: 'POST /api/example expects {field1: string, field2: number}, returns 201: {success: true, id: string}',\n" +
-      "  reasoning: 'Derived from approved API spec/design (link or reference).',\n" +
+      "  topic: 'contract_<method>_<path>',\n" +
+      "  decision: '<METHOD> <PATH> expects {...}, returns {...}',\n" +
+      "  reasoning: 'Context: ... Evidence: from spec/design. Unknowns: ...',\n" +
       '  confidence: 0.9\n' +
       '});\n' +
       '```\n';
 
-  const session = shouldShowLong('pre');
-  const showLong = session.showLong;
-
   const intro = showLong
-    ? `\n🚨 **You MUST search MAMA before opening or editing this file.**\n` +
-      `Why: Prevents schema hallucination and keeps frontend/backend contracts consistent.\n\n`
-    : `\nMAMA search executed (short view).\nUse contracts below; do not guess fields.\n\n`;
-
-  const response = {
-    decision: 'allow',
-    reason: '',
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      systemMessage: `⚠️ MAMA CRITICAL: Search before reading (${searchQuery || 'unknown'})`,
-      additionalContext:
-        intro +
-        `**Search executed. Results:**\n` +
-        `${searchSummary}\n` +
-        `\n${reasoningSummary}\n` +
-        `${contractWarning}\n` +
-        `File: ${filePath || 'unknown'}`,
-    },
-  };
+    ? `\n🚨 **MAMA Contract Check**\n` +
+      `You MUST use existing contracts. Do NOT guess API fields.\n\n`
+    : `\nMAMA: Use contracts below. Do NOT guess fields.\n\n`;
 
   markSeen(session.state, 'pre');
 
-  // Contract가 없으면 조용히 allow (파일 내용 표시되도록)
-  if (!hasContracts) {
-    const silentResponse = { decision: 'allow', reason: '' };
-    console.log(JSON.stringify(silentResponse));
-    process.exit(0);
-  }
+  // PreToolUse: exit(2) + message로 상세 내용 표시
+  // decision: "allow"로 파일 읽기는 허용 요청
+  const messageContent = hasContracts
+    ? intro +
+      `**Search executed. Results:**\n` +
+      `${searchSummary}\n` +
+      `\n${reasoningSummary}\n` +
+      `File: ${filePath || 'unknown'}`
+    : intro +
+      `**Search executed. Results:**\n` +
+      `${searchSummary}\n` +
+      `${contractWarning}\n` +
+      `File: ${filePath || 'unknown'}`;
 
-  // Contract가 있을 때만 컨텍스트 주입
-  console.log(JSON.stringify(response));
-  process.exit(0);
+  const outputResponse = {
+    decision: 'allow',
+    message: messageContent,
+  };
+
+  // stdout으로 출력 (Claude Code가 터미널에 표시하도록)
+  console.log(JSON.stringify(outputResponse));
+  // stderr에도 사용자가 볼 수 있도록 짧은 메시지 출력
+  console.error(
+    `\n🔍 MAMA PreToolUse: ${hasContracts ? 'Contracts found' : 'No contracts'} for ${filePath || 'unknown'}`
+  );
+  process.exit(2);
 }
 
 main().catch((err) => {

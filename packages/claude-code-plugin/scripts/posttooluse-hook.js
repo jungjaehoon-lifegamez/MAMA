@@ -181,14 +181,23 @@ function formatContractsCompact(contracts, filePath) {
   }
 
   let output = '\n\n---\n';
-  output += '✅ **Contracts Detected (Short)**\n\n';
+  output += '🚨 **MANDATORY: Save API Contract NOW**\n\n';
   output += `**File:** \`${filePath}\`\n`;
   output += `**Endpoints:** ${apiContracts.length}\n\n`;
   apiContracts.slice(0, 3).forEach((c, i) => {
     output += `${i + 1}. ${c.method} ${c.path}\n`;
   });
-  output += '\n**Action:** Save exact request/response fields to MAMA. Use code evidence only.\n';
-  output += 'If unsure, mark `unknown`.\n';
+  output += '\n⛔ **YOU MUST call mcp__plugin_mama_mama__save before continuing.**\n';
+  output += 'Extract request/response from code above. Do NOT skip this step.\n\n';
+  output += '```javascript\n';
+  output += 'mcp__plugin_mama_mama__save({\n';
+  output += `  type: "decision",\n`;
+  output += `  topic: "contract_${apiContracts[0]?.method?.toLowerCase() || 'api'}_${(apiContracts[0]?.path || '/api/endpoint').replace(/[/:]/g, '_').replace(/^_/, '')}",\n`;
+  output += `  decision: "${apiContracts[0]?.method || 'METHOD'} ${apiContracts[0]?.path || '/path'} expects {...}, returns {...}",\n`;
+  output += '  reasoning: "Context: ... Evidence: req.body/res.json fields. Unknowns: none.",\n';
+  output += '  confidence: 0.9\n';
+  output += '});\n';
+  output += '```\n';
   return output;
 }
 
@@ -737,17 +746,17 @@ async function main() {
       );
     }
 
-    // Fix: For Edit tool, ALWAYS read entire file for contract extraction
-    // (Edit only sends old_string/new_string, not full file)
-    if (toolName === 'Edit' && filePath) {
+    // Fix: For Edit/Write tools, ALWAYS read entire file for contract extraction
+    // (Edit only sends old_string/new_string, Write sends content but may be incomplete)
+    if ((toolName === 'Edit' || toolName === 'Write') && filePath) {
       try {
         const fs = require('fs');
         if (fs.existsSync(filePath)) {
           diffContent = fs.readFileSync(filePath, 'utf8');
-          info(`[Hook] Read full file for Edit tool (${diffContent.length} bytes)`);
+          info(`[Hook] Read full file for ${toolName} tool (${diffContent.length} bytes)`);
         }
       } catch (readErr) {
-        warn(`[Hook] Failed to read file for Edit: ${readErr.message}`);
+        warn(`[Hook] Failed to read file for ${toolName}: ${readErr.message}`);
       }
     }
 

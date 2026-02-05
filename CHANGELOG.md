@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-02-05
+
+### Fixed - claude-code-plugin@1.7.4
+
+- **PostToolUse Write tool bug**: Now reads entire file for Write tool (previously only Edit)
+  - Fixes incorrect endpoint detection (e.g., showing `/api/checkout` when `/api/payments` was written)
+
+### Changed - claude-code-plugin@1.7.4
+
+- **Hook messages strengthened to MANDATORY**: Claude now follows hook instructions instead of ignoring suggestions
+  - PostToolUse: "MANDATORY: Save API Contract NOW" with code template
+  - PreToolUse: "MANDATORY: Create contract BEFORE coding" when no contracts exist
+- **PreToolUse always passes context**: Uses exit(2) + message to inject search results to Claude
+- **Hook output visibility clarified**:
+  - PreToolUse/PostToolUse: exit(2) → visible to Claude as error context
+  - UserPromptSubmit/SessionStart: additionalContext → quiet injection to Claude
+
 ## [0.3.5] - 2026-02-04
 
 ### Fixed - claude-code-plugin@1.7.3
