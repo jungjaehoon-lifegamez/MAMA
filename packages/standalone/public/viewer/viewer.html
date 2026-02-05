@@ -1604,7 +1604,7 @@
       function updateTTSSpeed(value) {
         document.getElementById('tts-speed-label').textContent = value + 'x';
         document.getElementById('tts-speed-value').textContent = value + 'x';
-        chat.setTTSSpeed && chat.setTTSSpeed(parseFloat(value));
+        chat.setTTSRate && chat.setTTSRate(parseFloat(value));
       }
 
       function toggleHandsFree() {
@@ -1612,7 +1612,7 @@
       }
 
       function toggleVoiceInput() {
-        chat.toggleVoiceInput && chat.toggleVoiceInput();
+        chat.toggleVoice && chat.toggleVoice();
       }
 
       function filterByTopic(topic) {
