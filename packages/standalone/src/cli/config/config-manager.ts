@@ -164,6 +164,8 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     telegram: config.telegram ?? DEFAULT_CONFIG.telegram,
     chatwork: config.chatwork ?? DEFAULT_CONFIG.chatwork,
     heartbeat: config.heartbeat ?? DEFAULT_CONFIG.heartbeat,
+    // Multi-agent config (optional)
+    multi_agent: config.multi_agent,
   };
 }
 

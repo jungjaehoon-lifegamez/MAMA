@@ -276,6 +276,78 @@ export interface HeartbeatIntegrationConfig {
   template_file: string;
 }
 
+// ============================================================================
+// Multi-Agent Types (imported from multi-agent module)
+// ============================================================================
+
+/**
+ * Individual agent persona configuration
+ */
+export interface AgentPersonaConfig {
+  /** Internal agent ID (used in code) */
+  id: string;
+  /** Display name shown in Discord messages */
+  name: string;
+  /** Display name with emoji prefix */
+  display_name: string;
+  /** Command prefix to explicitly trigger this agent */
+  trigger_prefix: string;
+  /** Path to persona markdown file with system prompt */
+  persona_file: string;
+  /**
+   * Optional dedicated Discord bot token for this agent
+   * If provided, this agent will use its own bot instead of the main bot
+   */
+  bot_token?: string;
+  /** Keywords that auto-trigger this agent's response */
+  auto_respond_keywords?: string[];
+  /** Cooldown between responses in milliseconds */
+  cooldown_ms?: number;
+  /** Claude model to use for this agent */
+  model?: string;
+  /** Maximum turns for this agent */
+  max_turns?: number;
+  /** Whether this agent is enabled */
+  enabled?: boolean;
+}
+
+/**
+ * Loop prevention configuration
+ */
+export interface LoopPreventionConfig {
+  /** Maximum consecutive agent responses without human intervention */
+  max_chain_length: number;
+  /** Minimum time between any agent responses in milliseconds */
+  global_cooldown_ms: number;
+  /** Time window for counting chain length in milliseconds */
+  chain_window_ms: number;
+}
+
+/**
+ * Multi-agent system configuration
+ */
+export interface MultiAgentConfig {
+  /** Enable/disable multi-agent system */
+  enabled: boolean;
+  /** Agent definitions (key is agent ID) */
+  agents: Record<string, Omit<AgentPersonaConfig, 'id'>>;
+  /** Loop prevention settings */
+  loop_prevention: LoopPreventionConfig;
+  /** Free chat mode - all agents respond to every human message */
+  free_chat?: boolean;
+  /** Default agent ID for channels without explicit triggers */
+  default_agent?: string;
+  /** Channel-specific agent configurations */
+  channel_overrides?: Record<
+    string,
+    {
+      default_agent?: string;
+      allowed_agents?: string[];
+      disabled_agents?: string[];
+    }
+  >;
+}
+
 /**
  * Integrations configuration
  */
@@ -314,6 +386,8 @@ export interface MAMAConfig {
   integrations?: IntegrationsConfig;
   /** Heartbeat scheduler settings (optional) */
   heartbeat?: HeartbeatConfig;
+  /** Multi-agent settings (optional) */
+  multi_agent?: MultiAgentConfig;
 }
 
 /**
