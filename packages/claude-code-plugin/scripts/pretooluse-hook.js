@@ -103,6 +103,53 @@ function shouldProcessFile(filePath) {
   return CODE_EXTENSIONS.has(ext);
 }
 
+/**
+ * Extract function/method calls from code content
+ * Looks for patterns like: functionName(, ClassName.methodName(, await funcName(
+ */
+function extractFunctionCalls(content) {
+  if (!content || typeof content !== 'string') {
+    return [];
+  }
+
+  const calls = new Set();
+
+  // Pattern 1: method calls - obj.method( or Class.method(
+  const methodPattern = /(\w+)\.(\w+)\s*\(/g;
+  let match;
+  while ((match = methodPattern.exec(content)) !== null) {
+    const [, obj, method] = match;
+    // Skip common non-API patterns
+    if (!['console', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number'].includes(obj)) {
+      calls.add(`${obj}.${method}`);
+      calls.add(method);
+    }
+  }
+
+  // Pattern 2: function calls - funcName( or await funcName(
+  const funcPattern = /(?:await\s+)?(\w+)\s*\(/g;
+  while ((match = funcPattern.exec(content)) !== null) {
+    const [, funcName] = match;
+    // Skip common keywords and built-ins
+    if (
+      !['if', 'for', 'while', 'switch', 'function', 'catch', 'require', 'import'].includes(
+        funcName
+      ) &&
+      funcName.length > 2
+    ) {
+      calls.add(funcName);
+    }
+  }
+
+  // Pattern 3: API paths - /api/something or POST /path
+  const apiPattern = /(?:GET|POST|PUT|DELETE|PATCH)\s+([/\w-]+)/gi;
+  while ((match = apiPattern.exec(content)) !== null) {
+    calls.add(match[1]);
+  }
+
+  return Array.from(calls);
+}
+
 function isContractResult(result) {
   const topic = (result && result.topic) || '';
   return typeof topic === 'string' && topic.startsWith('contract_');
@@ -286,11 +333,22 @@ async function main() {
     process.exit(0);
   }
 
-  // Extract search query from file path
+  // Extract search query from file path AND new_string content
   const fileName = filePath.split('/').pop() || '';
-  // Future: analyze new_string content to find interface calls
-  // const _newContent = input.tool_input?.new_string || input.tool_input?.content || '';
-  const searchQuery = fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+  const newContent = input.tool_input?.new_string || input.tool_input?.content || '';
+
+  // Extract function/method calls from new_string for more accurate search
+  const extractedCalls = extractFunctionCalls(newContent);
+
+  // Build search query: prioritize extracted calls, fallback to filename
+  let searchQuery;
+  if (extractedCalls.length > 0) {
+    // Use extracted function/method names for search
+    searchQuery = extractedCalls.slice(0, 3).join(' ');
+  } else {
+    // Fallback to filename tokens
+    searchQuery = fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+  }
 
   let searchSummary = '';
   let hasContracts = false;

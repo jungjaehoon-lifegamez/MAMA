@@ -32,8 +32,9 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 
 const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
-// Lazy load to avoid embedding model initialization before tier check
-// const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+// Memory store for direct contract saving
+const { initDB, saveDecision } = require(path.join(CORE_PATH, 'memory-store'));
+const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
 const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
 
 // MAMA v2: Contract extraction
@@ -841,9 +842,44 @@ async function main() {
         ];
         if (allContracts.length > 0) {
           info(`[Hook] Auto-extracted ${allContracts.length} contracts`);
+
+          // AUTO-SAVE: Directly save extracted contracts to MAMA
+          let savedCount = 0;
+          try {
+            await initDB();
+            for (const contract of allContracts.slice(0, 3)) {
+              // Limit to 3 contracts per edit
+              const contractTopic = `contract_${contract.type}_${contract.name}`.replace(
+                /[^a-zA-Z0-9_]/g,
+                '_'
+              );
+              const contractDecision = contract.signature || contract.name;
+              const contractReasoning = `Auto-extracted from ${filePath}. Source: ${contract.source || 'code analysis'}`;
+
+              const embedding = await generateEmbedding(`${contractTopic} ${contractDecision}`);
+              if (embedding) {
+                await saveDecision({
+                  topic: contractTopic,
+                  decision: contractDecision,
+                  reasoning: contractReasoning,
+                  confidence: 0.8,
+                  embedding,
+                });
+                savedCount++;
+                info(`[Hook] Auto-saved contract: ${contractTopic}`);
+              }
+            }
+          } catch (saveErr) {
+            warn(`[Hook] Auto-save failed: ${saveErr.message}`);
+          }
+
+          // Show what was saved
           const formatted = showLong
             ? formatExtractedContracts(allContracts, filePath)
             : formatContractsCompact(allContracts, filePath);
+          if (savedCount > 0) {
+            additionalContext += `\n✅ **Auto-saved ${savedCount} contract(s) to MAMA**\n`;
+          }
           // Fallback if formatted output is empty (e.g., no API endpoints)
           if (formatted && formatted.trim()) {
             additionalContext += formatted;
