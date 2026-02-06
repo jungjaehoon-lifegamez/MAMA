@@ -31,6 +31,12 @@ export interface ClaudeCLIWrapperOptions {
   sessionId?: string;
   systemPrompt?: string;
   mcpConfigPath?: string;
+  /**
+   * Skip permission prompts for tool execution
+   *
+   * @warning SECURITY RISK: Bypasses all permission checks.
+   * Only enable in trusted environments where agent actions are pre-approved.
+   */
   dangerouslySkipPermissions?: boolean;
   /** If true, use GatewayToolExecutor instead of MCP (default: false) */
   useGatewayTools?: boolean;
