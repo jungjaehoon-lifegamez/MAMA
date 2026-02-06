@@ -24,6 +24,20 @@ import type {
   CategoryConfig,
 } from '../../src/multi-agent/types.js';
 
+/**
+ * Wait for an UltraWork session to complete (non-blocking startSession).
+ */
+async function waitForSessionComplete(
+  session: { active: boolean },
+  timeoutMs = 5000,
+  intervalMs = 10
+): Promise<void> {
+  const start = Date.now();
+  while (session.active && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
 // ============================================================================
 // Test Fixtures
 // ============================================================================
@@ -344,6 +358,8 @@ describe('E2E: UltraWork Session', () => {
       notifyCallback
     );
 
+    await waitForSessionComplete(session);
+
     expect(session.active).toBe(false);
     expect(session.steps.length).toBeGreaterThanOrEqual(3);
 
@@ -376,6 +392,8 @@ describe('E2E: UltraWork Session', () => {
       executeCallback,
       notifyCallback
     );
+
+    await waitForSessionComplete(session);
 
     expect(session.active).toBe(false);
     // Should be limited by max_steps + continuation retries
@@ -496,6 +514,8 @@ describe('Edge Cases', () => {
       executeCallback,
       notifyCallback
     );
+
+    await waitForSessionComplete(session);
 
     // Should not crash, should continue and complete
     expect(session.steps.length).toBeGreaterThanOrEqual(1);

@@ -158,8 +158,16 @@ export class UltraWorkManager {
         `Limits: ${session.maxSteps} steps, ${Math.round(session.maxDuration / 60000)} min`
     );
 
-    // Run the autonomous loop
-    await this.runSessionLoop(session, agents, executeCallback, notifyCallback);
+    // Run the autonomous loop in detached context (non-blocking)
+    // This prevents blocking the Discord message handler for up to 30 minutes
+    this.runSessionLoop(session, agents, executeCallback, notifyCallback).catch((err) => {
+      console.error(`[UltraWork] Session ${session.id} loop error:`, err);
+      session.active = false;
+      this.sessions.delete(session.channelId);
+      notifyCallback(
+        `**UltraWork Session Error** (${session.id}): ${err instanceof Error ? err.message : String(err)}`
+      ).catch(() => {});
+    });
 
     return session;
   }

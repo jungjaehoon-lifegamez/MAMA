@@ -374,6 +374,8 @@ export interface MultiAgentConfig {
     max_retries?: number;
     completion_markers?: string[];
   };
+  /** Skip permission prompts for all agent processes (default: true) */
+  dangerouslySkipPermissions?: boolean;
 }
 
 /**

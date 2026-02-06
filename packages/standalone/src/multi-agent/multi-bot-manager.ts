@@ -298,7 +298,12 @@ export class MultiBotManager {
 
     // Start new bots for agents with new tokens
     for (const [agentId, agentConfig] of Object.entries(config.agents)) {
-      if (agentConfig.bot_token && !this.bots.has(agentId)) {
+      if (agentConfig.bot_token && agentConfig.enabled !== false && !this.bots.has(agentId)) {
+        // Skip if agent uses the same token as main bot (avoid duplicate login)
+        if (this.mainBotToken && agentConfig.bot_token === this.mainBotToken) {
+          console.log(`[MultiBotManager] Agent ${agentId} uses main bot token - skipping`);
+          continue;
+        }
         await this.createAgentBot(agentId, agentConfig);
       }
     }

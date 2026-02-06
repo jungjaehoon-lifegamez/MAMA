@@ -95,6 +95,18 @@ describe('ToolPermissionManager', () => {
       expect(perms.blocked).toContain('Write');
       expect(perms.blocked).toContain('Edit');
     });
+
+    it('should fall back to Tier 2 (read-only) for unsupported tier values', () => {
+      const agent = makeAgent({ tier: 99 as any });
+      const perms = manager.resolvePermissions(agent);
+      // Should NOT get Tier 1 all-access (fail-open)
+      expect(perms.allowed).not.toEqual(['*']);
+      // Should fall back to Tier 2 read-only
+      expect(perms.allowed).toContain('Read');
+      expect(perms.allowed).toContain('Grep');
+      expect(perms.blocked).toContain('Write');
+      expect(perms.blocked).toContain('Bash');
+    });
   });
 
   describe('isToolAllowed', () => {
