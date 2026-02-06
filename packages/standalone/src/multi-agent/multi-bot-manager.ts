@@ -148,6 +148,12 @@ export class MultiBotManager {
       console.error(`[MultiBotManager] Agent ${agentId} bot error:`, error);
     });
 
+    // Set up disconnect handlers
+    client.on('shardDisconnect', () => {
+      bot.connected = false;
+      console.log(`[MultiBotManager] Agent ${agentId} bot disconnected`);
+    });
+
     // Login
     await client.login(agentConfig.bot_token);
     this.bots.set(agentId, bot);
@@ -204,9 +210,14 @@ export class MultiBotManager {
   ): Promise<Message | null> {
     const bot = this.bots.get(agentId);
     if (!bot?.connected) {
-      // Fall back to replying via the original message's channel
-      console.warn(`[MultiBotManager] No connected bot for agent ${agentId}, using channel send`);
-      return this.sendAsAgent(agentId, originalMessage.channel.id, content);
+      // Fall back to main bot reply (avoid infinite loop with sendAsAgent)
+      console.warn(`[MultiBotManager] No connected bot for agent ${agentId}, using main bot reply`);
+      try {
+        return await originalMessage.reply({ content });
+      } catch (err) {
+        console.error(`[MultiBotManager] Failed to reply with main bot:`, err);
+        return null;
+      }
     }
 
     try {

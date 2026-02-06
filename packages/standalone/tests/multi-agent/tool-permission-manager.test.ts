@@ -83,7 +83,7 @@ describe('ToolPermissionManager', () => {
       expect(perms.blocked).toEqual(['Bash']);
     });
 
-    it('should use tier default for blocked if only allowed is explicitly set', () => {
+    it('should remove explicitly allowed tools from tier default blocked list', () => {
       const agent = makeAgent({
         tier: 2,
         tool_permissions: {
@@ -92,8 +92,12 @@ describe('ToolPermissionManager', () => {
       });
       const perms = manager.resolvePermissions(agent);
       expect(perms.allowed).toEqual(['Read', 'Write']);
-      expect(perms.blocked).toContain('Write');
+      // Write is in allowed, so it should be removed from blocked
+      expect(perms.blocked).not.toContain('Write');
+      // Edit is NOT in allowed, so it stays blocked
       expect(perms.blocked).toContain('Edit');
+      expect(perms.blocked).toContain('Bash');
+      expect(perms.blocked).toContain('NotebookEdit');
     });
 
     it('should fall back to Tier 2 (read-only) for unsupported tier values', () => {

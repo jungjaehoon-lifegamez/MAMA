@@ -58,10 +58,16 @@ export class ToolPermissionManager {
 
     // Explicit permissions take priority over tier defaults
     if (agent.tool_permissions) {
-      return {
-        allowed: agent.tool_permissions.allowed ?? defaults.allowed,
-        blocked: agent.tool_permissions.blocked ?? defaults.blocked,
-      };
+      const allowed = agent.tool_permissions.allowed ?? defaults.allowed;
+      let blocked = agent.tool_permissions.blocked ?? defaults.blocked;
+
+      // If allowed explicitly lists tools that are in default blocked, remove them from blocked
+      // This prevents the confusing case where allowed: ["Edit", "Write"] still gets blocked by tier defaults
+      if (agent.tool_permissions.allowed && !agent.tool_permissions.blocked) {
+        blocked = blocked.filter((b) => !allowed.includes(b));
+      }
+
+      return { allowed, blocked };
     }
 
     return { ...defaults };
@@ -209,6 +215,48 @@ export class ToolPermissionManager {
     lines.push("- Only delegate when the task matches another agent's expertise");
     lines.push('- Include a clear task description after the mention');
     lines.push('- Example: "<@123456789> please review this code for security issues"');
+    lines.push('');
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Build report-back prompt for non-delegating agents (Tier 2/3).
+   * Instructs them to @mention the coordinator when their task is complete,
+   * so the coordinator can continue orchestrating the workflow.
+   */
+  buildReportBackPrompt(
+    agent: AgentPersonaConfig,
+    allAgents: AgentPersonaConfig[],
+    botUserIdMap: Map<string, string>
+  ): string {
+    // Only for non-delegating agents (Tier 2/3)
+    if (this.canDelegate(agent)) {
+      return '';
+    }
+
+    // Find the coordinator (Tier 1 with can_delegate)
+    const coordinator = allAgents.find(
+      (a) => a.id !== agent.id && this.canDelegate(a) && botUserIdMap.has(a.id)
+    );
+
+    if (!coordinator) {
+      return '';
+    }
+
+    const coordinatorUserId = botUserIdMap.get(coordinator.id)!;
+
+    const lines: string[] = [];
+    lines.push('## Report Back');
+    lines.push('');
+    lines.push(
+      `When you complete your task, **always mention <@${coordinatorUserId}>** (${coordinator.display_name}) in your response to report back.`
+    );
+    lines.push('This allows the coordinator to continue orchestrating the workflow.');
+    lines.push('');
+    lines.push('**Format:**');
+    lines.push(`- End your response with: "<@${coordinatorUserId}> [결과 요약]"`);
+    lines.push('- Include: what you found/did, issues discovered, and your recommendation');
     lines.push('');
 
     return lines.join('\n');

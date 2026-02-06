@@ -131,6 +131,7 @@ export class AgentProcessManager {
     const options: Partial<PersistentProcessOptions> = {
       ...this.defaultOptions,
       systemPrompt,
+      requestTimeout: 900000, // 15 minutes — agent tasks (code review, implementation) need more than default 2min
     };
 
     // Override model if agent-specific
@@ -192,13 +193,14 @@ export class AgentProcessManager {
     // Build permission prompt
     const permissionPrompt = this.permissionManager.buildPermissionPrompt(agent);
 
-    // Build delegation prompt for Tier 1 agents
+    // Build delegation prompt for Tier 1 agents, or report-back prompt for Tier 2/3
     let delegationPrompt = '';
-    if (this.permissionManager.canDelegate(agent)) {
-      const allAgents = Object.entries(this.config.agents)
-        .filter(([, cfg]) => cfg.enabled !== false)
-        .map(([id, cfg]) => ({ id, ...cfg }));
+    let reportBackPrompt = '';
+    const allAgents = Object.entries(this.config.agents)
+      .filter(([, cfg]) => cfg.enabled !== false)
+      .map(([id, cfg]) => ({ id, ...cfg }));
 
+    if (this.permissionManager.canDelegate(agent)) {
       if (this.mentionDelegationEnabled && this.botUserIdMap.size > 0) {
         delegationPrompt = this.permissionManager.buildMentionDelegationPrompt(
           agent,
@@ -208,6 +210,13 @@ export class AgentProcessManager {
       } else {
         delegationPrompt = this.permissionManager.buildDelegationPrompt(agent, allAgents);
       }
+    } else if (this.mentionDelegationEnabled && this.botUserIdMap.size > 0) {
+      // Tier 2/3 agents get report-back instructions
+      reportBackPrompt = this.permissionManager.buildReportBackPrompt(
+        agent,
+        allAgents,
+        this.botUserIdMap
+      );
     }
 
     return `# Agent Identity
@@ -229,7 +238,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${personaContent}
 
-${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}## Guidelines
+${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Guidelines
 - Stay in character as ${agentConfig.name}
 - Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
 - Your trigger prefix is: ${agentConfig.trigger_prefix}
