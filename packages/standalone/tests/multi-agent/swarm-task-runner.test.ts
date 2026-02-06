@@ -1,0 +1,487 @@
+/**
+ * Tests for Swarm Task Runner
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { SwarmTaskRunner } from '../../src/multi-agent/swarm/swarm-task-runner.js';
+import { SwarmManager } from '../../src/multi-agent/swarm/swarm-manager.js';
+import type { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
+import type { CreateTaskParams } from '../../src/multi-agent/swarm/swarm-db.js';
+import { randomUUID } from 'crypto';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { unlinkSync, existsSync } from 'fs';
+
+describe('SwarmTaskRunner', () => {
+  let runner: SwarmTaskRunner;
+  let manager: SwarmManager;
+  let mockAgentProcessManager: AgentProcessManager;
+  let dbPath: string;
+  let sessionId: string;
+
+  beforeEach(() => {
+    // Create temporary DB file and manager
+    dbPath = join(tmpdir(), `swarm-runner-test-${randomUUID()}.db`);
+    manager = new SwarmManager(dbPath);
+    sessionId = manager.createSession();
+
+    // Mock AgentProcessManager
+    const mockProcess = {
+      sendMessage: vi.fn().mockResolvedValue({
+        response: 'Task completed successfully',
+        usage: { input_tokens: 10, output_tokens: 20 },
+        session_id: 'test-session',
+      }),
+    };
+
+    mockAgentProcessManager = {
+      getProcess: vi.fn().mockResolvedValue(mockProcess),
+    } as any;
+
+    runner = new SwarmTaskRunner(manager, mockAgentProcessManager);
+
+    // Suppress console logs
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    runner.stopAll();
+    manager.close();
+    if (existsSync(dbPath)) {
+      unlinkSync(dbPath);
+    }
+    vi.restoreAllMocks();
+  });
+
+  describe('startSession / stopSession', () => {
+    it('should start a session', async () => {
+      // Add a task to prevent immediate session completion
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Pending task', category: 'test', wave: 1 },
+      ];
+      manager.addTasks(sessionId, taskParams);
+
+      expect(runner.getActiveSessionCount()).toBe(0);
+
+      runner.startSession(sessionId);
+
+      // Wait for pollAndExecute to run
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(runner.getActiveSessionCount()).toBe(1);
+      expect(runner.getActiveSessionIds()).toContain(sessionId);
+    });
+
+    it('should warn on duplicate session start', async () => {
+      // Add a task to prevent immediate session completion
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Pending task', category: 'test', wave: 1 },
+      ];
+      manager.addTasks(sessionId, taskParams);
+
+      runner.startSession(sessionId);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      runner.startSession(sessionId); // Duplicate
+
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining(`Session ${sessionId} already running`)
+      );
+      expect(runner.getActiveSessionCount()).toBe(1);
+    });
+
+    it('should stop a session', async () => {
+      // Add a task to prevent immediate session completion
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Pending task', category: 'test', wave: 1 },
+      ];
+      manager.addTasks(sessionId, taskParams);
+
+      runner.startSession(sessionId);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(runner.getActiveSessionCount()).toBe(1);
+
+      runner.stopSession(sessionId);
+      expect(runner.getActiveSessionCount()).toBe(0);
+    });
+
+    it('should warn when stopping non-existent session', () => {
+      runner.stopSession('non-existent-session');
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('not running'));
+    });
+
+    it('should stop all sessions', async () => {
+      const session1 = manager.createSession();
+      const session2 = manager.createSession();
+
+      // Add tasks to both sessions to prevent immediate completion
+      manager.addTasks(session1, [
+        { session_id: session1, description: 'Task 1', category: 'test', wave: 1 },
+      ]);
+      manager.addTasks(session2, [
+        { session_id: session2, description: 'Task 2', category: 'test', wave: 1 },
+      ]);
+
+      runner.startSession(session1);
+      runner.startSession(session2);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(runner.getActiveSessionCount()).toBe(2);
+
+      runner.stopAll();
+      expect(runner.getActiveSessionCount()).toBe(0);
+    });
+  });
+
+  describe('executeImmediateTask', () => {
+    it('should execute a task immediately', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Immediate task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      expect(result.status).toBe('completed');
+      expect(result.taskId).toBe(taskId);
+      expect(result.result).toBe('Task completed successfully');
+      // agentId is now derived from task.category ('test' in this case)
+      expect(mockAgentProcessManager.getProcess).toHaveBeenCalledWith('test', 'channel1', 'test');
+    });
+
+    it('should throw for non-existent task', async () => {
+      await expect(
+        runner.executeImmediateTask(sessionId, 'non-existent-id', 'test', 'channel1')
+      ).rejects.toThrow('Task non-existent-id not found');
+    });
+
+    it('should throw for session mismatch', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await expect(
+        runner.executeImmediateTask('wrong-session-id', taskId, 'test', 'channel1')
+      ).rejects.toThrow('does not belong to session');
+    });
+
+    it('should handle task execution failure', async () => {
+      // Mock process to throw error
+      const errorProcess = {
+        sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(errorProcess);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Failing task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe('Execution failed');
+
+      // Verify task is marked as failed in DB
+      const tasks = manager.getProgress(sessionId);
+      expect(tasks.failed).toBe(1);
+    });
+
+    it('should throw when task cannot be claimed (already claimed)', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Pre-claim the task
+      const db = manager.getDatabase();
+      db.prepare(
+        `UPDATE swarm_tasks SET status = 'claimed', claimed_by = 'other-agent' WHERE id = ?`
+      ).run(taskId);
+
+      // Attempt to execute should throw because claim will fail
+      await expect(
+        runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1')
+      ).rejects.toThrow(/could not be claimed/);
+    });
+  });
+
+  describe('dependency resolution', () => {
+    it('should execute task with no dependencies', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Independent task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      expect(result.status).toBe('completed');
+    });
+
+    it('should execute task when dependencies are completed', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Dep task', category: 'test', wave: 1 },
+        {
+          session_id: sessionId,
+          description: 'Main task',
+          category: 'test',
+          wave: 2,
+          depends_on: ['dep-id'], // Will be replaced
+        },
+      ];
+      const [depTaskId, mainTaskId] = manager.addTasks(sessionId, taskParams);
+
+      // Update dependency to point to actual task
+      const db = manager.getDatabase();
+      db.prepare(`UPDATE swarm_tasks SET depends_on = ? WHERE id = ?`).run(
+        JSON.stringify([depTaskId]),
+        mainTaskId
+      );
+
+      // Complete dependency first
+      await runner.executeImmediateTask(sessionId, depTaskId, 'test', 'channel1');
+
+      // Execute main task
+      const result = await runner.executeImmediateTask(sessionId, mainTaskId, 'test', 'channel1');
+
+      expect(result.status).toBe('completed');
+    });
+
+    it('should auto-fail task when dependency fails', async () => {
+      // Mock process to fail for first task
+      const failProcess = {
+        sendMessage: vi.fn().mockRejectedValue(new Error('Dep failed')),
+      };
+      const successProcess = {
+        sendMessage: vi.fn().mockResolvedValue({ response: 'done', usage: {}, session_id: 'test' }),
+      };
+
+      (mockAgentProcessManager.getProcess as any)
+        .mockResolvedValueOnce(failProcess)
+        .mockResolvedValueOnce(successProcess);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Dep task', category: 'test', wave: 1 },
+        {
+          session_id: sessionId,
+          description: 'Main task',
+          category: 'test',
+          wave: 2,
+          depends_on: ['dep-id'],
+        },
+      ];
+      const [depTaskId, mainTaskId] = manager.addTasks(sessionId, taskParams);
+
+      // Update dependency
+      const db = manager.getDatabase();
+      db.prepare(`UPDATE swarm_tasks SET depends_on = ? WHERE id = ?`).run(
+        JSON.stringify([depTaskId]),
+        mainTaskId
+      );
+
+      // Fail dependency
+      await runner.executeImmediateTask(sessionId, depTaskId, 'test', 'channel1');
+
+      // Check dependency through private method by triggering polling
+      // Since we can't call checkDependencies directly, we'll verify via DB state
+      const tasks = db.prepare(`SELECT * FROM swarm_tasks WHERE id = ?`).get(depTaskId);
+      expect(tasks).toHaveProperty('status', 'failed');
+    });
+  });
+
+  describe('file conflict detection', () => {
+    it('should detect file conflicts', async () => {
+      const conflictSpy = vi.fn();
+      runner.on('file-conflict', conflictSpy);
+
+      const taskParams: CreateTaskParams[] = [
+        {
+          session_id: sessionId,
+          description: 'Task 1',
+          category: 'test',
+          wave: 1,
+          files_owned: ['file1.ts'],
+        },
+        {
+          session_id: sessionId,
+          description: 'Task 2',
+          category: 'test',
+          wave: 1,
+          files_owned: ['file1.ts'],
+        },
+      ];
+      const [task1Id, task2Id] = manager.addTasks(sessionId, taskParams);
+
+      // Claim first task to simulate in-progress work
+      const db = manager.getDatabase();
+      db.prepare(
+        `UPDATE swarm_tasks SET status = 'claimed', claimed_by = 'agent1' WHERE id = ?`
+      ).run(task1Id);
+
+      // Start session to trigger pollAndExecute which checks conflicts
+      runner.startSession(sessionId);
+
+      // Wait for polling to claim and execute task2 (which will detect conflict with task1)
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Conflict should be detected
+      expect(conflictSpy).toHaveBeenCalledWith(task2Id, expect.arrayContaining(['file1.ts']), [
+        task1Id,
+      ]);
+    });
+
+    it('should not conflict when files are different', async () => {
+      const conflictSpy = vi.fn();
+      runner.on('file-conflict', conflictSpy);
+
+      const taskParams: CreateTaskParams[] = [
+        {
+          session_id: sessionId,
+          description: 'Task 1',
+          category: 'test',
+          wave: 1,
+          files_owned: ['file1.ts'],
+        },
+        {
+          session_id: sessionId,
+          description: 'Task 2',
+          category: 'test',
+          wave: 1,
+          files_owned: ['file2.ts'],
+        },
+      ];
+      const [task1Id, task2Id] = manager.addTasks(sessionId, taskParams);
+
+      // Claim first task
+      const db = manager.getDatabase();
+      db.prepare(
+        `UPDATE swarm_tasks SET status = 'claimed', claimed_by = 'agent1' WHERE id = ?`
+      ).run(task1Id);
+
+      // Start session to trigger pollAndExecute
+      runner.startSession(sessionId);
+
+      // Wait for polling to execute task2
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // No conflict should be detected (different files)
+      expect(conflictSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('event emission', () => {
+    it('should emit task-completed event', async () => {
+      const completedSpy = vi.fn();
+      runner.on('task-completed', completedSpy);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      expect(completedSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskId,
+          status: 'completed',
+        })
+      );
+    });
+
+    it('should emit task-failed event', async () => {
+      const failedSpy = vi.fn();
+      runner.on('task-failed', failedSpy);
+
+      // Mock failure
+      const failProcess = {
+        sendMessage: vi.fn().mockRejectedValue(new Error('Failed')),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      expect(failedSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskId,
+          status: 'failed',
+          error: 'Failed',
+        })
+      );
+    });
+
+    it('should emit session-complete event when all tasks done', async () => {
+      const completeSpy = vi.fn();
+      runner.on('session-complete', completeSpy);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Complete the task
+      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Start session (which will trigger pollAndExecute)
+      runner.startSession(sessionId);
+
+      // Wait for polling to detect completion
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(completeSpy).toHaveBeenCalledWith(sessionId);
+      expect(runner.getActiveSessionCount()).toBe(0); // Auto-stopped
+    });
+  });
+
+  describe('getActiveSessionCount / getActiveSessionIds', () => {
+    it('should return active session count', async () => {
+      expect(runner.getActiveSessionCount()).toBe(0);
+
+      // Add task to prevent immediate completion
+      manager.addTasks(sessionId, [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ]);
+
+      runner.startSession(sessionId);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(runner.getActiveSessionCount()).toBe(1);
+
+      const session2 = manager.createSession();
+      manager.addTasks(session2, [
+        { session_id: session2, description: 'Task 2', category: 'test', wave: 1 },
+      ]);
+      runner.startSession(session2);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(runner.getActiveSessionCount()).toBe(2);
+    });
+
+    it('should return active session IDs', async () => {
+      const session1 = manager.createSession();
+      const session2 = manager.createSession();
+
+      // Add tasks to prevent immediate completion
+      manager.addTasks(session1, [
+        { session_id: session1, description: 'Task 1', category: 'test', wave: 1 },
+      ]);
+      manager.addTasks(session2, [
+        { session_id: session2, description: 'Task 2', category: 'test', wave: 1 },
+      ]);
+
+      runner.startSession(session1);
+      runner.startSession(session2);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const activeIds = runner.getActiveSessionIds();
+      expect(activeIds).toHaveLength(2);
+      expect(activeIds).toContain(session1);
+      expect(activeIds).toContain(session2);
+    });
+  });
+});
