@@ -14,6 +14,9 @@ import { MultiBotManager } from './multi-bot-manager.js';
 import type { PersistentProcessOptions } from '../agent/persistent-cli-process.js';
 import { splitForDiscord } from '../gateways/message-splitter.js';
 
+/** Default timeout for agent responses (5 minutes) */
+const AGENT_TIMEOUT_MS = 5 * 60 * 1000;
+
 /**
  * Multi-Agent Discord Handler
  *
@@ -236,8 +239,16 @@ export class MultiAgentDiscordHandler {
       // Get or create process for this agent in this channel
       const process = await this.processManager.getProcess('discord', context.channelId, agentId);
 
-      // Send message and get response
-      const result = await process.sendMessage(fullPrompt);
+      // Send message and get response (with timeout to prevent indefinite hangs)
+      const result = await Promise.race([
+        process.sendMessage(fullPrompt),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)),
+            AGENT_TIMEOUT_MS
+          )
+        ),
+      ]);
 
       // Format response with agent prefix
       const formattedResponse = this.formatAgentResponse(agent, result.response);
@@ -309,54 +320,59 @@ export class MultiAgentDiscordHandler {
     const sentMessages: Message[] = [];
 
     for (const response of responses) {
-      const chunks = splitForDiscord(response.content);
-      const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
+      try {
+        const chunks = splitForDiscord(response.content);
+        const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
 
-      for (let i = 0; i < chunks.length; i++) {
-        let sentMessage: Message | null = null;
+        for (let i = 0; i < chunks.length; i++) {
+          let sentMessage: Message | null = null;
 
-        if (hasOwnBot) {
-          // Use agent's dedicated bot
-          if (i === 0) {
-            // First chunk: reply to original message
-            sentMessage = await this.multiBotManager.replyAsAgent(
-              response.agentId,
-              originalMessage,
-              chunks[i]
-            );
+          if (hasOwnBot) {
+            // Use agent's dedicated bot
+            if (i === 0) {
+              // First chunk: reply to original message
+              sentMessage = await this.multiBotManager.replyAsAgent(
+                response.agentId,
+                originalMessage,
+                chunks[i]
+              );
+            } else {
+              // Subsequent chunks: send as new message
+              sentMessage = await this.multiBotManager.sendAsAgent(
+                response.agentId,
+                originalMessage.channel.id,
+                chunks[i]
+              );
+            }
           } else {
-            // Subsequent chunks: send as new message
-            sentMessage = await this.multiBotManager.sendAsAgent(
-              response.agentId,
-              originalMessage.channel.id,
-              chunks[i]
-            );
+            // Use main bot
+            if (sentMessages.length === 0 && i === 0) {
+              // First message: reply to original
+              sentMessage = await originalMessage.reply({ content: chunks[i] });
+            } else {
+              // Subsequent messages: send as new message
+              if ('send' in originalMessage.channel) {
+                sentMessage = await (
+                  originalMessage.channel as {
+                    send: (content: { content: string }) => Promise<Message>;
+                  }
+                ).send({ content: chunks[i] });
+              }
+            }
           }
-        } else {
-          // Use main bot
-          if (sentMessages.length === 0 && i === 0) {
-            // First message: reply to original
-            sentMessage = await originalMessage.reply({ content: chunks[i] });
-          } else {
-            // Subsequent messages: send as new message
-            if ('send' in originalMessage.channel) {
-              sentMessage = await (
-                originalMessage.channel as {
-                  send: (content: { content: string }) => Promise<Message>;
-                }
-              ).send({ content: chunks[i] });
+
+          if (sentMessage) {
+            sentMessages.push(sentMessage);
+
+            // Update response with message ID (for chain tracking)
+            if (i === 0) {
+              response.messageId = sentMessage.id;
             }
           }
         }
-
-        if (sentMessage) {
-          sentMessages.push(sentMessage);
-
-          // Update response with message ID (for chain tracking)
-          if (i === 0) {
-            response.messageId = sentMessage.id;
-          }
-        }
+      } catch (err) {
+        // Per-response error handling: don't let one agent's failure drop other agents' responses
+        console.error(`[MultiAgent] Failed to send response for agent ${response.agentId}:`, err);
       }
     }
 

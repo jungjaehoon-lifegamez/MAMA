@@ -203,6 +203,12 @@ export interface MultiAgentConfig {
    * Task continuation configuration
    */
   task_continuation?: TaskContinuationConfig;
+
+  /**
+   * Skip permission prompts for all agent processes
+   * @default true
+   */
+  dangerouslySkipPermissions?: boolean;
 }
 
 /**

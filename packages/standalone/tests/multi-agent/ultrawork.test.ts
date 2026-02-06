@@ -17,6 +17,21 @@ function makeAgent(overrides: Partial<AgentPersonaConfig> = {}): AgentPersonaCon
   };
 }
 
+/**
+ * Wait for an UltraWork session to complete (non-blocking startSession).
+ * Polls session.active until it becomes false or timeout is reached.
+ */
+async function waitForSessionComplete(
+  session: { active: boolean },
+  timeoutMs = 5000,
+  intervalMs = 10
+): Promise<void> {
+  const start = Date.now();
+  while (session.active && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
 describe('UltraWorkManager', () => {
   let manager: UltraWorkManager;
   const defaultConfig: UltraWorkConfig = {
@@ -102,6 +117,9 @@ describe('UltraWorkManager', () => {
         notifyCallback
       );
 
+      // startSession is non-blocking; wait for the session loop to complete
+      await waitForSessionComplete(session);
+
       expect(session.channelId).toBe('ch1');
       expect(session.leadAgentId).toBe('sisyphus');
       expect(session.task).toBe('Build the login page');
@@ -139,6 +157,8 @@ describe('UltraWorkManager', () => {
         notifyCallback
       );
 
+      await waitForSessionComplete(session);
+
       expect(session.active).toBe(false);
       expect(session.steps.length).toBeGreaterThanOrEqual(2);
       // Should have delegation step
@@ -161,6 +181,8 @@ describe('UltraWorkManager', () => {
         executeCallback,
         notifyCallback
       );
+
+      await waitForSessionComplete(session);
 
       expect(session.active).toBe(false);
       // Should stop at or near maxSteps (5 configured + continuation retries might stop earlier)
@@ -220,6 +242,8 @@ describe('UltraWorkManager', () => {
         notifyCallback
       );
 
+      await waitForSessionComplete(session);
+
       // Should have recovered and continued
       const errorStep = session.steps.find((s) => s.action === 'error');
       expect(errorStep).toBeDefined();
@@ -233,7 +257,7 @@ describe('UltraWorkManager', () => {
       });
       const notifyCallback = vi.fn().mockResolvedValue(undefined);
 
-      await manager.startSession(
+      const session1 = await manager.startSession(
         'ch1',
         'sisyphus',
         'Task 1',
@@ -241,6 +265,8 @@ describe('UltraWorkManager', () => {
         executeCallback,
         notifyCallback
       );
+      await waitForSessionComplete(session1);
+
       const session2 = await manager.startSession(
         'ch1',
         'sisyphus',
