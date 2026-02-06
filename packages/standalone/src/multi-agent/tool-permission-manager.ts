@@ -47,17 +47,24 @@ export class ToolPermissionManager {
   resolvePermissions(agent: AgentPersonaConfig): ToolPermissions {
     const tier = agent.tier ?? 1;
 
+    // Get tier defaults, falling back to Tier 2 (read-only) for unsupported tier values
+    const tierDefaults = ToolPermissionManager.TIER_DEFAULTS[tier];
+    if (!tierDefaults) {
+      console.warn(
+        `[ToolPermissionManager] Unsupported tier ${tier} for agent ${agent.id}, falling back to Tier 2 (read-only)`
+      );
+    }
+    const defaults = tierDefaults ?? ToolPermissionManager.TIER_DEFAULTS[2];
+
     // Explicit permissions take priority over tier defaults
     if (agent.tool_permissions) {
       return {
-        allowed:
-          agent.tool_permissions.allowed ?? ToolPermissionManager.TIER_DEFAULTS[tier].allowed,
-        blocked:
-          agent.tool_permissions.blocked ?? ToolPermissionManager.TIER_DEFAULTS[tier].blocked,
+        allowed: agent.tool_permissions.allowed ?? defaults.allowed,
+        blocked: agent.tool_permissions.blocked ?? defaults.blocked,
       };
     }
 
-    return { ...ToolPermissionManager.TIER_DEFAULTS[tier] };
+    return { ...defaults };
   }
 
   /**

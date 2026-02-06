@@ -74,12 +74,25 @@ export class PersistentCLIAdapter {
 
     // Check if we have pending tool results to send first
     if (this.pendingToolResults.size > 0) {
-      // Send tool results before the new message
-      for (const [toolUseId, { result, isError }] of this.pendingToolResults) {
-        console.log(`[PersistentAdapter] Sending pending tool_result: ${toolUseId}`);
-        await this.currentProcess.sendToolResult(toolUseId, result, isError);
+      // Verify the process is still alive before sending stale tool results
+      // If the process was replaced (e.g., crashed and restarted), pending results are invalid
+      if (!this.currentProcess.isAlive()) {
+        console.warn(
+          `[PersistentAdapter] Process not alive, discarding ${this.pendingToolResults.size} pending tool results`
+        );
+        this.pendingToolResults.clear();
+      } else {
+        // Send tool results before the new message
+        for (const [toolUseId, { result, isError }] of this.pendingToolResults) {
+          try {
+            console.log(`[PersistentAdapter] Sending pending tool_result: ${toolUseId}`);
+            await this.currentProcess.sendToolResult(toolUseId, result, isError);
+          } catch (err) {
+            console.error(`[PersistentAdapter] Failed to send tool_result ${toolUseId}:`, err);
+          }
+        }
+        this.pendingToolResults.clear();
       }
-      this.pendingToolResults.clear();
     }
 
     // Send the user message
