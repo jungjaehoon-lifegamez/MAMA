@@ -79,6 +79,9 @@ export class SwarmTaskRunner extends EventEmitter {
   private pollingIntervalMs = 30000; // 30 seconds
   private contextInjector?: ContextInjector;
 
+  // Prevent concurrent pollAndExecute for the same session
+  private pollingSessionIds: Set<string> = new Set();
+
   // Auto-checkpoint settings (F6)
   private enableAutoCheckpoint: boolean = false;
   private checkpointDebounceMs: number = 5000;
@@ -232,6 +235,31 @@ export class SwarmTaskRunner extends EventEmitter {
    * @param sessionId - Session ID to poll
    */
   private async pollAndExecute(sessionId: string): Promise<void> {
+    const state = this.sessions.get(sessionId);
+    if (!state || !state.isRunning) {
+      return;
+    }
+
+    // Prevent concurrent polling for the same session
+    if (this.pollingSessionIds.has(sessionId)) {
+      console.log(
+        `[SwarmTaskRunner] Polling already in progress for session ${sessionId}, skipping`
+      );
+      return;
+    }
+
+    this.pollingSessionIds.add(sessionId);
+    try {
+      await this.pollAndExecuteInternal(sessionId);
+    } finally {
+      this.pollingSessionIds.delete(sessionId);
+    }
+  }
+
+  /**
+   * Internal poll logic (extracted for concurrency guard)
+   */
+  private async pollAndExecuteInternal(sessionId: string): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (!state || !state.isRunning) {
       return;
