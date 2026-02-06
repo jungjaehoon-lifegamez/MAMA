@@ -146,6 +146,11 @@ export class PRReviewPoller {
       }
     } catch (err) {
       this.logger.error(`[PRPoller] Failed to load existing comments:`, err);
+      this.logger.warn(
+        `[PRPoller] Starting with empty seen comment sets — existing comments may be re-reported as new`
+      );
+      // seenCommentIds and seenReviewIds remain empty Sets (initialized above)
+      // This means all comments will be treated as new on first poll
     }
 
     // Fetch initial HEAD SHA
@@ -305,19 +310,27 @@ export class PRReviewPoller {
       this.logger.error(`[PRPoller] Failed to detect push:`, err);
     }
 
+    // Fetch comments once (avoid N+1 API calls between handlePostPush and standard flow)
+    let allComments: PRComment[] = [];
+    try {
+      allComments = await this.fetchComments(session.owner, session.repo, session.prNumber);
+    } catch (err) {
+      this.logger.error(`[PRPoller] Failed to fetch comments:`, err);
+      return; // Cannot proceed without comments
+    }
+
     // After a push, check unresolved threads and auto-reply to addressed ones
     if (newPush && changedFiles.length > 0) {
       try {
-        await this.handlePostPush(session, sessionKey, changedFiles);
+        await this.handlePostPush(session, sessionKey, changedFiles, allComments);
       } catch (err) {
         this.logger.error(`[PRPoller] Failed to handle post-push:`, err);
       }
     }
 
-    // Fetch new comments (standard flow)
+    // Standard flow: filter and send new comments
     try {
-      const comments = await this.fetchComments(session.owner, session.repo, session.prNumber);
-      const newComments = comments.filter(
+      const newComments = allComments.filter(
         (c) => !session.seenCommentIds.has(c.id) && !session.addressedCommentIds.has(c.id)
       );
 
@@ -335,7 +348,7 @@ export class PRReviewPoller {
 
       this.logger.log(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
     } catch (err) {
-      this.logger.error(`[PRPoller] Failed to fetch comments:`, err);
+      this.logger.error(`[PRPoller] Failed to process comments:`, err);
     }
   }
 
@@ -440,11 +453,14 @@ export class PRReviewPoller {
   /**
    * Handle post-push: check unresolved threads, auto-reply to addressed ones,
    * and re-inject truly unresolved comments to Slack.
+   *
+   * @param allComments - Pre-fetched comments (to avoid N+1 API calls)
    */
   private async handlePostPush(
     session: PollSession,
     sessionKey: string,
-    changedFiles: string[]
+    changedFiles: string[],
+    allComments: PRComment[]
   ): Promise<void> {
     const changedFileSet = new Set(changedFiles);
 
@@ -478,8 +494,7 @@ export class PRReviewPoller {
     if (addressed.length > 0) {
       const shortSha = session.lastHeadSha?.substring(0, 7) ?? 'latest';
 
-      // Fetch all comments to map GraphQL threads to REST API comment IDs
-      const allComments = await this.fetchComments(session.owner, session.repo, session.prNumber);
+      // Use pre-fetched comments (passed as parameter to avoid N+1 API calls)
 
       for (const thread of addressed) {
         try {
@@ -704,8 +719,8 @@ export class PRReviewPoller {
    * Parse GitHub PR URL into owner/repo/number
    */
   parsePRUrl(url: string): { owner: string; repo: string; prNumber: number } | null {
-    // Match: https://github.com/owner/repo/pull/123
-    const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+    // Match: https://github.com/owner/repo/pull/123 (with anchors to prevent partial matches)
+    const match = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/);
     if (!match) return null;
 
     return {
