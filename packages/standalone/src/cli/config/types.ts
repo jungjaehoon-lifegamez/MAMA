@@ -282,6 +282,10 @@ export interface HeartbeatIntegrationConfig {
 
 /**
  * Individual agent persona configuration
+ *
+ * @see packages/standalone/src/multi-agent/types.ts
+ * Note: This is intentionally duplicated from runtime types for CLI config parsing.
+ * CLI config layer uses this for validation, runtime uses multi-agent/types.ts.
  */
 export interface AgentPersonaConfig {
   /** Internal agent ID (used in code) */
@@ -319,7 +323,7 @@ export interface AgentPersonaConfig {
   max_turns?: number;
   /** Whether this agent is enabled */
   enabled?: boolean;
-  /** Agent tier level (1=full, 2=read-only, 3=read-only) @default 1 */
+  /** Agent tier level (1=full, 2=read-only, 3=scoped execution) @default 1 */
   tier?: 1 | 2 | 3;
   /** Whether this agent can delegate tasks (Tier 1 only) */
   can_delegate?: boolean;
@@ -343,6 +347,9 @@ export interface LoopPreventionConfig {
 
 /**
  * Multi-agent system configuration
+ *
+ * @see packages/standalone/src/multi-agent/types.ts
+ * Note: This is intentionally duplicated from runtime types for CLI config parsing.
  */
 export interface MultiAgentConfig {
   /** Enable/disable multi-agent system */
@@ -386,6 +393,10 @@ export interface MultiAgentConfig {
   };
   /** Skip permission prompts for all agent processes (default: true) */
   dangerouslySkipPermissions?: boolean;
+  /** Enable @mention-based delegation between agents @default false */
+  mention_delegation?: boolean;
+  /** Maximum depth of @mention delegation chains @default 3 */
+  max_mention_depth?: number;
 }
 
 /**

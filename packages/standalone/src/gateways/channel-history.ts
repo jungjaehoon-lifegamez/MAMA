@@ -158,6 +158,21 @@ ${lines.join('\n')}`;
   }
 
   /**
+   * Update the sender name of a specific history entry.
+   * Safe encapsulated method that avoids direct array mutation from outside.
+   */
+  updateSender(channelId: string, messageId: string, newSender: string): boolean {
+    const history = this.histories.get(channelId);
+    if (!history) return false;
+
+    const entry = history.find((e) => e.messageId === messageId);
+    if (!entry) return false;
+
+    entry.sender = newSender;
+    return true;
+  }
+
+  /**
    * Clear history for a channel (after bot reply, like OpenClaw)
    */
   clear(channelId: string): void {
