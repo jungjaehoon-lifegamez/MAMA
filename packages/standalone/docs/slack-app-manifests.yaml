@@ -65,6 +65,8 @@ settings:
   event_subscriptions:
     bot_events:
       - app_mention           # Core: detect when mentioned by users or other agents
+      - message.channels      # Detect bot-to-bot mentions (report-back from Tier 2/3)
+      - message.groups        # Same for private channels
       - message.im            # Handle direct messages
   interactivity:
     is_enabled: false
@@ -124,7 +126,9 @@ oauth_config:
 settings:
   event_subscriptions:
     bot_events:
-      - app_mention           # Core: detect delegation mentions
+      - app_mention           # Core: detect delegation mentions from humans
+      - message.channels      # Detect bot-to-bot mentions (app_mention doesn't fire for bot messages)
+      - message.groups        # Same for private channels
       - message.im            # Handle direct messages
   interactivity:
     is_enabled: false
@@ -184,7 +188,9 @@ oauth_config:
 settings:
   event_subscriptions:
     bot_events:
-      - app_mention           # Core: detect delegation mentions
+      - app_mention           # Core: detect delegation mentions from humans
+      - message.channels      # Detect bot-to-bot mentions (app_mention doesn't fire for bot messages)
+      - message.groups        # Same for private channels
       - message.im            # Handle direct messages
   interactivity:
     is_enabled: false

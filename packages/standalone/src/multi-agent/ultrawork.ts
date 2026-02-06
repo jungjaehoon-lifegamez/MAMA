@@ -23,6 +23,9 @@ import {
 } from './delegation-manager.js';
 import { TaskContinuationEnforcer } from './task-continuation.js';
 
+/** Default timeout for executeCallback (5 minutes) */
+const DEFAULT_EXECUTE_TIMEOUT = 300000;
+
 /**
  * UltraWork session state
  */
@@ -223,6 +226,38 @@ export class UltraWorkManager {
   }
 
   /**
+   * Execute callback with timeout protection.
+   * Prevents long-running agent responses from blocking indefinitely.
+   *
+   * @param executeCallback - The callback to execute
+   * @param agentId - Agent ID for error messages
+   * @param prompt - Prompt to send to agent
+   * @param timeoutMs - Timeout in milliseconds (default: 5 minutes)
+   * @returns Promise that rejects on timeout
+   */
+  private async executeWithTimeout(
+    executeCallback: DelegationExecuteCallback,
+    agentId: string,
+    prompt: string,
+    timeoutMs: number = DEFAULT_EXECUTE_TIMEOUT
+  ): Promise<{ response: string; duration?: number }> {
+    let timeoutHandle: ReturnType<typeof setTimeout>;
+
+    const result = await Promise.race([
+      executeCallback(agentId, prompt),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error(`Agent ${agentId} timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      }),
+    ]);
+
+    clearTimeout(timeoutHandle!);
+    return result;
+  }
+
+  /**
    * Run the autonomous session loop.
    * Lead agent works on the task, delegating and continuing as needed.
    */
@@ -247,8 +282,12 @@ export class UltraWorkManager {
       const stepStart = Date.now();
 
       try {
-        // Execute current agent's task
-        const result = await executeCallback(currentAgentId, currentPrompt);
+        // Execute current agent's task with timeout protection
+        const result = await this.executeWithTimeout(
+          executeCallback,
+          currentAgentId,
+          currentPrompt
+        );
         const stepDuration = Date.now() - stepStart;
 
         // Check for delegation in response
