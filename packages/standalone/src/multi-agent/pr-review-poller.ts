@@ -258,12 +258,15 @@ export class PRReviewPoller {
         session.seenReviewIds.add(review.id);
 
         if (review.state === 'APPROVED') {
-          await this.sendMessage(
-            session.channelId,
-            `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. 폴링 종료.`
-          );
-          clearInterval(session.interval);
-          this.sessions.delete(sessionKey);
+          try {
+            await this.sendMessage(
+              session.channelId,
+              `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. 폴링 종료.`
+            );
+          } finally {
+            clearInterval(session.interval);
+            this.sessions.delete(sessionKey);
+          }
           return;
         }
 

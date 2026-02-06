@@ -229,6 +229,7 @@ export class SlackRateLimiter {
 
           setTimeout(() => {
             this.requestQueue.unshift(request); // Put back at front of queue
+            this.startProcessing();
           }, retryDelay);
           return;
         }
