@@ -37,7 +37,7 @@ interface ChannelContinuationState {
 /**
  * Default completion markers
  */
-const DEFAULT_COMPLETION_MARKERS = ['DONE', '완료', '✅', 'TASK_COMPLETE', 'finished', 'all done'];
+const DEFAULT_COMPLETION_MARKERS = ['DONE', '완료', '✅', 'TASK_COMPLETE'];
 
 /**
  * Patterns that suggest a response is incomplete

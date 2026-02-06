@@ -41,9 +41,10 @@ describe('TaskContinuationEnforcer', () => {
       expect(result.isComplete).toBe(true);
     });
 
-    it('should detect "finished" as complete', () => {
+    it('should treat "finished" as normal response (not a false-positive marker)', () => {
       const result = enforcer.analyzeResponse('agent1', 'ch1', 'I have finished the task.');
       expect(result.isComplete).toBe(true);
+      expect(result.reason).toBe('normal_response');
     });
 
     it('should support custom completion markers', () => {

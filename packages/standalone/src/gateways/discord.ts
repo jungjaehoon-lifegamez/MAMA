@@ -94,7 +94,7 @@ export class DiscordGateway implements Gateway {
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
       this.multiAgentHandler = new MultiAgentDiscordHandler(options.multiAgentConfig, {
-        dangerouslySkipPermissions: true,
+        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
       });
       console.log('[Discord] Multi-agent mode enabled');
     }
@@ -1040,9 +1040,12 @@ export class DiscordGateway implements Gateway {
       if (this.multiAgentHandler) {
         this.multiAgentHandler.updateConfig(config);
       } else {
-        this.multiAgentHandler = new MultiAgentDiscordHandler(config);
+        this.multiAgentHandler = new MultiAgentDiscordHandler(config, {
+          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
+        });
         if (this.client.user) {
           this.multiAgentHandler.setBotUserId(this.client.user.id);
+          this.multiAgentHandler.setMainBotToken(this.token);
           await this.multiAgentHandler.initializeMultiBots();
         }
       }

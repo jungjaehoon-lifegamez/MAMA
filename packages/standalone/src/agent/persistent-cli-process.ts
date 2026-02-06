@@ -378,8 +378,8 @@ export class PersistentClaudeProcess extends EventEmitter {
         if (event.message?.content) {
           for (const block of event.message.content) {
             if (block.type === 'text') {
-              this.accumulatedText = block.text || '';
-              this.currentCallbacks?.onDelta?.(this.accumulatedText);
+              this.accumulatedText += block.text || '';
+              this.currentCallbacks?.onDelta?.(block.text || '');
             } else if (block.type === 'tool_use') {
               const toolUse: ToolUseBlock = {
                 type: 'tool_use',
@@ -600,6 +600,12 @@ export class PersistentProcessPool {
 
       console.log(`[ProcessPool] Creating new process for channel: ${channelKey}`);
       process = new PersistentClaudeProcess(mergedOptions);
+
+      // Handle process errors - prevent unhandled 'error' event crash
+      process.on('error', (err) => {
+        console.error(`[ProcessPool] Process error for ${channelKey}:`, err);
+        this.processes.delete(channelKey);
+      });
 
       // Handle process death - remove from pool
       process.on('close', () => {
