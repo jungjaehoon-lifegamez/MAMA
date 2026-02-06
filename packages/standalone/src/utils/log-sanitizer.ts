@@ -72,8 +72,10 @@ export function sanitizeString(value: string, options: SanitizationOptions = {})
   }
 
   if (opts.redactTokens) {
-    // Match Slack tokens: xoxb-, xapp-, xoxp-
-    sanitized = sanitized.replace(/xo(?:xb|xp|xa)p?-[a-zA-Z0-9-]+/g, (match) => redactToken(match));
+    // Match Slack tokens: xoxb-, xoxp-, xoxa-, xapp-
+    sanitized = sanitized.replace(/x(?:oxb|oxp|oxa|app)-[a-zA-Z0-9-]+/g, (match) =>
+      redactToken(match)
+    );
   }
 
   // Apply custom patterns
