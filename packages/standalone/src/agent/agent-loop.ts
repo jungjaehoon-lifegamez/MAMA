@@ -473,7 +473,12 @@ export class AgentLoop {
           },
         };
 
-        const promptText = this.formatHistoryAsPrompt(history);
+        // Persistent CLI preserves context automatically - only send new messages
+        // Non-persistent CLI needs full history formatted as prompt
+        const promptText = this.usePersistentCLI
+          ? this.formatLastMessageOnly(history)
+          : this.formatHistoryAsPrompt(history);
+
         let piResult;
         try {
           // Pass role-specific model and resume flag based on session state
@@ -854,6 +859,45 @@ export class AgentLoop {
       })
       .filter(Boolean)
       .join('\n\n');
+  }
+
+  /**
+   * Format only the last user message for persistent CLI
+   * Persistent CLI maintains context automatically, so we only send the new message
+   */
+  private formatLastMessageOnly(history: Message[]): string {
+    // Find the last user message in the history
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === 'user') {
+        const content = msg.content;
+        let text: string;
+
+        if (typeof content === 'string') {
+          text = content;
+        } else if (Array.isArray(content)) {
+          const parts: string[] = [];
+          for (const block of content as any[]) {
+            if (block.type === 'text') {
+              parts.push(block.text);
+            } else if (block.type === 'image' && block.localPath) {
+              // Include image instructions for persistent CLI as well
+              parts.push(
+                `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
+                  `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
+              );
+            }
+          }
+          text = parts.join('\n');
+        } else {
+          text = '';
+        }
+
+        return text;
+      }
+    }
+    // Fallback: if no user message found, return empty string
+    return '';
   }
 
   /**
