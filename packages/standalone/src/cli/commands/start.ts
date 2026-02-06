@@ -23,6 +23,7 @@ import {
   SessionStore,
   MessageRouter,
   PluginLoader,
+  initChannelHistory,
 } from '../../gateways/index.js';
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
@@ -389,6 +390,9 @@ export async function runAgentLoop(
   const db = new Database(dbPath);
   const sessionStore = new SessionStore(db);
 
+  // Initialize channel history with SQLite persistence (Sprint 3 F5)
+  initChannelHistory(db);
+
   const mamaDbPath = expandPath(config.database.path);
   const toolExecutor = new GatewayToolExecutor({
     mamaDbPath: mamaDbPath,
@@ -593,7 +597,13 @@ export async function runAgentLoop(
 
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);
 
-  const graphHandler = createGraphHandler();
+  // Prepare graph handler options (will be populated after gateways init)
+  let graphHandlerOptions: {
+    getAgentStates?: () => Map<string, string>;
+    getSwarmTasks?: (limit?: number) => Array<any>;
+  } = {};
+
+  const graphHandler = createGraphHandler(graphHandlerOptions);
 
   await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
@@ -671,6 +681,44 @@ export async function runAgentLoop(
         `Failed to connect Slack: ${error instanceof Error ? error.message : String(error)}`
       );
       slackGateway = null;
+    }
+  }
+
+  // Populate graph handler options with runtime dependencies (F4)
+  if (discordGateway || slackGateway) {
+    const gateway = discordGateway || slackGateway;
+    const multiAgentHandler = gateway!.getMultiAgentHandler();
+
+    if (multiAgentHandler) {
+      // getAgentStates: real-time process states
+      graphHandlerOptions.getAgentStates = () => {
+        try {
+          return multiAgentHandler.getProcessManager().getAgentStates();
+        } catch (err) {
+          console.error('[GraphAPI] Failed to get agent states:', err);
+          return new Map();
+        }
+      };
+
+      // getSwarmTasks: recent delegations from swarm-db
+      graphHandlerOptions.getSwarmTasks = (limit = 20) => {
+        try {
+          // Query swarm_tasks table directly from mama-sessions.db
+          const stmt = db.prepare(`
+            SELECT
+              id, description, category, wave, status,
+              claimed_by, claimed_at, completed_at, result
+            FROM swarm_tasks
+            WHERE status IN ('completed', 'claimed')
+            ORDER BY completed_at DESC, claimed_at DESC
+            LIMIT ?
+          `);
+          return stmt.all(limit) as Array<any>;
+        } catch (err) {
+          console.error('[GraphAPI] Failed to fetch swarm tasks:', err);
+          return [];
+        }
+      };
     }
   }
 

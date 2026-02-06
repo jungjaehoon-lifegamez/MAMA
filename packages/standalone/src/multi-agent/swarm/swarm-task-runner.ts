@@ -78,6 +78,12 @@ export class SwarmTaskRunner extends EventEmitter {
   private sessions: Map<string, SessionState> = new Map();
   private pollingIntervalMs = 30000; // 30 seconds
   private contextInjector?: ContextInjector;
+
+  // Auto-checkpoint settings (F6)
+  private enableAutoCheckpoint: boolean = false;
+  private checkpointDebounceMs: number = 5000;
+  private checkpointFailCounts: Map<string, number> = new Map();
+  private checkpointTimers: Map<string, NodeJS.Timeout> = new Map();
   private antiPatternDetector?: SwarmAntiPatternDetector;
   private maxRetries = 3;
 
@@ -89,6 +95,8 @@ export class SwarmTaskRunner extends EventEmitter {
       contextInjector?: ContextInjector;
       antiPatternDetector?: SwarmAntiPatternDetector;
       maxRetries?: number;
+      enableAutoCheckpoint?: boolean;
+      checkpointDebounceMs?: number;
     }
   ) {
     super();
@@ -105,6 +113,17 @@ export class SwarmTaskRunner extends EventEmitter {
     }
     if (options?.maxRetries !== undefined) {
       this.maxRetries = options.maxRetries;
+    }
+    if (options?.enableAutoCheckpoint !== undefined) {
+      this.enableAutoCheckpoint = options.enableAutoCheckpoint;
+    }
+    if (options?.checkpointDebounceMs !== undefined) {
+      this.checkpointDebounceMs = options.checkpointDebounceMs;
+    }
+
+    // Setup auto-checkpoint listeners (F6)
+    if (this.enableAutoCheckpoint) {
+      this.setupAutoCheckpoint();
     }
   }
 
@@ -154,6 +173,13 @@ export class SwarmTaskRunner extends EventEmitter {
     console.log(`[SwarmTaskRunner] Stopping session ${sessionId}`);
     clearInterval(state.intervalHandle);
     this.sessions.delete(sessionId);
+
+    // Clear debounce timer (F6)
+    const checkpointTimer = this.checkpointTimers.get(sessionId);
+    if (checkpointTimer) {
+      clearTimeout(checkpointTimer);
+      this.checkpointTimers.delete(sessionId);
+    }
   }
 
   /**
@@ -525,6 +551,127 @@ export class SwarmTaskRunner extends EventEmitter {
     }
 
     return conflicts;
+  }
+
+  /**
+   * Setup auto-checkpoint listeners (F6)
+   */
+  private setupAutoCheckpoint(): void {
+    // session-complete: immediate checkpoint (no debounce)
+    this.on('session-complete', async (sessionId: string) => {
+      try {
+        await this.saveSessionCheckpoint(sessionId, true);
+        // Reset fail counter on success
+        this.checkpointFailCounts.delete(sessionId);
+      } catch (err) {
+        const failCount = (this.checkpointFailCounts.get(sessionId) || 0) + 1;
+        this.checkpointFailCounts.set(sessionId, failCount);
+
+        if (failCount >= 3) {
+          console.warn(
+            `[SwarmTaskRunner] Checkpoint failed ${failCount} times for session ${sessionId}. Continuing without checkpoint.`,
+            err
+          );
+        } else {
+          console.warn(
+            `[SwarmTaskRunner] Failed to save checkpoint for session ${sessionId}:`,
+            err
+          );
+        }
+      }
+    });
+
+    // task-completed / task-failed: debounced checkpoint
+    const handleTaskEvent = async (result: TaskExecutionResult) => {
+      if (!result) return;
+
+      // Extract sessionId from taskId (format: {sessionId}-task-{N})
+      const match = result.taskId.match(/^(.+)-task-\d+$/);
+      if (!match) return;
+
+      const sessionId = match[1];
+      this.scheduleCheckpoint(sessionId);
+    };
+
+    this.on('task-completed', handleTaskEvent);
+    this.on('task-failed', handleTaskEvent);
+  }
+
+  /**
+   * Schedule a debounced checkpoint save (F6)
+   */
+  private scheduleCheckpoint(sessionId: string): void {
+    // Clear existing timer
+    const existingTimer = this.checkpointTimers.get(sessionId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    // Schedule new timer
+    const timer = setTimeout(async () => {
+      try {
+        await this.saveSessionCheckpoint(sessionId, false);
+        this.checkpointTimers.delete(sessionId);
+        // Reset fail counter on success
+        this.checkpointFailCounts.delete(sessionId);
+      } catch (err) {
+        const failCount = (this.checkpointFailCounts.get(sessionId) || 0) + 1;
+        this.checkpointFailCounts.set(sessionId, failCount);
+
+        if (failCount >= 3) {
+          console.warn(
+            `[SwarmTaskRunner] Checkpoint failed ${failCount} times for session ${sessionId}. Continuing without checkpoint.`,
+            err
+          );
+        } else {
+          console.warn(`[SwarmTaskRunner] Failed to save debounced checkpoint:`, err);
+        }
+      }
+    }, this.checkpointDebounceMs);
+
+    this.checkpointTimers.set(sessionId, timer);
+  }
+
+  /**
+   * Save session checkpoint to MAMA (F6)
+   */
+  private async saveSessionCheckpoint(sessionId: string, isComplete: boolean): Promise<void> {
+    const db = this.swarmManager.getDatabase();
+
+    // Get all tasks for this session
+    const { getTasksBySession } = await import('./swarm-db.js');
+    const allTasks = getTasksBySession(db, sessionId);
+
+    const completed = allTasks.filter((t) => t.status === 'completed').length;
+    const failed = allTasks.filter((t) => t.status === 'failed').length;
+    const total = allTasks.length;
+
+    // Build summary
+    const summary = isComplete
+      ? `Swarm session ${sessionId} completed. ${completed}/${total} tasks succeeded.`
+      : `Swarm session ${sessionId} progress: ${completed}/${total} tasks completed.`;
+
+    // Collect open files (files_owned from active tasks)
+    const activeTasks = allTasks.filter((t) => t.status === 'claimed' || t.status === 'completed');
+    const openFiles: string[] = [];
+    for (const task of activeTasks) {
+      if (task.files_owned) {
+        const files = parseFilesOwned(task);
+        openFiles.push(...files);
+      }
+    }
+
+    // Build next steps (list failed tasks if any)
+    let nextSteps = '';
+    if (failed > 0) {
+      const failedTasks = allTasks.filter((t) => t.status === 'failed');
+      const failedDescriptions = failedTasks.map((t) => `- ${t.description}`).slice(0, 5);
+      nextSteps = `Failed tasks (${failed}):\n${failedDescriptions.join('\n')}`;
+    }
+
+    // Save checkpoint via swarm-mama-adapter
+    const { saveSwarmCheckpoint } = await import('./swarm-mama-adapter.js');
+    await saveSwarmCheckpoint(sessionId, summary, openFiles, nextSteps);
   }
 
   /**

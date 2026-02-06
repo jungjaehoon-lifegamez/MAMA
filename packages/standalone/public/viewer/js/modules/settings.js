@@ -12,7 +12,7 @@
 
 /* eslint-env browser */
 
-import { showToast } from '../utils/dom.js';
+import { showToast, escapeHtml } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 
 /**
@@ -49,6 +49,20 @@ export class SettingsModule {
       }
 
       this.config = await response.json();
+
+      // Load multi-agent data (F3)
+      try {
+        const multiAgentResponse = await fetch('/api/multi-agent/agents');
+        if (multiAgentResponse.ok) {
+          this.multiAgentData = await multiAgentResponse.json();
+        } else {
+          this.multiAgentData = { agents: [] };
+        }
+      } catch (e) {
+        console.warn('[Settings] Multi-agent data unavailable:', e);
+        this.multiAgentData = { agents: [] };
+      }
+
       this.populateForm();
       this.setStatus('');
     } catch (error) {
@@ -108,26 +122,9 @@ export class SettingsModule {
 
     // Role Permissions
     this.populateRoles();
-  }
 
-  /**
-   * Escape HTML to prevent XSS attacks
-   * @param {string} value - Value to escape
-   * @returns {string} Escaped HTML string
-   */
-  escapeHtml(value) {
-    const str = String(value);
-    return str.replace(
-      /[&<>"']/g,
-      (ch) =>
-        ({
-          '&': '&amp;',
-          '<': '&lt;',
-          '>': '&gt;',
-          '"': '&quot;',
-          "'": '&#39;',
-        })[ch]
-    );
+    // Multi-Agent Team (F3)
+    this.populateMultiAgentSection();
   }
 
   /**
@@ -169,7 +166,7 @@ export class SettingsModule {
         const sources = roleSources[roleName] || [];
         const color = roleColors[roleName] || { badge: 'gray', label: 'Custom' };
         const icon = roleIcons[roleName] || '⚙️';
-        const displayName = this.escapeHtml(
+        const displayName = escapeHtml(
           roleName.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
         );
 
@@ -181,7 +178,7 @@ export class SettingsModule {
         const maxTurns = roleConfig.maxTurns;
 
         // Format model name for display (and escape)
-        const displayModel = this.escapeHtml(formatModelName(model));
+        const displayModel = escapeHtml(formatModelName(model));
 
         return `
           <div class="bg-white border border-gray-200 rounded-lg p-2.5">
@@ -196,11 +193,11 @@ export class SettingsModule {
               <div class="flex items-center gap-2">
                 <span class="font-medium">Model:</span>
                 <span class="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">${displayModel}</span>
-                ${maxTurns ? `<span class="text-gray-400">| ${this.escapeHtml(maxTurns)} turns</span>` : ''}
+                ${maxTurns ? `<span class="text-gray-400">| ${escapeHtml(maxTurns)} turns</span>` : ''}
               </div>
-              <div><span class="font-medium">Source:</span> ${sources.map((s) => `<code class="bg-gray-100 px-1 rounded">${this.escapeHtml(s)}</code>`).join(' ')}</div>
-              <div><span class="font-medium">Allowed:</span> <code class="text-green-600 text-[10px]">${this.escapeHtml(allowedTools.join(', '))}</code></div>
-              ${blockedTools.length > 0 ? `<div><span class="font-medium">Blocked:</span> <code class="text-red-600 text-[10px]">${this.escapeHtml(blockedTools.join(', '))}</code></div>` : ''}
+              <div><span class="font-medium">Source:</span> ${sources.map((s) => `<code class="bg-gray-100 px-1 rounded">${escapeHtml(s)}</code>`).join(' ')}</div>
+              <div><span class="font-medium">Allowed:</span> <code class="text-green-600 text-[10px]">${escapeHtml(allowedTools.join(', '))}</code></div>
+              ${blockedTools.length > 0 ? `<div><span class="font-medium">Blocked:</span> <code class="text-red-600 text-[10px]">${escapeHtml(blockedTools.join(', '))}</code></div>` : ''}
               ${
                 hasSystemControl || hasSensitiveAccess
                   ? `<div><span class="font-medium">Permissions:</span>
@@ -507,6 +504,104 @@ export class SettingsModule {
             ? 'text-green-500'
             : 'text-gray-500 dark:text-gray-400'
       }`;
+    }
+  }
+
+  /**
+   * Populate Multi-Agent Team section (F3)
+   */
+  populateMultiAgentSection() {
+    const container = document.getElementById('settings-multi-agent-container');
+    if (!container) {
+      return;
+    }
+
+    const agents = this.multiAgentData?.agents || [];
+
+    if (agents.length === 0) {
+      container.innerHTML = `
+        <div class="bg-white border border-gray-200 rounded-lg p-3 text-xs text-gray-500">
+          No agents configured. Add agents in <code class="bg-gray-100 px-1 rounded">config.yaml</code>
+        </div>
+      `;
+      return;
+    }
+
+    // Tier badge colors
+    const tierColors = {
+      1: 'bg-indigo-100 text-indigo-700',
+      2: 'bg-green-100 text-green-700',
+      3: 'bg-yellow-100 text-yellow-700',
+    };
+
+    // Mask token (show last 4 chars)
+    const maskToken = (token) => {
+      if (!token || token.length < 8) {
+        return '****';
+      }
+      return '****' + token.slice(-4);
+    };
+
+    const agentCards = agents
+      .map((agent) => {
+        const tierColor = tierColors[agent.tier] || tierColors[1];
+        const friendlyModel = formatModelName(agent.model) || agent.model || 'Default';
+        const maskedToken = agent.bot_token ? maskToken(agent.bot_token) : 'N/A';
+
+        return `
+          <div class="bg-white border border-gray-200 rounded-lg p-2.5">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="flex items-center gap-2">
+                <span class="${tierColor} text-xs font-bold px-1.5 py-0.5 rounded">T${agent.tier}</span>
+                <h3 class="font-semibold text-gray-900 text-sm">${escapeHtml(agent.name)}</h3>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="sr-only peer"
+                  data-agent-id="${escapeHtml(agent.id)}"
+                  ${agent.enabled ? 'checked' : ''}
+                  onchange="window.settingsModule.toggleAgent('${escapeHtml(agent.id)}', this.checked)"
+                >
+                <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-1 text-xs text-gray-600">
+              <div><span class="font-medium">Model:</span> ${escapeHtml(friendlyModel)}</div>
+              <div><span class="font-medium">Token:</span> <code class="bg-gray-100 px-1 rounded">${maskedToken}</code></div>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    container.innerHTML = agentCards;
+  }
+
+  /**
+   * Toggle agent enabled status (F3)
+   */
+  async toggleAgent(agentId, enabled) {
+    try {
+      const response = await fetch(`/api/multi-agent/agents/${agentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      console.log(`[Settings] Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      console.error('[Settings] Failed to toggle agent:', error);
+      // Revert checkbox on error
+      const checkbox = document.querySelector(`input[data-agent-id="${agentId}"]`);
+      if (checkbox) {
+        checkbox.checked = !enabled;
+      }
+      alert(`Failed to update agent: ${error.message}`);
     }
   }
 }

@@ -122,6 +122,7 @@ export class SlackGateway implements Gateway {
           this.multiAgentHandler.setBotUserId(userId);
           this.multiAgentHandler.setMainBotId(botId);
           this.multiAgentHandler.setMainBotToken(this.botToken);
+          this.multiAgentHandler.setMainWebClient(this.webClient);
           // Initialize agent-specific bots (async, don't block)
           this.multiAgentHandler.initializeMultiBots().catch((err) => {
             this.logger.error('Failed to initialize multi-bots:', err);
@@ -390,6 +391,10 @@ export class SlackGateway implements Gateway {
         this.logger.log(
           `[Slack] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
         );
+
+        // Start heartbeat polling for this channel (reports only when agents are busy)
+        this.multiAgentHandler.startHeartbeat(event.channel);
+
         return; // Multi-agent handled it
       }
       // If multi-agent returns null, fall through to regular processing
