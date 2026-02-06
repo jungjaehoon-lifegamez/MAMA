@@ -31,8 +31,10 @@ import {
   parseFilesOwned,
   parseDependsOn,
   retryTask,
+  deferTask,
 } from './swarm-db.js';
 import { AgentProcessManager } from '../agent-process-manager.js';
+import type { PersistentClaudeProcess } from '../../agent/persistent-cli-process.js';
 import type { ContextInjector } from '../../gateways/context-injector.js';
 import type { SwarmAntiPatternDetector } from './swarm-anti-pattern-detector.js';
 
@@ -216,6 +218,26 @@ export class SwarmTaskRunner extends EventEmitter {
       console.log(`[SwarmTaskRunner] Expired ${expired} stale leases`);
     }
 
+    // Cleanup idle & hung processes
+    const agentPool = this.agentProcessManager.getAgentProcessPool();
+    const idleCleaned = agentPool.cleanupIdleProcesses();
+    const hungCleaned = agentPool.cleanupHungProcesses();
+    if (idleCleaned > 0 || hungCleaned > 0) {
+      console.log(
+        `[SwarmTaskRunner] Cleaned up ${idleCleaned} idle + ${hungCleaned} hung processes`
+      );
+    }
+
+    // Log pool status (only if pools exist)
+    const statuses = agentPool.getAllPoolStatuses();
+    if (statuses.size > 0) {
+      for (const [agentId, status] of statuses) {
+        console.log(
+          `[SwarmTaskRunner] Pool status: agent=${agentId} busy=${status.busy}/${status.total}`
+        );
+      }
+    }
+
     // Check if session is complete
     if (this.swarmManager.isSessionComplete(sessionId)) {
       console.log(`[SwarmTaskRunner] Session ${sessionId} is complete`);
@@ -283,6 +305,8 @@ export class SwarmTaskRunner extends EventEmitter {
     // Determine agent ID from category or use default
     const agentId = task.category || 'developer';
 
+    let process: PersistentClaudeProcess | undefined; // Declare in outer scope for catch block access
+
     try {
       console.log(`[SwarmTaskRunner] Executing task ${task.id}: ${task.description}`);
 
@@ -323,7 +347,25 @@ export class SwarmTaskRunner extends EventEmitter {
       }
 
       // Get agent process
-      const process = await this.agentProcessManager.getProcess(source, channelId, agentId);
+      process = await this.agentProcessManager.getProcess(source, channelId, agentId);
+
+      // Busy Guard: defer task if agent process is not ready
+      if (!process.isReady()) {
+        deferTask(db, task.id);
+
+        // Release process back to pool (we didn't use it)
+        this.agentProcessManager.releaseProcess(agentId, process);
+
+        const deferredResult: TaskExecutionResult = {
+          taskId: task.id,
+          agentId,
+          status: 'failed', // status는 TaskExecutionResult 타입 제약 유지
+          error: 'Agent process busy, task deferred',
+        };
+        console.log(`[SwarmTaskRunner] Task ${task.id} deferred — agent ${agentId} busy`);
+        this.emit('task-deferred', deferredResult);
+        return deferredResult;
+      }
 
       // Send enriched task description to agent
       const promptResult = await process.sendMessage(enrichedDescription);
@@ -331,6 +373,9 @@ export class SwarmTaskRunner extends EventEmitter {
       // Mark task as completed
       const resultText = promptResult.response || 'Task completed';
       completeTask(db, task.id, resultText);
+
+      // Release process back to pool
+      (this.agentProcessManager as any).releaseProcess?.(agentId, process);
 
       const result: TaskExecutionResult = {
         taskId: task.id,
@@ -350,6 +395,11 @@ export class SwarmTaskRunner extends EventEmitter {
         .prepare('SELECT retry_count FROM swarm_tasks WHERE id = ?')
         .get(task.id) as { retry_count: number } | undefined;
       const retryCount = currentTask?.retry_count ?? 0;
+
+      // Release process back to pool (error occurred after getting process)
+      if (process) {
+        this.agentProcessManager.releaseProcess(agentId, process);
+      }
 
       if (retryCount < this.maxRetries) {
         // Retry the task
