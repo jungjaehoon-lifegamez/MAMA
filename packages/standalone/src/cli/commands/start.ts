@@ -17,7 +17,13 @@ import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
-import { DiscordGateway, SessionStore, MessageRouter, PluginLoader } from '../../gateways/index.js';
+import {
+  DiscordGateway,
+  SlackGateway,
+  SessionStore,
+  MessageRouter,
+  PluginLoader,
+} from '../../gateways/index.js';
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer } from '../../api/index.js';
@@ -645,19 +651,33 @@ export async function runAgentLoop(
     }
   }
 
-  // Initialize gateway plugin loader (for additional gateways like Slack, Chatwork)
+  // Initialize Slack gateway if enabled (native, like Discord)
+  let slackGateway: SlackGateway | null = null;
+  if (config.slack?.enabled && config.slack?.bot_token && config.slack?.app_token) {
+    console.log('Initializing Slack gateway...');
+    try {
+      slackGateway = new SlackGateway({
+        botToken: config.slack.bot_token,
+        appToken: config.slack.app_token,
+        messageRouter,
+        multiAgentConfig: config.multi_agent,
+      });
+
+      await slackGateway.start();
+      gateways.push(slackGateway);
+      console.log('✓ Slack connected');
+    } catch (error) {
+      console.error(
+        `Failed to connect Slack: ${error instanceof Error ? error.message : String(error)}`
+      );
+      slackGateway = null;
+    }
+  }
+
+  // Initialize gateway plugin loader (for additional gateways like Chatwork)
   const pluginLoader = new PluginLoader({
     gatewayConfigs: {
       // Pass gateway configs from main config
-      ...(config.slack
-        ? {
-            'slack-gateway': {
-              enabled: config.slack.enabled,
-              botToken: config.slack.bot_token,
-              appToken: config.slack.app_token,
-            },
-          }
-        : {}),
       ...(config.chatwork
         ? {
             'chatwork-gateway': {

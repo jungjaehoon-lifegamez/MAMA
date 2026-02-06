@@ -46,6 +46,12 @@ export class AgentProcessManager {
   /** Cached persona content: Map<agentId, systemPrompt> */
   private personaCache: Map<string, string> = new Map();
 
+  /** Bot user ID map for mention-based delegation: agentId → Discord userId */
+  private botUserIdMap: Map<string, string> = new Map();
+
+  /** Whether mention-based delegation is enabled */
+  private mentionDelegationEnabled = false;
+
   /** Default options for all processes */
   private defaultOptions: Partial<PersistentProcessOptions>;
 
@@ -62,6 +68,24 @@ export class AgentProcessManager {
   updateConfig(config: MultiAgentConfig): void {
     this.config = config;
     // Clear persona cache to force reload
+    this.personaCache.clear();
+  }
+
+  /**
+   * Set the bot user ID map for mention-based delegation
+   * Clears persona cache to regenerate system prompts with mention info
+   */
+  setBotUserIdMap(map: Map<string, string>): void {
+    this.botUserIdMap = map;
+    this.personaCache.clear();
+  }
+
+  /**
+   * Enable or disable mention-based delegation
+   * Clears persona cache to regenerate system prompts
+   */
+  setMentionDelegation(enabled: boolean): void {
+    this.mentionDelegationEnabled = enabled;
     this.personaCache.clear();
   }
 
@@ -174,7 +198,16 @@ export class AgentProcessManager {
       const allAgents = Object.entries(this.config.agents)
         .filter(([, cfg]) => cfg.enabled !== false)
         .map(([id, cfg]) => ({ id, ...cfg }));
-      delegationPrompt = this.permissionManager.buildDelegationPrompt(agent, allAgents);
+
+      if (this.mentionDelegationEnabled && this.botUserIdMap.size > 0) {
+        delegationPrompt = this.permissionManager.buildMentionDelegationPrompt(
+          agent,
+          allAgents,
+          this.botUserIdMap
+        );
+      } else {
+        delegationPrompt = this.permissionManager.buildDelegationPrompt(agent, allAgents);
+      }
     }
 
     return `# Agent Identity
