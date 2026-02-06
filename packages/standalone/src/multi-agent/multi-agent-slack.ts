@@ -18,9 +18,21 @@ import { getSharedContextManager, type SharedContextManager } from './shared-con
 import { SlackMultiBotManager, type SlackMentionEvent } from './slack-multi-bot-manager.js';
 import type { PersistentProcessOptions } from '../agent/persistent-cli-process.js';
 import { splitForSlack } from '../gateways/message-splitter.js';
+import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
 
 /** Default timeout for agent responses (15 minutes - longer than Discord due to Slack's slower Socket Mode relay and complex thread routing) */
 const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
+
+/** Heartbeat interval for status polling (60 seconds) */
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+
+/** Status emoji for each process state */
+const STATE_EMOJI: Record<string, string> = {
+  busy: '🔄',
+  idle: '💤',
+  starting: '⏳',
+  dead: '💀',
+};
 
 /**
  * Multi-Agent Slack Handler
@@ -33,7 +45,17 @@ export class MultiAgentSlackHandler {
   private processManager: AgentProcessManager;
   private sharedContext: SharedContextManager;
   private multiBotManager: SlackMultiBotManager;
+  private messageQueue: AgentMessageQueue;
   private logger = console;
+
+  /** Main Slack WebClient for posting system messages (heartbeat) */
+  private mainWebClient: WebClient | null = null;
+
+  /** Active channel for heartbeat reporting */
+  private heartbeatChannelId: string | null = null;
+
+  /** Heartbeat polling interval handle */
+  private heartbeatInterval?: ReturnType<typeof setInterval>;
 
   /** Whether multi-bot mode is initialized */
   private multiBotInitialized = false;
@@ -53,11 +75,30 @@ export class MultiAgentSlackHandler {
     this.processManager = new AgentProcessManager(config, processOptions);
     this.sharedContext = getSharedContextManager();
     this.multiBotManager = new SlackMultiBotManager(config);
+    this.messageQueue = new AgentMessageQueue();
 
     // Start periodic cleanup of processed mentions (every 60 seconds)
     this.mentionCleanupInterval = setInterval(() => {
       this.cleanupProcessedMentions();
+      this.messageQueue.clearExpired();
     }, 60_000);
+
+    // Setup idle event listeners for all agents (F7: message queue drain)
+    this.setupIdleListeners();
+  }
+
+  /**
+   * Setup idle event listeners for agent processes (F7)
+   */
+  private setupIdleListeners(): void {
+    // Listen to process creation events from AgentProcessManager
+    this.processManager.on('process-created', ({ agentId, process }) => {
+      process.on('idle', async () => {
+        await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
+          await this.sendQueuedResponse(aid, message, response);
+        });
+      });
+    });
   }
 
   /**
@@ -147,6 +188,13 @@ export class MultiAgentSlackHandler {
         `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
       );
     }
+  }
+
+  /**
+   * Set main Slack WebClient (for heartbeat status messages)
+   */
+  setMainWebClient(client: WebClient): void {
+    this.mainWebClient = client;
   }
 
   /**
@@ -337,9 +385,20 @@ export class MultiAgentSlackHandler {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(`[MultiAgentSlack] Failed to get response from ${agentId}:`, error);
 
-      // Silently drop busy responses — don't spam the channel
+      // Enqueue busy responses (F7: message queue)
       if (errMsg.includes('busy')) {
-        this.logger.log(`[MultiAgentSlack] Agent ${agentId} busy, silently dropping request`);
+        this.logger.log(`[MultiAgentSlack] Agent ${agentId} busy, enqueuing message`);
+
+        const queuedMessage: QueuedMessage = {
+          prompt: fullPrompt,
+          channelId: context.channelId,
+          threadTs: context.messageId,
+          source: 'slack',
+          enqueuedAt: Date.now(),
+          context,
+        };
+
+        this.messageQueue.enqueue(agentId, queuedMessage);
         return null;
       }
       return null;
@@ -441,6 +500,51 @@ export class MultiAgentSlackHandler {
     }
 
     return sentMessageTs;
+  }
+
+  /**
+   * Send queued response to Slack (F7: message queue drain callback)
+   */
+  private async sendQueuedResponse(
+    agentId: string,
+    message: QueuedMessage,
+    response: string
+  ): Promise<void> {
+    const agent = this.orchestrator.getAgent(agentId);
+    if (!agent) {
+      this.logger.error(`[MultiAgentSlack] Unknown agent in queue: ${agentId}`);
+      return;
+    }
+
+    // Format response with agent prefix
+    const formattedResponse = this.formatAgentResponse(agent, response);
+
+    const agentResponse: SlackAgentResponse = {
+      agentId,
+      agent,
+      content: formattedResponse,
+      rawContent: response,
+    };
+
+    // Send to channel
+    await this.sendAgentResponses(
+      message.channelId,
+      message.threadTs || '',
+      [agentResponse],
+      undefined // No mainWebClient - use agent bot
+    );
+
+    // Record to shared context
+    this.sharedContext.recordAgentMessage(
+      message.channelId,
+      agent,
+      response,
+      agentResponse.messageId || ''
+    );
+
+    this.logger.log(
+      `[MultiAgentSlack] Queued message delivered for ${agentId} in ${message.channelId}`
+    );
   }
 
   /**
@@ -629,9 +733,92 @@ export class MultiAgentSlackHandler {
   }
 
   /**
+   * Start heartbeat polling for a channel.
+   * Only reports when at least 1 agent is busy. Silent when all idle.
+   */
+  startHeartbeat(channelId: string): void {
+    // Already running for this channel
+    if (this.heartbeatInterval && this.heartbeatChannelId === channelId) return;
+
+    // Stop existing heartbeat if switching channels
+    this.stopHeartbeat();
+
+    this.heartbeatChannelId = channelId;
+    this.heartbeatInterval = setInterval(() => {
+      this.pollAndReport().catch((err) => {
+        this.logger.error('[Heartbeat] Poll error:', err);
+      });
+    }, HEARTBEAT_INTERVAL_MS);
+
+    this.logger.log(
+      `[Heartbeat] Started for channel ${channelId} (${HEARTBEAT_INTERVAL_MS / 1000}s interval)`
+    );
+  }
+
+  /**
+   * Stop heartbeat polling
+   */
+  stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = undefined;
+      this.heartbeatChannelId = null;
+    }
+  }
+
+  /**
+   * Poll agent states and report to Slack if any are busy
+   */
+  private async pollAndReport(): Promise<void> {
+    if (!this.mainWebClient || !this.heartbeatChannelId) return;
+
+    const agentStates = this.processManager.getAgentStates();
+
+    // Check if any agent is busy
+    let hasBusy = false;
+    for (const state of agentStates.values()) {
+      if (state === 'busy' || state === 'starting') {
+        hasBusy = true;
+        break;
+      }
+    }
+
+    // Silent when no agents are busy
+    if (!hasBusy) return;
+
+    // Build status line
+    const agentConfigs = this.config.agents;
+    const parts: string[] = [];
+
+    for (const [agentId, agentConfig] of Object.entries(agentConfigs)) {
+      if (agentConfig.enabled === false) continue;
+      const state = agentStates.get(agentId) ?? 'idle';
+      const emoji = STATE_EMOJI[state] ?? '❓';
+      const queueSize = this.messageQueue.getQueueSize(agentId);
+      let entry = `${emoji} ${agentConfig.display_name}: ${state}`;
+      if (queueSize > 0) {
+        entry += ` (📬 ${queueSize} queued)`;
+      }
+      parts.push(entry);
+    }
+
+    const statusLine = `⏱️ *Agent Status* | ${parts.join(' | ')}`;
+
+    try {
+      await this.mainWebClient.chat.postMessage({
+        channel: this.heartbeatChannelId,
+        text: statusLine,
+      });
+    } catch (err) {
+      this.logger.error('[Heartbeat] Failed to post status:', err);
+    }
+  }
+
+  /**
    * Stop all agent processes and bots
    */
   async stopAll(): Promise<void> {
+    this.stopHeartbeat();
     if (this.mentionCleanupInterval) {
       clearInterval(this.mentionCleanupInterval);
       this.mentionCleanupInterval = undefined;

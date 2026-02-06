@@ -65,6 +65,19 @@ export class DashboardModule {
         this.multiAgentData = { enabled: false, agents: [] };
       }
 
+      // Load delegations (F4 endpoint)
+      try {
+        const delegationsResponse = await fetch('/api/multi-agent/delegations?limit=10');
+        if (delegationsResponse.ok) {
+          this.delegationsData = await delegationsResponse.json();
+        } else {
+          this.delegationsData = { delegations: [], count: 0 };
+        }
+      } catch (e) {
+        console.warn('[Dashboard] Delegations unavailable:', e);
+        this.delegationsData = { delegations: [], count: 0 };
+      }
+
       this.render();
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
@@ -520,12 +533,26 @@ export class DashboardModule {
       3: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'T3' },
     };
 
-    // Status icons
+    // Status icons (F2 enhanced)
     const statusIcons = {
-      online: '🟢',
-      busy: '🟡',
-      offline: '🔴',
-      disabled: '⚪',
+      idle: '🟢', // 대기 중
+      online: '🟢', // 온라인 (fallback)
+      busy: '🟡', // 작업 중
+      starting: '🔵', // 시작 중
+      dead: '🔴', // 비정상 종료
+      offline: '🔴', // 오프라인
+      disabled: '⚪', // 비활성
+    };
+
+    // Status text labels
+    const statusLabels = {
+      idle: 'Ready',
+      online: 'Ready',
+      busy: 'Working...',
+      starting: 'Starting...',
+      dead: 'Error',
+      offline: 'Offline',
+      disabled: 'Disabled',
     };
 
     // Agent cards
@@ -533,6 +560,7 @@ export class DashboardModule {
       .map((agent) => {
         const tier = tierColors[agent.tier] || tierColors[1];
         const statusIcon = statusIcons[agent.status] || statusIcons.offline;
+        const statusLabel = statusLabels[agent.status] || 'Unknown';
         const friendlyModel = formatModelName(agent.model) || agent.model || 'Default';
 
         return `
@@ -540,7 +568,7 @@ export class DashboardModule {
             <div class="flex items-center justify-between mb-1.5">
               <div class="flex items-center gap-2">
                 <span class="${tier.bg} ${tier.text} text-xs font-bold px-1.5 py-0.5 rounded">${tier.label}</span>
-                <span class="text-xs">${statusIcon}</span>
+                <span class="text-xs">${statusIcon} ${escapeHtml(statusLabel)}</span>
               </div>
             </div>
             <h3 class="font-semibold text-gray-900 dark:text-gray-100 text-sm">${escapeHtml(agent.name)}</h3>
@@ -555,21 +583,35 @@ export class DashboardModule {
       })
       .join('');
 
-    // Recent delegations
-    const delegations = multiAgent.recentDelegations || [];
+    // Recent delegations (F2 F4 API integration)
+    const delegationsData = this.delegationsData || { delegations: [], count: 0 };
+    const delegations = delegationsData.delegations || [];
+
+    // Status badge colors
+    const statusColors = {
+      completed: 'bg-green-100 text-green-700',
+      claimed: 'bg-yellow-100 text-yellow-700',
+      failed: 'bg-red-100 text-red-700',
+      pending: 'bg-gray-100 text-gray-700',
+    };
+
     const delegationList =
       delegations.length > 0
         ? delegations
             .slice(0, 5)
-            .map(
-              (del) => `
+            .map((del) => {
+              const statusColor = statusColors[del.status] || statusColors.pending;
+              const timestamp = del.completedAt || del.claimedAt;
+              return `
             <div class="text-xs text-gray-700 dark:text-gray-300 py-1 border-b border-gray-100 dark:border-gray-700 last:border-0">
-              <span class="font-medium">${escapeHtml(del.from)}</span> → <span class="font-medium">${escapeHtml(del.to)}</span>:
-              "${escapeHtml(del.task)}"
-              <span class="text-gray-400">(${this.formatRelativeTime(del.timestamp)})</span>
+              <span class="${statusColor} text-[10px] font-bold px-1 py-0.5 rounded">${escapeHtml(del.status)}</span>
+              <span class="font-medium">${escapeHtml(del.claimedBy || 'unknown')}</span>:
+              "${escapeHtml(del.description)}"
+              ${del.wave ? `<span class="text-gray-400">(wave ${del.wave})</span>` : ''}
+              ${timestamp ? `<span class="text-gray-400 text-[10px]"> ${this.formatRelativeTime(timestamp)}</span>` : ''}
             </div>
-          `
-            )
+          `;
+            })
             .join('')
         : '<p class="text-xs text-gray-400">No recent delegations</p>';
 
