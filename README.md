@@ -117,9 +117,10 @@ Choose the right package for your use case:
 
 ### 🤖 Want an Always-On AI Agent?
 
-**→ Discord/Slack/Telegram bot**  
-**→ Autonomous agent loop**  
+**→ Discord/Slack/Telegram bot**
+**→ Autonomous agent loop**
 **→ Scheduled tasks & heartbeat monitoring**
+**→ Multi-Agent Swarm** - AI agents collaborate with tiered permissions and delegation
 
 **Use:** [MAMA OS](packages/standalone/README.md)
 
@@ -172,6 +173,38 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 </details>
 
 **Requires:** [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated.
+
+#### Multi-Agent Swarm <sup>NEW in 0.4.0</sup>
+
+> Built independently, announced the same day as Anthropic's [Agent Teams](https://docs.anthropic.com/en/docs/claude-code/agent-teams).
+> Same vision — coordinated AI agents — but for **chat platforms**, not just CLI.
+
+Multiple specialized AI agents collaborate in Discord, each with their own persona,
+tier-based permissions, and the ability to delegate tasks to each other.
+
+```text
+User message → Orchestrator → 5-Stage Routing
+                                │
+                ┌───────────────┼───────────────┐
+                ▼               ▼               ▼
+         🏔️ Sisyphus      🔧 Developer     📝 Reviewer
+          (Tier 1)          (Tier 2)         (Tier 3)
+        Full tools        Read-only         Read-only
+        Can delegate      Implements        Reviews
+                │
+                └── DELEGATE::developer::Fix the auth bug
+```
+
+| Feature                | Description                                         |
+| ---------------------- | --------------------------------------------------- |
+| **3-Tier Permissions** | Tier 1: all tools + delegation. Tier 2/3: read-only |
+| **5-Stage Routing**    | free_chat → trigger → category → keyword → default  |
+| **Category Router**    | Korean/English regex patterns for auto-routing      |
+| **Task Delegation**    | `DELEGATE::{agent}::{task}` with depth-1 safety     |
+| **Task Continuation**  | Auto-resume incomplete responses (Korean/English)   |
+| **UltraWork Mode**     | Autonomous sessions: delegation + continuation loop |
+
+[Setup Guide →](packages/standalone/README.md#multi-agent-swarm) | [Architecture →](docs/architecture-mama-swarm-2026-02-06.md)
 
 ---
 
@@ -307,7 +340,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.3.1   | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.4.0   | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.0   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.1   | Shared core library (embeddings, DB, memory) | npm                |
 | [mama](packages/claude-code-plugin/README.md)                    | 1.7.0   | Claude Code plugin                           | Claude Marketplace |
@@ -326,6 +359,8 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 **🔍 Semantic Search** - Natural language queries find relevant decisions even if exact keywords don't match. [Learn more →](docs/reference/commands.md#mama-suggest)
 
 **🤖 Autonomous Agent** - Run MAMA as a standalone service with Discord, Slack, or Telegram bot support. [Learn more →](packages/standalone/README.md)
+
+**🤝 Multi-Agent Swarm** - Multiple AI agents collaborate in Discord with tiered permissions, delegation chains, and autonomous UltraWork sessions. [Learn more →](packages/standalone/README.md#multi-agent-swarm)
 
 **🌐 MAMA OS** - Built-in graph viewer and mobile chat interface for managing memory from anywhere. [Learn more →](packages/standalone/README.md#mama-os)
 
