@@ -19,6 +19,7 @@ import { SlackMultiBotManager, type SlackMentionEvent } from './slack-multi-bot-
 import type { PersistentProcessOptions } from '../agent/persistent-cli-process.js';
 import { splitForSlack } from '../gateways/message-splitter.js';
 import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
+import { PRReviewPoller } from './pr-review-poller.js';
 
 /** Default timeout for agent responses (15 minutes - longer than Discord due to Slack's slower Socket Mode relay and complex thread routing) */
 const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -46,6 +47,7 @@ export class MultiAgentSlackHandler {
   private sharedContext: SharedContextManager;
   private multiBotManager: SlackMultiBotManager;
   private messageQueue: AgentMessageQueue;
+  private prReviewPoller: PRReviewPoller;
   private logger = console;
 
   /** Main Slack WebClient for posting system messages (heartbeat) */
@@ -76,6 +78,7 @@ export class MultiAgentSlackHandler {
     this.sharedContext = getSharedContextManager();
     this.multiBotManager = new SlackMultiBotManager(config);
     this.messageQueue = new AgentMessageQueue();
+    this.prReviewPoller = new PRReviewPoller();
 
     // Start periodic cleanup of processed mentions (every 60 seconds)
     this.mentionCleanupInterval = setInterval(() => {
@@ -187,6 +190,12 @@ export class MultiAgentSlackHandler {
       this.logger.log(
         `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
       );
+
+      // Set Sisyphus user ID on PR review poller for @mentions
+      const sisyphusUserId = botUserIdMap.get('sisyphus');
+      if (sisyphusUserId) {
+        this.prReviewPoller.setSisyphusUserId(sisyphusUserId);
+      }
     }
   }
 
@@ -195,6 +204,11 @@ export class MultiAgentSlackHandler {
    */
   setMainWebClient(client: WebClient): void {
     this.mainWebClient = client;
+
+    // Wire PRReviewPoller to send messages via this WebClient
+    this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
+      await client.chat.postMessage({ channel: channelId, text });
+    });
   }
 
   /**
@@ -239,6 +253,57 @@ export class MultiAgentSlackHandler {
     this.config = config;
     this.orchestrator.updateConfig(config);
     this.processManager.updateConfig(config);
+  }
+
+  /**
+   * Handle PR review polling commands from human messages.
+   * Returns true if the message was a PR command (consumed), false otherwise.
+   *
+   * Start: message contains a GitHub PR URL (auto-detect)
+   * Stop: message contains "pr 중지", "pr stop", "폴링 중지", "stop polling"
+   */
+  async handlePRCommand(channelId: string, content: string): Promise<boolean> {
+    if (!this.mainWebClient) return false;
+
+    const contentLower = content.toLowerCase();
+
+    // Stop commands
+    const stopPatterns = ['pr 중지', 'pr stop', '폴링 중지', 'stop polling', 'pr 종료', 'stop pr'];
+    if (stopPatterns.some((p) => contentLower.includes(p))) {
+      const sessions = this.prReviewPoller.getActiveSessions();
+      if (sessions.length === 0) {
+        await this.mainWebClient.chat.postMessage({
+          channel: channelId,
+          text: '📭 활성 PR 폴링이 없습니다.',
+        });
+      } else {
+        this.prReviewPoller.stopAll();
+        await this.mainWebClient.chat.postMessage({
+          channel: channelId,
+          text: `⏹️ PR 리뷰 폴링 중지: ${sessions.join(', ')}`,
+        });
+      }
+      return true;
+    }
+
+    // Start: detect PR URL in message
+    const prUrls = PRReviewPoller.extractPRUrls(content);
+    if (prUrls.length > 0) {
+      for (const prUrl of prUrls) {
+        const started = await this.prReviewPoller.startPolling(prUrl, channelId);
+        if (started) {
+          const parsed = this.prReviewPoller.parsePRUrl(prUrl);
+          const key = parsed ? `${parsed.owner}/${parsed.repo}#${parsed.prNumber}` : prUrl;
+          await this.mainWebClient.chat.postMessage({
+            channel: channelId,
+            text: `👀 *PR Review Poller 시작* — ${key}\n60초 간격으로 새 리뷰 코멘트를 감지합니다. 중지하려면 "PR 중지"라고 입력하세요.`,
+          });
+        }
+      }
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -819,12 +884,20 @@ export class MultiAgentSlackHandler {
    */
   async stopAll(): Promise<void> {
     this.stopHeartbeat();
+    this.prReviewPoller.stopAll();
     if (this.mentionCleanupInterval) {
       clearInterval(this.mentionCleanupInterval);
       this.mentionCleanupInterval = undefined;
     }
     this.processManager.stopAll();
     await this.multiBotManager.stopAll();
+  }
+
+  /**
+   * Get PR review poller for direct access
+   */
+  getPRReviewPoller(): PRReviewPoller {
+    return this.prReviewPoller;
   }
 
   /**
