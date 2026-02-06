@@ -213,6 +213,31 @@ export function failTask(db: Database.Database, taskId: string, result?: string)
 }
 
 /**
+ * Mark a pending task as failed (for dependency propagation)
+ *
+ * Used when a task's dependency fails and the task hasn't been claimed yet.
+ *
+ * @param db - Database instance
+ * @param taskId - Task ID
+ * @param result - Optional error message or failure details
+ * @returns true if updated successfully
+ */
+export function failPendingTask(db: Database.Database, taskId: string, result?: string): boolean {
+  const now = Date.now();
+  const updateResult = db
+    .prepare(
+      `
+    UPDATE swarm_tasks
+    SET status = 'failed', completed_at = ?, result = ?
+    WHERE id = ? AND status = 'pending'
+  `
+    )
+    .run(now, result ?? null, taskId);
+
+  return updateResult.changes > 0;
+}
+
+/**
  * Get all tasks for a session
  *
  * @param db - Database instance
