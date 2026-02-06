@@ -301,6 +301,12 @@ export class SlackGateway implements Gateway {
       return; // Don't process empty messages
     }
 
+    // Check for PR review polling commands (start/stop) before multi-agent routing
+    if (this.multiAgentHandler?.isEnabled()) {
+      const handled = await this.multiAgentHandler.handlePRCommand(event.channel, cleanContent);
+      if (handled) return;
+    }
+
     // Check if multi-agent mode should handle this message
     if (this.multiAgentHandler?.isEnabled()) {
       // Acknowledge receipt with emoji reaction
