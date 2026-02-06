@@ -477,6 +477,10 @@ export class PRReviewPoller {
     // Auto-reply to addressed threads
     if (addressed.length > 0) {
       const shortSha = session.lastHeadSha?.substring(0, 7) ?? 'latest';
+
+      // Fetch all comments to map GraphQL threads to REST API comment IDs
+      const allComments = await this.fetchComments(session.owner, session.repo, session.prNumber);
+
       for (const thread of addressed) {
         try {
           await this.replyToThread(
@@ -486,6 +490,17 @@ export class PRReviewPoller {
             thread,
             `${FIXED_REPLY_PREFIX} ${shortSha}`
           );
+
+          // Mark all comments in this thread as addressed (by matching path/line)
+          const threadPath = thread.comments[0]?.path;
+          const threadLine = thread.comments[0]?.line;
+          if (threadPath) {
+            for (const comment of allComments) {
+              if (comment.path === threadPath && (!threadLine || comment.line === threadLine)) {
+                session.addressedCommentIds.add(comment.id);
+              }
+            }
+          }
         } catch (err) {
           this.logger.error(`[PRPoller] Failed to reply to thread:`, err);
         }
