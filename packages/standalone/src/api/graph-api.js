@@ -796,7 +796,14 @@ async function handleCheckpointsRequest(req, res) {
  *
  * @returns {Function} Route handler function
  */
-function createGraphHandler() {
+/**
+ * Create graph handler with optional dependencies
+ *
+ * @param {Object} options - Optional dependencies for multi-agent endpoints
+ * @param {Function} options.getAgentStates - Returns Map<string, string> of agentId -> state
+ * @param {Function} options.getSwarmTasks - Returns Array<SwarmTask> for recent delegations
+ */
+function createGraphHandler(options = {}) {
   return async function graphHandler(req, res) {
     // Parse URL
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -1144,7 +1151,7 @@ function createGraphHandler() {
 
     // Route: GET /api/multi-agent/status - get multi-agent system status (Sprint 3 F4)
     if (pathname === '/api/multi-agent/status' && req.method === 'GET') {
-      await handleMultiAgentStatusRequest(req, res);
+      await handleMultiAgentStatusRequest(req, res, options);
       return true;
     }
 
@@ -1162,7 +1169,7 @@ function createGraphHandler() {
 
     // Route: GET /api/multi-agent/delegations - get recent delegations (Sprint 3 F4)
     if (pathname === '/api/multi-agent/delegations' && req.method === 'GET') {
-      await handleMultiAgentDelegationsRequest(req, res);
+      await handleMultiAgentDelegationsRequest(req, res, options);
       return true;
     }
 
@@ -1882,21 +1889,26 @@ function exportToMarkdown(decisions) {
  * @param {Object} req - HTTP request
  * @param {Object} res - HTTP response
  */
-async function handleMultiAgentStatusRequest(req, res) {
+async function handleMultiAgentStatusRequest(req, res, options = {}) {
   try {
     const config = loadMAMAConfig();
     const multiAgentConfig = config.multi_agent || { enabled: false, agents: {} };
+
+    // Get real-time agent states if available
+    const agentStatesMap = options.getAgentStates ? options.getAgentStates() : null;
 
     // Build agents array with status
     const agents = [];
     if (multiAgentConfig.enabled && multiAgentConfig.agents) {
       for (const [id, agentConfig] of Object.entries(multiAgentConfig.agents)) {
-        // Determine status: disabled if enabled===false, otherwise online
+        // Determine status: real-time if available, else disabled/online from config
         let status = 'online';
         if (agentConfig.enabled === false) {
           status = 'disabled';
+        } else if (agentStatesMap && agentStatesMap.has(id)) {
+          // Real-time status from AgentProcessManager
+          status = agentStatesMap.get(id);
         }
-        // TODO: Real-time status from CLI process pool (future enhancement)
 
         agents.push({
           id,
@@ -1904,7 +1916,7 @@ async function handleMultiAgentStatusRequest(req, res) {
           tier: agentConfig.tier || 1,
           model: agentConfig.model || config.agent?.model || 'claude-sonnet-4-20250514',
           status,
-          lastActivity: null, // TODO: track from CLI process manager
+          lastActivity: null, // TODO: track from CLI process manager (future)
         });
       }
     }
@@ -1914,7 +1926,7 @@ async function handleMultiAgentStatusRequest(req, res) {
       JSON.stringify({
         enabled: multiAgentConfig.enabled || false,
         agents,
-        recentDelegations: [], // TODO: integrate with swarm-db (future)
+        recentDelegations: [], // Moved to /delegations endpoint
         activeChains: 0, // TODO: track from chain manager (future)
       })
     );
@@ -1996,8 +2008,8 @@ async function handleMultiAgentAgentsRequest(req, res) {
  */
 async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
   try {
-    // Extract agent ID from URL
-    const match = pathname.match(/\/api\/multi-agent\/agents\/(.+)/);
+    // Extract agent ID from URL (n1: improved regex to exclude slashes)
+    const match = pathname.match(/\/api\/multi-agent\/agents\/([^/]+)/);
     if (!match) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
@@ -2011,6 +2023,20 @@ async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
     }
 
     const agentId = match[1];
+
+    // m1: Validate agent ID format (alphanumeric, underscore, hyphen only)
+    if (!/^[a-z0-9_-]+$/i.test(agentId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'INVALID_AGENT_ID',
+          message: 'Invalid agent ID format',
+        })
+      );
+      return;
+    }
+
     const body = await readBody(req);
 
     // Load current config
@@ -2072,14 +2098,17 @@ async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
       updatedAgent.tool_permissions = body.tool_permissions;
     }
 
+    // Helper: check if token is masked (****xxxx pattern)
+    const isMaskedToken = (token) => /^\*{4}.{0,4}$/.test(token);
+
     // Only update tokens if not masked
-    if (body.bot_token && !body.bot_token.startsWith('****')) {
+    if (body.bot_token && !isMaskedToken(body.bot_token)) {
       updatedAgent.bot_token = body.bot_token;
     }
-    if (body.slack_bot_token && !body.slack_bot_token.startsWith('****')) {
+    if (body.slack_bot_token && !isMaskedToken(body.slack_bot_token)) {
       updatedAgent.slack_bot_token = body.slack_bot_token;
     }
-    if (body.slack_app_token && !body.slack_app_token.startsWith('****')) {
+    if (body.slack_app_token && !isMaskedToken(body.slack_app_token)) {
       updatedAgent.slack_app_token = body.slack_app_token;
     }
 
@@ -2114,15 +2143,38 @@ async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
  * @param {Object} req - HTTP request
  * @param {Object} res - HTTP response
  */
-async function handleMultiAgentDelegationsRequest(req, res) {
+async function handleMultiAgentDelegationsRequest(req, res, options = {}) {
   try {
-    // TODO: Integrate with swarm-db for real delegation logs
-    // For now, return empty array (stub)
+    // Parse URL for query parameters
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+
+    // Get swarm tasks if available
+    let delegations = [];
+    if (options.getSwarmTasks) {
+      try {
+        const tasks = options.getSwarmTasks(limit);
+        delegations = tasks.map((task) => ({
+          id: task.id,
+          description: task.description,
+          category: task.category,
+          wave: task.wave,
+          status: task.status,
+          claimedBy: task.claimed_by,
+          claimedAt: task.claimed_at,
+          completedAt: task.completed_at,
+          result: task.result,
+        }));
+      } catch (err) {
+        console.error('[GraphAPI] Failed to fetch swarm tasks:', err.message);
+      }
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
-        delegations: [],
-        count: 0,
+        delegations,
+        count: delegations.length,
       })
     );
   } catch (error) {

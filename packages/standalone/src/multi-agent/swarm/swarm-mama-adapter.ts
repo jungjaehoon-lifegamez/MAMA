@@ -87,3 +87,39 @@ export function createMamaApiAdapter(): MamaApiClient {
     },
   };
 }
+
+/**
+ * Save swarm checkpoint to MAMA (F6)
+ *
+ * @param sessionId - Swarm session ID
+ * @param summary - Checkpoint summary
+ * @param openFiles - Files being worked on (optional)
+ * @param nextSteps - Next steps description (optional)
+ */
+export async function saveSwarmCheckpoint(
+  sessionId: string,
+  summary: string,
+  openFiles?: string[],
+  nextSteps?: string
+): Promise<void> {
+  try {
+    // Dynamically require mama-core (CommonJS module)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mama = require('@jungjaehoon/mama-core/mama-api');
+
+    if (!mama || !mama.saveCheckpoint) {
+      console.warn('[SwarmMamaAdapter] mama.saveCheckpoint() not available');
+      return;
+    }
+
+    // Call mama-core saveCheckpoint()
+    await mama.saveCheckpoint(summary, openFiles || [], nextSteps || '', []);
+
+    console.log(
+      `[SwarmMamaAdapter] Saved checkpoint for session ${sessionId}: ${summary.substring(0, 60)}...`
+    );
+  } catch (error) {
+    // Graceful fallback - log error but don't throw
+    console.warn('[SwarmMamaAdapter] Failed to save checkpoint:', error);
+  }
+}
