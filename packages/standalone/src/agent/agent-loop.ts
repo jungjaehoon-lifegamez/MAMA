@@ -411,6 +411,7 @@ export class AgentLoop {
     // IMPORTANT: If caller passes cliSessionId, use it directly to avoid double-locking
     // MessageRouter already calls getSession() and passes the result via options
     let sessionIsNew = options?.resumeSession === undefined ? true : !options.resumeSession;
+    let ownedSession = false;
 
     // Set session ID on the agent (works for both ClaudeCLIWrapper and PersistentCLIAdapter)
     if (options?.cliSessionId) {
@@ -422,6 +423,7 @@ export class AgentLoop {
       // Fallback: get session from pool (for direct AgentLoop usage)
       const { sessionId: cliSessionId, isNew } = this.sessionPool.getSession(channelKey);
       sessionIsNew = isNew;
+      ownedSession = true;
       this.agent.setSessionId(cliSessionId);
       console.log(
         `[AgentLoop] Session pool: ${channelKey} → ${cliSessionId} (${isNew ? 'NEW' : 'RESUME'})`
@@ -662,7 +664,10 @@ export class AgentLoop {
       };
     } finally {
       // Always release session lock, even on error
-      this.sessionPool.releaseSession(channelKey);
+      // BUT only if we own the session (not passed by caller)
+      if (ownedSession) {
+        this.sessionPool.releaseSession(channelKey);
+      }
     }
   }
 

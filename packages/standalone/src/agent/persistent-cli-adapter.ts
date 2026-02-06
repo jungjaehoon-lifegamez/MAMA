@@ -168,6 +168,7 @@ export class PersistentCLIAdapter {
    *
    * Note: This creates a new channel key, effectively switching channels.
    * The old process is kept alive for potential reuse.
+   * Callers should use resetSession() if the old process is no longer needed to avoid orphan processes.
    */
   setSessionId(sessionId: string): void {
     this.options.sessionId = sessionId;
@@ -236,8 +237,7 @@ export class PersistentCLIAdapter {
  *   const wrapper = createPersistentCLIAdapter({ sessionId: 'discord-channel-123' });
  *   const result = await wrapper.prompt('Hello!');
  *
- * The adapter maintains a process pool internally, so multiple wrappers
- * with the same sessionId will share the same underlying process.
+ * Each adapter instance maintains its own process pool. Processes are not shared across adapter instances.
  */
 export function createPersistentCLIAdapter(
   options: ClaudeCLIWrapperOptions = {}
