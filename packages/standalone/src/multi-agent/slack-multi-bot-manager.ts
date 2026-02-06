@@ -147,6 +147,8 @@ export class SlackMultiBotManager {
 
     const socketClient = new SocketModeClient({
       appToken: agentConfig.slack_app_token,
+      serverPingTimeout: 30000,
+      clientPingTimeout: 30000,
     });
 
     const webClient = new WebClient(agentConfig.slack_bot_token);
