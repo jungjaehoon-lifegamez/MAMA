@@ -299,6 +299,16 @@ export interface AgentPersonaConfig {
    * If provided, this agent will use its own bot instead of the main bot
    */
   bot_token?: string;
+  /**
+   * Optional dedicated Slack bot token (xoxb-...) for this agent
+   * If provided, this agent will use its own Slack bot
+   */
+  slack_bot_token?: string;
+  /**
+   * Optional dedicated Slack app token (xapp-...) for Socket Mode
+   * Required alongside slack_bot_token for Slack multi-bot support
+   */
+  slack_app_token?: string;
   /** Keywords that auto-trigger this agent's response */
   auto_respond_keywords?: string[];
   /** Cooldown between responses in milliseconds */

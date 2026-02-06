@@ -177,7 +177,7 @@ export class DiscordGateway implements Gateway {
     if (message.author.bot && this.multiAgentHandler) {
       const agentBotId = this.multiAgentHandler.getMultiBotManager().isFromAgentBot(message);
       if (agentBotId && agentBotId !== 'main') {
-        // This is from one of our agent bots - record and let other agents respond
+        // This is from one of our agent bots - record to shared context
         const agentId =
           this.multiAgentHandler.getOrchestrator().extractAgentIdFromMessage(message.content) ||
           agentBotId;
@@ -187,7 +187,14 @@ export class DiscordGateway implements Gateway {
             .getSharedContext()
             .recordAgentMessage(message.channel.id, agent, message.content, message.id);
         }
-        // Pass to multi-agent handler for cross-agent conversation
+
+        // When mention_delegation is enabled, MultiBotManager's onMention handles
+        // agent-to-agent routing directly — skip orchestrator to avoid dual processing
+        if (this.multiAgentHandler.isMentionDelegationEnabled()) {
+          return;
+        }
+
+        // Fallback: pass to multi-agent handler for cross-agent conversation
         const cleanContent = this.cleanMessageContent(message.content);
         const multiAgentResult = await this.multiAgentHandler.handleMessage(message, cleanContent);
         if (multiAgentResult && multiAgentResult.responses.length > 0) {

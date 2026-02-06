@@ -103,7 +103,11 @@ export class ToolPermissionManager {
 
     if (permissions.blocked.length > 0) {
       lines.push(`- **Blocked tools (DO NOT USE):** ${permissions.blocked.join(', ')}`);
-      lines.push('- If you need a blocked tool, ask a Tier 1 agent to help via delegation.');
+      if (this.canDelegate(agent)) {
+        lines.push('- Delegate tasks requiring blocked tools to other agents via @mention.');
+      } else {
+        lines.push('- If you need a blocked tool, ask a Tier 1 agent to help via delegation.');
+      }
     }
 
     lines.push('');
@@ -157,6 +161,54 @@ export class ToolPermissionManager {
     lines.push('**Rules:**');
     lines.push("- Only delegate when the task matches another agent's expertise");
     lines.push('- Delegation depth is limited to 1 (no re-delegation)');
+    lines.push('');
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Build mention-based delegation prompt for agents.
+   * Uses <@USER_ID> format so agents delegate via Discord @mentions.
+   */
+  buildMentionDelegationPrompt(
+    agent: AgentPersonaConfig,
+    allAgents: AgentPersonaConfig[],
+    botUserIdMap: Map<string, string>
+  ): string {
+    if (!this.canDelegate(agent)) {
+      return '';
+    }
+
+    const delegatableAgents = allAgents.filter(
+      (a) => a.id !== agent.id && a.enabled !== false && botUserIdMap.has(a.id)
+    );
+
+    if (delegatableAgents.length === 0) {
+      return '';
+    }
+
+    const lines: string[] = [];
+    lines.push('## Delegation via @Mention');
+    lines.push('');
+    lines.push('You can delegate tasks to other agents by mentioning them in your response.');
+    lines.push(
+      'Use the @mention format shown below. The mentioned agent will automatically receive your message and respond.'
+    );
+    lines.push('');
+    lines.push('Available agents for delegation:');
+
+    for (const a of delegatableAgents) {
+      const tier = a.tier ?? 1;
+      const userId = botUserIdMap.get(a.id)!;
+      lines.push(`- **${a.display_name}** (Tier ${tier}): mention with <@${userId}>`);
+    }
+
+    lines.push('');
+    lines.push('**Rules:**');
+    lines.push('- Mention only ONE agent at a time per message');
+    lines.push("- Only delegate when the task matches another agent's expertise");
+    lines.push('- Include a clear task description after the mention');
+    lines.push('- Example: "<@123456789> please review this code for security issues"');
     lines.push('');
 
     return lines.join('\n');
