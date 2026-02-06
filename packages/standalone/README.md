@@ -393,7 +393,7 @@ multi_agent:
       trigger_prefix: '!dev'
       persona_file: '~/.mama/personas/developer.md'
       bot_token: 'DISCORD_BOT_TOKEN_2'
-      tier: 2
+      tier: 1 # Full access for code changes
       auto_continue: true
       auto_respond_keywords: ['bug', 'code', 'implement', '구현']
 
@@ -403,7 +403,7 @@ multi_agent:
       trigger_prefix: '!review'
       persona_file: '~/.mama/personas/reviewer.md'
       bot_token: 'DISCORD_BOT_TOKEN_3'
-      tier: 3
+      tier: 2 # Read-only for analysis
       auto_respond_keywords: ['review', 'check', '리뷰', '검토']
 
   # Regex-based category routing
@@ -814,6 +814,6 @@ MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While 
 
 ---
 
-**Author:** SpineLift Team  
-**Version:** 0.1.0  
-**Last Updated:** 2026-02-01
+**Author:** SpineLift Team
+**Version:** 0.4.0
+**Last Updated:** 2026-02-06

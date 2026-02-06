@@ -194,10 +194,93 @@ export class SlackMultiBotManager {
           this.logger.log(
             `Agent ${agentId} mentioned by ${mentionEvent.user ? maskUserId(mentionEvent.user) : maskBotId(mentionEvent.bot_id || '')}`
           );
-          this.onMentionCallback(agentId, mentionEvent, bot.webClient);
+
+          // Add eyes reaction to acknowledge receipt
+          try {
+            await bot.webClient.reactions.add({
+              channel: mentionEvent.channel,
+              timestamp: mentionEvent.ts,
+              name: 'eyes',
+            });
+          } catch {
+            /* ignore reaction errors */
+          }
+
+          await this.onMentionCallback(agentId, mentionEvent, bot.webClient);
+
+          // Replace eyes with checkmark on completion
+          try {
+            await bot.webClient.reactions.remove({
+              channel: mentionEvent.channel,
+              timestamp: mentionEvent.ts,
+              name: 'eyes',
+            });
+            await bot.webClient.reactions.add({
+              channel: mentionEvent.channel,
+              timestamp: mentionEvent.ts,
+              name: 'white_check_mark',
+            });
+          } catch {
+            /* ignore reaction errors */
+          }
         }
       } catch (error) {
         this.logger.error(`app_mention error for ${agentId}:`, error);
+      }
+    });
+
+    // Listen for channel messages (catches bot-to-bot mentions that app_mention misses)
+    socketClient.on('message', async ({ event, ack }) => {
+      try {
+        await ack();
+        const msgEvent = event as SlackMentionEvent;
+
+        // Only process bot messages that mention this agent
+        if (!msgEvent.bot_id) return; // Human messages handled by app_mention
+        if (msgEvent.bot_id === bot.botId) return; // Ignore own messages
+
+        // Check if this agent is mentioned in the message
+        if (!bot.userId || !msgEvent.text?.includes(`<@${bot.userId}>`)) return;
+
+        // Verify sender is one of our agent bots
+        const senderAgentId = this.isFromAgentBot(msgEvent.bot_id);
+        if (!senderAgentId || senderAgentId === 'main') return;
+
+        // Forward to callback (same as app_mention handler)
+        if (this.onMentionCallback) {
+          this.logger.log(
+            `Agent ${agentId} mentioned by bot ${maskBotId(msgEvent.bot_id)} (via message event)`
+          );
+
+          try {
+            await bot.webClient.reactions.add({
+              channel: msgEvent.channel,
+              timestamp: msgEvent.ts,
+              name: 'eyes',
+            });
+          } catch {
+            /* ignore reaction errors */
+          }
+
+          await this.onMentionCallback(agentId, msgEvent, bot.webClient);
+
+          try {
+            await bot.webClient.reactions.remove({
+              channel: msgEvent.channel,
+              timestamp: msgEvent.ts,
+              name: 'eyes',
+            });
+            await bot.webClient.reactions.add({
+              channel: msgEvent.channel,
+              timestamp: msgEvent.ts,
+              name: 'white_check_mark',
+            });
+          } catch {
+            /* ignore reaction errors */
+          }
+        }
+      } catch (error) {
+        this.logger.error(`message event error for ${agentId}:`, error);
       }
     });
 
@@ -320,6 +403,10 @@ export class SlackMultiBotManager {
       if (bot.connected && bot.userId) {
         map.set(agentId, bot.userId);
       }
+    }
+    // Include main bot agent (skipped during init because it shares the main token)
+    if (this.mainBotAgentId && this.mainBotUserId) {
+      map.set(this.mainBotAgentId, this.mainBotUserId);
     }
     return map;
   }
