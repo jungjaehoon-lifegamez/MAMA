@@ -439,7 +439,15 @@ export interface MultiAgentResponse {
   /** Selected agent IDs */
   selectedAgents: string[];
   /** Selection reason */
-  reason: 'explicit_trigger' | 'keyword_match' | 'default_agent' | 'free_chat' | 'none';
+  reason:
+    | 'explicit_trigger'
+    | 'keyword_match'
+    | 'default_agent'
+    | 'free_chat'
+    | 'category_match'
+    | 'delegation'
+    | 'ultrawork'
+    | 'none';
   /** Individual agent responses */
   responses: AgentResponse[];
 }

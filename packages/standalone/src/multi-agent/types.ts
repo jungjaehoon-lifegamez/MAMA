@@ -76,6 +76,39 @@ export interface AgentPersonaConfig {
    * @default true
    */
   enabled?: boolean;
+
+  /**
+   * Agent tier level
+   * - Tier 1: Full access, can delegate to others
+   * - Tier 2: Read/analyze tools only (no write/edit/bash)
+   * - Tier 3: Read/analyze tools only (no write/edit/bash)
+   * @default 1 (backward compat: existing agents keep full access)
+   */
+  tier?: 1 | 2 | 3;
+
+  /**
+   * Whether this agent can delegate tasks to other agents
+   * Only effective for Tier 1 agents
+   * @default false
+   */
+  can_delegate?: boolean;
+
+  /**
+   * Enable automatic task continuation when response is incomplete
+   * @default false
+   */
+  auto_continue?: boolean;
+
+  /**
+   * Explicit tool permissions for this agent
+   * Overrides tier defaults when specified
+   */
+  tool_permissions?: {
+    /** Allowed tools (supports wildcards like "mama_*") */
+    allowed?: string[];
+    /** Blocked tools (takes precedence over allowed) */
+    blocked?: string[];
+  };
 }
 
 /**
@@ -154,6 +187,63 @@ export interface MultiAgentConfig {
       disabled_agents?: string[];
     }
   >;
+
+  /**
+   * Category-based routing rules
+   * Checked after explicit triggers, before keyword matching
+   */
+  categories?: CategoryConfig[];
+
+  /**
+   * UltraWork autonomous session configuration
+   */
+  ultrawork?: UltraWorkConfig;
+
+  /**
+   * Task continuation configuration
+   */
+  task_continuation?: TaskContinuationConfig;
+}
+
+/**
+ * Category routing configuration
+ * Maps message patterns to specific agents
+ */
+export interface CategoryConfig {
+  /** Category name for logging */
+  name: string;
+  /** Regex patterns to match against message content */
+  patterns: string[];
+  /** Agent IDs to route matching messages to */
+  agent_ids: string[];
+  /** Priority (higher = checked first) @default 0 */
+  priority?: number;
+}
+
+/**
+ * UltraWork autonomous session configuration
+ */
+export interface UltraWorkConfig {
+  /** Enable UltraWork mode */
+  enabled: boolean;
+  /** Trigger keywords to start UltraWork session */
+  trigger_keywords?: string[];
+  /** Maximum session duration in milliseconds @default 1800000 (30min) */
+  max_duration?: number;
+  /** Maximum autonomous steps @default 20 */
+  max_steps?: number;
+}
+
+/**
+ * Task continuation configuration
+ */
+export interface TaskContinuationConfig {
+  /** Enable task continuation */
+  enabled: boolean;
+  /** Maximum continuation attempts per response @default 3 */
+  max_retries?: number;
+  /** Completion markers that indicate task is done */
+  completion_markers?: string[];
 }
 
 /**
@@ -191,7 +281,15 @@ export interface AgentSelectionResult {
   /** Selected agent IDs that should respond */
   selectedAgents: string[];
   /** Reason for selection (for logging/debugging) */
-  reason: 'explicit_trigger' | 'keyword_match' | 'default_agent' | 'free_chat' | 'none';
+  reason:
+    | 'explicit_trigger'
+    | 'keyword_match'
+    | 'default_agent'
+    | 'free_chat'
+    | 'category_match'
+    | 'delegation'
+    | 'ultrawork'
+    | 'none';
   /** Whether response is blocked by loop prevention */
   blocked: boolean;
   /** Block reason if blocked */

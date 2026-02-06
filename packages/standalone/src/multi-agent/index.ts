@@ -16,6 +16,9 @@ export type {
   AgentSelectionResult,
   MessageContext,
   AgentResponseRecord,
+  CategoryConfig,
+  UltraWorkConfig,
+  TaskContinuationConfig,
 } from './types.js';
 
 export { DEFAULT_LOOP_PREVENTION, DEFAULT_MULTI_AGENT_CONFIG } from './types.js';
@@ -40,3 +43,28 @@ export { MultiAgentDiscordHandler } from './multi-agent-discord.js';
 
 // Multi-Bot Manager
 export { MultiBotManager } from './multi-bot-manager.js';
+
+// Tool Permission Manager
+export type { ToolPermissions } from './tool-permission-manager.js';
+export { ToolPermissionManager } from './tool-permission-manager.js';
+
+// Category Router
+export type { CategoryMatchResult } from './category-router.js';
+export { CategoryRouter } from './category-router.js';
+
+// Task Continuation
+export type { ContinuationResult } from './task-continuation.js';
+export { TaskContinuationEnforcer } from './task-continuation.js';
+
+// Delegation Manager
+export type {
+  DelegationRequest,
+  DelegationResult,
+  DelegationNotifyCallback,
+  DelegationExecuteCallback,
+} from './delegation-manager.js';
+export { DelegationManager } from './delegation-manager.js';
+
+// UltraWork Manager
+export type { UltraWorkSession, UltraWorkStep } from './ultrawork.js';
+export { UltraWorkManager } from './ultrawork.js';
