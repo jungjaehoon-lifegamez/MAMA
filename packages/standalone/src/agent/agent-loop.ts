@@ -287,7 +287,8 @@ export class AgentLoop {
     this.mcpExecutor = new GatewayToolExecutor(executorOptions);
     this.systemPromptOverride = options.systemPrompt;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
-    this.model = options.model ?? 'claude-opus-4-20250514';
+    // Use the same default model as CLI wrappers above (L252, L264)
+    this.model = options.model ?? 'claude-sonnet-4-20250514';
     this.onTurn = options.onTurn;
     this.onToolUse = options.onToolUse;
 
