@@ -679,7 +679,7 @@ export class SwarmTaskRunner extends EventEmitter {
    */
   stopAll(): void {
     console.log(`[SwarmTaskRunner] Stopping all sessions (${this.sessions.size})`);
-    for (const sessionId of this.sessions.keys()) {
+    for (const sessionId of Array.from(this.sessions.keys())) {
       this.stopSession(sessionId);
     }
   }

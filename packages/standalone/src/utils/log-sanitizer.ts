@@ -87,7 +87,11 @@ export function sanitizeString(value: string, options: SanitizationOptions = {})
 /**
  * Recursively sanitizes an object, preserving structure but sanitizing string values
  */
-export function sanitizeObject(obj: any, options: SanitizationOptions = {}): any {
+export function sanitizeObject(
+  obj: any,
+  options: SanitizationOptions = {},
+  seen: WeakSet<object> = new WeakSet()
+): any {
   if (obj === null || obj === undefined) {
     return obj;
   }
@@ -101,15 +105,19 @@ export function sanitizeObject(obj: any, options: SanitizationOptions = {}): any
   }
 
   if (Array.isArray(obj)) {
-    return obj.map((item) => sanitizeObject(item, options));
+    if (seen.has(obj)) return '[Circular]';
+    seen.add(obj);
+    return obj.map((item) => sanitizeObject(item, options, seen));
   }
 
   if (typeof obj === 'object') {
+    if (seen.has(obj)) return '[Circular]';
+    seen.add(obj);
     const sanitized: any = {};
     for (const [key, value] of Object.entries(obj)) {
       // Sanitize both key and value
       const sanitizedKey = sanitizeString(key, options);
-      sanitized[sanitizedKey] = sanitizeObject(value, options);
+      sanitized[sanitizedKey] = sanitizeObject(value, options, seen);
     }
     return sanitized;
   }
