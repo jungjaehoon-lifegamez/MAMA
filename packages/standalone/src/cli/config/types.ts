@@ -323,7 +323,7 @@ export interface AgentPersonaConfig {
   max_turns?: number;
   /** Whether this agent is enabled */
   enabled?: boolean;
-  /** Agent tier level (1=full, 2=read-only, 3=scoped execution) @default 1 */
+  /** Agent tier level (1=full, 2=limited, 3=scoped execution) @default 1 */
   tier?: 1 | 2 | 3;
   /** Whether this agent can delegate tasks (Tier 1 only) */
   can_delegate?: boolean;
