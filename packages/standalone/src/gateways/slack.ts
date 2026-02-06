@@ -19,6 +19,7 @@ import type {
 } from './types.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import { MultiAgentSlackHandler } from '../multi-agent/multi-agent-slack.js';
+import { getChannelHistory } from './channel-history.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 
 /**
@@ -183,38 +184,86 @@ export class SlackGateway implements Gateway {
    * Handle incoming Slack message
    */
   private async handleMessage(event: SlackMessageEvent, isMention: boolean): Promise<void> {
-    // Multi-agent mode: detect messages from our agent bots
+    // Record ALL messages to channel history (for conversation context)
+    const channelHistory = getChannelHistory();
+    const senderName = event.bot_id ? (event.bot_id === 'auto-route' ? 'Agent' : 'Bot') : 'User';
+    channelHistory.record(event.channel, {
+      messageId: event.ts,
+      sender: senderName,
+      userId: event.user || event.bot_id || '',
+      body: event.text || '',
+      timestamp: parseFloat(event.ts) * 1000,
+      isBot: !!event.bot_id,
+    });
+
+    // Multi-agent mode: detect messages from our bots (main or agent)
     if (event.bot_id && this.multiAgentHandler) {
-      const agentBotId = this.multiAgentHandler.getMultiBotManager().isFromAgentBot(event.bot_id);
-      if (agentBotId && agentBotId !== 'main') {
-        // This is from one of our agent bots - record to shared context
-        const agent = this.multiAgentHandler.getOrchestrator().getAgent(agentBotId);
-        if (agent) {
-          this.multiAgentHandler
-            .getSharedContext()
-            .recordAgentMessage(event.channel, agent, event.text, event.ts);
+      const multiBotManager = this.multiAgentHandler.getMultiBotManager();
+      const agentBotId = multiBotManager.isFromAgentBot(event.bot_id);
+
+      if (agentBotId) {
+        // Message from one of our bots (main or agent)
+
+        // Update history entry with agent display name
+        const agentForHistory = this.multiAgentHandler
+          .getOrchestrator()
+          .getAgent(
+            agentBotId === 'main' ? (multiBotManager.getMainBotAgentId() ?? agentBotId) : agentBotId
+          );
+        if (agentForHistory) {
+          channelHistory.updateSender(event.channel, event.ts, agentForHistory.display_name);
         }
 
-        // When mention_delegation is enabled, SlackMultiBotManager's onMention handles
-        // agent-to-agent routing directly — skip orchestrator to avoid dual processing
+        // Record to shared context (non-main agent bots)
+        if (agentBotId !== 'main') {
+          const agent = this.multiAgentHandler.getOrchestrator().getAgent(agentBotId);
+          if (agent) {
+            this.multiAgentHandler
+              .getSharedContext()
+              .recordAgentMessage(event.channel, agent, event.text, event.ts);
+          }
+        }
+
+        // Route bot→agent @mentions directly from the gateway.
+        // Slack's app_mention event does NOT fire for bot-posted messages,
+        // so the gateway must detect <@AGENT_USER_ID> in bot messages and
+        // invoke the target agent's response directly.
         if (this.multiAgentHandler.isMentionDelegationEnabled()) {
+          const mentionedAgentIds = this.multiAgentHandler.extractMentionedAgentIds(event.text);
+          if (mentionedAgentIds.length > 0) {
+            this.logger.log(
+              `[Slack] Bot→Agent mention routing: ${agentBotId} → ${mentionedAgentIds.join(', ')}`
+            );
+            // Route to all mentioned agents in parallel
+            await Promise.all(
+              mentionedAgentIds.map((targetAgentId) =>
+                this.multiAgentHandler!.handleBotToAgentMention(
+                  targetAgentId,
+                  event,
+                  this.webClient
+                )
+              )
+            );
+          }
           return;
         }
 
-        // Fallback: pass to multi-agent handler for cross-agent conversation
-        const cleanContent = this.cleanMessageContent(event.text);
-        const multiAgentResult = await this.multiAgentHandler.handleMessage(event, cleanContent);
-        if (multiAgentResult && multiAgentResult.responses.length > 0) {
-          const threadTs = event.thread_ts || event.ts;
-          await this.multiAgentHandler.sendAgentResponses(
-            event.channel,
-            threadTs,
-            multiAgentResult.responses,
-            this.webClient
-          );
-          this.logger.log(
-            `[Slack] Agent-to-agent: ${agentBotId} → ${multiAgentResult.selectedAgents.join(', ')}`
-          );
+        // Non-delegation fallback for non-main agent bots
+        if (agentBotId !== 'main') {
+          const cleanContent = this.cleanMessageContent(event.text);
+          const multiAgentResult = await this.multiAgentHandler.handleMessage(event, cleanContent);
+          if (multiAgentResult && multiAgentResult.responses.length > 0) {
+            const threadTs = event.thread_ts || event.ts;
+            await this.multiAgentHandler.sendAgentResponses(
+              event.channel,
+              threadTs,
+              multiAgentResult.responses,
+              this.webClient
+            );
+            this.logger.log(
+              `[Slack] Agent-to-agent: ${agentBotId} → ${multiAgentResult.selectedAgents.join(', ')}`
+            );
+          }
         }
         return;
       }
@@ -265,9 +314,28 @@ export class SlackGateway implements Gateway {
         this.logger.warn(`[Slack] Failed to add reaction: ${errDetail}`);
       }
 
-      const multiAgentResult = await this.multiAgentHandler.handleMessage(event, cleanContent);
+      // Build conversation history context (like Discord's channel-history)
+      const historyContext = channelHistory.formatForContext(event.channel, event.ts);
+
+      const multiAgentResult = await this.multiAgentHandler.handleMessage(
+        event,
+        cleanContent,
+        historyContext || undefined
+      );
 
       if (multiAgentResult && multiAgentResult.responses.length > 0) {
+        // Record agent responses to channel history
+        for (const resp of multiAgentResult.responses) {
+          channelHistory.record(event.channel, {
+            messageId: resp.messageId || event.ts,
+            sender: resp.agent.display_name,
+            userId: resp.agentId,
+            body: resp.rawContent.substring(0, 500),
+            timestamp: Date.now(),
+            isBot: true,
+          });
+        }
+
         // Replace eyes with checkmark on completion
         try {
           await this.webClient.reactions.remove({
@@ -291,6 +359,18 @@ export class SlackGateway implements Gateway {
           multiAgentResult.responses,
           this.webClient
         );
+
+        // Route any @agent mentions in the responses.
+        // Slack doesn't deliver a bot's own messages back to itself,
+        // so we must route mentions immediately after sending.
+        if (this.multiAgentHandler.isMentionDelegationEnabled()) {
+          await this.multiAgentHandler.routeResponseMentions(
+            event.channel,
+            threadTs,
+            multiAgentResult.responses,
+            this.webClient
+          );
+        }
 
         this.emitEvent({
           type: 'message_sent',

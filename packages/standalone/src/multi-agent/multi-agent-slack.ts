@@ -19,7 +19,7 @@ import { SlackMultiBotManager, type SlackMentionEvent } from './slack-multi-bot-
 import type { PersistentProcessOptions } from '../agent/persistent-cli-process.js';
 import { splitForSlack } from '../gateways/message-splitter.js';
 
-/** Default timeout for agent responses (5 minutes) */
+/** Default timeout for agent responses (15 minutes - longer than Discord due to Slack's slower Socket Mode relay and complex thread routing) */
 const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
 
 /**
@@ -38,12 +38,26 @@ export class MultiAgentSlackHandler {
   /** Whether multi-bot mode is initialized */
   private multiBotInitialized = false;
 
+  /** Dedup map for bot→agent mentions with timestamps (prevents double processing + memory leak) */
+  private processedMentions = new Map<string, number>();
+
+  /** TTL for processed mention entries (5 minutes) */
+  private static readonly MENTION_TTL_MS = 5 * 60 * 1000;
+
+  /** Interval handle for periodic cleanup */
+  private mentionCleanupInterval?: ReturnType<typeof setInterval>;
+
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
     this.config = config;
     this.orchestrator = new MultiAgentOrchestrator(config);
     this.processManager = new AgentProcessManager(config, processOptions);
     this.sharedContext = getSharedContextManager();
     this.multiBotManager = new SlackMultiBotManager(config);
+
+    // Start periodic cleanup of processed mentions (every 60 seconds)
+    this.mentionCleanupInterval = setInterval(() => {
+      this.cleanupProcessedMentions();
+    }, 60_000);
   }
 
   /**
@@ -435,9 +449,144 @@ export class MultiAgentSlackHandler {
   }
 
   /**
+   * Handle bot→agent mention delegation (called by gateway for main bot messages).
+   * Bridges the gap where Slack's app_mention event doesn't fire for bot-posted messages.
+   */
+  async handleBotToAgentMention(
+    targetAgentId: string,
+    event: SlackMentionEvent,
+    mainWebClient: WebClient
+  ): Promise<void> {
+    // Dedup: prevent double processing if both gateway and SlackMultiBotManager fire
+    const dedupKey = `${targetAgentId}:${event.ts}`;
+    if (this.processedMentions.has(dedupKey)) return;
+    this.processedMentions.set(dedupKey, Date.now());
+
+    const cleanContent = event.text.replace(/<@[UW]\w+>/g, '').trim();
+    if (!cleanContent) return;
+
+    // Determine sender agent
+    const senderBotResult = event.bot_id ? this.multiBotManager.isFromAgentBot(event.bot_id) : null;
+    const senderAgentId =
+      senderBotResult === 'main'
+        ? (this.multiBotManager.getMainBotAgentId() ?? undefined)
+        : (senderBotResult ?? undefined);
+
+    // Chain depth check
+    const chainState = this.orchestrator.getChainState(event.channel);
+    const maxDepth = this.config.max_mention_depth ?? 3;
+    if (chainState.blocked || chainState.length >= maxDepth) {
+      this.logger.log(
+        `[MultiAgentSlack] Bot→Agent mention chain blocked/maxed in ${event.channel}`
+      );
+      return;
+    }
+
+    this.logger.log(
+      `[MultiAgentSlack] Bot→Agent mention: ${senderAgentId ?? 'main'} → ${targetAgentId}, content="${cleanContent.substring(0, 50)}"`
+    );
+
+    // Add eyes reaction
+    try {
+      await mainWebClient.reactions.add({
+        channel: event.channel,
+        timestamp: event.ts,
+        name: 'eyes',
+      });
+    } catch {
+      /* ignore reaction errors */
+    }
+
+    try {
+      const response = await this.processAgentResponse(
+        targetAgentId,
+        {
+          channelId: event.channel,
+          userId: event.user,
+          content: cleanContent,
+          isBot: true,
+          senderAgentId,
+          mentionedAgentIds: [targetAgentId],
+          messageId: event.ts,
+          timestamp: parseFloat(event.ts) * 1000,
+        },
+        cleanContent
+      );
+
+      if (response) {
+        const threadTs = event.thread_ts || event.ts;
+        await this.sendAgentResponses(event.channel, threadTs, [response], mainWebClient);
+        this.orchestrator.recordAgentResponse(targetAgentId, event.channel, response.messageId);
+
+        // Recursively route mentions in this agent's response.
+        // Necessary because Slack doesn't deliver a bot's own messages back to itself.
+        await this.routeResponseMentions(event.channel, threadTs, [response], mainWebClient);
+      }
+
+      // Replace eyes with checkmark
+      try {
+        await mainWebClient.reactions.remove({
+          channel: event.channel,
+          timestamp: event.ts,
+          name: 'eyes',
+        });
+        await mainWebClient.reactions.add({
+          channel: event.channel,
+          timestamp: event.ts,
+          name: 'white_check_mark',
+        });
+      } catch {
+        /* ignore reaction errors */
+      }
+    } catch (err) {
+      this.logger.error(`[MultiAgentSlack] Bot→Agent mention error:`, err);
+    }
+  }
+
+  /**
+   * After sending agent responses, check for mentions to other agents and route them.
+   * Necessary because Slack Socket Mode doesn't deliver a bot's own messages back to itself,
+   * so the gateway's message listener never fires for responses sent by any bot.
+   */
+  async routeResponseMentions(
+    channelId: string,
+    threadTs: string,
+    responses: SlackAgentResponse[],
+    mainWebClient: WebClient
+  ): Promise<void> {
+    for (const response of responses) {
+      // Filter out self-mentions to prevent routing an agent's response back to itself
+      const mentionedAgentIds = this.extractMentionedAgentIds(response.rawContent).filter(
+        (id) => id !== response.agentId
+      );
+      if (mentionedAgentIds.length === 0) continue;
+
+      this.logger.log(
+        `[MultiAgentSlack] Auto-routing mentions from ${response.agentId}: → ${mentionedAgentIds.join(', ')}`
+      );
+
+      // Route to all mentioned agents in parallel (not sequential)
+      await Promise.all(
+        mentionedAgentIds.map((targetAgentId) => {
+          const syntheticEvent: SlackMentionEvent = {
+            type: 'message',
+            channel: channelId,
+            user: '',
+            text: response.rawContent,
+            ts: response.messageId || threadTs,
+            thread_ts: threadTs,
+            bot_id: 'auto-route',
+          };
+          return this.handleBotToAgentMention(targetAgentId, syntheticEvent, mainWebClient);
+        })
+      );
+    }
+  }
+
+  /**
    * Extract agent IDs from <@U...> mentions in message content
    */
-  private extractMentionedAgentIds(content: string): string[] {
+  extractMentionedAgentIds(content: string): string[] {
     const mentionPattern = /<@([UW]\w+)>/g;
     const agentIds: string[] = [];
     let match;
@@ -445,8 +594,11 @@ export class MultiAgentSlackHandler {
     while ((match = mentionPattern.exec(content)) !== null) {
       const userId = match[1];
       const agentId = this.multiBotManager.resolveAgentIdFromUserId(userId);
-      if (agentId && agentId !== 'main') {
-        agentIds.push(agentId);
+      if (agentId) {
+        // Resolve 'main' to the actual agent ID (e.g., 'sisyphus')
+        const resolvedId =
+          agentId === 'main' ? (this.multiBotManager.getMainBotAgentId() ?? agentId) : agentId;
+        agentIds.push(resolvedId);
       }
     }
 
@@ -485,8 +637,25 @@ export class MultiAgentSlackHandler {
    * Stop all agent processes and bots
    */
   async stopAll(): Promise<void> {
+    if (this.mentionCleanupInterval) {
+      clearInterval(this.mentionCleanupInterval);
+      this.mentionCleanupInterval = undefined;
+    }
     this.processManager.stopAll();
     await this.multiBotManager.stopAll();
+  }
+
+  /**
+   * Clean up old processed mention entries based on TTL
+   * Called periodically by setInterval in constructor
+   */
+  private cleanupProcessedMentions(): void {
+    const now = Date.now();
+    for (const [key, ts] of this.processedMentions) {
+      if (now - ts > MultiAgentSlackHandler.MENTION_TTL_MS) {
+        this.processedMentions.delete(key);
+      }
+    }
   }
 
   /**

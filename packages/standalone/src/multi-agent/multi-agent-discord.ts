@@ -156,6 +156,7 @@ export class MultiAgentDiscordHandler {
     this.config = config;
     this.orchestrator.updateConfig(config);
     this.processManager.updateConfig(config);
+    this.multiBotManager.updateConfig(config);
   }
 
   /**
@@ -367,47 +368,56 @@ export class MultiAgentDiscordHandler {
         for (let i = 0; i < chunks.length; i++) {
           let sentMessage: Message | null = null;
 
-          if (hasOwnBot) {
-            // Use agent's dedicated bot
-            if (i === 0) {
-              // First chunk: reply to original message
-              sentMessage = await this.multiBotManager.replyAsAgent(
-                response.agentId,
-                originalMessage,
-                chunks[i]
-              );
+          try {
+            if (hasOwnBot) {
+              // Use agent's dedicated bot
+              if (i === 0) {
+                // First chunk: reply to original message
+                sentMessage = await this.multiBotManager.replyAsAgent(
+                  response.agentId,
+                  originalMessage,
+                  chunks[i]
+                );
+              } else {
+                // Subsequent chunks: send as new message
+                sentMessage = await this.multiBotManager.sendAsAgent(
+                  response.agentId,
+                  originalMessage.channel.id,
+                  chunks[i]
+                );
+              }
             } else {
-              // Subsequent chunks: send as new message
-              sentMessage = await this.multiBotManager.sendAsAgent(
-                response.agentId,
-                originalMessage.channel.id,
-                chunks[i]
-              );
-            }
-          } else {
-            // Use main bot
-            if (sentMessages.length === 0 && i === 0) {
-              // First message: reply to original
-              sentMessage = await originalMessage.reply({ content: chunks[i] });
-            } else {
-              // Subsequent messages: send as new message
-              if ('send' in originalMessage.channel) {
-                sentMessage = await (
-                  originalMessage.channel as {
-                    send: (content: { content: string }) => Promise<Message>;
-                  }
-                ).send({ content: chunks[i] });
+              // Use main bot
+              if (sentMessages.length === 0 && i === 0) {
+                // First message: reply to original
+                sentMessage = await originalMessage.reply({ content: chunks[i] });
+              } else {
+                // Subsequent messages: send as new message
+                if ('send' in originalMessage.channel) {
+                  sentMessage = await (
+                    originalMessage.channel as {
+                      send: (content: { content: string }) => Promise<Message>;
+                    }
+                  ).send({ content: chunks[i] });
+                }
               }
             }
-          }
 
-          if (sentMessage) {
-            sentMessages.push(sentMessage);
+            if (sentMessage) {
+              sentMessages.push(sentMessage);
 
-            // Update response with message ID (for chain tracking)
-            if (i === 0) {
-              response.messageId = sentMessage.id;
+              // Update response with message ID (for chain tracking)
+              if (i === 0) {
+                response.messageId = sentMessage.id;
+              }
             }
+          } catch (chunkErr) {
+            // Per-chunk error handling: don't let one chunk failure drop remaining chunks
+            console.error(
+              `[MultiAgent] Failed to send chunk ${i + 1}/${chunks.length} for agent ${response.agentId}:`,
+              chunkErr
+            );
+            // Continue with next chunk
           }
         }
       } catch (err) {

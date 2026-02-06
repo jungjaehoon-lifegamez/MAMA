@@ -118,6 +118,8 @@ export class DiscordGateway implements Gateway {
         // Initialize agent-specific bots (async, don't block)
         this.multiAgentHandler.initializeMultiBots().catch((err) => {
           console.error('[Discord] Failed to initialize multi-bots:', err);
+          // Reset handler on failure to prevent isEnabled() returning true with broken state
+          this.multiAgentHandler = null;
         });
       }
 
@@ -752,9 +754,14 @@ export class DiscordGateway implements Gateway {
    * Stop the Discord gateway
    */
   async stop(): Promise<void> {
-    // Stop multi-agent processes
+    // Stop multi-agent processes (don't let failure block shutdown)
     if (this.multiAgentHandler) {
-      await this.multiAgentHandler.stopAll();
+      try {
+        await this.multiAgentHandler.stopAll();
+      } catch (err) {
+        console.error('[Discord] Error stopping multi-agent handler:', err);
+        // Continue with shutdown anyway
+      }
     }
 
     if (!this.connected) {

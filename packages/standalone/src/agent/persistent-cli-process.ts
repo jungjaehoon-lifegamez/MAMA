@@ -162,8 +162,13 @@ export class PersistentClaudeProcess extends EventEmitter {
     // Just wait a brief moment for the process to stabilize
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    this.state = 'idle';
-    console.log(`[PersistentCLI] Process started and waiting for first message`);
+    // Guard: Only set idle if still in starting state AND process is alive
+    // handleClose could have been called during the setTimeout above (→ state='dead')
+    // process could be killed after spawn (→ !this.process.killed check prevents premature 'idle')
+    if (this.state === 'starting' && this.process && !this.process.killed) {
+      this.state = 'idle';
+      console.log(`[PersistentCLI] Process started and waiting for first message`);
+    }
   }
 
   /**
@@ -274,6 +279,12 @@ export class PersistentClaudeProcess extends EventEmitter {
 
     if (this.state !== 'idle' && this.state !== 'busy') {
       throw new Error(`Cannot send tool result in state: ${this.state}`);
+    }
+
+    // If already busy, reject the existing promise to prevent orphan
+    if (this.state === 'busy' && this.currentReject) {
+      this.currentReject(new Error('Tool result interrupted by new request'));
+      this.resetRequestState();
     }
 
     this.state = 'busy';
@@ -434,7 +445,7 @@ export class PersistentClaudeProcess extends EventEmitter {
         }
         break;
 
-      case 'error':
+      case 'error': {
         this.clearRequestTimeout();
         const error = new Error(event.error || 'Unknown error');
         this.currentCallbacks?.onError?.(error);
@@ -442,6 +453,7 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.currentReject?.(error);
         this.resetRequestState();
         break;
+      }
     }
   }
 

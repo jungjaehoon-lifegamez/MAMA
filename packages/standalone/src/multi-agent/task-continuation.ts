@@ -158,11 +158,17 @@ Continue the task. When done, end your response with "DONE" or "완료".`;
 
   /**
    * Check if a response contains completion markers.
+   *
+   * Position-based check: Only markers in the last 3 lines count as completion.
+   * This prevents false positives like "I finished the first part, moving on..."
    */
   private isResponseComplete(response: string): boolean {
-    const lower = response.toLowerCase();
+    // Get last 3 lines of response for position-based marker detection
+    const lines = response.split('\n');
+    const lastLines = lines.slice(-3).join('\n').toLowerCase();
+
     for (const marker of this.completionMarkers) {
-      if (lower.includes(marker.toLowerCase())) {
+      if (lastLines.includes(marker.toLowerCase())) {
         return true;
       }
     }
