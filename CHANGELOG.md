@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - mama-os@0.4.0: Multi-Agent Swarm
+
+**Multi-Agent Swarm System** - Coordinated AI agents with hierarchical delegation for Discord.
+
+- **Tool Permission Manager** - 3-tier permission system (Tier 1=full, 2/3=read-only), wildcard matching, system prompt injection
+- **Category Router** - Regex-based message routing, Korean/English patterns, priority ordering, compiled regex cache
+- **Task Continuation Enforcer** - Completion marker detection (DONE/완료/✅), truncation sensing, auto-retry (max 3)
+- **Delegation Manager** - `DELEGATE::{agent_id}::{task}` pattern, circular prevention, depth-1 limit, Discord notifications
+- **UltraWork Manager** - Autonomous multi-step sessions combining delegation + continuation, safety limits (20 steps / 30 min)
+- **5-Stage Message Routing** - free_chat → explicit_trigger → category_match → keyword_match → default_agent
+- **Agent Config Extensions** - `tier`, `can_delegate`, `auto_continue`, `tool_permissions` fields (backward compatible)
+- **173 multi-agent tests** across 8 test files (6 new + 2 existing)
+
+### Changed - mama-os@0.4.0
+
+- **MultiAgentOrchestrator** - Integrated CategoryRouter for stage-3 routing
+- **AgentProcessManager** - System prompt now includes tool permission and delegation sections
+- **Config Types** - Synced `cli/config/types.ts` with `multi-agent/types.ts` for categories, ultrawork, task_continuation
+
 ## [0.3.16] - 2026-02-06
 
 ### Fixed - mama-os@0.3.16

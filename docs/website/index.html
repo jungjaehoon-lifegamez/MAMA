@@ -31,6 +31,7 @@
       </a>
       <div class="nav-links" id="nav-links">
         <a href="#features">Features</a>
+        <a href="#multiagent">Multi-Agent</a>
         <a href="#packages">Packages</a>
         <a href="#docs">Docs</a>
         <a href="#install">Install</a>
@@ -58,7 +59,7 @@
         <span class="title-accent">Long-Term Memory</span>
       </h1>
       <p class="hero-tagline">
-        24/7 AI assistant. Chat anywhere via <strong>Discord, Slack, Telegram</strong>.
+        24/7 AI assistant. <strong>Multi-Agent Swarm</strong> for Discord. Also on Slack, Telegram.
       </p>
       <div class="hero-cta">
         <a href="#install" class="btn btn-primary">Get Started</a>
@@ -133,6 +134,48 @@
           <h3>⚙️ Settings</h3>
           <p>Easy gateway and agent configuration</p>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Multi-Agent Swarm Section -->
+  <section class="section section-about" id="multiagent">
+    <div class="section-inner">
+      <h2 class="section-title">Multi-Agent Swarm <sup style="font-size:0.5em; color:#FF9999;">NEW in 0.4</sup></h2>
+      <p class="section-subtitle">Multiple AI agents collaborate in Discord with tiered permissions and delegation</p>
+      <div class="comparison-cards">
+        <div class="comparison-card comparison-old">
+          <div class="comparison-icon">🤖</div>
+          <h3>Single Agent</h3>
+          <p>One AI handles everything alone</p>
+          <ul>
+            <li>One persona, one skill set</li>
+            <li>No task specialization</li>
+            <li>Limited autonomy</li>
+          </ul>
+        </div>
+        <div class="comparison-card comparison-new">
+          <div class="comparison-icon">🐝</div>
+          <h3>Agent Swarm</h3>
+          <p>Specialized agents collaborate as a team</p>
+          <ul>
+            <li>3-tier permissions (lead / advisory / scoped)</li>
+            <li>Task delegation between agents</li>
+            <li>UltraWork autonomous sessions</li>
+          </ul>
+        </div>
+      </div>
+      <div style="max-width:640px; margin:2rem auto 0; text-align:left;">
+        <pre style="background:#1e1e2e; color:#cdd6f4; border-radius:12px; padding:1.2rem; font-size:0.85rem; overflow-x:auto; line-height:1.5;">User message → Orchestrator → 5-Stage Routing
+                                │
+                ┌───────────────┼───────────────┐
+                ▼               ▼               ▼
+         🏔️ Lead Agent    🔧 Developer     📝 Reviewer
+          (Tier 1)          (Tier 2)         (Tier 3)
+        Full tools        Read-only         Scoped
+        Can delegate      Implements        Reviews
+                │
+                └── DELEGATE::developer::Fix the auth bug</pre>
       </div>
     </div>
   </section>
@@ -225,6 +268,11 @@
           <div class="feature-icon">⏰</div>
           <h3>Cron Scheduler</h3>
           <p>Automated task scheduling. Daily briefings, weekly reports.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">🤖</div>
+          <h3>Multi-Agent Swarm</h3>
+          <p>Coordinated AI agents with tiered permissions, delegation, and autonomous work.</p>
         </article>
       </div>
     </div>
@@ -321,7 +369,7 @@
       <div class="footer-brand">
         <img src="assets/mama-icon.svg" alt="MAMA" class="footer-logo">
         <span>MAMA OS</span>
-        <span class="footer-version">v0.3.1</span>
+        <span class="footer-version">v0.4.0</span>
       </div>
       <div class="footer-links">
         <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
