@@ -233,8 +233,11 @@ export class PersistentClaudeProcess extends EventEmitter {
       await this.start();
     }
 
-    if (this.state === 'busy') {
-      throw new Error('Process is busy with another request');
+    // Prevent concurrent requests during auto-restart or active processing
+    if (this.state === 'busy' || this.state === 'starting') {
+      throw new Error(
+        `Process is ${this.state === 'busy' ? 'busy with another request' : 'starting up, please retry'}`
+      );
     }
 
     this.state = 'busy';
