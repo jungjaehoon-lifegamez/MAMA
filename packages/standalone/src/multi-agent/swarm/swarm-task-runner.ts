@@ -30,8 +30,11 @@ import {
   expireStaleLeases,
   parseFilesOwned,
   parseDependsOn,
+  retryTask,
 } from './swarm-db.js';
 import { AgentProcessManager } from '../agent-process-manager.js';
+import type { ContextInjector } from '../../gateways/context-injector.js';
+import type { SwarmAntiPatternDetector } from './swarm-anti-pattern-detector.js';
 
 /**
  * Result of executing a single task
@@ -43,6 +46,7 @@ export interface TaskExecutionResult {
   result?: string;
   error?: string;
   warnings?: string[];
+  retryCount?: number;
 }
 
 /**
@@ -71,17 +75,34 @@ export class SwarmTaskRunner extends EventEmitter {
   private agentProcessManager: AgentProcessManager;
   private sessions: Map<string, SessionState> = new Map();
   private pollingIntervalMs = 30000; // 30 seconds
+  private contextInjector?: ContextInjector;
+  private antiPatternDetector?: SwarmAntiPatternDetector;
+  private maxRetries = 3;
 
   constructor(
     swarmManager: SwarmManager,
     agentProcessManager: AgentProcessManager,
-    options?: { pollingIntervalMs?: number }
+    options?: {
+      pollingIntervalMs?: number;
+      contextInjector?: ContextInjector;
+      antiPatternDetector?: SwarmAntiPatternDetector;
+      maxRetries?: number;
+    }
   ) {
     super();
     this.swarmManager = swarmManager;
     this.agentProcessManager = agentProcessManager;
     if (options?.pollingIntervalMs) {
       this.pollingIntervalMs = options.pollingIntervalMs;
+    }
+    if (options?.contextInjector) {
+      this.contextInjector = options.contextInjector;
+    }
+    if (options?.antiPatternDetector) {
+      this.antiPatternDetector = options.antiPatternDetector;
+    }
+    if (options?.maxRetries !== undefined) {
+      this.maxRetries = options.maxRetries;
     }
   }
 
@@ -265,11 +286,47 @@ export class SwarmTaskRunner extends EventEmitter {
     try {
       console.log(`[SwarmTaskRunner] Executing task ${task.id}: ${task.description}`);
 
+      // Inject MAMA context if available
+      let enrichedDescription = task.description;
+      if (this.contextInjector) {
+        try {
+          const context = await this.contextInjector.getRelevantContext(task.description);
+          if (context.hasContext) {
+            enrichedDescription = `${context.prompt}\n\n---\n\nTask:\n${task.description}`;
+            console.log(
+              `[SwarmTaskRunner] Injected ${context.decisions.length} related decisions into task ${task.id}`
+            );
+          }
+        } catch (error) {
+          // Graceful fallback - log error but continue with original description
+          console.warn(`[SwarmTaskRunner] Failed to inject context for task ${task.id}:`, error);
+        }
+      }
+
+      // Anti-pattern detection
+      if (this.antiPatternDetector) {
+        try {
+          const warnings = await this.antiPatternDetector.detect(agentId, task.description);
+          if (warnings.length > 0) {
+            const warningText = this.antiPatternDetector.formatWarnings(warnings);
+            enrichedDescription = `${warningText}\n\n---\n\n${enrichedDescription}`;
+            console.log(
+              `[SwarmTaskRunner] Injected ${warnings.length} anti-pattern warnings for agent ${agentId}`
+            );
+          }
+        } catch (error) {
+          console.warn(
+            `[SwarmTaskRunner] Anti-pattern detection failed for task ${task.id}:`,
+            error
+          );
+        }
+      }
+
       // Get agent process
       const process = await this.agentProcessManager.getProcess(source, channelId, agentId);
 
-      // Send task description to agent
-      const promptResult = await process.sendMessage(task.description);
+      // Send enriched task description to agent
+      const promptResult = await process.sendMessage(enrichedDescription);
 
       // Mark task as completed
       const resultText = promptResult.response || 'Task completed';
@@ -287,21 +344,50 @@ export class SwarmTaskRunner extends EventEmitter {
 
       return result;
     } catch (error) {
-      // Mark task as failed
+      // Check retry count
       const errorMsg = error instanceof Error ? error.message : String(error);
-      failTask(db, task.id, errorMsg);
+      const currentTask = db
+        .prepare('SELECT retry_count FROM swarm_tasks WHERE id = ?')
+        .get(task.id) as { retry_count: number } | undefined;
+      const retryCount = currentTask?.retry_count ?? 0;
 
-      const result: TaskExecutionResult = {
-        taskId: task.id,
-        agentId,
-        status: 'failed',
-        error: errorMsg,
-      };
+      if (retryCount < this.maxRetries) {
+        // Retry the task
+        retryTask(db, task.id);
+        const retriedResult: TaskExecutionResult = {
+          taskId: task.id,
+          agentId,
+          status: 'failed',
+          error: errorMsg,
+          retryCount: retryCount + 1,
+        };
 
-      console.error(`[SwarmTaskRunner] Task ${task.id} failed:`, errorMsg);
-      this.emit('task-failed', result);
+        console.log(
+          `[SwarmTaskRunner] Task ${task.id} will be retried (attempt ${retryCount + 1}/${this.maxRetries})`
+        );
+        this.emit('task-retried', retriedResult, retryCount + 1, this.maxRetries);
 
-      return result;
+        return retriedResult;
+      } else {
+        // Max retries reached, mark as failed
+        failTask(db, task.id, errorMsg);
+
+        const result: TaskExecutionResult = {
+          taskId: task.id,
+          agentId,
+          status: 'failed',
+          error: errorMsg,
+          retryCount,
+        };
+
+        console.error(
+          `[SwarmTaskRunner] Task ${task.id} failed after ${retryCount} retries:`,
+          errorMsg
+        );
+        this.emit('task-failed', result);
+
+        return result;
+      }
     }
   }
 

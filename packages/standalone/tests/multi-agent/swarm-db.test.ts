@@ -13,6 +13,7 @@ import {
   getTasksBySession,
   getPendingTasks,
   expireStaleLeases,
+  retryTask,
 } from '../../src/multi-agent/swarm/swarm-db.js';
 import type { CreateTaskParams } from '../../src/multi-agent/swarm/swarm-db.js';
 
@@ -508,6 +509,97 @@ describe('Swarm DB', () => {
       // Expire with 1 minute threshold
       const expired = expireStaleLeases(db, 1 * 60 * 1000);
       expect(expired).toBe(1);
+    });
+  });
+
+  describe('retryTask', () => {
+    it('should reset claimed task to pending and increment retry_count', () => {
+      const taskId = createTask(db, {
+        session_id: 'session1',
+        description: 'Test task',
+        category: 'test',
+        wave: 1,
+      });
+
+      // Claim the task
+      claimTask(db, taskId, 'agent1');
+
+      // Retry the task
+      const success = retryTask(db, taskId);
+      expect(success).toBe(true);
+
+      // Verify task state
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.status).toBe('pending');
+      expect(task.claimed_by).toBeNull();
+      expect(task.claimed_at).toBeNull();
+      expect(task.retry_count).toBe(1);
+    });
+
+    it('should reset failed task to pending and increment retry_count', () => {
+      const taskId = createTask(db, {
+        session_id: 'session1',
+        description: 'Test task',
+        category: 'test',
+        wave: 1,
+      });
+
+      // Claim and fail the task
+      claimTask(db, taskId, 'agent1');
+      failTask(db, taskId, 'Some error');
+
+      // Retry the task
+      const success = retryTask(db, taskId);
+      expect(success).toBe(true);
+
+      // Verify task state
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.status).toBe('pending');
+      expect(task.retry_count).toBe(1);
+    });
+
+    it('should return false when retrying pending task', () => {
+      const taskId = createTask(db, {
+        session_id: 'session1',
+        description: 'Test task',
+        category: 'test',
+        wave: 1,
+      });
+
+      // Task is already pending
+      const success = retryTask(db, taskId);
+      expect(success).toBe(false);
+
+      // Retry count should not change
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.retry_count).toBe(0);
+    });
+
+    it('should increment retry_count on multiple retries', () => {
+      const taskId = createTask(db, {
+        session_id: 'session1',
+        description: 'Test task',
+        category: 'test',
+        wave: 1,
+      });
+
+      // First retry
+      claimTask(db, taskId, 'agent1');
+      retryTask(db, taskId);
+      let task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.retry_count).toBe(1);
+
+      // Second retry
+      claimTask(db, taskId, 'agent1');
+      retryTask(db, taskId);
+      task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.retry_count).toBe(2);
+
+      // Third retry
+      claimTask(db, taskId, 'agent1');
+      retryTask(db, taskId);
+      task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.retry_count).toBe(3);
     });
   });
 });

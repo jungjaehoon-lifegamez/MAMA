@@ -35,6 +35,7 @@ export interface SwarmTask {
   result: string | null;
   files_owned: string | null; // JSON array
   depends_on: string | null; // JSON array of task IDs
+  retry_count: number;
 }
 
 /**
@@ -79,7 +80,8 @@ export function initSwarmDb(dbPath: string): Database.Database {
       completed_at INTEGER,
       result TEXT,
       files_owned TEXT,
-      depends_on TEXT
+      depends_on TEXT,
+      retry_count INTEGER DEFAULT 0
     )
   `
   ).run();
@@ -235,6 +237,30 @@ export function failPendingTask(db: Database.Database, taskId: string, result?: 
     .run(now, result ?? null, taskId);
 
   return updateResult.changes > 0;
+}
+
+/**
+ * Retry a failed task
+ *
+ * Resets task status to pending and increments retry_count.
+ * Used for automatic retry on task failure.
+ *
+ * @param db - Database instance
+ * @param taskId - Task ID
+ * @returns true if task was reset to pending
+ */
+export function retryTask(db: Database.Database, taskId: string): boolean {
+  const result = db
+    .prepare(
+      `
+    UPDATE swarm_tasks
+    SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = retry_count + 1
+    WHERE id = ? AND (status = 'claimed' OR status = 'failed')
+  `
+    )
+    .run(taskId);
+
+  return result.changes > 0;
 }
 
 /**

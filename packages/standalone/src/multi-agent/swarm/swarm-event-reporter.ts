@@ -63,6 +63,9 @@ export class SwarmEventReporter {
   // Event handler references (needed for removeListener)
   private taskCompletedHandler: ((result: TaskExecutionResult) => void) | null = null;
   private taskFailedHandler: ((result: TaskExecutionResult) => void) | null = null;
+  private taskRetriedHandler:
+    | ((result: TaskExecutionResult, attempt: number, maxRetries: number) => void)
+    | null = null;
   private sessionCompleteHandler: ((sessionId: string) => void) | null = null;
   private fileConflictHandler:
     | ((taskId: string, conflictingFiles: string[], conflictingTasks: string[]) => void)
@@ -98,6 +101,17 @@ export class SwarmEventReporter {
       this.sendMessage(message);
     };
     this.runner.on('task-failed', this.taskFailedHandler);
+
+    // task-retried event
+    this.taskRetriedHandler = (
+      result: TaskExecutionResult,
+      attempt: number,
+      maxRetries: number
+    ) => {
+      const message = this.formatTaskRetried(result, attempt, maxRetries);
+      this.sendMessage(message);
+    };
+    this.runner.on('task-retried', this.taskRetriedHandler);
 
     // session-complete event
     this.sessionCompleteHandler = (sessionId: string) => {
@@ -143,6 +157,11 @@ export class SwarmEventReporter {
       this.taskFailedHandler = null;
     }
 
+    if (this.taskRetriedHandler) {
+      this.runner.removeListener('task-retried', this.taskRetriedHandler);
+      this.taskRetriedHandler = null;
+    }
+
     if (this.sessionCompleteHandler) {
       this.runner.removeListener('session-complete', this.sessionCompleteHandler);
       this.sessionCompleteHandler = null;
@@ -186,6 +205,25 @@ export class SwarmEventReporter {
 
     if (this.options.verbose && result.agentId) {
       message += `\n> Agent: \`${result.agentId}\``;
+    }
+
+    return this.enforceLimit(message);
+  }
+
+  /**
+   * Format task-retried event message
+   */
+  private formatTaskRetried(
+    result: TaskExecutionResult,
+    attempt: number,
+    maxRetries: number
+  ): string {
+    const taskIdShort = result.taskId.substring(0, 8);
+    let message = `🔄 Task \`${taskIdShort}\` retrying (attempt ${attempt}/${maxRetries})`;
+
+    if (this.options.verbose && result.error) {
+      const errorPreview = this.truncate(result.error, 80);
+      message += `\n> Error: ${errorPreview}`;
     }
 
     return this.enforceLimit(message);
