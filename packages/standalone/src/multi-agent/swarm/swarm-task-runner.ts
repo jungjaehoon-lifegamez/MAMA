@@ -454,8 +454,10 @@ export class SwarmTaskRunner extends EventEmitter {
       const resultText = promptResult.response || 'Task completed';
       completeTask(db, task.id, resultText);
 
-      // Release process back to pool
-      (this.agentProcessManager as any).releaseProcess?.(agentId, process);
+      // Release process back to pool (optional for backward compatibility)
+      if (typeof this.agentProcessManager.releaseProcess === 'function') {
+        this.agentProcessManager.releaseProcess(agentId, process);
+      }
 
       const result: TaskExecutionResult = {
         taskId: task.id,
