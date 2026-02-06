@@ -337,15 +337,10 @@ export class MultiAgentSlackHandler {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(`[MultiAgentSlack] Failed to get response from ${agentId}:`, error);
 
-      // Return a user-friendly busy message instead of silently failing
+      // Silently drop busy responses — don't spam the channel
       if (errMsg.includes('busy')) {
-        return {
-          agentId,
-          agent,
-          content: `*${agent.display_name}*: 이전 요청을 처리 중입니다. 잠시 후 다시 시도해주세요. ⏳`,
-          rawContent: '',
-          duration: 0,
-        };
+        this.logger.log(`[MultiAgentSlack] Agent ${agentId} busy, silently dropping request`);
+        return null;
       }
       return null;
     }
