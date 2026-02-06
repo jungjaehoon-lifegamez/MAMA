@@ -279,14 +279,8 @@ export class PersistentClaudeProcess extends EventEmitter {
       throw new Error('Cannot send tool result: process is dead');
     }
 
-    if (this.state !== 'idle' && this.state !== 'busy') {
+    if (this.state !== 'idle') {
       throw new Error(`Cannot send tool result in state: ${this.state}`);
-    }
-
-    // If already busy, reject the existing promise to prevent orphan
-    if (this.state === 'busy' && this.currentReject) {
-      this.currentReject(new Error('Tool result interrupted by new request'));
-      this.resetRequestState();
     }
 
     this.state = 'busy';
