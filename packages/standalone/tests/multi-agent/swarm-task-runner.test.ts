@@ -18,15 +18,18 @@ describe('SwarmTaskRunner', () => {
   let mockAgentProcessManager: AgentProcessManager;
   let dbPath: string;
   let sessionId: string;
+  let db: any;
 
   beforeEach(() => {
     // Create temporary DB file and manager
     dbPath = join(tmpdir(), `swarm-runner-test-${randomUUID()}.db`);
     manager = new SwarmManager(dbPath);
     sessionId = manager.createSession();
+    db = manager.getDatabase();
 
     // Mock AgentProcessManager
     const mockProcess = {
+      isReady: vi.fn().mockReturnValue(true),
       sendMessage: vi.fn().mockResolvedValue({
         response: 'Task completed successfully',
         usage: { input_tokens: 10, output_tokens: 20 },
@@ -34,8 +37,16 @@ describe('SwarmTaskRunner', () => {
       }),
     };
 
+    const mockAgentProcessPool = {
+      cleanupIdleProcesses: vi.fn().mockReturnValue(0),
+      cleanupHungProcesses: vi.fn().mockReturnValue(0),
+      getAllPoolStatuses: vi.fn().mockReturnValue(new Map()),
+    };
+
     mockAgentProcessManager = {
       getProcess: vi.fn().mockResolvedValue(mockProcess),
+      releaseProcess: vi.fn(),
+      getAgentProcessPool: vi.fn().mockReturnValue(mockAgentProcessPool),
     } as any;
 
     runner = new SwarmTaskRunner(manager, mockAgentProcessManager, { maxRetries: 0 });
@@ -170,6 +181,7 @@ describe('SwarmTaskRunner', () => {
     it('should handle task execution failure', async () => {
       // Mock process to throw error
       const errorProcess = {
+        isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
       };
       (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(errorProcess);
@@ -205,6 +217,97 @@ describe('SwarmTaskRunner', () => {
       await expect(
         runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1')
       ).rejects.toThrow(/could not be claimed/);
+    });
+
+    it('should defer task when agent process is not ready (busy)', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Mock process as not ready (busy)
+      const busyProcess = {
+        isReady: vi.fn().mockReturnValue(false),
+        sendMessage: vi.fn(),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(busyProcess);
+
+      // Listen for task-deferred event
+      const deferredListener = vi.fn();
+      runner.on('task-deferred', deferredListener);
+
+      const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Should return failed status with defer message
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe('Agent process busy, task deferred');
+
+      // Should emit task-deferred event
+      expect(deferredListener).toHaveBeenCalledOnce();
+      expect(deferredListener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskId,
+          agentId: 'test',
+          status: 'failed',
+          error: 'Agent process busy, task deferred',
+        })
+      );
+
+      // Task should be back to pending (not failed in DB)
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.status).toBe('pending');
+      expect(task.retry_count).toBe(0); // Should NOT increment
+    });
+
+    it('should execute task when agent process is ready', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Mock process as ready
+      const readyProcess = {
+        isReady: vi.fn().mockReturnValue(true),
+        sendMessage: vi.fn().mockResolvedValue({
+          response: 'Success',
+          usage: { input_tokens: 10, output_tokens: 20 },
+          session_id: 'test-session',
+        }),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(readyProcess);
+
+      const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Should execute normally
+      expect(result.status).toBe('completed');
+      expect(readyProcess.isReady).toHaveBeenCalledOnce();
+      expect(readyProcess.sendMessage).toHaveBeenCalledOnce();
+    });
+
+    it('should not emit task-deferred when process is ready', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Mock process as ready
+      const readyProcess = {
+        isReady: vi.fn().mockReturnValue(true),
+        sendMessage: vi.fn().mockResolvedValue({
+          response: 'Success',
+          usage: { input_tokens: 10, output_tokens: 20 },
+          session_id: 'test-session',
+        }),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(readyProcess);
+
+      const deferredListener = vi.fn();
+      runner.on('task-deferred', deferredListener);
+
+      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Should NOT emit task-deferred
+      expect(deferredListener).not.toHaveBeenCalled();
     });
   });
 
@@ -397,6 +500,7 @@ describe('SwarmTaskRunner', () => {
 
       // Mock failure
       const failProcess = {
+        isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Failed')),
       };
       (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
@@ -650,6 +754,7 @@ describe('SwarmTaskRunner', () => {
 
       // Mock process to fail
       const failProcess = {
+        isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
       };
       (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
@@ -693,6 +798,7 @@ describe('SwarmTaskRunner', () => {
 
       // Mock process to fail
       const failProcess = {
+        isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
       };
       (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
@@ -718,6 +824,7 @@ describe('SwarmTaskRunner', () => {
 
       // First attempt: fail and retry
       const failProcess = {
+        isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('First attempt failed')),
       };
       (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
@@ -732,6 +839,7 @@ describe('SwarmTaskRunner', () => {
 
       // Second attempt: succeed
       const successProcess = {
+        isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockResolvedValue({ response: 'Task completed successfully' }),
       };
       (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(successProcess);
@@ -744,6 +852,111 @@ describe('SwarmTaskRunner', () => {
 
       task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
       expect(task.status).toBe('completed');
+    });
+  });
+
+  describe('process release', () => {
+    it('should call releaseProcess after task completion', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // releaseProcess should be called with agentId and process
+      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledOnce();
+      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledWith(
+        'test',
+        expect.objectContaining({
+          isReady: expect.any(Function),
+          sendMessage: expect.any(Function),
+        })
+      );
+    });
+
+    it('should call releaseProcess after task failure', async () => {
+      // Mock process to fail
+      const failProcess = {
+        isReady: vi.fn().mockReturnValue(true),
+        sendMessage: vi.fn().mockRejectedValue(new Error('Failed')),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // releaseProcess should be called even on failure
+      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledOnce();
+      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledWith(
+        'test',
+        expect.objectContaining({
+          isReady: expect.any(Function),
+          sendMessage: expect.any(Function),
+        })
+      );
+    });
+
+    it('should call releaseProcess when task is deferred (busy guard)', async () => {
+      // Mock process as not ready (busy)
+      const busyProcess = {
+        isReady: vi.fn().mockReturnValue(false),
+        sendMessage: vi.fn(),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(busyProcess);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // releaseProcess should be called for deferred task
+      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledOnce();
+      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledWith(
+        'test',
+        expect.objectContaining({
+          isReady: expect.any(Function),
+        })
+      );
+    });
+
+    it('should not throw when releaseProcess is not available', async () => {
+      // Create mock without releaseProcess
+      const mockProcessNoRelease = {
+        isReady: vi.fn().mockReturnValue(true),
+        sendMessage: vi.fn().mockResolvedValue({
+          response: 'Success',
+          usage: { input_tokens: 10, output_tokens: 20 },
+          session_id: 'test-session',
+        }),
+      };
+
+      const mockManagerNoRelease = {
+        getProcess: vi.fn().mockResolvedValue(mockProcessNoRelease),
+        // No releaseProcess method
+      } as any;
+
+      const runnerNoRelease = new SwarmTaskRunner(manager, mockManagerNoRelease, {
+        maxRetries: 0,
+      });
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Should not throw
+      await expect(
+        runnerNoRelease.executeImmediateTask(sessionId, taskId, 'test', 'channel1')
+      ).resolves.not.toThrow();
+
+      runnerNoRelease.stopAll();
     });
   });
 });

@@ -14,6 +14,7 @@ import {
   getPendingTasks,
   expireStaleLeases,
   retryTask,
+  deferTask,
 } from '../../src/multi-agent/swarm/swarm-db.js';
 import type { CreateTaskParams } from '../../src/multi-agent/swarm/swarm-db.js';
 
@@ -509,6 +510,66 @@ describe('Swarm DB', () => {
       // Expire with 1 minute threshold
       const expired = expireStaleLeases(db, 1 * 60 * 1000);
       expect(expired).toBe(1);
+    });
+  });
+
+  describe('deferTask', () => {
+    it('should reset claimed task to pending without incrementing retry_count', () => {
+      const taskId = createTask(db, {
+        session_id: 'session1',
+        description: 'Test task',
+        category: 'test',
+        wave: 1,
+      });
+
+      // Claim the task
+      claimTask(db, taskId, 'agent1');
+
+      // Defer the task
+      const success = deferTask(db, taskId);
+      expect(success).toBe(true);
+
+      // Verify task state
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.status).toBe('pending');
+      expect(task.claimed_by).toBeNull();
+      expect(task.claimed_at).toBeNull();
+      expect(task.retry_count).toBe(0); // Should NOT increment
+    });
+
+    it('should return false when task is not claimed', () => {
+      const taskId = createTask(db, {
+        session_id: 'session1',
+        description: 'Test task',
+        category: 'test',
+        wave: 1,
+      });
+
+      // Task is pending, not claimed
+      const success = deferTask(db, taskId);
+      expect(success).toBe(false);
+    });
+
+    it('should return false when task is failed', () => {
+      const taskId = createTask(db, {
+        session_id: 'session1',
+        description: 'Test task',
+        category: 'test',
+        wave: 1,
+      });
+
+      // Claim and fail the task
+      claimTask(db, taskId, 'agent1');
+      failTask(db, taskId, 'Error');
+
+      // Defer should fail (task is failed, not claimed)
+      const success = deferTask(db, taskId);
+      expect(success).toBe(false);
+    });
+
+    it('should return false for nonexistent task', () => {
+      const success = deferTask(db, 'nonexistent-id');
+      expect(success).toBe(false);
     });
   });
 

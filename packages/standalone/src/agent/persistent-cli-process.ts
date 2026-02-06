@@ -39,6 +39,8 @@ export interface PersistentProcessOptions {
   useGatewayTools?: boolean;
   /** Timeout for each request in ms (default: 120000) */
   requestTimeout?: number;
+  /** Environment variables to pass to the Claude CLI process */
+  env?: Record<string, string>;
 }
 
 export interface ToolUseBlock {
@@ -150,6 +152,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
+      env: { ...process.env, ...(this.options.env || {}) },
     });
 
     // Set up event handlers

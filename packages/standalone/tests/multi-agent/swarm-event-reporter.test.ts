@@ -281,6 +281,49 @@ describe('SwarmEventReporter', () => {
     });
   });
 
+  describe('task-deferred event', () => {
+    it('should format and send task-deferred message', async () => {
+      reporter.start();
+
+      const result: TaskExecutionResult = {
+        taskId: 'deferred-task-12345678',
+        agentId: 'developer',
+        status: 'failed',
+        error: 'Agent process busy, task deferred',
+      };
+
+      mockRunner.emit('task-deferred', result);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(mockSendMessage).toHaveBeenCalledOnce();
+      const message = (mockSendMessage as any).mock.calls[0][1];
+      expect(message).toContain('⏸️ Task `deferred` deferred — agent `developer` busy');
+    });
+
+    it('should include error reason in verbose mode', async () => {
+      reporter = new SwarmEventReporter(mockRunner, {
+        sendMessage: mockSendMessage,
+        channelId: 'test-channel-123',
+        verbose: true,
+      });
+      reporter.start();
+
+      const result: TaskExecutionResult = {
+        taskId: 'task-id',
+        agentId: 'developer',
+        status: 'failed',
+        error: 'Agent process busy, task deferred',
+      };
+
+      mockRunner.emit('task-deferred', result);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const message = (mockSendMessage as any).mock.calls[0][1];
+      expect(message).toContain('⏸️ Task `task-id` deferred — agent `developer` busy');
+      expect(message).toContain('Reason: Agent process busy, task deferred');
+    });
+  });
+
   describe('session-complete event', () => {
     it('should format and send session-complete message', async () => {
       reporter.start();
