@@ -12,6 +12,7 @@ import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { homedir } from 'os';
+import { randomUUID } from 'crypto';
 import {
   PersistentProcessPool,
   PersistentClaudeProcess,
@@ -19,6 +20,7 @@ import {
 } from '../agent/persistent-cli-process.js';
 import type { AgentPersonaConfig, MultiAgentConfig } from './types.js';
 import { ToolPermissionManager } from './tool-permission-manager.js';
+import { AgentProcessPool } from './agent-process-pool.js';
 
 /**
  * Resolve path with ~ expansion
@@ -41,6 +43,7 @@ function resolvePath(path: string): string {
 export class AgentProcessManager {
   private config: MultiAgentConfig;
   private processPool: PersistentProcessPool;
+  private agentProcessPool: AgentProcessPool;
   private permissionManager: ToolPermissionManager;
 
   /** Cached persona content: Map<agentId, systemPrompt> */
@@ -60,6 +63,20 @@ export class AgentProcessManager {
     this.defaultOptions = defaultOptions;
     this.processPool = new PersistentProcessPool(defaultOptions);
     this.permissionManager = new ToolPermissionManager();
+
+    // Initialize AgentProcessPool with per-agent pool sizes
+    const agentPoolSizes: Record<string, number> = {};
+    for (const [agentId, agentConfig] of Object.entries(config.agents)) {
+      if (agentConfig.pool_size && agentConfig.pool_size > 1) {
+        agentPoolSizes[agentId] = agentConfig.pool_size;
+      }
+    }
+
+    this.agentProcessPool = new AgentProcessPool({
+      defaultPoolSize: 1,
+      agentPoolSizes,
+      idleTimeoutMs: 300000, // 5 minutes
+    });
   }
 
   /**
@@ -69,6 +86,20 @@ export class AgentProcessManager {
     this.config = config;
     // Clear persona cache to force reload
     this.personaCache.clear();
+
+    // Rebuild AgentProcessPool with new pool sizes
+    this.agentProcessPool.stopAll();
+    const agentPoolSizes: Record<string, number> = {};
+    for (const [agentId, agentConfig] of Object.entries(config.agents)) {
+      if (agentConfig.pool_size && agentConfig.pool_size > 1) {
+        agentPoolSizes[agentId] = agentConfig.pool_size;
+      }
+    }
+    this.agentProcessPool = new AgentProcessPool({
+      defaultPoolSize: 1,
+      agentPoolSizes,
+      idleTimeoutMs: 300000, // 5 minutes
+    });
   }
 
   /**
@@ -122,21 +153,62 @@ export class AgentProcessManager {
     agentId: string
   ): Promise<PersistentClaudeProcess> {
     const channelKey = this.buildChannelKey(source, channelId, agentId);
-
-    // Load persona system prompt
-    const systemPrompt = await this.loadPersona(agentId);
-
-    // Get agent-specific options
     const agentConfig = this.config.agents[agentId];
+    const poolSize = agentConfig?.pool_size ?? 1;
+
+    // Use AgentProcessPool for multi-process agents (pool_size > 1)
+    if (poolSize > 1) {
+      const systemPrompt = await this.loadPersona(agentId);
+      const tier = agentConfig?.tier ?? 1;
+      const options: Partial<PersistentProcessOptions> = {
+        ...this.defaultOptions,
+        systemPrompt,
+        requestTimeout: 900000,
+      };
+
+      if (agentConfig?.model) {
+        options.model = agentConfig.model;
+      }
+
+      if (tier >= 2) {
+        options.env = { MAMA_DISABLE_HOOKS: 'true' };
+      }
+
+      const { process } = await this.agentProcessPool.getAvailableProcess(
+        agentId,
+        channelKey,
+        async () => {
+          // Factory: create new PersistentClaudeProcess
+          const mergedOptions: PersistentProcessOptions = {
+            sessionId: randomUUID(),
+            ...this.defaultOptions,
+            ...options,
+          } as PersistentProcessOptions;
+
+          const newProcess = new PersistentClaudeProcess(mergedOptions);
+          await newProcess.start();
+          return newProcess;
+        }
+      );
+
+      return process;
+    }
+
+    // pool_size=1: use existing PersistentProcessPool (backward compatible)
+    const systemPrompt = await this.loadPersona(agentId);
+    const tier = agentConfig?.tier ?? 1;
     const options: Partial<PersistentProcessOptions> = {
       ...this.defaultOptions,
       systemPrompt,
-      requestTimeout: 900000, // 15 minutes — agent tasks (code review, implementation) need more than default 2min
+      requestTimeout: 900000,
     };
 
-    // Override model if agent-specific
     if (agentConfig?.model) {
       options.model = agentConfig.model;
+    }
+
+    if (tier >= 2) {
+      options.env = { MAMA_DISABLE_HOOKS: 'true' };
     }
 
     return this.processPool.getProcess(channelKey, options);
@@ -309,11 +381,32 @@ Respond to messages in a helpful and professional manner.
   }
 
   /**
+   * Release a process back to the pool (for multi-process agents)
+   */
+  releaseProcess(agentId: string, process: PersistentClaudeProcess): void {
+    const agentConfig = this.config.agents[agentId];
+    const poolSize = agentConfig?.pool_size ?? 1;
+
+    if (poolSize > 1) {
+      this.agentProcessPool.releaseProcess(agentId, process);
+    }
+    // pool_size=1: PersistentProcessPool handles reuse automatically, no release needed
+  }
+
+  /**
    * Stop all processes
    */
   stopAll(): void {
     this.processPool.stopAll();
+    this.agentProcessPool.stopAll();
     this.personaCache.clear();
+  }
+
+  /**
+   * Get AgentProcessPool instance (for testing/advanced usage)
+   */
+  getAgentProcessPool(): AgentProcessPool {
+    return this.agentProcessPool;
   }
 
   /**

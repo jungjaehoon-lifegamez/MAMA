@@ -66,6 +66,7 @@ export class SwarmEventReporter {
   private taskRetriedHandler:
     | ((result: TaskExecutionResult, attempt: number, maxRetries: number) => void)
     | null = null;
+  private taskDeferredHandler: ((result: TaskExecutionResult) => void) | null = null;
   private sessionCompleteHandler: ((sessionId: string) => void) | null = null;
   private fileConflictHandler:
     | ((taskId: string, conflictingFiles: string[], conflictingTasks: string[]) => void)
@@ -112,6 +113,13 @@ export class SwarmEventReporter {
       this.sendMessage(message);
     };
     this.runner.on('task-retried', this.taskRetriedHandler);
+
+    // task-deferred event
+    this.taskDeferredHandler = (result: TaskExecutionResult) => {
+      const message = this.formatTaskDeferred(result);
+      this.sendMessage(message);
+    };
+    this.runner.on('task-deferred', this.taskDeferredHandler);
 
     // session-complete event
     this.sessionCompleteHandler = (sessionId: string) => {
@@ -160,6 +168,11 @@ export class SwarmEventReporter {
     if (this.taskRetriedHandler) {
       this.runner.removeListener('task-retried', this.taskRetriedHandler);
       this.taskRetriedHandler = null;
+    }
+
+    if (this.taskDeferredHandler) {
+      this.runner.removeListener('task-deferred', this.taskDeferredHandler);
+      this.taskDeferredHandler = null;
     }
 
     if (this.sessionCompleteHandler) {
@@ -224,6 +237,21 @@ export class SwarmEventReporter {
     if (this.options.verbose && result.error) {
       const errorPreview = this.truncate(result.error, 80);
       message += `\n> Error: ${errorPreview}`;
+    }
+
+    return this.enforceLimit(message);
+  }
+
+  /**
+   * Format task-deferred event message
+   */
+  private formatTaskDeferred(result: TaskExecutionResult): string {
+    const taskIdShort = result.taskId.substring(0, 8);
+    let message = `⏸️ Task \`${taskIdShort}\` deferred — agent \`${result.agentId}\` busy`;
+
+    if (this.options.verbose && result.error) {
+      const errorPreview = this.truncate(result.error, 80);
+      message += `\n> Reason: ${errorPreview}`;
     }
 
     return this.enforceLimit(message);

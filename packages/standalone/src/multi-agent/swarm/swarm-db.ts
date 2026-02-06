@@ -264,6 +264,30 @@ export function retryTask(db: Database.Database, taskId: string): boolean {
 }
 
 /**
+ * Defer a claimed task back to pending without incrementing retry_count
+ *
+ * Used when agent process is busy (not ready to accept new requests).
+ * Unlike retryTask(), this does NOT increment retry_count.
+ *
+ * @param db - Database instance
+ * @param taskId - Task ID to defer
+ * @returns true if task was deferred, false otherwise
+ */
+export function deferTask(db: Database.Database, taskId: string): boolean {
+  const result = db
+    .prepare(
+      `
+    UPDATE swarm_tasks
+    SET status = 'pending', claimed_by = NULL, claimed_at = NULL
+    WHERE id = ? AND status = 'claimed'
+  `
+    )
+    .run(taskId);
+
+  return result.changes > 0;
+}
+
+/**
  * Get all tasks for a session
  *
  * @param db - Database instance
