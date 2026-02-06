@@ -391,7 +391,14 @@ export interface MultiAgentConfig {
     max_retries?: number;
     completion_markers?: string[];
   };
-  /** Skip permission prompts for all agent processes (default: true) */
+  /**
+   * Skip permission prompts for all agent processes
+   *
+   * @warning SECURITY RISK: Bypasses all permission checks for tool use.
+   * Only enable in trusted environments where agent actions are pre-approved.
+   *
+   * @default true
+   */
   dangerouslySkipPermissions?: boolean;
   /** Enable @mention-based delegation between agents @default false */
   mention_delegation?: boolean;

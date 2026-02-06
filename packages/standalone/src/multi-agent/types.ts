@@ -225,6 +225,11 @@ export interface MultiAgentConfig {
 
   /**
    * Skip permission prompts for all agent processes
+   *
+   * @warning SECURITY RISK: Bypasses all permission checks for tool use.
+   * Only enable in trusted environments where agent actions are pre-approved.
+   * In production, consider setting to false to enforce user consent for sensitive operations.
+   *
    * @default true
    */
   dangerouslySkipPermissions?: boolean;
