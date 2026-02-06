@@ -38,7 +38,7 @@ describe('SwarmTaskRunner', () => {
       getProcess: vi.fn().mockResolvedValue(mockProcess),
     } as any;
 
-    runner = new SwarmTaskRunner(manager, mockAgentProcessManager);
+    runner = new SwarmTaskRunner(manager, mockAgentProcessManager, { maxRetries: 0 });
 
     // Suppress console logs
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -482,6 +482,268 @@ describe('SwarmTaskRunner', () => {
       expect(activeIds).toHaveLength(2);
       expect(activeIds).toContain(session1);
       expect(activeIds).toContain(session2);
+    });
+  });
+
+  describe('context injection', () => {
+    it('should inject MAMA context when contextInjector is provided', async () => {
+      const mockContextInjector = {
+        getRelevantContext: vi.fn().mockResolvedValue({
+          prompt: '## Related decisions:\n\n### Auth Strategy\n- Decision: Use JWT\n',
+          decisions: [{ id: 'decision_123', topic: 'auth', decision: 'JWT', similarity: 0.9 }],
+          hasContext: true,
+        }),
+      };
+
+      const runnerWithContext = new SwarmTaskRunner(manager, mockAgentProcessManager, {
+        contextInjector: mockContextInjector as any,
+      });
+
+      const taskParams: CreateTaskParams[] = [
+        {
+          session_id: sessionId,
+          description: 'Implement authentication',
+          category: 'test',
+          wave: 1,
+        },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await runnerWithContext.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Verify context was requested
+      expect(mockContextInjector.getRelevantContext).toHaveBeenCalledWith(
+        'Implement authentication'
+      );
+
+      // Verify enriched description was sent to agent
+      const sentMessage = (mockAgentProcessManager.getProcess as any).mock.results[0].value
+        .sendMessage.mock.calls[0][0];
+      expect(sentMessage).toContain('## Related decisions:');
+      expect(sentMessage).toContain('Task:');
+      expect(sentMessage).toContain('Implement authentication');
+    });
+
+    it('should not inject context when contextInjector is not provided', async () => {
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Some task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Verify original description was sent unchanged
+      const sentMessage = (mockAgentProcessManager.getProcess as any).mock.results[0].value
+        .sendMessage.mock.calls[0][0];
+      expect(sentMessage).toBe('Some task');
+    });
+
+    it('should use original description when context injection fails', async () => {
+      const mockContextInjector = {
+        getRelevantContext: vi.fn().mockRejectedValue(new Error('MAMA DB not found')),
+      };
+
+      const runnerWithContext = new SwarmTaskRunner(manager, mockAgentProcessManager, {
+        contextInjector: mockContextInjector as any,
+      });
+
+      const taskParams: CreateTaskParams[] = [
+        {
+          session_id: sessionId,
+          description: 'Task with failed context',
+          category: 'test',
+          wave: 1,
+        },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      const result = await runnerWithContext.executeImmediateTask(
+        sessionId,
+        taskId,
+        'test',
+        'channel1'
+      );
+
+      // Task should still succeed with original description
+      expect(result.status).toBe('completed');
+
+      // Verify original description was sent
+      const sentMessage = (mockAgentProcessManager.getProcess as any).mock.results[0].value
+        .sendMessage.mock.calls[0][0];
+      expect(sentMessage).toBe('Task with failed context');
+    });
+
+    it('should use original description when no context is found', async () => {
+      const mockContextInjector = {
+        getRelevantContext: vi.fn().mockResolvedValue({
+          prompt: '',
+          decisions: [],
+          hasContext: false,
+        }),
+      };
+
+      const runnerWithContext = new SwarmTaskRunner(manager, mockAgentProcessManager, {
+        contextInjector: mockContextInjector as any,
+      });
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Task with no context', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      await runnerWithContext.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Verify original description was sent
+      const sentMessage = (mockAgentProcessManager.getProcess as any).mock.results[0].value
+        .sendMessage.mock.calls[0][0];
+      expect(sentMessage).toBe('Task with no context');
+    });
+  });
+
+  describe('task retry', () => {
+    it('should retry task on failure when retry_count < maxRetries', async () => {
+      // Create runner with maxRetries = 3 for retry tests
+      const retryRunner = new SwarmTaskRunner(manager, mockAgentProcessManager, { maxRetries: 3 });
+      const retriedSpy = vi.fn();
+      retryRunner.on('task-retried', retriedSpy);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Failing task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Mock process to fail on first attempt
+      const failProcess = {
+        sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+
+      const result = await retryRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Task should be marked for retry
+      expect(result.status).toBe('failed');
+      expect(result.retryCount).toBe(1);
+
+      // task-retried event should be emitted
+      expect(retriedSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId, status: 'failed', retryCount: 1 }),
+        1,
+        3
+      );
+
+      // Task should be back to pending in DB
+      const db = manager.getDatabase();
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.status).toBe('pending');
+      expect(task.retry_count).toBe(1);
+    });
+
+    it('should fail task permanently when retry_count >= maxRetries', async () => {
+      // Use default runner with maxRetries = 0
+      const failedSpy = vi.fn();
+      runner.on('task-failed', failedSpy);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Failing task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Mock process to fail
+      const failProcess = {
+        sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+
+      const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Task should be permanently failed (maxRetries = 0)
+      expect(result.status).toBe('failed');
+      expect(result.retryCount).toBe(0);
+
+      // task-failed event should be emitted (not retried)
+      expect(failedSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId, status: 'failed', retryCount: 0 })
+      );
+
+      // Task should be failed in DB
+      const db = manager.getDatabase();
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.status).toBe('failed');
+    });
+
+    it('should respect custom maxRetries option', async () => {
+      const retriedSpy = vi.fn();
+      const failedSpy = vi.fn();
+
+      // Create runner with maxRetries = 1
+      const customRunner = new SwarmTaskRunner(manager, mockAgentProcessManager, {
+        maxRetries: 1,
+      });
+      customRunner.on('task-retried', retriedSpy);
+      customRunner.on('task-failed', failedSpy);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Failing task', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // Set retry_count to 1
+      const db = manager.getDatabase();
+      db.prepare('UPDATE swarm_tasks SET retry_count = ? WHERE id = ?').run(1, taskId);
+
+      // Mock process to fail
+      const failProcess = {
+        sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+
+      const result = await customRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Should be permanently failed (retry_count 1 >= maxRetries 1)
+      expect(result.status).toBe('failed');
+      expect(failedSpy).toHaveBeenCalled();
+      expect(retriedSpy).not.toHaveBeenCalled();
+    });
+
+    it('should successfully complete task after retry', async () => {
+      // Create runner with maxRetries = 3 for retry tests
+      const retryRunner = new SwarmTaskRunner(manager, mockAgentProcessManager, { maxRetries: 3 });
+      const completedSpy = vi.fn();
+      retryRunner.on('task-completed', completedSpy);
+
+      const taskParams: CreateTaskParams[] = [
+        { session_id: sessionId, description: 'Eventually succeeds', category: 'test', wave: 1 },
+      ];
+      const [taskId] = manager.addTasks(sessionId, taskParams);
+
+      // First attempt: fail and retry
+      const failProcess = {
+        sendMessage: vi.fn().mockRejectedValue(new Error('First attempt failed')),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+
+      await retryRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Task should be pending with retry_count = 1
+      const db = manager.getDatabase();
+      let task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.status).toBe('pending');
+      expect(task.retry_count).toBe(1);
+
+      // Second attempt: succeed
+      const successProcess = {
+        sendMessage: vi.fn().mockResolvedValue({ response: 'Task completed successfully' }),
+      };
+      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(successProcess);
+
+      const result = await retryRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
+
+      // Task should be completed
+      expect(result.status).toBe('completed');
+      expect(completedSpy).toHaveBeenCalled();
+
+      task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      expect(task.status).toBe('completed');
     });
   });
 });
