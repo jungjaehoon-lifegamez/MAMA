@@ -14,6 +14,7 @@ import type {
   AgentResponseRecord,
 } from './types.js';
 import { DEFAULT_LOOP_PREVENTION } from './types.js';
+import { CategoryRouter } from './category-router.js';
 
 /**
  * Multi-Agent Orchestrator
@@ -26,6 +27,7 @@ import { DEFAULT_LOOP_PREVENTION } from './types.js';
  */
 export class MultiAgentOrchestrator {
   private config: MultiAgentConfig;
+  private categoryRouter: CategoryRouter;
 
   /** Chain state per channel: Map<channelId, ChainState> */
   private chainStates: Map<string, ChainState> = new Map();
@@ -39,6 +41,7 @@ export class MultiAgentOrchestrator {
 
   constructor(config: MultiAgentConfig) {
     this.config = config;
+    this.categoryRouter = new CategoryRouter(config.categories);
   }
 
   /**
@@ -46,6 +49,7 @@ export class MultiAgentOrchestrator {
    */
   updateConfig(config: MultiAgentConfig): void {
     this.config = config;
+    this.categoryRouter.updateCategories(config.categories ?? []);
   }
 
   /**
@@ -169,6 +173,20 @@ export class MultiAgentOrchestrator {
         reason: 'explicit_trigger',
         blocked: false,
       };
+    }
+
+    // 1.5 Category-based routing
+    const categoryMatch = this.categoryRouter.route(context.content, availableAgents);
+    if (categoryMatch) {
+      // Filter out agents on cooldown
+      const readyAgents = categoryMatch.agentIds.filter((id) => this.isAgentReady(id));
+      if (readyAgents.length > 0) {
+        return {
+          selectedAgents: readyAgents,
+          reason: 'category_match',
+          blocked: false,
+        };
+      }
     }
 
     // 2. Check for keyword matches (only for human messages or agent-to-agent)

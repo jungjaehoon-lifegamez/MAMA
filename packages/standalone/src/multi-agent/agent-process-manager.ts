@@ -18,6 +18,7 @@ import {
   type PersistentProcessOptions,
 } from '../agent/persistent-cli-process.js';
 import type { AgentPersonaConfig, MultiAgentConfig } from './types.js';
+import { ToolPermissionManager } from './tool-permission-manager.js';
 
 /**
  * Resolve path with ~ expansion
@@ -40,6 +41,7 @@ function resolvePath(path: string): string {
 export class AgentProcessManager {
   private config: MultiAgentConfig;
   private processPool: PersistentProcessPool;
+  private permissionManager: ToolPermissionManager;
 
   /** Cached persona content: Map<agentId, systemPrompt> */
   private personaCache: Map<string, string> = new Map();
@@ -51,6 +53,7 @@ export class AgentProcessManager {
     this.config = config;
     this.defaultOptions = defaultOptions;
     this.processPool = new PersistentProcessPool(defaultOptions);
+    this.permissionManager = new ToolPermissionManager();
   }
 
   /**
@@ -160,6 +163,20 @@ export class AgentProcessManager {
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
     personaContent: string
   ): string {
+    const agent: AgentPersonaConfig = { id: agentId, ...agentConfig };
+
+    // Build permission prompt
+    const permissionPrompt = this.permissionManager.buildPermissionPrompt(agent);
+
+    // Build delegation prompt for Tier 1 agents
+    let delegationPrompt = '';
+    if (this.permissionManager.canDelegate(agent)) {
+      const allAgents = Object.entries(this.config.agents)
+        .filter(([, cfg]) => cfg.enabled !== false)
+        .map(([id, cfg]) => ({ id, ...cfg }));
+      delegationPrompt = this.permissionManager.buildDelegationPrompt(agent, allAgents);
+    }
+
     return `# Agent Identity
 
 You are **${agentConfig.display_name}** (ID: ${agentId}).
@@ -179,7 +196,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${personaContent}
 
-## Guidelines
+${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}## Guidelines
 - Stay in character as ${agentConfig.name}
 - Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
 - Your trigger prefix is: ${agentConfig.trigger_prefix}
