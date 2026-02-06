@@ -185,7 +185,6 @@ export class PersistentClaudeProcess extends EventEmitter {
       'stream-json',
       '--output-format',
       'stream-json',
-      '--no-session-persistence', // Required for init event to be emitted before user message
       '--session-id',
       this.options.sessionId,
     ];
