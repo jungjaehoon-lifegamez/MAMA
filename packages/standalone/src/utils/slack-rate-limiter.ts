@@ -47,6 +47,8 @@ export interface QueuedRequest<T> {
   attempts: number;
   /** Request timeout handle */
   timeoutHandle?: NodeJS.Timeout;
+  /** Retry delay timeout handle (for pending retry) */
+  retryTimeoutHandle?: NodeJS.Timeout;
 }
 
 export interface RateLimitStats {
@@ -227,7 +229,20 @@ export class SlackRateLimiter {
           const retryDelay = this.calculateRetryDelay(request.attempts);
           this.logger.log(`Retrying request ${request.id} in ${retryDelay}ms`);
 
-          setTimeout(() => {
+          // Store retry timeout handle for cancellation in reset()
+          request.retryTimeoutHandle = setTimeout(() => {
+            // Clear retry timeout handle before re-queueing
+            delete request.retryTimeoutHandle;
+
+            // Re-attach timeout for retry (same timeout as original request)
+            request.timeoutHandle = setTimeout(() => {
+              this.removeFromQueue(request.id);
+              const error = new Error(
+                `Request timeout after ${this.config.requestTimeoutMs}ms (retry attempt)`
+              );
+              request.reject(error);
+            }, this.config.requestTimeoutMs);
+
             this.requestQueue.unshift(request); // Put back at front of queue
             this.startProcessing();
           }, retryDelay);
@@ -244,7 +259,7 @@ export class SlackRateLimiter {
    * Wait if necessary to respect rate limits
    */
   private async waitForRateLimit(): Promise<void> {
-    const now = Date.now();
+    let now = Date.now();
 
     // Clean old request history (older than 1 minute)
     this.requestHistory = this.requestHistory.filter((time) => now - time < 60000);
@@ -256,6 +271,7 @@ export class SlackRateLimiter {
       if (waitTime > 0) {
         this.logger.log(`Rate limit reached, waiting ${waitTime}ms`);
         await this.sleep(waitTime);
+        now = Date.now(); // Refresh timestamp after sleep
       }
     }
 
@@ -265,9 +281,10 @@ export class SlackRateLimiter {
       const waitTime = this.config.minIntervalMs - timeSinceLastRequest;
       this.logger.log(`Minimum interval not met, waiting ${waitTime}ms`);
       await this.sleep(waitTime);
+      now = Date.now(); // Refresh timestamp after sleep
     }
 
-    // Record this request
+    // Record this request (now reflects actual time after any waits)
     this.lastRequestTime = now;
     this.requestHistory.push(now);
     this.stats.lastRequestTime = now;
@@ -368,10 +385,13 @@ export class SlackRateLimiter {
    * Clear the request queue and reset statistics
    */
   reset(): void {
-    // Reject all queued requests
+    // Reject all queued requests and cancel all timers
     for (const request of this.requestQueue) {
       if (request.timeoutHandle) {
         clearTimeout(request.timeoutHandle);
+      }
+      if (request.retryTimeoutHandle) {
+        clearTimeout(request.retryTimeoutHandle);
       }
       request.reject(new Error('Rate limiter reset'));
     }
