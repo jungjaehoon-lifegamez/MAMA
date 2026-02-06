@@ -37,6 +37,7 @@ describe('SwarmEventReporter', () => {
     it('should start listening to events', () => {
       expect(mockRunner.listenerCount('task-completed')).toBe(0);
       expect(mockRunner.listenerCount('task-failed')).toBe(0);
+      expect(mockRunner.listenerCount('task-retried')).toBe(0);
       expect(mockRunner.listenerCount('session-complete')).toBe(0);
       expect(mockRunner.listenerCount('file-conflict')).toBe(0);
 
@@ -44,6 +45,7 @@ describe('SwarmEventReporter', () => {
 
       expect(mockRunner.listenerCount('task-completed')).toBe(1);
       expect(mockRunner.listenerCount('task-failed')).toBe(1);
+      expect(mockRunner.listenerCount('task-retried')).toBe(1);
       expect(mockRunner.listenerCount('session-complete')).toBe(1);
       expect(mockRunner.listenerCount('file-conflict')).toBe(1);
     });
@@ -56,6 +58,7 @@ describe('SwarmEventReporter', () => {
 
       expect(mockRunner.listenerCount('task-completed')).toBe(0);
       expect(mockRunner.listenerCount('task-failed')).toBe(0);
+      expect(mockRunner.listenerCount('task-retried')).toBe(0);
       expect(mockRunner.listenerCount('session-complete')).toBe(0);
       expect(mockRunner.listenerCount('file-conflict')).toBe(0);
     });
@@ -212,6 +215,69 @@ describe('SwarmEventReporter', () => {
 
       const message = (mockSendMessage as any).mock.calls[0][1];
       expect(message).toContain('Agent: `test-agent`');
+    });
+  });
+
+  describe('task-retried event', () => {
+    it('should format and send task-retried message', async () => {
+      reporter.start();
+
+      const result: TaskExecutionResult = {
+        taskId: 'retry-task-12345678',
+        agentId: 'developer',
+        status: 'failed',
+        error: 'Execution failed',
+        retryCount: 1,
+      };
+
+      mockRunner.emit('task-retried', result, 1, 3);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(mockSendMessage).toHaveBeenCalledOnce();
+      const message = (mockSendMessage as any).mock.calls[0][1];
+      expect(message).toContain('🔄 Task `retry-ta` retrying (attempt 1/3)');
+    });
+
+    it('should include error in verbose mode', async () => {
+      reporter = new SwarmEventReporter(mockRunner, {
+        sendMessage: mockSendMessage,
+        channelId: 'test-channel-123',
+        verbose: true,
+      });
+      reporter.start();
+
+      const result: TaskExecutionResult = {
+        taskId: 'task-id',
+        agentId: 'developer',
+        status: 'failed',
+        error: 'Network timeout occurred while processing the request',
+        retryCount: 2,
+      };
+
+      mockRunner.emit('task-retried', result, 2, 3);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const message = (mockSendMessage as any).mock.calls[0][1];
+      expect(message).toContain('🔄 Task `task-id` retrying (attempt 2/3)');
+      expect(message).toContain('Error: Network timeout occurred while processing the request');
+    });
+
+    it('should not include error in non-verbose mode', async () => {
+      reporter.start();
+
+      const result: TaskExecutionResult = {
+        taskId: 'task-id',
+        agentId: 'developer',
+        status: 'failed',
+        error: 'Some error',
+        retryCount: 1,
+      };
+
+      mockRunner.emit('task-retried', result, 1, 3);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const message = (mockSendMessage as any).mock.calls[0][1];
+      expect(message).not.toContain('Some error');
     });
   });
 
