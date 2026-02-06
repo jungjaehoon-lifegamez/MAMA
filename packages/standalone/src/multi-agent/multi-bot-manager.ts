@@ -126,8 +126,14 @@ export class MultiBotManager {
 
     // Listen for messages mentioning this agent bot
     client.on('messageCreate', (msg) => {
-      // Ignore own messages and other bot messages
-      if (msg.author.bot) return;
+      // Allow agent bot messages through for mention-based delegation
+      if (msg.author.bot) {
+        const senderAgentId = this.isFromAgentBot(msg);
+        // Ignore non-agent bots and the main bot
+        if (!senderAgentId || senderAgentId === 'main') return;
+        // Ignore own messages (self-mention prevention)
+        if (msg.author.id === bot.userId) return;
+      }
       // Check if this bot is mentioned
       if (!bot.userId || !msg.mentions.has(bot.userId)) return;
       // Forward to callback
@@ -307,6 +313,35 @@ export class MultiBotManager {
         await this.createAgentBot(agentId, agentConfig);
       }
     }
+  }
+
+  /**
+   * Get a map of agentId → Discord userId for all connected bots
+   */
+  getBotUserIdMap(): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const [agentId, bot] of this.bots) {
+      if (bot.connected && bot.userId) {
+        map.set(agentId, bot.userId);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Resolve an agent ID from a Discord user ID (reverse lookup)
+   */
+  resolveAgentIdFromUserId(userId: string): string | null {
+    for (const [agentId, bot] of this.bots) {
+      if (bot.userId === userId) {
+        return agentId;
+      }
+    }
+    // Check main bot
+    if (this.mainBotUserId && userId === this.mainBotUserId) {
+      return 'main';
+    }
+    return null;
   }
 
   /**

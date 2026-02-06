@@ -1,35 +1,39 @@
 /**
- * Multi-Agent Discord Integration
+ * Multi-Agent Slack Integration
  *
- * Extends the Discord gateway with multi-agent support.
- * Enables multiple AI personas to interact in Discord channels.
+ * Extends the Slack gateway with multi-agent support.
+ * Mirrors MultiAgentDiscordHandler but uses Slack-specific APIs.
+ *
+ * Reused platform-agnostic components:
+ * - MultiAgentOrchestrator: agent selection, chain tracking
+ * - AgentProcessManager: getProcess('slack', channelId, agentId)
+ * - SharedContextManager: channelId-based context
  */
 
-import type { Message } from 'discord.js';
+import type { WebClient } from '@slack/web-api';
 import type { MultiAgentConfig, MessageContext, AgentPersonaConfig } from './types.js';
 import { MultiAgentOrchestrator } from './orchestrator.js';
 import { AgentProcessManager } from './agent-process-manager.js';
 import { getSharedContextManager, type SharedContextManager } from './shared-context.js';
-import { MultiBotManager } from './multi-bot-manager.js';
+import { SlackMultiBotManager, type SlackMentionEvent } from './slack-multi-bot-manager.js';
 import type { PersistentProcessOptions } from '../agent/persistent-cli-process.js';
-import { splitForDiscord } from '../gateways/message-splitter.js';
+import { splitForSlack } from '../gateways/message-splitter.js';
 
 /** Default timeout for agent responses (5 minutes) */
-const AGENT_TIMEOUT_MS = 5 * 60 * 1000;
+const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
 
 /**
- * Multi-Agent Discord Handler
+ * Multi-Agent Slack Handler
  *
- * Integrates with the Discord gateway to provide multi-agent support.
- * Should be instantiated and called from the Discord gateway when
- * multi-agent mode is enabled.
+ * Integrates with the Slack gateway to provide multi-agent support.
  */
-export class MultiAgentDiscordHandler {
+export class MultiAgentSlackHandler {
   private config: MultiAgentConfig;
   private orchestrator: MultiAgentOrchestrator;
   private processManager: AgentProcessManager;
   private sharedContext: SharedContextManager;
-  private multiBotManager: MultiBotManager;
+  private multiBotManager: SlackMultiBotManager;
+  private logger = console;
 
   /** Whether multi-bot mode is initialized */
   private multiBotInitialized = false;
@@ -39,75 +43,76 @@ export class MultiAgentDiscordHandler {
     this.orchestrator = new MultiAgentOrchestrator(config);
     this.processManager = new AgentProcessManager(config, processOptions);
     this.sharedContext = getSharedContextManager();
-    this.multiBotManager = new MultiBotManager(config);
+    this.multiBotManager = new SlackMultiBotManager(config);
   }
 
   /**
-   * Initialize multi-bot support (call after Discord connects)
+   * Initialize multi-bot support (call after Slack connects)
    */
   async initializeMultiBots(): Promise<void> {
     if (this.multiBotInitialized) return;
 
     // Register mention callback so agent bots forward mentions to handler
-    this.multiBotManager.onMention(async (agentId, message) => {
-      const cleanContent = message.content.replace(/<@!?\d+>/g, '').trim();
+    this.multiBotManager.onMention(async (agentId, event, _webClient) => {
+      const cleanContent = event.text.replace(/<@[UW]\w+>/g, '').trim();
       if (!cleanContent) return;
 
-      // Determine if sender is an agent bot (for mention_delegation chains)
-      const isFromAgent = message.author.bot;
+      // Determine if sender is an agent bot
+      const isFromAgent = !!event.bot_id;
       const senderAgentId = isFromAgent
-        ? (this.multiBotManager.isFromAgentBot(message) ?? undefined)
+        ? (this.multiBotManager.isFromAgentBot(event.bot_id!) ?? undefined)
         : undefined;
 
       // Chain depth check for mention_delegation
       if (isFromAgent && senderAgentId && senderAgentId !== 'main') {
-        const chainState = this.orchestrator.getChainState(message.channel.id);
+        const chainState = this.orchestrator.getChainState(event.channel);
         const maxDepth = this.config.max_mention_depth ?? 3;
 
         if (chainState.blocked) {
-          console.log(
-            `[MultiAgent] Mention chain blocked in channel ${message.channel.id}, ignoring`
+          this.logger.log(
+            `[MultiAgentSlack] Mention chain blocked in channel ${event.channel}, ignoring`
           );
           return;
         }
         if (chainState.length >= maxDepth) {
-          console.log(
-            `[MultiAgent] Mention chain depth ${chainState.length} >= max ${maxDepth}, ignoring`
+          this.logger.log(
+            `[MultiAgentSlack] Mention chain depth ${chainState.length} >= max ${maxDepth}, ignoring`
           );
           return;
         }
       }
 
-      console.log(
-        `[MultiAgent] Mention-triggered: agent=${agentId}, from=${senderAgentId ?? message.author.tag}, content="${cleanContent.substring(0, 50)}"`
+      this.logger.log(
+        `[MultiAgentSlack] Mention-triggered: agent=${agentId}, from=${senderAgentId ?? event.user}, content="${cleanContent.substring(0, 50)}"`
       );
 
       // Extract mentioned agent IDs from the original content
-      const mentionedAgentIds = this.extractMentionedAgentIds(message.content);
+      const mentionedAgentIds = this.extractMentionedAgentIds(event.text);
 
       // Force this specific agent to respond
       try {
         const response = await this.processAgentResponse(
           agentId,
           {
-            channelId: message.channel.id,
-            userId: message.author.id,
+            channelId: event.channel,
+            userId: event.user,
             content: cleanContent,
             isBot: isFromAgent,
             senderAgentId: senderAgentId && senderAgentId !== 'main' ? senderAgentId : undefined,
             mentionedAgentIds,
-            messageId: message.id,
-            timestamp: message.createdTimestamp,
+            messageId: event.ts,
+            timestamp: parseFloat(event.ts) * 1000,
           },
           cleanContent
         );
 
         if (response) {
-          await this.sendAgentResponses(message, [response]);
-          this.orchestrator.recordAgentResponse(agentId, message.channel.id, response.messageId);
+          const threadTs = event.thread_ts || event.ts;
+          await this.sendAgentResponses(event.channel, threadTs, [response]);
+          this.orchestrator.recordAgentResponse(agentId, event.channel, response.messageId);
         }
       } catch (err) {
-        console.error(`[MultiAgent] Mention handler error:`, err);
+        this.logger.error(`[MultiAgentSlack] Mention handler error:`, err);
       }
     });
 
@@ -116,7 +121,7 @@ export class MultiAgentDiscordHandler {
 
     const connectedAgents = this.multiBotManager.getConnectedAgents();
     if (connectedAgents.length > 0) {
-      console.log(`[MultiAgent] Multi-bot mode active for: ${connectedAgents.join(', ')}`);
+      this.logger.log(`[MultiAgentSlack] Multi-bot mode active for: ${connectedAgents.join(', ')}`);
     }
 
     // Pass bot ID map to process manager for mention-based delegation prompts
@@ -124,19 +129,28 @@ export class MultiAgentDiscordHandler {
       const botUserIdMap = this.multiBotManager.getBotUserIdMap();
       this.processManager.setBotUserIdMap(botUserIdMap);
       this.processManager.setMentionDelegation(true);
-      console.log(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
+      this.logger.log(
+        `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
+      );
     }
   }
 
   /**
-   * Set bot's own user ID (call when Discord connects)
+   * Set main bot's user ID (call when Slack connects via auth.test)
    */
   setBotUserId(userId: string): void {
     this.multiBotManager.setMainBotUserId(userId);
   }
 
   /**
-   * Set main bot token (to avoid duplicate logins in MultiBotManager)
+   * Set main bot's bot ID
+   */
+  setMainBotId(botId: string): void {
+    this.multiBotManager.setMainBotId(botId);
+  }
+
+  /**
+   * Set main bot token (to avoid duplicate connections)
    */
   setMainBotToken(token: string): void {
     this.multiBotManager.setMainBotToken(token);
@@ -150,6 +164,13 @@ export class MultiAgentDiscordHandler {
   }
 
   /**
+   * Check if mention-based delegation is enabled
+   */
+  isMentionDelegationEnabled(): boolean {
+    return this.config.mention_delegation === true;
+  }
+
+  /**
    * Update configuration (for hot reload)
    */
   updateConfig(config: MultiAgentConfig): void {
@@ -159,37 +180,33 @@ export class MultiAgentDiscordHandler {
   }
 
   /**
-   * Handle a Discord message with multi-agent logic
+   * Handle a Slack message with multi-agent logic
    *
    * @returns Object with selected agents and their responses, or null if no agents respond
    */
   async handleMessage(
-    message: Message,
+    event: SlackMentionEvent,
     cleanContent: string,
     historyContext?: string
-  ): Promise<MultiAgentResponse | null> {
-    // Build message context
-    const context = this.buildMessageContext(message, cleanContent);
+  ): Promise<SlackMultiAgentResponse | null> {
+    // Build message context (extract mentioned agents from original text)
+    const context = this.buildMessageContext(event, cleanContent);
+    context.mentionedAgentIds = this.extractMentionedAgentIds(event.text);
 
     // Record human message to shared context
     if (!context.isBot) {
-      this.sharedContext.recordHumanMessage(
-        context.channelId,
-        message.author.username,
-        cleanContent,
-        message.id
-      );
+      this.sharedContext.recordHumanMessage(context.channelId, event.user, cleanContent, event.ts);
     }
 
     // Select responding agents
     const selection = this.orchestrator.selectRespondingAgents(context);
 
-    console.log(
-      `[MultiAgent] Selection result: agents=${selection.selectedAgents.join(',')}, reason=${selection.reason}, blocked=${selection.blocked}`
+    this.logger.log(
+      `[MultiAgentSlack] Selection result: agents=${selection.selectedAgents.join(',')}, reason=${selection.reason}, blocked=${selection.blocked}`
     );
 
     if (selection.blocked) {
-      console.log(`[MultiAgent] Blocked: ${selection.blockReason}`);
+      this.logger.log(`[MultiAgentSlack] Blocked: ${selection.blockReason}`);
       return null;
     }
 
@@ -204,7 +221,7 @@ export class MultiAgentDiscordHandler {
       )
     );
 
-    const responses: AgentResponse[] = [];
+    const responses: SlackAgentResponse[] = [];
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       const agentId = selection.selectedAgents[i];
@@ -226,7 +243,7 @@ export class MultiAgentDiscordHandler {
           );
         }
       } else if (result.status === 'rejected') {
-        console.error(`[MultiAgent] Error processing agent ${agentId}:`, result.reason);
+        this.logger.error(`[MultiAgentSlack] Error processing agent ${agentId}:`, result.reason);
       }
     }
 
@@ -249,17 +266,17 @@ export class MultiAgentDiscordHandler {
     context: MessageContext,
     userMessage: string,
     historyContext?: string
-  ): Promise<AgentResponse | null> {
+  ): Promise<SlackAgentResponse | null> {
     const agent = this.orchestrator.getAgent(agentId);
     if (!agent) {
-      console.error(`[MultiAgent] Unknown agent: ${agentId}`);
+      this.logger.error(`[MultiAgentSlack] Unknown agent: ${agentId}`);
       return null;
     }
 
     // Strip trigger prefix from message if present
     const cleanMessage = this.orchestrator.stripTriggerPrefix(userMessage, agentId);
 
-    // Build context for this agent (excluding its own previous messages)
+    // Build context for this agent
     const agentContext = this.sharedContext.buildContextForAgent(context.channelId, agentId, 5);
 
     // Build full prompt with context
@@ -271,11 +288,13 @@ export class MultiAgentDiscordHandler {
       fullPrompt = `${agentContext}\n\n${fullPrompt}`;
     }
 
-    console.log(`[MultiAgent] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`);
+    this.logger.log(
+      `[MultiAgentSlack] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`
+    );
 
     try {
       // Get or create process for this agent in this channel
-      const process = await this.processManager.getProcess('discord', context.channelId, agentId);
+      const process = await this.processManager.getProcess('slack', context.channelId, agentId);
 
       // Send message and get response (with timeout, properly cleaned up)
       let timeoutHandle: ReturnType<typeof setTimeout>;
@@ -301,38 +320,45 @@ export class MultiAgentDiscordHandler {
         duration: result.duration_ms,
       };
     } catch (error) {
-      console.error(`[MultiAgent] Failed to get response from ${agentId}:`, error);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`[MultiAgentSlack] Failed to get response from ${agentId}:`, error);
+
+      // Return a user-friendly busy message instead of silently failing
+      if (errMsg.includes('busy')) {
+        return {
+          agentId,
+          agent,
+          content: `*${agent.display_name}*: 이전 요청을 처리 중입니다. 잠시 후 다시 시도해주세요. ⏳`,
+          rawContent: '',
+          duration: 0,
+        };
+      }
       return null;
     }
   }
 
   /**
-   * Build message context from Discord message
+   * Build message context from Slack event
    */
-  private buildMessageContext(message: Message, cleanContent: string): MessageContext {
-    const isBot = message.author.bot;
+  private buildMessageContext(event: SlackMentionEvent, cleanContent: string): MessageContext {
+    const isBot = !!event.bot_id;
     let senderAgentId: string | undefined;
 
-    if (isBot) {
-      // Check if message is from one of our agent bots
-      const agentBotId = this.multiBotManager.isFromAgentBot(message);
+    if (isBot && event.bot_id) {
+      const agentBotId = this.multiBotManager.isFromAgentBot(event.bot_id);
       if (agentBotId && agentBotId !== 'main') {
         senderAgentId = agentBotId;
-      } else {
-        // Try to extract agent ID from message display name (main bot)
-        const extracted = this.orchestrator.extractAgentIdFromMessage(message.content);
-        senderAgentId = extracted ?? undefined;
       }
     }
 
     return {
-      channelId: message.channel.id,
-      userId: message.author.id,
+      channelId: event.channel,
+      userId: event.user,
       content: cleanContent,
       isBot,
       senderAgentId,
-      messageId: message.id,
-      timestamp: message.createdTimestamp,
+      messageId: event.ts,
+      timestamp: parseFloat(event.ts) * 1000,
     };
   }
 
@@ -340,83 +366,91 @@ export class MultiAgentDiscordHandler {
    * Format agent response with display name prefix
    */
   private formatAgentResponse(agent: AgentPersonaConfig, response: string): string {
-    // Check if response already has the agent prefix
-    const prefix = `**${agent.display_name}**:`;
-    if (response.startsWith(prefix) || response.startsWith(`**${agent.display_name}**: `)) {
+    const prefix = `*${agent.display_name}*:`;
+    if (response.startsWith(prefix) || response.startsWith(`*${agent.display_name}*: `)) {
       return response;
     }
-
     return `${prefix} ${response}`;
   }
 
   /**
-   * Send formatted response to Discord (handles message splitting)
-   * Uses agent's dedicated bot if available, otherwise main bot
+   * Send formatted responses to Slack (handles message splitting)
+   * Uses agent's dedicated bot if available, otherwise main WebClient
    */
   async sendAgentResponses(
-    originalMessage: Message,
-    responses: AgentResponse[]
-  ): Promise<Message[]> {
-    const sentMessages: Message[] = [];
+    channelId: string,
+    threadTs: string,
+    responses: SlackAgentResponse[],
+    mainWebClient?: WebClient
+  ): Promise<string[]> {
+    const sentMessageTs: string[] = [];
 
     for (const response of responses) {
       try {
-        const chunks = splitForDiscord(response.content);
+        const chunks = splitForSlack(response.content);
         const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
 
         for (let i = 0; i < chunks.length; i++) {
-          let sentMessage: Message | null = null;
+          let messageTs: string | null = null;
 
           if (hasOwnBot) {
             // Use agent's dedicated bot
+            messageTs = await this.multiBotManager.replyAsAgent(
+              response.agentId,
+              channelId,
+              threadTs,
+              chunks[i]
+            );
+          } else if (mainWebClient) {
+            // Use main bot — broadcast first chunk to channel
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const msgParams: any = {
+              channel: channelId,
+              text: chunks[i],
+              thread_ts: threadTs,
+            };
             if (i === 0) {
-              // First chunk: reply to original message
-              sentMessage = await this.multiBotManager.replyAsAgent(
-                response.agentId,
-                originalMessage,
-                chunks[i]
-              );
-            } else {
-              // Subsequent chunks: send as new message
-              sentMessage = await this.multiBotManager.sendAsAgent(
-                response.agentId,
-                originalMessage.channel.id,
-                chunks[i]
-              );
+              msgParams.reply_broadcast = true;
             }
-          } else {
-            // Use main bot
-            if (sentMessages.length === 0 && i === 0) {
-              // First message: reply to original
-              sentMessage = await originalMessage.reply({ content: chunks[i] });
-            } else {
-              // Subsequent messages: send as new message
-              if ('send' in originalMessage.channel) {
-                sentMessage = await (
-                  originalMessage.channel as {
-                    send: (content: { content: string }) => Promise<Message>;
-                  }
-                ).send({ content: chunks[i] });
-              }
-            }
+            const result = await mainWebClient.chat.postMessage(msgParams);
+            messageTs = result.ts as string;
           }
 
-          if (sentMessage) {
-            sentMessages.push(sentMessage);
-
-            // Update response with message ID (for chain tracking)
+          if (messageTs) {
+            sentMessageTs.push(messageTs);
             if (i === 0) {
-              response.messageId = sentMessage.id;
+              response.messageId = messageTs;
             }
           }
         }
       } catch (err) {
-        // Per-response error handling: don't let one agent's failure drop other agents' responses
-        console.error(`[MultiAgent] Failed to send response for agent ${response.agentId}:`, err);
+        this.logger.error(
+          `[MultiAgentSlack] Failed to send response for agent ${response.agentId}:`,
+          err
+        );
       }
     }
 
-    return sentMessages;
+    return sentMessageTs;
+  }
+
+  /**
+   * Extract agent IDs from <@U...> mentions in message content
+   */
+  private extractMentionedAgentIds(content: string): string[] {
+    const mentionPattern = /<@([UW]\w+)>/g;
+    const agentIds: string[] = [];
+    let match;
+
+    while ((match = mentionPattern.exec(content)) !== null) {
+      const userId = match[1];
+      const agentId = this.multiBotManager.resolveAgentIdFromUserId(userId);
+      if (agentId && agentId !== 'main') {
+        agentIds.push(agentId);
+      }
+    }
+
+    return agentIds;
   }
 
   /**
@@ -443,34 +477,8 @@ export class MultiAgentDiscordHandler {
   /**
    * Get multi-bot manager
    */
-  getMultiBotManager(): MultiBotManager {
+  getMultiBotManager(): SlackMultiBotManager {
     return this.multiBotManager;
-  }
-
-  /**
-   * Check if mention-based delegation is enabled
-   */
-  isMentionDelegationEnabled(): boolean {
-    return this.config.mention_delegation === true;
-  }
-
-  /**
-   * Extract agent IDs from <@USER_ID> mentions in message content
-   */
-  private extractMentionedAgentIds(content: string): string[] {
-    const mentionPattern = /<@!?(\d+)>/g;
-    const agentIds: string[] = [];
-    let match;
-
-    while ((match = mentionPattern.exec(content)) !== null) {
-      const userId = match[1];
-      const agentId = this.multiBotManager.resolveAgentIdFromUserId(userId);
-      if (agentId && agentId !== 'main') {
-        agentIds.push(agentId);
-      }
-    }
-
-    return agentIds;
   }
 
   /**
@@ -482,7 +490,7 @@ export class MultiAgentDiscordHandler {
   }
 
   /**
-   * Get chain state for a channel (for debugging)
+   * Get chain state for a channel
    */
   getChainState(channelId: string) {
     return this.orchestrator.getChainState(channelId);
@@ -491,36 +499,28 @@ export class MultiAgentDiscordHandler {
   /**
    * Get status of all agent bots
    */
-  getBotStatus(): Record<string, { connected: boolean; username?: string }> {
+  getBotStatus(): Record<string, { connected: boolean; botName?: string }> {
     return this.multiBotManager.getStatus();
   }
 }
 
 /**
- * Response from a single agent
+ * Response from a single agent (Slack)
  */
-export interface AgentResponse {
-  /** Agent ID */
+export interface SlackAgentResponse {
   agentId: string;
-  /** Agent configuration */
   agent: AgentPersonaConfig;
-  /** Formatted content (with agent prefix) */
   content: string;
-  /** Raw content from Claude */
   rawContent: string;
-  /** Response duration in ms */
   duration?: number;
-  /** Discord message ID (set after sending) */
   messageId?: string;
 }
 
 /**
- * Multi-agent response result
+ * Multi-agent response result (Slack)
  */
-export interface MultiAgentResponse {
-  /** Selected agent IDs */
+export interface SlackMultiAgentResponse {
   selectedAgents: string[];
-  /** Selection reason */
   reason:
     | 'explicit_trigger'
     | 'keyword_match'
@@ -531,6 +531,5 @@ export interface MultiAgentResponse {
     | 'ultrawork'
     | 'mention_chain'
     | 'none';
-  /** Individual agent responses */
-  responses: AgentResponse[];
+  responses: SlackAgentResponse[];
 }

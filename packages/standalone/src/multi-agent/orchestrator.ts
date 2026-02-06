@@ -134,7 +134,21 @@ export class MultiAgentOrchestrator {
     // 0. Free chat mode
     if (this.config.free_chat) {
       if (!context.isBot) {
-        // Human message: all agents respond (reset cooldowns for fresh start)
+        // If specific agents are @mentioned, only those respond
+        if (context.mentionedAgentIds && context.mentionedAgentIds.length > 0) {
+          const mentionedAvailable = availableAgents.filter((a) =>
+            context.mentionedAgentIds!.includes(a.id)
+          );
+          if (mentionedAvailable.length > 0) {
+            this.agentCooldowns.clear();
+            return {
+              selectedAgents: mentionedAvailable.map((a) => a.id),
+              reason: 'free_chat',
+              blocked: false,
+            };
+          }
+        }
+        // No specific mention: all agents respond (reset cooldowns for fresh start)
         this.agentCooldowns.clear();
         return {
           selectedAgents: availableAgents.map((a) => a.id),

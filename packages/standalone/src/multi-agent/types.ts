@@ -47,6 +47,18 @@ export interface AgentPersonaConfig {
   bot_token?: string;
 
   /**
+   * Optional dedicated Slack bot token for this agent (xoxb-...)
+   * If provided, this agent will use its own Slack bot
+   */
+  slack_bot_token?: string;
+
+  /**
+   * Optional Slack app token for Socket Mode (xapp-...)
+   * Required alongside slack_bot_token for Slack multi-bot support
+   */
+  slack_app_token?: string;
+
+  /**
    * Keywords that auto-trigger this agent's response
    * @example ["bug", "error", "code", "fix"]
    */
@@ -209,6 +221,20 @@ export interface MultiAgentConfig {
    * @default true
    */
   dangerouslySkipPermissions?: boolean;
+
+  /**
+   * Enable @mention-based delegation between agents via Discord messages
+   * Instead of internal DELEGATE:: pattern, agents mention each other with <@BOT_USER_ID>
+   * @default false
+   */
+  mention_delegation?: boolean;
+
+  /**
+   * Maximum depth of @mention delegation chains
+   * Prevents infinite agent-to-agent mention loops
+   * @default 3
+   */
+  max_mention_depth?: number;
 }
 
 /**
@@ -295,6 +321,7 @@ export interface AgentSelectionResult {
     | 'category_match'
     | 'delegation'
     | 'ultrawork'
+    | 'mention_chain'
     | 'none';
   /** Whether response is blocked by loop prevention */
   blocked: boolean;
@@ -316,6 +343,8 @@ export interface MessageContext {
   isBot: boolean;
   /** If bot, the agent ID that sent it (extracted from display name) */
   senderAgentId?: string;
+  /** Agent IDs mentioned via <@USER_ID> in the message content */
+  mentionedAgentIds?: string[];
   /** Message ID */
   messageId?: string;
   /** Timestamp */
