@@ -838,8 +838,9 @@ export class MultiAgentSlackHandler {
     if (!this.mainWebClient || !this.heartbeatChannelId) return;
 
     const agentStates = this.processManager.getAgentStates();
+    const prSessions = this.prReviewPoller.getActiveSessions();
 
-    // Check if any agent is busy
+    // Check if any agent is busy or PR polling is active
     let hasBusy = false;
     for (const state of agentStates.values()) {
       if (state === 'busy' || state === 'starting') {
@@ -848,8 +849,8 @@ export class MultiAgentSlackHandler {
       }
     }
 
-    // Silent when no agents are busy
-    if (!hasBusy) return;
+    // Silent when no agents are busy AND no PR polling active
+    if (!hasBusy && prSessions.length === 0) return;
 
     // Build status line
     const agentConfigs = this.config.agents;
@@ -867,7 +868,12 @@ export class MultiAgentSlackHandler {
       parts.push(entry);
     }
 
-    const statusLine = `⏱️ *Agent Status* | ${parts.join(' | ')}`;
+    let statusLine = `⏱️ *Agent Status* | ${parts.join(' | ')}`;
+
+    // Append PR polling info
+    if (prSessions.length > 0) {
+      statusLine += ` | 👀 PR: ${prSessions.join(', ')}`;
+    }
 
     try {
       await this.mainWebClient.chat.postMessage({

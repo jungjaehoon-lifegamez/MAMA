@@ -88,6 +88,8 @@ export class SlackGateway implements Gateway {
     // Create Socket Mode client for real-time events
     this.socketClient = new SocketModeClient({
       appToken: options.appToken,
+      serverPingTimeout: 30000,
+      clientPingTimeout: 30000,
     });
 
     // Create Web client for API calls

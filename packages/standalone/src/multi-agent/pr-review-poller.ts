@@ -20,8 +20,8 @@ const execFileAsync = promisify(execFile);
 /** Default polling interval (60 seconds) */
 const POLL_INTERVAL_MS = 60 * 1000;
 
-/** Max polling duration before auto-stop (30 minutes) */
-const MAX_POLL_DURATION_MS = 30 * 60 * 1000;
+/** Max polling duration before auto-stop (2 hours) */
+const MAX_POLL_DURATION_MS = 2 * 60 * 60 * 1000;
 
 /** Marker prefix for auto-reply comments */
 const FIXED_REPLY_PREFIX = '✅ Fixed in';
@@ -227,7 +227,7 @@ export class PRReviewPoller {
       this.sessions.delete(sessionKey);
       await this.sendMessage(
         session.channelId,
-        `⏰ *PR Review Poller* — ${sessionKey} 폴링 30분 경과로 자동 중지. 재시작하려면 PR URL을 다시 게시하세요.`
+        `⏰ *PR Review Poller* — ${sessionKey} 폴링 2시간 경과로 자동 중지. 재시작하려면 PR URL을 다시 게시하세요.`
       );
       return;
     }
