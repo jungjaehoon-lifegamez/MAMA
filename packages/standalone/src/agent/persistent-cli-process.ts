@@ -549,19 +549,21 @@ export class PersistentClaudeProcess extends EventEmitter {
    * Stop the process
    */
   stop(): void {
+    console.log(`[PersistentCLI] Stopping process`);
+
+    // Reject any pending request BEFORE resetting state
+    // This ensures promises are resolved even if process is already dead
+    if (this.currentReject) {
+      this.currentReject(new Error('Process stopped by user'));
+    }
+
     if (this.process) {
-      console.log(`[PersistentCLI] Stopping process`);
-
-      // Reject any pending request before killing process
-      if (this.currentReject) {
-        this.currentReject(new Error('Process stopped by user'));
-      }
       this.clearRequestTimeout();
-
       this.process.stdin?.end();
       this.process.kill('SIGTERM');
       this.process = null;
     }
+
     this.state = 'dead';
     this.resetRequestState();
   }
