@@ -128,6 +128,11 @@ export class PersistentClaudeProcess extends EventEmitter {
   constructor(options: PersistentProcessOptions) {
     super();
     this.options = options;
+
+    // Register default error handler to prevent Node crash if no listeners attached
+    this.on('error', (err) => {
+      console.error('[PersistentCLI] Unhandled error event:', err);
+    });
   }
 
   /**
@@ -540,6 +545,13 @@ export class PersistentClaudeProcess extends EventEmitter {
   stop(): void {
     if (this.process) {
       console.log(`[PersistentCLI] Stopping process`);
+
+      // Reject any pending request before killing process
+      if (this.currentReject) {
+        this.currentReject(new Error('Process stopped by user'));
+      }
+      this.clearRequestTimeout();
+
       this.process.stdin?.end();
       this.process.kill('SIGTERM');
       this.process = null;

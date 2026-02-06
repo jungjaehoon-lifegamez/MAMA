@@ -145,6 +145,7 @@ export class MultiBotManager {
 
     // Set up error handler
     client.on('error', (error) => {
+      bot.connected = false;
       console.error(`[MultiBotManager] Agent ${agentId} bot error:`, error);
     });
 
