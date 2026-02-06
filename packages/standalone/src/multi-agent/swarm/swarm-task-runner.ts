@@ -336,7 +336,33 @@ export class SwarmTaskRunner extends EventEmitter {
 
       // Execute the task asynchronously (don't wait)
       this.executeTask(task, 'swarm', 'auto-' + sessionId).catch((error) => {
-        console.error(`[SwarmTaskRunner] Error executing task ${task.id}:`, error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[SwarmTaskRunner] Error executing task ${task.id}:`, errorMsg);
+
+        // Ensure task is marked as failed in DB if executeTask didn't handle it
+        // (executeTask's catch block should handle this, but this is a safety net)
+        try {
+          const taskStatus = db
+            .prepare('SELECT status FROM swarm_tasks WHERE id = ?')
+            .get(task.id) as { status: string } | undefined;
+
+          if (taskStatus && taskStatus.status !== 'failed' && taskStatus.status !== 'completed') {
+            console.warn(
+              `[SwarmTaskRunner] Task ${task.id} in unexpected state after error: ${taskStatus.status}, marking as failed`
+            );
+            failTask(db, task.id, errorMsg);
+          }
+        } catch (dbError) {
+          console.error(`[SwarmTaskRunner] Failed to verify task status:`, dbError);
+        }
+
+        // Emit task-failed event for monitoring
+        this.emit('task-failed', {
+          taskId: task.id,
+          agentId: task.category || 'developer',
+          status: 'failed' as const,
+          error: errorMsg,
+        });
       });
     }
   }
