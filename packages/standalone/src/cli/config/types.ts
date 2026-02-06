@@ -309,6 +309,14 @@ export interface AgentPersonaConfig {
   max_turns?: number;
   /** Whether this agent is enabled */
   enabled?: boolean;
+  /** Agent tier level (1=full, 2=read-only, 3=read-only) @default 1 */
+  tier?: 1 | 2 | 3;
+  /** Whether this agent can delegate tasks (Tier 1 only) */
+  can_delegate?: boolean;
+  /** Enable automatic task continuation */
+  auto_continue?: boolean;
+  /** Explicit tool permissions (overrides tier defaults) */
+  tool_permissions?: { allowed?: string[]; blocked?: string[] };
 }
 
 /**
@@ -346,6 +354,26 @@ export interface MultiAgentConfig {
       disabled_agents?: string[];
     }
   >;
+  /** Category-based routing rules */
+  categories?: Array<{
+    name: string;
+    patterns: string[];
+    agent_ids: string[];
+    priority?: number;
+  }>;
+  /** UltraWork autonomous session configuration */
+  ultrawork?: {
+    enabled: boolean;
+    trigger_keywords?: string[];
+    max_duration?: number;
+    max_steps?: number;
+  };
+  /** Task continuation configuration */
+  task_continuation?: {
+    enabled: boolean;
+    max_retries?: number;
+    completion_markers?: string[];
+  };
 }
 
 /**
