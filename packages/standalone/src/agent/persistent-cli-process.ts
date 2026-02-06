@@ -438,12 +438,14 @@ export class PersistentClaudeProcess extends EventEmitter {
           this.state = 'idle';
           this.currentResolve?.(result);
           this.resetRequestState();
+          this.emit('idle'); // F7: Trigger message queue drain (after resolve/cleanup)
         } else if (event.is_error) {
           const error = new Error(event.error || 'Unknown error');
           this.currentCallbacks?.onError?.(error);
           this.state = 'idle';
           this.currentReject?.(error);
           this.resetRequestState();
+          this.emit('idle'); // F7: Trigger message queue drain (after reject/cleanup)
         }
         break;
 
@@ -454,6 +456,7 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.state = 'idle';
         this.currentReject?.(error);
         this.resetRequestState();
+        this.emit('idle'); // F7: Trigger message queue drain (after reject/cleanup)
         break;
       }
     }
@@ -512,6 +515,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
 
     this.state = 'idle';
+    this.emit('idle'); // F7: Trigger message queue drain (after cleanup)
   }
 
   /**
@@ -668,5 +672,17 @@ export class PersistentProcessPool {
    */
   getActiveChannels(): string[] {
     return Array.from(this.processes.keys());
+  }
+
+  /**
+   * Get states of all active processes
+   * @returns Map of channelKey → ProcessState
+   */
+  getProcessStates(): Map<string, string> {
+    const states = new Map<string, string>();
+    for (const [key, proc] of this.processes) {
+      states.set(key, proc.getState());
+    }
+    return states;
   }
 }

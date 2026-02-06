@@ -13,6 +13,7 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
+import { EventEmitter } from 'events';
 import {
   PersistentProcessPool,
   PersistentClaudeProcess,
@@ -39,8 +40,11 @@ function resolvePath(path: string): string {
  * - One persistent CLI process per agent per channel
  * - Persona file loading and system prompt injection
  * - Automatic process lifecycle management
+ *
+ * Events:
+ * - 'process-created': { agentId: string, process: PersistentClaudeProcess }
  */
-export class AgentProcessManager {
+export class AgentProcessManager extends EventEmitter {
   private config: MultiAgentConfig;
   private processPool: PersistentProcessPool;
   private agentProcessPool: AgentProcessPool;
@@ -59,6 +63,7 @@ export class AgentProcessManager {
   private defaultOptions: Partial<PersistentProcessOptions>;
 
   constructor(config: MultiAgentConfig, defaultOptions: Partial<PersistentProcessOptions> = {}) {
+    super(); // EventEmitter
     this.config = config;
     this.defaultOptions = defaultOptions;
     this.processPool = new PersistentProcessPool(defaultOptions);
@@ -174,7 +179,7 @@ export class AgentProcessManager {
         options.env = { MAMA_DISABLE_HOOKS: 'true' };
       }
 
-      const { process } = await this.agentProcessPool.getAvailableProcess(
+      const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
         agentId,
         channelKey,
         async () => {
@@ -190,6 +195,11 @@ export class AgentProcessManager {
           return newProcess;
         }
       );
+
+      // Emit process-created event for new processes (F7: queue idle listener setup)
+      if (isNew) {
+        this.emit('process-created', { agentId, process });
+      }
 
       return process;
     }
@@ -211,7 +221,15 @@ export class AgentProcessManager {
       options.env = { MAMA_DISABLE_HOOKS: 'true' };
     }
 
-    return this.processPool.getProcess(channelKey, options);
+    const process = await this.processPool.getProcess(channelKey, options);
+
+    // Emit process-created event if process was just created (F7)
+    // Note: PersistentProcessPool doesn't expose isNew, so we check if process has no listeners yet
+    if (process.listenerCount('idle') === 0) {
+      this.emit('process-created', { agentId, process });
+    }
+
+    return process;
   }
 
   /**
@@ -421,6 +439,32 @@ Respond to messages in a helpful and professional manner.
    */
   getActiveChannels(): string[] {
     return this.processPool.getActiveChannels();
+  }
+
+  /**
+   * Get states of all agent processes, aggregated by agentId.
+   * Returns the "most active" state per agent (busy > starting > idle > dead).
+   */
+  getAgentStates(): Map<string, string> {
+    const states = new Map<string, string>();
+    const processStates = this.processPool.getProcessStates();
+
+    // Priority: busy > starting > idle > dead
+    const priority: Record<string, number> = { busy: 3, starting: 2, idle: 1, dead: 0 };
+
+    for (const [channelKey, state] of processStates) {
+      try {
+        const { agentId } = this.parseChannelKey(channelKey);
+        const existing = states.get(agentId);
+        if (!existing || (priority[state] ?? 0) > (priority[existing] ?? 0)) {
+          states.set(agentId, state);
+        }
+      } catch {
+        // Skip malformed keys
+      }
+    }
+
+    return states;
   }
 
   /**

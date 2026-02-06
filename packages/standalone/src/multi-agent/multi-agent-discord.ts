@@ -13,6 +13,7 @@ import { getSharedContextManager, type SharedContextManager } from './shared-con
 import { MultiBotManager } from './multi-bot-manager.js';
 import type { PersistentProcessOptions } from '../agent/persistent-cli-process.js';
 import { splitForDiscord } from '../gateways/message-splitter.js';
+import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
 
 /** Default timeout for agent responses (5 minutes) */
 const AGENT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -30,6 +31,7 @@ export class MultiAgentDiscordHandler {
   private processManager: AgentProcessManager;
   private sharedContext: SharedContextManager;
   private multiBotManager: MultiBotManager;
+  private messageQueue: AgentMessageQueue;
 
   /** Whether multi-bot mode is initialized */
   private multiBotInitialized = false;
@@ -40,6 +42,28 @@ export class MultiAgentDiscordHandler {
     this.processManager = new AgentProcessManager(config, processOptions);
     this.sharedContext = getSharedContextManager();
     this.multiBotManager = new MultiBotManager(config);
+    this.messageQueue = new AgentMessageQueue();
+
+    // Periodic cleanup of expired queued messages (F7)
+    setInterval(() => {
+      this.messageQueue.clearExpired();
+    }, 60_000);
+
+    // Setup idle event listeners for all agents (F7)
+    this.setupIdleListeners();
+  }
+
+  /**
+   * Setup idle event listeners for agent processes (F7)
+   */
+  private setupIdleListeners(): void {
+    this.processManager.on('process-created', ({ agentId, process }) => {
+      process.on('idle', async () => {
+        await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
+          await this.sendQueuedResponse(aid, message, response);
+        });
+      });
+    });
   }
 
   /**
@@ -302,7 +326,25 @@ export class MultiAgentDiscordHandler {
         duration: result.duration_ms,
       };
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
       console.error(`[MultiAgent] Failed to get response from ${agentId}:`, error);
+
+      // Enqueue busy responses (F7: message queue)
+      if (errMsg.includes('busy')) {
+        console.log(`[MultiAgent] Agent ${agentId} busy, enqueuing message`);
+
+        const queuedMessage: QueuedMessage = {
+          prompt: fullPrompt,
+          channelId: context.channelId,
+          threadTs: context.messageId,
+          source: 'discord',
+          enqueuedAt: Date.now(),
+          context,
+        };
+
+        this.messageQueue.enqueue(agentId, queuedMessage);
+      }
+
       return null;
     }
   }
@@ -348,6 +390,49 @@ export class MultiAgentDiscordHandler {
     }
 
     return `${prefix} ${response}`;
+  }
+
+  /**
+   * Send queued response to Discord (F7: message queue drain callback)
+   */
+  private async sendQueuedResponse(
+    agentId: string,
+    message: QueuedMessage,
+    response: string
+  ): Promise<void> {
+    const agent = this.orchestrator.getAgent(agentId);
+    if (!agent) {
+      console.error(`[MultiAgent] Unknown agent in queue: ${agentId}`);
+      return;
+    }
+
+    // Format response with agent prefix
+    const formattedResponse = this.formatAgentResponse(agent, response);
+
+    const chunks = splitForDiscord(formattedResponse);
+    const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
+
+    for (const chunk of chunks) {
+      try {
+        if (hasOwnBot) {
+          // Use agent's dedicated bot - send to channel
+          await this.multiBotManager.sendAsAgent(agentId, message.channelId, chunk);
+        } else {
+          // Use main bot - need to get channel reference
+          // Note: We can't reply without original message, so just log
+          console.warn(
+            `[MultiAgent] Cannot send queued message for ${agentId} without agent bot (no original message)`
+          );
+        }
+      } catch (err) {
+        console.error(`[MultiAgent] Failed to send queued response for ${agentId}:`, err);
+      }
+    }
+
+    // Record to shared context
+    this.sharedContext.recordAgentMessage(message.channelId, agent, response, '');
+
+    console.log(`[MultiAgent] Queued message delivered for ${agentId} in ${message.channelId}`);
   }
 
   /**
