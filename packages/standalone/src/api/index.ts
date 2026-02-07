@@ -197,6 +197,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
           resolve();
           return;
         }
+        // Force-close all open connections so server.close() resolves immediately
+        server.closeAllConnections();
         server.close((err) => {
           if (err) {
             reject(err);
