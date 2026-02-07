@@ -217,14 +217,13 @@ export class SlackRateLimiter {
       request.resolve(result);
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      this.updateStats(responseTime, false);
 
       // Check if it's a rate limit error
       if (this.isRateLimitError(error)) {
         this.stats.rateLimitHits++;
         this.logger.warn(`Rate limit hit for request ${request.id}`);
 
-        // Retry if enabled and under limit
+        // Retry if enabled and under limit — defer stats until final attempt
         if (this.config.enableRetry && request.attempts < this.config.maxRetries) {
           const retryDelay = this.calculateRetryDelay(request.attempts);
           this.logger.log(`Retrying request ${request.id} in ${retryDelay}ms`);
@@ -250,6 +249,8 @@ export class SlackRateLimiter {
         }
       }
 
+      // Only record failure stats for final failures (not retryable intermediate errors)
+      this.updateStats(responseTime, false);
       this.logger.error(`Request ${request.id} failed after ${request.attempts} attempts:`, error);
       request.reject(error as Error);
     }
