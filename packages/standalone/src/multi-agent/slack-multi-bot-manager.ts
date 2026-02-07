@@ -430,6 +430,14 @@ export class SlackMultiBotManager {
   }
 
   /**
+   * Get a specific agent bot's WebClient (for sending messages as that bot)
+   */
+  getAgentWebClient(agentId: string): WebClient | null {
+    const bot = this.bots.get(agentId);
+    return bot?.connected ? bot.webClient : null;
+  }
+
+  /**
    * Get the agent ID that maps to the main bot
    */
   getMainBotAgentId(): string | null {
