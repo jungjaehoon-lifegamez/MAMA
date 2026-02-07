@@ -12,12 +12,24 @@ import express from 'express';
 import path, { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 
-import { loadConfig, configExists, expandPath } from '../config/config-manager.js';
+import {
+  loadConfig,
+  configExists,
+  expandPath,
+  provisionDefaults,
+} from '../config/config-manager.js';
 import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
-import { DiscordGateway, SessionStore, MessageRouter, PluginLoader } from '../../gateways/index.js';
+import {
+  DiscordGateway,
+  SlackGateway,
+  SessionStore,
+  MessageRouter,
+  PluginLoader,
+  initChannelHistory,
+} from '../../gateways/index.js';
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer } from '../../api/index.js';
@@ -26,6 +38,12 @@ import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboa
 
 const { createGraphHandler } = require('../../api/graph-api.js');
 import http from 'node:http';
+
+// Port configuration — single source of truth
+/** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
+const API_PORT = 3847;
+/** Internal embedding server port (model inference, mobile chat, graph) */
+const EMBEDDING_PORT = 3849;
 
 // MAMA embedding server (keeps model in memory)
 let embeddingServer: any = null;
@@ -148,7 +166,7 @@ async function startEmbeddingServerIfAvailable(
   sessionStore?: any,
   graphHandler?: any
 ): Promise<void> {
-  const port = 3847;
+  const port = EMBEDDING_PORT;
 
   try {
     // Check if server already running
@@ -165,7 +183,7 @@ async function startEmbeddingServerIfAvailable(
       graphHandler,
     });
     if (embeddingServer) {
-      console.log('✓ Embedding server started (port 3847)');
+      console.log(`✓ Embedding server started (port ${EMBEDDING_PORT})`);
       if (messageRouter && sessionStore) {
         console.log('✓ Mobile Chat integrated with MessageRouter');
       }
@@ -278,8 +296,8 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     // Auto-open browser (after a delay for server to start)
     const needsOnboarding = !isOnboardingComplete();
     const targetUrl = needsOnboarding
-      ? 'http://localhost:3847/setup'
-      : 'http://localhost:3847/viewer';
+      ? `http://localhost:${API_PORT}/setup`
+      : `http://localhost:${API_PORT}/viewer`;
     setTimeout(() => {
       if (needsOnboarding) {
         console.log('🎭 First-time setup - Opening onboarding wizard...\n');
@@ -306,8 +324,8 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
       // Auto-open browser after server is ready
       const needsOnboarding = !isOnboardingComplete();
       const targetUrl = needsOnboarding
-        ? 'http://localhost:3847/setup'
-        : 'http://localhost:3847/viewer';
+        ? `http://localhost:${API_PORT}/setup`
+        : `http://localhost:${API_PORT}/viewer`;
 
       // Wait for server to be ready
       setTimeout(() => {
@@ -376,12 +394,45 @@ export async function runAgentLoop(
   // Claude CLI is always used (Pi Agent removed for ToS compliance)
   console.log('✓ Claude CLI mode (ToS compliance)');
 
+  // Provision default persona templates and multi-agent config on first start
+  try {
+    await provisionDefaults();
+  } catch (error) {
+    console.warn(`[Provision] Warning: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   const oauthManager = new OAuthManager();
 
   // Initialize database for session storage
   const dbPath = expandPath(config.database.path).replace('mama-memory.db', 'mama-sessions.db');
   const db = new Database(dbPath);
+
+  // Ensure swarm_tasks table exists (used by Graph API delegations endpoint)
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS swarm_tasks (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      category TEXT NOT NULL,
+      priority INTEGER DEFAULT 0,
+      wave INTEGER NOT NULL,
+      status TEXT DEFAULT 'pending',
+      claimed_by TEXT,
+      claimed_at INTEGER,
+      completed_at INTEGER,
+      result TEXT,
+      files_owned TEXT,
+      depends_on TEXT,
+      retry_count INTEGER DEFAULT 0
+    )
+  `
+  ).run();
+
   const sessionStore = new SessionStore(db);
+
+  // Initialize channel history with SQLite persistence (Sprint 3 F5)
+  initChannelHistory(db);
 
   const mamaDbPath = expandPath(config.database.path);
   const toolExecutor = new GatewayToolExecutor({
@@ -435,6 +486,7 @@ export async function runAgentLoop(
     model: config.agent.model,
     maxTurns: config.agent.max_turns,
     useLanes: true, // Enable lane-based concurrency for Discord
+    usePersistentCLI: config.agent.use_persistent_cli ?? false, // 🚀 Fast mode when enabled
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
     // Collect reasoning for Discord display
@@ -586,7 +638,13 @@ export async function runAgentLoop(
 
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);
 
-  const graphHandler = createGraphHandler();
+  // Prepare graph handler options (will be populated after gateways init)
+  let graphHandlerOptions: {
+    getAgentStates?: () => Map<string, string>;
+    getSwarmTasks?: (limit?: number) => Array<any>;
+  } = {};
+
+  const graphHandler = createGraphHandler(graphHandlerOptions);
 
   await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
@@ -619,6 +677,7 @@ export async function runAgentLoop(
         token: config.discord.token,
         messageRouter,
         config: discordConfig.guilds ? { guilds: discordConfig.guilds } : undefined,
+        multiAgentConfig: config.multi_agent,
       });
 
       const gatewayInterface = {
@@ -643,19 +702,72 @@ export async function runAgentLoop(
     }
   }
 
-  // Initialize gateway plugin loader (for additional gateways like Slack, Chatwork)
+  // Initialize Slack gateway if enabled (native, like Discord)
+  let slackGateway: SlackGateway | null = null;
+  if (config.slack?.enabled && config.slack?.bot_token && config.slack?.app_token) {
+    console.log('Initializing Slack gateway...');
+    try {
+      slackGateway = new SlackGateway({
+        botToken: config.slack.bot_token,
+        appToken: config.slack.app_token,
+        messageRouter,
+        multiAgentConfig: config.multi_agent,
+      });
+
+      await slackGateway.start();
+      gateways.push(slackGateway);
+      console.log('✓ Slack connected');
+    } catch (error) {
+      console.error(
+        `Failed to connect Slack: ${error instanceof Error ? error.message : String(error)}`
+      );
+      slackGateway = null;
+    }
+  }
+
+  // Populate graph handler options with runtime dependencies (F4)
+  if (discordGateway || slackGateway) {
+    const discordHandler = discordGateway?.getMultiAgentHandler();
+    const slackHandler = slackGateway?.getMultiAgentHandler();
+    const multiAgentHandler = discordHandler || slackHandler;
+
+    if (multiAgentHandler) {
+      // getAgentStates: real-time process states
+      graphHandlerOptions.getAgentStates = () => {
+        try {
+          return multiAgentHandler.getProcessManager().getAgentStates();
+        } catch (err) {
+          console.error('[GraphAPI] Failed to get agent states:', err);
+          return new Map();
+        }
+      };
+
+      // getSwarmTasks: recent delegations from swarm-db
+      graphHandlerOptions.getSwarmTasks = (limit = 20) => {
+        try {
+          // Query swarm_tasks table directly from mama-sessions.db
+          const stmt = db.prepare(`
+            SELECT
+              id, description, category, wave, status,
+              claimed_by, claimed_at, completed_at, result
+            FROM swarm_tasks
+            WHERE status IN ('completed', 'claimed')
+            ORDER BY completed_at DESC, claimed_at DESC
+            LIMIT ?
+          `);
+          return stmt.all(limit) as Array<any>;
+        } catch (err) {
+          console.error('[GraphAPI] Failed to fetch swarm tasks:', err);
+          return [];
+        }
+      };
+    }
+  }
+
+  // Initialize gateway plugin loader (for additional gateways like Chatwork)
   const pluginLoader = new PluginLoader({
     gatewayConfigs: {
       // Pass gateway configs from main config
-      ...(config.slack
-        ? {
-            'slack-gateway': {
-              enabled: config.slack.enabled,
-              botToken: config.slack.bot_token,
-              appToken: config.slack.app_token,
-            },
-          }
-        : {}),
       ...(config.chatwork
         ? {
             'chatwork-gateway': {
@@ -741,7 +853,7 @@ export async function runAgentLoop(
   // Start API server
   const apiServer = createApiServer({
     scheduler,
-    port: 3848,
+    port: API_PORT,
     onHeartbeat: async (prompt) => {
       try {
         await agentLoop.run(prompt);
@@ -1093,12 +1205,12 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const bodyData = req.body ? JSON.stringify(req.body) : '';
       const options = {
         hostname: 'localhost',
-        port: 3847,
+        port: EMBEDDING_PORT,
         path: req.url,
         method: req.method,
         headers: {
           ...req.headers,
-          host: 'localhost:3847',
+          host: `localhost:${EMBEDDING_PORT}`,
           'content-length': Buffer.byteLength(bodyData),
         },
       };
@@ -1119,7 +1231,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       next();
     }
   });
-  console.log('✓ Session API proxied to port 3847');
+  console.log(`✓ Session API proxied to port ${EMBEDDING_PORT}`);
 
   const publicDir = path.resolve(process.cwd(), 'public');
 
@@ -1159,16 +1271,16 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
           setupWss.emit('connection', ws, request);
         });
       } else if (url.pathname === '/ws') {
-        // Proxy chat WebSocket to embedding server (port 3847)
+        // Proxy chat WebSocket to embedding server
         const http = require('http');
         const options = {
           hostname: '127.0.0.1',
-          port: 3847,
+          port: EMBEDDING_PORT,
           path: request.url,
           method: 'GET',
           headers: {
             ...request.headers,
-            host: '127.0.0.1:3847',
+            host: `127.0.0.1:${EMBEDDING_PORT}`,
           },
         };
 
@@ -1194,7 +1306,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         socket.destroy();
       }
     });
-    console.log('✓ WebSocket upgrade handler registered (/ws → 3847, /setup-ws local)');
+    console.log(
+      `✓ WebSocket upgrade handler registered (/ws → ${EMBEDDING_PORT}, /setup-ws local)`
+    );
   }
 
   gateways.push(apiServer);

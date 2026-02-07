@@ -755,6 +755,18 @@ export interface AgentLoopOptions {
    * (CLI already has context from previous requests)
    */
   resumeSession?: boolean;
+  /**
+   * CLI session ID from MessageRouter
+   * When provided, AgentLoop uses this instead of calling getSession() again
+   * This prevents double-locking of the session pool
+   */
+  cliSessionId?: string;
+  /**
+   * Use persistent CLI process for faster responses (experimental)
+   * When true, keeps Claude CLI process alive for multi-turn conversations
+   * Response time: ~2-3s instead of ~16-30s
+   */
+  usePersistentCLI?: boolean;
 }
 
 /**
