@@ -5,12 +5,12 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 
-import type { MAMAConfig } from './types.js';
+import type { MAMAConfig, MultiAgentConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
 
 /**
@@ -204,4 +204,83 @@ export function validateConfig(config: MAMAConfig): string[] {
   }
 
   return errors;
+}
+
+/**
+ * Get the default multi-agent configuration (disabled by default)
+ */
+export function getDefaultMultiAgentConfig(): MultiAgentConfig {
+  return {
+    enabled: false,
+    free_chat: true,
+    agents: {
+      sisyphus: {
+        name: 'Sisyphus',
+        display_name: '🏔️ Sisyphus',
+        trigger_prefix: '!sisyphus',
+        persona_file: '~/.mama/personas/sisyphus.md',
+        tier: 1,
+        can_delegate: true,
+      },
+      developer: {
+        name: 'DevBot',
+        display_name: '🔧 DevBot',
+        trigger_prefix: '!dev',
+        persona_file: '~/.mama/personas/developer.md',
+        tier: 2,
+      },
+      reviewer: {
+        name: 'Reviewer',
+        display_name: '📝 Reviewer',
+        trigger_prefix: '!review',
+        persona_file: '~/.mama/personas/reviewer.md',
+        tier: 3,
+      },
+    },
+    loop_prevention: {
+      max_chain_length: 5,
+      global_cooldown_ms: 2000,
+      chain_window_ms: 60000,
+    },
+  };
+}
+
+/**
+ * Provision default persona templates and multi-agent config on first start.
+ *
+ * - Copies builtin persona .md files from templates/personas/ to ~/.mama/personas/
+ *   only if the personas directory does not yet exist.
+ * - Injects a default (disabled) multi_agent section into config.yaml
+ *   only if one is not already present.
+ */
+export async function provisionDefaults(): Promise<void> {
+  const mamaHome = getMAMAHome();
+  const personasDir = join(mamaHome, 'personas');
+
+  // Resolve templates dir relative to this file's compiled location
+  // In dist: dist/cli/config/config-manager.js → ../../../templates/personas
+  const templatesDir = resolve(__dirname, '../../../templates/personas');
+
+  // 1. Provision personas directory with builtin templates
+  if (!existsSync(personasDir)) {
+    mkdirSync(personasDir, { recursive: true });
+    if (existsSync(templatesDir)) {
+      for (const file of readdirSync(templatesDir)) {
+        if (file.endsWith('.md')) {
+          copyFileSync(join(templatesDir, file), join(personasDir, file));
+        }
+      }
+      console.log('✓ Default persona templates installed');
+    }
+  }
+
+  // 2. Inject default multi_agent config if missing
+  if (configExists()) {
+    const config = await loadConfig();
+    if (!config.multi_agent) {
+      config.multi_agent = getDefaultMultiAgentConfig();
+      await saveConfig(config);
+      console.log('✓ Multi-agent config initialized (disabled)');
+    }
+  }
 }

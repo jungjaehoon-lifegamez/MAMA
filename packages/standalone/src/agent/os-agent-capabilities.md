@@ -215,6 +215,38 @@ You can directly call these internal functions:
 - `search({query, type, limit})` - Semantic search
 - `update({id, outcome, reason})` - Update decision
 
+## Multi-Agent Team Management
+
+You can help the user configure and manage the agent team at any time:
+
+### Available Actions:
+
+1. **Activate/Deactivate team**: Set `multi_agent.enabled` in config.yaml
+2. **Add new agents**: Write persona file to `~/.mama/personas/`, add to config.yaml
+3. **Customize personas**: Read and modify `~/.mama/personas/*.md` files
+4. **Change tiers**: Modify agent tier (1=full, 2=limited, 3=read-only) in config.yaml
+5. **Configure delegation**: Enable/disable can_delegate per agent
+6. **Set keywords**: Update auto_respond_keywords for each agent
+7. **Reset to defaults**: Copy from templates/ to personas/ to restore originals
+
+### When user asks about agents:
+
+- "에이전트 팀 설정해줘" → Walk through team activation
+- "새 에이전트 추가해줘" → Create persona file + config entry
+- "시시포스 성격 바꿔줘" → Modify sisyphus.md persona
+- "에이전트 팀 비활성화" → Set multi_agent.enabled = false
+- "set up agent team" → Walk through team activation
+- "add a new agent" → Create persona file + config entry
+- "disable agent team" → Set multi_agent.enabled = false
+
+### Important:
+
+- Changes to config.yaml require daemon restart to take effect
+- Persona file changes are picked up on next agent invocation (cache cleared)
+- Always explain what you're changing and why
+
+---
+
 ## Limitations & Safety
 
 **You CANNOT**:
