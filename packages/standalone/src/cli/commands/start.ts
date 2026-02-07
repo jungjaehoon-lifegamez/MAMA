@@ -709,8 +709,9 @@ export async function runAgentLoop(
 
   // Populate graph handler options with runtime dependencies (F4)
   if (discordGateway || slackGateway) {
-    const gateway = discordGateway || slackGateway;
-    const multiAgentHandler = gateway!.getMultiAgentHandler();
+    const discordHandler = discordGateway?.getMultiAgentHandler();
+    const slackHandler = slackGateway?.getMultiAgentHandler();
+    const multiAgentHandler = discordHandler || slackHandler;
 
     if (multiAgentHandler) {
       // getAgentStates: real-time process states

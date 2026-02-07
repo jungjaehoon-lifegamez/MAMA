@@ -332,15 +332,15 @@ export class PRReviewPoller {
 
       if (newComments.length === 0) return;
 
-      // Mark as seen
-      for (const c of newComments) {
-        session.seenCommentIds.add(c.id);
-      }
-
       // Format and send
       const formatted = this.formatComments(sessionKey, newComments);
       const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
       await this.sendMessage(session.channelId, `${mention}${formatted}`);
+
+      // Mark as seen only after successful send
+      for (const c of newComments) {
+        session.seenCommentIds.add(c.id);
+      }
 
       this.logger.log(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
     } catch (err) {
@@ -418,14 +418,17 @@ export class PRReviewPoller {
       'gh',
       [
         'api',
+        '--paginate',
         `repos/${owner}/${repo}/pulls/${prNumber}/comments`,
         '--jq',
-        '[.[] | {id, path, line, body, user: {login: .user.login}, created_at}]',
+        '.[] | {id, path, line, body, user: {login: .user.login}, created_at}',
       ],
-      { timeout: 15000 }
+      { timeout: 30000 }
     );
 
-    return JSON.parse(stdout || '[]');
+    if (!stdout.trim()) return [];
+    const lines = stdout.trim().split('\n').filter(Boolean);
+    return lines.map((line) => JSON.parse(line));
   }
 
   /**
@@ -499,7 +502,8 @@ export class PRReviewPoller {
             session.repo,
             session.prNumber,
             thread,
-            `${FIXED_REPLY_PREFIX} ${shortSha}`
+            `${FIXED_REPLY_PREFIX} ${shortSha}`,
+            allComments
           );
 
           // Mark all comments in this thread as addressed (by matching path/line)
@@ -564,10 +568,12 @@ export class PRReviewPoller {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $prNumber) {
             reviewThreads(first: 100) {
+              totalCount
               nodes {
                 id
                 isResolved
                 comments(first: 10) {
+                  totalCount
                   nodes {
                     path
                     line
@@ -596,12 +602,21 @@ export class PRReviewPoller {
         '-F',
         `prNumber=${prNumber}`,
         '--jq',
-        '.data.repository.pullRequest.reviewThreads.nodes',
+        '.data.repository.pullRequest.reviewThreads | {totalCount, nodes}',
       ],
       { timeout: 20000 }
     );
 
-    const nodes = JSON.parse(stdout || '[]');
+    const result = JSON.parse(stdout || '{"totalCount":0,"nodes":[]}');
+    const nodes = result.nodes || [];
+
+    // Warn if GraphQL pagination caps are hit
+    if (result.totalCount > 100) {
+      this.logger.warn(
+        `[PRPoller] Warning: PR has ${result.totalCount} review threads but only 100 fetched`
+      );
+    }
+
     return nodes.map((node: Record<string, unknown>) => ({
       id: node.id as string,
       isResolved: node.isResolved as boolean,
@@ -624,13 +639,14 @@ export class PRReviewPoller {
     repo: string,
     prNumber: number,
     thread: ReviewThread,
-    body: string
+    body: string,
+    cachedComments?: PRComment[]
   ): Promise<void> {
     // GraphQL: addPullRequestReviewComment is complex.
     // Simpler: use REST API to reply to the thread's first comment.
     // We need the REST comment ID, but we have GraphQL ID.
     // Fetch comments and match by path+body to find the REST ID.
-    const comments = await this.fetchComments(owner, repo, prNumber);
+    const comments = cachedComments ?? (await this.fetchComments(owner, repo, prNumber));
     const firstThreadComment = thread.comments[0];
     if (!firstThreadComment) return;
 

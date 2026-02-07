@@ -44,7 +44,7 @@ import type { SwarmAntiPatternDetector } from './swarm-anti-pattern-detector.js'
 export interface TaskExecutionResult {
   taskId: string;
   agentId: string;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'deferred';
   result?: string;
   error?: string;
   warnings?: string[];
@@ -105,7 +105,7 @@ export class SwarmTaskRunner extends EventEmitter {
     super();
     this.swarmManager = swarmManager;
     this.agentProcessManager = agentProcessManager;
-    if (options?.pollingIntervalMs) {
+    if (options?.pollingIntervalMs !== undefined) {
       this.pollingIntervalMs = options.pollingIntervalMs;
     }
     if (options?.contextInjector) {
@@ -439,7 +439,7 @@ export class SwarmTaskRunner extends EventEmitter {
         const deferredResult: TaskExecutionResult = {
           taskId: task.id,
           agentId,
-          status: 'failed', // status는 TaskExecutionResult 타입 제약 유지
+          status: 'deferred',
           error: 'Agent process busy, task deferred',
         };
         console.log(`[SwarmTaskRunner] Task ${task.id} deferred — agent ${agentId} busy`);
@@ -454,10 +454,8 @@ export class SwarmTaskRunner extends EventEmitter {
       const resultText = promptResult.response || 'Task completed';
       completeTask(db, task.id, resultText);
 
-      // Release process back to pool (optional for backward compatibility)
-      if (typeof this.agentProcessManager.releaseProcess === 'function') {
-        this.agentProcessManager.releaseProcess(agentId, process);
-      }
+      // Release process back to pool
+      this.agentProcessManager.releaseProcess(agentId, process);
 
       const result: TaskExecutionResult = {
         taskId: task.id,

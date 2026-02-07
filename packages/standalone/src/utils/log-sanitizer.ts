@@ -48,7 +48,12 @@ export function maskUserId(userId: string): string {
  */
 export function redactToken(token: string): string {
   if (!token || typeof token !== 'string') return token;
-  if (token.startsWith('xoxb-') || token.startsWith('xapp-') || token.startsWith('xoxp-')) {
+  if (
+    token.startsWith('xoxb-') ||
+    token.startsWith('xapp-') ||
+    token.startsWith('xoxp-') ||
+    token.startsWith('xoxa-')
+  ) {
     return token.substring(0, 8) + '***[REDACTED]***';
   }
   return token;

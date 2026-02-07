@@ -61,7 +61,7 @@ export class SlackMultiBotManager {
 
   /** Callback for when an agent bot receives a mention */
   private onMentionCallback:
-    | ((agentId: string, event: SlackMentionEvent, webClient: WebClient) => void)
+    | ((agentId: string, event: SlackMentionEvent, webClient: WebClient) => Promise<void>)
     | null = null;
 
   /** Safe logger that sanitizes sensitive information */
@@ -105,7 +105,7 @@ export class SlackMultiBotManager {
    * Register callback for when an agent bot receives a mention
    */
   onMention(
-    callback: (agentId: string, event: SlackMentionEvent, webClient: WebClient) => void
+    callback: (agentId: string, event: SlackMentionEvent, webClient: WebClient) => Promise<void>
   ): void {
     this.onMentionCallback = callback;
   }
@@ -208,22 +208,24 @@ export class SlackMultiBotManager {
             /* ignore reaction errors */
           }
 
-          await this.onMentionCallback(agentId, mentionEvent, bot.webClient);
-
-          // Replace eyes with checkmark on completion
           try {
-            await bot.webClient.reactions.remove({
-              channel: mentionEvent.channel,
-              timestamp: mentionEvent.ts,
-              name: 'eyes',
-            });
-            await bot.webClient.reactions.add({
-              channel: mentionEvent.channel,
-              timestamp: mentionEvent.ts,
-              name: 'white_check_mark',
-            });
-          } catch {
-            /* ignore reaction errors */
+            await this.onMentionCallback(agentId, mentionEvent, bot.webClient);
+          } finally {
+            // Replace eyes with checkmark on completion (or failure)
+            try {
+              await bot.webClient.reactions.remove({
+                channel: mentionEvent.channel,
+                timestamp: mentionEvent.ts,
+                name: 'eyes',
+              });
+              await bot.webClient.reactions.add({
+                channel: mentionEvent.channel,
+                timestamp: mentionEvent.ts,
+                name: 'white_check_mark',
+              });
+            } catch {
+              /* ignore reaction errors */
+            }
           }
         }
       } catch (error) {
@@ -264,21 +266,24 @@ export class SlackMultiBotManager {
             /* ignore reaction errors */
           }
 
-          await this.onMentionCallback(agentId, msgEvent, bot.webClient);
-
           try {
-            await bot.webClient.reactions.remove({
-              channel: msgEvent.channel,
-              timestamp: msgEvent.ts,
-              name: 'eyes',
-            });
-            await bot.webClient.reactions.add({
-              channel: msgEvent.channel,
-              timestamp: msgEvent.ts,
-              name: 'white_check_mark',
-            });
-          } catch {
-            /* ignore reaction errors */
+            await this.onMentionCallback(agentId, msgEvent, bot.webClient);
+          } finally {
+            // Replace eyes with checkmark on completion (or failure)
+            try {
+              await bot.webClient.reactions.remove({
+                channel: msgEvent.channel,
+                timestamp: msgEvent.ts,
+                name: 'eyes',
+              });
+              await bot.webClient.reactions.add({
+                channel: msgEvent.channel,
+                timestamp: msgEvent.ts,
+                name: 'white_check_mark',
+              });
+            } catch {
+              /* ignore reaction errors */
+            }
           }
         }
       } catch (error) {
@@ -297,9 +302,11 @@ export class SlackMultiBotManager {
       this.logger.warn(`Agent ${agentId} bot disconnected`);
     });
 
+    // Register bot before starting so event handlers can find it
+    this.bots.set(agentId, bot);
+
     // Start socket mode connection
     await socketClient.start();
-    this.bots.set(agentId, bot);
   }
 
   /**
