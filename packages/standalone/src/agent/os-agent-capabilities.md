@@ -224,7 +224,7 @@ You can help the user configure and manage the agent team at any time:
 1. **Activate/Deactivate team**: Set `multi_agent.enabled` in config.yaml
 2. **Add new agents**: Write persona file to `~/.mama/personas/`, add to config.yaml
 3. **Customize personas**: Read and modify `~/.mama/personas/*.md` files
-4. **Change tiers**: Modify agent tier (1=full, 2=limited, 3=read-only) in config.yaml
+4. **Change tiers**: Modify agent tier (1=full tools, 2=read-only advisory, 3=read-only scoped execution) in config.yaml
 5. **Configure delegation**: Enable/disable can_delegate per agent
 6. **Set keywords**: Update auto_respond_keywords for each agent
 7. **Reset to defaults**: Copy from templates/ to personas/ to restore originals

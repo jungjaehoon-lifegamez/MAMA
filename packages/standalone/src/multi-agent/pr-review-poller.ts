@@ -94,6 +94,13 @@ export class PRReviewPoller {
   private logger = console;
 
   /**
+   * Check if a message sender is already configured
+   */
+  hasMessageSender(): boolean {
+    return this.messageSender !== null;
+  }
+
+  /**
    * Set the message sender callback (Slack WebClient wrapper)
    */
   setMessageSender(sender: MessageSender): void {
