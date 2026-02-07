@@ -283,8 +283,14 @@ export class ChannelHistory {
    * Format history for Claude context injection
    * Similar to OpenClaw's "[Chat messages since your last reply - for context]"
    */
-  formatForContext(channelId: string, excludeMessageId?: string): string {
-    const history = this.getRecentHistory(channelId, excludeMessageId);
+  formatForContext(channelId: string, excludeMessageId?: string, keepBotSender?: string): string {
+    let history = this.getRecentHistory(channelId, excludeMessageId);
+
+    if (keepBotSender) {
+      // Keep human messages + bot messages from the specified sender only.
+      // Excludes other bots (DevBot, Reviewer etc.) to avoid context pollution.
+      history = history.filter((entry) => !entry.isBot || entry.sender === keepBotSender);
+    }
 
     if (history.length === 0) {
       return '';

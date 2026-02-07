@@ -171,9 +171,33 @@ export class MultiBotManager {
       console.log(`[MultiBotManager] Agent ${agentId} bot disconnected`);
     });
 
-    // Login
+    // Login and wait for ready event (ensures userId is available)
     await client.login(agentConfig.bot_token);
     this.bots.set(agentId, bot);
+
+    // Wait for ready with timeout (5s) — ensures getBotUserIdMap() has all IDs
+    if (!bot.connected) {
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => resolve(), 5000);
+        const check = () => {
+          if (bot.connected) {
+            clearTimeout(timeout);
+            resolve();
+          }
+        };
+        client.once('ready', () => {
+          check();
+        });
+        check(); // In case ready already fired
+      });
+    }
+  }
+
+  /**
+   * Get main bot user ID
+   */
+  getMainBotUserId(): string | null {
+    return this.mainBotUserId;
   }
 
   /**
@@ -189,6 +213,30 @@ export class MultiBotManager {
    */
   getAgentBot(agentId: string): AgentBot | undefined {
     return this.bots.get(agentId);
+  }
+
+  /**
+   * React to a message as a specific agent's bot
+   */
+  async reactAsAgent(
+    agentId: string,
+    channelId: string,
+    messageId: string,
+    emoji: string
+  ): Promise<boolean> {
+    const bot = this.bots.get(agentId);
+    if (!bot?.connected) return false;
+
+    try {
+      const channel = await bot.client.channels.fetch(channelId);
+      if (!channel || !('messages' in channel)) return false;
+
+      const msg = await (channel as TextChannel).messages.fetch(messageId);
+      await msg.react(emoji);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
