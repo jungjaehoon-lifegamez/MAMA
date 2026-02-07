@@ -216,10 +216,12 @@ export class MultiAgentSlackHandler {
   setMainWebClient(client: WebClient): void {
     this.mainWebClient = client;
 
-    // Wire PRReviewPoller to send messages via this WebClient
-    this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
-      await client.chat.postMessage({ channel: channelId, text });
-    });
+    // Only set PR poller sender if not already configured (e.g., by reviewer bot)
+    if (!this.prReviewPoller.hasMessageSender?.()) {
+      this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
+        await client.chat.postMessage({ channel: channelId, text });
+      });
+    }
   }
 
   /**
@@ -614,12 +616,12 @@ export class MultiAgentSlackHandler {
       rawContent: response,
     };
 
-    // Send to channel
+    // Send to channel (pass mainWebClient as fallback for agents without dedicated bots)
     await this.sendAgentResponses(
       message.channelId,
       message.threadTs,
       [agentResponse],
-      undefined // No mainWebClient - use agent bot
+      this.mainWebClient ?? undefined
     );
 
     // Record to shared context
@@ -760,7 +762,7 @@ export class MultiAgentSlackHandler {
             channel: channelId,
             user: '',
             text: response.rawContent,
-            ts: response.messageId || threadTs,
+            ts: `${response.messageId || threadTs}-${response.agentId}`,
             thread_ts: threadTs,
             bot_id: 'auto-route',
           };
