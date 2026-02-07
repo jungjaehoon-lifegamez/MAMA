@@ -20,6 +20,7 @@ import type { PersistentProcessOptions } from '../agent/persistent-cli-process.j
 import { splitForSlack } from '../gateways/message-splitter.js';
 import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
 import { PRReviewPoller } from './pr-review-poller.js';
+import { createSafeLogger } from '../utils/log-sanitizer.js';
 
 /** Default timeout for agent responses (15 minutes - longer than Discord due to Slack's slower Socket Mode relay and complex thread routing) */
 const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -48,7 +49,7 @@ export class MultiAgentSlackHandler {
   private multiBotManager: SlackMultiBotManager;
   private messageQueue: AgentMessageQueue;
   private prReviewPoller: PRReviewPoller;
-  private logger = console;
+  private logger = createSafeLogger('MultiAgentSlack');
 
   /** Main Slack WebClient for posting system messages (heartbeat) */
   private mainWebClient: WebClient | null = null;
@@ -435,16 +436,21 @@ export class MultiAgentSlackHandler {
 
       // Send message and get response (with timeout, properly cleaned up)
       let timeoutHandle: ReturnType<typeof setTimeout>;
-      const result = await Promise.race([
-        process.sendMessage(fullPrompt),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () => reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)),
-            AGENT_TIMEOUT_MS
-          );
-        }),
-      ]);
-      clearTimeout(timeoutHandle!);
+      let result;
+      try {
+        result = await Promise.race([
+          process.sendMessage(fullPrompt),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(
+              () =>
+                reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)),
+              AGENT_TIMEOUT_MS
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeoutHandle!);
+      }
 
       // Format response with agent prefix
       const formattedResponse = this.formatAgentResponse(agent, result.response);
@@ -522,7 +528,7 @@ export class MultiAgentSlackHandler {
    */
   async sendAgentResponses(
     channelId: string,
-    threadTs: string,
+    threadTs: string | undefined,
     responses: SlackAgentResponse[],
     mainWebClient?: WebClient
   ): Promise<string[]> {
@@ -536,12 +542,19 @@ export class MultiAgentSlackHandler {
         for (let i = 0; i < chunks.length; i++) {
           let messageTs: string | null = null;
 
-          if (hasOwnBot) {
-            // Use agent's dedicated bot
+          if (hasOwnBot && threadTs) {
+            // Use agent's dedicated bot (requires threadTs for reply)
             messageTs = await this.multiBotManager.replyAsAgent(
               response.agentId,
               channelId,
               threadTs,
+              chunks[i]
+            );
+          } else if (hasOwnBot && !threadTs) {
+            // Use agent's dedicated bot for top-level message
+            messageTs = await this.multiBotManager.sendAsAgent(
+              response.agentId,
+              channelId,
               chunks[i]
             );
           } else if (mainWebClient) {
@@ -550,7 +563,7 @@ export class MultiAgentSlackHandler {
             const msgParams: any = {
               channel: channelId,
               text: chunks[i],
-              thread_ts: threadTs,
+              ...(threadTs && { thread_ts: threadTs }),
             };
             if (i === 0) {
               msgParams.reply_broadcast = true;
@@ -604,7 +617,7 @@ export class MultiAgentSlackHandler {
     // Send to channel
     await this.sendAgentResponses(
       message.channelId,
-      message.threadTs || '',
+      message.threadTs,
       [agentResponse],
       undefined // No mainWebClient - use agent bot
     );
