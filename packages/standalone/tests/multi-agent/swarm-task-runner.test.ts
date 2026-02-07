@@ -725,12 +725,12 @@ describe('SwarmTaskRunner', () => {
       const result = await retryRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
       // Task should be marked for retry
-      expect(result.status).toBe('failed');
+      expect(result.status).toBe('retrying');
       expect(result.retryCount).toBe(1);
 
       // task-retried event should be emitted
       expect(retriedSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ taskId, status: 'failed', retryCount: 1 }),
+        expect.objectContaining({ taskId, status: 'retrying', retryCount: 1 }),
         1,
         3
       );
