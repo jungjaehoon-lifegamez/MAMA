@@ -32,6 +32,7 @@ import {
   parseDependsOn,
   retryTask,
   deferTask,
+  getTasksBySession,
 } from './swarm-db.js';
 import { AgentProcessManager } from '../agent-process-manager.js';
 import type { PersistentClaudeProcess } from '../../agent/persistent-cli-process.js';
@@ -44,7 +45,7 @@ import type { SwarmAntiPatternDetector } from './swarm-anti-pattern-detector.js'
 export interface TaskExecutionResult {
   taskId: string;
   agentId: string;
-  status: 'completed' | 'failed' | 'deferred';
+  status: 'completed' | 'failed' | 'deferred' | 'retrying';
   result?: string;
   error?: string;
   warnings?: string[];
@@ -487,7 +488,7 @@ export class SwarmTaskRunner extends EventEmitter {
         const retriedResult: TaskExecutionResult = {
           taskId: task.id,
           agentId,
-          status: 'failed',
+          status: 'retrying',
           error: errorMsg,
           retryCount: retryCount + 1,
         };
@@ -534,10 +535,32 @@ export class SwarmTaskRunner extends EventEmitter {
       return true; // No dependencies
     }
 
-    // Check for circular dependency (self-reference)
+    // Check for circular dependencies (self-reference and transitive cycles)
     if (dependencies.includes(task.id)) {
       console.warn(`[SwarmTaskRunner] Circular dependency detected for task ${task.id}`);
       return false;
+    }
+    // DFS cycle detection: walk dependency graph with visited set
+    const visited = new Set<string>();
+    const stack = [...dependencies];
+    while (stack.length > 0) {
+      const depId = stack.pop()!;
+      if (depId === task.id) {
+        console.warn(
+          `[SwarmTaskRunner] Transitive circular dependency: task ${task.id} → ... → ${task.id}`
+        );
+        return false;
+      }
+      if (visited.has(depId)) continue;
+      visited.add(depId);
+      const depTask = db.prepare('SELECT depends_on FROM swarm_tasks WHERE id = ?').get(depId) as
+        | { depends_on: string | null }
+        | undefined;
+      if (depTask?.depends_on) {
+        for (const transitive of parseDependsOn(depTask as SwarmTask)) {
+          stack.push(transitive);
+        }
+      }
     }
 
     // Check each dependency
@@ -693,7 +716,6 @@ export class SwarmTaskRunner extends EventEmitter {
     const db = this.swarmManager.getDatabase();
 
     // Get all tasks for this session
-    const { getTasksBySession } = await import('./swarm-db.js');
     const allTasks = getTasksBySession(db, sessionId);
 
     const completed = allTasks.filter((t) => t.status === 'completed').length;

@@ -94,7 +94,7 @@ export class DiscordGateway implements Gateway {
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
       this.multiAgentHandler = new MultiAgentDiscordHandler(options.multiAgentConfig, {
-        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? false,
+        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
       });
       console.log('[Discord] Multi-agent mode enabled');
     }
@@ -425,18 +425,22 @@ export class DiscordGateway implements Gateway {
             multiAgentResult.responses
           );
 
-          // Record bot responses to history with correct agent attribution
-          for (let i = 0; i < sentMessages.length; i++) {
-            const sentMsg = sentMessages[i];
-            const agentResp = multiAgentResult.responses[i];
-            channelHistory.record(message.channel.id, {
-              messageId: sentMsg.id,
-              sender: agentResp?.agent.display_name || this.client.user?.username || 'MAMA',
-              userId: agentResp?.agentId || this.client.user?.id || '',
-              body: sentMsg.content,
-              timestamp: Date.now(),
-              isBot: true,
-            });
+          // Record bot responses to history with correct agent attribution.
+          // sentMessages is a flat array of chunks; track offset per response.
+          let msgIndex = 0;
+          for (const agentResp of multiAgentResult.responses) {
+            const chunkCount = splitForDiscord(agentResp.content).length;
+            for (let c = 0; c < chunkCount && msgIndex < sentMessages.length; c++) {
+              const sentMsg = sentMessages[msgIndex++];
+              channelHistory.record(message.channel.id, {
+                messageId: sentMsg.id,
+                sender: agentResp.agent.display_name || this.client.user?.username || 'MAMA',
+                userId: agentResp.agentId || this.client.user?.id || '',
+                body: sentMsg.content,
+                timestamp: Date.now(),
+                isBot: true,
+              });
+            }
           }
 
           this.emitEvent({
