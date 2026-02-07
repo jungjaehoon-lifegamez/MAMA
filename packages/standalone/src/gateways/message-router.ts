@@ -285,7 +285,7 @@ This protects your credentials from being exposed in chat logs.`;
     const sessionStartupContext = await this.contextInjector.getSessionStartupContext();
 
     // 5. Get per-message context (related decisions - like UserPromptSubmit hook)
-    // Embedding server runs on port 3847, model stays in memory
+    // Embedding server runs on port 3849, model stays in memory
     const context = await this.contextInjector.getRelevantContext(message.text);
 
     // 6. Build system prompt with all contexts including AgentContext
