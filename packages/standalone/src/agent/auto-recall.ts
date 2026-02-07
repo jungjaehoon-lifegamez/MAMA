@@ -75,16 +75,12 @@ async function initMAMA(dbPath?: string): Promise<void> {
   process.env.MAMA_DB_PATH = finalDbPath;
 
   try {
-    // Dynamic import of mama-server modules
-    const mamaModulePath = path.dirname(
-      require.resolve('@jungjaehoon/mama-server/src/mama/mama-api.js')
-    );
-
-    mamaApi = require(path.join(mamaModulePath, 'mama-api.js'));
+    // Dynamic import of mama-core modules
+    mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
     // Initialize database
-    const memoryStore = require(path.join(mamaModulePath, 'memory-store.js'));
-    await memoryStore.initDB();
+    const dbManager = require('@jungjaehoon/mama-core/db-manager');
+    await dbManager.initDB();
 
     initialized = true;
     console.log(`[AutoRecall] MAMA initialized (db: ${finalDbPath})`);

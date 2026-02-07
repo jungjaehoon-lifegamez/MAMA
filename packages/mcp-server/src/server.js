@@ -31,12 +31,12 @@ const path = require('path');
 // Import MAMA tools - Simplified to 4 core tools (2025-11-25 refactor)
 // Rationale: LLM can infer relationships from search results, fewer tools = more flexibility
 const { loadCheckpointTool } = require('./tools/checkpoint-tools.js');
-const mama = require('./mama/mama-api.js');
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Import core modules from mama-core
-const { initDB } = require('./mama/db-manager.js');
-const { generateEmbedding } = require('./mama/embeddings.js');
-const { vectorSearch } = require('./mama/memory-store.js');
+const { initDB } = require('@jungjaehoon/mama-core/db-manager');
+const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
+const { vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
 const embeddingServer = require('@jungjaehoon/mama-core/embedding-server');
 const http = require('http');
 

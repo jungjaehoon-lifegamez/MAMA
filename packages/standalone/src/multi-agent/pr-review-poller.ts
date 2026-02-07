@@ -8,8 +8,9 @@
  * 1. Agent pushes and posts PR URL in channel
  * 2. Poller detects URL → starts polling `gh api` every 60s
  * 3. New review comments → formatted and sent to Slack as @Sisyphus mention
- * 4. Sisyphus delegates fix to DevBot → DevBot fixes → pushes
- * 5. Poller detects new comments or Approved → loop continues or ends
+ * 4. Sisyphus analyzes severity → delegates fixes to @DevBot
+ * 5. DevBot fixes → @Reviewer → approve or request changes
+ * 6. Poller detects new comments or Approved → loop continues or ends
  */
 
 import { execFile } from 'child_process';
@@ -109,7 +110,7 @@ export class PRReviewPoller {
 
   /**
    * Set the target agent's Slack user ID for @mentions in review messages
-   * (typically the developer bot, who should fix the review comments)
+   * (typically the orchestrator/Sisyphus, who analyzes and delegates to DevBot)
    */
   private targetAgentUserId?: string;
   setTargetAgentUserId(userId: string): void {
@@ -235,7 +236,7 @@ export class PRReviewPoller {
       this.sessions.delete(sessionKey);
       await this.sendMessage(
         session.channelId,
-        `⏰ *PR Review Poller* — ${sessionKey} 폴링 2시간 경과로 자동 중지. 재시작하려면 PR URL을 다시 게시하세요.`
+        `⏰ *PR Review Poller* — ${sessionKey} auto-stopped after 2h. Re-post the PR URL to restart.`
       );
       return;
     }
@@ -249,7 +250,7 @@ export class PRReviewPoller {
         this.sessions.delete(sessionKey);
         await this.sendMessage(
           session.channelId,
-          `✅ *PR Review Poller* — ${sessionKey} ${prState}. 폴링 종료.`
+          `✅ *PR Review Poller* — ${sessionKey} ${prState}. Polling stopped.`
         );
         return;
       }
@@ -269,7 +270,7 @@ export class PRReviewPoller {
           try {
             await this.sendMessage(
               session.channelId,
-              `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. 폴링 종료.`
+              `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. Polling stopped.`
             );
           } finally {
             clearInterval(session.interval);
@@ -397,7 +398,7 @@ export class PRReviewPoller {
       }
     }
 
-    let msg = `📝 *PR Review Comments* — ${sessionKey} (${comments.length}건 새 코멘트)\n\n`;
+    let msg = `📝 *PR Review Comments* — ${sessionKey} (${comments.length} new comments)\n\n`;
 
     if (critical.length > 0) {
       msg += `*🔴 Critical/High:*\n${critical.map((e) => `• ${e}`).join('\n')}\n\n`;
@@ -412,7 +413,7 @@ export class PRReviewPoller {
       msg += `*💬 Other:*\n${other.map((e) => `• ${e}`).join('\n')}\n\n`;
     }
 
-    msg += `위 코멘트를 분석하고 DevBot에게 수정을 위임하세요.`;
+    msg += `Analyze the above comments by severity. Delegate Critical/Major fixes to @DevBot as atomic tasks. Bundle Minor/Nit items together. After fixes, run typecheck + tests and request re-review from @Reviewer.`;
 
     return msg;
   }
@@ -547,8 +548,8 @@ export class PRReviewPoller {
    * Format unresolved threads for Slack message
    */
   private formatUnresolvedThreads(sessionKey: string, threads: ReviewThread[]): string {
-    let msg = `⚠️ *미해결 PR 코멘트* — ${sessionKey} (${threads.length}건 미해결)\n\n`;
-    msg += `Push 후에도 아직 resolve 되지 않은 코멘트입니다:\n\n`;
+    let msg = `⚠️ *Unresolved PR Comments* — ${sessionKey} (${threads.length} unresolved)\n\n`;
+    msg += `These comments remain unresolved after the latest push:\n\n`;
 
     for (const thread of threads) {
       const first = thread.comments[0];
@@ -558,7 +559,7 @@ export class PRReviewPoller {
       msg += `• ${location} — ${body} _(${first.author})_\n`;
     }
 
-    msg += `\n위 미해결 코멘트를 분석하고 DevBot에게 수정을 위임하세요.`;
+    msg += `\nAnalyze the above unresolved comments. Delegate fixes to @DevBot as atomic tasks. After fixes, run typecheck + tests and request re-review from @Reviewer.`;
     return msg;
   }
 

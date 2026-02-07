@@ -179,6 +179,18 @@ export class AgentProcessManager extends EventEmitter {
         options.env = { MAMA_DISABLE_HOOKS: 'true' };
       }
 
+      // Structural tool enforcement via CLI flags
+      const permissions = this.permissionManager.resolvePermissions({
+        id: agentId,
+        ...agentConfig,
+      } as AgentPersonaConfig);
+      if (!permissions.allowed.includes('*')) {
+        options.allowedTools = permissions.allowed;
+      }
+      if (permissions.blocked.length > 0) {
+        options.disallowedTools = permissions.blocked;
+      }
+
       const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
         agentId,
         channelKey,
@@ -219,6 +231,18 @@ export class AgentProcessManager extends EventEmitter {
 
     if (tier >= 2) {
       options.env = { MAMA_DISABLE_HOOKS: 'true' };
+    }
+
+    // Structural tool enforcement via CLI flags
+    const permissions = this.permissionManager.resolvePermissions({
+      id: agentId,
+      ...agentConfig,
+    } as AgentPersonaConfig);
+    if (!permissions.allowed.includes('*')) {
+      options.allowedTools = permissions.allowed;
+    }
+    if (permissions.blocked.length > 0) {
+      options.disallowedTools = permissions.blocked;
     }
 
     const process = await this.processPool.getProcess(channelKey, options);
@@ -280,6 +304,18 @@ export class AgentProcessManager extends EventEmitter {
   ): string {
     const agent: AgentPersonaConfig = { id: agentId, ...agentConfig };
 
+    // Replace @DisplayName mentions in persona with platform-specific <@userId>
+    let resolvedPersona = personaContent;
+    if (this.mentionDelegationEnabled && this.botUserIdMap.size > 0) {
+      for (const [aid, cfg] of Object.entries(this.config.agents)) {
+        const userId = this.botUserIdMap.get(aid);
+        if (userId && cfg.display_name) {
+          // Replace @DisplayName (e.g. @DevBot → <@U123>)
+          resolvedPersona = resolvedPersona.replaceAll(`@${cfg.display_name}`, `<@${userId}>`);
+        }
+      }
+    }
+
     // Build permission prompt
     const permissionPrompt = this.permissionManager.buildPermissionPrompt(agent);
 
@@ -326,7 +362,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 - If another agent has already addressed a topic well, acknowledge it briefly
 
 ## Persona
-${personaContent}
+${resolvedPersona}
 
 ${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Guidelines
 - Stay in character as ${agentConfig.name}

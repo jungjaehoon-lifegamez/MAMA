@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 // eslint-disable-next-line no-unused-vars
-import { initDB, closeDB, getAdapter } from '../../src/mama/db-manager.js';
+import { initDB, closeDB, getAdapter } from '@jungjaehoon/mama-core/db-manager';
 import { saveDecisionTool } from '../../src/tools/save-decision.js';
 import { searchNarrativeTool } from '../../src/tools/search-narrative.js';
 import path from 'path';
