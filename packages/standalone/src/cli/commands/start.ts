@@ -12,7 +12,12 @@ import express from 'express';
 import path, { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 
-import { loadConfig, configExists, expandPath } from '../config/config-manager.js';
+import {
+  loadConfig,
+  configExists,
+  expandPath,
+  provisionDefaults,
+} from '../config/config-manager.js';
 import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
@@ -33,6 +38,12 @@ import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboa
 
 const { createGraphHandler } = require('../../api/graph-api.js');
 import http from 'node:http';
+
+// Port configuration — single source of truth
+/** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
+const API_PORT = 3847;
+/** Internal embedding server port (model inference, mobile chat, graph) */
+const EMBEDDING_PORT = 3849;
 
 // MAMA embedding server (keeps model in memory)
 let embeddingServer: any = null;
@@ -155,7 +166,7 @@ async function startEmbeddingServerIfAvailable(
   sessionStore?: any,
   graphHandler?: any
 ): Promise<void> {
-  const port = 3847;
+  const port = EMBEDDING_PORT;
 
   try {
     // Check if server already running
@@ -172,7 +183,7 @@ async function startEmbeddingServerIfAvailable(
       graphHandler,
     });
     if (embeddingServer) {
-      console.log('✓ Embedding server started (port 3847)');
+      console.log(`✓ Embedding server started (port ${EMBEDDING_PORT})`);
       if (messageRouter && sessionStore) {
         console.log('✓ Mobile Chat integrated with MessageRouter');
       }
@@ -285,8 +296,8 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     // Auto-open browser (after a delay for server to start)
     const needsOnboarding = !isOnboardingComplete();
     const targetUrl = needsOnboarding
-      ? 'http://localhost:3847/setup'
-      : 'http://localhost:3847/viewer';
+      ? `http://localhost:${API_PORT}/setup`
+      : `http://localhost:${API_PORT}/viewer`;
     setTimeout(() => {
       if (needsOnboarding) {
         console.log('🎭 First-time setup - Opening onboarding wizard...\n');
@@ -313,8 +324,8 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
       // Auto-open browser after server is ready
       const needsOnboarding = !isOnboardingComplete();
       const targetUrl = needsOnboarding
-        ? 'http://localhost:3847/setup'
-        : 'http://localhost:3847/viewer';
+        ? `http://localhost:${API_PORT}/setup`
+        : `http://localhost:${API_PORT}/viewer`;
 
       // Wait for server to be ready
       setTimeout(() => {
@@ -382,6 +393,13 @@ export async function runAgentLoop(
 ): Promise<void> {
   // Claude CLI is always used (Pi Agent removed for ToS compliance)
   console.log('✓ Claude CLI mode (ToS compliance)');
+
+  // Provision default persona templates and multi-agent config on first start
+  try {
+    await provisionDefaults();
+  } catch (error) {
+    console.warn(`[Provision] Warning: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   const oauthManager = new OAuthManager();
 
@@ -835,7 +853,7 @@ export async function runAgentLoop(
   // Start API server
   const apiServer = createApiServer({
     scheduler,
-    port: 3848,
+    port: API_PORT,
     onHeartbeat: async (prompt) => {
       try {
         await agentLoop.run(prompt);
@@ -1187,12 +1205,12 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const bodyData = req.body ? JSON.stringify(req.body) : '';
       const options = {
         hostname: 'localhost',
-        port: 3847,
+        port: EMBEDDING_PORT,
         path: req.url,
         method: req.method,
         headers: {
           ...req.headers,
-          host: 'localhost:3847',
+          host: `localhost:${EMBEDDING_PORT}`,
           'content-length': Buffer.byteLength(bodyData),
         },
       };
@@ -1213,7 +1231,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       next();
     }
   });
-  console.log('✓ Session API proxied to port 3847');
+  console.log(`✓ Session API proxied to port ${EMBEDDING_PORT}`);
 
   const publicDir = path.resolve(process.cwd(), 'public');
 
@@ -1253,16 +1271,16 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
           setupWss.emit('connection', ws, request);
         });
       } else if (url.pathname === '/ws') {
-        // Proxy chat WebSocket to embedding server (port 3847)
+        // Proxy chat WebSocket to embedding server
         const http = require('http');
         const options = {
           hostname: '127.0.0.1',
-          port: 3847,
+          port: EMBEDDING_PORT,
           path: request.url,
           method: 'GET',
           headers: {
             ...request.headers,
-            host: '127.0.0.1:3847',
+            host: `127.0.0.1:${EMBEDDING_PORT}`,
           },
         };
 
@@ -1288,7 +1306,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         socket.destroy();
       }
     });
-    console.log('✓ WebSocket upgrade handler registered (/ws → 3847, /setup-ws local)');
+    console.log(
+      `✓ WebSocket upgrade handler registered (/ws → ${EMBEDDING_PORT}, /setup-ws local)`
+    );
   }
 
   gateways.push(apiServer);

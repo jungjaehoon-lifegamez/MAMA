@@ -28,7 +28,7 @@ export { asyncHandler, validateRequired, ApiError } from './error-handler.js';
 export interface ApiServerOptions {
   /** Scheduler instance */
   scheduler: CronScheduler;
-  /** Port to listen on (default: 3848) */
+  /** Port to listen on (default: 3847) */
   port?: number;
   /** Log store for execution logs (default: InMemoryLogStore) */
   logStore?: ExecutionLogStore;
@@ -60,7 +60,7 @@ export interface ApiServer {
 export function createApiServer(options: ApiServerOptions): ApiServer {
   const {
     scheduler,
-    port = 3848,
+    port = 3847,
     logStore = new InMemoryLogStore(),
     heartbeatTracker = new InMemoryHeartbeatTracker(),
     onHeartbeat,
