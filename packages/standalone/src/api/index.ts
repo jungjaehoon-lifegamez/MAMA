@@ -116,36 +116,80 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         errorHandlersMounted = true;
       }
 
-      return new Promise((resolve, reject) => {
-        try {
-          // SECURITY: Bind to localhost only to prevent remote access
-          const host = process.env.MAMA_API_HOST || '127.0.0.1';
-          server = app.listen(port, host, () => {
-            const addr = server?.address();
-            if (addr && typeof addr === 'object') {
-              actualPort = addr.port;
-              console.log(`API server listening on http://${host}:${actualPort}`);
-              if (host === '0.0.0.0') {
-                console.warn('⚠️  WARNING: API server exposed to all interfaces!');
-                console.warn('   Set MAMA_API_HOST=127.0.0.1 for local-only access');
+      const host = process.env.MAMA_API_HOST || '127.0.0.1';
+
+      const tryListen = (): Promise<void> =>
+        new Promise((resolve, reject) => {
+          let settled = false;
+          try {
+            server = app.listen(port, host, () => {
+              if (settled) return;
+              settled = true;
+              const addr = server?.address();
+              if (addr && typeof addr === 'object') {
+                actualPort = addr.port;
+                console.log(`API server listening on http://${host}:${actualPort}`);
+                if (host === '0.0.0.0') {
+                  console.warn('⚠️  WARNING: API server exposed to all interfaces!');
+                  console.warn('   Set MAMA_API_HOST=127.0.0.1 for local-only access');
+                }
+                resolve();
+              } else {
+                reject(new Error(`Failed to bind to port ${port}`));
               }
-              resolve();
-            } else {
-              reject(new Error(`Failed to bind to port ${port}`));
+            });
+            server.on('error', (err: NodeJS.ErrnoException) => {
+              if (settled) return;
+              settled = true;
+              reject(err);
+            });
+          } catch (error) {
+            if (!settled) {
+              settled = true;
+              reject(error);
             }
-          });
-          server.on('error', (err: NodeJS.ErrnoException) => {
-            if (err.code === 'EADDRINUSE') {
-              console.error(
-                `Port ${port} is already in use. Try: lsof -i :${port} | awk 'NR>1 {print $2}' | xargs kill`
-              );
+          }
+        });
+
+      const MAX_RETRIES = 5;
+      const RETRY_DELAY_MS = 2000;
+
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          await tryListen();
+          break; // Success
+        } catch (err: any) {
+          if (err.code === 'EADDRINUSE' && attempt < MAX_RETRIES) {
+            console.warn(
+              `Port ${port} in use (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${RETRY_DELAY_MS}ms...`
+            );
+            if (attempt === 0) {
+              // First retry: try to kill the process holding the port
+              try {
+                const { execSync } = require('child_process');
+                try {
+                  execSync(`fuser -k ${port}/tcp 2>/dev/null`, { timeout: 5000 });
+                } catch {
+                  try {
+                    execSync(`lsof -t -i :${port} 2>/dev/null | xargs kill -9 2>/dev/null`, {
+                      timeout: 5000,
+                    });
+                  } catch {
+                    /* ignore */
+                  }
+                }
+              } catch {
+                /* ignore */
+              }
             }
-            reject(err);
-          });
-        } catch (error) {
-          reject(error);
+            await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+          } else if (err.code === 'EADDRINUSE') {
+            throw new Error(`Failed to bind to port ${port} after ${MAX_RETRIES + 1} attempts`);
+          } else {
+            throw err;
+          }
         }
-      });
+      }
     },
     async stop(): Promise<void> {
       return new Promise((resolve, reject) => {

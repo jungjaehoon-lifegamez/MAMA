@@ -1,5 +1,5 @@
-const { saveCheckpoint, loadCheckpoint } = require('../mama/mama-api');
-const { getAdapter } = require('../mama/memory-store');
+const { saveCheckpoint, loadCheckpoint } = require('@jungjaehoon/mama-core/mama-api');
+const { getAdapter } = require('@jungjaehoon/mama-core/memory-store');
 const { logRestartMetric } = require('../mama/restart-metrics');
 const { search } = require('../mama/search-engine');
 const { expand } = require('../mama/link-expander');

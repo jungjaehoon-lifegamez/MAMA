@@ -14,8 +14,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { generateQualityReportTool } from '../../src/tools/quality-metrics-tools.js';
 // eslint-disable-next-line no-unused-vars
 import { saveDecisionTool } from '../../src/tools/save-decision.js';
-import { initDB, getAdapter, closeDB } from '../../src/mama/memory-store.js';
-import mama from '../../src/mama/mama-api.js';
+import { initDB, getAdapter, closeDB } from '@jungjaehoon/mama-core/memory-store';
+import mama from '@jungjaehoon/mama-core/mama-api';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';

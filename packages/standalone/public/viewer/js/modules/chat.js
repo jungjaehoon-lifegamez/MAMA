@@ -244,12 +244,14 @@ export class ChatModule {
       case 'output':
       case 'stream':
         if (data.content) {
+          this.hideTypingIndicator();
           this.enableSend(true);
           this.appendStreamChunk(data.content);
         }
         break;
 
       case 'stream_end':
+        this.hideTypingIndicator();
         this.finalizeStreamMessage();
         break;
 
@@ -277,6 +279,10 @@ export class ChatModule {
 
       case 'tool_complete':
         this.completeToolCard(data.index);
+        break;
+
+      case 'typing':
+        this.showTypingIndicator(data.elapsed);
         break;
 
       case 'pong':
@@ -742,6 +748,40 @@ export class ChatModule {
     }
     this.rafPending = false;
     this.enableSend(true);
+  }
+
+  /**
+   * Show typing indicator while agent is processing
+   */
+  showTypingIndicator(elapsed) {
+    const container = document.getElementById('chat-messages');
+    let indicator = container.querySelector('.chat-typing-indicator');
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.className = 'chat-typing-indicator';
+      indicator.innerHTML = `
+        <div class="typing-dots">
+          <span></span><span></span><span></span>
+        </div>
+        <span class="typing-label">thinking...</span>`;
+      container.appendChild(indicator);
+      scrollToBottom(container);
+    }
+    if (elapsed) {
+      const label = indicator.querySelector('.typing-label');
+      label.textContent = `thinking... (${elapsed}s)`;
+    }
+  }
+
+  /**
+   * Hide typing indicator
+   */
+  hideTypingIndicator() {
+    const container = document.getElementById('chat-messages');
+    const indicator = container?.querySelector('.chat-typing-indicator');
+    if (indicator) {
+      indicator.remove();
+    }
   }
 
   // =============================================

@@ -15,7 +15,7 @@ const { search } = require('../mama/search-engine');
 const { expand } = require('../mama/link-expander');
 // eslint-disable-next-line no-unused-vars
 const { format, formatMultiple } = require('../mama/response-formatter');
-const { info, error: logError } = require('../mama/debug-logger');
+const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 
 /**
  * Search narrative tool definition

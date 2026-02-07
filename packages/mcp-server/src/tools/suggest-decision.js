@@ -9,7 +9,7 @@
  * @module suggest-decision
  */
 
-const mama = require('../mama/mama-api.js');
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 /**
  * Suggest decision tool definition
