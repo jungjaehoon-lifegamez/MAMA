@@ -336,6 +336,182 @@ heartbeat:
 
 During quiet hours, heartbeat is paused to avoid notifications.
 
+## Multi-Agent Swarm
+
+Run multiple AI agents in Discord that collaborate, delegate tasks, and work autonomously.
+
+> Developed independently, released the same day as Anthropic's [Agent Teams](https://docs.anthropic.com/en/docs/claude-code/agent-teams).
+> Same vision — coordinated AI agents — but designed for **chat platforms** (Discord/Slack/Telegram), not CLI.
+
+### Agent Tier System
+
+| Tier       | Role         | Tool Access                                       | Capabilities                             |
+| ---------- | ------------ | ------------------------------------------------- | ---------------------------------------- |
+| **Tier 1** | Orchestrator | All tools (Read, Write, Edit, Bash, ...)          | Full access + delegation to other agents |
+| **Tier 2** | Advisor      | Read-only (Read, Grep, Glob, WebSearch, WebFetch) | Analysis and recommendations             |
+| **Tier 3** | Executor     | Read-only (Read, Grep, Glob, WebSearch, WebFetch) | Scoped tasks, no delegation              |
+
+Tier defaults can be overridden per agent with explicit `tool_permissions.allowed/blocked`.
+
+### 5-Stage Message Routing
+
+Messages are routed through a priority pipeline:
+
+```text
+Message arrives
+    │
+    ├─ 1. Free Chat?     → All agents respond (when free_chat: true)
+    ├─ 2. Explicit Trigger? → "!dev fix the bug" → Developer responds
+    ├─ 3. Category Match? → "리뷰해줘" → Reviewer responds (regex patterns)
+    ├─ 4. Keyword Match?  → "bug" in auto_respond_keywords → Developer responds
+    └─ 5. Default Agent   → Fallback agent responds
+```
+
+### Configuration
+
+```yaml
+multi_agent:
+  enabled: true
+  free_chat: false
+
+  agents:
+    sisyphus:
+      name: 'Sisyphus'
+      display_name: '🏔️ Sisyphus'
+      trigger_prefix: '!sis'
+      persona_file: '~/.mama/personas/sisyphus.md'
+      bot_token: 'DISCORD_BOT_TOKEN_1'
+      tier: 1
+      can_delegate: true
+      auto_continue: true
+      auto_respond_keywords: ['architect', 'plan', '설계']
+      cooldown_ms: 5000
+
+    developer:
+      name: 'Developer'
+      display_name: '🔧 Developer'
+      trigger_prefix: '!dev'
+      persona_file: '~/.mama/personas/developer.md'
+      bot_token: 'DISCORD_BOT_TOKEN_2'
+      tier: 1 # Full access for code changes
+      auto_continue: true
+      auto_respond_keywords: ['bug', 'code', 'implement', '구현']
+
+    reviewer:
+      name: 'Reviewer'
+      display_name: '📝 Reviewer'
+      trigger_prefix: '!review'
+      persona_file: '~/.mama/personas/reviewer.md'
+      bot_token: 'DISCORD_BOT_TOKEN_3'
+      tier: 2 # Read-only for analysis
+      auto_respond_keywords: ['review', 'check', '리뷰', '검토']
+
+  # Regex-based category routing
+  categories:
+    - name: 'code_review'
+      patterns: ['리뷰해', "review\\s+(this|the)"]
+      agent_ids: ['reviewer']
+      priority: 10
+    - name: 'implementation'
+      patterns: ['구현해', 'implement', 'build']
+      agent_ids: ['developer']
+      priority: 5
+
+  # Autonomous work sessions
+  ultrawork:
+    enabled: true
+    max_steps: 20
+    max_duration: 1800000 # 30 minutes
+
+  # Auto-resume incomplete responses
+  task_continuation:
+    enabled: true
+    max_retries: 3
+
+  loop_prevention:
+    max_chain_length: 10
+    global_cooldown_ms: 2000
+```
+
+### Delegation
+
+Tier 1 agents can delegate tasks to other agents:
+
+```text
+DELEGATE::{agent_id}::{task description}
+```
+
+Example in a persona file:
+
+```markdown
+When implementation is needed, delegate:
+DELEGATE::developer::Implement the login endpoint with JWT
+
+When code review is needed, delegate:
+DELEGATE::reviewer::Review the auth module changes
+```
+
+**Constraints:**
+
+- Only Tier 1 agents with `can_delegate: true`
+- Maximum delegation depth: 1 (no re-delegation)
+- Circular delegation automatically prevented
+- Notifications appear in Discord
+
+### Task Continuation
+
+When an agent's response appears incomplete, MAMA auto-retries:
+
+- **Completion markers:** `DONE`, `완료`, `TASK_COMPLETE`, `finished`
+- **Incomplete signals:** "I'll continue", "계속하겠", truncation near 2000 chars
+- **Max retries:** Configurable (default: 3)
+- Supports Korean and English patterns
+
+### UltraWork Mode
+
+Trigger autonomous multi-step sessions:
+
+```
+User: "Build the auth system ultrawork"
+```
+
+**How it works:**
+
+1. Lead agent (Tier 1) analyzes the task and creates a plan
+2. Delegates specialized subtasks to Tier 2/3 agents
+3. Collects results, continues until done or limits reached
+4. Safety: max steps (20) and max duration (30 min)
+
+**Trigger keywords:** `ultrawork`, `울트라워크`, `deep work`, `autonomous`, `자율 작업`
+
+Session progress is reported in Discord in real-time.
+
+### Persona Files
+
+Each agent loads a persona from a markdown file:
+
+```markdown
+# Sisyphus - Lead Architect
+
+You are Sisyphus, the tireless lead architect.
+
+## Role
+
+- Break down complex tasks into manageable pieces
+- Delegate specialized work to Developer and Reviewer agents
+- Ensure quality and consistency
+
+## Delegation Guidelines
+
+When implementation is needed:
+DELEGATE::developer::task description here
+
+When code review is needed:
+DELEGATE::reviewer::review description here
+```
+
+Place persona files in `~/.mama/personas/`.
+
 ## Onboarding Wizard
 
 First-time setup includes a 9-phase autonomous onboarding:
@@ -636,8 +812,10 @@ MIT - see [LICENSE](../../LICENSE)
 
 MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While MAMA is a distinct implementation focused on local-first SQLite/MCP architecture, we appreciate their pioneering work in LLM memory management.
 
+The multi-agent swarm architecture was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode). Their agent orchestration approach informed our design. The key difference is that MAMA's swarm is built for **chat platforms** (Discord, Slack, Telegram) — multiple bot accounts collaborating in real-time channels — rather than a local CLI environment.
+
 ---
 
-**Author:** SpineLift Team  
-**Version:** 0.1.0  
-**Last Updated:** 2026-02-01
+**Author:** SpineLift Team
+**Version:** 0.4.0
+**Last Updated:** 2026-02-06

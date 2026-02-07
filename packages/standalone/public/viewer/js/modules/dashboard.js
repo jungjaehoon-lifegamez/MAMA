@@ -51,6 +51,33 @@ export class DashboardModule {
       }
 
       this.data = await response.json();
+
+      // Load multi-agent status (Sprint 3 F2)
+      try {
+        const multiAgentResponse = await fetch('/api/multi-agent/status');
+        if (multiAgentResponse.ok) {
+          this.multiAgentData = await multiAgentResponse.json();
+        } else {
+          this.multiAgentData = { enabled: false, agents: [] };
+        }
+      } catch (e) {
+        console.warn('[Dashboard] Multi-agent status unavailable:', e);
+        this.multiAgentData = { enabled: false, agents: [] };
+      }
+
+      // Load delegations (F4 endpoint)
+      try {
+        const delegationsResponse = await fetch('/api/multi-agent/delegations?limit=10');
+        if (delegationsResponse.ok) {
+          this.delegationsData = await delegationsResponse.json();
+        } else {
+          this.delegationsData = { delegations: [], count: 0 };
+        }
+      } catch (e) {
+        console.warn('[Dashboard] Delegations unavailable:', e);
+        this.delegationsData = { delegations: [], count: 0 };
+      }
+
       this.render();
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
@@ -72,6 +99,7 @@ export class DashboardModule {
     this.renderMemoryStats();
     this.renderAgentConfig();
     this.renderToolStatus();
+    this.renderAgentSwarm(); // Sprint 3 F2
     this.renderTopTopics();
   }
 
@@ -464,6 +492,153 @@ export class DashboardModule {
         : '';
 
     container.innerHTML = html + mcpSection;
+  }
+
+  /**
+   * Render agent swarm section
+   * Sprint 3 F2: Multi-agent dashboard
+   */
+  renderAgentSwarm() {
+    const container = document.getElementById('dashboard-agent-swarm');
+    if (!container) {
+      return;
+    }
+
+    const multiAgent = this.multiAgentData || { enabled: false, agents: [] };
+
+    if (!multiAgent.enabled) {
+      container.innerHTML = `
+        <p class="text-gray-500 dark:text-gray-400 text-sm text-center py-4">
+          Multi-agent is not enabled. Enable in <a href="#" class="text-indigo-600 hover:underline" onclick="document.querySelector('[data-tab=\\'settings\\']').click(); return false;">Settings</a>.
+        </p>
+      `;
+      return;
+    }
+
+    const agents = multiAgent.agents || [];
+
+    if (agents.length === 0) {
+      container.innerHTML = `
+        <p class="text-gray-500 dark:text-gray-400 text-sm text-center py-4">
+          No agents configured yet.
+        </p>
+      `;
+      return;
+    }
+
+    // Tier badge colors
+    const tierColors = {
+      1: { bg: 'bg-indigo-100', text: 'text-indigo-700', label: 'T1' },
+      2: { bg: 'bg-green-100', text: 'text-green-700', label: 'T2' },
+      3: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'T3' },
+    };
+
+    // Status icons (F2 enhanced)
+    const statusIcons = {
+      idle: '🟢', // 대기 중
+      online: '🟢', // 온라인 (fallback)
+      busy: '🟡', // 작업 중
+      starting: '🔵', // 시작 중
+      dead: '🔴', // 비정상 종료
+      offline: '🔴', // 오프라인
+      disabled: '⚪', // 비활성
+    };
+
+    // Status text labels
+    const statusLabels = {
+      idle: 'Ready',
+      online: 'Ready',
+      busy: 'Working...',
+      starting: 'Starting...',
+      dead: 'Error',
+      offline: 'Offline',
+      disabled: 'Disabled',
+    };
+
+    // Agent cards
+    const agentCards = agents
+      .map((agent) => {
+        const tier = tierColors[agent.tier] || tierColors[1];
+        const statusIcon = statusIcons[agent.status] || statusIcons.offline;
+        const statusLabel = statusLabels[agent.status] || 'Unknown';
+        const friendlyModel = formatModelName(agent.model) || agent.model || 'Default';
+
+        return `
+          <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 hover:shadow-md transition-shadow">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="flex items-center gap-2">
+                <span class="${tier.bg} ${tier.text} text-xs font-bold px-1.5 py-0.5 rounded">${tier.label}</span>
+                <span class="text-xs">${statusIcon} ${escapeHtml(statusLabel)}</span>
+              </div>
+            </div>
+            <h3 class="font-semibold text-gray-900 dark:text-gray-100 text-sm">${escapeHtml(agent.name)}</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(friendlyModel)}</p>
+            ${
+              agent.lastActivity
+                ? `<p class="text-[10px] text-gray-400 mt-1">Last: ${this.formatRelativeTime(agent.lastActivity)}</p>`
+                : ''
+            }
+          </div>
+        `;
+      })
+      .join('');
+
+    // Recent delegations (F2 F4 API integration)
+    const delegationsData = this.delegationsData || { delegations: [], count: 0 };
+    const delegations = delegationsData.delegations || [];
+
+    // Status badge colors
+    const statusColors = {
+      completed: 'bg-green-100 text-green-700',
+      claimed: 'bg-yellow-100 text-yellow-700',
+      failed: 'bg-red-100 text-red-700',
+      pending: 'bg-gray-100 text-gray-700',
+    };
+
+    const delegationList =
+      delegations.length > 0
+        ? delegations
+            .slice(0, 5)
+            .map((del) => {
+              const statusColor = statusColors[del.status] || statusColors.pending;
+              const timestamp = del.completedAt || del.claimedAt;
+              return `
+            <div class="text-xs text-gray-700 dark:text-gray-300 py-1 border-b border-gray-100 dark:border-gray-700 last:border-0">
+              <span class="${statusColor} text-[10px] font-bold px-1 py-0.5 rounded">${escapeHtml(del.status)}</span>
+              <span class="font-medium">${escapeHtml(del.claimedBy || 'unknown')}</span>:
+              "${escapeHtml(del.description)}"
+              ${del.wave ? `<span class="text-gray-400">(wave ${del.wave})</span>` : ''}
+              ${timestamp ? `<span class="text-gray-400 text-[10px]"> ${this.formatRelativeTime(timestamp)}</span>` : ''}
+            </div>
+          `;
+            })
+            .join('')
+        : '<p class="text-xs text-gray-400">No recent delegations</p>';
+
+    // Active chains
+    const activeChains = multiAgent.activeChains || 0;
+    const chainBadge =
+      activeChains > 0
+        ? `<span class="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">${activeChains} active</span>`
+        : '<span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">0 active</span>';
+
+    container.innerHTML = `
+      <div class="mb-3">
+        <p class="text-xs text-gray-500 mb-2">Agent Team:</p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+          ${agentCards}
+        </div>
+      </div>
+      <div class="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs text-gray-500">Delegation Chain:</p>
+          ${chainBadge}
+        </div>
+        <div class="bg-gray-50 dark:bg-gray-800 rounded p-2">
+          ${delegationList}
+        </div>
+      </div>
+    `;
   }
 
   /**

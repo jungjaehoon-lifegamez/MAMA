@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - mama-os@0.4.0: Multi-Agent Swarm & Agent Provisioning
+
+**Builtin Agent Personas & Auto-Provisioning** (2026-02-07)
+
+- **Builtin Persona Templates** - 4 persona files bundled in `templates/personas/` (sisyphus, developer, reviewer, pm)
+- **Auto-Provisioning** - `provisionDefaults()` copies templates to `~/.mama/personas/` on first start
+- **Default Multi-Agent Config** - Injects disabled multi_agent config into config.yaml if missing
+- **Onboarding Phase 7b** - Agent team introduction during onboarding with activation option
+- **OS Agent Multi-Agent Management** - OS agent can configure/activate/customize agent team anytime
+- **Port Constants** - Extracted `API_PORT=3847` and `EMBEDDING_PORT=3849` as named constants
+
+**Multi-Agent Swarm System** (2026-02-06) - Coordinated AI agents with hierarchical delegation for Discord.
+
+- **Tool Permission Manager** - 3-tier permission system (Tier 1=full, 2/3=read-only), wildcard matching, system prompt injection
+- **Category Router** - Regex-based message routing, Korean/English patterns, priority ordering, compiled regex cache
+- **Task Continuation Enforcer** - Completion marker detection (DONE/완료/✅), truncation sensing, auto-retry (max 3)
+- **Delegation Manager** - `DELEGATE::{agent_id}::{task}` pattern, circular prevention, depth-1 limit, Discord notifications
+- **UltraWork Manager** - Autonomous multi-step sessions combining delegation + continuation, safety limits (20 steps / 30 min)
+- **5-Stage Message Routing** - free_chat → explicit_trigger → category_match → keyword_match → default_agent
+- **Agent Config Extensions** - `tier`, `can_delegate`, `auto_continue`, `tool_permissions` fields (backward compatible)
+- **173 multi-agent tests** across 8 test files (6 new + 2 existing)
+
+### Changed - mama-os@0.4.0
+
+- **MultiAgentOrchestrator** - Integrated CategoryRouter for stage-3 routing
+- **AgentProcessManager** - System prompt now includes tool permission and delegation sections
+- **Config Types** - Synced `cli/config/types.ts` with `multi-agent/types.ts` for categories, ultrawork, task_continuation
+
 ## [0.3.16] - 2026-02-06
 
 ### Fixed - mama-os@0.3.16

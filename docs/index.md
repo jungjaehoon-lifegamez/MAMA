@@ -1,6 +1,6 @@
 # MAMA Plugin Documentation
 
-**Version:** 0.3.1 (MAMA OS) | 1.7.0 (MCP Server)
+**Version:** 0.4.0 (MAMA OS) | 1.7.2 (MCP Server)
 **MAMA:** Memory-Augmented MCP Assistant
 **Navigation Hub**
 
@@ -140,5 +140,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.1.0 - Standalone Agent, Gateway Integrations & Web Dashboard
-**Last Updated:** 2026-02-01
+**Status:** MAMA OS v0.4.0 - Standalone Agent, Multi-Agent Swarm, Gateway Integrations & Web Dashboard
+**Last Updated:** 2026-02-07

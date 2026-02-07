@@ -12,6 +12,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
+import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
@@ -180,8 +181,9 @@ To call a Gateway Tool, output a JSON block:
 }
 
 export class AgentLoop {
-  private readonly agent: ClaudeCLIWrapper;
+  private readonly agent: ClaudeCLIWrapper | PersistentCLIAdapter;
   private readonly claudeCLI: ClaudeCLIWrapper | null = null;
+  private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
   private systemPromptOverride?: string;
   private readonly maxTurns: number;
@@ -194,6 +196,7 @@ export class AgentLoop {
   private readonly sessionPool: SessionPool;
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
+  private readonly usePersistentCLI: boolean;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -239,14 +242,36 @@ export class AgentLoop {
       ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
       : basePrompt;
 
-    this.claudeCLI = new ClaudeCLIWrapper({
-      model: options.model ?? 'claude-sonnet-4-20250514',
-      sessionId,
-      systemPrompt: defaultSystemPrompt,
-      mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-      dangerouslySkipPermissions: true,
-      useGatewayTools: useGatewayMode,
-    });
+    // Choose CLI mode: Persistent (fast, experimental) or Standard (stable)
+    this.usePersistentCLI = options.usePersistentCLI ?? false;
+
+    if (this.usePersistentCLI) {
+      // Persistent CLI mode: keeps Claude process alive for multi-turn conversations
+      // Response time: ~2-3s instead of ~16-30s
+      this.persistentCLI = new PersistentCLIAdapter({
+        model: options.model ?? 'claude-sonnet-4-20250514',
+        sessionId,
+        systemPrompt: defaultSystemPrompt,
+        mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
+        // Headless daemon — no interactive permission prompts possible
+        dangerouslySkipPermissions: true,
+        useGatewayTools: useGatewayMode,
+      });
+      this.agent = this.persistentCLI;
+      console.log('[AgentLoop] 🚀 Persistent CLI mode enabled - faster responses');
+    } else {
+      // Standard CLI mode: spawns new process per message
+      this.claudeCLI = new ClaudeCLIWrapper({
+        model: options.model ?? 'claude-sonnet-4-20250514',
+        sessionId,
+        systemPrompt: defaultSystemPrompt,
+        mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
+        // Headless daemon — no interactive permission prompts possible
+        dangerouslySkipPermissions: true,
+        useGatewayTools: useGatewayMode,
+      });
+      this.agent = this.claudeCLI;
+    }
 
     // Log tool mode for transparency
     if (useMCPMode) {
@@ -260,12 +285,12 @@ export class AgentLoop {
         ' mcp=' +
         JSON.stringify(this.toolsConfig.mcp)
     );
-    this.agent = this.claudeCLI;
 
     this.mcpExecutor = new GatewayToolExecutor(executorOptions);
     this.systemPromptOverride = options.systemPrompt;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
-    this.model = options.model ?? 'claude-opus-4-20250514';
+    // Use the same default model as CLI wrappers above (L252, L264)
+    this.model = options.model ?? 'claude-sonnet-4-20250514';
     this.onTurn = options.onTurn;
     this.onToolUse = options.onToolUse;
 
@@ -385,12 +410,27 @@ export class AgentLoop {
       options?.channelId ?? this.sessionKey
     );
 
-    // Use session pool for conversation continuity (instead of resetting each time)
-    // This allows Claude CLI to maintain its own conversation history
-    if (this.claudeCLI) {
-      const cliSessionId = this.sessionPool.getSessionId(channelKey);
-      this.claudeCLI.setSessionId(cliSessionId);
-      console.log(`[AgentLoop] Using session pool: ${channelKey} → ${cliSessionId}`);
+    // Use session pool for conversation continuity
+    // IMPORTANT: If caller passes cliSessionId, use it directly to avoid double-locking
+    // MessageRouter already calls getSession() and passes the result via options
+    let sessionIsNew = options?.resumeSession === undefined ? true : !options.resumeSession;
+    let ownedSession = false;
+
+    // Set session ID on the agent (works for both ClaudeCLIWrapper and PersistentCLIAdapter)
+    if (options?.cliSessionId) {
+      this.agent.setSessionId(options.cliSessionId);
+      console.log(
+        `[AgentLoop] Using caller session: ${channelKey} → ${options.cliSessionId} (${sessionIsNew ? 'NEW' : 'RESUME'})`
+      );
+    } else {
+      // Fallback: get session from pool (for direct AgentLoop usage)
+      const { sessionId: cliSessionId, isNew } = this.sessionPool.getSession(channelKey);
+      sessionIsNew = isNew;
+      ownedSession = true;
+      this.agent.setSessionId(cliSessionId);
+      console.log(
+        `[AgentLoop] Session pool: ${channelKey} → ${cliSessionId} (${isNew ? 'NEW' : 'RESUME'})`
+      );
     }
 
     try {
@@ -436,14 +476,24 @@ export class AgentLoop {
           },
         };
 
-        const promptText = this.formatHistoryAsPrompt(history);
+        // Persistent CLI preserves context automatically - only send new messages
+        // Non-persistent CLI needs full history formatted as prompt
+        const promptText = this.usePersistentCLI
+          ? this.formatLastMessageOnly(history)
+          : this.formatHistoryAsPrompt(history);
+
         let piResult;
         try {
-          // Pass role-specific model and resume flag if provided in options
+          // Pass role-specific model and resume flag based on session state
+          // First turn of new session: --session-id (inject system prompt)
+          // Subsequent turns (tool loop) or resumed sessions: --resume (skip system prompt)
+          const shouldResume = !sessionIsNew || turn > 1;
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
-            resumeSession: options?.resumeSession,
+            resumeSession: shouldResume,
           });
+          // After first successful call, mark session as not new for subsequent turns
+          if (turn === 1) sessionIsNew = false;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error('[AgentLoop] Claude CLI error:', errorMessage);
@@ -461,7 +511,7 @@ export class AgentLoop {
             // Reset session in pool so it creates a new one
             this.sessionPool.resetSession(channelKey);
             const newSessionId = this.sessionPool.getSessionId(channelKey);
-            this.claudeCLI?.setSessionId(newSessionId);
+            this.agent.setSessionId(newSessionId);
 
             // Retry with new session (--session-id instead of --resume)
             piResult = await this.agent.prompt(promptText, callbacks, {
@@ -622,7 +672,10 @@ export class AgentLoop {
       };
     } finally {
       // Always release session lock, even on error
-      this.sessionPool.releaseSession(channelKey);
+      // BUT only if we own the session (not passed by caller)
+      if (ownedSession) {
+        this.sessionPool.releaseSession(channelKey);
+      }
     }
   }
 
@@ -809,6 +862,74 @@ export class AgentLoop {
       })
       .filter(Boolean)
       .join('\n\n');
+  }
+
+  /**
+   * Format only the last user message for persistent CLI
+   * Persistent CLI maintains context automatically, so we only send the new message
+   */
+  private formatLastMessageOnly(history: Message[]): string {
+    // Find the last user message in the history
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === 'user') {
+        const content = msg.content;
+        let text: string;
+
+        if (typeof content === 'string') {
+          text = content;
+        } else if (Array.isArray(content)) {
+          const parts: string[] = [];
+          for (const block of content as any[]) {
+            if (block.type === 'text') {
+              parts.push(block.text);
+            } else if (block.type === 'image' && block.localPath) {
+              // Include image instructions for persistent CLI as well
+              parts.push(
+                `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
+                  `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
+              );
+            } else if (block.type === 'image' && block.source?.data) {
+              // Base64-encoded image — save to disk so persistent CLI can read it
+              const fs = require('fs');
+              const path = require('path');
+              const mediaDir = path.join(
+                process.env.HOME || '',
+                '.mama',
+                'workspace',
+                'media',
+                'inbound'
+              );
+              fs.mkdirSync(mediaDir, { recursive: true });
+              const imagePath = path.join(mediaDir, `${Date.now()}.jpg`);
+              try {
+                fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
+                parts.push(
+                  `**[MANDATORY IMAGE]** The user has attached an image at: ${imagePath}\n` +
+                    `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
+                );
+              } catch {
+                parts.push('[Image attached but could not be processed]');
+              }
+            } else if (block.type === 'tool_result') {
+              const status = block.is_error ? 'ERROR' : 'SUCCESS';
+              parts.push(`[Tool Result: ${status}]\n${block.content}`);
+            } else if (block.type === 'tool_use') {
+              parts.push(
+                `[Tool Call: ${block.name}]\nInput: ${JSON.stringify(block.input, null, 2)}`
+              );
+            }
+          }
+          text = parts.join('\n');
+        } else {
+          text = '';
+        }
+
+        return text;
+      }
+    }
+    // Fallback: if no user message found, return empty string
+    return '';
   }
 
   /**

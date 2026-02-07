@@ -796,7 +796,14 @@ async function handleCheckpointsRequest(req, res) {
  *
  * @returns {Function} Route handler function
  */
-function createGraphHandler() {
+/**
+ * Create graph handler with optional dependencies
+ *
+ * @param {Object} options - Optional dependencies for multi-agent endpoints
+ * @param {Function} options.getAgentStates - Returns Map<string, string> of agentId -> state
+ * @param {Function} options.getSwarmTasks - Returns Array<SwarmTask> for recent delegations
+ */
+function createGraphHandler(options = {}) {
   return async function graphHandler(req, res) {
     // Parse URL
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -1139,6 +1146,30 @@ function createGraphHandler() {
     // Route: GET /api/memory/export - export decisions (Phase 6)
     if (pathname === '/api/memory/export' && req.method === 'GET') {
       await handleExportRequest(req, res, params);
+      return true;
+    }
+
+    // Route: GET /api/multi-agent/status - get multi-agent system status (Sprint 3 F4)
+    if (pathname === '/api/multi-agent/status' && req.method === 'GET') {
+      await handleMultiAgentStatusRequest(req, res, options);
+      return true;
+    }
+
+    // Route: GET /api/multi-agent/agents - get all agents config (Sprint 3 F4)
+    if (pathname === '/api/multi-agent/agents' && req.method === 'GET') {
+      await handleMultiAgentAgentsRequest(req, res);
+      return true;
+    }
+
+    // Route: PUT /api/multi-agent/agents/:id - update agent config (Sprint 3 F4)
+    if (pathname.startsWith('/api/multi-agent/agents/') && req.method === 'PUT') {
+      await handleMultiAgentUpdateAgentRequest(req, res, pathname);
+      return true;
+    }
+
+    // Route: GET /api/multi-agent/delegations - get recent delegations (Sprint 3 F4)
+    if (pathname === '/api/multi-agent/delegations' && req.method === 'GET') {
+      await handleMultiAgentDelegationsRequest(req, res, options);
       return true;
     }
 
@@ -1489,6 +1520,22 @@ async function handleGetConfigRequest(req, res) {
           chatwork: 'chat_bot',
         },
       },
+      // Multi-agent configuration (Sprint 3)
+      multi_agent: config.multi_agent
+        ? {
+            enabled: config.multi_agent.enabled || false,
+            agents: maskAgentsTokens(config.multi_agent.agents || {}),
+            loop_prevention: config.multi_agent.loop_prevention || {
+              max_chain_length: 3,
+              global_cooldown_ms: 2000,
+              chain_window_ms: 60000,
+            },
+            free_chat: config.multi_agent.free_chat || false,
+            default_agent: config.multi_agent.default_agent || null,
+            mention_delegation: config.multi_agent.mention_delegation || false,
+            max_mention_depth: config.multi_agent.max_mention_depth || 3,
+          }
+        : undefined,
     };
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1568,6 +1615,27 @@ function maskToken(token) {
 }
 
 /**
+ * Mask tokens in multi-agent config
+ * Returns agents object with masked bot tokens
+ */
+function maskAgentsTokens(agents) {
+  const masked = {};
+  for (const [id, agent] of Object.entries(agents)) {
+    masked[id] = { ...agent };
+    if (agent.bot_token) {
+      masked[id].bot_token = maskToken(agent.bot_token);
+    }
+    if (agent.slack_bot_token) {
+      masked[id].slack_bot_token = maskToken(agent.slack_bot_token);
+    }
+    if (agent.slack_app_token) {
+      masked[id].slack_app_token = maskToken(agent.slack_app_token);
+    }
+  }
+  return masked;
+}
+
+/**
  * Merge config updates, preserving existing tokens if masked value sent
  */
 function mergeConfigUpdates(current, updates) {
@@ -1635,6 +1703,37 @@ function mergeConfigUpdates(current, updates) {
     };
     if (updates.chatwork.api_token && !updates.chatwork.api_token.startsWith('****')) {
       merged.chatwork.api_token = updates.chatwork.api_token;
+    }
+  }
+
+  // Multi-agent config (Sprint 3)
+  if (updates.multi_agent) {
+    merged.multi_agent = {
+      ...current.multi_agent,
+      ...updates.multi_agent,
+    };
+
+    // Merge agents, preserving existing tokens if masked
+    if (updates.multi_agent.agents) {
+      merged.multi_agent.agents = { ...current.multi_agent?.agents };
+      for (const [agentId, agentUpdates] of Object.entries(updates.multi_agent.agents)) {
+        const currentAgent = current.multi_agent?.agents?.[agentId] || {};
+        merged.multi_agent.agents[agentId] = {
+          ...currentAgent,
+          ...agentUpdates,
+        };
+
+        // Preserve existing tokens if masked
+        if (agentUpdates.bot_token && agentUpdates.bot_token.startsWith('****')) {
+          merged.multi_agent.agents[agentId].bot_token = currentAgent.bot_token;
+        }
+        if (agentUpdates.slack_bot_token && agentUpdates.slack_bot_token.startsWith('****')) {
+          merged.multi_agent.agents[agentId].slack_bot_token = currentAgent.slack_bot_token;
+        }
+        if (agentUpdates.slack_app_token && agentUpdates.slack_app_token.startsWith('****')) {
+          merged.multi_agent.agents[agentId].slack_app_token = currentAgent.slack_app_token;
+        }
+      }
     }
   }
 
@@ -1781,6 +1880,314 @@ function exportToMarkdown(decisions) {
   }
 
   return lines.join('\n');
+}
+
+/**
+ * Handle GET /api/multi-agent/status - get multi-agent system status
+ * Sprint 3 F4: Dashboard agent status panel
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleMultiAgentStatusRequest(req, res, options = {}) {
+  try {
+    const config = loadMAMAConfig();
+    const multiAgentConfig = config.multi_agent || { enabled: false, agents: {} };
+
+    // Get real-time agent states if available
+    const agentStatesMap = options.getAgentStates ? options.getAgentStates() : null;
+
+    // Build agents array with status
+    const agents = [];
+    if (multiAgentConfig.enabled && multiAgentConfig.agents) {
+      for (const [id, agentConfig] of Object.entries(multiAgentConfig.agents)) {
+        // Determine status: real-time if available, else disabled/online from config
+        let status = 'online';
+        if (agentConfig.enabled === false) {
+          status = 'disabled';
+        } else if (agentStatesMap && agentStatesMap.has(id)) {
+          // Real-time status from AgentProcessManager
+          status = agentStatesMap.get(id);
+        }
+
+        agents.push({
+          id,
+          name: agentConfig.name || id,
+          tier: agentConfig.tier || 1,
+          model: agentConfig.model || config.agent?.model || 'claude-sonnet-4-20250514',
+          status,
+          lastActivity: null, // TODO: track from CLI process manager (future)
+        });
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        enabled: multiAgentConfig.enabled || false,
+        agents,
+        recentDelegations: [], // Moved to /delegations endpoint
+        activeChains: 0, // TODO: track from chain manager (future)
+      })
+    );
+  } catch (error) {
+    console.error('[GraphAPI] Multi-agent status error:', error.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'MULTI_AGENT_STATUS_ERROR',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle GET /api/multi-agent/agents - get all agents config
+ * Sprint 3 F4: Settings UI agent list
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleMultiAgentAgentsRequest(req, res) {
+  try {
+    const config = loadMAMAConfig();
+    const multiAgentConfig = config.multi_agent || { enabled: false, agents: {} };
+
+    // Convert agents object to array with masked tokens
+    const agentsList = [];
+    if (multiAgentConfig.agents) {
+      for (const [id, agentConfig] of Object.entries(multiAgentConfig.agents)) {
+        agentsList.push({
+          id,
+          name: agentConfig.name || id,
+          display_name: agentConfig.display_name || agentConfig.name || id,
+          tier: agentConfig.tier || 1,
+          model: agentConfig.model || null,
+          enabled: agentConfig.enabled !== false,
+          persona_file: agentConfig.persona_file || null,
+          trigger_prefix: agentConfig.trigger_prefix || null,
+          bot_token: agentConfig.bot_token ? maskToken(agentConfig.bot_token) : null,
+          slack_bot_token: agentConfig.slack_bot_token
+            ? maskToken(agentConfig.slack_bot_token)
+            : null,
+          slack_app_token: agentConfig.slack_app_token
+            ? maskToken(agentConfig.slack_app_token)
+            : null,
+          auto_respond_keywords: agentConfig.auto_respond_keywords || [],
+          cooldown_ms: agentConfig.cooldown_ms || 5000,
+          can_delegate: agentConfig.can_delegate || false,
+          tool_permissions: agentConfig.tool_permissions || null,
+        });
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ agents: agentsList }));
+  } catch (error) {
+    console.error('[GraphAPI] Multi-agent agents list error:', error.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'MULTI_AGENT_AGENTS_ERROR',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle PUT /api/multi-agent/agents/:id - update agent config
+ * Sprint 3 F4: Settings UI agent update
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ * @param {string} pathname - Request pathname
+ */
+async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
+  try {
+    // Extract agent ID from URL (n1: improved regex to exclude slashes)
+    const match = pathname.match(/\/api\/multi-agent\/agents\/([^/]+)/);
+    if (!match) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'INVALID_URL',
+          message: 'Invalid agent ID in URL',
+        })
+      );
+      return;
+    }
+
+    const agentId = match[1];
+
+    // m1: Validate agent ID format (alphanumeric, underscore, hyphen only)
+    if (!/^[a-z0-9_-]+$/i.test(agentId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'INVALID_AGENT_ID',
+          message: 'Invalid agent ID format',
+        })
+      );
+      return;
+    }
+
+    const body = await readBody(req);
+
+    // Load current config
+    const config = loadMAMAConfig();
+    if (!config.multi_agent) {
+      config.multi_agent = { enabled: false, agents: {} };
+    }
+    if (!config.multi_agent.agents) {
+      config.multi_agent.agents = {};
+    }
+    if (!config.multi_agent.agents[agentId]) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'AGENT_NOT_FOUND',
+          message: `Agent '${agentId}' not found`,
+        })
+      );
+      return;
+    }
+
+    // Merge updates, preserve existing tokens if masked
+    const currentAgent = config.multi_agent.agents[agentId];
+    const updatedAgent = { ...currentAgent };
+
+    // Update non-token fields
+    if (body.name !== undefined) {
+      updatedAgent.name = body.name;
+    }
+    if (body.display_name !== undefined) {
+      updatedAgent.display_name = body.display_name;
+    }
+    if (body.tier !== undefined) {
+      updatedAgent.tier = body.tier;
+    }
+    if (body.model !== undefined) {
+      updatedAgent.model = body.model;
+    }
+    if (body.enabled !== undefined) {
+      updatedAgent.enabled = body.enabled;
+    }
+    if (body.persona_file !== undefined) {
+      updatedAgent.persona_file = body.persona_file;
+    }
+    if (body.trigger_prefix !== undefined) {
+      updatedAgent.trigger_prefix = body.trigger_prefix;
+    }
+    if (body.auto_respond_keywords !== undefined) {
+      updatedAgent.auto_respond_keywords = body.auto_respond_keywords;
+    }
+    if (body.cooldown_ms !== undefined) {
+      updatedAgent.cooldown_ms = body.cooldown_ms;
+    }
+    if (body.can_delegate !== undefined) {
+      updatedAgent.can_delegate = body.can_delegate;
+    }
+    if (body.tool_permissions !== undefined) {
+      updatedAgent.tool_permissions = body.tool_permissions;
+    }
+
+    // Helper: check if token is masked (****xxxx pattern)
+    const isMaskedToken = (token) => /^\*{4}.{0,4}$/.test(token);
+
+    // Only update tokens if not masked
+    if (body.bot_token && !isMaskedToken(body.bot_token)) {
+      updatedAgent.bot_token = body.bot_token;
+    }
+    if (body.slack_bot_token && !isMaskedToken(body.slack_bot_token)) {
+      updatedAgent.slack_bot_token = body.slack_bot_token;
+    }
+    if (body.slack_app_token && !isMaskedToken(body.slack_app_token)) {
+      updatedAgent.slack_app_token = body.slack_app_token;
+    }
+
+    // Save updated config
+    config.multi_agent.agents[agentId] = updatedAgent;
+    saveMAMAConfig(config);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        success: true,
+        message: `Agent '${agentId}' updated successfully`,
+      })
+    );
+  } catch (error) {
+    console.error('[GraphAPI] Multi-agent update agent error:', error.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'MULTI_AGENT_UPDATE_ERROR',
+        message: error.message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle GET /api/multi-agent/delegations - get recent delegation logs
+ * Sprint 3 F4: Dashboard delegation chain visualization
+ *
+ * @param {Object} req - HTTP request
+ * @param {Object} res - HTTP response
+ */
+async function handleMultiAgentDelegationsRequest(req, res, options = {}) {
+  try {
+    // Parse URL for query parameters
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+
+    // Get swarm tasks if available
+    let delegations = [];
+    if (options.getSwarmTasks) {
+      try {
+        const tasks = options.getSwarmTasks(limit);
+        delegations = tasks.map((task) => ({
+          id: task.id,
+          description: task.description,
+          category: task.category,
+          wave: task.wave,
+          status: task.status,
+          claimedBy: task.claimed_by,
+          claimedAt: task.claimed_at,
+          completedAt: task.completed_at,
+          result: task.result,
+        }));
+      } catch (err) {
+        console.error('[GraphAPI] Failed to fetch swarm tasks:', err.message);
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        delegations,
+        count: delegations.length,
+      })
+    );
+  } catch (error) {
+    console.error('[GraphAPI] Multi-agent delegations error:', error.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'MULTI_AGENT_DELEGATIONS_ERROR',
+        message: error.message,
+      })
+    );
+  }
 }
 
 /**

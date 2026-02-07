@@ -41,7 +41,12 @@ export {
 export type { SplitOptions } from './message-splitter.js';
 
 // Channel history (for message context)
-export { ChannelHistory, getChannelHistory, setChannelHistory } from './channel-history.js';
+export {
+  ChannelHistory,
+  getChannelHistory,
+  setChannelHistory,
+  initChannelHistory,
+} from './channel-history.js';
 export type { HistoryEntry, ChannelHistoryConfig } from './channel-history.js';
 
 // Plugin system

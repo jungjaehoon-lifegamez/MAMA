@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-07
+
+### Added
+
+**Builtin Agent Personas & Auto-Provisioning** (2026-02-07)
+
+- **Builtin Persona Templates** - 4 persona files bundled in `templates/personas/`
+  - `sisyphus.md` - Tier 1 Orchestrator (plans, delegates, verifies)
+  - `developer.md` - Tier 2 Implementation Specialist (implements, tests, reports)
+  - `reviewer.md` - Tier 3 Code Quality Guardian (reviews, approves/rejects)
+  - `pm.md` - Optional Product Manager agent
+- **Auto-Provisioning** - `provisionDefaults()` copies templates to `~/.mama/personas/` on first start
+- **Default Multi-Agent Config** - Injects disabled multi_agent config into config.yaml if missing
+- **Onboarding Phase 7b** - Agent team introduction during onboarding with activation option
+- **OS Agent Multi-Agent Management** - OS agent can configure/activate/customize agent team anytime
+- **Port Constants** - Extracted `API_PORT=3847` and `EMBEDDING_PORT=3849` as named constants
+
+**Multi-Agent Swarm** (2026-02-06) - Coordinated AI agents with hierarchical delegation for Discord.
+
+- **3-Tier Agent Hierarchy** - Tier 1 (full tools + delegation), Tier 2 (read-only advisory), Tier 3 (scoped execution)
+- **Tool Permission Manager** - Per-agent tool access control with wildcard matching and system prompt enforcement
+- **Category Router** - Regex-based message routing with Korean/English patterns and priority ordering
+- **Task Continuation** - Auto-resume incomplete responses with completion markers (DONE/완료/✅) and truncation detection
+- **Delegation Manager** - `DELEGATE::{agent_id}::{task}` pattern with circular prevention and depth-1 limit
+- **UltraWork Mode** - Autonomous multi-step sessions combining delegation + continuation (max 20 steps / 30 min)
+- **5-Stage Routing Pipeline** - free_chat → explicit_trigger → category_match → keyword_match → default_agent
+- **Agent Config** - New fields: `tier`, `can_delegate`, `auto_continue`, `tool_permissions`
+- **Config Sections** - `categories`, `ultrawork`, `task_continuation` in multi_agent config
+
+### Changed
+
+- **MultiAgentOrchestrator** - Integrated CategoryRouter between explicit triggers and keyword matching
+- **AgentProcessManager** - System prompt includes tool permission and delegation sections
+- **MultiAgentDiscordHandler** - Updated reason types for category_match, delegation, ultrawork
+
 ## [0.3.3] - 2026-02-04
 
 ### Fixed
