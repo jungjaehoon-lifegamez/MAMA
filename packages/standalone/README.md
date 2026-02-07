@@ -812,6 +812,8 @@ MIT - see [LICENSE](../../LICENSE)
 
 MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While MAMA is a distinct implementation focused on local-first SQLite/MCP architecture, we appreciate their pioneering work in LLM memory management.
 
+The multi-agent swarm architecture was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode). Their agent orchestration approach informed our design. The key difference is that MAMA's swarm is built for **chat platforms** (Discord, Slack, Telegram) — multiple bot accounts collaborating in real-time channels — rather than a local CLI environment.
+
 ---
 
 **Author:** SpineLift Team
