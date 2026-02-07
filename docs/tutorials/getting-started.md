@@ -15,7 +15,7 @@ MAMA comes in three flavors. Pick the one that matches your use case:
 **Best for:** Discord/Slack/Telegram bots, autonomous agent loops, scheduled tasks
 
 ```bash
-npm install -g @jungjaehoon/mama-standalone
+npm install -g @jungjaehoon/mama-os
 mama init
 mama start
 ```

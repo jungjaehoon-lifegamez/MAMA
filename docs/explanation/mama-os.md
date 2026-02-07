@@ -1,6 +1,6 @@
 # MAMA OS - Unified Web Interface
 
-**Version:** 0.1.0  
+**Version:** 0.4.0
 **Category:** Explanation (Conceptual Understanding)  
 **Audience:** Users wanting to understand what MAMA OS is and why it exists
 
@@ -53,7 +53,7 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 │  • Autonomous agent loop                         │
 │  • Gateway integrations (Discord, Slack, etc.)   │
 │  • SQLite + vector embeddings                    │
-│  • HTTP embedding server (port 3847)             │
+│  • HTTP embedding server (port 3849)             │
 └─────────────────────────────────────────────────┘
 ```
 

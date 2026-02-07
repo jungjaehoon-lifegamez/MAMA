@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added - mama-os@0.4.0: Multi-Agent Swarm
+### Added - mama-os@0.4.0: Multi-Agent Swarm & Agent Provisioning
 
-**Multi-Agent Swarm System** - Coordinated AI agents with hierarchical delegation for Discord.
+**Builtin Agent Personas & Auto-Provisioning** (2026-02-07)
+
+- **Builtin Persona Templates** - 4 persona files bundled in `templates/personas/` (sisyphus, developer, reviewer, pm)
+- **Auto-Provisioning** - `provisionDefaults()` copies templates to `~/.mama/personas/` on first start
+- **Default Multi-Agent Config** - Injects disabled multi_agent config into config.yaml if missing
+- **Onboarding Phase 7b** - Agent team introduction during onboarding with activation option
+- **OS Agent Multi-Agent Management** - OS agent can configure/activate/customize agent team anytime
+- **Port Constants** - Extracted `API_PORT=3847` and `EMBEDDING_PORT=3849` as named constants
+
+**Multi-Agent Swarm System** (2026-02-06) - Coordinated AI agents with hierarchical delegation for Discord.
 
 - **Tool Permission Manager** - 3-tier permission system (Tier 1=full, 2/3=read-only), wildcard matching, system prompt injection
 - **Category Router** - Regex-based message routing, Korean/English patterns, priority ordering, compiled regex cache

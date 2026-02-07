@@ -140,5 +140,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.1.0 - Standalone Agent, Gateway Integrations & Web Dashboard
-**Last Updated:** 2026-02-01
+**Status:** MAMA OS v0.4.0 - Standalone Agent, Multi-Agent Swarm, Gateway Integrations & Web Dashboard
+**Last Updated:** 2026-02-07
