@@ -195,14 +195,14 @@ User message → Orchestrator → 5-Stage Routing
                 └── DELEGATE::developer::Fix the auth bug
 ```
 
-| Feature                | Description                                         |
-| ---------------------- | --------------------------------------------------- |
-| **3-Tier Permissions** | Tier 1: all tools + delegation. Tier 2/3: read-only |
-| **5-Stage Routing**    | free_chat → trigger → category → keyword → default  |
-| **Category Router**    | Korean/English regex patterns for auto-routing      |
-| **Task Delegation**    | `DELEGATE::{agent}::{task}` with depth-1 safety     |
-| **Task Continuation**  | Auto-resume incomplete responses (Korean/English)   |
-| **UltraWork Mode**     | Autonomous sessions: delegation + continuation loop |
+| Feature                | Description                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| **3-Tier Permissions** | Tier 1: all tools + delegation. Tier 2: advisory (read-only). Tier 3: scoped execution (read-only) |
+| **5-Stage Routing**    | free_chat → explicit_trigger → category_match → keyword_match → default_agent                      |
+| **Category Router**    | Korean/English regex patterns for auto-routing                                                     |
+| **Task Delegation**    | `DELEGATE::{agent}::{task}` with depth-1 safety                                                    |
+| **Task Continuation**  | Auto-resume incomplete responses (Korean/English)                                                  |
+| **UltraWork Mode**     | Autonomous sessions: delegation + continuation loop                                                |
 
 [Setup Guide →](packages/standalone/README.md#multi-agent-swarm) | [Architecture →](docs/architecture-mama-swarm-2026-02-06.md)
 
@@ -332,7 +332,7 @@ const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
 const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```
 
-**Package:** `@jungjaehoon/mama-core` v1.0.1
+**Package:** `@jungjaehoon/mama-core` v1.0.2
 
 ---
 
