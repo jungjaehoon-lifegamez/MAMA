@@ -76,7 +76,6 @@ interface PollSession {
   addressedCommentIds: Set<number>;
   lastHeadSha: string | null;
   startedAt: number;
-  sisyphusUserId?: string;
 }
 
 /**
@@ -102,11 +101,12 @@ export class PRReviewPoller {
   }
 
   /**
-   * Set Sisyphus's Slack user ID for @mentions
+   * Set the target agent's Slack user ID for @mentions in review messages
+   * (typically the developer bot, who should fix the review comments)
    */
-  private sisyphusUserId?: string;
-  setSisyphusUserId(userId: string): void {
-    this.sisyphusUserId = userId;
+  private targetAgentUserId?: string;
+  setTargetAgentUserId(userId: string): void {
+    this.targetAgentUserId = userId;
   }
 
   /**
@@ -339,7 +339,7 @@ export class PRReviewPoller {
 
       // Format and send
       const formatted = this.formatComments(sessionKey, newComments);
-      const mention = this.sisyphusUserId ? `<@${this.sisyphusUserId}> ` : '';
+      const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
       await this.sendMessage(session.channelId, `${mention}${formatted}`);
 
       this.logger.log(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
@@ -524,7 +524,7 @@ export class PRReviewPoller {
     // Report still-unresolved threads to Slack
     if (stillUnresolved.length > 0) {
       const formatted = this.formatUnresolvedThreads(sessionKey, stillUnresolved);
-      const mention = this.sisyphusUserId ? `<@${this.sisyphusUserId}> ` : '';
+      const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
       await this.sendMessage(session.channelId, `${mention}${formatted}`);
       this.logger.log(
         `[PRPoller] Sent ${stillUnresolved.length} unresolved threads for ${sessionKey}`
