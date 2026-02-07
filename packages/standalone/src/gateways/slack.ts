@@ -232,6 +232,8 @@ export class SlackGateway implements Gateway {
         // Slack's app_mention event does NOT fire for bot-posted messages,
         // so the gateway must detect <@AGENT_USER_ID> in bot messages and
         // invoke the target agent's response directly.
+        // When mention_delegation is enabled, MultiBotManager's onMention handles
+        // agent-to-agent routing directly — skip fallback to avoid dual processing.
         if (this.multiAgentHandler.isMentionDelegationEnabled()) {
           const mentionedAgentIds = this.multiAgentHandler.extractMentionedAgentIds(event.text);
           if (mentionedAgentIds.length > 0) {
@@ -334,18 +336,6 @@ export class SlackGateway implements Gateway {
       );
 
       if (multiAgentResult && multiAgentResult.responses.length > 0) {
-        // Record agent responses to channel history
-        for (const resp of multiAgentResult.responses) {
-          channelHistory.record(event.channel, {
-            messageId: resp.messageId || event.ts,
-            sender: resp.agent.display_name,
-            userId: resp.agentId,
-            body: resp.rawContent.substring(0, 500),
-            timestamp: Date.now(),
-            isBot: true,
-          });
-        }
-
         // Replace eyes with checkmark on completion
         try {
           await this.webClient.reactions.remove({
@@ -369,6 +359,18 @@ export class SlackGateway implements Gateway {
           multiAgentResult.responses,
           this.webClient
         );
+
+        // Record agent responses to channel history (after send so messageId is populated)
+        for (const resp of multiAgentResult.responses) {
+          channelHistory.record(event.channel, {
+            messageId: resp.messageId || event.ts,
+            sender: resp.agent.display_name,
+            userId: resp.agentId,
+            body: resp.rawContent.substring(0, 500),
+            timestamp: Date.now(),
+            isBot: true,
+          });
+        }
 
         // Route any @agent mentions in the responses.
         // Slack doesn't deliver a bot's own messages back to itself,

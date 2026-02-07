@@ -238,8 +238,8 @@ describe('SwarmTaskRunner', () => {
 
       const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
-      // Should return failed status with defer message
-      expect(result.status).toBe('failed');
+      // Should return deferred status with defer message
+      expect(result.status).toBe('deferred');
       expect(result.error).toBe('Agent process busy, task deferred');
 
       // Should emit task-deferred event
@@ -248,7 +248,7 @@ describe('SwarmTaskRunner', () => {
         expect.objectContaining({
           taskId,
           agentId: 'test',
-          status: 'failed',
+          status: 'deferred',
           error: 'Agent process busy, task deferred',
         })
       );
@@ -926,9 +926,9 @@ describe('SwarmTaskRunner', () => {
       );
     });
 
-    it('should not throw when releaseProcess is not available', async () => {
-      // Create mock without releaseProcess
-      const mockProcessNoRelease = {
+    it('should call releaseProcess on success path consistently', async () => {
+      // Verify releaseProcess is called directly (no typeof guard)
+      const mockProcessWithRelease = {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockResolvedValue({
           response: 'Success',
@@ -937,12 +937,12 @@ describe('SwarmTaskRunner', () => {
         }),
       };
 
-      const mockManagerNoRelease = {
-        getProcess: vi.fn().mockResolvedValue(mockProcessNoRelease),
-        // No releaseProcess method
+      const mockManagerWithRelease = {
+        getProcess: vi.fn().mockResolvedValue(mockProcessWithRelease),
+        releaseProcess: vi.fn(),
       } as any;
 
-      const runnerNoRelease = new SwarmTaskRunner(manager, mockManagerNoRelease, {
+      const runnerWithRelease = new SwarmTaskRunner(manager, mockManagerWithRelease, {
         maxRetries: 0,
       });
 
@@ -951,12 +951,12 @@ describe('SwarmTaskRunner', () => {
       ];
       const [taskId] = manager.addTasks(sessionId, taskParams);
 
-      // Should not throw
-      await expect(
-        runnerNoRelease.executeImmediateTask(sessionId, taskId, 'test', 'channel1')
-      ).resolves.not.toThrow();
+      await runnerWithRelease.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
-      runnerNoRelease.stopAll();
+      // releaseProcess should be called on success
+      expect(mockManagerWithRelease.releaseProcess).toHaveBeenCalledOnce();
+
+      runnerWithRelease.stopAll();
     });
   });
 
