@@ -47,6 +47,10 @@ export interface PersistentProcessOptions {
   requestTimeout?: number;
   /** Environment variables to pass to the Claude CLI process */
   env?: Record<string, string>;
+  /** Structurally allowed tools (--allowedTools CLI flag) */
+  allowedTools?: string[];
+  /** Structurally disallowed tools (--disallowedTools CLI flag) */
+  disallowedTools?: string[];
 }
 
 export interface ToolUseBlock {
@@ -237,9 +241,17 @@ export class PersistentClaudeProcess extends EventEmitter {
       args.push('--dangerously-skip-permissions');
     }
 
-    // Add MAMA workspace for file access
-    const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
-    args.push('--add-dir', mamaWorkspace);
+    // Structural tool enforcement via CLI flags
+    if (this.options.allowedTools?.length) {
+      args.push('--allowedTools', ...this.options.allowedTools);
+    }
+    if (this.options.disallowedTools?.length) {
+      args.push('--disallowedTools', ...this.options.disallowedTools);
+    }
+
+    // Add MAMA home for file access (config, logs, workspace, personas)
+    const mamaHome = path.join(os.homedir(), '.mama');
+    args.push('--add-dir', mamaHome);
 
     return args;
   }

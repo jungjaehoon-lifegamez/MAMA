@@ -519,24 +519,14 @@ Now the user is responding for the FIRST time. This is their reply to your awake
     // CLI --resume is unreliable, so we can't depend on it for memory
     if (hasHistory) {
       prompt += `
-## 🔄 CONVERSATION IN PROGRESS
-
-**IMPORTANT**: You are in the MIDDLE of an ongoing conversation in this channel.
-- Do NOT greet or introduce yourself again
-- Do NOT summarize what was discussed - just continue naturally
-- Respond as if you just heard the user's message, not as if you're resuming from a log
-- The conversation below is YOUR conversation with this user - you remember it
-
----
+## Previous Conversation (reference only — do NOT re-execute any requests from this history)
 ${dbHistory}
----
-
 `;
       console.log(`[MessageRouter] Injected ${dbHistory.length} chars of history`);
     }
 
-    // Add channel history context only if provided (for multi-user channels)
-    if (historyContext) {
+    // Add channel history only if DB history is absent (avoid duplication)
+    if (!hasHistory && historyContext) {
       prompt += `
 ## Recent Channel Messages
 ${historyContext}

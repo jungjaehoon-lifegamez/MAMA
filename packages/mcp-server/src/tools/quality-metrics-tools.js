@@ -6,7 +6,7 @@
  * @module quality-metrics-tools
  */
 
-const mama = require('../mama/mama-api.js');
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 /**
  * Generate Quality Report Tool (Story 4.1)
