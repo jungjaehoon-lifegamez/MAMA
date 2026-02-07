@@ -329,8 +329,7 @@ export class MultiAgentSlackHandler {
    */
   async handleMessage(
     event: SlackMentionEvent,
-    cleanContent: string,
-    historyContext?: string
+    cleanContent: string
   ): Promise<SlackMultiAgentResponse | null> {
     // Build message context (extract mentioned agents from original text)
     const context = this.buildMessageContext(event, cleanContent);
@@ -360,7 +359,7 @@ export class MultiAgentSlackHandler {
     // Process all selected agents in parallel
     const results = await Promise.allSettled(
       selection.selectedAgents.map((agentId) =>
-        this.processAgentResponse(agentId, context, cleanContent, historyContext)
+        this.processAgentResponse(agentId, context, cleanContent)
       )
     );
 
@@ -407,8 +406,7 @@ export class MultiAgentSlackHandler {
   private async processAgentResponse(
     agentId: string,
     context: MessageContext,
-    userMessage: string,
-    historyContext?: string
+    userMessage: string
   ): Promise<SlackAgentResponse | null> {
     const agent = this.orchestrator.getAgent(agentId);
     if (!agent) {
@@ -422,11 +420,13 @@ export class MultiAgentSlackHandler {
     // Build context for this agent
     const agentContext = this.sharedContext.buildContextForAgent(context.channelId, agentId, 5);
 
-    // Build full prompt with context
+    // Build full prompt with context.
+    // NOTE: Do NOT inject historyContext into persistent processes — the CLI process
+    // already retains conversation memory across turns. Injecting historyContext causes
+    // duplicate messages in Claude's context, making old messages appear "just conversed"
+    // and creating cross-agent context confusion.
+    // Only inject agentContext (other agents' messages) for inter-agent awareness.
     let fullPrompt = cleanMessage;
-    if (historyContext) {
-      fullPrompt = `${historyContext}\n\n${cleanMessage}`;
-    }
     if (agentContext) {
       fullPrompt = `${agentContext}\n\n${fullPrompt}`;
     }

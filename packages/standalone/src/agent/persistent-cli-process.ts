@@ -249,9 +249,10 @@ export class PersistentClaudeProcess extends EventEmitter {
       args.push('--disallowedTools', ...this.options.disallowedTools);
     }
 
-    // Add MAMA home for file access (config, logs, workspace, personas)
-    const mamaHome = path.join(os.homedir(), '.mama');
-    args.push('--add-dir', mamaHome);
+    // Add MAMA workspace for file access (NOT full ~/.mama which leaks logs/config)
+    // Personas are already injected via --system-prompt, no need for ~/.mama/personas
+    const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
+    args.push('--add-dir', mamaWorkspace);
 
     return args;
   }
