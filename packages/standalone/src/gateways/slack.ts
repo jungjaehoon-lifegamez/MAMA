@@ -355,14 +355,7 @@ export class SlackGateway implements Gateway {
         this.logger.warn(`[Slack] Failed to add reaction: ${errDetail}`);
       }
 
-      // Build conversation history context (like Discord's channel-history)
-      const historyContext = channelHistory.formatForContext(event.channel, event.ts);
-
-      const multiAgentResult = await this.multiAgentHandler.handleMessage(
-        event,
-        cleanContent,
-        historyContext || undefined
-      );
+      const multiAgentResult = await this.multiAgentHandler.handleMessage(event, cleanContent);
 
       if (multiAgentResult && multiAgentResult.responses.length > 0) {
         // Replace eyes with checkmark on completion
