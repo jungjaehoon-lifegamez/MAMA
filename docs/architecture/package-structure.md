@@ -132,7 +132,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 
 **Used by:** Claude Code CLI
 
-### 4. @jungjaehoon/mama-standalone
+### 4. @jungjaehoon/mama-os
 
 **Purpose:** Autonomous AI agent with gateway integrations
 
@@ -142,8 +142,8 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 
 - **Agent Loop:** Autonomous conversation handling with Claude API
 - **Gateway Integrations:** Discord, Slack, Telegram bot support
-- **Skills System:** Pluggable skill architecture
-- **Onboarding Wizard:** 9-phase autonomous discovery
+- **Multi-Agent Swarm:** 3-tier agent hierarchy with delegation and UltraWork mode
+- **Onboarding Wizard:** 10-phase autonomous discovery
 - **Cron Scheduler:** Scheduled task execution with heartbeat
 - **MAMA OS Viewer:** Graph viewer and mobile chat interface
 - **CLI Commands:** `mama init`, `start`, `stop`, `status`, `run`, `setup`
@@ -155,7 +155,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - `discord.js`, `@slack/bolt`, `node-telegram-bot-api` - Gateway integrations
 - `express`, `ws` - HTTP/WebSocket server
 
-**Distribution:** npm package (`@jungjaehoon/mama-standalone`)
+**Distribution:** npm package (`@jungjaehoon/mama-os`)
 
 **Used by:** Standalone deployment, bot integrations
 
@@ -267,10 +267,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 1.0.0 (stable API)
-- **mama-server:** 1.5.9 (follows MAMA version)
-- **claude-code-plugin:** 1.5.9 (follows MAMA version)
-- **mama-standalone:** 1.0.0 (new package)
+- **mama-core:** 1.0.2 (stable API)
+- **mama-server:** 1.7.2 (follows MAMA version)
+- **claude-code-plugin:** 1.7.6 (follows MAMA version)
+- **mama-os:** 0.4.0 (standalone agent)
 
 ## Distribution Strategy
 
@@ -278,7 +278,7 @@ Each package has independent versioning:
 
 - `@jungjaehoon/mama-core` - Published to npm (future)
 - `@jungjaehoon/mama-server` - Published to npm (current)
-- `@jungjaehoon/mama-standalone` - Published to npm (future)
+- `@jungjaehoon/mama-os` - Published to npm (current)
 
 ### Marketplace
 
@@ -308,7 +308,7 @@ Each package has independent versioning:
 **Standalone Server:**
 
 ```bash
-npx @jungjaehoon/mama-standalone
+npx @jungjaehoon/mama-os
 ```
 
 ## Design Principles
@@ -410,4 +410,4 @@ Existing decisions remain valid across all package updates. SQLite schema change
 
 ---
 
-**Last Updated:** 2026-02-01
+**Last Updated:** 2026-02-07

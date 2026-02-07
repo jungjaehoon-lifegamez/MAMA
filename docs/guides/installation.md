@@ -25,14 +25,14 @@ node --version
 
 ## Quick Install
 
-### MAMA Standalone (v0.1.0)
+### MAMA Standalone (v0.4.0)
 
 **Always-on AI agent** with Discord/Slack/Telegram bot support, autonomous loops, and MAMA OS graph viewer.
 
 **Step 1: Install globally**
 
 ```bash
-npm install -g @jungjaehoon/mama-standalone
+npm install -g @jungjaehoon/mama-os
 ```
 
 **Step 2: Initialize workspace**
@@ -343,7 +343,7 @@ Then configure with absolute path:
 
 MAMA uses a **5-package architecture**:
 
-1. **@jungjaehoon/mama-standalone** (Standalone Agent)
+1. **@jungjaehoon/mama-os** (Standalone Agent)
    - Always-on AI agent with gateway support
    - Built-in MAMA OS (graph viewer + mobile chat)
    - Autonomous agent loops

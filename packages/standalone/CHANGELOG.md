@@ -5,11 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - 2026-02-06
+## [0.4.0] - 2026-02-07
 
 ### Added
 
-**Multi-Agent Swarm** - Coordinated AI agents with hierarchical delegation for Discord.
+**Builtin Agent Personas & Auto-Provisioning** (2026-02-07)
+
+- **Builtin Persona Templates** - 4 persona files bundled in `templates/personas/`
+  - `sisyphus.md` - Tier 1 Orchestrator (plans, delegates, verifies)
+  - `developer.md` - Tier 2 Implementation Specialist (implements, tests, reports)
+  - `reviewer.md` - Tier 3 Code Quality Guardian (reviews, approves/rejects)
+  - `pm.md` - Optional Product Manager agent
+- **Auto-Provisioning** - `provisionDefaults()` copies templates to `~/.mama/personas/` on first start
+- **Default Multi-Agent Config** - Injects disabled multi_agent config into config.yaml if missing
+- **Onboarding Phase 7b** - Agent team introduction during onboarding with activation option
+- **OS Agent Multi-Agent Management** - OS agent can configure/activate/customize agent team anytime
+- **Port Constants** - Extracted `API_PORT=3847` and `EMBEDDING_PORT=3849` as named constants
+
+**Multi-Agent Swarm** (2026-02-06) - Coordinated AI agents with hierarchical delegation for Discord.
 
 - **3-Tier Agent Hierarchy** - Tier 1 (full tools + delegation), Tier 2 (read-only advisory), Tier 3 (scoped execution)
 - **Tool Permission Manager** - Per-agent tool access control with wildcard matching and system prompt enforcement

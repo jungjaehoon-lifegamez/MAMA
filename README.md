@@ -130,7 +130,7 @@ mama init
 mama start
 ```
 
-**Package:** `@jungjaehoon/mama-os` v0.3.1
+**Package:** `@jungjaehoon/mama-os` v0.4.0
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -237,7 +237,7 @@ User message → Orchestrator → 5-Stage Routing
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` v1.7.0
+**Package:** `@jungjaehoon/mama-server` v1.7.2
 
 **What happens after installation:**
 
@@ -341,9 +341,9 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
 | [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.4.0   | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.0   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.1   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.0   | Claude Code plugin                           | Claude Marketplace |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.2   | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.2   | Shared core library (embeddings, DB, memory) | npm                |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.6   | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1   | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
@@ -495,6 +495,9 @@ MAMA OS was inspired by [OpenClaw](https://github.com/openclaw/openclaw) (former
 
 We provide `@jungjaehoon/openclaw-mama` plugin for users who prefer the OpenClaw ecosystem.
 
+**Multi-Agent Architecture:**
+The Multi-Agent Swarm system was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode), a multi-agent orchestration framework for AI coding assistants. While MAMA's swarm shares the vision of coordinated AI agents with tiered permissions, it was built specifically for **chat platforms** (Discord, Slack, Telegram) rather than CLI environments, enabling collaborative agent teams accessible from anywhere.
+
 ---
 
 ## 🔗 Links
@@ -510,5 +513,5 @@ We provide `@jungjaehoon/openclaw-mama` plugin for users who prefer the OpenClaw
 
 ---
 
-**Author**: SpineLift Team  
-**Last Updated**: 2026-02-01
+**Author**: SpineLift Team
+**Last Updated**: 2026-02-07
