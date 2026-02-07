@@ -194,11 +194,13 @@ export class PersistentClaudeProcess extends EventEmitter {
     // handleClose could have been called during the setTimeout above (→ state='dead')
     // Note: TS can't track async state mutations from event handlers, so cast is needed
     const currentState = this.state as ProcessState;
-    if (currentState === 'starting' && this.process && !this.process.killed) {
+    const pid = this.process?.pid;
+    if (currentState === 'starting' && pid && !this.process?.killed) {
       this.state = 'idle';
       console.log(`[PersistentCLI] Process started and waiting for first message`);
-    } else if (currentState === 'dead') {
-      throw new Error('Process died during startup');
+    } else {
+      this.state = 'dead';
+      throw new Error('Process failed to start');
     }
   }
 
