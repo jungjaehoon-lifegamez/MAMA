@@ -150,14 +150,14 @@ export class PersistentClaudeProcess extends EventEmitter {
    * The first sendMessage() call will handle init as part of its response flow.
    */
   async start(): Promise<void> {
-    if (this.state !== 'dead') {
-      console.log(`[PersistentCLI] Process already in state: ${this.state}`);
-      return;
-    }
-
     // Serialize concurrent start() calls — if already starting, wait for that to finish
     if (this.startPromise) {
       return this.startPromise;
+    }
+
+    if (this.state !== 'dead') {
+      console.log(`[PersistentCLI] Process already in state: ${this.state}`);
+      return;
     }
 
     this.startPromise = this.doStart();
@@ -530,6 +530,12 @@ export class PersistentClaudeProcess extends EventEmitter {
     if (this.currentReject) {
       this.currentReject(error);
       this.resetRequestState();
+    }
+
+    // Transition to idle so subsequent requests aren't blocked
+    if (this.state === 'busy') {
+      this.state = 'idle';
+      this.emit('idle');
     }
 
     this.emit('error', error);
