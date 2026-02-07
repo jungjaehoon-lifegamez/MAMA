@@ -408,7 +408,17 @@ export class SlackGateway implements Gateway {
 
         return; // Multi-agent handled it
       }
-      // If multi-agent returns null, fall through to regular processing
+      // No multi-agent response; remove eyes reaction before falling through
+      try {
+        await this.webClient.reactions.remove({
+          channel: event.channel,
+          timestamp: event.ts,
+          name: 'eyes',
+        });
+      } catch {
+        /* ignore reaction errors */
+      }
+      // Fall through to regular processing
     }
 
     // Normalize message for router
@@ -662,6 +672,7 @@ export class SlackGateway implements Gateway {
             this.multiAgentHandler.setBotUserId(authResult.user_id as string);
             this.multiAgentHandler.setMainBotId(authResult.bot_id as string);
             this.multiAgentHandler.setMainBotToken(this.botToken);
+            this.multiAgentHandler.setMainWebClient(this.webClient);
             await this.multiAgentHandler.initializeMultiBots();
           } catch (err) {
             this.logger.error('[Slack] Failed to initialize multi-agent:', err);

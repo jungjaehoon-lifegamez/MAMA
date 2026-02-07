@@ -709,8 +709,10 @@ export class MultiAgentSlackHandler {
         // Necessary because Slack doesn't deliver a bot's own messages back to itself.
         await this.routeResponseMentions(event.channel, threadTs, [response], mainWebClient);
       }
-
-      // Replace eyes with checkmark
+    } catch (err) {
+      this.logger.error(`[MultiAgentSlack] Bot→Agent mention error:`, err);
+    } finally {
+      // Replace eyes with checkmark regardless of success/failure
       try {
         await mainWebClient.reactions.remove({
           channel: event.channel,
@@ -725,8 +727,6 @@ export class MultiAgentSlackHandler {
       } catch {
         /* ignore reaction errors */
       }
-    } catch (err) {
-      this.logger.error(`[MultiAgentSlack] Bot→Agent mention error:`, err);
     }
   }
 

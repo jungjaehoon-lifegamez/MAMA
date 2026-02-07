@@ -889,6 +889,28 @@ export class AgentLoop {
                 `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
                   `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
               );
+            } else if (block.type === 'image' && block.source?.data) {
+              // Base64-encoded image — save to disk so persistent CLI can read it
+              const fs = require('fs');
+              const path = require('path');
+              const mediaDir = path.join(
+                process.env.HOME || '',
+                '.mama',
+                'workspace',
+                'media',
+                'inbound'
+              );
+              fs.mkdirSync(mediaDir, { recursive: true });
+              const imagePath = path.join(mediaDir, `${Date.now()}.jpg`);
+              try {
+                fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
+                parts.push(
+                  `**[MANDATORY IMAGE]** The user has attached an image at: ${imagePath}\n` +
+                    `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
+                );
+              } catch {
+                parts.push('[Image attached but could not be processed]');
+              }
             } else if (block.type === 'tool_result') {
               const status = block.is_error ? 'ERROR' : 'SUCCESS';
               parts.push(`[Tool Result: ${status}]\n${block.content}`);
