@@ -98,7 +98,8 @@ export class SlackGateway implements Gateway {
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
       this.multiAgentHandler = new MultiAgentSlackHandler(options.multiAgentConfig, {
-        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? false,
+        // Headless daemon — no interactive permission prompts possible
+        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
       });
       this.logger.log('Multi-agent mode enabled');
     }
@@ -649,7 +650,8 @@ export class SlackGateway implements Gateway {
         this.multiAgentHandler.updateConfig(config);
       } else {
         this.multiAgentHandler = new MultiAgentSlackHandler(config, {
-          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? false,
+          // Headless daemon — no interactive permission prompts possible
+          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
         });
         // If already connected, initialize multi-bots
         if (this.connected) {
