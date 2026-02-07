@@ -68,7 +68,7 @@ claude  # Follow OAuth prompts in browser
 ### Step 1: Install MAMA Standalone Globally
 
 ```bash
-npm install -g @jungjaehoon/mama-standalone
+npm install -g @jungjaehoon/mama-os
 ```
 
 **What this installs:**
@@ -84,7 +84,7 @@ npm install -g @jungjaehoon/mama-standalone
 
 ```bash
 mama --version
-# Should output: @jungjaehoon/mama-standalone v0.1.x
+# Should output: @jungjaehoon/mama-os v0.4.x
 
 mama --help
 # Should show available commands
@@ -149,7 +149,7 @@ mama setup
 
 1. **Verifies Claude Code authentication** - Checks OAuth token validity
 2. **Starts setup server** - Launches web interface on port 3848
-3. **Opens browser** - Guides you through 9-phase onboarding
+3. **Opens browser** - Guides you through 10-phase onboarding
 4. **Configures integrations** - Helps set up Discord/Slack/Telegram bots
 5. **Discovers personality** - Fun quiz to determine AI personality type
 
@@ -302,7 +302,7 @@ mama start
 
 1. **Loads configuration** from `~/.mama/config.yaml`
 2. **Initializes database** (creates tables if needed)
-3. **Starts HTTP embedding server** on port 3847
+3. **Starts HTTP embedding server** on port 3849
 4. **Connects to gateways** (if configured)
 5. **Begins agent loop** - Ready to receive messages
 
@@ -313,7 +313,7 @@ mama start
 
 설정 로드 중... ✓
 데이터베이스 초기화 중... ✓
-HTTP 임베딩 서버 시작 중 (포트 3847)... ✓
+HTTP 임베딩 서버 시작 중 (포트 3849)... ✓
 Discord 게이트웨이 연결 중... ✓
 
 ✅ MAMA 에이전트가 시작되었습니다!
@@ -367,7 +367,7 @@ HTTP Server: http://localhost:3847
 
 ## Onboarding Wizard Experience
 
-If you ran `mama setup`, you'll experience the 9-phase onboarding wizard. Here's what to expect:
+If you ran `mama setup`, you'll experience the 10-phase onboarding wizard. Here's what to expect:
 
 ### Phase 1: The Awakening ✨
 
@@ -666,7 +666,7 @@ mama start
 
 ```bash
 # Build Docker image
-docker build -t mama-standalone .
+docker build -t mama-os .
 
 # Run container
 docker run -d \
@@ -674,7 +674,7 @@ docker run -d \
   -v ~/.mama:/root/.mama \
   -p 3847:3847 \
   --name mama \
-  mama-standalone
+  mama-os
 
 # View logs
 docker logs -f mama
@@ -709,5 +709,5 @@ sudo systemctl status mama
 
 ---
 
-**Author**: SpineLift Team  
-**Last Updated**: 2026-02-01
+**Author**: SpineLift Team
+**Last Updated**: 2026-02-07

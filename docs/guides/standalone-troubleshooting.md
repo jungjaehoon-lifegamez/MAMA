@@ -343,22 +343,28 @@ ls -la ~/.mama/
 sudo chown -R $USER:$USER ~/.mama/
 ```
 
-#### Port Binding (3848 Already in Use)
+#### Port Binding (3847 Already in Use)
 
 **Symptoms:**
 
-- Error: "EADDRINUSE: address already in use :::3848"
+- Error: "EADDRINUSE: address already in use :::3847"
 - MAMA OS viewer won't start
 - `mama start` fails
+
+**Note:** MAMA OS uses three ports:
+
+- **3847** - API server (viewer, graph API, sessions)
+- **3848** - Setup wizard (`mama setup`)
+- **3849** - Embedding server
 
 **Diagnosis:**
 
 ```bash
-# Check what's using port 3848
-lsof -i :3848
+# Check what's using port 3847
+lsof -i :3847
 
 # Or on Linux
-netstat -tulpn | grep 3848
+netstat -tulpn | grep 3847
 
 # Expected: Shows process using the port
 ```
@@ -369,7 +375,7 @@ netstat -tulpn | grep 3848
 
 ```bash
 # Find process ID
-lsof -i :3848
+lsof -i :3847
 
 # Kill process (replace PID)
 kill -9 PID
@@ -719,7 +725,7 @@ ls -lh ~/.claude/mama-memory.db
 
 3. **Create issue with:**
    - OS and Node.js version
-   - MAMA Standalone version (`npm list -g @jungjaehoon/mama-standalone`)
+   - MAMA Standalone version (`npm list -g @jungjaehoon/mama-os`)
    - Error messages from logs
    - Steps to reproduce
 

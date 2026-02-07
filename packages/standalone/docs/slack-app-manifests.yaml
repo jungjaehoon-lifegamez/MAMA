@@ -1,0 +1,245 @@
+# ============================================================================
+# MAMA Multi-Agent Slack App Manifests
+# ============================================================================
+#
+# Each agent needs its own Slack App for @mention-based delegation to work.
+# Go to https://api.slack.com/apps → "Create New App" → "From an app manifest"
+# Paste the relevant manifest for each role.
+#
+# After creating each app:
+# 1. Install to Workspace → copy Bot User OAuth Token (xoxb-...)
+# 2. Basic Information → App-Level Tokens → Generate (connections:write) → copy (xapp-...)
+# 3. Add tokens to ~/.mama/config.yaml under multi_agent.agents.<role>
+#
+# ============================================================================
+
+
+# ============================================================================
+# 1. Sisyphus - Architect / Lead (Tier 1)
+# ============================================================================
+# Role: Project architect, planner, coordinator
+# Tier: 1 (full access, can delegate to other agents)
+# Delegation: Mentions other agent bots via <@BOT_USER_ID>
+
+---
+_metadata:
+  major_version: 2
+  minor_version: 1
+display_information:
+  name: "Sisyphus"
+  description: "MAMA Architect Agent - plans, designs, and coordinates work across agents"
+  background_color: "#4A154B"
+  long_description: |
+    Sisyphus is the lead architect agent in the MAMA multi-agent system.
+    As a Tier 1 agent, it has full tool access and can delegate tasks to
+    other specialized agents (DevBot, Reviewer) via @mentions.
+
+    Capabilities:
+    - System architecture and design planning
+    - Task coordination and delegation
+    - Cross-agent workflow orchestration
+    - Autonomous task continuation (UltraWork mode)
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: "Sisyphus"
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read     # Receive @mentions from other agents/users
+      - channels:history      # Read channel message history for context
+      - channels:read         # List channels
+      - chat:write            # Send messages and delegate via @mention
+      - groups:history        # Read private channel history
+      - groups:read           # List private channels
+      - im:history            # Read DM history
+      - im:read               # List DMs
+      - im:write              # Send DMs
+      - reactions:write        # Add emoji reactions (processing status)
+      - users:read            # Resolve user IDs for mention delegation
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention           # Core: detect when mentioned by users or other agents
+      - message.channels      # Detect bot-to-bot mentions (report-back from Tier 2/3)
+      - message.groups        # Same for private channels
+      - message.im            # Handle direct messages
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true   # Required: real-time event delivery
+  token_rotation_enabled: false
+
+
+# ============================================================================
+# 2. DevBot - Developer (Tier 2)
+# ============================================================================
+# Role: Code implementation, bug fixing, feature development
+# Tier: 2 (read/analyze only - no write/edit/bash in multi-agent mode)
+# Receives delegated tasks from Sisyphus via @mention
+
+---
+_metadata:
+  major_version: 2
+  minor_version: 1
+display_information:
+  name: "DevBot"
+  description: "MAMA Developer Agent - implements features, fixes bugs, writes code"
+  background_color: "#2EB67D"
+  long_description: |
+    DevBot is the developer agent in the MAMA multi-agent system.
+    As a Tier 2 agent, it specializes in code implementation and analysis.
+    It receives delegated tasks from the lead agent (Sisyphus) and
+    responds with implementation details, code reviews, and technical analysis.
+
+    Capabilities:
+    - Code implementation and feature development
+    - Bug analysis and debugging
+    - Technical documentation
+    - Automatic task continuation for complex implementations
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: "DevBot"
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read     # Receive @mentions (delegation from Sisyphus)
+      - channels:history      # Read channel context
+      - channels:read         # List channels
+      - chat:write            # Send responses
+      - groups:history        # Read private channel context
+      - groups:read           # List private channels
+      - im:history            # Read DM history
+      - im:read               # List DMs
+      - im:write              # Send DMs
+      - reactions:write        # Add emoji reactions (processing status)
+      - users:read            # Resolve user IDs
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention           # Core: detect delegation mentions from humans
+      - message.channels      # Detect bot-to-bot mentions (app_mention doesn't fire for bot messages)
+      - message.groups        # Same for private channels
+      - message.im            # Handle direct messages
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true   # Required: real-time event delivery
+  token_rotation_enabled: false
+
+
+# ============================================================================
+# 3. Reviewer - Code Reviewer (Tier 3)
+# ============================================================================
+# Role: Code review, quality assurance, feedback
+# Tier: 3 (read/analyze only - strictly read-only tools)
+# Receives delegated review tasks from Sisyphus via @mention
+
+---
+_metadata:
+  major_version: 2
+  minor_version: 1
+display_information:
+  name: "Reviewer"
+  description: "MAMA Reviewer Agent - reviews code, provides quality feedback"
+  background_color: "#E01E5A"
+  long_description: |
+    Reviewer is the code review agent in the MAMA multi-agent system.
+    As a Tier 3 agent, it operates in strict read-only mode, focusing on
+    code analysis and quality feedback without making direct changes.
+    It receives review tasks from the lead agent (Sisyphus).
+
+    Capabilities:
+    - Code quality review and analysis
+    - Security vulnerability detection
+    - Best practices compliance checking
+    - Performance review and optimization suggestions
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: "Reviewer"
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read     # Receive @mentions (delegation from Sisyphus)
+      - channels:history      # Read channel context for review
+      - channels:read         # List channels
+      - chat:write            # Send review feedback
+      - groups:history        # Read private channel context
+      - groups:read           # List private channels
+      - im:history            # Read DM history
+      - im:read               # List DMs
+      - im:write              # Send DMs
+      - reactions:write        # Add emoji reactions (processing status)
+      - users:read            # Resolve user IDs
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention           # Core: detect delegation mentions from humans
+      - message.channels      # Detect bot-to-bot mentions (app_mention doesn't fire for bot messages)
+      - message.groups        # Same for private channels
+      - message.im            # Handle direct messages
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true   # Required: real-time event delivery
+  token_rotation_enabled: false
+
+
+# ============================================================================
+# Configuration Guide
+# ============================================================================
+#
+# After creating all 3 Slack Apps, update ~/.mama/config.yaml:
+#
+# ```yaml
+# slack:
+#   enabled: true
+#   bot_token: "xoxb-SISYPHUS-BOT-TOKEN"   # Main bot = Sisyphus (Tier 1)
+#   app_token: "xapp-SISYPHUS-APP-TOKEN"
+#
+# multi_agent:
+#   enabled: true
+#   mention_delegation: true
+#   max_mention_depth: 3
+#   agents:
+#     sisyphus:
+#       # ... existing config ...
+#       slack_bot_token: "xoxb-SISYPHUS-BOT-TOKEN"
+#       slack_app_token: "xapp-SISYPHUS-APP-TOKEN"
+#     developer:
+#       # ... existing config ...
+#       slack_bot_token: "xoxb-DEVBOT-BOT-TOKEN"
+#       slack_app_token: "xapp-DEVBOT-APP-TOKEN"
+#     reviewer:
+#       # ... existing config ...
+#       slack_bot_token: "xoxb-REVIEWER-BOT-TOKEN"
+#       slack_app_token: "xapp-REVIEWER-APP-TOKEN"
+# ```
+#
+# All 3 bots must be invited to the same Slack channels:
+#   /invite @Sisyphus
+#   /invite @DevBot
+#   /invite @Reviewer
+#
+# Delegation flow example:
+#   User: "@Sisyphus 이 PR 리뷰하고 버그 수정해줘"
+#   Sisyphus: "리뷰를 먼저 진행하겠습니다. @Reviewer 이 PR의 코드 품질을 검토해주세요"
+#   Reviewer: "검토 완료. 3가지 이슈 발견... @Sisyphus 결과 보고드립니다"
+#   Sisyphus: "버그 수정을 위임합니다. @DevBot 다음 3가지 이슈를 수정해주세요: ..."
+#   DevBot: "수정 완료. PR #42에 커밋했습니다."
+#
+# ============================================================================

@@ -30,6 +30,8 @@ import type {
   MessageAttachment,
   ContentBlock,
 } from './types.js';
+import type { MultiAgentConfig } from '../cli/config/types.js';
+import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
 
 /**
  * Discord Gateway options
@@ -41,6 +43,8 @@ export interface DiscordGatewayOptions {
   messageRouter: MessageRouter;
   /** Gateway configuration */
   config?: Partial<DiscordGatewayConfig>;
+  /** Multi-agent configuration (optional) */
+  multiAgentConfig?: MultiAgentConfig;
 }
 
 /**
@@ -64,6 +68,9 @@ export class DiscordGateway implements Gateway {
   private pendingEdit: string | null = null;
   private editTimer: NodeJS.Timeout | null = null;
 
+  // Multi-agent support
+  private multiAgentHandler: MultiAgentDiscordHandler | null = null;
+
   constructor(options: DiscordGatewayOptions) {
     this.token = options.token;
     this.messageRouter = options.messageRouter;
@@ -84,6 +91,14 @@ export class DiscordGateway implements Gateway {
       partials: [Partials.Channel], // Required for DM support
     });
 
+    // Initialize multi-agent handler if configured
+    if (options.multiAgentConfig?.enabled) {
+      this.multiAgentHandler = new MultiAgentDiscordHandler(options.multiAgentConfig, {
+        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
+      });
+      console.log('[Discord] Multi-agent mode enabled');
+    }
+
     this.setupEventListeners();
   }
 
@@ -95,6 +110,19 @@ export class DiscordGateway implements Gateway {
     this.client.once(Events.ClientReady, (client) => {
       console.log(`Discord bot logged in as ${client.user.tag}`);
       this.connected = true;
+
+      // Set bot user ID and token for multi-agent handler, then initialize multi-bots
+      if (this.multiAgentHandler) {
+        this.multiAgentHandler.setBotUserId(client.user.id);
+        this.multiAgentHandler.setMainBotToken(this.token);
+        // Initialize agent-specific bots (async, don't block)
+        this.multiAgentHandler.initializeMultiBots().catch((err) => {
+          console.error('[Discord] Failed to initialize multi-bots:', err);
+          // Reset handler on failure to prevent isEnabled() returning true with broken state
+          this.multiAgentHandler = null;
+        });
+      }
+
       this.emitEvent({
         type: 'connected',
         source: 'discord',
@@ -147,7 +175,68 @@ export class DiscordGateway implements Gateway {
    * Handle incoming Discord message
    */
   private async handleMessage(message: Message): Promise<void> {
-    // Ignore bot messages
+    // Multi-agent mode: detect messages from our agent bots
+    if (message.author.bot && this.multiAgentHandler) {
+      const agentBotId = this.multiAgentHandler.getMultiBotManager().isFromAgentBot(message);
+      if (agentBotId && agentBotId !== 'main') {
+        // This is from one of our agent bots - record to shared context
+        const agentId =
+          this.multiAgentHandler.getOrchestrator().extractAgentIdFromMessage(message.content) ||
+          agentBotId;
+        const agent = this.multiAgentHandler.getOrchestrator().getAgent(agentId);
+        if (agent) {
+          this.multiAgentHandler
+            .getSharedContext()
+            .recordAgentMessage(message.channel.id, agent, message.content, message.id);
+        }
+
+        // When mention_delegation is enabled, MultiBotManager's onMention handles
+        // agent-to-agent routing directly — skip orchestrator to avoid dual processing
+        if (this.multiAgentHandler.isMentionDelegationEnabled()) {
+          return;
+        }
+
+        // Fallback: pass to multi-agent handler for cross-agent conversation
+        const cleanContent = this.cleanMessageContent(message.content);
+        const multiAgentResult = await this.multiAgentHandler.handleMessage(message, cleanContent);
+        if (multiAgentResult && multiAgentResult.responses.length > 0) {
+          await this.multiAgentHandler.sendAgentResponses(message, multiAgentResult.responses);
+          console.log(
+            `[Discord] Agent-to-agent: ${agentBotId} → ${multiAgentResult.selectedAgents.join(', ')}`
+          );
+        }
+        return;
+      }
+      // Message from main bot - record and trigger agent-to-agent if it's from an agent
+      if (agentBotId === 'main' || message.author.id === this.client.user?.id) {
+        const agentId = this.multiAgentHandler
+          .getOrchestrator()
+          .extractAgentIdFromMessage(message.content);
+        if (agentId) {
+          const agent = this.multiAgentHandler.getOrchestrator().getAgent(agentId);
+          if (agent) {
+            this.multiAgentHandler
+              .getSharedContext()
+              .recordAgentMessage(message.channel.id, agent, message.content, message.id);
+          }
+          // Trigger other agents to respond (agent-to-agent via main bot)
+          const cleanContent = this.cleanMessageContent(message.content);
+          const multiAgentResult = await this.multiAgentHandler.handleMessage(
+            message,
+            cleanContent
+          );
+          if (multiAgentResult && multiAgentResult.responses.length > 0) {
+            await this.multiAgentHandler.sendAgentResponses(message, multiAgentResult.responses);
+            console.log(
+              `[Discord] Agent-to-agent (main): ${agentId} → ${multiAgentResult.selectedAgents.join(', ')}`
+            );
+          }
+        }
+        return;
+      }
+    }
+
+    // Ignore other bot messages (not part of our multi-agent system)
     if (message.author.bot) return;
 
     const isDM = message.channel.type === ChannelType.DM;
@@ -321,6 +410,63 @@ export class DiscordGateway implements Gateway {
     };
 
     try {
+      // Check if multi-agent mode should handle this message
+      if (this.multiAgentHandler?.isEnabled()) {
+        const multiAgentResult = await this.multiAgentHandler.handleMessage(
+          message,
+          cleanContent,
+          historyContext
+        );
+
+        if (multiAgentResult && multiAgentResult.responses.length > 0) {
+          // Multi-agent handled the message
+          const sentMessages = await this.multiAgentHandler.sendAgentResponses(
+            message,
+            multiAgentResult.responses
+          );
+
+          // Record bot responses to history with correct agent attribution.
+          // sentMessages is a flat array of chunks; track offset per response.
+          let msgIndex = 0;
+          for (const agentResp of multiAgentResult.responses) {
+            const chunkCount = splitForDiscord(agentResp.content).length;
+            for (let c = 0; c < chunkCount && msgIndex < sentMessages.length; c++) {
+              const sentMsg = sentMessages[msgIndex++];
+              channelHistory.record(message.channel.id, {
+                messageId: sentMsg.id,
+                sender: agentResp.agent.display_name || this.client.user?.username || 'MAMA',
+                userId: agentResp.agentId || this.client.user?.id || '',
+                body: sentMsg.content,
+                timestamp: Date.now(),
+                isBot: true,
+              });
+            }
+          }
+
+          this.emitEvent({
+            type: 'message_sent',
+            source: 'discord',
+            timestamp: new Date(),
+            data: {
+              channelId: message.channel.id,
+              responseLength: multiAgentResult.responses.reduce(
+                (sum, r) => sum + r.content.length,
+                0
+              ),
+              multiAgent: true,
+              agents: multiAgentResult.selectedAgents,
+            },
+          });
+
+          console.log(
+            `[Discord] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
+          );
+          return; // Multi-agent handled it
+        }
+        // If multi-agent returns null, fall through to regular processing
+      }
+
+      // Regular single-agent processing
       let response: string;
       let duration: number;
 
@@ -614,6 +760,16 @@ export class DiscordGateway implements Gateway {
    * Stop the Discord gateway
    */
   async stop(): Promise<void> {
+    // Stop multi-agent processes (don't let failure block shutdown)
+    if (this.multiAgentHandler) {
+      try {
+        await this.multiAgentHandler.stopAll();
+      } catch (err) {
+        console.error('[Discord] Error stopping multi-agent handler:', err);
+        // Continue with shutdown anyway
+      }
+    }
+
     if (!this.connected) {
       return;
     }
@@ -887,5 +1043,39 @@ export class DiscordGateway implements Gateway {
    */
   async sendImage(channelId: string, imagePath: string, caption?: string): Promise<void> {
     return this.sendFile(channelId, imagePath, caption);
+  }
+
+  /**
+   * Get the multi-agent handler (if enabled)
+   */
+  getMultiAgentHandler(): MultiAgentDiscordHandler | null {
+    return this.multiAgentHandler;
+  }
+
+  /**
+   * Update multi-agent configuration
+   */
+  async setMultiAgentConfig(config: MultiAgentConfig): Promise<void> {
+    if (config.enabled) {
+      if (this.multiAgentHandler) {
+        this.multiAgentHandler.updateConfig(config);
+      } else {
+        this.multiAgentHandler = new MultiAgentDiscordHandler(config, {
+          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? false,
+        });
+        if (this.client.user) {
+          this.multiAgentHandler.setBotUserId(this.client.user.id);
+          this.multiAgentHandler.setMainBotToken(this.token);
+          await this.multiAgentHandler.initializeMultiBots();
+        }
+      }
+      console.log('[Discord] Multi-agent mode enabled/updated');
+    } else {
+      if (this.multiAgentHandler) {
+        await this.multiAgentHandler.stopAll();
+        this.multiAgentHandler = null;
+      }
+      console.log('[Discord] Multi-agent mode disabled');
+    }
   }
 }

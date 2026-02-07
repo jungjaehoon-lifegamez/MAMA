@@ -31,6 +31,12 @@ export interface ClaudeCLIWrapperOptions {
   sessionId?: string;
   systemPrompt?: string;
   mcpConfigPath?: string;
+  /**
+   * Skip permission prompts for tool execution
+   *
+   * @warning SECURITY RISK: Bypasses all permission checks.
+   * Only enable in trusted environments where agent actions are pre-approved.
+   */
   dangerouslySkipPermissions?: boolean;
   /** If true, use GatewayToolExecutor instead of MCP (default: false) */
   useGatewayTools?: boolean;
@@ -115,8 +121,6 @@ export class ClaudeCLIWrapper {
     options?: { model?: string; resumeSession?: boolean }
   ): Promise<PromptResult> {
     return new Promise((resolve, reject) => {
-      const isResume = options?.resumeSession === true;
-
       // Use stdin for large content to avoid E2BIG error (ARG_MAX exceeded)
       const useStdin = content.length > 50000; // 50KB threshold
       const args = useStdin
@@ -129,18 +133,10 @@ export class ClaudeCLIWrapper {
 
       // Session handling: use --no-session-persistence to avoid session locking
       // This prevents "Session ID already in use" errors during multi-turn tool loops
+      // Trade-off: System prompt sent every time, but reliable memory via DB history
       args.push('--no-session-persistence');
-
-      // Session ID for tracking (not for CLI persistence)
-      if (isResume) {
-        // Resume existing session - but with no-session-persistence, we inject history manually
-        args.push('--session-id', this.sessionId);
-        console.log(`[ClaudeCLI] Session: ${this.sessionId} (no-persistence mode)`);
-      } else {
-        // New session
-        args.push('--session-id', this.sessionId);
-        console.log(`[ClaudeCLI] New session: ${this.sessionId} (no-persistence mode)`);
-      }
+      args.push('--session-id', this.sessionId);
+      console.log(`[ClaudeCLI] Session: ${this.sessionId} (no-persistence mode)`);
 
       // Add model flag - per-request override takes precedence
       const model = options?.model || this.options.model;
@@ -148,9 +144,7 @@ export class ClaudeCLIWrapper {
         args.push('--model', model);
       }
 
-      // Always inject system prompt - even for resume sessions
-      // This ensures Gateway Tools are available if CLI session was lost
-      // (CLI will use cached context if available, otherwise use this prompt)
+      // Always inject system prompt (contains DB history for memory)
       if (this.options.systemPrompt) {
         args.push('--system-prompt', this.options.systemPrompt);
       }

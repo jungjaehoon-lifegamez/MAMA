@@ -156,7 +156,7 @@ Configure MAMA settings.
 
 **MAMA Standalone CLI Commands**
 
-> **Package:** `@jungjaehoon/mama-standalone` - Always-on agent with gateway integrations
+> **Package:** `@jungjaehoon/mama-os` - Always-on agent with gateway integrations
 
 The `mama` CLI is used to manage MAMA Standalone, an autonomous agent that runs continuously with Discord, Slack, and Telegram bot support.
 
@@ -293,7 +293,7 @@ MAMA Agent Status:
   Uptime: 2 hours 34 minutes
   Gateways: Discord (connected), Slack (disconnected)
   Memory: 45 decisions, 3 checkpoints
-  MAMA OS: http://localhost:3848
+  MAMA OS: http://localhost:3847
 ```
 
 ---

@@ -117,9 +117,10 @@ Choose the right package for your use case:
 
 ### 🤖 Want an Always-On AI Agent?
 
-**→ Discord/Slack/Telegram bot**  
-**→ Autonomous agent loop**  
+**→ Discord/Slack/Telegram bot**
+**→ Autonomous agent loop**
 **→ Scheduled tasks & heartbeat monitoring**
+**→ Multi-Agent Swarm** - AI agents collaborate with tiered permissions and delegation
 
 **Use:** [MAMA OS](packages/standalone/README.md)
 
@@ -129,7 +130,7 @@ mama init
 mama start
 ```
 
-**Package:** `@jungjaehoon/mama-os` v0.3.1
+**Package:** `@jungjaehoon/mama-os` v0.4.0
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -173,6 +174,38 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 
 **Requires:** [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated.
 
+#### Multi-Agent Swarm <sup>NEW in 0.4.0</sup>
+
+> Built independently, announced the same day as Anthropic's [Agent Teams](https://docs.anthropic.com/en/docs/claude-code/agent-teams).
+> Same vision — coordinated AI agents — but for **chat platforms**, not just CLI.
+
+Multiple specialized AI agents collaborate in Discord, each with their own persona,
+tier-based permissions, and the ability to delegate tasks to each other.
+
+```text
+User message → Orchestrator → 5-Stage Routing
+                                │
+                ┌───────────────┼───────────────┐
+                ▼               ▼               ▼
+         🏔️ Sisyphus      🔧 Developer     📝 Reviewer
+          (Tier 1)          (Tier 2)         (Tier 3)
+        Full tools        Read-only         Read-only
+        Can delegate      Implements        Reviews
+                │
+                └── DELEGATE::developer::Fix the auth bug
+```
+
+| Feature                | Description                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| **3-Tier Permissions** | Tier 1: all tools + delegation. Tier 2: advisory (read-only). Tier 3: scoped execution (read-only) |
+| **5-Stage Routing**    | free_chat → explicit_trigger → category_match → keyword_match → default_agent                      |
+| **Category Router**    | Korean/English regex patterns for auto-routing                                                     |
+| **Task Delegation**    | `DELEGATE::{agent}::{task}` with depth-1 safety                                                    |
+| **Task Continuation**  | Auto-resume incomplete responses (Korean/English)                                                  |
+| **UltraWork Mode**     | Autonomous sessions: delegation + continuation loop                                                |
+
+[Setup Guide →](packages/standalone/README.md#multi-agent-swarm) | [Architecture →](docs/architecture-mama-swarm-2026-02-06.md)
+
 ---
 
 ### 💻 Building Software with Claude Code/Desktop?
@@ -204,7 +237,7 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` v1.7.0
+**Package:** `@jungjaehoon/mama-server` v1.7.2
 
 **What happens after installation:**
 
@@ -299,7 +332,7 @@ const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
 const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```
 
-**Package:** `@jungjaehoon/mama-core` v1.0.1
+**Package:** `@jungjaehoon/mama-core` v1.0.2
 
 ---
 
@@ -307,10 +340,10 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.3.1   | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.0   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.1   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.0   | Claude Code plugin                           | Claude Marketplace |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.4.0   | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.2   | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.2   | Shared core library (embeddings, DB, memory) | npm                |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.6   | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1   | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
@@ -326,6 +359,8 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 **🔍 Semantic Search** - Natural language queries find relevant decisions even if exact keywords don't match. [Learn more →](docs/reference/commands.md#mama-suggest)
 
 **🤖 Autonomous Agent** - Run MAMA as a standalone service with Discord, Slack, or Telegram bot support. [Learn more →](packages/standalone/README.md)
+
+**🤝 Multi-Agent Swarm** - Multiple AI agents collaborate in Discord with tiered permissions, delegation chains, and autonomous UltraWork sessions. [Learn more →](packages/standalone/README.md#multi-agent-swarm)
 
 **🌐 MAMA OS** - Built-in graph viewer and mobile chat interface for managing memory from anywhere. [Learn more →](packages/standalone/README.md#mama-os)
 
@@ -460,6 +495,9 @@ MAMA OS was inspired by [OpenClaw](https://github.com/openclaw/openclaw) (former
 
 We provide `@jungjaehoon/openclaw-mama` plugin for users who prefer the OpenClaw ecosystem.
 
+**Multi-Agent Architecture:**
+The Multi-Agent Swarm system was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode), a multi-agent orchestration framework for AI coding assistants. While MAMA's swarm shares the vision of coordinated AI agents with tiered permissions, it was built specifically for **chat platforms** (Discord, Slack, Telegram) rather than CLI environments, enabling collaborative agent teams accessible from anywhere.
+
 ---
 
 ## 🔗 Links
@@ -475,5 +513,5 @@ We provide `@jungjaehoon/openclaw-mama` plugin for users who prefer the OpenClaw
 
 ---
 
-**Author**: SpineLift Team  
-**Last Updated**: 2026-02-01
+**Author**: SpineLift Team
+**Last Updated**: 2026-02-07

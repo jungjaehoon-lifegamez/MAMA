@@ -157,6 +157,13 @@ export interface AgentConfig {
    * If not specified, all tools use Gateway mode (default)
    */
   tools?: ToolsConfig;
+  /**
+   * Use persistent CLI process for faster responses (experimental)
+   * When true, keeps Claude CLI process alive for multi-turn conversations
+   * Response time: ~2-3s instead of ~16-30s
+   * @default false
+   */
+  use_persistent_cli?: boolean;
 }
 
 /**
@@ -269,6 +276,138 @@ export interface HeartbeatIntegrationConfig {
   template_file: string;
 }
 
+// ============================================================================
+// Multi-Agent Types (imported from multi-agent module)
+// ============================================================================
+
+/**
+ * Individual agent persona configuration
+ *
+ * @see packages/standalone/src/multi-agent/types.ts
+ * Note: This is intentionally duplicated from runtime types for CLI config parsing.
+ * CLI config layer uses this for validation, runtime uses multi-agent/types.ts.
+ */
+export interface AgentPersonaConfig {
+  /** Internal agent ID (used in code) */
+  id: string;
+  /** Display name shown in Discord messages */
+  name: string;
+  /** Display name with emoji prefix */
+  display_name: string;
+  /** Command prefix to explicitly trigger this agent */
+  trigger_prefix: string;
+  /** Path to persona markdown file with system prompt */
+  persona_file: string;
+  /**
+   * Optional dedicated Discord bot token for this agent
+   * If provided, this agent will use its own bot instead of the main bot
+   */
+  bot_token?: string;
+  /**
+   * Optional dedicated Slack bot token (xoxb-...) for this agent
+   * If provided, this agent will use its own Slack bot
+   */
+  slack_bot_token?: string;
+  /**
+   * Optional dedicated Slack app token (xapp-...) for Socket Mode
+   * Required alongside slack_bot_token for Slack multi-bot support
+   */
+  slack_app_token?: string;
+  /** Keywords that auto-trigger this agent's response */
+  auto_respond_keywords?: string[];
+  /** Cooldown between responses in milliseconds */
+  cooldown_ms?: number;
+  /** Claude model to use for this agent */
+  model?: string;
+  /** Maximum turns for this agent */
+  max_turns?: number;
+  /** Whether this agent is enabled */
+  enabled?: boolean;
+  /** Number of concurrent CLI processes for this agent @default 1 */
+  pool_size?: number;
+  /** Agent tier level (1=full, 2=limited, 3=scoped execution) @default 1 */
+  tier?: 1 | 2 | 3;
+  /** Whether this agent can delegate tasks (Tier 1 only) */
+  can_delegate?: boolean;
+  /** Enable automatic task continuation */
+  auto_continue?: boolean;
+  /** Explicit tool permissions (overrides tier defaults) */
+  tool_permissions?: { allowed?: string[]; blocked?: string[] };
+}
+
+/**
+ * Loop prevention configuration
+ */
+export interface LoopPreventionConfig {
+  /** Maximum consecutive agent responses without human intervention */
+  max_chain_length: number;
+  /** Minimum time between any agent responses in milliseconds */
+  global_cooldown_ms: number;
+  /** Time window for counting chain length in milliseconds */
+  chain_window_ms: number;
+}
+
+/**
+ * Multi-agent system configuration
+ *
+ * @see packages/standalone/src/multi-agent/types.ts
+ * Note: This is intentionally duplicated from runtime types for CLI config parsing.
+ */
+export interface MultiAgentConfig {
+  /** Enable/disable multi-agent system */
+  enabled: boolean;
+  /** Agent definitions (key is agent ID) */
+  agents: Record<string, Omit<AgentPersonaConfig, 'id'>>;
+  /** Loop prevention settings */
+  loop_prevention: LoopPreventionConfig;
+  /** Free chat mode - all agents respond to every human message */
+  free_chat?: boolean;
+  /** Default agent ID for channels without explicit triggers */
+  default_agent?: string;
+  /** Channel-specific agent configurations */
+  channel_overrides?: Record<
+    string,
+    {
+      default_agent?: string;
+      allowed_agents?: string[];
+      disabled_agents?: string[];
+    }
+  >;
+  /** Category-based routing rules */
+  categories?: Array<{
+    name: string;
+    patterns: string[];
+    agent_ids: string[];
+    priority?: number;
+  }>;
+  /** UltraWork autonomous session configuration */
+  ultrawork?: {
+    enabled: boolean;
+    trigger_keywords?: string[];
+    max_duration?: number;
+    max_steps?: number;
+  };
+  /** Task continuation configuration */
+  task_continuation?: {
+    enabled: boolean;
+    max_retries?: number;
+    completion_markers?: string[];
+  };
+  /**
+   * Skip permission prompts for all agent processes
+   *
+   * @warning SECURITY RISK: Bypasses all permission checks for tool use.
+   * Only enable in trusted environments where agent actions are pre-approved.
+   *
+   * @default true
+   */
+  dangerouslySkipPermissions?: boolean;
+  /** Enable @mention-based delegation between agents @default false */
+  mention_delegation?: boolean;
+  /** Maximum depth of @mention delegation chains @default 3 */
+  max_mention_depth?: number;
+}
+
 /**
  * Integrations configuration
  */
@@ -307,6 +446,8 @@ export interface MAMAConfig {
   integrations?: IntegrationsConfig;
   /** Heartbeat scheduler settings (optional) */
   heartbeat?: HeartbeatConfig;
+  /** Multi-agent settings (optional) */
+  multi_agent?: MultiAgentConfig;
 }
 
 /**

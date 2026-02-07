@@ -42,6 +42,18 @@ export interface IntegrationOptions {
     enabled: boolean;
   }>;
   role?: string;
+  multi_agent?: {
+    enabled: boolean;
+    agents?: Record<
+      string,
+      {
+        name: string;
+        tier: number;
+        model?: string;
+        enabled: boolean;
+      }
+    >;
+  };
 }
 
 const ROLE_EXAMPLES: Record<string, string> = {
@@ -97,6 +109,20 @@ const ROLE_EXAMPLES: Record<string, string> = {
     "notifyChannelId": "YOUR_DISCORD_CHANNEL_ID"
   }
 }
+\`\`\`
+
+### Multi-Agent Setup (Optional)
+\`\`\`json
+{
+  "multi_agent": {
+    "enabled": true,
+    "agents": {
+      "sisyphus": { "name": "Sisyphus", "tier": 1, "enabled": true },
+      "devbot": { "name": "DevBot", "tier": 2, "enabled": true },
+      "reviewer": { "name": "Reviewer", "tier": 3, "enabled": true }
+    }
+  }
+}
 \`\`\``,
 
   researcher: `## Researcher Integration Examples
@@ -148,6 +174,19 @@ const ROLE_EXAMPLES: Record<string, string> = {
     }
   ]
 }
+\`\`\`
+
+### Multi-Agent Setup (Optional)
+\`\`\`json
+{
+  "multi_agent": {
+    "enabled": true,
+    "agents": {
+      "researcher": { "name": "Researcher", "tier": 1, "enabled": true },
+      "analyst": { "name": "Analyst", "tier": 2, "enabled": true }
+    }
+  }
+}
 \`\`\``,
 
   manager: `## Manager Integration Examples
@@ -192,6 +231,19 @@ const ROLE_EXAMPLES: Record<string, string> = {
     "quietStart": 20,
     "quietEnd": 8,
     "notifyChannelId": "YOUR_SLACK_CHANNEL_ID"
+  }
+}
+\`\`\`
+
+### Multi-Agent Setup (Optional)
+\`\`\`json
+{
+  "multi_agent": {
+    "enabled": true,
+    "agents": {
+      "coordinator": { "name": "Coordinator", "tier": 1, "enabled": true },
+      "reporter": { "name": "Reporter", "tier": 2, "enabled": true }
+    }
   }
 }
 \`\`\``,
@@ -605,6 +657,65 @@ export async function handleSaveIntegrationToken(input: {
     return {
       success: false,
       message: 'Failed to save token',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Handler for saving multi-agent configuration
+ */
+export async function handleSaveMultiAgent(input: {
+  enabled: boolean;
+  agents?: Record<
+    string,
+    {
+      name: string;
+      tier: number;
+      model?: string;
+      enabled: boolean;
+    }
+  >;
+}): Promise<{ success: boolean; message: string; error?: string }> {
+  try {
+    const config = await loadConfig();
+
+    // Transform simple agent config to full AgentPersonaConfig format
+    const agents: Record<string, any> = {};
+    if (input.agents) {
+      for (const [id, agent] of Object.entries(input.agents)) {
+        agents[id] = {
+          name: agent.name,
+          display_name: agent.name,
+          tier: agent.tier,
+          model: agent.model || 'claude-sonnet-4-20250514',
+          enabled: agent.enabled,
+          trigger_prefix: `!${id.toLowerCase()}`,
+          persona_file: `~/.mama/personas/${id}.md`,
+        };
+      }
+    }
+
+    config.multi_agent = {
+      enabled: input.enabled,
+      agents,
+      loop_prevention: {
+        max_chain_length: 3,
+        cooldown_seconds: 300,
+      },
+    } as any;
+
+    await saveConfig(config);
+
+    return {
+      success: true,
+      message:
+        'Multi-agent configuration saved successfully! Edit config.yaml to customize agent personas.',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: 'Failed to save multi-agent configuration',
       error: error instanceof Error ? error.message : String(error),
     };
   }
