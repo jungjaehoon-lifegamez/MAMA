@@ -889,6 +889,13 @@ export class AgentLoop {
                 `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
                   `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
               );
+            } else if (block.type === 'tool_result') {
+              const status = block.is_error ? 'ERROR' : 'SUCCESS';
+              parts.push(`[Tool Result: ${status}]\n${block.content}`);
+            } else if (block.type === 'tool_use') {
+              parts.push(
+                `[Tool Call: ${block.name}]\nInput: ${JSON.stringify(block.input, null, 2)}`
+              );
             }
           }
           text = parts.join('\n');

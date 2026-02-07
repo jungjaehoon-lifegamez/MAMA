@@ -425,12 +425,14 @@ export class DiscordGateway implements Gateway {
             multiAgentResult.responses
           );
 
-          // Record bot responses to history
-          for (const sentMsg of sentMessages) {
+          // Record bot responses to history with correct agent attribution
+          for (let i = 0; i < sentMessages.length; i++) {
+            const sentMsg = sentMessages[i];
+            const agentResp = multiAgentResult.responses[i];
             channelHistory.record(message.channel.id, {
               messageId: sentMsg.id,
-              sender: this.client.user?.username || 'MAMA',
-              userId: this.client.user?.id || '',
+              sender: agentResp?.agent.display_name || this.client.user?.username || 'MAMA',
+              userId: agentResp?.agentId || this.client.user?.id || '',
               body: sentMsg.content,
               timestamp: Date.now(),
               isBot: true,
