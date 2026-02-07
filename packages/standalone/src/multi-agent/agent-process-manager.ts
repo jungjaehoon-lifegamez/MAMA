@@ -304,14 +304,19 @@ export class AgentProcessManager extends EventEmitter {
   ): string {
     const agent: AgentPersonaConfig = { id: agentId, ...agentConfig };
 
-    // Replace @DisplayName mentions in persona with platform-specific <@userId>
+    // Replace @mentions in persona with platform-specific <@userId>
+    // Matches both @DisplayName (e.g. @📝 Reviewer) and @Name (e.g. @Reviewer)
     let resolvedPersona = personaContent;
     if (this.mentionDelegationEnabled && this.botUserIdMap.size > 0) {
       for (const [aid, cfg] of Object.entries(this.config.agents)) {
         const userId = this.botUserIdMap.get(aid);
-        if (userId && cfg.display_name) {
-          // Replace @DisplayName (e.g. @DevBot → <@U123>)
-          resolvedPersona = resolvedPersona.replaceAll(`@${cfg.display_name}`, `<@${userId}>`);
+        if (userId) {
+          if (cfg.display_name) {
+            resolvedPersona = resolvedPersona.replaceAll(`@${cfg.display_name}`, `<@${userId}>`);
+          }
+          if (cfg.name && cfg.name !== cfg.display_name) {
+            resolvedPersona = resolvedPersona.replaceAll(`@${cfg.name}`, `<@${userId}>`);
+          }
         }
       }
     }
