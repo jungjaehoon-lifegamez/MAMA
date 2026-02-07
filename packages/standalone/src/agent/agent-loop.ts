@@ -253,6 +253,7 @@ export class AgentLoop {
         sessionId,
         systemPrompt: defaultSystemPrompt,
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
+        // Headless daemon — no interactive permission prompts possible
         dangerouslySkipPermissions: true,
         useGatewayTools: useGatewayMode,
       });
@@ -265,6 +266,7 @@ export class AgentLoop {
         sessionId,
         systemPrompt: defaultSystemPrompt,
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
+        // Headless daemon — no interactive permission prompts possible
         dangerouslySkipPermissions: true,
         useGatewayTools: useGatewayMode,
       });

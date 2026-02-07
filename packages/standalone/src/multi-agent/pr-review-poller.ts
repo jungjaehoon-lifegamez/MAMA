@@ -145,12 +145,8 @@ export class PRReviewPoller {
         seenReviewIds.add(r.id);
       }
     } catch (err) {
-      this.logger.error(`[PRPoller] Failed to load existing comments:`, err);
-      this.logger.warn(
-        `[PRPoller] Starting with empty seen comment sets — existing comments may be re-reported as new`
-      );
-      // seenCommentIds and seenReviewIds remain empty Sets (initialized above)
-      // This means all comments will be treated as new on first poll
+      this.logger.error(`[PRPoller] Failed to load existing comments — aborting start:`, err);
+      return false;
     }
 
     // Fetch initial HEAD SHA

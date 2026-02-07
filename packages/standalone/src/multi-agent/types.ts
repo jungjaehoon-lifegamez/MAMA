@@ -100,7 +100,7 @@ export interface AgentPersonaConfig {
    * Agent tier level
    * - Tier 1: Full access, can delegate to others
    * - Tier 2: Read/analyze tools only (no write/edit/bash)
-   * - Tier 3: Read/analyze tools only (no write/edit/bash)
+   * - Tier 3: Scoped execution (limited tools per agent config)
    * @default 1 (backward compat: existing agents keep full access)
    */
   tier?: 1 | 2 | 3;
@@ -230,7 +230,7 @@ export interface MultiAgentConfig {
    * Only enable in trusted environments where agent actions are pre-approved.
    * In production, consider setting to false to enforce user consent for sensitive operations.
    *
-   * @default true
+   * @default false
    */
   dangerouslySkipPermissions?: boolean;
 

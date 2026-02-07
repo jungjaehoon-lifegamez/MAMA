@@ -130,6 +130,7 @@ export class PersistentClaudeProcess extends EventEmitter {
   private requestTimeoutHandle: NodeJS.Timeout | null = null;
   private toolUseBlocks: ToolUseBlock[] = [];
   private accumulatedText: string = '';
+  private startPromise: Promise<void> | null = null;
 
   constructor(options: PersistentProcessOptions) {
     super();
@@ -154,6 +155,20 @@ export class PersistentClaudeProcess extends EventEmitter {
       return;
     }
 
+    // Serialize concurrent start() calls — if already starting, wait for that to finish
+    if (this.startPromise) {
+      return this.startPromise;
+    }
+
+    this.startPromise = this.doStart();
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  private async doStart(): Promise<void> {
     this.state = 'starting';
     console.log(`[PersistentCLI] Starting process for session: ${this.options.sessionId}`);
 
@@ -162,7 +177,6 @@ export class PersistentClaudeProcess extends EventEmitter {
 
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      detached: true,
       env: { ...process.env, ...(this.options.env || {}) },
     });
 
@@ -178,10 +192,13 @@ export class PersistentClaudeProcess extends EventEmitter {
 
     // Guard: Only set idle if still in starting state AND process is alive
     // handleClose could have been called during the setTimeout above (→ state='dead')
-    // process could be killed after spawn (→ !this.process.killed check prevents premature 'idle')
-    if (this.state === 'starting' && this.process && !this.process.killed) {
+    // Note: TS can't track async state mutations from event handlers, so cast is needed
+    const currentState = this.state as ProcessState;
+    if (currentState === 'starting' && this.process && !this.process.killed) {
       this.state = 'idle';
       console.log(`[PersistentCLI] Process started and waiting for first message`);
+    } else if (currentState === 'dead') {
+      throw new Error('Process died during startup');
     }
   }
 
@@ -233,11 +250,18 @@ export class PersistentClaudeProcess extends EventEmitter {
       await this.start();
     }
 
-    // Prevent concurrent requests during auto-restart or active processing
-    if (this.state === 'busy' || this.state === 'starting') {
-      throw new Error(
-        `Process is ${this.state === 'busy' ? 'busy with another request' : 'starting up, please retry'}`
-      );
+    // If another caller is starting, wait for it to finish
+    if (this.startPromise) {
+      await this.startPromise;
+    }
+
+    // Prevent concurrent requests during active processing
+    if (this.state === 'busy') {
+      throw new Error('Process is busy with another request');
+    }
+
+    if (this.state === 'starting' || this.state === 'dead') {
+      throw new Error(`Process is not ready (state: ${this.state})`);
     }
 
     this.state = 'busy';

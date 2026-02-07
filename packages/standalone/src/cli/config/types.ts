@@ -323,6 +323,8 @@ export interface AgentPersonaConfig {
   max_turns?: number;
   /** Whether this agent is enabled */
   enabled?: boolean;
+  /** Number of concurrent CLI processes for this agent @default 1 */
+  pool_size?: number;
   /** Agent tier level (1=full, 2=limited, 3=scoped execution) @default 1 */
   tier?: 1 | 2 | 3;
   /** Whether this agent can delegate tasks (Tier 1 only) */
