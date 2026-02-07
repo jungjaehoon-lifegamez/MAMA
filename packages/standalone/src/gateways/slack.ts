@@ -275,6 +275,16 @@ export class SlackGateway implements Gateway {
     // Ignore other bot messages (not part of our multi-agent system)
     if (event.bot_id) return;
 
+    // Check for PR review polling commands (start/stop) — before shouldRespond
+    // so "PR 중지" works without requiring bot mention
+    if (this.multiAgentHandler?.isEnabled()) {
+      const prContent = this.cleanMessageContent(event.text);
+      if (prContent.trim()) {
+        const handled = await this.multiAgentHandler.handlePRCommand(event.channel, prContent);
+        if (handled) return;
+      }
+    }
+
     const isDM = event.channel_type === 'im';
 
     // Check if we should respond to this message
@@ -298,16 +308,6 @@ export class SlackGateway implements Gateway {
 
     // Remove mentions from message content
     const cleanContent = this.cleanMessageContent(event.text);
-
-    if (!cleanContent.trim()) {
-      return; // Don't process empty messages
-    }
-
-    // Check for PR review polling commands (start/stop) before multi-agent routing
-    if (this.multiAgentHandler?.isEnabled()) {
-      const handled = await this.multiAgentHandler.handlePRCommand(event.channel, cleanContent);
-      if (handled) return;
-    }
 
     // Check if multi-agent mode should handle this message
     if (this.multiAgentHandler?.isEnabled()) {
