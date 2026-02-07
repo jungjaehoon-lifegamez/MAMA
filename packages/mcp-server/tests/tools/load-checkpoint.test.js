@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { initDB, closeDB, getAdapter } from '../../src/mama/db-manager.js';
+import { initDB, closeDB, getAdapter } from '@jungjaehoon/mama-core/db-manager';
 import { saveCheckpointTool, loadCheckpointTool } from '../../src/tools/checkpoint-tools.js';
 import { saveDecisionTool } from '../../src/tools/save-decision.js';
 import path from 'path';

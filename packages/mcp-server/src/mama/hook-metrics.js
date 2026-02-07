@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
-const { info, warn, error: logError } = require('./debug-logger');
+const { info, warn, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 
 // Metrics log directory (override with MAMA_LOG_DIR for tests/sandboxes)
 const LOG_DIR = process.env.MAMA_LOG_DIR || path.join(os.homedir(), '.mama', 'logs');
