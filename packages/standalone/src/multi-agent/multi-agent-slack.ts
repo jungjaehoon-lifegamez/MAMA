@@ -20,6 +20,7 @@ import type { PersistentProcessOptions } from '../agent/persistent-cli-process.j
 import { splitForSlack } from '../gateways/message-splitter.js';
 import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
 import { PRReviewPoller } from './pr-review-poller.js';
+import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 
 /** Default timeout for agent responses (15 minutes - longer than Discord due to Slack's slower Socket Mode relay and complex thread routing) */
@@ -192,10 +193,12 @@ export class MultiAgentSlackHandler {
         `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
       );
 
-      // PR Review Poller: reviewer bot sends messages mentioning @developer
-      const developerUserId = botUserIdMap.get('developer');
-      if (developerUserId) {
-        this.prReviewPoller.setTargetAgentUserId(developerUserId);
+      // PR Review Poller: reviewer bot sends messages mentioning @Sisyphus (orchestrator)
+      // Sisyphus analyzes severity, delegates atomic fix tasks to @DevBot
+      const orchestratorId = this.config.default_agent || 'sisyphus';
+      const orchestratorUserId = botUserIdMap.get(orchestratorId);
+      if (orchestratorUserId) {
+        this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
       }
 
       // Use reviewer bot's WebClient to send PR review messages
@@ -749,6 +752,43 @@ export class MultiAgentSlackHandler {
         (id) => id !== response.agentId
       );
       if (mentionedAgentIds.length === 0) continue;
+
+      // Hard gate: block malformed delegations from can_delegate agents
+      const senderAgent = this.orchestrator.getAgent(response.agentId);
+      if (senderAgent?.can_delegate && isDelegationAttempt(response.rawContent)) {
+        const validation = validateDelegationFormat(response.rawContent);
+        if (!validation.valid) {
+          this.logger.warn(
+            `[Delegation] BLOCKED ${response.agentId} — missing: ${validation.missingSections.join(', ')}`
+          );
+
+          // Post warning to channel so the agent sees the feedback
+          try {
+            const warningMsg =
+              `⚠️ *Delegation blocked* — missing sections: ${validation.missingSections.join(', ')}\n` +
+              `Re-send with all 6 sections: TASK, EXPECTED OUTCOME, MUST DO, MUST NOT DO, REQUIRED TOOLS, CONTEXT`;
+            const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
+            if (hasOwnBot) {
+              await this.multiBotManager.replyAsAgent(
+                response.agentId,
+                channelId,
+                threadTs,
+                warningMsg
+              );
+            } else {
+              await mainWebClient.chat.postMessage({
+                channel: channelId,
+                text: warningMsg,
+                thread_ts: threadTs,
+              });
+            }
+          } catch {
+            /* ignore warning post errors */
+          }
+
+          continue; // Skip routing — do not forward to target agents
+        }
+      }
 
       this.logger.log(
         `[MultiAgentSlack] Auto-routing mentions from ${response.agentId}: → ${mentionedAgentIds.join(', ')}`

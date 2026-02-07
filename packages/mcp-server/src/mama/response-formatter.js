@@ -10,7 +10,7 @@
  */
 
 // eslint-disable-next-line no-unused-vars
-const { info } = require('./debug-logger');
+const { info } = require('@jungjaehoon/mama-core/debug-logger');
 
 /**
  * Response Formatter for search results

@@ -87,6 +87,8 @@ export class DiscordGateway implements Gateway {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildPresences,
+        GatewayIntentBits.GuildMembers,
       ],
       partials: [Partials.Channel], // Required for DM support
     });

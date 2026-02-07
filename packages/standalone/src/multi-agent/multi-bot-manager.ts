@@ -5,7 +5,14 @@
  * Each agent with a dedicated bot_token gets its own Discord client.
  */
 
-import { Client, GatewayIntentBits, Partials, TextChannel, type Message } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  TextChannel,
+  ActivityType,
+  type Message,
+} from 'discord.js';
 import type { MultiAgentConfig, AgentPersonaConfig } from './types.js';
 
 /**
@@ -105,6 +112,8 @@ export class MultiBotManager {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildPresences,
+        GatewayIntentBits.GuildMembers,
       ],
       partials: [Partials.Channel],
     });
@@ -121,7 +130,14 @@ export class MultiBotManager {
       bot.connected = true;
       bot.userId = c.user.id;
       bot.username = c.user.tag;
-      console.log(`[MultiBotManager] Agent ${agentId} bot logged in as ${c.user.tag}`);
+      // Set online presence explicitly
+      c.user.setPresence({
+        status: 'online',
+        activities: [{ name: agentConfig.name || agentId, type: ActivityType.Watching }],
+      });
+      console.log(
+        `[MultiBotManager] Agent ${agentId} bot logged in as ${c.user.tag} (guilds: ${c.guilds.cache.size})`
+      );
     });
 
     // Listen for messages mentioning this agent bot

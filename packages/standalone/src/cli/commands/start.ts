@@ -1313,36 +1313,51 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   gateways.push(apiServer);
 
-  // Handle graceful shutdown
+  // Handle graceful shutdown with timeout
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return; // Prevent double shutdown
+    shuttingDown = true;
     console.log('\n\n🛑 Shutting down MAMA...');
 
-    // Stop all gateways
-    for (const gateway of gateways) {
-      try {
-        await gateway.stop();
-      } catch {
-        // Ignore errors during shutdown
-      }
-    }
+    // Force exit after 5 seconds if graceful shutdown hangs
+    const forceExit = setTimeout(() => {
+      console.error('[MAMA] Graceful shutdown timed out, forcing exit');
+      process.exit(1);
+    }, 5000);
+    forceExit.unref();
 
-    // Stop plugin gateways
     try {
-      await pluginLoader.stopAll();
+      // Stop schedulers first (sync, fast)
+      scheduler.shutdown();
+      heartbeatScheduler.stop();
+      tokenKeepAlive.stop();
+
+      // Close embedding server (port 3849) - fast, no await needed
+      if (embeddingServer?.close) {
+        embeddingServer.close();
+      }
+
+      // Stop all gateways with per-gateway 2s timeout
+      const withTimeout = (p: Promise<void>, ms: number) =>
+        Promise.race([p, new Promise<void>((r) => setTimeout(r, ms))]);
+      await Promise.allSettled(gateways.map((g) => withTimeout(g.stop(), 2000)));
+
+      // Stop plugin gateways
+      await withTimeout(
+        pluginLoader.stopAll().catch(() => {}),
+        1000
+      );
+
+      // Close session database
+      sessionStore.close();
+
+      const { deletePid } = await import('../utils/pid-manager.js');
+      await deletePid();
     } catch {
-      // Ignore errors during shutdown
+      // Best effort cleanup
     }
 
-    // Stop schedulers
-    scheduler.shutdown();
-    heartbeatScheduler.stop();
-    tokenKeepAlive.stop();
-
-    // Close session database
-    sessionStore.close();
-
-    const { deletePid } = await import('../utils/pid-manager.js');
-    await deletePid();
     process.exit(0);
   };
 

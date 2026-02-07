@@ -9,9 +9,9 @@
  * @date 2025-11-25
  */
 
-const { info, error: logError } = require('./debug-logger');
-const { generateEmbedding } = require('./embeddings');
-const { vectorSearch } = require('./memory-store');
+const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
+const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
+const { vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
 
 /**
  * Search Engine for narrative/decision search

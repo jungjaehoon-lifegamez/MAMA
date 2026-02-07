@@ -13,7 +13,7 @@
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import type {
   GatewayToolName,
   GatewayToolInput,
@@ -588,6 +588,30 @@ export class GatewayToolExecutor {
 
     if (!command) {
       return { success: false, error: 'command is required' };
+    }
+
+    // Block destructive commands (stop/kill) - these would permanently kill the agent
+    const destructive = /(systemctl\s+--user\s+stop\s+mama-os|kill\s.*mama|pkill\s.*mama)/i;
+    if (destructive.test(command)) {
+      return {
+        success: false,
+        error:
+          'Cannot stop mama-os from within the agent. Ask the user to run this command from their terminal.',
+      };
+    }
+
+    // Handle restart: deferred restart (agent survives to respond, service restarts after 3s)
+    const restartPattern = /systemctl\s+--user\s+restart\s+mama-os/i;
+    if (restartPattern.test(command)) {
+      const child = spawn('bash', ['-c', 'sleep 3 && systemctl --user restart mama-os'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      return {
+        success: true,
+        output: 'mama-os 재시작이 3초 후에 실행됩니다. 현재 세션은 종료됩니다.',
+      };
     }
 
     try {

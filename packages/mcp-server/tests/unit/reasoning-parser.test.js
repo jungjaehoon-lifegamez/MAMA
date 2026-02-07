@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseReasoningForRelationships,
   VALID_EDGE_TYPES,
-} from '../../src/mama/decision-tracker.js';
+} from '@jungjaehoon/mama-core/decision-tracker';
 
 describe('Story 2.2: Reasoning Field Parsing', () => {
   describe('VALID_EDGE_TYPES constant', () => {
