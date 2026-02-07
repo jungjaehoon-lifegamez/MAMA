@@ -345,11 +345,11 @@ Run multiple AI agents in Discord that collaborate, delegate tasks, and work aut
 
 ### Agent Tier System
 
-| Tier       | Role         | Tool Access                              | Capabilities                             |
-| ---------- | ------------ | ---------------------------------------- | ---------------------------------------- |
-| **Tier 1** | Orchestrator | All tools (Read, Write, Edit, Bash, ...) | Full access + delegation to other agents |
-| **Tier 2** | Advisor      | Read-only (Read, Grep, Glob, WebSearch)  | Analysis and recommendations             |
-| **Tier 3** | Executor     | Read-only (Read, Grep, Glob)             | Scoped tasks, no delegation              |
+| Tier       | Role         | Tool Access                                       | Capabilities                             |
+| ---------- | ------------ | ------------------------------------------------- | ---------------------------------------- |
+| **Tier 1** | Orchestrator | All tools (Read, Write, Edit, Bash, ...)          | Full access + delegation to other agents |
+| **Tier 2** | Advisor      | Read-only (Read, Grep, Glob, WebSearch, WebFetch) | Analysis and recommendations             |
+| **Tier 3** | Executor     | Read-only (Read, Grep, Glob, WebSearch, WebFetch) | Scoped tasks, no delegation              |
 
 Tier defaults can be overridden per agent with explicit `tool_permissions.allowed/blocked`.
 

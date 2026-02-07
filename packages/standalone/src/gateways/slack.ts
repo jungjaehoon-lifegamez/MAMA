@@ -536,9 +536,15 @@ export class SlackGateway implements Gateway {
    * Stop the Slack gateway
    */
   async stop(): Promise<void> {
-    // Stop multi-agent processes
+    // Stop multi-agent processes (don't block disconnect on failure)
     if (this.multiAgentHandler) {
-      await this.multiAgentHandler.stopAll();
+      try {
+        await this.multiAgentHandler.stopAll();
+      } catch (error) {
+        console.warn(
+          `[SlackGateway] Failed to stop multi-agent handler: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
 
     if (!this.connected) {
