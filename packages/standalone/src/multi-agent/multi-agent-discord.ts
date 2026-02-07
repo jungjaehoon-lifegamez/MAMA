@@ -61,6 +61,9 @@ export class MultiAgentDiscordHandler {
   private messageQueue: AgentMessageQueue;
   private prReviewPoller: PRReviewPoller;
 
+  /** Discord client reference for main bot channel sends */
+  private discordClient: { channels: { fetch: (id: string) => Promise<unknown> } } | null = null;
+
   /** Whether multi-bot mode is initialized */
   private multiBotInitialized = false;
 
@@ -160,9 +163,6 @@ export class MultiAgentDiscordHandler {
         /* ignore */
       }
 
-      // Send brief acknowledgment so the channel isn't silent during processing
-      await this.sendAcknowledgment(agentId, message, isFromAgent);
-
       // Force this specific agent to respond
       try {
         const response = await this.processAgentResponse(
@@ -228,11 +228,25 @@ export class MultiAgentDiscordHandler {
       this.processManager.setMentionDelegation(true);
       console.log(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
 
-      // PR Review Poller: set target agent (LEAD/orchestrator) for @mentions
-      const orchestratorId = defaultAgentId || 'sisyphus';
-      const orchestratorUserId = botUserIdMap.get(orchestratorId);
-      if (orchestratorUserId) {
-        this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
+      // PR Review Poller: target Reviewer for @mention in Discord messages.
+      // Reviewer analyzes PR data → summarizes → mentions LEAD with prioritized tasks.
+      const reviewerEntry = Object.entries(this.config.agents).find(
+        ([aid, cfg]) =>
+          aid.toLowerCase().includes('review') || cfg.name?.toLowerCase().includes('review')
+      );
+      const reviewerTargetId = reviewerEntry?.[0];
+      const reviewerUserId = reviewerTargetId ? botUserIdMap.get(reviewerTargetId) : undefined;
+      if (reviewerUserId) {
+        this.prReviewPoller.setTargetAgentUserId(reviewerUserId);
+        console.log(`[MultiAgent] PR Poller target: ${reviewerTargetId} (reviewer → LEAD)`);
+      } else {
+        // Fallback: mention LEAD directly
+        const orchestratorId = defaultAgentId || 'sisyphus';
+        const orchestratorUserId = botUserIdMap.get(orchestratorId);
+        if (orchestratorUserId) {
+          this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
+          console.log(`[MultiAgent] PR Poller target: ${orchestratorId} (fallback LEAD)`);
+        }
       }
     }
   }
@@ -252,45 +266,58 @@ export class MultiAgentDiscordHandler {
    * multi-agent flow so LEAD processes the review comments.
    */
   setDiscordClient(client: { channels: { fetch: (id: string) => Promise<unknown> } }): void {
+    this.discordClient = client;
     if (this.prReviewPoller.hasMessageSender()) return;
+    // Accumulate PR data texts for LEAD mention
+    let batchChannelId: string | null = null;
+    let batchTexts: string[] = [];
+
     this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
       const channel = await client.channels.fetch(channelId);
       if (!channel || !('send' in (channel as Record<string, unknown>))) return;
 
-      const sentMsg = await (
-        channel as { send: (opts: { content: string }) => Promise<Message> }
-      ).send({ content: text });
+      await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
+        content: text,
+      });
 
-      // Inject into multi-agent flow so LEAD processes the review comments.
-      // Without this, the main bot's own message gets ignored by discord.ts.
-      const defaultAgentId = this.config.default_agent;
-      if (defaultAgentId) {
-        const cleanContent = text.replace(/<@!?\d+>/g, '').trim();
-        try {
-          const response = await this.processAgentResponse(
-            defaultAgentId,
-            {
-              channelId,
-              userId: 'system',
-              content: cleanContent,
-              isBot: false,
-              messageId: sentMsg.id,
-              timestamp: Date.now(),
-            },
-            cleanContent,
-            sentMsg
-          );
-          if (response) {
-            await this.sendAgentResponses(sentMsg, [response]);
-            this.orchestrator.recordAgentResponse(defaultAgentId, channelId, response.messageId);
-            if (this.isMentionDelegationEnabled()) {
-              await this.routeResponseMentions(sentMsg, [response]);
-            }
-          }
-        } catch (err) {
-          console.error('[MultiAgent] PR Poller → LEAD injection error:', err);
-        }
+      batchChannelId = channelId;
+      batchTexts.push(text.replace(/<@!?\d+>/g, '').trim());
+    });
+
+    // After all chunks sent, send LEAD mention FROM Reviewer bot
+    // with PR data included so LEAD doesn't pick up stale channel history.
+    this.prReviewPoller.setOnBatchComplete(async (channelId: string) => {
+      if (!batchChannelId || batchChannelId !== channelId) return;
+      const texts = batchTexts;
+      batchChannelId = null;
+      batchTexts = [];
+
+      // Reset chain so LEAD can delegate freely
+      this.orchestrator.resetChain(channelId);
+
+      const leadUserId = this.multiBotManager.getMainBotUserId();
+      if (!leadUserId) return;
+
+      const reviewerEntry = Object.entries(this.config.agents).find(
+        ([aid, cfg]) =>
+          aid.toLowerCase().includes('review') || cfg.name?.toLowerCase().includes('review')
+      );
+      const reviewerAgentId = reviewerEntry?.[0];
+      if (!reviewerAgentId) return;
+
+      // Include PR data summary in LEAD mention (Discord 2000 char limit per message)
+      const prSummary = texts.join('\n').slice(0, 3500);
+      const mentionPrefix = `<@${leadUserId}> PR 리뷰 코멘트를 분석하고 우선순위별로 정리하여 위임하세요.\n\n`;
+      const fullMsg = `${mentionPrefix}${prSummary}`;
+
+      // Split using Discord-aware splitter (2000 char limit)
+      const chunks = splitForDiscord(fullMsg);
+      for (const chunk of chunks) {
+        await this.multiBotManager.sendAsAgent(reviewerAgentId, channelId, chunk);
       }
+      console.log(
+        `[MultiAgent] PR Poller → LEAD mention sent via ${reviewerAgentId} (${chunks.length} chunks, ${prSummary.length} chars)`
+      );
     });
     console.log('[MultiAgent] PR Review Poller message sender configured for Discord');
   }
@@ -356,11 +383,6 @@ export class MultiAgentDiscordHandler {
     if (selection.selectedAgents.length === 0) {
       return null;
     }
-
-    // Send acknowledgment for each selected agent before processing
-    await Promise.all(
-      selection.selectedAgents.map((agentId) => this.sendAcknowledgment(agentId, message, false))
-    );
 
     // Process all selected agents in parallel
     const results = await Promise.allSettled(
@@ -594,33 +616,6 @@ export class MultiAgentDiscordHandler {
   }
 
   /**
-   * Send a brief acknowledgment message so the channel isn't silent during processing.
-   * Like saying "확인했습니다, 진행하겠습니다" before doing the actual work.
-   */
-  private async sendAcknowledgment(
-    agentId: string,
-    message: Message,
-    isDelegation: boolean
-  ): Promise<void> {
-    const agent = this.orchestrator.getAgent(agentId);
-    if (!agent) return;
-
-    const ack = isDelegation ? `확인했습니다. 작업을 진행하겠습니다.` : `네, 확인하겠습니다.`;
-    const content = `**${agent.display_name}**: ${ack}`;
-
-    try {
-      const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
-      if (hasOwnBot) {
-        await this.multiBotManager.replyAsAgent(agentId, message, content);
-      } else {
-        await message.reply({ content });
-      }
-    } catch {
-      // Non-critical — don't let ack failure block processing
-    }
-  }
-
-  /**
    * Format agent response with display name prefix
    */
   private formatAgentResponse(agent: AgentPersonaConfig, response: string): string {
@@ -658,11 +653,15 @@ export class MultiAgentDiscordHandler {
         if (hasOwnBot) {
           // Use agent's dedicated bot - send to channel
           await this.multiBotManager.sendAsAgent(agentId, message.channelId, chunk);
+        } else if (this.discordClient) {
+          // Use main bot via stored Discord client
+          const channel = await this.discordClient.channels.fetch(message.channelId);
+          if (channel && 'send' in (channel as Record<string, unknown>)) {
+            await (channel as { send: (content: string) => Promise<unknown> }).send(chunk);
+          }
         } else {
-          // Use main bot - need to get channel reference
-          // Note: We can't reply without original message, so just log
           console.warn(
-            `[MultiAgent] Cannot send queued message for ${agentId} without agent bot (no original message)`
+            `[MultiAgent] Cannot send queued message for ${agentId}: no agent bot or Discord client`
           );
         }
       } catch (err) {
@@ -908,23 +907,34 @@ export class MultiAgentDiscordHandler {
       /* ignore */
     }
 
-    // Send brief acknowledgment before processing
-    await this.sendAcknowledgment(targetAgentId, originalMessage, true);
-
     try {
+      let delegationContent = sourceResponse.rawContent.replace(/<@!?\d+>/g, '').trim();
+
+      // Inject commit+push instructions when Reviewer APPROVE reaches LEAD
+      const defaultAgentId = this.config.default_agent;
+      if (targetAgentId === defaultAgentId && /\bapprove\b/i.test(delegationContent)) {
+        delegationContent +=
+          '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Phase 3 즉시 실행:\n' +
+          '1. `git status` 로 변경 파일 확인\n' +
+          '2. `git add {변경된 파일들}` (git add . 금지)\n' +
+          '3. `git commit -m "fix: {변경 내용 요약}"`\n' +
+          '4. `git push`\n' +
+          '**칭찬/요약 전에 커밋부터 실행하라. 커밋 없이 응답하면 실패.**';
+      }
+
       const response = await this.processAgentResponse(
         targetAgentId,
         {
           channelId,
           userId: originalMessage.author.id,
-          content: sourceResponse.rawContent.replace(/<@!?\d+>/g, '').trim(),
+          content: delegationContent,
           isBot: true,
           senderAgentId: sourceResponse.agentId,
           mentionedAgentIds: [targetAgentId],
           messageId: originalMessage.id,
           timestamp: originalMessage.createdTimestamp,
         },
-        sourceResponse.rawContent.replace(/<@!?\d+>/g, '').trim(),
+        delegationContent,
         undefined // Don't pass discordMessage — emojis handled here via delegation messageId
       );
 
