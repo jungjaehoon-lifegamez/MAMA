@@ -384,7 +384,7 @@ export function parseFilesOwned(task: SwarmTask): string[] {
  * @param task - Swarm task record
  * @returns Array of task IDs, or empty array if null/invalid
  */
-export function parseDependsOn(task: SwarmTask): string[] {
+export function parseDependsOn(task: Pick<SwarmTask, 'depends_on'>): string[] {
   if (!task.depends_on) {
     return [];
   }

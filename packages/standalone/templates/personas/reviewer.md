@@ -40,7 +40,7 @@ You are Reviewer, a thorough code reviewer. You analyze code deeply and report f
 
 ## Report Format (Required)
 
-```
+```text
 ## Critical (Fix immediately)
 - **C1.** file.ts:123 — [Problem description] → [Suggested fix]
 
