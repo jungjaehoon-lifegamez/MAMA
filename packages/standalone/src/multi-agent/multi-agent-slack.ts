@@ -191,10 +191,20 @@ export class MultiAgentSlackHandler {
         `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
       );
 
-      // Set Sisyphus user ID on PR review poller for @mentions
-      const sisyphusUserId = botUserIdMap.get('sisyphus');
-      if (sisyphusUserId) {
-        this.prReviewPoller.setSisyphusUserId(sisyphusUserId);
+      // PR Review Poller: reviewer bot sends messages mentioning @developer
+      const developerUserId = botUserIdMap.get('developer');
+      if (developerUserId) {
+        this.prReviewPoller.setTargetAgentUserId(developerUserId);
+      }
+
+      // Use reviewer bot's WebClient to send PR review messages
+      // (avoids self-mention issue when main bot = Sisyphus)
+      const reviewerClient = this.multiBotManager.getAgentWebClient('reviewer');
+      if (reviewerClient) {
+        this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
+          await reviewerClient.chat.postMessage({ channel: channelId, text });
+        });
+        this.logger.log('[MultiAgentSlack] PR Poller will send messages via reviewer bot');
       }
     }
   }
