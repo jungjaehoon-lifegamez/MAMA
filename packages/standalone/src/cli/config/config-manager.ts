@@ -134,9 +134,6 @@ export async function createDefaultConfig(overwrite = false): Promise<string> {
 
 /**
  * Merge user config with defaults
- */
-/**
- * Merge user config with defaults
  * SECURITY: Type guards ensure safe defaults for optional fields
  */
 function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {

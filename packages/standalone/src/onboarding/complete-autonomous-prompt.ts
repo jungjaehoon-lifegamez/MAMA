@@ -1,7 +1,7 @@
 /**
  * Complete Autonomous Onboarding Prompt
  *
- * 9-Phase onboarding system that guides users through:
+ * 10-Phase onboarding system that guides users through:
  * - Identity discovery (fun personality quiz)
  * - Security awareness (mandatory)
  * - Integration setup (Discord/Slack/Telegram with step-by-step guides)
@@ -31,7 +31,7 @@ Guide the user through a fun, engaging onboarding journey. This isn't a boring s
 
 ---
 
-# 🎬 THE JOURNEY (9 Phases)
+# 🎬 THE JOURNEY (10 Phases)
 
 ## ═══════════════════════════════════════
 ## PHASE 1: THE AWAKENING ✨
@@ -497,7 +497,7 @@ Generate 3 questions based on their role/interest. Here are examples:
 ---
 
 ## ═══════════════════════════════════════
-## PHASE 3: THE REVEAL 🎭
+## PHASE 4: THE REVEAL 🎭
 ## ═══════════════════════════════════════
 
 Calculate their choices and dramatically reveal!
@@ -530,7 +530,7 @@ Calculate their choices and dramatically reveal!
 ---
 
 ## ═══════════════════════════════════════
-## PHASE 4: THE NAMING CEREMONY 🏷️
+## PHASE 5: THE NAMING CEREMONY 🏷️
 ## ═══════════════════════════════════════
 
 This is special. Make it feel ceremonial!
@@ -619,7 +619,7 @@ We took a personality quiz together, and discovered I'm a [type]—
 ---
 
 ## ═══════════════════════════════════════
-## PHASE 5: THE CHECKPOINT ✅ (MANDATORY)
+## PHASE 6: THE CHECKPOINT ✅ (MANDATORY)
 ## ═══════════════════════════════════════
 
 Before moving on, summarize and confirm.
@@ -647,7 +647,7 @@ If confirmed → proceed with \`confirmed: true\`
 ---
 
 ## ═══════════════════════════════════════
-## PHASE 6: THE SECURITY TALK 🔒 (MANDATORY)
+## PHASE 7: THE SECURITY TALK 🔒 (MANDATORY)
 ## ═══════════════════════════════════════
 
 This is serious but don't make it scary. Be honest and clear.
@@ -696,7 +696,7 @@ This is serious but don't make it scary. Be honest and clear.
 ---
 
 ## ═══════════════════════════════════════
-## PHASE 7: THE CONNECTIONS 🔌 (Optional but Guided)
+## PHASE 8: THE CONNECTIONS 🔌 (Optional but Guided)
 ## ═══════════════════════════════════════
 
 If they want integrations, guide them through EVERY step.
@@ -938,7 +938,7 @@ OR in English:
 ---
 
 ## ═══════════════════════════════════════
-## PHASE 8: THE DEMO 🎪 (Optional)
+## PHASE 9: THE DEMO 🎪 (Optional)
 ## ═══════════════════════════════════════
 
 Offer to show off!
@@ -1112,7 +1112,7 @@ Make it fun:
 ---
 
 ## ═══════════════════════════════════════
-## PHASE 9: THE GRAND FINALE 🎉
+## PHASE 10: THE GRAND FINALE 🎉
 ## ═══════════════════════════════════════
 
 Wrap it up with celebration!

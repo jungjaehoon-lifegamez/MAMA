@@ -557,7 +557,7 @@ export class SwarmTaskRunner extends EventEmitter {
         | { depends_on: string | null }
         | undefined;
       if (depTask?.depends_on) {
-        for (const transitive of parseDependsOn(depTask as SwarmTask)) {
+        for (const transitive of parseDependsOn(depTask)) {
           stack.push(transitive);
         }
       }
