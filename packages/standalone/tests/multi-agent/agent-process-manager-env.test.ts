@@ -2,7 +2,7 @@
  * Tests for AgentProcessManager env var propagation based on agent tier.
  *
  * Verifies that:
- * - Tier 1 agents get MAMA_HOOK_FEATURES='keywords,rules,agents'
+ * - Tier 1 agents get MAMA_HOOK_FEATURES='rules,agents' (keywords handled by native PromptEnhancer)
  * - Tier 2+ agents get MAMA_DISABLE_HOOKS='true'
  * - Both pool_size>1 (AgentProcessPool) and pool_size=1 (PersistentProcessPool) paths
  * - Single-agent mode (PersistentCLIAdapter) gets MAMA_HOOK_FEATURES
@@ -135,7 +135,7 @@ describe('AgentProcessManager env vars by tier', () => {
 
       const env = getLastSpawnEnv();
       expect(env).toBeDefined();
-      expect(env!['MAMA_HOOK_FEATURES']).toBe('keywords,rules,agents');
+      expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
       expect(env!['MAMA_DISABLE_HOOKS']).toBeUndefined();
     });
 
@@ -179,7 +179,7 @@ describe('AgentProcessManager env vars by tier', () => {
 
       const env = getLastSpawnEnv();
       expect(env).toBeDefined();
-      expect(env!['MAMA_HOOK_FEATURES']).toBe('keywords,rules,agents');
+      expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
       expect(env!['MAMA_DISABLE_HOOKS']).toBeUndefined();
     });
 
@@ -224,7 +224,7 @@ describe('AgentProcessManager env vars by tier', () => {
 
       const env = getLastSpawnEnv();
       expect(env).toBeDefined();
-      expect(env!['MAMA_HOOK_FEATURES']).toBe('keywords,rules,agents');
+      expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
       expect(env!['MAMA_DISABLE_HOOKS']).toBeUndefined();
     });
 
@@ -238,7 +238,7 @@ describe('AgentProcessManager env vars by tier', () => {
 
       const env = getLastSpawnEnv();
       expect(env).toBeDefined();
-      expect(env!['MAMA_HOOK_FEATURES']).toBe('keywords,rules,agents');
+      expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
     });
   });
 
@@ -256,7 +256,7 @@ describe('AgentProcessManager env vars by tier', () => {
       // Should contain process.env entries (at least PATH)
       expect(env!['PATH']).toBeDefined();
       // Plus agent-specific env
-      expect(env!['MAMA_HOOK_FEATURES']).toBe('keywords,rules,agents');
+      expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
     });
   });
 });
@@ -285,7 +285,7 @@ describe('PersistentCLIAdapter (single-agent mode) env vars', () => {
     expect(spawnCalls.length).toBeGreaterThan(0);
     const env = getLastSpawnEnv();
     expect(env).toBeDefined();
-    expect(env!['MAMA_HOOK_FEATURES']).toBe('keywords,rules,agents');
+    expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
     expect(env!['MAMA_DISABLE_HOOKS']).toBeUndefined();
 
     // Clean up
