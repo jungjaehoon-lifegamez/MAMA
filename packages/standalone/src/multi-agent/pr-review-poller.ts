@@ -448,7 +448,7 @@ export class PRReviewPoller {
           ).length;
           const isReminder = seenCount === toReport.length && seenCount > 0;
           const prefix = isReminder ? '🔔 *Reminder*: ' : '';
-          const formatted = this.formatUnresolvedThreads(sessionKey, toReport);
+          const formatted = this.formatUnresolvedThreads(sessionKey, toReport, threads.length);
           const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
           await this.sendMessage(session.channelId, `${mention}${prefix}${formatted}`);
 
@@ -486,63 +486,50 @@ export class PRReviewPoller {
   }
 
   /**
-   * Format PR comments for Slack message
+   * Format PR comments for Slack message (simplified count format)
    */
   private formatComments(sessionKey: string, comments: PRComment[]): string {
-    // Group by severity (detect from body)
-    const critical: string[] = [];
-    const major: string[] = [];
-    const minor: string[] = [];
-    const other: string[] = [];
+    // Count by severity (detect from body)
+    let critical = 0;
+    let major = 0;
+    let minor = 0;
+    let other = 0;
 
     for (const c of comments) {
-      const location = c.path ? `\`${c.path}${c.line ? `:${c.line}` : ''}\`` : '';
-      // Use full body for both severity detection and display (no truncation for matching)
+      // Use full body for severity detection
       const bodyLower = c.body.toLowerCase();
-      const entry = `${location} — ${c.body} _(${c.user.login})_`;
 
-      // Detect severity from full body content (not truncated)
+      // Detect severity from full body content
       if (
         bodyLower.includes('critical') ||
         bodyLower.includes('bug') ||
         bodyLower.includes('security') ||
         bodyLower.includes('high')
       ) {
-        critical.push(entry);
+        critical++;
       } else if (
         bodyLower.includes('medium') ||
         bodyLower.includes('should') ||
         bodyLower.includes('major')
       ) {
-        major.push(entry);
+        major++;
       } else if (
         bodyLower.includes('nit') ||
         bodyLower.includes('minor') ||
         bodyLower.includes('low') ||
         bodyLower.includes('suggestion')
       ) {
-        minor.push(entry);
+        minor++;
       } else {
-        other.push(entry);
+        other++;
       }
     }
 
-    let msg = `📝 *PR Review Comments* — ${sessionKey} (${comments.length} new comments)\n\n`;
-
-    if (critical.length > 0) {
-      msg += `*🔴 Critical/High:*\n${critical.map((e) => `• ${e}`).join('\n')}\n\n`;
-    }
-    if (major.length > 0) {
-      msg += `*🟡 Medium:*\n${major.map((e) => `• ${e}`).join('\n')}\n\n`;
-    }
-    if (minor.length > 0) {
-      msg += `*🔵 Minor/Nit:*\n${minor.map((e) => `• ${e}`).join('\n')}\n\n`;
-    }
-    if (other.length > 0) {
-      msg += `*💬 Other:*\n${other.map((e) => `• ${e}`).join('\n')}\n\n`;
-    }
-
-    return msg;
+    return (
+      `📝 PR ${sessionKey} 리뷰 업데이트\n` +
+      `• 새 코멘트: ${comments.length}개 (🔴 ${critical} / 🟡 ${major} / 🔵 ${minor})\n` +
+      `👉 상세 내용은 PR에서 직접 확인하세요`
+    );
   }
 
   /**
@@ -662,7 +649,7 @@ export class PRReviewPoller {
 
     // Report still-unresolved threads to Slack
     if (stillUnresolved.length > 0) {
-      const formatted = this.formatUnresolvedThreads(sessionKey, stillUnresolved);
+      const formatted = this.formatUnresolvedThreads(sessionKey, stillUnresolved, threads.length);
       const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
       await this.sendMessage(session.channelId, `${mention}${formatted}`);
       this.logger.log(
@@ -672,22 +659,18 @@ export class PRReviewPoller {
   }
 
   /**
-   * Format unresolved threads for Slack message
+   * Format unresolved threads for Slack message (simplified count format)
    */
-  private formatUnresolvedThreads(sessionKey: string, threads: ReviewThread[]): string {
-    let msg = `⚠️ *Unresolved PR Comments* — ${sessionKey} (${threads.length} unresolved)\n\n`;
-    msg += `These comments remain unresolved after the latest push:\n\n`;
-
-    for (const thread of threads) {
-      const first = thread.comments[0];
-      if (!first) continue;
-      const location = first.path ? `\`${first.path}${first.line ? `:${first.line}` : ''}\`` : '';
-      const body = first.body.length > 150 ? first.body.substring(0, 150) + '...' : first.body;
-      msg += `• ${location} — ${body} _(${first.author})_\n`;
+  private formatUnresolvedThreads(
+    sessionKey: string,
+    threads: ReviewThread[],
+    totalThreads?: number
+  ): string {
+    if (totalThreads !== undefined) {
+      const resolved = totalThreads - threads.length;
+      return `⚠️ PR ${sessionKey} 스레드 상태: 해결됨 ${resolved}개 / 미해결 ${threads.length}개`;
     }
-
-    // No hardcoded instructions — agent decides from persona
-    return msg;
+    return `⚠️ PR ${sessionKey} 미해결 스레드: ${threads.length}개`;
   }
 
   /**
