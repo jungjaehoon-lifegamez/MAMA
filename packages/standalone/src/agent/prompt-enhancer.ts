@@ -100,6 +100,7 @@ export class PromptEnhancer {
       for (const pattern of detector.patterns) {
         if (pattern.test(cleanText)) {
           detected.push(detector.message);
+          console.log(`[PromptEnhancer] Keyword detected: ${detector.type}`);
           break;
         }
       }

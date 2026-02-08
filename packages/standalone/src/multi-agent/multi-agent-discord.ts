@@ -16,6 +16,7 @@ import { splitForDiscord } from '../gateways/message-splitter.js';
 import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { getChannelHistory } from '../gateways/channel-history.js';
+import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import { PRReviewPoller } from './pr-review-poller.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -64,6 +65,7 @@ export class MultiAgentDiscordHandler {
   private multiBotManager: MultiBotManager;
   private messageQueue: AgentMessageQueue;
   private prReviewPoller: PRReviewPoller;
+  private promptEnhancer: PromptEnhancer;
 
   /** Discord client reference for main bot channel sends */
   private discordClient: { channels: { fetch: (id: string) => Promise<unknown> } } | null = null;
@@ -100,6 +102,7 @@ export class MultiAgentDiscordHandler {
     this.multiBotManager = new MultiBotManager(config);
     this.messageQueue = new AgentMessageQueue();
     this.prReviewPoller = new PRReviewPoller();
+    this.promptEnhancer = new PromptEnhancer();
 
     // Periodic cleanup of expired queued messages and mention dedup entries
     this.cleanupInterval = setInterval(() => {
@@ -537,6 +540,22 @@ export class MultiAgentDiscordHandler {
 
     if (agentContext) {
       fullPrompt = `${agentContext}\n\n${fullPrompt}`;
+    }
+
+    // Enhance prompt with keyword detection (ultrawork/search/analyze modes)
+    const workspacePath = process.env.MAMA_WORKSPACE || '';
+    const enhanced = this.promptEnhancer.enhance(cleanMessage, workspacePath);
+    if (enhanced.keywordInstructions) {
+      fullPrompt = `${enhanced.keywordInstructions}\n\n${fullPrompt}`;
+      console.log(
+        `[PromptEnhancer] Keyword detected for agent ${agentId}: ${enhanced.keywordInstructions.length} chars injected`
+      );
+    }
+    if (enhanced.rulesContent) {
+      fullPrompt = `## Project Rules\n${enhanced.rulesContent}\n\n${fullPrompt}`;
+      console.log(
+        `[PromptEnhancer] Rules injected for agent ${agentId}: ${enhanced.rulesContent.length} chars`
+      );
     }
 
     console.log(`[MultiAgent] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`);
