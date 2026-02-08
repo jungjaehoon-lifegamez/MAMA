@@ -850,5 +850,4 @@ The multi-agent swarm architecture was inspired by [oh-my-opencode](https://gith
 ---
 
 **Author:** SpineLift Team
-**Version:** 0.4.0
 **Last Updated:** 2026-02-06
