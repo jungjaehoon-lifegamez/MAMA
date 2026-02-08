@@ -392,6 +392,7 @@ export class PRReviewPoller {
     }
 
     // Check unresolved threads every cycle (not just after push)
+    let hasNewData = false;
     try {
       const threads = await this.fetchUnresolvedThreads(
         session.owner,
@@ -414,6 +415,7 @@ export class PRReviewPoller {
       );
 
       if (toReport.length > 0) {
+        hasNewData = true;
         const isReminder = toReport.some((t) => session.seenUnresolvedThreadIds.has(t.id));
         const prefix = isReminder ? '🔔 *Reminder*: ' : '';
         const formatted = this.formatUnresolvedThreads(sessionKey, toReport);
@@ -439,8 +441,8 @@ export class PRReviewPoller {
       this.logger.error(`[PRPoller] Failed to check unresolved threads:`, err);
     }
 
-    // Notify batch complete — triggers agent processing once after all chunks
-    if (this.onBatchComplete) {
+    // Notify batch complete — triggers agent processing once after all chunks (only when new data found)
+    if (hasNewData && this.onBatchComplete) {
       try {
         await this.onBatchComplete(session.channelId);
       } catch (err) {
