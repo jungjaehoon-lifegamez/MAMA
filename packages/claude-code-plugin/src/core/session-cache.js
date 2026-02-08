@@ -188,6 +188,10 @@ function setCache(key, data, envFile) {
 
     return true;
   } catch (error) {
+    console.warn(
+      `[SessionCache] Failed to set cache for key=${key}:`,
+      error instanceof Error ? error.message : String(error)
+    );
     return false;
   }
 }
