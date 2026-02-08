@@ -164,12 +164,26 @@ function setCache(key, data, envFile) {
     // Store in memory cache
     memoryCache.set(envKey, encoded);
 
-    // If CLAUDE_ENV_FILE provided, append to it
+    // If CLAUDE_ENV_FILE provided, update or append to it
     if (envFile && typeof envFile === 'string') {
       const exportLine = `export ${envKey}="${encoded}"`;
 
-      // Append to file
-      fs.appendFileSync(envFile, exportLine + '\n', 'utf8');
+      // Read existing file content to avoid duplicates
+      let fileContent = '';
+      if (fs.existsSync(envFile)) {
+        fileContent = fs.readFileSync(envFile, 'utf8');
+      }
+
+      // Check if the key already exists
+      const keyPattern = new RegExp(`^export ${envKey}=.*$`, 'm');
+      if (keyPattern.test(fileContent)) {
+        // Replace existing line
+        fileContent = fileContent.replace(keyPattern, exportLine);
+        fs.writeFileSync(envFile, fileContent, 'utf8');
+      } else {
+        // Append new line
+        fs.appendFileSync(envFile, exportLine + '\n', 'utf8');
+      }
     }
 
     return true;
