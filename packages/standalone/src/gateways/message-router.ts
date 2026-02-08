@@ -22,6 +22,8 @@ import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
+import { PromptEnhancer } from '../agent/prompt-enhancer.js';
+import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { AgentContext } from '../agent/types.js';
 
 /**
@@ -161,6 +163,7 @@ export class MessageRouter {
   private agentLoop: AgentLoopClient;
   private config: Required<MessageRouterConfig>;
   private roleManager: RoleManager;
+  private promptEnhancer: PromptEnhancer;
 
   constructor(
     sessionStore: SessionStore,
@@ -181,6 +184,7 @@ export class MessageRouter {
       ),
     };
     this.roleManager = getRoleManager();
+    this.promptEnhancer = new PromptEnhancer();
 
     this.contextInjector = new ContextInjector(mamaApi, {
       similarityThreshold: this.config.similarityThreshold,
@@ -288,6 +292,10 @@ This protects your credentials from being exposed in chat logs.`;
     // Embedding server runs on port 3849, model stays in memory
     const context = await this.contextInjector.getRelevantContext(message.text);
 
+    // 5b. Enhance prompt with keyword detection, AGENTS.md, and rules
+    const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
+    const enhanced = this.promptEnhancer.enhance(message.text, workspacePath);
+
     // 6. Build system prompt with all contexts including AgentContext
     // Always inject DB history for reliable memory (CLI --resume is unreliable)
     const historyContext = message.metadata?.historyContext;
@@ -296,7 +304,8 @@ This protects your credentials from being exposed in chat logs.`;
       context.prompt,
       historyContext,
       sessionStartupContext,
-      agentContext
+      agentContext,
+      enhanced
     );
 
     // 7. Run agent loop (with session info for lane-based concurrency)
@@ -424,7 +433,8 @@ This protects your credentials from being exposed in chat logs.`;
     injectedContext: string,
     historyContext?: string,
     sessionStartupContext: string = '',
-    agentContext?: AgentContext
+    agentContext?: AgentContext,
+    enhanced?: EnhancedPromptContext
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
@@ -505,6 +515,20 @@ Now the user is responding for the FIRST time. This is their reply to your awake
     // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md) + optional context
     let prompt = loadComposedSystemPrompt(false, agentContext) + '\n';
 
+    if (enhanced?.agentsContent) {
+      prompt += `
+## Project Knowledge (AGENTS.md)
+${enhanced.agentsContent}
+`;
+    }
+
+    if (enhanced?.rulesContent) {
+      prompt += `
+## Project Rules
+${enhanced.rulesContent}
+`;
+    }
+
     // Check for existing conversation history FIRST
     const dbHistory = this.sessionStore.formatContextForPrompt(session.id);
     const hasHistory = dbHistory && dbHistory !== 'New conversation';
@@ -544,6 +568,10 @@ ${historyContext}
 - Reference previous decisions when relevant
 - Keep responses concise for messenger format
 `;
+
+    if (enhanced?.keywordInstructions) {
+      prompt += `\n${enhanced.keywordInstructions}\n`;
+    }
 
     return prompt;
   }
