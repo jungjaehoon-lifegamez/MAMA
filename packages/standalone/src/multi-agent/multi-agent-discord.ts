@@ -86,6 +86,12 @@ export class MultiAgentDiscordHandler {
   /** Channel-safe batch data accumulation (prevents cross-channel data contamination) */
   private batchData = new Map<string, string[]>();
 
+  /** Tracks channels where APPROVE+commit was processed (prevents congratulation loops) */
+  private approveProcessedChannels = new Map<string, number>();
+
+  /** APPROVE cooldown period — blocks agent-to-agent routing after commit (5 minutes) */
+  private static readonly APPROVE_COOLDOWN_MS = 5 * 60 * 1000;
+
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
     this.config = config;
     this.orchestrator = new MultiAgentOrchestrator(config);
@@ -99,6 +105,7 @@ export class MultiAgentDiscordHandler {
     this.cleanupInterval = setInterval(() => {
       this.messageQueue.clearExpired();
       this.cleanupProcessedMentions();
+      this.cleanupApproveChannels();
     }, 60_000);
 
     // Setup idle event listeners for all agents (F7)
@@ -130,6 +137,16 @@ export class MultiAgentDiscordHandler {
       const dedupKey = `${agentId}:${message.id}`;
       if (this.processedMentions.has(dedupKey)) return;
       this.processedMentions.set(dedupKey, Date.now());
+
+      // Block agent-to-agent mentions during post-APPROVE cooldown
+      const approveCooldown = this.approveProcessedChannels.get(message.channel.id);
+      if (
+        message.author.bot &&
+        approveCooldown &&
+        Date.now() - approveCooldown < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
+      ) {
+        return;
+      }
 
       const cleanContent = message.content.replace(/<@!?\d+>/g, '').trim();
       if (!cleanContent) return;
@@ -174,8 +191,9 @@ export class MultiAgentDiscordHandler {
       }
 
       // Force this specific agent to respond
+      let mentionResponse: AgentResponse | null = null;
       try {
-        const response = await this.processAgentResponse(
+        mentionResponse = await this.processAgentResponse(
           agentId,
           {
             channelId: message.channel.id,
@@ -191,23 +209,29 @@ export class MultiAgentDiscordHandler {
           message
         );
 
-        if (response) {
-          await this.sendAgentResponses(message, [response]);
-          this.orchestrator.recordAgentResponse(agentId, message.channel.id, response.messageId);
+        if (mentionResponse) {
+          await this.sendAgentResponses(message, [mentionResponse]);
+          this.orchestrator.recordAgentResponse(
+            agentId,
+            message.channel.id,
+            mentionResponse.messageId
+          );
 
           // Route delegation mentions from this agent's response
           if (this.isMentionDelegationEnabled()) {
-            await this.routeResponseMentions(message, [response]);
+            await this.routeResponseMentions(message, [mentionResponse]);
           }
         }
       } catch (err) {
         console.error(`[MultiAgent] Mention handler error:`, err);
       } finally {
-        // Add ✅ to complete the emoji progression
-        try {
-          await message.react('✅');
-        } catch {
-          /* ignore */
+        // Only add ✅ if agent responded (null = busy/queued, ⏳ already added)
+        if (mentionResponse) {
+          try {
+            await message.react('✅');
+          } catch {
+            /* ignore */
+          }
         }
       }
     });
@@ -574,7 +598,6 @@ export class MultiAgentDiscordHandler {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error(`[MultiAgent] Failed to get response from ${agentId}:`, error);
 
-      // Enqueue busy responses (F7: message queue)
       if (errMsg.includes('busy')) {
         console.log(`[MultiAgent] Agent ${agentId} busy, enqueuing message`);
 
@@ -585,9 +608,18 @@ export class MultiAgentDiscordHandler {
           source: 'discord',
           enqueuedAt: Date.now(),
           context,
+          discordMessageId: discordMessage?.id,
         };
 
         this.messageQueue.enqueue(agentId, queuedMessage);
+
+        if (discordMessage) {
+          try {
+            await discordMessage.react('⏳');
+          } catch {
+            /* ignore */
+          }
+        }
       }
 
       return null;
@@ -680,6 +712,23 @@ export class MultiAgentDiscordHandler {
 
     // Record to shared context
     this.sharedContext.recordAgentMessage(message.channelId, agent, response, '');
+
+    // Mark original Discord message as completed (⏳→✅)
+    if (message.discordMessageId && this.discordClient) {
+      try {
+        const channel = await this.discordClient.channels.fetch(message.channelId);
+        if (channel && 'messages' in (channel as Record<string, unknown>)) {
+          const originalMsg = await (
+            channel as { messages: { fetch: (id: string) => Promise<Message> } }
+          ).messages.fetch(message.discordMessageId);
+          if (originalMsg) {
+            await originalMsg.react('✅');
+          }
+        }
+      } catch {
+        /* ignore — message may have been deleted */
+      }
+    }
 
     console.log(`[MultiAgent] Queued message delivered for ${agentId} in ${message.channelId}`);
   }
@@ -932,6 +981,15 @@ export class MultiAgentDiscordHandler {
    * bots don't receive their own messages as events.
    */
   async routeResponseMentions(originalMessage: Message, responses: AgentResponse[]): Promise<void> {
+    // Block all agent-to-agent routing during post-APPROVE cooldown
+    const channelApproveTs = this.approveProcessedChannels.get(originalMessage.channel.id);
+    if (
+      channelApproveTs &&
+      Date.now() - channelApproveTs < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
+    ) {
+      return;
+    }
+
     for (const response of responses) {
       const senderAgent = this.orchestrator.getAgent(response.agentId);
 
@@ -976,7 +1034,6 @@ export class MultiAgentDiscordHandler {
         `[MultiAgent] Auto-routing mentions from ${response.agentId}: → ${mentionedAgentIds.join(', ')}`
       );
 
-      // Auto commit+push when Reviewer APPROVE reaches LEAD
       const defaultAgentId = this.config.default_agent;
       const isReviewerApproveToLead =
         this.isReviewerAgent(response.agentId) &&
@@ -985,9 +1042,20 @@ export class MultiAgentDiscordHandler {
 
       let autoCommitResult: string | null = null;
       if (isReviewerApproveToLead) {
+        // Dedup: skip if APPROVE already processed for this channel
+        const lastApprove = this.approveProcessedChannels.get(originalMessage.channel.id);
+        if (
+          lastApprove &&
+          Date.now() - lastApprove < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
+        ) {
+          console.log(
+            `[MultiAgent] APPROVE already processed for ${originalMessage.channel.id}, skipping`
+          );
+          continue;
+        }
+
         autoCommitResult = await this.autoCommitAndPush(originalMessage.channel.id);
         if (autoCommitResult) {
-          // Post commit result to channel
           try {
             const chunks = splitForDiscord(autoCommitResult);
             for (const chunk of chunks) {
@@ -1011,6 +1079,11 @@ export class MultiAgentDiscordHandler {
           this.handleDelegatedMention(targetAgentId, originalMessage, response, autoCommitResult)
         )
       );
+
+      // Set APPROVE cooldown AFTER routing to LEAD (so LEAD gets the first one)
+      if (isReviewerApproveToLead) {
+        this.approveProcessedChannels.set(originalMessage.channel.id, Date.now());
+      }
     }
   }
 
@@ -1055,32 +1128,29 @@ export class MultiAgentDiscordHandler {
     try {
       let delegationContent = sourceResponse.rawContent.replace(/<@!?\d+>/g, '').trim();
 
-      // Inject commit context when Reviewer APPROVE reaches LEAD
       const defaultAgentId = this.config.default_agent;
       if (
         targetAgentId === defaultAgentId &&
         /\b(APPROVE|approved|approves)\b/i.test(delegationContent)
       ) {
         if (autoCommitResult && autoCommitResult.startsWith('✅')) {
-          // Auto commit+push succeeded — inform LEAD, no manual commit needed
           delegationContent +=
-            '\n\n✅ [SYSTEM] Auto Commit+Push completed. Commit already processed.\n' +
+            '\n\n✅ [SYSTEM] Auto Commit completed.\n' +
             `Result: ${autoCommitResult}\n` +
-            '**No commit/push needed. Summarize review results.**';
-        } else {
-          // Auto commit+push failed or not attempted — LEAD should commit manually
-          const allowAutoPush = process.env.MAMA_ALLOW_AUTO_PUSH === 'true';
-          const pushInstruction = allowAutoPush
-            ? '4. `git push`\n'
-            : '4. `git push` (requires MAMA_ALLOW_AUTO_PUSH=true)\n';
-
+            '**Execute `git push` now. Then summarize review results briefly. Do NOT congratulate agents.**';
+        } else if (autoCommitResult) {
           delegationContent +=
-            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Auto commit failed. Execute Phase 3 immediately:\n' +
-            '1. `git status` to check changed files\n' +
+            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Auto commit failed. Execute Phase 3:\n' +
+            '1. `git status`\n' +
             '2. `git add {changed files}` (git add . prohibited)\n' +
             '3. `git commit -m "fix: {change summary}"`\n' +
-            pushInstruction +
-            '**Execute commit first before praise/summary. Response without commit will fail.**';
+            '4. `git push`\n' +
+            '**Execute commit+push first. No praise. No congratulations. Just results.**';
+        } else {
+          delegationContent +=
+            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Execute Phase 3:\n' +
+            '1. `git status` → `git add` → `git commit` → `git push`\n' +
+            '**Execute immediately. No praise. Just results.**';
         }
       }
 
@@ -1178,6 +1248,15 @@ export class MultiAgentDiscordHandler {
     for (const [key, ts] of this.processedMentions) {
       if (now - ts > MultiAgentDiscordHandler.MENTION_TTL_MS) {
         this.processedMentions.delete(key);
+      }
+    }
+  }
+
+  private cleanupApproveChannels(): void {
+    const now = Date.now();
+    for (const [channelId, ts] of this.approveProcessedChannels) {
+      if (now - ts > MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS) {
+        this.approveProcessedChannels.delete(channelId);
       }
     }
   }
@@ -1348,7 +1427,7 @@ export class MultiAgentDiscordHandler {
         .map((line) => {
           // Porcelain v1: first 2 chars = status, then space, then path
           // For renames: "R  old -> new" — use the new path
-          let path = line.slice(3);
+          let path = line.substring(2).trimStart();
           if (path.includes(' -> ')) {
             path = path.split(' -> ').pop()?.trim() || '';
           } else {
@@ -1383,36 +1462,17 @@ export class MultiAgentDiscordHandler {
           ? changedFiles.join(', ')
           : `${changedFiles.slice(0, 5).join(', ')} +${changedFiles.length - 5} more`;
 
-      // 5. git push - only if explicitly allowed
-      const allowAutoPush = process.env.MAMA_ALLOW_AUTO_PUSH === 'true';
-      if (allowAutoPush) {
-        const { stdout: pushOut, stderr: pushErr } = await execFileAsync('git', ['push'], {
-          cwd: repoPath,
-          timeout: 30000,
-        });
-
-        const result =
-          `✅ **Auto Commit+Push Completed**\n` +
-          `📁 ${changedFiles.length} files: ${shortStatus}\n` +
-          `💬 \`${commitMsg}\`\n` +
-          `${pushOut || pushErr || '(pushed)'}`;
-
-        console.log(`[AutoCommit] Success: ${changedFiles.length} files committed and pushed`);
-        return result;
-      } else {
-        const result =
-          `✅ **Auto Commit Completed** (Manual Push)\n` +
-          `📁 ${changedFiles.length} files: ${shortStatus}\n` +
-          `💬 \`${commitMsg}\`\n` +
-          `⚠️ MAMA_ALLOW_AUTO_PUSH=true required (auto push disabled)`;
-
-        console.log(`[AutoCommit] Commit complete, but auto-push disabled`);
-        return result;
-      }
+      // Push is LEAD's responsibility — only commit here
+      console.log(`[AutoCommit] Committed ${changedFiles.length} files, push deferred to LEAD`);
+      return (
+        `✅ **Auto Commit Completed** (LEAD pushes)\n` +
+        `📁 ${changedFiles.length} files: ${shortStatus}\n` +
+        `💬 \`${commitMsg}\``
+      );
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[AutoCommit] Failed:`, err);
-      return `❌ **Auto Commit+Push Failed**: ${errMsg.substring(0, 200)}`;
+      return `❌ **Auto Commit Failed**: ${errMsg.substring(0, 200)}`;
     }
   }
 }

@@ -44,6 +44,8 @@ export interface QueuedMessage {
   enqueuedAt: number;
   /** Full message context */
   context?: MessageContext;
+  /** Discord message ID for emoji queue tracking (⏳→✅) */
+  discordMessageId?: string;
 }
 
 const MAX_QUEUE_SIZE = 5;
