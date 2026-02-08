@@ -905,7 +905,7 @@ export class PRReviewPoller {
       return;
     }
 
-    // Discord has a 4000 char limit; split long messages
+    // Discord has a 2000 char limit; split long messages
     this.logger.log(`[PRPoller] sendMessage: ${text.length} chars`);
     if (text.length <= 1900) {
       await this.messageSender(channelId, text);
