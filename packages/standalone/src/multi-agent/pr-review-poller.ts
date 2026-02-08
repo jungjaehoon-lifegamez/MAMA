@@ -268,6 +268,9 @@ export class PRReviewPoller {
     }
 
     session.isPolling = true;
+    // Track if any new data is found (for onBatchComplete trigger)
+    let hasNewData = false;
+
     try {
       this.logger.log(
         `[PRPoller] Polling ${sessionKey} (seen: ${session.seenCommentIds.size} comments, ${session.seenReviewIds.size} reviews)`
@@ -317,6 +320,8 @@ export class PRReviewPoller {
                 `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. Polling stopped.`
               );
 
+              hasNewData = true; // Set flag for APPROVED review
+
               // Trigger onBatchComplete for LEAD agent to handle commit+push
               if (this.onBatchComplete) {
                 try {
@@ -337,6 +342,7 @@ export class PRReviewPoller {
               session.channelId,
               `🔴 *PR Review* — ${sessionKey} **CHANGES REQUESTED** by ${review.user.login}`
             );
+            hasNewData = true; // Set flag for CHANGES_REQUESTED review
           }
         }
       } catch (err) {
@@ -384,9 +390,6 @@ export class PRReviewPoller {
           this.logger.error(`[PRPoller] Failed to handle post-push:`, err);
         }
       }
-
-      // Track if any new data is found (for onBatchComplete trigger)
-      let hasNewData = false;
 
       // Standard flow: filter and send new comments
       try {
