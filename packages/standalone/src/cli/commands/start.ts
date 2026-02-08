@@ -1320,11 +1320,11 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     shuttingDown = true;
     console.log('\n\n🛑 Shutting down MAMA...');
 
-    // Force exit after 3 seconds if graceful shutdown hangs
+    // Force exit after 5 seconds if graceful shutdown hangs
     setTimeout(() => {
       console.error('[MAMA] Graceful shutdown timed out, forcing exit');
       process.exit(1);
-    }, 3000);
+    }, 5000);
 
     try {
       // Stop schedulers first (sync, fast)
