@@ -100,6 +100,10 @@ export class MultiAgentDiscordHandler {
       ? new EnforcementPipeline(config.enforcement)
       : null;
 
+    if (this.enforcement) {
+      console.log('[Enforcement] Pipeline enabled — ResponseValidator + ReviewGate + TodoTracker');
+    }
+
     // Periodic cleanup of expired queued messages and mention dedup entries
     this.cleanupInterval = setInterval(() => {
       this.messageQueue.clearExpired();
@@ -1262,11 +1266,19 @@ export class MultiAgentDiscordHandler {
         .map((line) => {
           // Porcelain v1: first 2 chars = status, then space, then path
           // For renames: "R  old -> new" — use the new path
-          const path = line.slice(3);
+          let path = line.slice(3);
           if (path.includes(' -> ')) {
-            return path.split(' -> ').pop()?.trim() || '';
+            path = path.split(' -> ').pop()?.trim() || '';
+          } else {
+            path = path.trim();
           }
-          return path.trim();
+
+          // Remove quotes if git added them for paths with spaces
+          if (path.startsWith('"') && path.endsWith('"')) {
+            path = path.slice(1, -1);
+          }
+
+          return path;
         })
         .filter(Boolean);
 
