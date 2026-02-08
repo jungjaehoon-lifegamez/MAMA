@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0  
 **Package:** `@jungjaehoon/mama-os`  
-**Status:** Week 2 Complete (ResponseValidator + ReviewGate)
+**Status:** Complete (5 components, 143 tests)
 
 ---
 
@@ -650,15 +650,15 @@ console.log(gate.checkApproval(response));
 
 ## Roadmap
 
-| Week | Status         | Components                                |
-| ---- | -------------- | ----------------------------------------- |
-| 1    | ✅ Complete    | Documentation, ADR-001                    |
-| 2    | ✅ Complete    | ResponseValidator, ReviewGate             |
-| 3    | 🚧 In Progress | ScopeGuard, TodoTracker (prototype)       |
-| 4    | 📅 Planned     | TodoTracker (production), custom patterns |
-| 5    | 📅 Planned     | Per-agent config, metrics dashboard       |
+| Week | Status      | Components                                           |
+| ---- | ----------- | ---------------------------------------------------- |
+| 1    | ✅ Complete | Documentation, ADR-001                               |
+| 2    | ✅ Complete | ResponseValidator, ReviewGate (spike)                |
+| 3    | ✅ Complete | ScopeGuard, EnforcementPipeline, Discord integration |
+| 4    | ✅ Complete | TodoTracker, EnforcementMetrics, full pipeline       |
+| 5    | ✅ Complete | Docs, version bump, release                          |
 
-**Current Version:** 1.0.0 (Week 2 Complete)
+**Current Version:** 2.0.0 (All 5 components implemented, 143 tests)
 
 ---
 
