@@ -314,7 +314,7 @@ export class MultiAgentDiscordHandler {
       if (!reviewerAgentId) return;
 
       // Include PR data summary in LEAD mention (Discord 2000 char limit per message)
-      const prSummary = texts.join('\n').slice(0, 3500);
+      const prSummary = texts.join('\n').slice(0, 2000);
       const mentionPrefix = `<@${leadUserId}> PR 리뷰 코멘트를 분석하고 우선순위별로 정리하여 위임하세요.\n\n`;
       const fullMsg = `${mentionPrefix}${prSummary}`;
 
