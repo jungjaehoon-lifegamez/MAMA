@@ -349,15 +349,19 @@
 
 **Week 2:**
 
-- [ ] ResponseValidator spike 성공
-- [ ] ReviewGate spike 성공
-- [ ] Go/No-Go 결정
+- [x] ResponseValidator spike 성공 — 완료 2026-02-08 (19 tests pass)
+- [x] ReviewGate spike 성공 — 완료 2026-02-08 (20 tests pass)
+- [x] Go/No-Go 결정 — GO (all criteria met)
 
 **Week 3-4:**
 
-- [ ] 4개 컴포넌트 구현 완료
-- [ ] 통합 테스트 통과
-- [ ] 문서 업데이트
+- [x] ScopeGuard 구현 — 완료 2026-02-08 (23 tests pass)
+- [x] EnforcementPipeline 통합 — 완료 2026-02-08 (17 tests pass)
+- [x] Discord 통합 (2 injection points) — 완료 2026-02-08
+- [x] 문서 업데이트 (API ref + config guide) — 완료 2026-02-08
+- [ ] TodoTracker 구현 — 진행 중
+- [ ] EnforcementMetrics 구현 — 진행 중
+- [ ] 4-컴포넌트 파이프라인 통합 테스트
 
 **Week 5:**
 
