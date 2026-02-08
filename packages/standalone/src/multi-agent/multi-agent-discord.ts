@@ -95,6 +95,9 @@ export class MultiAgentDiscordHandler {
   /** APPROVE cooldown period — blocks agent-to-agent routing after commit (5 minutes) */
   private static readonly APPROVE_COOLDOWN_MS = 5 * 60 * 1000;
 
+  /** Cleanup interval period (1 minute) */
+  private static readonly CLEANUP_INTERVAL_MS = 60_000;
+
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
     this.config = config;
     this.orchestrator = new MultiAgentOrchestrator(config);
@@ -110,7 +113,7 @@ export class MultiAgentDiscordHandler {
       this.messageQueue.clearExpired();
       this.cleanupProcessedMentions();
       this.cleanupApproveChannels();
-    }, 60_000);
+    }, MultiAgentDiscordHandler.CLEANUP_INTERVAL_MS);
 
     // Setup idle event listeners for all agents (F7)
     this.setupIdleListeners();
@@ -319,18 +322,21 @@ export class MultiAgentDiscordHandler {
       });
 
       // Store texts per channel to prevent cross-channel contamination
-      if (!this.batchData.has(channelId)) {
-        this.batchData.set(channelId, []);
-      }
-      this.batchData.get(channelId)!.push(text.replace(/<@!?\d+>/g, '').trim());
+      // Use immutable approach to avoid race conditions
+      const currentTexts = this.batchData.get(channelId) || [];
+      const cleanText = text.replace(/<@!?\d+>/g, '').trim();
+      this.batchData.set(channelId, [...currentTexts, cleanText]);
     });
 
     // After all chunks sent, send LEAD mention FROM Reviewer bot
     // with PR data included so LEAD doesn't pick up stale channel history.
     this.prReviewPoller.setOnBatchComplete(async (channelId: string) => {
+      // Atomically retrieve and clear batch data to prevent race conditions
       const texts = this.batchData.get(channelId) || [];
       if (texts.length === 0) return;
-      this.batchData.delete(channelId); // Clean up after processing
+
+      // Clear immediately to prevent duplicate processing
+      this.batchData.delete(channelId);
 
       // Reset chain so LEAD can delegate freely
       this.orchestrator.resetChain(channelId);
@@ -343,8 +349,8 @@ export class MultiAgentDiscordHandler {
       if (!reviewerAgentId) return;
 
       // Include PR data summary in LEAD mention (Discord 2000 char limit per message)
-      const prSummary = texts.join('\n').slice(0, 2000);
       const mentionPrefix = `<@${leadUserId}> Please analyze PR review comments and prioritize them for delegation.\n\n`;
+      const prSummary = texts.join('\n').slice(0, 2000 - mentionPrefix.length);
       const fullMsg = `${mentionPrefix}${prSummary}`;
 
       // Split using Discord-aware splitter (2000 char limit)
