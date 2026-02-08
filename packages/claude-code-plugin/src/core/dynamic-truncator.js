@@ -104,8 +104,8 @@ function truncateMultiple(entries, options = {}) {
       continue;
     }
 
-    // Allocate budget for this entry
-    const entryBudget = Math.max(500, remainingBudget);
+    // Allocate budget for this entry (ensure we don't exceed remaining budget)
+    const entryBudget = Math.min(500, remainingBudget);
     const truncated = truncate(entry.content, {
       maxChars: entryBudget,
       suffix,
