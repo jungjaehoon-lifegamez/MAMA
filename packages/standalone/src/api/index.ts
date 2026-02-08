@@ -117,12 +117,14 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       }
 
       const host = process.env.MAMA_API_HOST || '127.0.0.1';
+      const enablePortFallback = process.env.MAMA_API_PORT_FALLBACK === 'true';
+      let attemptPort = port; // Mutable copy for fallback attempts
 
       const tryListen = (): Promise<void> =>
         new Promise((resolve, reject) => {
           let settled = false;
           try {
-            server = app.listen(port, host, () => {
+            server = app.listen(attemptPort, host, () => {
               if (settled) return;
               settled = true;
               const addr = server?.address();
@@ -135,7 +137,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
                 }
                 resolve();
               } else {
-                reject(new Error(`Failed to bind to port ${port}`));
+                reject(new Error(`Failed to bind to port ${attemptPort}`));
               }
             });
             server.on('error', (err: NodeJS.ErrnoException) => {
@@ -161,37 +163,53 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         } catch (err: any) {
           if (err.code === 'EADDRINUSE' && attempt < MAX_RETRIES) {
             console.warn(
-              `Port ${port} in use (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${RETRY_DELAY_MS}ms...`
+              `Port ${attemptPort} in use (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${RETRY_DELAY_MS}ms...`
             );
             if (attempt === 0) {
-              // First retry: try to kill the process holding the port (only if explicitly allowed)
-              const allowPortKill = process.env.MAMA_ALLOW_PORT_KILL === 'true';
-              if (allowPortKill) {
-                try {
-                  const { execSync } = require('child_process');
-                  try {
-                    execSync(`fuser -k ${port}/tcp 2>/dev/null`, { timeout: 5000 });
-                  } catch {
-                    try {
-                      execSync(`lsof -t -i :${port} 2>/dev/null | xargs kill -9 2>/dev/null`, {
-                        timeout: 5000,
-                      });
-                    } catch {
-                      /* ignore */
-                    }
+              // First retry: show what's using the port but don't kill it
+              console.error(
+                `\n❌ Port ${attemptPort} is already in use.\n\n` +
+                  `Options:\n` +
+                  `1. Stop the process using port ${attemptPort}\n` +
+                  `2. Use a different port: MAMA_API_PORT=<port> mama start\n` +
+                  `3. Enable port fallback: MAMA_API_PORT_FALLBACK=true mama start\n`
+              );
+
+              // Try to identify the process (informational only)
+              try {
+                const { execSync } = require('child_process');
+                const processInfo = execSync(
+                  `lsof -i :${attemptPort} 2>/dev/null | grep LISTEN || echo ""`,
+                  {
+                    timeout: 2000,
+                    encoding: 'utf8',
                   }
-                } catch {
-                  /* ignore */
-                }
-              } else {
-                console.warn(
-                  `Port ${port} in use. To allow automatic port cleanup, set MAMA_ALLOW_PORT_KILL=true`
                 );
+                if (processInfo.trim()) {
+                  console.error(`Process using port ${attemptPort}:\n${processInfo}`);
+                }
+              } catch {
+                /* ignore - lsof might not be available */
               }
             }
             await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
           } else if (err.code === 'EADDRINUSE') {
-            throw new Error(`Failed to bind to port ${port} after ${MAX_RETRIES + 1} attempts`);
+            // All retries failed - try fallback port if enabled
+            if (enablePortFallback && attemptPort < 65535) {
+              const fallbackPort = attemptPort + 1;
+              console.log(
+                `\n🔄 Port ${attemptPort} unavailable after ${MAX_RETRIES + 1} attempts. ` +
+                  `Trying fallback port ${fallbackPort}...`
+              );
+              attemptPort = fallbackPort;
+              actualPort = fallbackPort;
+              attempt = -1; // Reset attempts for new port
+            } else {
+              throw new Error(
+                `Failed to bind to port ${attemptPort} after ${MAX_RETRIES + 1} attempts. ` +
+                  `Enable port fallback with MAMA_API_PORT_FALLBACK=true`
+              );
+            }
           } else {
             throw err;
           }
