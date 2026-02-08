@@ -132,6 +132,145 @@ describe('PromptEnhancer', () => {
       const result = enhancer.detectKeywords(message);
       expect(result).toContain('ULTRAWORK MODE ACTIVATED');
     });
+
+    // Multilingual: ultrawork
+    it('should detect Korean "울트라워크"', () => {
+      expect(enhancer.detectKeywords('울트라워크 모드로 진행')).toContain(
+        'ULTRAWORK MODE ACTIVATED'
+      );
+    });
+
+    it('should detect Korean "자율 작업"', () => {
+      expect(enhancer.detectKeywords('자율 작업으로 해줘')).toContain('ULTRAWORK MODE ACTIVATED');
+    });
+
+    it('should detect Korean "딥 워크"', () => {
+      expect(enhancer.detectKeywords('딥 워크로 시작')).toContain('ULTRAWORK MODE ACTIVATED');
+    });
+
+    it('should detect Japanese "ウルトラワーク"', () => {
+      expect(enhancer.detectKeywords('ウルトラワークで進めて')).toContain(
+        'ULTRAWORK MODE ACTIVATED'
+      );
+    });
+
+    it('should detect Japanese "自律作業"', () => {
+      expect(enhancer.detectKeywords('自律作業モードで')).toContain('ULTRAWORK MODE ACTIVATED');
+    });
+
+    it('should detect Chinese "超级工作"', () => {
+      expect(enhancer.detectKeywords('超级工作模式开始')).toContain('ULTRAWORK MODE ACTIVATED');
+    });
+
+    it('should detect Chinese "自主工作"', () => {
+      expect(enhancer.detectKeywords('请用自主工作模式')).toContain('ULTRAWORK MODE ACTIVATED');
+    });
+
+    it('should detect Vietnamese "tự động hoàn toàn"', () => {
+      expect(enhancer.detectKeywords('hãy tự động hoàn toàn')).toContain(
+        'ULTRAWORK MODE ACTIVATED'
+      );
+    });
+
+    it('should detect English "deep work"', () => {
+      expect(enhancer.detectKeywords('do this in deep work mode')).toContain(
+        'ULTRAWORK MODE ACTIVATED'
+      );
+    });
+
+    it('should detect English "autonomous"', () => {
+      expect(enhancer.detectKeywords('run autonomous please')).toContain(
+        'ULTRAWORK MODE ACTIVATED'
+      );
+    });
+
+    it('should detect English "full auto"', () => {
+      expect(enhancer.detectKeywords('full auto mode on')).toContain('ULTRAWORK MODE ACTIVATED');
+    });
+
+    // Multilingual: search
+    it('should detect Korean "검색 모드"', () => {
+      expect(enhancer.detectKeywords('검색 모드로 찾아줘')).toContain('SEARCH MODE');
+    });
+
+    it('should detect Korean "전부 찾아"', () => {
+      expect(enhancer.detectKeywords('관련된거 전부 찾아')).toContain('SEARCH MODE');
+    });
+
+    it('should detect Korean "어디.*사용"', () => {
+      expect(enhancer.detectKeywords('이 함수 어디서 사용해?')).toContain('SEARCH MODE');
+    });
+
+    it('should detect Japanese "検索モード"', () => {
+      expect(enhancer.detectKeywords('検索モードで探して')).toContain('SEARCH MODE');
+    });
+
+    it('should detect Chinese "搜索模式"', () => {
+      expect(enhancer.detectKeywords('搜索模式开始')).toContain('SEARCH MODE');
+    });
+
+    it('should detect Vietnamese "tìm tất cả"', () => {
+      expect(enhancer.detectKeywords('hãy tìm tất cả các file')).toContain('SEARCH MODE');
+    });
+
+    it('should detect English "find all"', () => {
+      expect(enhancer.detectKeywords('find all usages of this function')).toContain('SEARCH MODE');
+    });
+
+    it('should detect English "show me all"', () => {
+      expect(enhancer.detectKeywords('show me all imports')).toContain('SEARCH MODE');
+    });
+
+    it('should detect English "where is used"', () => {
+      expect(enhancer.detectKeywords('where is this function used')).toContain('SEARCH MODE');
+    });
+
+    // Multilingual: analyze
+    it('should detect Korean "분석 모드"', () => {
+      expect(enhancer.detectKeywords('분석 모드로 봐줘')).toContain('ANALYSIS MODE');
+    });
+
+    it('should detect Korean "근본 원인"', () => {
+      expect(enhancer.detectKeywords('근본 원인을 찾아줘')).toContain('ANALYSIS MODE');
+    });
+
+    it('should detect Korean "왜 안 되"', () => {
+      expect(enhancer.detectKeywords('왜 안 되는거야?')).toContain('ANALYSIS MODE');
+    });
+
+    it('should detect Japanese "分析モード"', () => {
+      expect(enhancer.detectKeywords('分析モードで調べて')).toContain('ANALYSIS MODE');
+    });
+
+    it('should detect Japanese "根本原因"', () => {
+      expect(enhancer.detectKeywords('根本原因を見つけて')).toContain('ANALYSIS MODE');
+    });
+
+    it('should detect Chinese "深入分析"', () => {
+      expect(enhancer.detectKeywords('请深入分析这个问题')).toContain('ANALYSIS MODE');
+    });
+
+    it('should detect Vietnamese "phân tích sâu"', () => {
+      expect(enhancer.detectKeywords('hãy phân tích sâu vấn đề này')).toContain('ANALYSIS MODE');
+    });
+
+    it('should detect English "root cause"', () => {
+      expect(enhancer.detectKeywords('find the root cause of this crash')).toContain(
+        'ANALYSIS MODE'
+      );
+    });
+
+    it('should detect English "deep dive"', () => {
+      expect(enhancer.detectKeywords('do a deep dive into the auth module')).toContain(
+        'ANALYSIS MODE'
+      );
+    });
+
+    it('should detect English "diagnose"', () => {
+      expect(enhancer.detectKeywords('diagnose why the test is failing')).toContain(
+        'ANALYSIS MODE'
+      );
+    });
   });
 
   // ─────────────────────────────────────────────────────
