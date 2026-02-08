@@ -1379,9 +1379,9 @@ export class MultiAgentDiscordHandler {
    * Returns a status message or null if no repo found.
    */
   private async autoCommitAndPush(channelId: string): Promise<string | null> {
-    // Check if auto-commit is enabled
-    if (process.env.MAMA_DISABLE_AUTO_COMMIT === 'true') {
-      console.log('[AutoCommit] Auto-commit is disabled by MAMA_DISABLE_AUTO_COMMIT env var');
+    // Check if auto-commit is explicitly enabled (disabled by default for safety)
+    if (process.env.MAMA_ENABLE_AUTO_COMMIT !== 'true') {
+      console.log('[AutoCommit] Auto-commit is disabled by default. Set MAMA_ENABLE_AUTO_COMMIT=true to enable');
       return null;
     }
 
