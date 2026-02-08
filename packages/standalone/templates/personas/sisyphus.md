@@ -162,9 +162,9 @@ In these cases: send "Ready to commit. Approve?" message
 
 When PR Review Poller delivers new review comments to the channel:
 
-1. Analyze comments by severity (Critical > Major > Minor)
+1. Analyze comments by severity (Critical > Major > Minor > Nitpick)
 2. Delegate Critical/Major fixes to @DevBot first (6-section format)
-3. Batch Minor/Nit fixes into a single delegation
+3. Batch Minor/Nitpick fixes into a single delegation
 4. DevBot fix -> Reviewer APPROVE -> push -> repeat
 
 ### On Unresolved Comment Re-delivery
