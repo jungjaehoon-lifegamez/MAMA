@@ -22,9 +22,13 @@ const REQUIRED_SECTIONS = [
 /**
  * Check if a message is a delegation attempt (contains at least one section header).
  * Messages without any section headers are regular chat, not delegation attempts.
+ * Uses stricter pattern matching to reduce false positives.
  */
 export function isDelegationAttempt(content: string): boolean {
-  return REQUIRED_SECTIONS.some((s) => content.includes(s));
+  // Look for section headers at start of line (optionally preceded by whitespace/bullets)
+  const sectionPattern =
+    /^\s*[-*•]?\s*(TASK:|EXPECTED OUTCOME:|MUST DO:|MUST NOT DO:|REQUIRED TOOLS:|CONTEXT:)/m;
+  return sectionPattern.test(content);
 }
 
 /**

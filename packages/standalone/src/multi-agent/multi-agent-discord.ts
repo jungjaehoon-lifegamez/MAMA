@@ -1092,8 +1092,11 @@ export class MultiAgentDiscordHandler {
                 .send({
                   content: `👀 **PR Review Poller 시작** — ${key}\n60초 간격으로 새 리뷰 코멘트를 감지합니다.`,
                 })
-                .catch(() => {
-                  /* ignore */
+                .catch((err) => {
+                  console.warn(
+                    `[MultiAgent] Failed to send PR polling start message to Discord channel ${channelId}:`,
+                    err?.message || err
+                  );
                 });
             }
             console.log(
