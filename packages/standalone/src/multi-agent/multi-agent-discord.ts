@@ -1361,6 +1361,12 @@ export class MultiAgentDiscordHandler {
    * Returns a status message or null if no repo found.
    */
   private async autoCommitAndPush(channelId: string): Promise<string | null> {
+    // Check if auto-commit is enabled
+    if (process.env.MAMA_DISABLE_AUTO_COMMIT === 'true') {
+      console.log('[AutoCommit] Auto-commit is disabled by MAMA_DISABLE_AUTO_COMMIT env var');
+      return null;
+    }
+
     // Find active PR session for this channel to get the repo info
     const sessions = this.prReviewPoller.getActiveSessions();
     if (sessions.length === 0) return null;
@@ -1404,9 +1410,10 @@ export class MultiAgentDiscordHandler {
       });
 
       const currentBranch = branchOut.trim();
-      if (currentBranch === 'main' || currentBranch === 'master') {
+      const protectedBranches = ['main', 'master', 'develop', 'production', 'staging'];
+      if (protectedBranches.includes(currentBranch)) {
         console.log(`[AutoCommit] Refusing to commit to protected branch: ${currentBranch}`);
-        return `🚫 Auto-commit blocked: Cannot commit to ${currentBranch} branch. (${session.repo})`;
+        return `🚫 Auto-commit blocked: Cannot commit to protected branch '${currentBranch}'. (${session.repo})`;
       }
 
       // 2. git status
@@ -1443,6 +1450,31 @@ export class MultiAgentDiscordHandler {
         })
         .filter(Boolean);
 
+      // Check for sensitive files
+      const sensitivePatterns = [
+        /\.env/i,
+        /\.pem$/i,
+        /\.key$/i,
+        /credentials/i,
+        /secrets/i,
+        /private.*key/i,
+        /id_rsa/i,
+        /\.p12$/i,
+        /\.pfx$/i,
+        /password/i,
+        /\.aws\//i,
+        /\.ssh\//i,
+      ];
+
+      const sensitiveFiles = changedFiles.filter((file) =>
+        sensitivePatterns.some((pattern) => pattern.test(file))
+      );
+
+      if (sensitiveFiles.length > 0) {
+        console.log(`[AutoCommit] Blocked: sensitive files detected: ${sensitiveFiles.join(', ')}`);
+        return `🔒 Auto-commit blocked: Sensitive files detected:\n${sensitiveFiles.map((f) => `• ${f}`).join('\n')}`;
+      }
+
       // 3. git add (specific files, batched to prevent ARG_MAX issues)
       const BATCH_SIZE = 50;
       for (let i = 0; i < changedFiles.length; i += BATCH_SIZE) {
@@ -1462,12 +1494,13 @@ export class MultiAgentDiscordHandler {
           ? changedFiles.join(', ')
           : `${changedFiles.slice(0, 5).join(', ')} +${changedFiles.length - 5} more`;
 
-      // Push is LEAD's responsibility — only commit here
-      console.log(`[AutoCommit] Committed ${changedFiles.length} files, push deferred to LEAD`);
+      // Safety: Only commit, never push. Push is always manual.
+      console.log(`[AutoCommit] Committed ${changedFiles.length} files safely (no push)`);
       return (
-        `✅ **Auto Commit Completed** (LEAD pushes)\n` +
+        `✅ **Auto Commit Completed** (Manual push required)\n` +
         `📁 ${changedFiles.length} files: ${shortStatus}\n` +
-        `💬 \`${commitMsg}\``
+        `💬 \`${commitMsg}\`\n` +
+        `⚠️ Review changes with \`git diff HEAD~1\` before pushing`
       );
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
