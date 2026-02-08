@@ -28,6 +28,22 @@ const fs = require('fs');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 
+function getEnabledFeatures() {
+  const isDaemon = process.env.MAMA_DAEMON === '1';
+  const disableAll = process.env.MAMA_DISABLE_HOOKS === 'true';
+  const featuresEnv = process.env.MAMA_HOOK_FEATURES;
+  if (disableAll) {
+    return new Set();
+  }
+  if (!isDaemon) {
+    return new Set(['memory', 'keywords', 'rules', 'agents', 'contracts']);
+  }
+  if (!featuresEnv) {
+    return new Set();
+  }
+  return new Set(featuresEnv.split(',').map((f) => f.trim().toLowerCase()));
+}
+
 // Add core to require path
 require('module').globalPaths.push(CORE_PATH);
 
@@ -300,16 +316,10 @@ async function ensureDependencies() {
  * Main hook handler
  */
 async function main() {
-  if (process.env.MAMA_DISABLE_HOOKS === 'true') {
-    info('[SessionStart] MAMA hooks disabled, skipping warmup');
-    return;
-  }
-
-  // Skip if running inside MAMA Standalone daemon
-  // MAMA OS uses Gateway Tools for auto-recall, not plugin hooks
-  if (process.env.MAMA_DAEMON === '1') {
-    info('[SessionStart] Running inside MAMA daemon, skipping hook (using Gateway Tools)');
-    return;
+  const features = getEnabledFeatures();
+  if (features.size === 0) {
+    info('[SessionStart] All hooks disabled');
+    process.exit(0);
   }
 
   // Check if this is a resume/compact event (not a fresh session start)
