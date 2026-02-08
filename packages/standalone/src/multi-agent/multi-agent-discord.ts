@@ -1211,7 +1211,7 @@ export class MultiAgentDiscordHandler {
 
       if (!statusOut.trim()) {
         console.log(`[AutoCommit] No changes to commit in ${repoPath}`);
-        return `📭 커밋할 변경사항이 없습니다. (${session.repo})`;
+        return `📭 No changes to commit. (${session.repo})`;
       }
 
       // 2. Get changed files from porcelain format (XY PATH or XY ORIG -> PATH)
@@ -1253,8 +1253,8 @@ export class MultiAgentDiscordHandler {
         });
 
         const result =
-          `✅ **Auto Commit+Push 완료**\n` +
-          `📁 ${changedFiles.length}개 파일: ${shortStatus}\n` +
+          `✅ **Auto Commit+Push Completed**\n` +
+          `📁 ${changedFiles.length} files: ${shortStatus}\n` +
           `💬 \`${commitMsg}\`\n` +
           `${pushOut || pushErr || '(pushed)'}`;
 
@@ -1262,10 +1262,10 @@ export class MultiAgentDiscordHandler {
         return result;
       } else {
         const result =
-          `✅ **Auto Commit 완료** (Push는 수동)\n` +
-          `📁 ${changedFiles.length}개 파일: ${shortStatus}\n` +
+          `✅ **Auto Commit Completed** (Manual Push)\n` +
+          `📁 ${changedFiles.length} files: ${shortStatus}\n` +
           `💬 \`${commitMsg}\`\n` +
-          `⚠️ MAMA_ALLOW_AUTO_PUSH=true 필요 (자동 push 비활성화)`;
+          `⚠️ MAMA_ALLOW_AUTO_PUSH=true required (auto push disabled)`;
 
         console.log(`[AutoCommit] Commit complete, but auto-push disabled`);
         return result;
@@ -1273,7 +1273,7 @@ export class MultiAgentDiscordHandler {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[AutoCommit] Failed:`, err);
-      return `❌ **Auto Commit+Push 실패**: ${errMsg.substring(0, 200)}`;
+      return `❌ **Auto Commit+Push Failed**: ${errMsg.substring(0, 200)}`;
     }
   }
 }
