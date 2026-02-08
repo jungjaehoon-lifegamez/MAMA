@@ -24,7 +24,7 @@ Call tools via JSON block:
 
 - Service name: **mama-os** (NOT "mama")
 - Status: `systemctl --user status mama-os`
-- Restart: `systemctl --user restart mama-os` (auto 3s delay — **always confirm with user before executing**)
+- Restart: `systemctl --user restart mama-os` (automatic 3s delay — **always confirm with user before executing**)
 - NEVER use sudo. NEVER use service name "mama".
 - Config: `~/.mama/config.yaml`
 - Logs: `~/.mama/logs/daemon.log`

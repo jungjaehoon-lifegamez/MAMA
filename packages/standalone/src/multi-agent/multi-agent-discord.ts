@@ -899,10 +899,9 @@ export class MultiAgentDiscordHandler {
           `[AutoReview] Sisyphus self-implementation exceeded thresholds: ${filesChanged} files, ${totalLines} lines → auto-triggering Reviewer`
         );
 
-        // Find reviewer agent
-        const reviewerAgentId = Object.keys(this.config.agents || {}).find(
-          (id) => id !== defaultAgentId && /review/i.test(id)
-        );
+        // Find reviewer agent using shared helper
+        const reviewerEntry = this.findReviewerAgent();
+        const reviewerAgentId = reviewerEntry?.[0];
 
         if (reviewerAgentId && this.multiBotManager.hasAgentBot(reviewerAgentId)) {
           const reviewMsg = `⬆️ **Auto-Review Triggered** — ${defaultAgentId}가 직접 구현했으나 diff 크기가 임계값을 초과했습니다 (${filesChanged} files, ${totalLines} lines). @Reviewer 자동 리뷰를 요청합니다.`;
