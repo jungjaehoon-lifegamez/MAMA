@@ -5,6 +5,9 @@
  * with automatic conversation flow and loop prevention.
  */
 
+import type { EnforcementConfig } from '../enforcement/index.js';
+export type { EnforcementConfig } from '../enforcement/index.js';
+
 /**
  * Individual agent persona configuration
  */
@@ -247,6 +250,12 @@ export interface MultiAgentConfig {
    * @default 3
    */
   max_mention_depth?: number;
+
+  /**
+   * Enforcement pipeline configuration (response validation + review gate)
+   * When omitted, enforcement is disabled.
+   */
+  enforcement?: Partial<EnforcementConfig>;
 }
 
 /**

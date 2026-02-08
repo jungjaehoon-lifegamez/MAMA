@@ -17,6 +17,7 @@ import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js'
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { getChannelHistory } from '../gateways/channel-history.js';
 import { PRReviewPoller } from './pr-review-poller.js';
+import { EnforcementPipeline } from '../enforcement/index.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -64,6 +65,7 @@ export class MultiAgentDiscordHandler {
   private multiBotManager: MultiBotManager;
   private messageQueue: AgentMessageQueue;
   private prReviewPoller: PRReviewPoller;
+  private enforcement: EnforcementPipeline | null;
 
   /** Discord client reference for main bot channel sends */
   private discordClient: { channels: { fetch: (id: string) => Promise<unknown> } } | null = null;
@@ -94,6 +96,9 @@ export class MultiAgentDiscordHandler {
     this.multiBotManager = new MultiBotManager(config);
     this.messageQueue = new AgentMessageQueue();
     this.prReviewPoller = new PRReviewPoller();
+    this.enforcement = config.enforcement?.enabled
+      ? new EnforcementPipeline(config.enforcement)
+      : null;
 
     // Periodic cleanup of expired queued messages and mention dedup entries
     this.cleanupInterval = setInterval(() => {
@@ -695,6 +700,16 @@ export class MultiAgentDiscordHandler {
     const sentMessages: Message[] = [];
 
     for (const response of responses) {
+      if (this.enforcement) {
+        const result = this.enforcement.enforce(response.rawContent, { isAgentToAgent: false });
+        if (!result.passed) {
+          console.log(
+            `[Enforcement] Response rejected for ${response.agentId}: ${result.rejectionReason}`
+          );
+          continue;
+        }
+      }
+
       try {
         const chunks = splitForDiscord(response.content);
         const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
@@ -944,6 +959,14 @@ export class MultiAgentDiscordHandler {
       }
     } catch {
       /* ignore */
+    }
+
+    if (this.enforcement) {
+      const result = this.enforcement.enforce(sourceResponse.rawContent, { isAgentToAgent: true });
+      if (!result.passed) {
+        console.log(`[Enforcement] Delegated response rejected: ${result.rejectionReason}`);
+        return;
+      }
     }
 
     try {
