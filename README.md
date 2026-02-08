@@ -130,7 +130,7 @@ mama init
 mama start
 ```
 
-**Package:** `@jungjaehoon/mama-os` v0.4.0
+**Package:** `@jungjaehoon/mama-os` 0.5.0-beta
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -174,7 +174,7 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 
 **Requires:** [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated.
 
-#### Multi-Agent Swarm <sup>NEW in 0.4.0</sup>
+#### Multi-Agent Swarm
 
 > Built independently, announced the same day as Anthropic's [Agent Teams](https://docs.anthropic.com/en/docs/claude-code/agent-teams).
 > Same vision — coordinated AI agents — but for **chat platforms**, not just CLI.
@@ -237,7 +237,7 @@ User message → Orchestrator → 5-Stage Routing
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` v1.7.2
+**Package:** `@jungjaehoon/mama-server` 1.7.2
 
 **What happens after installation:**
 
@@ -311,7 +311,7 @@ Add to `~/.openclaw/openclaw.json`:
 }
 ```
 
-**Package:** `@jungjaehoon/openclaw-mama` v0.4.1
+**Package:** `@jungjaehoon/openclaw-mama` 0.4.1
 
 ---
 
@@ -332,19 +332,19 @@ const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
 const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```
 
-**Package:** `@jungjaehoon/mama-core` v1.0.2
+**Package:** `@jungjaehoon/mama-core` 1.0.2
 
 ---
 
 ## 📦 All Packages
 
-| Package                                                          | Version | Description                                  | Distribution       |
-| ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.4.0   | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.2   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.2   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.6   | Claude Code plugin                           | Claude Marketplace |
-| [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1   | OpenClaw plugin                              | npm                |
+| Package                                                          | Version    | Description                                  | Distribution       |
+| ---------------------------------------------------------------- | ---------- | -------------------------------------------- | ------------------ |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.5.0-beta | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.2      | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.2      | Shared core library (embeddings, DB, memory) | npm                |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.6      | Claude Code plugin                           | Claude Marketplace |
+| [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1      | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
 
