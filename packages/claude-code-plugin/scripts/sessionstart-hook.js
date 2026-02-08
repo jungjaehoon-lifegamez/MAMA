@@ -27,22 +27,7 @@ const fs = require('fs');
 // Get paths relative to script location
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
-
-function getEnabledFeatures() {
-  const isDaemon = process.env.MAMA_DAEMON === '1';
-  const disableAll = process.env.MAMA_DISABLE_HOOKS === 'true';
-  const featuresEnv = process.env.MAMA_HOOK_FEATURES;
-  if (disableAll) {
-    return new Set();
-  }
-  if (!isDaemon) {
-    return new Set(['memory', 'keywords', 'rules', 'agents', 'contracts']);
-  }
-  if (!featuresEnv) {
-    return new Set();
-  }
-  return new Set(featuresEnv.split(',').map((f) => f.trim().toLowerCase()));
-}
+const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 
 // Add core to require path
 require('module').globalPaths.push(CORE_PATH);
