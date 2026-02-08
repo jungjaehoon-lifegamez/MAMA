@@ -872,12 +872,13 @@ export class MultiAgentDiscordHandler {
         mentionedAgentIds.includes(defaultAgentId || '') &&
         /\bapprove\b/i.test(response.rawContent);
 
+      let autoCommitResult: string | null = null;
       if (isReviewerApproveToLead) {
-        const commitResult = await this.autoCommitAndPush(originalMessage.channel.id);
-        if (commitResult) {
+        autoCommitResult = await this.autoCommitAndPush(originalMessage.channel.id);
+        if (autoCommitResult) {
           // Post commit result to channel
           try {
-            const chunks = splitForDiscord(commitResult);
+            const chunks = splitForDiscord(autoCommitResult);
             for (const chunk of chunks) {
               if ('send' in originalMessage.channel) {
                 await (
@@ -896,7 +897,7 @@ export class MultiAgentDiscordHandler {
       // Route to all mentioned agents in parallel
       await Promise.all(
         mentionedAgentIds.map((targetAgentId) =>
-          this.handleDelegatedMention(targetAgentId, originalMessage, response)
+          this.handleDelegatedMention(targetAgentId, originalMessage, response, autoCommitResult)
         )
       );
     }
@@ -908,7 +909,8 @@ export class MultiAgentDiscordHandler {
   private async handleDelegatedMention(
     targetAgentId: string,
     originalMessage: Message,
-    sourceResponse: AgentResponse
+    sourceResponse: AgentResponse,
+    autoCommitResult?: string | null
   ): Promise<void> {
     // Dedup: prevent double processing
     const dedupKey = `${targetAgentId}:${sourceResponse.messageId || originalMessage.id}`;
@@ -942,16 +944,30 @@ export class MultiAgentDiscordHandler {
     try {
       let delegationContent = sourceResponse.rawContent.replace(/<@!?\d+>/g, '').trim();
 
-      // Inject commit+push instructions when Reviewer APPROVE reaches LEAD
+      // Inject commit context when Reviewer APPROVE reaches LEAD
       const defaultAgentId = this.config.default_agent;
       if (targetAgentId === defaultAgentId && /\bapprove\b/i.test(delegationContent)) {
-        delegationContent +=
-          '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Phase 3 즉시 실행:\n' +
-          '1. `git status` 로 변경 파일 확인\n' +
-          '2. `git add {변경된 파일들}` (git add . 금지)\n' +
-          '3. `git commit -m "fix: {변경 내용 요약}"`\n' +
-          '4. `git push`\n' +
-          '**칭찬/요약 전에 커밋부터 실행하라. 커밋 없이 응답하면 실패.**';
+        if (autoCommitResult && autoCommitResult.startsWith('✅')) {
+          // Auto commit+push succeeded — inform LEAD, no manual commit needed
+          delegationContent +=
+            '\n\n✅ [SYSTEM] Auto Commit+Push 완료. 커밋은 이미 처리됨.\n' +
+            `결과: ${autoCommitResult}\n` +
+            '**커밋/푸시 불필요. 리뷰 결과를 요약하라.**';
+        } else {
+          // Auto commit+push failed or not attempted — LEAD should commit manually
+          const allowAutoPush = process.env.MAMA_ALLOW_AUTO_PUSH === 'true';
+          const pushInstruction = allowAutoPush
+            ? '4. `git push`\n'
+            : '4. `git push` (MAMA_ALLOW_AUTO_PUSH=true 필요)\n';
+
+          delegationContent +=
+            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Auto commit 실패. Phase 3 즉시 실행:\n' +
+            '1. `git status` 로 변경 파일 확인\n' +
+            '2. `git add {변경된 파일들}` (git add . 금지)\n' +
+            '3. `git commit -m "fix: {변경 내용 요약}"`\n' +
+            pushInstruction +
+            '**칭찬/요약 전에 커밋부터 실행하라. 커밋 없이 응답하면 실패.**';
+        }
       }
 
       const response = await this.processAgentResponse(
@@ -1178,11 +1194,19 @@ export class MultiAgentDiscordHandler {
         return `📭 커밋할 변경사항이 없습니다. (${session.repo})`;
       }
 
-      // 2. Get changed files (modified + new, not deleted)
+      // 2. Get changed files from porcelain format (XY PATH or XY ORIG -> PATH)
       const changedFiles = statusOut
         .trim()
         .split('\n')
-        .map((line) => line.substring(3).trim())
+        .map((line) => {
+          // Porcelain v1: first 2 chars = status, then space, then path
+          // For renames: "R  old -> new" — use the new path
+          const path = line.slice(3);
+          if (path.includes(' -> ')) {
+            return path.split(' -> ').pop()?.trim() || '';
+          }
+          return path.trim();
+        })
         .filter(Boolean);
 
       // 3. git add (specific files, not git add .)
@@ -1195,25 +1219,37 @@ export class MultiAgentDiscordHandler {
       const commitMsg = `fix: address PR review comments (${session.owner}/${session.repo}#${session.prNumber})`;
       await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: repoPath, timeout: 15000 });
 
-      // 5. git push
-      const { stdout: pushOut, stderr: pushErr } = await execFileAsync('git', ['push'], {
-        cwd: repoPath,
-        timeout: 30000,
-      });
-
       const shortStatus =
         changedFiles.length <= 5
           ? changedFiles.join(', ')
           : `${changedFiles.slice(0, 5).join(', ')} +${changedFiles.length - 5} more`;
 
-      const result =
-        `✅ **Auto Commit+Push 완료**\n` +
-        `📁 ${changedFiles.length}개 파일: ${shortStatus}\n` +
-        `💬 \`${commitMsg}\`\n` +
-        `${pushOut || pushErr || '(pushed)'}`;
+      // 5. git push - only if explicitly allowed
+      const allowAutoPush = process.env.MAMA_ALLOW_AUTO_PUSH === 'true';
+      if (allowAutoPush) {
+        const { stdout: pushOut, stderr: pushErr } = await execFileAsync('git', ['push'], {
+          cwd: repoPath,
+          timeout: 30000,
+        });
 
-      console.log(`[AutoCommit] Success: ${changedFiles.length} files committed and pushed`);
-      return result;
+        const result =
+          `✅ **Auto Commit+Push 완료**\n` +
+          `📁 ${changedFiles.length}개 파일: ${shortStatus}\n` +
+          `💬 \`${commitMsg}\`\n` +
+          `${pushOut || pushErr || '(pushed)'}`;
+
+        console.log(`[AutoCommit] Success: ${changedFiles.length} files committed and pushed`);
+        return result;
+      } else {
+        const result =
+          `✅ **Auto Commit 완료** (Push는 수동)\n` +
+          `📁 ${changedFiles.length}개 파일: ${shortStatus}\n` +
+          `💬 \`${commitMsg}\`\n` +
+          `⚠️ MAMA_ALLOW_AUTO_PUSH=true 필요 (자동 push 비활성화)`;
+
+        console.log(`[AutoCommit] Commit complete, but auto-push disabled`);
+        return result;
+      }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[AutoCommit] Failed:`, err);
