@@ -80,6 +80,9 @@ export class MultiAgentDiscordHandler {
   /** TTL for processed mention entries (5 minutes) */
   private static readonly MENTION_TTL_MS = 5 * 60 * 1000;
 
+  /** Cleanup interval handle for periodic tasks */
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
     this.config = config;
     this.orchestrator = new MultiAgentOrchestrator(config);
@@ -90,7 +93,7 @@ export class MultiAgentDiscordHandler {
     this.prReviewPoller = new PRReviewPoller();
 
     // Periodic cleanup of expired queued messages and mention dedup entries
-    setInterval(() => {
+    this.cleanupInterval = setInterval(() => {
       this.messageQueue.clearExpired();
       this.cleanupProcessedMentions();
     }, 60_000);
@@ -1115,6 +1118,12 @@ export class MultiAgentDiscordHandler {
    * Stop all agent processes and bots
    */
   async stopAll(): Promise<void> {
+    // Clear cleanup interval to prevent memory leaks
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+
     this.processManager.stopAll();
     this.prReviewPoller.stopAll();
     await this.multiBotManager.stopAll();
