@@ -83,6 +83,9 @@ export class MultiAgentDiscordHandler {
   /** Cleanup interval handle for periodic tasks */
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
+  /** Channel-safe batch data accumulation (prevents cross-channel data contamination) */
+  private batchData = new Map<string, string[]>();
+
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
     this.config = config;
     this.orchestrator = new MultiAgentOrchestrator(config);
@@ -275,8 +278,6 @@ export class MultiAgentDiscordHandler {
   setDiscordClient(client: { channels: { fetch: (id: string) => Promise<unknown> } }): void {
     this.discordClient = client;
     if (this.prReviewPoller.hasMessageSender()) return;
-    // Channel-safe batch data accumulation (Map instead of shared variables)
-    const batchData = new Map<string, string[]>();
 
     this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
       const channel = await client.channels.fetch(channelId);
@@ -287,18 +288,18 @@ export class MultiAgentDiscordHandler {
       });
 
       // Store texts per channel to prevent cross-channel contamination
-      if (!batchData.has(channelId)) {
-        batchData.set(channelId, []);
+      if (!this.batchData.has(channelId)) {
+        this.batchData.set(channelId, []);
       }
-      batchData.get(channelId)!.push(text.replace(/<@!?\d+>/g, '').trim());
+      this.batchData.get(channelId)!.push(text.replace(/<@!?\d+>/g, '').trim());
     });
 
     // After all chunks sent, send LEAD mention FROM Reviewer bot
     // with PR data included so LEAD doesn't pick up stale channel history.
     this.prReviewPoller.setOnBatchComplete(async (channelId: string) => {
-      const texts = batchData.get(channelId) || [];
+      const texts = this.batchData.get(channelId) || [];
       if (texts.length === 0) return;
-      batchData.delete(channelId); // Clean up after processing
+      this.batchData.delete(channelId); // Clean up after processing
 
       // Reset chain so LEAD can delegate freely
       this.orchestrator.resetChain(channelId);
