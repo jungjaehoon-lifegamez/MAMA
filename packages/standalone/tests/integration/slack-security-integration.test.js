@@ -4,13 +4,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SlackMultiBotManager } from '../../src/multi-agent/slack-multi-bot-manager.js';
-import { MultiAgentSlackHandler } from '../../src/multi-agent/multi-agent-slack.js';
+import { SlackMultiBotManager } from '../../src/multi-agent/slack-multi-bot-manager.ts';
+import { MultiAgentSlackHandler } from '../../src/multi-agent/multi-agent-slack.ts';
 import {
   validateMentionEvent,
   sanitizeMessageContent,
-} from '../../src/utils/slack-input-validator.js';
-import { SlackRateLimiter } from '../../src/utils/slack-rate-limiter.js';
+} from '../../src/utils/slack-input-validator.ts';
+import { SlackRateLimiter } from '../../src/utils/slack-rate-limiter.ts';
 
 // Mock Slack WebClient and SocketModeClient
 vi.mock('@slack/web-api', () => ({

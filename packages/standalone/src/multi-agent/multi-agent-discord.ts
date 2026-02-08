@@ -1209,7 +1209,19 @@ export class MultiAgentDiscordHandler {
     console.log(`[AutoCommit] Found repo at ${repoPath}, running commit+push`);
 
     try {
-      // 1. git status
+      // 1. Check current branch - prevent commits to main/master
+      const { stdout: branchOut } = await execFileAsync('git', ['branch', '--show-current'], {
+        cwd: repoPath,
+        timeout: 5000,
+      });
+
+      const currentBranch = branchOut.trim();
+      if (currentBranch === 'main' || currentBranch === 'master') {
+        console.log(`[AutoCommit] Refusing to commit to protected branch: ${currentBranch}`);
+        return `🚫 Auto-commit blocked: Cannot commit to ${currentBranch} branch. (${session.repo})`;
+      }
+
+      // 2. git status
       const { stdout: statusOut } = await execFileAsync('git', ['status', '--porcelain'], {
         cwd: repoPath,
         timeout: 10000,
@@ -1235,11 +1247,21 @@ export class MultiAgentDiscordHandler {
         })
         .filter(Boolean);
 
-      // 3. git add (specific files, not git add .)
-      await execFileAsync('git', ['add', ...changedFiles], {
-        cwd: repoPath,
-        timeout: 15000,
-      });
+      // 3. git add (specific files, not git add .) - batch to prevent ARG_MAX issues
+      if (changedFiles.length > 50) {
+        console.log(
+          `[AutoCommit] Too many files (${changedFiles.length}), using git add . fallback`
+        );
+        await execFileAsync('git', ['add', '.'], {
+          cwd: repoPath,
+          timeout: 15000,
+        });
+      } else {
+        await execFileAsync('git', ['add', ...changedFiles], {
+          cwd: repoPath,
+          timeout: 15000,
+        });
+      }
 
       // 4. git commit
       const commitMsg = `fix: address PR review comments (${session.owner}/${session.repo}#${session.prNumber})`;

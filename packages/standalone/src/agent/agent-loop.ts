@@ -957,10 +957,18 @@ export class AgentLoop {
       }
 
       // Dispose session pool
-      // SessionPool is a singleton - don't dispose it as other components may still need it
-      // if (this.sessionPool?.dispose) {
-      //   this.sessionPool.dispose();
-      // }
+      // SessionPool graceful cleanup - only if it's the last reference
+      if (this.sessionPool?.dispose && typeof this.sessionPool.dispose === 'function') {
+        // Check if this is likely the last active component using the pool
+        // by checking if there are no active sessions
+        const hasActiveSessions = this.sessionPool.getActiveSessionCount?.() > 0;
+        if (!hasActiveSessions) {
+          console.log('[AgentLoop] Disposing SessionPool - no active sessions');
+          this.sessionPool.dispose();
+        } else {
+          console.log('[AgentLoop] SessionPool has active sessions - skipping disposal');
+        }
+      }
 
       // Lane manager doesn't have explicit stop method
       // Let it be cleaned up by garbage collection
