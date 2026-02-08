@@ -239,6 +239,18 @@ export class PRReviewPoller {
   }
 
   /**
+   * Get session details for active polling sessions (for auto-commit)
+   */
+  getSessionDetails(): { owner: string; repo: string; prNumber: number; channelId: string }[] {
+    return Array.from(this.sessions.values()).map((s) => ({
+      owner: s.owner,
+      repo: s.repo,
+      prNumber: s.prNumber,
+      channelId: s.channelId,
+    }));
+  }
+
+  /**
    * Poll a single PR for new comments/reviews
    */
   private async poll(sessionKey: string): Promise<void> {
