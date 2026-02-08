@@ -151,9 +151,9 @@
 
 **완료 기준**:
 
-- [ ] ResponseValidator 프로토타입 작동
-- [ ] 10개 테스트 모두 통과
-- [ ] Flattery 감지율 90% 이상
+- [x] ResponseValidator 프로토타입 작동 (2026-02-08 — 281줄, 50 patterns)
+- [x] 19개 테스트 모두 통과 (2026-02-08 — 10 spike cases + 9 edge cases)
+- [x] Flattery 감지율 100% (spike test suite 기준)
 
 ### Day 3-4 (8시간)
 
@@ -182,9 +182,9 @@
 
 **완료 기준**:
 
-- [ ] ReviewGate 프로토타입 작동
-- [ ] Discord 통합 성공
-- [ ] 증거 없는 APPROVE 100% 차단
+- [x] ReviewGate 프로토타입 작동 (2026-02-08 — 117줄, 18 evidence patterns)
+- [ ] Discord 통합 성공 → Week 3으로 이관 (통합 포인트 식별 완료)
+- [x] 증거 없는 APPROVE 100% 차단 (2026-02-08 — 20/20 tests pass)
 
 ### Day 5 (4시간)
 
@@ -203,8 +203,8 @@
 
 **완료 기준**:
 
-- [ ] Spike 결과 문서 작성
-- [ ] Go/No-Go 결정 완료
+- [x] Spike 결과 문서 작성 (2026-02-08 — `docs/spike-results-enforcement-layer-2026-02-08.md`)
+- [x] Go/No-Go 결정 완료 (2026-02-08 — ✅ GO, 모든 기준 충족)
 
 ---
 
