@@ -1,6 +1,6 @@
 # STANDALONE PACKAGE KNOWLEDGE BASE
 
-**Package:** @jungjaehoon/mama-os v0.4.0  
+**Package:** @jungjaehoon/mama-os  
 **Language:** TypeScript (compiles to dist/)  
 **Purpose:** Always-on AI agent with gateway integrations, multi-agent swarm, and autonomous capabilities
 
