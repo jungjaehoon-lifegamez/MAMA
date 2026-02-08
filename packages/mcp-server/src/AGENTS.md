@@ -1,6 +1,6 @@
 # MCP SERVER PACKAGE
 
-**Package:** `@jungjaehoon/mama-server` v1.7.2  
+**Package:** `@jungjaehoon/mama-server`  
 **Purpose:** MCP transport layer for Claude Desktop/Code  
 **Entry:** `src/server.js` (bin: `mama-server`)
 
