@@ -465,11 +465,12 @@ export class PRReviewPoller {
 
     for (const c of comments) {
       const location = c.path ? `\`${c.path}${c.line ? `:${c.line}` : ''}\`` : '';
-      const body = c.body.length > 200 ? c.body.substring(0, 200) + '...' : c.body;
-      const entry = `${location} — ${body} _(${c.user.login})_`;
-
-      // Detect severity from body content
+      // Use full body for severity detection, only truncate for display
       const bodyLower = c.body.toLowerCase();
+      const displayBody = c.body.length > 200 ? c.body.substring(0, 200) + '...' : c.body;
+      const entry = `${location} — ${displayBody} _(${c.user.login})_`;
+
+      // Detect severity from full body content (not truncated)
       if (
         bodyLower.includes('critical') ||
         bodyLower.includes('bug') ||
@@ -524,7 +525,7 @@ export class PRReviewPoller {
         '--paginate',
         `repos/${owner}/${repo}/pulls/${prNumber}/comments`,
         '--jq',
-        '.[] | {id, path, line, body: .body[0:1000], user: {login: .user.login}, created_at}',
+        '.[] | {id, path, line, body: .body, user: {login: .user.login}, created_at}',
       ],
       { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
     );
