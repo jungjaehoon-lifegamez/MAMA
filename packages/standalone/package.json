@@ -54,7 +54,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
     "@jungjaehoon/mama-core": "workspace:*",
-    "@jungjaehoon/mama-server": "^1.5.11",
     "@slack/socket-mode": "^2.0.5",
     "@slack/web-api": "^7.13.0",
     "better-sqlite3": "^11.10.0",
