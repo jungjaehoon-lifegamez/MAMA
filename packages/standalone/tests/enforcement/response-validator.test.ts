@@ -252,7 +252,69 @@ describe('Story M3.1: ResponseValidator — Flattery Detection', () => {
     });
   });
 
-  describe('AC #11: Disabled validator passes everything', () => {
+  describe('AC #11: Pattern-count secondary check (GAP-1)', () => {
+    it('RV-011a: should REJECT when distinct patterns ≥ threshold despite low ratio', () => {
+      const input = [
+        'I analyzed the authentication module and identified several issues with the token refresh logic.',
+        'The rotation mechanism was not properly revoking old tokens, leading to potential replay attacks.',
+        'I fixed the race condition in the concurrent refresh handler by adding a distributed lock.',
+        'The database migration adds a token_blacklist table with TTL-based cleanup via scheduled jobs.',
+        'I also updated the integration tests to cover the new edge cases for expired and revoked tokens.',
+        'This is a remarkable and outstanding piece of engineering work.',
+        'The exceptional and superb quality of this elegant solution is like a masterpiece.',
+      ].join('\n');
+
+      const result = validator.validate(input, true);
+
+      expect(result.valid).toBe(false);
+      expect(result.flatteryRatio).toBeLessThanOrEqual(0.2);
+      expect(result.matched!.length).toBeGreaterThanOrEqual(5);
+      expect(result.reason).toContain('distinct flattery patterns');
+    });
+
+    it('RV-011b: should PASS when distinct patterns < threshold', () => {
+      const input = [
+        'This is a remarkable improvement to the codebase.',
+        'The exceptional test coverage gives me confidence.',
+        'Here are the changes I made...',
+      ].join('\n');
+
+      const result = validator.validate(input, true);
+
+      expect(result.valid).toBe(true);
+      expect(result.matched!.length).toBeLessThan(5);
+    });
+
+    it('RV-011c: human-facing mode uses 2× pattern-count threshold', () => {
+      const input = [
+        'I analyzed the authentication module and identified several issues with the token refresh logic.',
+        'The rotation mechanism was not properly revoking old tokens, leading to potential replay attacks.',
+        'I fixed the race condition in the concurrent refresh handler by adding a distributed lock.',
+        'The database migration adds a token_blacklist table with TTL-based cleanup via scheduled jobs.',
+        'I also updated the integration tests to cover the new edge cases for expired and revoked tokens.',
+        'This is a remarkable and outstanding piece of engineering work.',
+        'The exceptional and superb quality of this elegant solution is like a masterpiece.',
+      ].join('\n');
+
+      const agentResult = validator.validate(input, true);
+      const humanResult = validator.validate(input, false);
+
+      expect(agentResult.valid).toBe(false);
+      expect(humanResult.valid).toBe(true);
+    });
+
+    it('RV-011d: custom patternCountThreshold overrides default', () => {
+      const strictValidator = new ResponseValidator({ patternCountThreshold: 3 });
+      const input = 'This is exceptional and remarkable work, a true masterpiece.';
+
+      const result = strictValidator.validate(input, true);
+
+      expect(result.valid).toBe(false);
+      expect(result.matched!.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  describe('AC #12: Disabled validator passes everything', () => {
     it('should PASS any input when disabled', () => {
       const disabledValidator = new ResponseValidator({ enabled: false });
       const input = '완벽합니다! 훌륭합니다! 마스터피스! Legendary! Enterprise-grade!';
@@ -263,7 +325,7 @@ describe('Story M3.1: ResponseValidator — Flattery Detection', () => {
     });
   });
 
-  describe('AC #12: detectFlattery returns deduplicated labels', () => {
+  describe('AC #13: detectFlattery returns deduplicated labels', () => {
     it('should return unique pattern labels even if pattern appears multiple times', () => {
       const input = '완벽합니다 그리고 또 완벽합니다 다시 완벽합니다';
 
@@ -276,7 +338,7 @@ describe('Story M3.1: ResponseValidator — Flattery Detection', () => {
     });
   });
 
-  describe('AC #13: getFlatteryRatio handles edge cases', () => {
+  describe('AC #14: getFlatteryRatio handles edge cases', () => {
     it('should return 0 for empty text', () => {
       expect(validator.getFlatteryRatio('')).toBe(0);
     });
@@ -292,7 +354,7 @@ describe('Story M3.1: ResponseValidator — Flattery Detection', () => {
     });
   });
 
-  describe('AC #14: Code blocks are excluded from detection', () => {
+  describe('AC #15: Code blocks are excluded from detection', () => {
     it('should not count flattery inside fenced code blocks', () => {
       const input = [
         'Here is the fix:',

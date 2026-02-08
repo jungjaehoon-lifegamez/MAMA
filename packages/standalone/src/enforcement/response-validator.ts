@@ -31,6 +31,8 @@ export interface ResponseValidatorConfig {
   maxRetries: number;
   /** Strict mode for agent-to-agent communication. Default: true */
   strictMode: boolean;
+  /** Distinct pattern count that triggers rejection regardless of ratio. Default: 5 */
+  patternCountThreshold: number;
 }
 
 /**
@@ -163,6 +165,7 @@ const DEFAULT_CONFIG: ResponseValidatorConfig = {
   flatteryThreshold: 0.2,
   maxRetries: 3,
   strictMode: true,
+  patternCountThreshold: 5,
 };
 
 /**
@@ -217,6 +220,22 @@ export class ResponseValidator {
       return {
         valid: false,
         reason: `Flattery ratio ${(ratio * 100).toFixed(1)}% exceeds ${(effectiveThreshold * 100).toFixed(1)}% threshold. Matched: ${matched.join(', ')}`,
+        matched,
+        flatteryRatio: ratio,
+      };
+    }
+
+    // Secondary check: reject if too many distinct flattery patterns are matched,
+    // even when the ratio is below threshold (catches verbose English self-congratulation
+    // where long filler text dilutes the character ratio).
+    const effectiveCountThreshold = isAgentToAgent
+      ? this.config.patternCountThreshold
+      : this.config.patternCountThreshold * 2;
+
+    if (matched.length >= effectiveCountThreshold) {
+      return {
+        valid: false,
+        reason: `${matched.length} distinct flattery patterns detected (threshold: ${effectiveCountThreshold}). Matched: ${matched.join(', ')}`,
         matched,
         flatteryRatio: ratio,
       };

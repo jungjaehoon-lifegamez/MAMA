@@ -85,7 +85,7 @@ Verification:
   });
 
   describe('AC #6: Korean approval + evidence → PASS', () => {
-    it('should approve Korean 통과 with evidence', () => {
+    it('should approve Korean 통과 with English evidence', () => {
       const response = '통과. 테스트 628/628 passed. TypeScript compiles. 0 errors.';
 
       const result = gate.checkApproval(response);
@@ -93,6 +93,48 @@ Verification:
       expect(result.approved).toBe(true);
       expect(result.hasEvidence).toBe(true);
       expect(result.evidenceFound).toContain('test count');
+    });
+
+    it('should approve Korean 승인 with Korean-only evidence (GAP-2)', () => {
+      const response = [
+        '승인',
+        '',
+        '테스트 통과 (45개 테스트 통과)',
+        '에러 0건, 경고 0건',
+        '빌드 성공',
+        '타입체크 통과',
+        '린트 통과',
+      ].join('\n');
+
+      const result = gate.checkApproval(response);
+
+      expect(result.approved).toBe(true);
+      expect(result.hasEvidence).toBe(true);
+      expect(result.evidenceFound).toContain('테스트 통과');
+      expect(result.evidenceFound).toContain('에러 0건');
+      expect(result.evidenceFound).toContain('빌드 성공');
+      expect(result.evidenceFound).toContain('타입체크 통과');
+      expect(result.evidenceFound).toContain('린트 통과');
+      expect(result.evidenceFound).toContain('경고 0건');
+    });
+
+    it('should detect 검토 완료 and 코드 리뷰 완료 as evidence', () => {
+      const response = '승인. 코드 리뷰 완료. 검토 완료.';
+
+      const result = gate.checkApproval(response);
+
+      expect(result.approved).toBe(true);
+      expect(result.hasEvidence).toBe(true);
+      expect(result.evidenceFound).toContain('검토 완료');
+      expect(result.evidenceFound).toContain('코드 리뷰 완료');
+    });
+
+    it('should detect Korean test count patterns', () => {
+      const evidence1 = gate.extractEvidence('45개 테스트 통과');
+      expect(evidence1).toContain('test count (KR)');
+
+      const evidence2 = gate.extractEvidence('23/25 통과');
+      expect(evidence2).toContain('test count (KR)');
     });
   });
 
