@@ -945,4 +945,26 @@ export class AgentLoop {
   static getDefaultSystemPrompt(): string {
     return loadSystemPrompt(true);
   }
+
+  /**
+   * Stop and cleanup the AgentLoop resources
+   */
+  stop(): void {
+    try {
+      // Stop persistent CLI if it exists
+      if (this.persistentCLI?.stopAll) {
+        this.persistentCLI.stopAll();
+      }
+
+      // Dispose session pool
+      if (this.sessionPool?.dispose) {
+        this.sessionPool.dispose();
+      }
+
+      // Lane manager doesn't have explicit stop method
+      // Let it be cleaned up by garbage collection
+    } catch (error) {
+      console.error('Error during AgentLoop cleanup:', error);
+    }
+  }
 }

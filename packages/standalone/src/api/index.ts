@@ -164,22 +164,29 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
               `Port ${port} in use (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${RETRY_DELAY_MS}ms...`
             );
             if (attempt === 0) {
-              // First retry: try to kill the process holding the port
-              try {
-                const { execSync } = require('child_process');
+              // First retry: try to kill the process holding the port (only if explicitly allowed)
+              const allowPortKill = process.env.MAMA_ALLOW_PORT_KILL === 'true';
+              if (allowPortKill) {
                 try {
-                  execSync(`fuser -k ${port}/tcp 2>/dev/null`, { timeout: 5000 });
-                } catch {
+                  const { execSync } = require('child_process');
                   try {
-                    execSync(`lsof -t -i :${port} 2>/dev/null | xargs kill -9 2>/dev/null`, {
-                      timeout: 5000,
-                    });
+                    execSync(`fuser -k ${port}/tcp 2>/dev/null`, { timeout: 5000 });
                   } catch {
-                    /* ignore */
+                    try {
+                      execSync(`lsof -t -i :${port} 2>/dev/null | xargs kill -9 2>/dev/null`, {
+                        timeout: 5000,
+                      });
+                    } catch {
+                      /* ignore */
+                    }
                   }
+                } catch {
+                  /* ignore */
                 }
-              } catch {
-                /* ignore */
+              } else {
+                console.warn(
+                  `Port ${port} in use. To allow automatic port cleanup, set MAMA_ALLOW_PORT_KILL=true`
+                );
               }
             }
             await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
