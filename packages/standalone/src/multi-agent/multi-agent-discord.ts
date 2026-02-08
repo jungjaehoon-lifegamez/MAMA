@@ -779,7 +779,113 @@ export class MultiAgentDiscordHandler {
       }
     }
 
+    // Post-send: Auto-review trigger for default agent (Armed Sisyphus) self-implementations
+    const defaultAgentId = this.config.default_agent;
+    if (defaultAgentId) {
+      const selfImplemented = responses.find(
+        (r) => r.agentId === defaultAgentId && this.detectSelfImplementation(r.rawContent)
+      );
+
+      if (selfImplemented && sentMessages.length > 0) {
+        this.triggerAutoReviewIfNeeded(originalMessage.channel.id, defaultAgentId).catch((err) =>
+          console.error('[AutoReview] Failed to check diff size:', err)
+        );
+      }
+    }
+
     return sentMessages;
+  }
+
+  /**
+   * Detect if the default agent (Sisyphus) performed direct code edits.
+   * Checks for Claude CLI tool-use markers that indicate Edit/Write operations.
+   */
+  private detectSelfImplementation(rawContent: string): boolean {
+    // Claude CLI responses contain tool use results — look for Edit/Write indicators
+    const editIndicators = [
+      /\bedit\b.*\bapplied\b/i,
+      /\bwrote\b.*\bfile\b/i,
+      /\bmodified\b.*\bfile/i,
+      /\bEdit\b.*\bsuccess/i,
+      /\bWrite\b.*\bsuccess/i,
+      /파일.*수정/,
+      /수정.*완료/,
+      /\[SOLO\]/i,
+      /\[PAIR\]/i,
+    ];
+    return editIndicators.some((pattern) => pattern.test(rawContent));
+  }
+
+  /**
+   * Check git diff size after Sisyphus self-implementation.
+   * If diff exceeds thresholds, auto-trigger Reviewer for quality gate.
+   *
+   * Thresholds (PAIR mode auto-escalation):
+   * - >3 files changed → auto-mention Reviewer
+   * - >200 lines changed → auto-mention Reviewer
+   */
+  private async triggerAutoReviewIfNeeded(
+    channelId: string,
+    defaultAgentId: string
+  ): Promise<void> {
+    const MAX_FILES = 3;
+    const MAX_LINES = 200;
+
+    try {
+      // Get diff stats from git
+      const { stdout: diffStat } = await execFileAsync('git', ['diff', '--stat', '--cached'], {
+        cwd: process.cwd(),
+        timeout: 5000,
+      });
+
+      // Also check unstaged changes
+      const { stdout: diffUnstaged } = await execFileAsync('git', ['diff', '--stat'], {
+        cwd: process.cwd(),
+        timeout: 5000,
+      });
+
+      const combinedDiff = diffStat + '\n' + diffUnstaged;
+      const fileLines = combinedDiff
+        .split('\n')
+        .filter((l) => l.includes('|'))
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      const filesChanged = fileLines.length;
+
+      // Parse total insertions/deletions from summary line
+      const summaryMatch = combinedDiff.match(/(\d+)\s+insertion|(\d+)\s+deletion/g);
+      let totalLines = 0;
+      if (summaryMatch) {
+        for (const m of summaryMatch) {
+          const num = m.match(/(\d+)/);
+          if (num) {
+            totalLines += parseInt(num[1], 10);
+          }
+        }
+      }
+
+      if (filesChanged > MAX_FILES || totalLines > MAX_LINES) {
+        console.log(
+          `[AutoReview] Sisyphus self-implementation exceeded thresholds: ${filesChanged} files, ${totalLines} lines → auto-triggering Reviewer`
+        );
+
+        // Find reviewer agent
+        const reviewerAgentId = Object.keys(this.config.agents || {}).find(
+          (id) => id !== defaultAgentId && /review/i.test(id)
+        );
+
+        if (reviewerAgentId && this.multiBotManager.hasAgentBot(reviewerAgentId)) {
+          const reviewMsg = `⬆️ **Auto-Review Triggered** — ${defaultAgentId}가 직접 구현했으나 diff 크기가 임계값을 초과했습니다 (${filesChanged} files, ${totalLines} lines). @Reviewer 자동 리뷰를 요청합니다.`;
+          await this.multiBotManager.sendAsAgent(reviewerAgentId, channelId, reviewMsg);
+        }
+      } else {
+        console.log(
+          `[AutoReview] Sisyphus self-implementation within thresholds: ${filesChanged} files, ${totalLines} lines — no auto-review needed`
+        );
+      }
+    } catch {
+      // Git not available or not in a repo — skip silently
+    }
   }
 
   /**
