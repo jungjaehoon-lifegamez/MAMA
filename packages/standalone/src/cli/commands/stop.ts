@@ -28,17 +28,19 @@ export async function stopCommand(): Promise<void> {
     // Send SIGTERM for graceful shutdown
     process.kill(pid, 'SIGTERM');
 
-    // Wait for process to exit (up to 5 seconds)
+    // Wait for process to exit (up to 10 seconds for graceful shutdown)
     let attempts = 0;
-    const maxAttempts = 50; // 50 * 100ms = 5 seconds
+    const maxAttempts = 100; // 100 * 100ms = 10 seconds
 
     while (isProcessRunning(pid) && attempts < maxAttempts) {
       await sleep(100);
       attempts++;
     }
 
-    // If still running, force kill
+    // If still running, warn user before force kill
     if (isProcessRunning(pid)) {
+      console.log('\n⚠️  프로세스가 정상적으로 종료되지 않았습니다.');
+      console.log('강제 종료를 시도합니다...');
       process.kill(pid, 'SIGKILL');
       await sleep(100);
     }
