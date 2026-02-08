@@ -385,6 +385,9 @@ export class PRReviewPoller {
         }
       }
 
+      // Track if any new data is found (for onBatchComplete trigger)
+      let hasNewData = false;
+
       // Standard flow: filter and send new comments
       try {
         const newComments = allComments.filter(
@@ -406,6 +409,9 @@ export class PRReviewPoller {
             session.seenCommentIds.add(c.id);
           }
 
+          // Set flag to trigger onBatchComplete
+          hasNewData = true;
+
           this.logger.log(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
         }
       } catch (err) {
@@ -413,7 +419,6 @@ export class PRReviewPoller {
       }
 
       // Check unresolved threads every cycle (not just after push)
-      let hasNewData = false;
       try {
         const threads = await this.fetchUnresolvedThreads(
           session.owner,
