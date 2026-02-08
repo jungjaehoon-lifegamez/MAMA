@@ -70,6 +70,7 @@ export class PersistentCLIAdapter {
       systemPrompt: this.options.systemPrompt,
       dangerouslySkipPermissions: this.options.dangerouslySkipPermissions,
       useGatewayTools: this.options.useGatewayTools,
+      env: { MAMA_HOOK_FEATURES: 'keywords,rules,agents' },
     });
 
     // Check if we have pending tool results to send first
