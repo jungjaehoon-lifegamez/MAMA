@@ -1,6 +1,6 @@
 # Enforcement Layer API Reference
 
-**Version:** 1.0.0  
+**Version:** 2.0.0  
 **Package:** `@jungjaehoon/mama-os`  
 **Module:** `packages/standalone/src/enforcement/`
 
@@ -13,7 +13,10 @@ The Enforcement Layer provides runtime validation and quality control for AI age
 **Architecture:**
 
 ```
-Agent Response → ResponseValidator → ReviewGate → ScopeGuard → EnforcementPipeline → Discord/Slack
+Agent Response → ResponseValidator → ReviewGate → TodoTracker → Discord/Slack
+                                                      ↕
+                                               ScopeGuard (git diff)
+                                               EnforcementMetrics (observe)
 ```
 
 **Related Documents:**
@@ -586,11 +589,15 @@ if (violationDetected) {
 
 All components have comprehensive test coverage:
 
-| Component         | Test File                                      | Tests  | Coverage |
-| ----------------- | ---------------------------------------------- | ------ | -------- |
-| ResponseValidator | `tests/enforcement/response-validator.test.ts` | 19     | 100%     |
-| ReviewGate        | `tests/enforcement/review-gate.test.ts`        | 20     | 100%     |
-| **Total**         |                                                | **39** | **100%** |
+| Component           | Test File                                        | Tests   | Coverage |
+| ------------------- | ------------------------------------------------ | ------- | -------- |
+| ResponseValidator   | `tests/enforcement/response-validator.test.ts`   | 19      | 100%     |
+| ReviewGate          | `tests/enforcement/review-gate.test.ts`          | 20      | 100%     |
+| ScopeGuard          | `tests/enforcement/scope-guard.test.ts`          | 23      | 100%     |
+| TodoTracker         | `tests/enforcement/todo-tracker.test.ts`         | 36      | 100%     |
+| EnforcementMetrics  | `tests/enforcement/metrics.test.ts`              | 22      | 100%     |
+| EnforcementPipeline | `tests/enforcement/enforcement-pipeline.test.ts` | 23      | 100%     |
+| **Total**           |                                                  | **143** | **100%** |
 
 **Run tests:**
 

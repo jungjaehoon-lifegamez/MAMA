@@ -545,6 +545,40 @@ DELEGATE::reviewer::review description here
 
 Place persona files in `~/.mama/personas/`.
 
+### Enforcement Layer <sup>NEW in 0.5.0</sup>
+
+Runtime quality enforcement for agent responses. Prevents flattery loops, requires evidence for approvals, and tracks task completion.
+
+```text
+Agent Response → ResponseValidator → ReviewGate → TodoTracker → Discord/Slack
+                 (reject flattery)   (require      (track task
+                                      evidence)     completion)
+```
+
+| Component              | Purpose                                        | Mode       |
+| ---------------------- | ---------------------------------------------- | ---------- |
+| **ResponseValidator**  | Rejects flattery/filler (50 KR+EN patterns)    | Block      |
+| **ReviewGate**         | Requires evidence for APPROVE verdicts         | Block      |
+| **ScopeGuard**         | Detects file modifications outside task scope  | Warn/Block |
+| **TodoTracker**        | Tracks completion markers, generates reminders | Warn       |
+| **EnforcementMetrics** | Per-agent rejection/retry/pass rate tracking   | Observe    |
+
+**Configuration:**
+
+```yaml
+multi_agent:
+  enforcement:
+    enabled: true # Master switch (default: false, opt-in)
+    responseValidator:
+      flatteryThreshold: 0.2 # 20% flattery ratio triggers rejection
+    reviewGate:
+      requireEvidence: true
+    todoTracker:
+      generateReminders: true
+```
+
+**143 tests** across 6 test files. See [Enforcement API Reference](../../docs/reference/enforcement-api.md) and [Configuration Guide](../../docs/guides/enforcement-layer.md).
+
 ## Onboarding Wizard
 
 First-time setup includes a 9-phase autonomous onboarding:

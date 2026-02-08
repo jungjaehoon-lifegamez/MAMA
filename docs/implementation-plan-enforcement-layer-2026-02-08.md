@@ -359,14 +359,16 @@
 - [x] EnforcementPipeline 통합 — 완료 2026-02-08 (17 tests pass)
 - [x] Discord 통합 (2 injection points) — 완료 2026-02-08
 - [x] 문서 업데이트 (API ref + config guide) — 완료 2026-02-08
-- [ ] TodoTracker 구현 — 진행 중
-- [ ] EnforcementMetrics 구현 — 진행 중
-- [ ] 4-컴포넌트 파이프라인 통합 테스트
+- [x] TodoTracker 구현 — 완료 2026-02-08 (36 tests pass)
+- [x] EnforcementMetrics 구현 — 완료 2026-02-08 (22 tests pass)
+- [x] 4-컴포넌트 파이프라인 통합 테스트 — 완료 2026-02-08 (23 tests, +6 new)
 
 **Week 5:**
 
-- [ ] Beta 배포
-- [ ] 정식 릴리스
+- [x] README Enforcement Layer 섹션 추가 — 완료 2026-02-08
+- [x] AGENTS.md Enforcement 정보 추가 — 완료 2026-02-08
+- [x] API reference + config guide 업데이트 — 완료 2026-02-08
+- [x] v0.5.0-beta 버전 범프 — 완료 2026-02-08
 
 ### 성공 기준
 
