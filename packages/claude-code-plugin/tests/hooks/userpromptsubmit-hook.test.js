@@ -71,8 +71,8 @@ describe('Story M2.1: UserPromptSubmit Keyword Detection', () => {
 
     it('should include mode activation message', () => {
       const results = hook.detectKeywords('ultrawork');
-      expect(results[0].message).toContain('ULTRAWORK MODE ACTIVATED');
-      expect(results[0].message).toContain('Maximum precision');
+      expect(results[0].message).toContain('[ultrawork-mode]');
+      expect(results[0].message).toContain('Max precision');
     });
   });
 
@@ -97,8 +97,8 @@ describe('Story M2.1: UserPromptSubmit Keyword Detection', () => {
 
     it('should include search mode instructions', () => {
       const results = hook.detectKeywords('[search-mode]');
-      expect(results[0].message).toContain('SEARCH MODE');
-      expect(results[0].message).toContain('explore agents');
+      expect(results[0].message).toContain('[search-mode]');
+      expect(results[0].message).toContain('Explore codebase');
     });
   });
 
@@ -117,8 +117,8 @@ describe('Story M2.1: UserPromptSubmit Keyword Detection', () => {
 
     it('should include analysis mode instructions', () => {
       const results = hook.detectKeywords('[analyze-mode]');
-      expect(results[0].message).toContain('ANALYSIS MODE');
-      expect(results[0].message).toContain('Oracle');
+      expect(results[0].message).toContain('[analyze-mode]');
+      expect(results[0].message).toContain('Oracle/Artistry');
     });
   });
 
