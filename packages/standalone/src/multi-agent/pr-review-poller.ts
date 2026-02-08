@@ -416,7 +416,9 @@ export class PRReviewPoller {
 
       if (toReport.length > 0) {
         hasNewData = true;
-        const isReminder = toReport.some((t) => session.seenUnresolvedThreadIds.has(t.id));
+        // More accurate reminder detection: only if ALL threads are already seen
+        const seenCount = toReport.filter((t) => session.seenUnresolvedThreadIds.has(t.id)).length;
+        const isReminder = seenCount === toReport.length && seenCount > 0;
         const prefix = isReminder ? '🔔 *Reminder*: ' : '';
         const formatted = this.formatUnresolvedThreads(sessionKey, toReport);
         const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
