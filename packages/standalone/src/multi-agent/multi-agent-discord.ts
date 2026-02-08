@@ -1247,17 +1247,11 @@ export class MultiAgentDiscordHandler {
         })
         .filter(Boolean);
 
-      // 3. git add (specific files, not git add .) - batch to prevent ARG_MAX issues
-      if (changedFiles.length > 50) {
-        console.log(
-          `[AutoCommit] Too many files (${changedFiles.length}), using git add . fallback`
-        );
-        await execFileAsync('git', ['add', '.'], {
-          cwd: repoPath,
-          timeout: 15000,
-        });
-      } else {
-        await execFileAsync('git', ['add', ...changedFiles], {
+      // 3. git add (specific files, batched to prevent ARG_MAX issues)
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < changedFiles.length; i += BATCH_SIZE) {
+        const batch = changedFiles.slice(i, i + BATCH_SIZE);
+        await execFileAsync('git', ['add', ...batch], {
           cwd: repoPath,
           timeout: 15000,
         });
