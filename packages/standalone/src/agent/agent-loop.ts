@@ -11,6 +11,8 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
+import { PromptSizeMonitor } from './prompt-size-monitor.js';
+import type { PromptLayer } from './prompt-size-monitor.js';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
@@ -242,6 +244,18 @@ export class AgentLoop {
       ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
       : basePrompt;
 
+    // Monitor prompt size
+    const monitor = new PromptSizeMonitor();
+    const checkResult = monitor.check([
+      { name: 'base', content: basePrompt, priority: 1 },
+      ...(gatewayToolsPrompt
+        ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
+        : []),
+    ]);
+    if (checkResult.warning) {
+      console.warn(`[AgentLoop] ${checkResult.warning}`);
+    }
+
     // Choose CLI mode: Persistent (fast, experimental) or Standard (stable)
     this.usePersistentCLI = options.usePersistentCLI ?? false;
 
@@ -435,12 +449,23 @@ export class AgentLoop {
 
     try {
       if (options?.systemPrompt) {
-        // Append Gateway Tools to the provided system prompt
-        // This ensures tools are always available regardless of what MessageRouter provides
         const gatewayToolsPrompt = this.isGatewayMode ? getGatewayToolsPrompt() : '';
         const fullPrompt = gatewayToolsPrompt
           ? `${options.systemPrompt}\n\n---\n\n${gatewayToolsPrompt}`
           : options.systemPrompt;
+
+        // Monitor prompt size
+        const monitor = new PromptSizeMonitor();
+        const checkResult = monitor.check([
+          { name: 'systemPrompt', content: options.systemPrompt, priority: 1 },
+          ...(gatewayToolsPrompt
+            ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
+            : []),
+        ]);
+        if (checkResult.warning) {
+          console.warn(`[AgentLoop] ${checkResult.warning}`);
+        }
+
         console.log(
           `[AgentLoop] Setting systemPrompt: ${fullPrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
         );
@@ -694,11 +719,24 @@ export class AgentLoop {
       let isError = false;
 
       try {
+        // PreToolUse: search MAMA for contracts before Write operations
+        let contractContext = '';
+        if (toolUse.name === 'Write' && toolUse.input) {
+          contractContext = await this.searchContractsForTool(
+            toolUse.name,
+            toolUse.input as GatewayToolInput
+          );
+        }
+
         const toolResult = await this.mcpExecutor.execute(
           toolUse.name,
           toolUse.input as GatewayToolInput
         );
         result = JSON.stringify(toolResult, null, 2);
+
+        if (contractContext) {
+          result = `${contractContext}\n\n---\n\n${result}`;
+        }
 
         // Notify tool use callback
         this.onToolUse?.(toolUse.name, toolUse.input, toolResult);
@@ -719,6 +757,57 @@ export class AgentLoop {
     }
 
     return results;
+  }
+
+  /**
+   * Search MAMA for contracts related to a tool operation.
+   * Used as PreToolUse interceptor — searches for contract_* topics
+   * related to the file being written/edited.
+   *
+   * Non-blocking: returns empty string if search fails or no contracts found.
+   */
+  private async searchContractsForTool(
+    _toolName: string,
+    input: GatewayToolInput
+  ): Promise<string> {
+    try {
+      const filePath = (input as { path?: string }).path;
+      if (!filePath) {
+        return '';
+      }
+
+      const fileName = filePath.split('/').pop() || filePath;
+      const searchQuery = `contract ${fileName}`;
+
+      const searchResult = await this.mcpExecutor.execute('mama_search', {
+        query: searchQuery,
+        limit: 3,
+      });
+
+      if (searchResult && typeof searchResult === 'object' && 'results' in searchResult) {
+        const typedResult = searchResult as {
+          results: Array<{ topic?: string; decision?: string; confidence?: number }>;
+        };
+        const contractResults = typedResult.results.filter((r) => r.topic?.startsWith('contract_'));
+
+        if (contractResults.length > 0) {
+          const lines = contractResults.map(
+            (r) => `- **${r.topic}**: ${r.decision} (confidence: ${r.confidence ?? 'unknown'})`
+          );
+          return (
+            `## PreToolUse: Related Contracts Found\n\n` +
+            `Before writing to \`${fileName}\`, review these existing contracts:\n\n` +
+            `${lines.join('\n')}\n\n` +
+            `Ensure your changes are consistent with these contracts.`
+          );
+        }
+      }
+
+      return '';
+    } catch {
+      // Non-blocking: silently return empty on any error
+      return '';
+    }
   }
 
   /**

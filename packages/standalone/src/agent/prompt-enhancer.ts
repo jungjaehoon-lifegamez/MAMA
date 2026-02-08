@@ -7,6 +7,9 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
+import { ContentDeduplicator } from './content-dedup.js';
+import { parseFrontmatter, matchesContext } from './yaml-frontmatter.js';
+import type { RuleContext } from './yaml-frontmatter.js';
 
 export interface EnhancedPromptContext {
   keywordInstructions: string;
@@ -458,7 +461,7 @@ export class PromptEnhancer {
     }
 
     const projectRoot = this.findProjectRoot(workspacePath);
-    const results: Array<{ path: string; content: string; distance: number }> = [];
+    const dedup = new ContentDeduplicator();
 
     try {
       let currentDir = statSync(workspacePath).isDirectory()
@@ -486,7 +489,7 @@ export class PromptEnhancer {
 
           const content = this.getCachedFile(agentsMdPath);
           if (content) {
-            results.push({ path: agentsMdPath, content, distance: depth });
+            dedup.add(agentsMdPath, content, depth);
           }
         }
 
@@ -497,19 +500,19 @@ export class PromptEnhancer {
       // Silently handle filesystem errors
     }
 
-    results.sort((a, b) => a.distance - b.distance);
+    const entries = dedup.getEntries();
 
-    if (results.length === 0) {
+    if (entries.length === 0) {
       return '';
     }
 
-    const sections = results.map(
-      (r) => `<!-- AGENTS.md from ${r.path} (distance: ${r.distance}) -->\n${r.content}`
+    const sections = entries.map(
+      (e) => `<!-- AGENTS.md from ${e.path} (distance: ${e.distance}) -->\n${e.content}`
     );
     return sections.join('\n\n---\n\n');
   }
 
-  discoverRules(workspacePath: string): string {
+  discoverRules(workspacePath: string, ruleContext?: RuleContext): string {
     if (!workspacePath) {
       return '';
     }
@@ -520,17 +523,18 @@ export class PromptEnhancer {
     }
 
     const rules: Array<{ path: string; content: string; distance: number }> = [];
-    const seenPaths = new Set<string>();
+    const dedup = new ContentDeduplicator();
 
     // 1. Check .copilot-instructions at project root
     const copilotPath = join(projectRoot, '.copilot-instructions');
     if (existsSync(copilotPath)) {
       try {
         if (statSync(copilotPath).isFile()) {
-          const content = this.getCachedFile(copilotPath);
-          if (content?.trim()) {
-            rules.push({ path: copilotPath, content, distance: 0 });
-            seenPaths.add(copilotPath);
+          const rawContent = this.getCachedFile(copilotPath);
+          if (rawContent?.trim()) {
+            if (dedup.add(copilotPath, rawContent, 0)) {
+              rules.push({ path: copilotPath, content: rawContent, distance: 0 });
+            }
           }
         }
       } catch {
@@ -540,7 +544,7 @@ export class PromptEnhancer {
 
     // 2. Check project-level .claude/rules/*.md
     const projectRulesDir = join(projectRoot, '.claude', 'rules');
-    this.collectRulesFromDir(projectRulesDir, 0, rules, seenPaths);
+    this.collectRulesFromDir(projectRulesDir, 0, rules, dedup, ruleContext);
 
     // 3. Walk up from workspacePath for directory-level rules
     try {
@@ -551,7 +555,7 @@ export class PromptEnhancer {
 
       while (currentDir !== projectRoot && currentDir !== dirname(currentDir)) {
         const dirRulesPath = join(currentDir, '.claude', 'rules');
-        this.collectRulesFromDir(dirRulesPath, distance, rules, seenPaths);
+        this.collectRulesFromDir(dirRulesPath, distance, rules, dedup, ruleContext);
         currentDir = dirname(currentDir);
         distance++;
       }
@@ -569,11 +573,15 @@ export class PromptEnhancer {
     return sections.join('\n\n---\n\n');
   }
 
-  enhance(userMessage: string, workspacePath: string): EnhancedPromptContext {
+  enhance(
+    userMessage: string,
+    workspacePath: string,
+    ruleContext?: RuleContext
+  ): EnhancedPromptContext {
     return {
       keywordInstructions: this.detectKeywords(userMessage),
       agentsContent: this.discoverAgentsMd(workspacePath),
-      rulesContent: this.discoverRules(workspacePath),
+      rulesContent: this.discoverRules(workspacePath, ruleContext),
     };
   }
 
@@ -617,7 +625,8 @@ export class PromptEnhancer {
     dirPath: string,
     distance: number,
     rules: Array<{ path: string; content: string; distance: number }>,
-    seenPaths: Set<string>
+    dedup: ContentDeduplicator,
+    ruleContext?: RuleContext
   ): void {
     if (!existsSync(dirPath)) {
       return;
@@ -635,14 +644,18 @@ export class PromptEnhancer {
         }
 
         const rulePath = join(dirPath, file);
-        if (seenPaths.has(rulePath)) {
+        const rawContent = this.getCachedFile(rulePath);
+        if (!rawContent?.trim()) {
           continue;
         }
 
-        const content = this.getCachedFile(rulePath);
-        if (content?.trim()) {
-          rules.push({ path: rulePath, content, distance });
-          seenPaths.add(rulePath);
+        const parsed = parseFrontmatter(rawContent);
+        if (!matchesContext(parsed.appliesTo, ruleContext)) {
+          continue;
+        }
+
+        if (dedup.add(rulePath, parsed.rawContent, distance)) {
+          rules.push({ path: rulePath, content: parsed.content, distance });
         }
       }
     } catch {
