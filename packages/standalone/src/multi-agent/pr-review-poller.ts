@@ -546,7 +546,7 @@ export class PRReviewPoller {
         '--paginate',
         `repos/${owner}/${repo}/pulls/${prNumber}/comments`,
         '--jq',
-        '.[] | {id, path, line, body: .body, user: {login: .user.login}, created_at}',
+        '.[] | {id, path, line, body, user: {login: .user.login}, created_at}',
       ],
       { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
     );
