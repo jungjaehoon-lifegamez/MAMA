@@ -415,7 +415,7 @@ export class PRReviewPoller {
 
       if (toReport.length > 0) {
         const isReminder = toReport.some((t) => session.seenUnresolvedThreadIds.has(t.id));
-        const prefix = isReminder ? '🔔 *리마인드*: ' : '';
+        const prefix = isReminder ? '🔔 *Reminder*: ' : '';
         const formatted = this.formatUnresolvedThreads(sessionKey, toReport);
         const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
         await this.sendMessage(session.channelId, `${mention}${prefix}${formatted}`);
