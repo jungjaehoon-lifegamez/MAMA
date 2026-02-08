@@ -384,8 +384,11 @@ export class DiscordGateway implements Gateway {
     // Add eyes emoji to indicate processing
     try {
       await message.react('👀');
-    } catch {
-      /* ignore reaction errors */
+    } catch (err) {
+      console.warn(
+        '[Discord] Failed to add reaction emoji:',
+        err instanceof Error ? err.message : err
+      );
     }
 
     // Build message history context for Claude (OpenClaw style)

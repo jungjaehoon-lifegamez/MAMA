@@ -42,27 +42,7 @@ const KEYWORD_DETECTORS = [
       /tự\s*động\s*hoàn\s*toàn/i,
       /chế\s*độ\s*tự\s*chủ/i,
     ],
-    message: `<ultrawork-mode>
-ULTRAWORK MODE ACTIVATED. Maximum precision. Zero tolerance for guessing.
-
-CORE PRINCIPLES:
-1. ABSOLUTE CERTAINTY — Never guess. If you don't know, STOP and find out.
-2. EXPLORATION MANDATORY — Before ANY implementation, gather full context.
-3. QUALITY OVER SPEED — Take 10x longer if it means getting it right.
-4. VERIFY EVERYTHING — Diagnostics, build, tests after every change.
-5. FIX ROOT CAUSES — Never patch symptoms.
-
-WORKFLOW: Understand → Plan → Implement → Verify
-- Fire explore/librarian agents in parallel for context
-- Create todo list for multi-step tasks
-- Delegate specialized work (visual-engineering, ultrabrain, deep, etc.)
-- Use session_id for follow-ups (saves 70%+ tokens)
-- Run lsp_diagnostics on every changed file
-- NO type suppression (as any, @ts-ignore), NO empty catches, NO deleting tests
-
-FAILURE RECOVERY: After 3 failures → STOP → REVERT → CONSULT Oracle → ASK USER
-COMPLETION: All todos done + diagnostics clean + build passes + tests pass
-</ultrawork-mode>`,
+    message: `[ultrawork-mode] Max precision: explore first, verify everything, quality over speed.`,
   },
   {
     type: 'search',
@@ -104,22 +84,7 @@ COMPLETION: All todos done + diagnostics clean + build passes + tests pass
       /tìm\s*toàn\s*bộ/i,
       /tìm\s*ở\s*đâu/i,
     ],
-    message: `<search-mode>
-SEARCH MODE. Find, don't fix. Gather exhaustive context.
-
-INTERNAL: explore agents (background) + Grep + AST-grep + LSP find_references/goto_definition + Glob
-EXTERNAL: librarian agents (background) for docs, OSS examples, best practices
-
-PROTOCOL:
-1. Fire parallel agents FIRST (background)
-2. Use direct tools while waiting
-3. Collect background results when needed
-4. Cross-reference findings across multiple methods
-5. Stop when 2 iterations yield no new info
-
-SYNTHESIS: Organize by relevance, identify patterns, note gaps, present with file paths and line numbers.
-Never report raw search dumps — always synthesize into actionable insights.
-</search-mode>`,
+    message: `[search-mode] Explore codebase patterns, use Grep/AST-grep/LSP, synthesize before acting.`,
   },
   {
     type: 'analyze',
@@ -167,26 +132,7 @@ Never report raw search dumps — always synthesize into actionable insights.
       /nguyên\s*nhân\s*gốc/i,
       /tại\s*sao.*lỗi/i,
     ],
-    message: `<analyze-mode>
-ANALYSIS MODE. Understand before acting. Depth over speed.
-
-CONTEXT GATHERING (parallel):
-- 1-2 explore agents (codebase patterns, implementations)
-- 1-2 librarian agents (if external library involved)
-- Direct tools: Grep, AST-grep, LSP diagnostics/references
-
-FOR DEBUGGING: Reproduce → Trace execution path → Identify root cause → Verify hypothesis
-FOR ARCHITECTURE: Map data flow → Identify coupling → Find abstraction boundaries → Check patterns
-FOR PERFORMANCE: Profile hot path → Check complexity → Identify I/O bottlenecks → Measure
-
-DO NOT STRUGGLE ALONE — escalate when needed:
-- Oracle: Architecture, complex debugging, multi-system tradeoffs
-- Metis: Ambiguous requirements, hidden intentions
-- Momus: Plan review, gap analysis
-
-SYNTHESIS: Root Cause + Evidence + Impact + Options + Recommendation
-Never jump to fixing without completing analysis.
-</analyze-mode>`,
+    message: `[analyze-mode] Gather context (explore+librarian agents), consult Oracle/Artistry if complex, synthesize.`,
   },
 ];
 
