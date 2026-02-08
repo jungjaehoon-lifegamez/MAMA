@@ -36,7 +36,16 @@ function extractUnsavedDecisions(transcript) {
       let match;
       while ((match = pattern.exec(text)) !== null) {
         const candidate = match[1].trim();
-        if (candidate.length >= 10 && !savedTopics.has(candidate.slice(0, 30))) {
+        // Check if any saved topic appears as a word in the candidate
+        let isAlreadySaved = false;
+        for (const savedTopic of savedTopics) {
+          const topicRegex = new RegExp(`\\b${savedTopic}\\b`, 'i');
+          if (topicRegex.test(candidate)) {
+            isAlreadySaved = true;
+            break;
+          }
+        }
+        if (candidate.length >= 10 && !isAlreadySaved) {
           decisions.push(candidate);
         }
       }
@@ -47,7 +56,7 @@ function extractUnsavedDecisions(transcript) {
   return uniqueDecisions.slice(-5);
 }
 
-module.exports = { getEnabledFeatures, extractUnsavedDecisions };
+module.exports = { handler: main, main, getEnabledFeatures, extractUnsavedDecisions };
 
 async function main() {
   const features = getEnabledFeatures();
