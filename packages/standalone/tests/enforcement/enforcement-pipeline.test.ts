@@ -12,6 +12,8 @@ describe('Story M3.3: EnforcementPipeline — Integration', () => {
 
       expect(result.passed).toBe(true);
       expect(result.rejectionReason).toBeUndefined();
+      expect(result.todoResult).toBeDefined();
+      expect(result.todoResult.allComplete).toBe(true);
     });
 
     it('EP-002: should pass APPROVE without evidence when disabled', () => {
@@ -23,7 +25,7 @@ describe('Story M3.3: EnforcementPipeline — Integration', () => {
     });
   });
 
-  describe('AC #2: Pipeline enabled, clean response → passes both validators', () => {
+  describe('AC #2: Pipeline enabled, clean response → passes all stages', () => {
     it('EP-003: should pass a technical response with no flattery and no approval', () => {
       const pipeline = new EnforcementPipeline({ enabled: true });
 
@@ -39,6 +41,7 @@ describe('Story M3.3: EnforcementPipeline — Integration', () => {
       expect(result.passed).toBe(true);
       expect(result.validationResult.valid).toBe(true);
       expect(result.reviewResult.approved).toBe(true);
+      expect(result.todoResult).toBeDefined();
     });
   });
 
@@ -172,6 +175,7 @@ describe('Story M3.3: EnforcementPipeline — Integration', () => {
         enabled: true,
         responseValidator: { enabled: false },
         reviewGate: { enabled: false },
+        todoTracker: { enabled: false },
       });
 
       const response = '완벽합니다! APPROVED without evidence! Enterprise-grade!';
@@ -222,7 +226,7 @@ describe('Story M3.3: EnforcementPipeline — Integration', () => {
   });
 
   describe('AC #10: Result structure integrity', () => {
-    it('EP-016: passed result has both stage results without rejectionReason', () => {
+    it('EP-016: passed result has all stage results without rejectionReason', () => {
       const pipeline = new EnforcementPipeline({ enabled: true });
 
       const result = pipeline.enforce('Technical response with no issues.', {
@@ -233,9 +237,10 @@ describe('Story M3.3: EnforcementPipeline — Integration', () => {
       expect(result.rejectionReason).toBeUndefined();
       expect(result.validationResult).toBeDefined();
       expect(result.reviewResult).toBeDefined();
+      expect(result.todoResult).toBeDefined();
     });
 
-    it('EP-017: failed result has rejectionReason and both stage results', () => {
+    it('EP-017: failed result has rejectionReason and all stage results', () => {
       const pipeline = new EnforcementPipeline({ enabled: true });
 
       const result = pipeline.enforce('LGTM, APPROVED! No tests needed.', {
@@ -247,6 +252,111 @@ describe('Story M3.3: EnforcementPipeline — Integration', () => {
       expect(result.rejectionReason!.length).toBeGreaterThan(0);
       expect(result.validationResult).toBeDefined();
       expect(result.reviewResult).toBeDefined();
+      expect(result.todoResult).toBeDefined();
+    });
+  });
+
+  describe('AC #11: TodoTracker in pipeline — completion detection', () => {
+    it('EP-018: should detect completion markers in response', () => {
+      const pipeline = new EnforcementPipeline({ enabled: true });
+
+      const response = 'Fixed the auth bug. All tests passing. DONE.';
+      const result = pipeline.enforce(response, { isAgentToAgent: true });
+
+      expect(result.passed).toBe(true);
+      expect(result.todoResult.allComplete).toBe(true);
+      expect(result.todoResult.completionMarkers.length).toBeGreaterThan(0);
+    });
+
+    it('EP-019: should flag incomplete tasks when expected outcome provided', () => {
+      const pipeline = new EnforcementPipeline({ enabled: true });
+
+      const expectedOutcome = [
+        'EXPECTED OUTCOME:',
+        '- Fix authentication bug',
+        '- Add unit tests',
+        '- Update documentation',
+      ].join('\n');
+
+      const response = 'Fixed the authentication bug in auth-service.ts.';
+      const result = pipeline.enforce(response, {
+        isAgentToAgent: true,
+        expectedOutcome,
+      });
+
+      expect(result.passed).toBe(true);
+      expect(result.todoResult.pendingItems.length).toBeGreaterThan(0);
+      expect(result.todoResult.reminder).toContain('Incomplete tasks');
+    });
+
+    it('EP-020: should pass with no pending items when no expected outcome', () => {
+      const pipeline = new EnforcementPipeline({ enabled: true });
+
+      const response = 'Implemented the feature. 완료.';
+      const result = pipeline.enforce(response, { isAgentToAgent: true });
+
+      expect(result.passed).toBe(true);
+      expect(result.todoResult.pendingItems).toHaveLength(0);
+    });
+
+    it('EP-021: todoTracker disabled via config', () => {
+      const pipeline = new EnforcementPipeline({
+        enabled: true,
+        todoTracker: { enabled: false },
+      });
+
+      const result = pipeline.enforce('Some response', {
+        isAgentToAgent: true,
+        expectedOutcome: 'EXPECTED OUTCOME:\n- Item 1\n- Item 2',
+      });
+
+      expect(result.passed).toBe(true);
+      expect(result.todoResult.allComplete).toBe(true);
+      expect(result.todoResult.pendingItems).toHaveLength(0);
+    });
+  });
+
+  describe('AC #12: Full 3-stage chain with all components', () => {
+    it('EP-022: clean response + completed tasks → full pass', () => {
+      const pipeline = new EnforcementPipeline({ enabled: true });
+
+      const expectedOutcome = ['EXPECTED OUTCOME:', '- Fix the auth bug', '- Run tests'].join('\n');
+
+      const response = [
+        'Fixed the auth bug in auth-service.ts by switching to bcrypt.compare.',
+        'Tests pass (42/42). Build succeeded. Typecheck clean.',
+        'DONE.',
+      ].join('\n');
+
+      const result = pipeline.enforce(response, {
+        isAgentToAgent: true,
+        expectedOutcome,
+      });
+
+      expect(result.passed).toBe(true);
+      expect(result.validationResult.valid).toBe(true);
+      expect(result.reviewResult.approved).toBe(true);
+      expect(result.todoResult.completionMarkers.length).toBeGreaterThan(0);
+    });
+
+    it('EP-023: flattery blocks pipeline before TodoTracker runs', () => {
+      const pipeline = new EnforcementPipeline({ enabled: true });
+
+      const response = [
+        '완벽합니다! 훌륭합니다! 엔터프라이즈급! 마스터피스!',
+        '세계 최고 수준! 역사에 기록될! 프로덕션 레디!',
+        'DONE. All tasks complete.',
+      ].join('\n');
+
+      const result = pipeline.enforce(response, {
+        isAgentToAgent: true,
+        expectedOutcome: 'EXPECTED OUTCOME:\n- Fix bug',
+      });
+
+      expect(result.passed).toBe(false);
+      expect(result.rejectionReason).toContain('ResponseValidator');
+      expect(result.todoResult.allComplete).toBe(true);
+      expect(result.todoResult.completionMarkers).toHaveLength(0);
     });
   });
 });
