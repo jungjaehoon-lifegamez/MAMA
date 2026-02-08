@@ -184,7 +184,7 @@ export class SlackGateway implements Gateway {
           type: 'error',
           source: 'slack',
           timestamp: new Date(),
-          error: error instanceof Error ? error : new Error(String(error)),
+          error: error instanceof Error ? new Error(error.message) : new Error(String(error)),
         });
       }
     });
