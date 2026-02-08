@@ -74,8 +74,11 @@ Reviews have clear scope. Execute efficiently:
 ## Minor (Improvement suggestion)
 - **m1.** file.ts:789 — [Problem description]
 
+## Nitpick (Optional polish)
+- **n1.** file.ts:101 — [Problem description]
+
 ## Overall Assessment
-- Critical: N, Major: N, Minor: N
+- Critical: N, Major: N, Minor: N, Nitpick: N
 - Verdict: Approve / Approve with suggestions / Request changes
 ```
 

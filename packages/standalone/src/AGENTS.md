@@ -23,7 +23,7 @@ MAMA OS — Standalone AI agent powered by Claude CLI subprocess (ToS-compliant)
 | **Add skill**                | `skills/*.ts`                 | Pluggable capabilities (image translation, docs)  |
 | **Modify onboarding wizard** | `onboarding/*.ts`             | 9-phase autonomous setup (ritual-based)           |
 | **Add cron job handler**     | `scheduler/*.ts`              | Heartbeat, token keep-alive, job locking          |
-| **Modify web UI**            | `../../public/viewer/`        | MAMA OS dashboard (outside src/)                  |
+| **Modify web UI**            | `../public/viewer/`           | MAMA OS dashboard (outside src/)                  |
 | **Add MCP tool executor**    | `agent/mcp-executor.ts`       | Tool execution via Claude CLI --mcp-config        |
 | **Modify session pool**      | `agent/session-pool.ts`       | Persistent CLI process management                 |
 | **Add auth provider**        | `auth/oauth-manager.ts`       | OAuth token management (Claude CLI)               |
@@ -116,7 +116,7 @@ const response = await fetch('https://api.anthropic.com/v1/messages', {
 const child = spawn('claude', ['--output-format', 'json', prompt]);
 
 // ❌ FORBIDDEN: Hardcode gateway tokens
-const DISCORD_TOKEN = 'MTQ2OTAyNTkxMTg2MDEwMTMzMg.xxx.yyy';
+const DISCORD_TOKEN = 'YOUR_DISCORD_BOT_TOKEN';
 
 // ✅ REQUIRED: Load from config.yaml
 const token = config.gateways.discord.token;

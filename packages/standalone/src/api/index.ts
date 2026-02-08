@@ -155,6 +155,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
       const MAX_RETRIES = 5;
       const RETRY_DELAY_MS = 2000;
+      const MAX_PORT_FALLBACK = 10;
+      let fallbackCount = 0;
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
@@ -196,10 +198,16 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
           } else if (err.code === 'EADDRINUSE') {
             // All retries failed - try fallback port if enabled
             if (enablePortFallback && attemptPort < 65535) {
+              fallbackCount++;
+              if (fallbackCount > MAX_PORT_FALLBACK) {
+                throw new Error(
+                  `Failed to find an available port after trying ${MAX_PORT_FALLBACK} fallback ports from ${port}.`
+                );
+              }
               const fallbackPort = attemptPort + 1;
               console.log(
                 `\n🔄 Port ${attemptPort} unavailable after ${MAX_RETRIES + 1} attempts. ` +
-                  `Trying fallback port ${fallbackPort}...`
+                  `Trying fallback port ${fallbackPort}... (${fallbackCount}/${MAX_PORT_FALLBACK})`
               );
               attemptPort = fallbackPort;
               actualPort = fallbackPort;

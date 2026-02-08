@@ -1,3 +1,4 @@
+// Synced from `@jungjaehoon/mama-core` (2026-02-08)
 /**
  * MAMA Memory Store - Compatibility Wrapper
  *
