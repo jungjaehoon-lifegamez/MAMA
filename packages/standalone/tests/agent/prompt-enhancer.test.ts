@@ -572,6 +572,127 @@ describe('PromptEnhancer', () => {
   });
 
   // ─────────────────────────────────────────────────────
+  // discoverRules() with frontmatter filtering
+  // ─────────────────────────────────────────────────────
+  describe('discoverRules() with frontmatter', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'mama-test-frontmatter-'));
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should include rule when applies_to matches context', () => {
+      writeFileSync(join(tmpDir, 'package.json'), '{}');
+      mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
+      writeFileSync(
+        join(tmpDir, '.claude', 'rules', 'dev-only.md'),
+        `---\napplies_to:\n  agent_id: [dev]\n---\nDev-specific rule content`
+      );
+      mkdirSync(join(tmpDir, 'sub'), { recursive: true });
+      writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
+
+      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'), { agentId: 'dev' });
+      expect(result).toContain('Dev-specific rule content');
+    });
+
+    it('should exclude rule when applies_to does not match context', () => {
+      writeFileSync(join(tmpDir, 'package.json'), '{}');
+      mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
+      writeFileSync(
+        join(tmpDir, '.claude', 'rules', 'dev-only.md'),
+        `---\napplies_to:\n  agent_id: [dev]\n---\nDev-specific rule content`
+      );
+      mkdirSync(join(tmpDir, 'sub'), { recursive: true });
+      writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
+
+      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'), {
+        agentId: 'reviewer',
+      });
+      expect(result).not.toContain('Dev-specific rule content');
+    });
+
+    it('should include all rules when no ruleContext is provided (backward compatible)', () => {
+      writeFileSync(join(tmpDir, 'package.json'), '{}');
+      mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
+      writeFileSync(
+        join(tmpDir, '.claude', 'rules', 'restricted.md'),
+        `---\napplies_to:\n  agent_id: [dev]\n---\nRestricted rule`
+      );
+      mkdirSync(join(tmpDir, 'sub'), { recursive: true });
+      writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
+
+      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
+      expect(result).toContain('Restricted rule');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────
+  // discoverAgentsMd() dedup integration
+  // ─────────────────────────────────────────────────────
+  describe('discoverAgentsMd() dedup', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'mama-test-agents-dedup-'));
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should deduplicate AGENTS.md with identical content from different paths', () => {
+      mkdirSync(join(tmpDir, '.git'), { recursive: true });
+      mkdirSync(join(tmpDir, 'packages', 'a', 'sub'), { recursive: true });
+      mkdirSync(join(tmpDir, 'packages', 'b'), { recursive: true });
+      writeFileSync(join(tmpDir, 'packages', 'a', 'AGENTS.md'), '# Duplicate Agents');
+      writeFileSync(join(tmpDir, 'packages', 'b', 'AGENTS.md'), '# Duplicate Agents');
+      writeFileSync(join(tmpDir, 'packages', 'a', 'sub', 'file.ts'), '');
+
+      const result = enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'a', 'sub', 'file.ts'));
+      const occurrences = result.split('# Duplicate Agents').length - 1;
+      expect(occurrences).toBe(1);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────
+  // enhance() with ruleContext
+  // ─────────────────────────────────────────────────────
+  describe('enhance() with ruleContext', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'mama-test-enhance-ctx-'));
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should pass ruleContext to discoverRules for filtering', () => {
+      writeFileSync(join(tmpDir, 'package.json'), '{}');
+      mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
+      writeFileSync(
+        join(tmpDir, '.claude', 'rules', 'tier1-only.md'),
+        `---\napplies_to:\n  tier: [1]\n---\nTier 1 rule`
+      );
+      writeFileSync(
+        join(tmpDir, '.claude', 'rules', 'universal.md'),
+        'Universal rule for everyone'
+      );
+      mkdirSync(join(tmpDir, 'sub'), { recursive: true });
+      writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
+
+      const result = enhancer.enhance('hello', join(tmpDir, 'sub', 'file.ts'), { tier: 2 });
+      expect(result.rulesContent).not.toContain('Tier 1 rule');
+      expect(result.rulesContent).toContain('Universal rule for everyone');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────
   // File cache tests
   // ─────────────────────────────────────────────────────
   describe('file cache', () => {

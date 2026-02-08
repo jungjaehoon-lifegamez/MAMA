@@ -24,6 +24,7 @@ import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
+import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext } from '../agent/types.js';
 
 /**
@@ -294,7 +295,13 @@ This protects your credentials from being exposed in chat logs.`;
 
     // 5b. Enhance prompt with keyword detection, AGENTS.md, and rules
     const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
-    const enhanced = this.promptEnhancer.enhance(message.text, workspacePath);
+    const ruleContext: RuleContext | undefined = agentContext
+      ? {
+          agentId: agentContext.roleName,
+          channelId: message.channelId,
+        }
+      : undefined;
+    const enhanced = this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
 
     // 6. Build system prompt with all contexts including AgentContext
     // Always inject DB history for reliable memory (CLI --resume is unreliable)
