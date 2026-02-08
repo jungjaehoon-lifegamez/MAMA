@@ -981,7 +981,7 @@ export class MultiAgentDiscordHandler {
       const isReviewerApproveToLead =
         this.isReviewerAgent(response.agentId) &&
         mentionedAgentIds.includes(defaultAgentId || '') &&
-        /\b(APPROVE|approved|approves)\b/i.test(response.rawContent);
+        /\b(APPROVE|approved|approves)\b(?!\w)/i.test(response.rawContent);
 
       let autoCommitResult: string | null = null;
       if (isReviewerApproveToLead) {
