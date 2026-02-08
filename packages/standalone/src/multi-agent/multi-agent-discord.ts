@@ -273,6 +273,12 @@ export class MultiAgentDiscordHandler {
    * multi-agent flow so LEAD processes the review comments.
    */
   setDiscordClient(client: { channels: { fetch: (id: string) => Promise<unknown> } }): void {
+    // Guard against setting different client when already configured
+    if (this.discordClient && this.discordClient !== client) {
+      console.warn('[MultiAgent] Attempted to set different Discord client - ignoring');
+      return;
+    }
+
     this.discordClient = client;
     if (this.prReviewPoller.hasMessageSender()) return;
 
