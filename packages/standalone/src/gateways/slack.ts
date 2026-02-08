@@ -161,8 +161,7 @@ export class SlackGateway implements Gateway {
         await ack();
         await this.handleMessage(event as SlackMessageEvent, false);
       } catch (error) {
-        const errMsg =
-          error instanceof Error ? error.message : JSON.stringify(error) || String(error);
+        const errMsg = error instanceof Error ? error.message : String(error);
         this.logger.error('Error handling Slack message:', errMsg);
         this.emitEvent({
           type: 'error',
@@ -179,8 +178,7 @@ export class SlackGateway implements Gateway {
         await ack();
         await this.handleMessage(event as SlackMessageEvent, true);
       } catch (error) {
-        const errMsg =
-          error instanceof Error ? error.message : JSON.stringify(error) || String(error);
+        const errMsg = error instanceof Error ? error.message : String(error);
         this.logger.error('Error handling Slack mention:', errMsg);
         this.emitEvent({
           type: 'error',
