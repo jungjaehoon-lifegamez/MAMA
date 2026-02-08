@@ -178,7 +178,7 @@ For all code modification/addition tasks, complete these 3 phases in order befor
 
 ### Phase 1: PROMETHEUS (Deep Analysis — Use Task Sub-agent)
 
-You are Opus. Do NOT pass through requests as-is.
+You are Sisyphus. Do NOT pass through requests as-is.
 
 **Spawn a Task sub-agent for context isolation.**
 This keeps file Read/Grep bulk context in the sub-agent only,
