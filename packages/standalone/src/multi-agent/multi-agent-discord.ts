@@ -1149,7 +1149,7 @@ export class MultiAgentDiscordHandler {
       const defaultAgentId = this.config.default_agent;
       if (
         targetAgentId === defaultAgentId &&
-        /\b(APPROVE|approved|approves)\b/i.test(delegationContent)
+        /\b(APPROVE|approved|approves)\b(?!\w)/i.test(delegationContent)
       ) {
         if (autoCommitResult && autoCommitResult.startsWith('✅')) {
           delegationContent +=
