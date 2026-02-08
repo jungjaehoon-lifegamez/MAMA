@@ -422,6 +422,7 @@ export class DiscordGateway implements Gateway {
       },
     };
 
+    let processingSuccess = false;
     try {
       // Check if multi-agent mode should handle this message
       if (this.multiAgentHandler?.isEnabled()) {
@@ -475,6 +476,7 @@ export class DiscordGateway implements Gateway {
           console.log(
             `[Discord] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
           );
+          processingSuccess = true;
           return; // Multi-agent handled it
         }
         // If multi-agent returns null, fall through to regular processing
@@ -504,11 +506,16 @@ export class DiscordGateway implements Gateway {
       // Keep attachments in history for reference in subsequent turns
       // (localPath allows "that image" references to work)
       console.log(`[Discord] Kept attachments for future reference: ${message.channel.id}`);
+      processingSuccess = true;
+    } catch (error) {
+      console.error('[Discord] Message processing failed:', error);
+      processingSuccess = false;
+      throw error;
     } finally {
       clearInterval(typingInterval);
-      // Add ✅ to complete the emoji progression (accumulate, don't replace)
+      // Add conditional reaction based on processing success
       try {
-        await message.react('✅');
+        await message.react(processingSuccess ? '✅' : '❌');
       } catch {
         /* ignore reaction errors */
       }
