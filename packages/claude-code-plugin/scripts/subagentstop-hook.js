@@ -22,7 +22,8 @@ function extractDecisionPatterns(text) {
   return patterns;
 }
 
-module.exports = { getEnabledFeatures, extractDecisionPatterns };
+// Export before main function definition for proper hoisting
+module.exports = { handler: main, main, getEnabledFeatures, extractDecisionPatterns };
 
 async function main() {
   const features = getEnabledFeatures();

@@ -16,7 +16,7 @@ Claude Code plugin for MAMA memory system. Provides 5 slash commands, 4 hooks (2
 
 ## STRUCTURE
 
-```
+```text
 claude-code-plugin/
 ├── commands/                       # 5 slash commands (Markdown definitions)
 │   ├── mama-save.md                # Save decisions/checkpoints
@@ -57,7 +57,7 @@ claude-code-plugin/
 
 ### **Code Duplication (Unavoidable)**
 
-```
+```text
 src/core/ — 27 modules duplicated from mama-core
 Why: Claude Code plugins can't have npm dependencies; files must be self-contained
 Risk: Bug fixes in mama-core don't propagate to plugin (version skew)

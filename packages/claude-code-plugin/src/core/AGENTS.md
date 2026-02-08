@@ -17,7 +17,7 @@
 
 ## DUPLICATED MODULES
 
-```
+```text
 src/core/
 ├── mama-api.js              # High-level API (save/recall/suggest/update)
 ├── embeddings.js            # Local Transformers.js embeddings

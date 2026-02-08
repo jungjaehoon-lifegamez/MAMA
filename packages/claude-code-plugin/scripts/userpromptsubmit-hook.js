@@ -86,8 +86,8 @@ function detectKeywords(text) {
   return detected;
 }
 
-// Export for testing
-module.exports = { detectKeywords, KEYWORD_DETECTORS, getEnabledFeatures };
+// Export for testing and hook spec compliance
+module.exports = { handler: main, main, detectKeywords, KEYWORD_DETECTORS, getEnabledFeatures };
 
 async function main() {
   const features = getEnabledFeatures();
