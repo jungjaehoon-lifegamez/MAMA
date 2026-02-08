@@ -28,6 +28,22 @@ const fs = require('fs');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 
+function getEnabledFeatures() {
+  const isDaemon = process.env.MAMA_DAEMON === '1';
+  const disableAll = process.env.MAMA_DISABLE_HOOKS === 'true';
+  const featuresEnv = process.env.MAMA_HOOK_FEATURES;
+  if (disableAll) {
+    return new Set();
+  }
+  if (!isDaemon) {
+    return new Set(['memory', 'keywords', 'rules', 'agents', 'contracts']);
+  }
+  if (!featuresEnv) {
+    return new Set();
+  }
+  return new Set(featuresEnv.split(',').map((f) => f.trim().toLowerCase()));
+}
+
 // Add core to require path
 require('module').globalPaths.push(CORE_PATH);
 
@@ -688,11 +704,8 @@ async function main() {
 
   try {
     // 1. Check opt-out flags
-    if (process.env.MAMA_DISABLE_HOOKS === 'true') {
-      if (process.env.MAMA_DEBUG === 'true') {
-        console.error('🔍 [MAMA DEBUG] Hooks DISABLED via env var');
-      }
-      info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
+    const features = getEnabledFeatures();
+    if (!features.has('contracts')) {
       process.exit(0);
     }
 
