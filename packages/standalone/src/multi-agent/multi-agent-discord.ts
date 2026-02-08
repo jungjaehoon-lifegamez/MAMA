@@ -240,10 +240,7 @@ export class MultiAgentDiscordHandler {
 
       // PR Review Poller: target Reviewer for @mention in Discord messages.
       // Reviewer analyzes PR data → summarizes → mentions LEAD with prioritized tasks.
-      const reviewerEntry = Object.entries(this.config.agents).find(
-        ([aid, cfg]) =>
-          aid.toLowerCase().includes('review') || cfg.name?.toLowerCase().includes('review')
-      );
+      const reviewerEntry = this.findReviewerAgent();
       const reviewerTargetId = reviewerEntry?.[0];
       const reviewerUserId = reviewerTargetId ? botUserIdMap.get(reviewerTargetId) : undefined;
       if (reviewerUserId) {
@@ -307,16 +304,13 @@ export class MultiAgentDiscordHandler {
       const leadUserId = this.multiBotManager.getMainBotUserId();
       if (!leadUserId) return;
 
-      const reviewerEntry = Object.entries(this.config.agents).find(
-        ([aid, cfg]) =>
-          aid.toLowerCase().includes('review') || cfg.name?.toLowerCase().includes('review')
-      );
+      const reviewerEntry = this.findReviewerAgent();
       const reviewerAgentId = reviewerEntry?.[0];
       if (!reviewerAgentId) return;
 
       // Include PR data summary in LEAD mention (Discord 2000 char limit per message)
       const prSummary = texts.join('\n').slice(0, 2000);
-      const mentionPrefix = `<@${leadUserId}> PR 리뷰 코멘트를 분석하고 우선순위별로 정리하여 위임하세요.\n\n`;
+      const mentionPrefix = `<@${leadUserId}> Please analyze PR review comments and prioritize them for delegation.\n\n`;
       const fullMsg = `${mentionPrefix}${prSummary}`;
 
       // Split using Discord-aware splitter (2000 char limit)
@@ -1154,6 +1148,16 @@ export class MultiAgentDiscordHandler {
     return (
       agentId.toLowerCase().includes('review') ||
       this.config.agents[agentId]?.name?.toLowerCase().includes('review') === true
+    );
+  }
+
+  /**
+   * Find the reviewer agent entry from config
+   */
+  private findReviewerAgent(): [string, Omit<AgentPersonaConfig, 'id'>] | undefined {
+    return Object.entries(this.config.agents).find(
+      ([aid, cfg]) =>
+        aid.toLowerCase().includes('review') || cfg.name?.toLowerCase().includes('review')
     );
   }
 
