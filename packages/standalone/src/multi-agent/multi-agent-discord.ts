@@ -17,6 +17,7 @@ import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js'
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { getChannelHistory } from '../gateways/channel-history.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
+import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import { PRReviewPoller } from './pr-review-poller.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -544,7 +545,12 @@ export class MultiAgentDiscordHandler {
 
     // Enhance prompt with keyword detection (ultrawork/search/analyze modes)
     const workspacePath = process.env.MAMA_WORKSPACE || '';
-    const enhanced = this.promptEnhancer.enhance(cleanMessage, workspacePath);
+    const ruleContext: RuleContext = {
+      agentId,
+      tier: agent.tier,
+      channelId: context.channelId,
+    };
+    const enhanced = this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
     if (enhanced.keywordInstructions) {
       fullPrompt = `${enhanced.keywordInstructions}\n\n${fullPrompt}`;
       console.log(
@@ -1381,7 +1387,9 @@ export class MultiAgentDiscordHandler {
   private async autoCommitAndPush(channelId: string): Promise<string | null> {
     // Check if auto-commit is explicitly enabled (disabled by default for safety)
     if (process.env.MAMA_ENABLE_AUTO_COMMIT !== 'true') {
-      console.log('[AutoCommit] Auto-commit is disabled by default. Set MAMA_ENABLE_AUTO_COMMIT=true to enable');
+      console.log(
+        '[AutoCommit] Auto-commit is disabled by default. Set MAMA_ENABLE_AUTO_COMMIT=true to enable'
+      );
       return null;
     }
 
