@@ -313,16 +313,23 @@ export class AgentProcessManager extends EventEmitter {
     // Matches both @DisplayName (e.g. @📝 Reviewer) and @Name (e.g. @Reviewer)
     let resolvedPersona = personaContent;
     if (this.mentionDelegationEnabled && this.botUserIdMap.size > 0) {
+      // Build all replacement patterns first for better performance
+      const replacements: Array<[string, string]> = [];
       for (const [aid, cfg] of Object.entries(this.config.agents)) {
         const userId = this.botUserIdMap.get(aid);
         if (userId) {
           if (cfg.display_name) {
-            resolvedPersona = resolvedPersona.replaceAll(`@${cfg.display_name}`, `<@${userId}>`);
+            replacements.push([`@${cfg.display_name}`, `<@${userId}>`]);
           }
           if (cfg.name && cfg.name !== cfg.display_name) {
-            resolvedPersona = resolvedPersona.replaceAll(`@${cfg.name}`, `<@${userId}>`);
+            replacements.push([`@${cfg.name}`, `<@${userId}>`]);
           }
         }
+      }
+
+      // Apply all replacements
+      for (const [pattern, replacement] of replacements) {
+        resolvedPersona = resolvedPersona.replaceAll(pattern, replacement);
       }
     }
 
