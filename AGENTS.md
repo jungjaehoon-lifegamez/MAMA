@@ -238,28 +238,6 @@ multi_agent:
 
 Key code path: `AgentProcessManager` (line 81: `defaultPoolSize: 1`) → `AgentProcessPool.getAvailableProcess()` → `PersistentClaudeProcess`
 
-### **Enforcement Layer (Agent Response Quality)**
-
-```
-packages/standalone/src/enforcement/ (6 modules, 143 tests)
-├── response-validator.ts  — Flattery detection (50 KR+EN patterns, ratio-based)
-├── review-gate.ts         — Evidence-based APPROVE enforcement (18 evidence patterns)
-├── scope-guard.ts         — Git diff scope creep detection (glob matching)
-├── todo-tracker.ts        — Completion marker detection + reminder generation
-├── metrics.ts             — Per-agent rejection/retry/pass-through tracking (in-memory)
-└── index.ts               — EnforcementPipeline middleware chain + barrel exports
-```
-
-Pipeline chain: `ResponseValidator → ReviewGate → TodoTracker` (short-circuits on failure).
-ScopeGuard runs separately (requires git diff input). Metrics observes all events.
-
-Integration points in `multi-agent-discord.ts`:
-
-1. `sendAgentResponses()` — main gate before Discord post
-2. `handleDelegatedMention()` — delegation gate before agent-to-agent forwarding
-
-Config: `multi_agent.enforcement` in `config.yaml` (opt-in, `enabled: false` by default).
-
 ### **Tier System (Automatic, Not User-Selected)**
 
 - **Tier 1:** Vector search + Graph + Recency (80% accuracy) — Requires embedding model
