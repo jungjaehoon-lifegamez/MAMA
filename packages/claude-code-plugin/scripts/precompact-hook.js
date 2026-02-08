@@ -2,23 +2,8 @@
 const path = require('path');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
-const _CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
-
-function getEnabledFeatures() {
-  const isDaemon = process.env.MAMA_DAEMON === '1';
-  const disableAll = process.env.MAMA_DISABLE_HOOKS === 'true';
-  const featuresEnv = process.env.MAMA_HOOK_FEATURES;
-  if (disableAll) {
-    return new Set();
-  }
-  if (!isDaemon) {
-    return new Set(['memory', 'keywords', 'rules', 'agents', 'contracts']);
-  }
-  if (!featuresEnv) {
-    return new Set();
-  }
-  return new Set(featuresEnv.split(',').map((f) => f.trim().toLowerCase()));
-}
+const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
+const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 
 function extractUnsavedDecisions(transcript) {
   const lines = transcript.trim().split('\n');
