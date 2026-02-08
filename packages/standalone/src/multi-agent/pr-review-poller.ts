@@ -316,6 +316,15 @@ export class PRReviewPoller {
                 session.channelId,
                 `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. Polling stopped.`
               );
+
+              // Trigger onBatchComplete for LEAD agent to handle commit+push
+              if (this.onBatchComplete) {
+                try {
+                  await this.onBatchComplete(session.channelId);
+                } catch (err) {
+                  this.logger.error(`[PRPoller] onBatchComplete error after APPROVE:`, err);
+                }
+              }
             } finally {
               clearInterval(session.interval);
               this.sessions.delete(sessionKey);
