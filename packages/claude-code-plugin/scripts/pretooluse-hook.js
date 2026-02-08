@@ -20,22 +20,7 @@ const fs = require('fs');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
-
-function getEnabledFeatures() {
-  const isDaemon = process.env.MAMA_DAEMON === '1';
-  const disableAll = process.env.MAMA_DISABLE_HOOKS === 'true';
-  const featuresEnv = process.env.MAMA_HOOK_FEATURES;
-  if (disableAll) {
-    return new Set();
-  }
-  if (!isDaemon) {
-    return new Set(['memory', 'keywords', 'rules', 'agents', 'contracts']);
-  }
-  if (!featuresEnv) {
-    return new Set();
-  }
-  return new Set(featuresEnv.split(',').map((f) => f.trim().toLowerCase()));
-}
+const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 
 const { vectorSearch, initDB } = require(path.join(CORE_PATH, 'memory-store'));
 const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));

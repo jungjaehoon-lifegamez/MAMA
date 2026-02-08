@@ -177,6 +177,9 @@ export class AgentProcessManager extends EventEmitter {
 
       if (tier >= 2) {
         options.env = { MAMA_DISABLE_HOOKS: 'true' };
+      } else {
+        // Tier 1: Enable keyword detection, AGENTS.md injection, and rules injection
+        options.env = { MAMA_HOOK_FEATURES: 'keywords,rules,agents' };
       }
 
       // Structural tool enforcement via CLI flags
@@ -231,6 +234,8 @@ export class AgentProcessManager extends EventEmitter {
 
     if (tier >= 2) {
       options.env = { MAMA_DISABLE_HOOKS: 'true' };
+    } else {
+      options.env = { MAMA_HOOK_FEATURES: 'keywords,rules,agents' };
     }
 
     // Structural tool enforcement via CLI flags
