@@ -78,9 +78,13 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
 
   describe('UserPromptSubmit: Keyword Detection via Stdin', () => {
     it('should detect [ultrawork] keyword and output ULTRAWORK MODE', async () => {
-      const result = await execHookWithStdin(USERPROMPTSUBMIT_HOOK, {
-        prompt: '[ultrawork] refactor the auth module',
-      });
+      const result = await execHookWithStdin(
+        USERPROMPTSUBMIT_HOOK,
+        {
+          prompt: '[ultrawork] refactor the auth module',
+        },
+        { MAMA_HOOK_FEATURES: 'keywords' }
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).not.toBe('');
@@ -88,13 +92,17 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
       const parsed = JSON.parse(result.stdout);
       expect(parsed.hookSpecificOutput).toBeDefined();
       expect(parsed.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
-      expect(parsed.hookSpecificOutput.additionalContext).toContain('ULTRAWORK MODE');
+      expect(parsed.hookSpecificOutput.additionalContext).toContain('[ultrawork-mode]');
     });
 
     it('should detect [analyze-mode] keyword and output ANALYSIS MODE', async () => {
-      const result = await execHookWithStdin(USERPROMPTSUBMIT_HOOK, {
-        prompt: '[analyze-mode] investigate the memory leak',
-      });
+      const result = await execHookWithStdin(
+        USERPROMPTSUBMIT_HOOK,
+        {
+          prompt: '[analyze-mode] investigate the memory leak',
+        },
+        { MAMA_HOOK_FEATURES: 'keywords' }
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).not.toBe('');
@@ -102,7 +110,7 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
       const parsed = JSON.parse(result.stdout);
       expect(parsed.hookSpecificOutput).toBeDefined();
       expect(parsed.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
-      expect(parsed.hookSpecificOutput.additionalContext).toContain('ANALYSIS MODE');
+      expect(parsed.hookSpecificOutput.additionalContext).toContain('[analyze-mode]');
     });
 
     it('should produce no output for normal text (exit 0, empty stdout)', async () => {
@@ -185,7 +193,7 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
       const parsed = JSON.parse(result.stdout);
       expect(parsed.hookSpecificOutput).toBeDefined();
       expect(parsed.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
-      expect(parsed.hookSpecificOutput.additionalContext).toContain('ULTRAWORK MODE');
+      expect(parsed.hookSpecificOutput.additionalContext).toContain('[ultrawork-mode]');
     });
   });
 });
