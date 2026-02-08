@@ -492,6 +492,9 @@ export class DiscordGateway implements Gateway {
 
       await this.sendResponse(message, response);
 
+      // Only mark as success if sendResponse completes without error
+      processingSuccess = true;
+
       this.emitEvent({
         type: 'message_sent',
         source: 'discord',
@@ -506,7 +509,6 @@ export class DiscordGateway implements Gateway {
       // Keep attachments in history for reference in subsequent turns
       // (localPath allows "that image" references to work)
       console.log(`[Discord] Kept attachments for future reference: ${message.channel.id}`);
-      processingSuccess = true;
     } catch (error) {
       console.error('[Discord] Message processing failed:', error);
       processingSuccess = false;

@@ -450,20 +450,22 @@ export class SlackGateway implements Gateway {
     // Send response in thread
     await this.sendResponse(event, result.response);
 
-    // Replace eyes with checkmark after response sent
-    try {
-      await this.webClient.reactions.remove({
-        channel: event.channel,
-        timestamp: event.ts,
-        name: 'eyes',
-      });
-      await this.webClient.reactions.add({
-        channel: event.channel,
-        timestamp: event.ts,
-        name: 'white_check_mark',
-      });
-    } catch {
-      /* ignore reaction errors */
+    // Replace eyes with checkmark after response sent (only in multi-agent mode)
+    if (this.multiAgentHandler?.isEnabled()) {
+      try {
+        await this.webClient.reactions.remove({
+          channel: event.channel,
+          timestamp: event.ts,
+          name: 'eyes',
+        });
+        await this.webClient.reactions.add({
+          channel: event.channel,
+          timestamp: event.ts,
+          name: 'white_check_mark',
+        });
+      } catch {
+        /* ignore reaction errors */
+      }
     }
 
     // Emit message sent event
