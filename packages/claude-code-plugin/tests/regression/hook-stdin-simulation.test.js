@@ -149,6 +149,9 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
         expect(parsed.hookSpecificOutput).toBeDefined();
         expect(parsed.hookSpecificOutput.hookEventName).toBe('PreToolUse');
         expect(parsed.hookSpecificOutput.additionalContext).toContain('AGENTS.md');
+      } else {
+        // Validate that no stdout is expected for this scenario
+        expect(result.stdout).toBeDefined();
       }
     });
   });
