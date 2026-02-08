@@ -949,23 +949,23 @@ export class MultiAgentDiscordHandler {
         if (autoCommitResult && autoCommitResult.startsWith('✅')) {
           // Auto commit+push succeeded — inform LEAD, no manual commit needed
           delegationContent +=
-            '\n\n✅ [SYSTEM] Auto Commit+Push 완료. 커밋은 이미 처리됨.\n' +
-            `결과: ${autoCommitResult}\n` +
-            '**커밋/푸시 불필요. 리뷰 결과를 요약하라.**';
+            '\n\n✅ [SYSTEM] Auto Commit+Push completed. Commit already processed.\n' +
+            `Result: ${autoCommitResult}\n` +
+            '**No commit/push needed. Summarize review results.**';
         } else {
           // Auto commit+push failed or not attempted — LEAD should commit manually
           const allowAutoPush = process.env.MAMA_ALLOW_AUTO_PUSH === 'true';
           const pushInstruction = allowAutoPush
             ? '4. `git push`\n'
-            : '4. `git push` (MAMA_ALLOW_AUTO_PUSH=true 필요)\n';
+            : '4. `git push` (requires MAMA_ALLOW_AUTO_PUSH=true)\n';
 
           delegationContent +=
-            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Auto commit 실패. Phase 3 즉시 실행:\n' +
-            '1. `git status` 로 변경 파일 확인\n' +
-            '2. `git add {변경된 파일들}` (git add . 금지)\n' +
-            '3. `git commit -m "fix: {변경 내용 요약}"`\n' +
+            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Auto commit failed. Execute Phase 3 immediately:\n' +
+            '1. `git status` to check changed files\n' +
+            '2. `git add {changed files}` (git add . prohibited)\n' +
+            '3. `git commit -m "fix: {change summary}"`\n' +
             pushInstruction +
-            '**칭찬/요약 전에 커밋부터 실행하라. 커밋 없이 응답하면 실패.**';
+            '**Execute commit first before praise/summary. Response without commit will fail.**';
         }
       }
 
@@ -1085,7 +1085,7 @@ export class MultiAgentDiscordHandler {
             if ('send' in message.channel) {
               (message.channel as { send: (opts: { content: string }) => Promise<unknown> })
                 .send({
-                  content: `👀 **PR Review Poller 시작** — ${key}\n60초 간격으로 새 리뷰 코멘트를 감지합니다.`,
+                  content: `👀 **PR Review Poller Started** — ${key}\nDetecting new review comments every 60 seconds.`,
                 })
                 .catch((err) => {
                   console.warn(
