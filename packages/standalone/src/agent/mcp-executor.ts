@@ -84,17 +84,9 @@ export class MCPExecutor {
 
       // Dynamic import of MAMA core modules
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      let mama, dbManager;
-      try {
-        mama = require('@jungjaehoon/mama-core/mama-api');
-        dbManager = require('@jungjaehoon/mama-core/db-manager');
-      } catch {
-        // Fallback to direct path (for development)
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        mama = require('@jungjaehoon/mama-core/mama-api');
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        dbManager = require('@jungjaehoon/mama-core/db-manager');
-      }
+      const mama = require('@jungjaehoon/mama-core/mama-api');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const dbManager = require('@jungjaehoon/mama-core/db-manager');
 
       // Initialize the database before using mama-api functions
       await dbManager.initDB();
