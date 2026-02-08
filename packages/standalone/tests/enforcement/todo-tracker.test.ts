@@ -363,7 +363,65 @@ describe('Story M3.5: TodoTracker — Task Completion Detection', () => {
     });
   });
 
-  describe('AC #15: Partial config override', () => {
+  describe('AC #15: Anti-completion signals override keyword matches (GAP-3)', () => {
+    it('TT-015a: "in progress" near keywords marks item as NOT addressed', () => {
+      const outcome = 'EXPECTED OUTCOME:\n- Token rotation with blacklist';
+      const response =
+        'Working on token rotation — still in progress. The blacklist part is next. DONE';
+
+      const result = tracker.checkCompletion(response, outcome);
+
+      expect(result.allComplete).toBe(false);
+      expect(result.pendingItems).toContain('Token rotation with blacklist');
+    });
+
+    it('TT-015b: "not yet" near keywords marks item as NOT addressed', () => {
+      const outcome = 'EXPECTED OUTCOME:\n- Integration tests';
+      const response = 'Integration tests not yet written. Will handle next. DONE';
+
+      const result = tracker.checkCompletion(response, outcome);
+
+      expect(result.allComplete).toBe(false);
+      expect(result.pendingItems).toContain('Integration tests');
+    });
+
+    it('TT-015c: Korean anti-completion signals (아직, 진행 중)', () => {
+      const outcome = 'EXPECTED OUTCOME:\n- 데이터베이스 마이그레이션';
+      const response = '데이터베이스 마이그레이션은 아직 진행 중입니다. 완료';
+
+      const result = tracker.checkCompletion(response, outcome);
+
+      expect(result.allComplete).toBe(false);
+      expect(result.pendingItems).toContain('데이터베이스 마이그레이션');
+    });
+
+    it('TT-015d: completed items without anti-signals still pass', () => {
+      const outcome = [
+        'EXPECTED OUTCOME:',
+        '- JWT middleware implementation',
+        '- Token rotation with blacklist',
+      ].join('\n');
+      const response =
+        'Implemented JWT middleware and token rotation with blacklist. All working correctly. DONE';
+
+      const result = tracker.checkCompletion(response, outcome);
+
+      expect(result.allComplete).toBe(true);
+      expect(result.pendingItems).toEqual([]);
+    });
+
+    it('TT-015e: "remaining" near keywords marks item as NOT addressed', () => {
+      const outcome = 'EXPECTED OUTCOME:\n- Route guard registration';
+      const response = 'Route guard registration is a remaining task. DONE';
+
+      const result = tracker.checkCompletion(response, outcome);
+
+      expect(result.allComplete).toBe(false);
+      expect(result.pendingItems).toContain('Route guard registration');
+    });
+  });
+
+  describe('AC #16: Partial config override', () => {
     it('TT-015: should merge partial config with defaults', () => {
       const partialTracker = new TodoTracker({ generateReminders: false });
       const outcome = 'EXPECTED OUTCOME:\n- Missing task xyz';

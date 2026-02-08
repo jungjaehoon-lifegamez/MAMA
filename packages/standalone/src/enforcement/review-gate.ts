@@ -50,6 +50,16 @@ const EVIDENCE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /lint\s+pass(?:ing|ed)?/i, label: 'lint pass' },
   { pattern: /lint:\s*0\s+errors?/i, label: 'lint clean' },
   { pattern: /no\s+lint\s+errors?/i, label: 'lint clean' },
+  { pattern: /테스트\s*통과/i, label: '테스트 통과' },
+  { pattern: /\d+개\s*테스트\s*통과/i, label: 'test count (KR)' },
+  { pattern: /\d+\/\d+\s*통과/i, label: 'test count (KR)' },
+  { pattern: /빌드\s*성공/i, label: '빌드 성공' },
+  { pattern: /타입체크\s*(?:통과|성공)/i, label: '타입체크 통과' },
+  { pattern: /에러\s*0\s*건/i, label: '에러 0건' },
+  { pattern: /경고\s*0\s*건/i, label: '경고 0건' },
+  { pattern: /린트\s*(?:통과|성공)/i, label: '린트 통과' },
+  { pattern: /검토\s*완료/i, label: '검토 완료' },
+  { pattern: /코드\s*리뷰\s*완료/i, label: '코드 리뷰 완료' },
 ];
 
 const DEFAULT_CONFIG: ReviewGateConfig = {

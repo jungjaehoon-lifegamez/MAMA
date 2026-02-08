@@ -237,7 +237,6 @@ export class TodoTracker {
    * 2. The response contains a completion marker near relevant context
    */
   private isItemAddressed(lowerResponse: string, item: string): boolean {
-    // Extract significant words (3+ chars, skip common words)
     const words = item
       .toLowerCase()
       .split(/\s+/)
@@ -245,10 +244,9 @@ export class TodoTracker {
       .filter((w) => !COMMON_WORDS.has(w));
 
     if (words.length === 0) {
-      return true; // Trivial item, consider addressed
+      return true;
     }
 
-    // Item is addressed if at least half the significant words appear in the response
     const threshold = Math.max(1, Math.ceil(words.length / 2));
     let matchCount = 0;
 
@@ -258,7 +256,47 @@ export class TodoTracker {
       }
     }
 
-    return matchCount >= threshold;
+    if (matchCount < threshold) {
+      return false;
+    }
+
+    if (this.hasAntiCompletionSignal(lowerResponse, words)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Check if anti-completion signals appear near matched keywords.
+   * Scans a window of ±200 characters around each matched keyword
+   * for phrases like "in progress", "still working", "아직", etc.
+   */
+  private hasAntiCompletionSignal(lowerResponse: string, keywords: string[]): boolean {
+    const windowSize = 200;
+
+    for (const word of keywords) {
+      let searchStart = 0;
+      let idx = lowerResponse.indexOf(word, searchStart);
+
+      while (idx !== -1) {
+        const windowStart = Math.max(0, idx - windowSize);
+        const windowEnd = Math.min(lowerResponse.length, idx + word.length + windowSize);
+        const window = lowerResponse.slice(windowStart, windowEnd);
+
+        for (const signal of ANTI_COMPLETION_SIGNALS) {
+          const fresh = new RegExp(signal.source, signal.flags);
+          if (fresh.test(window)) {
+            return true;
+          }
+        }
+
+        searchStart = idx + 1;
+        idx = lowerResponse.indexOf(word, searchStart);
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -269,6 +307,28 @@ export class TodoTracker {
     return `⚠️ Incomplete tasks detected: [${itemList}]. Please complete before marking done.`;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Anti-completion signals (GAP-3: keyword overlap ignoring incompleteness)
+// ---------------------------------------------------------------------------
+
+const ANTI_COMPLETION_SIGNALS: RegExp[] = [
+  /\bin\s+progress\b/i,
+  /\bstill\s+working\b/i,
+  /\bnot\s+yet\b/i,
+  /\bremaining\b/i,
+  /\bpending\b/i,
+  /\bnot\s+(?:done|completed?|finished)\b/i,
+  /\bincomplete\b/i,
+  /\bworking\s+on\b/i,
+  /진행\s*중/,
+  /아직/,
+  /남아\s*있/,
+  /미완/,
+  /하지\s*못했/,
+  /해야\s*할/,
+  /하는\s*중/,
+];
 
 // ---------------------------------------------------------------------------
 // Common words to skip when matching expected outcome items
