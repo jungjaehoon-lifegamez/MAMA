@@ -949,26 +949,20 @@ export class AgentLoop {
   /**
    * Stop and cleanup the AgentLoop resources
    */
+  private stopped = false;
+
   stop(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+
     try {
       // Stop persistent CLI if it exists
       if (this.persistentCLI?.stopAll) {
         this.persistentCLI.stopAll();
       }
 
-      // Dispose session pool
-      // SessionPool graceful cleanup - only if it's the last reference
-      if (this.sessionPool?.dispose && typeof this.sessionPool.dispose === 'function') {
-        // Check if this is likely the last active component using the pool
-        // by checking if there are no active sessions
-        const hasActiveSessions = this.sessionPool.getActiveSessionCount?.() > 0;
-        if (!hasActiveSessions) {
-          console.log('[AgentLoop] Disposing SessionPool - no active sessions');
-          this.sessionPool.dispose();
-        } else {
-          console.log('[AgentLoop] SessionPool has active sessions - skipping disposal');
-        }
-      }
+      // NOTE: sessionPool is a shared global singleton — do NOT dispose here.
+      // It will be cleaned up when the process exits or via a global shutdown handler.
 
       // Lane manager doesn't have explicit stop method
       // Let it be cleaned up by garbage collection
