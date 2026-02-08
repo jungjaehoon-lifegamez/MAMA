@@ -272,9 +272,8 @@ export class MultiAgentDiscordHandler {
   setDiscordClient(client: { channels: { fetch: (id: string) => Promise<unknown> } }): void {
     this.discordClient = client;
     if (this.prReviewPoller.hasMessageSender()) return;
-    // Accumulate PR data texts for LEAD mention
-    let batchChannelId: string | null = null;
-    let batchTexts: string[] = [];
+    // Channel-safe batch data accumulation (Map instead of shared variables)
+    const batchData = new Map<string, string[]>();
 
     this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
       const channel = await client.channels.fetch(channelId);
@@ -284,17 +283,19 @@ export class MultiAgentDiscordHandler {
         content: text,
       });
 
-      batchChannelId = channelId;
-      batchTexts.push(text.replace(/<@!?\d+>/g, '').trim());
+      // Store texts per channel to prevent cross-channel contamination
+      if (!batchData.has(channelId)) {
+        batchData.set(channelId, []);
+      }
+      batchData.get(channelId)!.push(text.replace(/<@!?\d+>/g, '').trim());
     });
 
     // After all chunks sent, send LEAD mention FROM Reviewer bot
     // with PR data included so LEAD doesn't pick up stale channel history.
     this.prReviewPoller.setOnBatchComplete(async (channelId: string) => {
-      if (!batchChannelId || batchChannelId !== channelId) return;
-      const texts = batchTexts;
-      batchChannelId = null;
-      batchTexts = [];
+      const texts = batchData.get(channelId) || [];
+      if (texts.length === 0) return;
+      batchData.delete(channelId); // Clean up after processing
 
       // Reset chain so LEAD can delegate freely
       this.orchestrator.resetChain(channelId);
@@ -1005,7 +1006,9 @@ export class MultiAgentDiscordHandler {
         if (hasOwnBot) {
           await this.multiBotManager.reactAsAgent(targetAgentId, channelId, delegationMsgId, '✅');
         } else {
-          await originalMessage.react('✅');
+          // Fix: React to the delegation message, not the original user message
+          const delegationMsg = await originalMessage.channel.messages.fetch(delegationMsgId);
+          await delegationMsg.react('✅');
         }
       } catch {
         /* ignore */
