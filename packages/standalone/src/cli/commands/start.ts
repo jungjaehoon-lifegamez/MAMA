@@ -1348,6 +1348,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         1000
       );
 
+      // Stop agent loop
+      agentLoop.stop();
+
       // Close session database
       sessionStore.close();
 

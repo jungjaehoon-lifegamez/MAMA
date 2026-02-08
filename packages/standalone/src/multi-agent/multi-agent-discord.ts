@@ -17,6 +17,10 @@ import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js'
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { getChannelHistory } from '../gateways/channel-history.js';
 import { PRReviewPoller } from './pr-review-poller.js';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 /** Default timeout for agent responses (15 minutes — must accommodate sub-agent spawns) */
 const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -861,6 +865,34 @@ export class MultiAgentDiscordHandler {
         `[MultiAgent] Auto-routing mentions from ${response.agentId}: → ${mentionedAgentIds.join(', ')}`
       );
 
+      // Auto commit+push when Reviewer APPROVE reaches LEAD
+      const defaultAgentId = this.config.default_agent;
+      const isReviewerApproveToLead =
+        this.isReviewerAgent(response.agentId) &&
+        mentionedAgentIds.includes(defaultAgentId || '') &&
+        /\bapprove\b/i.test(response.rawContent);
+
+      if (isReviewerApproveToLead) {
+        const commitResult = await this.autoCommitAndPush(originalMessage.channel.id);
+        if (commitResult) {
+          // Post commit result to channel
+          try {
+            const chunks = splitForDiscord(commitResult);
+            for (const chunk of chunks) {
+              if ('send' in originalMessage.channel) {
+                await (
+                  originalMessage.channel as {
+                    send: (opts: { content: string }) => Promise<Message>;
+                  }
+                ).send({ content: chunk });
+              }
+            }
+          } catch {
+            /* ignore send errors */
+          }
+        }
+      }
+
       // Route to all mentioned agents in parallel
       await Promise.all(
         mentionedAgentIds.map((targetAgentId) =>
@@ -1081,6 +1113,112 @@ export class MultiAgentDiscordHandler {
    */
   getBotStatus(): Record<string, { connected: boolean; username?: string }> {
     return this.multiBotManager.getStatus();
+  }
+
+  /**
+   * Check if an agent ID is the reviewer agent
+   */
+  private isReviewerAgent(agentId: string): boolean {
+    return (
+      agentId.toLowerCase().includes('review') ||
+      this.config.agents[agentId]?.name?.toLowerCase().includes('review') === true
+    );
+  }
+
+  /**
+   * Auto commit+push when Reviewer APPROVE is detected.
+   * Finds the repo from active PR polling sessions, runs git operations.
+   * Returns a status message or null if no repo found.
+   */
+  private async autoCommitAndPush(channelId: string): Promise<string | null> {
+    // Find active PR session for this channel to get the repo info
+    const sessions = this.prReviewPoller.getActiveSessions();
+    if (sessions.length === 0) return null;
+
+    // Find session matching this channel
+    const pollerSessions = this.prReviewPoller.getSessionDetails();
+    const session = pollerSessions.find((s) => s.channelId === channelId);
+    if (!session) return null;
+
+    // Find local repo path (check common locations)
+    const homedir = process.env.HOME || '/home/deck';
+    const possiblePaths = [
+      `${homedir}/${session.repo}`,
+      `${homedir}/project/${session.repo}`,
+      `${homedir}/projects/${session.repo}`,
+    ];
+
+    let repoPath: string | null = null;
+    for (const p of possiblePaths) {
+      try {
+        await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: p, timeout: 5000 });
+        repoPath = p;
+        break;
+      } catch {
+        // not a git repo at this path
+      }
+    }
+
+    if (!repoPath) {
+      console.log(`[AutoCommit] No local repo found for ${session.repo}`);
+      return null;
+    }
+
+    console.log(`[AutoCommit] Found repo at ${repoPath}, running commit+push`);
+
+    try {
+      // 1. git status
+      const { stdout: statusOut } = await execFileAsync('git', ['status', '--porcelain'], {
+        cwd: repoPath,
+        timeout: 10000,
+      });
+
+      if (!statusOut.trim()) {
+        console.log(`[AutoCommit] No changes to commit in ${repoPath}`);
+        return `📭 커밋할 변경사항이 없습니다. (${session.repo})`;
+      }
+
+      // 2. Get changed files (modified + new, not deleted)
+      const changedFiles = statusOut
+        .trim()
+        .split('\n')
+        .map((line) => line.substring(3).trim())
+        .filter(Boolean);
+
+      // 3. git add (specific files, not git add .)
+      await execFileAsync('git', ['add', ...changedFiles], {
+        cwd: repoPath,
+        timeout: 15000,
+      });
+
+      // 4. git commit
+      const commitMsg = `fix: address PR review comments (${session.owner}/${session.repo}#${session.prNumber})`;
+      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: repoPath, timeout: 15000 });
+
+      // 5. git push
+      const { stdout: pushOut, stderr: pushErr } = await execFileAsync('git', ['push'], {
+        cwd: repoPath,
+        timeout: 30000,
+      });
+
+      const shortStatus =
+        changedFiles.length <= 5
+          ? changedFiles.join(', ')
+          : `${changedFiles.slice(0, 5).join(', ')} +${changedFiles.length - 5} more`;
+
+      const result =
+        `✅ **Auto Commit+Push 완료**\n` +
+        `📁 ${changedFiles.length}개 파일: ${shortStatus}\n` +
+        `💬 \`${commitMsg}\`\n` +
+        `${pushOut || pushErr || '(pushed)'}`;
+
+      console.log(`[AutoCommit] Success: ${changedFiles.length} files committed and pushed`);
+      return result;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[AutoCommit] Failed:`, err);
+      return `❌ **Auto Commit+Push 실패**: ${errMsg.substring(0, 200)}`;
+    }
   }
 }
 
