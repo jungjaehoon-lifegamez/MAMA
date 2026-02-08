@@ -957,9 +957,10 @@ export class AgentLoop {
       }
 
       // Dispose session pool
-      if (this.sessionPool?.dispose) {
-        this.sessionPool.dispose();
-      }
+      // SessionPool is a singleton - don't dispose it as other components may still need it
+      // if (this.sessionPool?.dispose) {
+      //   this.sessionPool.dispose();
+      // }
 
       // Lane manager doesn't have explicit stop method
       // Let it be cleaned up by garbage collection
