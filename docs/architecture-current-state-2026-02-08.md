@@ -1,14 +1,13 @@
 # MAMA Multi-Agent Architecture - Current State
 
 **Date:** 2026-02-08  
-**Version:** 0.4.0  
 **Purpose:** Factual baseline documentation of existing parallel execution infrastructure
 
 ---
 
 ## Executive Summary
 
-MAMA's standalone package (`@jungjaehoon/mama-os` v0.4.0) contains a complete multi-agent orchestration system with parallel execution infrastructure. This document provides a comprehensive inventory of the current implementation with code evidence.
+MAMA's standalone package (`@jungjaehoon/mama-os`) contains a complete multi-agent orchestration system with parallel execution infrastructure. This document provides a comprehensive inventory of the current implementation with code evidence.
 
 **Key Findings:**
 

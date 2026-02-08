@@ -18,6 +18,10 @@ else
   fi
 fi
 
+# Sync doc versions with package.json (auto-stage if changed)
+node scripts/sync-versions.js
+git diff --quiet -- README.md docs/ || git add README.md docs/guides/deployment.md docs/architecture/package-structure.md 2>/dev/null
+
 # Run typecheck for standalone package
 echo "Running typecheck..."
 pnpm --filter @jungjaehoon/mama-standalone typecheck

@@ -8,10 +8,10 @@
 
 ## OVERVIEW
 
-27 JavaScript modules duplicated from `@jungjaehoon/mama-core` v1.0.2. Claude Code plugins cannot have npm dependencies—all code must be self-contained. This creates version skew risk between mama-core and plugin snapshots.
+27 JavaScript modules duplicated from `@jungjaehoon/mama-core`. Claude Code plugins cannot have npm dependencies—all code must be self-contained. This creates version skew risk between mama-core and plugin snapshots.
 
-**Plugin version:** 1.7.6 (snapshot of mama-core from 2025-11-21)  
-**mama-core version:** 1.0.2 (current)
+**Plugin version:** snapshot of mama-core from 2025-11-21  
+**mama-core version:** current
 
 ---
 
@@ -104,7 +104,7 @@ cp packages/mama-core/src/relevance-scorer.js \
 **Tracking:** Add version comments to duplicated files:
 
 ```javascript
-// Synced from @jungjaehoon/mama-core v1.0.2 (2025-11-21)
+// Synced from @jungjaehoon/mama-core (2025-11-21)
 ```
 
 ---
