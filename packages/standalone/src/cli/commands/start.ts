@@ -1356,8 +1356,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       const { deletePid } = await import('../utils/pid-manager.js');
       await deletePid();
-    } catch {
+    } catch (error) {
       // Best effort cleanup
+      console.warn('[MAMA] Cleanup error during shutdown:', error);
     }
 
     process.exit(0);
