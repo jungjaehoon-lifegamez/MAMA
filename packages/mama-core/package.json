@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-core",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
   "main": "src/index.js",
   "exports": {
@@ -51,7 +51,7 @@
   },
   "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
+    "registry": "https://registry.npmjs.org",
     "access": "public"
   },
   "engines": {
