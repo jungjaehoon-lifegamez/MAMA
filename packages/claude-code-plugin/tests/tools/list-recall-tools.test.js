@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { listDecisionsTool } from '../../src/tools/list-decisions.js';
 import { recallDecisionTool } from '../../src/tools/recall-decision.js';
 import { saveDecisionTool } from '../../src/tools/save-decision.js';
-import { initDB, getAdapter, closeDB } from '../../src/core/db-manager.js';
+import { initDB, getAdapter, closeDB } from '@jungjaehoon/mama-core/db-manager';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -397,6 +397,15 @@ describe('Story M4.1: list_decisions and recall_decision Tools (ported from mcp-
 
   describe('Edge cases', () => {
     it('should handle empty database gracefully', async () => {
+      // Explicit cleanup — beforeEach may fail silently when adapter is stale
+      try {
+        const adapter = getAdapter();
+        adapter.prepare('DELETE FROM decision_edges').run();
+        adapter.prepare('DELETE FROM decisions').run();
+      } catch {
+        // ignore — DB may not be initialized
+      }
+
       const listResult = await listDecisionsTool.handler({ limit: 10 }, mockContext);
       expect(listResult.success).toBe(true);
       expect(listResult.list).toMatch(/No decisions|empty|❌/i);

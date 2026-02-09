@@ -203,27 +203,27 @@ export function formatQuizResultMessage(result: QuizResult, language: 'en' | 'ko
       .sort((a, b) => b[1] - a[1])
       .map(([id, score]) => {
         const p = PERSONALITY_TYPES.find((pt) => pt.id === id)!;
-        return `${p.emoji} ${p.name}: ${score}점`;
+        return `${p.emoji} ${p.name}: ${score} pts`;
       })
       .join('\n');
 
-    return `## 🎯 퀴즈 결과!
+    return `## 🎯 Quiz Results!
 
-당신의 답변을 분석했습니다:
+Based on your answers:
 
 ${sortedScores}
 
-**추천 Personality: ${topPersonality.emoji} ${topPersonality.name}**
+**Recommended Personality: ${topPersonality.emoji} ${topPersonality.name}**
 
 ${topPersonality.description}
 
-**주요 특징:**
+**Key Traits:**
 ${topPersonality.traits.map((t) => `• ${t}`).join('\n')}
 
-**말투 샘플:**
+**Voice Sample:**
 > ${topPersonality.voiceSample}
 
-이 느낌이 맞나요? 아니면 다른 스타일을 원하시나요?`;
+Does this feel right? Or would you prefer a different style?`;
   } else {
     const sortedScores = Object.entries(scores)
       .sort((a, b) => b[1] - a[1])

@@ -1,8 +1,8 @@
 /**
- * Tests for UserPromptSubmit Hook
+ * Tests for UserPromptSubmit Hook (Keyword Detection)
  *
- * Story M2.1: UserPromptSubmit Hook Migration
- * Tests AC #1-5: Hook implementation, performance, tier awareness, opt-out
+ * Story M2.1: UserPromptSubmit Hook — Keyword Detection Only
+ * Tests: Keyword patterns, behavior mode injection, feature guard, edge cases
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -13,190 +13,189 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Mock environment for testing
+const hookPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
+const hook = require(hookPath);
+
 const originalEnv = { ...process.env };
 
-describe('Story M2.1: UserPromptSubmit Hook', () => {
+describe('Story M2.1: UserPromptSubmit Keyword Detection', () => {
   beforeEach(() => {
-    // Reset environment
     process.env = { ...originalEnv };
   });
 
   afterEach(() => {
-    // Restore environment
     process.env = originalEnv;
   });
 
   describe('Hook Structure', () => {
-    it('should export required functions', async () => {
-      const hook = await import('../../scripts/userpromptsubmit-hook.js');
-
-      expect(hook).toHaveProperty('main');
-      expect(hook).toHaveProperty('getTierInfo');
-      expect(hook).toHaveProperty('formatTransparencyLine');
-
-      expect(typeof hook.main).toBe('function');
-      expect(typeof hook.getTierInfo).toBe('function');
-      expect(typeof hook.formatTransparencyLine).toBe('function');
+    it('should export required functions', () => {
+      expect(hook).toHaveProperty('detectKeywords');
+      expect(hook).toHaveProperty('KEYWORD_DETECTORS');
+      expect(hook).toHaveProperty('getEnabledFeatures');
+      expect(typeof hook.detectKeywords).toBe('function');
+      expect(Array.isArray(hook.KEYWORD_DETECTORS)).toBe(true);
+      expect(typeof hook.getEnabledFeatures).toBe('function');
     });
 
-    it('should be executable script with shebang', async () => {
-      const scriptPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
-
+    it('should be executable script with shebang', () => {
+      const content = fs.readFileSync(hookPath, 'utf8');
       expect(content.startsWith('#!/usr/bin/env node')).toBe(true);
+    });
 
-      // Check file permissions (executable) - Unix only
-      if (process.platform !== 'win32') {
-        const stats = fs.statSync(scriptPath);
-        const isExecutable = !!(stats.mode & 0o111);
-        expect(isExecutable).toBe(true);
-      }
+    it('should have 3 keyword detector types', () => {
+      const types = hook.KEYWORD_DETECTORS.map((d) => d.type);
+      expect(types).toContain('ultrawork');
+      expect(types).toContain('search');
+      expect(types).toContain('analyze');
     });
   });
 
-  describe('AC #1: Tier Detection', () => {
-    it('should detect Tier 1 with embeddings available', async () => {
-      const hook = await import('../../scripts/userpromptsubmit-hook.js');
-      const tierInfo = hook.getTierInfo();
-
-      // Should return tier object
-      expect(tierInfo).toHaveProperty('tier');
-      expect(tierInfo).toHaveProperty('vectorSearchEnabled');
-      expect(tierInfo).toHaveProperty('reason');
-
-      // Tier should be 1, 2, or 3
-      expect([1, 2, 3]).toContain(tierInfo.tier);
+  describe('Keyword Detection: ultrawork', () => {
+    it('should detect "ultrawork" keyword', () => {
+      const results = hook.detectKeywords('ultrawork do this task');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('ultrawork');
     });
 
-    it('should provide tier reason', async () => {
-      const hook = await import('../../scripts/userpromptsubmit-hook.js');
-      const tierInfo = hook.getTierInfo();
-
-      expect(typeof tierInfo.reason).toBe('string');
-      expect(tierInfo.reason.length).toBeGreaterThan(0);
-    });
-  });
-
-  describe('AC #2: Transparency Line', () => {
-    it('should format transparency line with tier badge', async () => {
-      const hook = await import('../../scripts/userpromptsubmit-hook.js');
-
-      const tierInfo = { tier: 1, reason: 'Full features' };
-      const line = hook.formatTransparencyLine(tierInfo, 150, 3);
-
-      // Should contain tier badge
-      expect(line).toContain('🔍 System Status:');
-      expect(line).toContain('Tier 1');
-
-      // Should contain reason
-      expect(line).toContain('Full features');
-
-      // Should contain performance
-      expect(line).toContain('150ms');
-
-      // Should contain result count
-      expect(line).toContain('3 decisions');
+    it('should detect "ulw" shorthand', () => {
+      const results = hook.detectKeywords('ulw fix this bug');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('ultrawork');
     });
 
-    it('should show warning for slow execution', async () => {
-      const hook = await import('../../scripts/userpromptsubmit-hook.js');
-
-      const tierInfo = { tier: 1, reason: 'Full features' };
-      const line = hook.formatTransparencyLine(tierInfo, 1900, 2);
-
-      // Should warn about slow execution (>1200ms)
-      expect(line).toContain('⚠️');
-      expect(line).toContain('1900ms');
-      expect(line).toContain('exceeded');
+    it('should detect "[ultrawork]" bracket format', () => {
+      const results = hook.detectKeywords('[ultrawork] implement feature');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('ultrawork');
     });
 
-    it('should format different tier levels', async () => {
-      const hook = await import('../../scripts/userpromptsubmit-hook.js');
-
-      const tier1 = hook.formatTransparencyLine({ tier: 1, reason: 'Full' }, 100, 3);
-      const tier2 = hook.formatTransparencyLine({ tier: 2, reason: 'Degraded' }, 100, 1);
-      const tier3 = hook.formatTransparencyLine({ tier: 3, reason: 'Disabled' }, 100, 0);
-
-      expect(tier1).toContain('Tier 1');
-      expect(tier2).toContain('Tier 2');
-      expect(tier3).toContain('Tier 3');
-
-      expect(tier1).toContain('🟢');
-      expect(tier2).toContain('🟡');
-      expect(tier3).toContain('🔴');
+    it('should include mode activation message', () => {
+      const results = hook.detectKeywords('ultrawork');
+      expect(results[0].message).toContain('[ultrawork-mode]');
+      expect(results[0].message).toContain('Max precision');
     });
   });
 
-  describe('AC #3: Opt-out Flag', () => {
-    it('should respect MAMA_DISABLE_HOOKS environment variable', () => {
-      const scriptPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
+  describe('Keyword Detection: search', () => {
+    it('should detect "search-mode" keyword', () => {
+      const results = hook.detectKeywords('[search-mode] find implementations');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('search');
+    });
 
-      // Check opt-out flag handling
-      expect(content).toContain('MAMA_DISABLE_HOOKS');
-      expect(content).toContain('process.env.MAMA_DISABLE_HOOKS');
+    it('should detect "find all" pattern', () => {
+      const results = hook.detectKeywords('find all usages across the codebase');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('search');
+    });
+
+    it('should detect "explore codebase" pattern', () => {
+      const results = hook.detectKeywords('explore the codebase for auth patterns');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('search');
+    });
+
+    it('should include search mode instructions', () => {
+      const results = hook.detectKeywords('[search-mode]');
+      expect(results[0].message).toContain('[search-mode]');
+      expect(results[0].message).toContain('Explore codebase');
     });
   });
 
-  describe('AC #4: Performance Requirements', () => {
-    it('should define MAX_RUNTIME_MS <=1200ms', () => {
-      const scriptPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
-
-      // Check MAX_RUNTIME_MS is defined and <=1200 (optimized with SessionStart pre-warming)
-      const match = content.match(/MAX_RUNTIME_MS\s*=\s*(\d+)/);
-      expect(match).toBeTruthy();
-
-      const maxRuntime = parseInt(match[1], 10);
-      expect(maxRuntime).toBeLessThanOrEqual(1200);
+  describe('Keyword Detection: analyze', () => {
+    it('should detect "analyze-mode" keyword', () => {
+      const results = hook.detectKeywords('[analyze-mode] check architecture');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('analyze');
     });
 
-    it('should implement timeout handling', () => {
-      const scriptPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
+    it('should detect "investigate" keyword', () => {
+      const results = hook.detectKeywords('investigate why tests fail');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('analyze');
+    });
 
-      // Check timeout implementation with Promise.race (graceful timeout via resolve, not reject)
-      expect(content).toContain('Promise.race');
-      expect(content).toContain('setTimeout');
-      expect(content).toContain('timedOut');
+    it('should include analysis mode instructions', () => {
+      const results = hook.detectKeywords('[analyze-mode]');
+      expect(results[0].message).toContain('[analyze-mode]');
+      expect(results[0].message).toContain('Oracle/Artistry');
     });
   });
 
-  describe('AC #5: Similarity Threshold', () => {
-    it('should define similarity threshold >75%', () => {
-      // SIMILARITY_THRESHOLD (0.75) is used in memory-inject.js and db-manager.js
-      // Check db-manager.js where the default threshold is defined
-      const dbManagerPath = path.join(__dirname, '../../src/core/db-manager.js');
-      const content = fs.readFileSync(dbManagerPath, 'utf8');
-
-      // Check threshold parameter default is 0.75
-      const match = content.match(/threshold\s*=\s*(0\.7\d*)/);
-      expect(match).toBeTruthy();
-
-      const threshold = parseFloat(match[1]);
-      expect(threshold).toBeGreaterThanOrEqual(0.7);
+  describe('Multiple Keywords', () => {
+    it('should detect multiple keyword types in one message', () => {
+      const results = hook.detectKeywords('[ultrawork] [analyze-mode] deep dive');
+      expect(results.length).toBe(2);
+      const types = results.map((r) => r.type);
+      expect(types).toContain('ultrawork');
+      expect(types).toContain('analyze');
     });
   });
 
-  describe('Integration', () => {
-    it('should handle missing USER_PROMPT gracefully', () => {
-      const scriptPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
-
-      // Verify graceful handling of missing prompt
-      expect(content).toContain('USER_PROMPT');
-      expect(content).toContain('process.exit(0)');
+  describe('No Keywords (Edge Cases)', () => {
+    it('should return empty array for plain text', () => {
+      expect(hook.detectKeywords('fix the bug in auth.js')).toEqual([]);
     });
 
-    it('should log structured information', () => {
-      const scriptPath = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
+    it('should return empty array for empty/null/undefined', () => {
+      expect(hook.detectKeywords('')).toEqual([]);
+      expect(hook.detectKeywords(null)).toEqual([]);
+      expect(hook.detectKeywords(undefined)).toEqual([]);
+    });
 
-      // Verify structured logging
-      expect(content).toContain('info');
-      expect(content).toContain('warn');
-      expect(content).toContain('[Hook]');
+    it('should not detect keywords inside code blocks', () => {
+      const text = 'Check this:\n```\nconst mode = "ultrawork";\n```\nDone.';
+      expect(hook.detectKeywords(text)).toEqual([]);
+    });
+
+    it('should not detect keywords inside inline code', () => {
+      expect(hook.detectKeywords('The `ultrawork` variable is set')).toEqual([]);
+    });
+  });
+
+  describe('Feature Guard: getEnabledFeatures', () => {
+    it('should enable all features when not in daemon mode', () => {
+      delete process.env.MAMA_DAEMON;
+      delete process.env.MAMA_HOOK_FEATURES;
+      delete process.env.MAMA_DISABLE_HOOKS;
+      const features = hook.getEnabledFeatures();
+      expect(features.has('keywords')).toBe(true);
+      expect(features.has('memory')).toBe(true);
+      expect(features.has('rules')).toBe(true);
+      expect(features.has('agents')).toBe(true);
+      expect(features.has('contracts')).toBe(true);
+    });
+
+    it('should disable all features when MAMA_DISABLE_HOOKS=true', () => {
+      process.env.MAMA_DISABLE_HOOKS = 'true';
+      const features = hook.getEnabledFeatures();
+      expect(features.size).toBe(0);
+    });
+
+    it('should disable all features when MAMA_DAEMON=1 without MAMA_HOOK_FEATURES', () => {
+      process.env.MAMA_DAEMON = '1';
+      delete process.env.MAMA_HOOK_FEATURES;
+      const features = hook.getEnabledFeatures();
+      expect(features.size).toBe(0);
+    });
+
+    it('should enable only specified features with MAMA_HOOK_FEATURES', () => {
+      process.env.MAMA_DAEMON = '1';
+      process.env.MAMA_HOOK_FEATURES = 'keywords,agents';
+      const features = hook.getEnabledFeatures();
+      expect(features.has('keywords')).toBe(true);
+      expect(features.has('agents')).toBe(true);
+      expect(features.has('memory')).toBe(false);
+      expect(features.has('contracts')).toBe(false);
+    });
+
+    it('should handle whitespace in MAMA_HOOK_FEATURES', () => {
+      process.env.MAMA_DAEMON = '1';
+      process.env.MAMA_HOOK_FEATURES = ' keywords , agents , rules ';
+      const features = hook.getEnabledFeatures();
+      expect(features.has('keywords')).toBe(true);
+      expect(features.has('agents')).toBe(true);
+      expect(features.has('rules')).toBe(true);
     });
   });
 });

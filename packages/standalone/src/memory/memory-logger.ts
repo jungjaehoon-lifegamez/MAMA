@@ -52,7 +52,7 @@ export class MemoryLogger {
   private ensureTodayFile(): void {
     const path = this.getTodayPath();
     if (!existsSync(path)) {
-      const header = `# ${this.getToday()} 일일 로그\n\n`;
+      const header = `# ${this.getToday()} Daily Log\n\n`;
       writeFileSync(path, header, 'utf-8');
       console.log(`[MemoryLogger] Created ${this.getToday()}.md`);
     }
@@ -93,7 +93,7 @@ export class MemoryLogger {
     this.ensureTodayFile();
 
     const time = this.getTime();
-    let entry = `\n### ${time} 📝 결정: ${topic}\n**${decision}**\n`;
+    let entry = `\n### ${time} 📝 Decision: ${topic}\n**${decision}**\n`;
     if (reasoning) {
       entry += `> ${reasoning}\n`;
     }

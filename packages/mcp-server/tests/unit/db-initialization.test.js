@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initDB, getDB, closeDB, getAdapter } from '../../src/mama/db-manager.js';
+import { initDB, getDB, closeDB, getAdapter } from '@jungjaehoon/mama-core/db-manager';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';

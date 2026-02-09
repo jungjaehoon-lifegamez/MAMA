@@ -10,8 +10,8 @@
  * @module commands/mama-list
  */
 
-const mama = require('../core/mama-api');
-const { info, error: logError } = require('../core/debug-logger');
+const mama = require('@jungjaehoon/mama-core/mama-api');
+const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 
 /**
  * List recent decisions

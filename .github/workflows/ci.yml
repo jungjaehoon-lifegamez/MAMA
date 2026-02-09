@@ -39,6 +39,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/transformers
+          key: ${{ runner.os }}-hf-models-v1
+          restore-keys: |
+            ${{ runner.os }}-hf-models-
+
       - name: Install dependencies
         run: pnpm install
 

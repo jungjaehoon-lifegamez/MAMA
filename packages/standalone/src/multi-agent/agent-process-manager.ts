@@ -177,6 +177,21 @@ export class AgentProcessManager extends EventEmitter {
 
       if (tier >= 2) {
         options.env = { MAMA_DISABLE_HOOKS: 'true' };
+      } else {
+        // Tier 1: Enable keyword detection, AGENTS.md injection, and rules injection
+        options.env = { MAMA_HOOK_FEATURES: 'rules,agents' };
+      }
+
+      // Structural tool enforcement via CLI flags
+      const permissions = this.permissionManager.resolvePermissions({
+        id: agentId,
+        ...agentConfig,
+      } as AgentPersonaConfig);
+      if (!permissions.allowed.includes('*')) {
+        options.allowedTools = permissions.allowed;
+      }
+      if (permissions.blocked.length > 0) {
+        options.disallowedTools = permissions.blocked;
       }
 
       const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
@@ -219,6 +234,20 @@ export class AgentProcessManager extends EventEmitter {
 
     if (tier >= 2) {
       options.env = { MAMA_DISABLE_HOOKS: 'true' };
+    } else {
+      options.env = { MAMA_HOOK_FEATURES: 'rules,agents' };
+    }
+
+    // Structural tool enforcement via CLI flags
+    const permissions = this.permissionManager.resolvePermissions({
+      id: agentId,
+      ...agentConfig,
+    } as AgentPersonaConfig);
+    if (!permissions.allowed.includes('*')) {
+      options.allowedTools = permissions.allowed;
+    }
+    if (permissions.blocked.length > 0) {
+      options.disallowedTools = permissions.blocked;
     }
 
     const process = await this.processPool.getProcess(channelKey, options);
@@ -280,6 +309,30 @@ export class AgentProcessManager extends EventEmitter {
   ): string {
     const agent: AgentPersonaConfig = { id: agentId, ...agentConfig };
 
+    // Replace @mentions in persona with platform-specific <@userId>
+    // Matches both @DisplayName (e.g. @📝 Reviewer) and @Name (e.g. @Reviewer)
+    let resolvedPersona = personaContent;
+    if (this.mentionDelegationEnabled && this.botUserIdMap.size > 0) {
+      // Build all replacement patterns first for better performance
+      const replacements: Array<[string, string]> = [];
+      for (const [aid, cfg] of Object.entries(this.config.agents)) {
+        const userId = this.botUserIdMap.get(aid);
+        if (userId) {
+          if (cfg.display_name) {
+            replacements.push([`@${cfg.display_name}`, `<@${userId}>`]);
+          }
+          if (cfg.name && cfg.name !== cfg.display_name) {
+            replacements.push([`@${cfg.name}`, `<@${userId}>`]);
+          }
+        }
+      }
+
+      // Apply all replacements
+      for (const [pattern, replacement] of replacements) {
+        resolvedPersona = resolvedPersona.replaceAll(pattern, replacement);
+      }
+    }
+
     // Build permission prompt
     const permissionPrompt = this.permissionManager.buildPermissionPrompt(agent);
 
@@ -326,7 +379,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 - If another agent has already addressed a topic well, acknowledge it briefly
 
 ## Persona
-${personaContent}
+${resolvedPersona}
 
 ${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Guidelines
 - Stay in character as ${agentConfig.name}
@@ -497,5 +550,34 @@ Respond to messages in a helpful and professional manner.
   hasActiveProcess(source: string, channelId: string, agentId: string): boolean {
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     return this.processPool.getActiveChannels().includes(channelKey);
+  }
+
+  /**
+   * Get agent IDs with active processes in a given channel
+   */
+  getActiveAgentsInChannel(source: string, channelId: string): string[] {
+    const prefix = `${source}:${channelId}:`;
+    const agentIdSet = new Set<string>();
+
+    // 1. Check processPool (pool_size=1 agents)
+    for (const channelKey of this.processPool.getActiveChannels()) {
+      if (channelKey.startsWith(prefix)) {
+        try {
+          const { agentId } = this.parseChannelKey(channelKey);
+          agentIdSet.add(agentId);
+        } catch {
+          // Skip malformed keys
+        }
+      }
+    }
+
+    // 2. Check agentProcessPool (pool_size>1 agents) — only include agents serving this channel
+    for (const [agentId] of this.agentProcessPool.getAllPoolStatuses()) {
+      if (this.agentProcessPool.hasBusyProcessForChannel(agentId, prefix)) {
+        agentIdSet.add(agentId);
+      }
+    }
+
+    return Array.from(agentIdSet);
   }
 }

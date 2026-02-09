@@ -6,7 +6,17 @@
  * @module quality-metrics-tools
  */
 
-const mama = require('../mama/mama-api.js');
+const mama = require('@jungjaehoon/mama-core/mama-api');
+
+/**
+ * Quality Metrics Error Codes
+ */
+const ERROR_CODES = {
+  REPORT_GENERATION_FAILED: 'QM001',
+  RESTART_METRICS_FAILED: 'QM002',
+  DATA_ACCESS_ERROR: 'QM003',
+  CALCULATION_ERROR: 'QM004',
+};
 
 /**
  * Generate Quality Report Tool (Story 4.1)
@@ -81,7 +91,7 @@ const generateQualityReportTool = {
         content: [
           {
             type: 'text',
-            text: `❌ Failed to generate quality report: ${error.message}`,
+            text: `❌ [${ERROR_CODES.REPORT_GENERATION_FAILED}] Failed to generate quality report: ${error.message}`,
           },
         ],
       };
@@ -138,7 +148,7 @@ const getRestartMetricsTool = {
         content: [
           {
             type: 'text',
-            text: `❌ Failed to get restart metrics: ${error.message}`,
+            text: `❌ [${ERROR_CODES.RESTART_METRICS_FAILED}] Failed to get restart metrics: ${error.message}`,
           },
         ],
       };

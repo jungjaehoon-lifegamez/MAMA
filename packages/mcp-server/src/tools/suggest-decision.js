@@ -9,7 +9,7 @@
  * @module suggest-decision
  */
 
-const mama = require('../mama/mama-api.js');
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 /**
  * Suggest decision tool definition
@@ -32,6 +32,21 @@ const suggestDecisionTool = {
           'Optional: How much to weight recency vs semantic similarity (0-1). Default: 0.3 (70% semantic, 30% recency).',
         minimum: 0,
         maximum: 1,
+      },
+      recencyScale: {
+        type: 'number',
+        description: 'Optional: Scale factor for recency scoring. Default: 0.7',
+        default: 0.7,
+      },
+      recencyDecay: {
+        type: 'number',
+        description: 'Optional: Decay rate for recency over time. Default: 0.001',
+        default: 0.001,
+      },
+      disableRecency: {
+        type: 'boolean',
+        description: 'Optional: Disable recency weighting entirely. Default: false',
+        default: false,
       },
     },
     required: ['userQuestion'],

@@ -171,7 +171,7 @@ describe('mama init command', () => {
       expect(existsSync(claudeMdPath)).toBe(true);
 
       const content = await readFile(claudeMdPath, 'utf-8');
-      expect(content).toContain('워크스페이스');
+      expect(content).toContain('Workspace');
       expect(content).toContain('~/.mama/workspace/');
       expect(content).toContain('~/.mama/skills/');
     });
@@ -207,7 +207,7 @@ describe('mama init command', () => {
         await initCommand({ force: false });
         expect.fail('Should have thrown');
       } catch (error) {
-        expect(consoleOutput.some((e) => e.includes('이미 존재'))).toBe(true);
+        expect(consoleOutput.some((e) => e.includes('already exists'))).toBe(true);
       } finally {
         exitSpy.mockRestore();
       }
@@ -365,7 +365,7 @@ describe('mama init command', () => {
       await initCommand();
 
       const output = consoleOutput.join('');
-      expect(output).toContain('초기화');
+      expect(output).toContain('Initialization');
     });
 
     it('should display success message', async () => {
@@ -377,7 +377,7 @@ describe('mama init command', () => {
       await initCommand();
 
       const output = consoleOutput.join('');
-      expect(output).toContain('생성 완료');
+      expect(output).toContain('created successfully');
     });
 
     it('should display next steps', async () => {
@@ -389,7 +389,7 @@ describe('mama init command', () => {
       await initCommand();
 
       const output = consoleOutput.join('');
-      expect(output).toContain('다음 단계');
+      expect(output).toContain('Next steps');
       expect(output).toContain('mama start');
       expect(output).toContain('mama status');
     });

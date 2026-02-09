@@ -312,7 +312,7 @@ export class SessionStore {
    * Format context as readable string for system prompt
    * Only includes the most recent turns to avoid token bloat
    */
-  formatContextForPrompt(sessionId: string, maxTurnsToInject: number = 10): string {
+  formatContextForPrompt(sessionId: string, maxTurnsToInject: number = 5): string {
     const history = this.getHistory(sessionId);
 
     if (history.length === 0) {
@@ -323,11 +323,19 @@ export class SessionStore {
     const recentTurns = history.slice(-maxTurnsToInject);
 
     // Truncate long messages when injecting to save tokens
-    // User messages: 500 chars, Bot responses: 1500 chars
+    // User messages: 300 chars, Bot responses: 500 chars
+    // Bot responses are aggressively truncated because they often contain
+    // tool_use blocks, verbose metadata (||⏱️ N turns||), and related decisions
     return recentTurns
       .map((turn) => {
-        const userMsg = turn.user.length > 500 ? turn.user.slice(0, 500) + '...' : turn.user;
-        const botMsg = turn.bot.length > 1500 ? turn.bot.slice(0, 1500) + '...' : turn.bot;
+        const userMsg = turn.user.length > 300 ? turn.user.slice(0, 300) + '...' : turn.user;
+        // Strip tool_use noise and metadata before truncating
+        let botMsg = turn.bot
+          .replace(/\|\|[^|]*\|\|/g, '') // Remove ||⏱️ N turns|| markers
+          .replace(/```tool_call[\s\S]*?```/g, '[tool used]') // Collapse tool_call blocks
+          .replace(/## Related decisions[\s\S]*$/m, '') // Remove injected decisions footer
+          .trim();
+        botMsg = botMsg.length > 500 ? botMsg.slice(0, 500) + '...' : botMsg;
         return `User: ${userMsg}\nAssistant: ${botMsg}`;
       })
       .join('\n\n');

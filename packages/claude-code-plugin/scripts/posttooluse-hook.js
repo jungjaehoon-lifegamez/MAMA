@@ -12,8 +12,8 @@
  * - FILE_PATH: File/directory path for the operation (optional)
  * - DIFF_CONTENT: Code diff or change description (optional)
  * - CONVERSATION_CONTEXT: Recent conversation for reasoning extraction (optional)
- * - MAMA_DISABLE_HOOKS: Set to "true" to disable hook (opt-out)
  * - MAMA_DISABLE_AUTO_SAVE: Set to "true" to disable auto-save (privacy mode)
+ * - Feature flags: Hook activation is controlled via getEnabledFeatures() (see hook-features.js)
  *
  * Output: Auto-save suggestion to stdout (or nothing if disabled/no match)
  * Exit codes: 0 (success), 1 (error)
@@ -27,16 +27,20 @@ const fs = require('fs');
 // Get paths relative to script location
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
+const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 
 // Add core to require path
 require('module').globalPaths.push(CORE_PATH);
 
-const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
+const { info, warn, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 // Memory store for DB initialization and direct contract saving
-const { initDB, getDB, insertDecisionWithEmbedding, queryVectorSearch } = require(
-  path.join(CORE_PATH, 'memory-store')
-);
-const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
+const {
+  initDB,
+  getDB,
+  insertDecisionWithEmbedding,
+  queryVectorSearch,
+} = require('@jungjaehoon/mama-core/memory-store');
+const { loadConfig } = require('@jungjaehoon/mama-core/config-loader');
 
 // MAMA v2: Contract extraction
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
@@ -582,9 +586,9 @@ function logContractAnalysis(action, details = {}) {
 async function checkSimilarDecision(decision) {
   try {
     // Lazy load embeddings and vector search (only on Tier 1)
-    const { initDB } = require(path.join(CORE_PATH, 'db-manager'));
-    const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
-    const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+    const { initDB } = require('@jungjaehoon/mama-core/db-manager');
+    const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
+    const { vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
 
     // Initialize DB first
     await initDB();
@@ -688,11 +692,8 @@ async function main() {
 
   try {
     // 1. Check opt-out flags
-    if (process.env.MAMA_DISABLE_HOOKS === 'true') {
-      if (process.env.MAMA_DEBUG === 'true') {
-        console.error('🔍 [MAMA DEBUG] Hooks DISABLED via env var');
-      }
-      info('[Hook] MAMA hooks disabled via MAMA_DISABLE_HOOKS');
+    const features = getEnabledFeatures();
+    if (!features.has('contracts')) {
       process.exit(0);
     }
 
@@ -983,10 +984,6 @@ async function main() {
     }
 
     // Correct Claude Code JSON format with hookSpecificOutput
-    const systemMessage = hasCodeChange
-      ? `⚠️ MAMA v2 CRITICAL: Execute Task tool below to extract contracts and prevent future bugs | ${topic} (${latencyMs}ms)`
-      : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
-
     const response = {
       decision: 'allow',
       message: additionalContext,
@@ -996,7 +993,7 @@ async function main() {
     if (process.env.MAMA_DEBUG === 'true') {
       console.error('🔍 [MAMA DEBUG] Hook outputting response:');
       console.error(`🔍 [MAMA DEBUG] - hasCodeChange: ${hasCodeChange}`);
-      console.error(`🔍 [MAMA DEBUG] - systemMessage: ${systemMessage}`);
+      console.error(`🔍 [MAMA DEBUG] - topic: ${topic} (${latencyMs}ms)`);
       console.error(`🔍 [MAMA DEBUG] - additionalContext length: ${additionalContext.length}`);
     }
 

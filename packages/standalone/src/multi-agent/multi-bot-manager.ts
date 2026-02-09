@@ -5,7 +5,14 @@
  * Each agent with a dedicated bot_token gets its own Discord client.
  */
 
-import { Client, GatewayIntentBits, Partials, TextChannel, type Message } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  TextChannel,
+  ActivityType,
+  type Message,
+} from 'discord.js';
 import type { MultiAgentConfig, AgentPersonaConfig } from './types.js';
 
 /**
@@ -33,7 +40,8 @@ export class MultiBotManager {
   private mainBotToken: string | null = null;
 
   /** Callback for when an agent bot receives a mention */
-  private onMentionCallback: ((agentId: string, message: Message) => void) | null = null;
+  private onMentionCallback: ((agentId: string, message: Message) => void | Promise<void>) | null =
+    null;
 
   constructor(config: MultiAgentConfig) {
     this.config = config;
@@ -56,7 +64,7 @@ export class MultiBotManager {
   /**
    * Register callback for when an agent bot receives a mention
    */
-  onMention(callback: (agentId: string, message: Message) => void): void {
+  onMention(callback: (agentId: string, message: Message) => void | Promise<void>): void {
     this.onMentionCallback = callback;
   }
 
@@ -105,6 +113,8 @@ export class MultiBotManager {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildPresences,
+        GatewayIntentBits.GuildMembers,
       ],
       partials: [Partials.Channel],
     });
@@ -121,25 +131,32 @@ export class MultiBotManager {
       bot.connected = true;
       bot.userId = c.user.id;
       bot.username = c.user.tag;
-      console.log(`[MultiBotManager] Agent ${agentId} bot logged in as ${c.user.tag}`);
+      // Set online presence explicitly
+      c.user.setPresence({
+        status: 'online',
+        activities: [{ name: agentConfig.name || agentId, type: ActivityType.Watching }],
+      });
+      console.log(
+        `[MultiBotManager] Agent ${agentId} bot logged in as ${c.user.tag} (guilds: ${c.guilds.cache.size})`
+      );
     });
 
     // Listen for messages mentioning this agent bot
     client.on('messageCreate', (msg) => {
-      // Allow agent bot messages through for mention-based delegation
       if (msg.author.bot) {
         const senderAgentId = this.isFromAgentBot(msg);
-        // Ignore non-agent bots and the main bot
-        if (!senderAgentId || senderAgentId === 'main') return;
-        // Ignore own messages (self-mention prevention)
+        if (!senderAgentId) return;
         if (msg.author.id === bot.userId) return;
       }
-      // Check if this bot is mentioned
       if (!bot.userId || !msg.mentions.has(bot.userId)) return;
-      // Forward to callback
       if (this.onMentionCallback) {
         console.log(`[MultiBotManager] Agent ${agentId} mentioned by ${msg.author.tag}`);
-        this.onMentionCallback(agentId, msg);
+        Promise.resolve(this.onMentionCallback(agentId, msg)).catch((err) => {
+          console.error(
+            `[MultiBotManager] onMention callback failed for ${agentId}:`,
+            err instanceof Error ? err.message : err
+          );
+        });
       }
     });
 
@@ -155,9 +172,33 @@ export class MultiBotManager {
       console.log(`[MultiBotManager] Agent ${agentId} bot disconnected`);
     });
 
-    // Login
+    // Login and wait for ready event (ensures userId is available)
     await client.login(agentConfig.bot_token);
     this.bots.set(agentId, bot);
+
+    // Wait for ready with timeout (5s) — ensures getBotUserIdMap() has all IDs
+    if (!bot.connected) {
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => resolve(), 5000);
+        const check = () => {
+          if (bot.connected) {
+            clearTimeout(timeout);
+            resolve();
+          }
+        };
+        client.once('ready', () => {
+          check();
+        });
+        check(); // In case ready already fired
+      });
+    }
+  }
+
+  /**
+   * Get main bot user ID
+   */
+  getMainBotUserId(): string | null {
+    return this.mainBotUserId;
   }
 
   /**
@@ -173,6 +214,30 @@ export class MultiBotManager {
    */
   getAgentBot(agentId: string): AgentBot | undefined {
     return this.bots.get(agentId);
+  }
+
+  /**
+   * React to a message as a specific agent's bot
+   */
+  async reactAsAgent(
+    agentId: string,
+    channelId: string,
+    messageId: string,
+    emoji: string
+  ): Promise<boolean> {
+    const bot = this.bots.get(agentId);
+    if (!bot?.connected) return false;
+
+    try {
+      const channel = await bot.client.channels.fetch(channelId);
+      if (!channel || !('messages' in channel)) return false;
+
+      const msg = await (channel as TextChannel).messages.fetch(messageId);
+      await msg.react(emoji);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**

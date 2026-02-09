@@ -10,9 +10,9 @@
  * @module commands/mama-configure
  */
 
-const { loadConfig, updateConfig, getConfigPath } = require('../core/config-loader');
-const { info, warn, error: logError } = require('../core/debug-logger');
-const { getDB } = require('../core/memory-store');
+const { loadConfig, updateConfig, getConfigPath } = require('@jungjaehoon/mama-core/config-loader');
+const { info, warn, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
+const { getDB } = require('@jungjaehoon/mama-core/memory-store');
 
 /**
  * Detect current tier status

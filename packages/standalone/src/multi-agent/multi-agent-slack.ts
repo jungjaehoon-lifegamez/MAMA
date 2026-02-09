@@ -20,7 +20,11 @@ import type { PersistentProcessOptions } from '../agent/persistent-cli-process.j
 import { splitForSlack } from '../gateways/message-splitter.js';
 import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
 import { PRReviewPoller } from './pr-review-poller.js';
+import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
+import { BackgroundTaskManager, type BackgroundTask } from './background-task-manager.js';
+import { SystemReminderService } from './system-reminder.js';
+import { DelegationManager } from './delegation-manager.js';
 
 /** Default timeout for agent responses (15 minutes - longer than Discord due to Slack's slower Socket Mode relay and complex thread routing) */
 const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -49,6 +53,9 @@ export class MultiAgentSlackHandler {
   private multiBotManager: SlackMultiBotManager;
   private messageQueue: AgentMessageQueue;
   private prReviewPoller: PRReviewPoller;
+  private backgroundTaskManager: BackgroundTaskManager;
+  private systemReminder: SystemReminderService;
+  private delegationManager: DelegationManager;
   private logger = createSafeLogger('MultiAgentSlack');
 
   /** Main Slack WebClient for posting system messages (heartbeat) */
@@ -80,6 +87,61 @@ export class MultiAgentSlackHandler {
     this.multiBotManager = new SlackMultiBotManager(config);
     this.messageQueue = new AgentMessageQueue();
     this.prReviewPoller = new PRReviewPoller();
+
+    const agentConfigs = Object.entries(config.agents).map(([id, cfg]) => ({ id, ...cfg }));
+    this.delegationManager = new DelegationManager(agentConfigs);
+
+    this.backgroundTaskManager = new BackgroundTaskManager(
+      async (agentId: string, prompt: string): Promise<string> => {
+        const process = await this.processManager.getProcess('slack', 'background', agentId);
+        const result = await process.sendMessage(prompt);
+        return result.response;
+      },
+      { maxConcurrentPerAgent: 2, maxTotalConcurrent: 5 }
+    );
+
+    this.systemReminder = new SystemReminderService({
+      batchWindowMs: 2000,
+      enableChatNotifications: true,
+    });
+
+    this.backgroundTaskManager.on('task-started', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-started',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        timestamp: Date.now(),
+      });
+    });
+
+    this.backgroundTaskManager.on('task-completed', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-completed',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        duration: task.duration,
+        timestamp: Date.now(),
+      });
+    });
+
+    this.backgroundTaskManager.on('task-failed', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-failed',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        error: task.error,
+        timestamp: Date.now(),
+      });
+    });
 
     // Start periodic cleanup of processed mentions (every 60 seconds)
     this.mentionCleanupInterval = setInterval(() => {
@@ -149,7 +211,18 @@ export class MultiAgentSlackHandler {
       const mentionedAgentIds = this.extractMentionedAgentIds(event.text);
 
       // Force this specific agent to respond
+      const mentionDescription = cleanContent.substring(0, 200);
       try {
+        this.systemReminder.notify({
+          type: 'delegation-started',
+          taskId: '',
+          description: mentionDescription,
+          agentId,
+          requestedBy: senderAgentId ?? event.user,
+          channelId: event.channel,
+          timestamp: Date.now(),
+        });
+
         const response = await this.processAgentResponse(
           agentId,
           {
@@ -166,6 +239,17 @@ export class MultiAgentSlackHandler {
         );
 
         if (response) {
+          this.systemReminder.notify({
+            type: 'delegation-completed',
+            taskId: '',
+            description: mentionDescription,
+            agentId,
+            requestedBy: senderAgentId ?? event.user,
+            channelId: event.channel,
+            duration: response.duration,
+            timestamp: Date.now(),
+          });
+
           const threadTs = event.thread_ts || event.ts;
           await this.sendAgentResponses(event.channel, threadTs, [response]);
           this.orchestrator.recordAgentResponse(agentId, event.channel, response.messageId);
@@ -192,10 +276,12 @@ export class MultiAgentSlackHandler {
         `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
       );
 
-      // PR Review Poller: reviewer bot sends messages mentioning @developer
-      const developerUserId = botUserIdMap.get('developer');
-      if (developerUserId) {
-        this.prReviewPoller.setTargetAgentUserId(developerUserId);
+      // PR Review Poller: reviewer bot sends messages mentioning @Sisyphus (orchestrator)
+      // Sisyphus analyzes severity, delegates atomic fix tasks to @DevBot
+      const orchestratorId = this.config.default_agent || 'sisyphus';
+      const orchestratorUserId = botUserIdMap.get(orchestratorId);
+      if (orchestratorUserId) {
+        this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
       }
 
       // Use reviewer bot's WebClient to send PR review messages
@@ -215,6 +301,13 @@ export class MultiAgentSlackHandler {
    */
   setMainWebClient(client: WebClient): void {
     this.mainWebClient = client;
+
+    this.systemReminder.registerCallback(async (channelId, message) => {
+      const chunks = splitForSlack(message);
+      for (const chunk of chunks) {
+        await client.chat.postMessage({ channel: channelId, text: chunk });
+      }
+    }, 'slack');
 
     // Only set PR poller sender if not already configured (e.g., by reviewer bot)
     if (!this.prReviewPoller.hasMessageSender?.()) {
@@ -287,13 +380,13 @@ export class MultiAgentSlackHandler {
       if (sessions.length === 0) {
         await this.mainWebClient.chat.postMessage({
           channel: channelId,
-          text: '📭 활성 PR 폴링이 없습니다.',
+          text: '📭 No active PR polling sessions.',
         });
       } else {
         this.prReviewPoller.stopAll();
         await this.mainWebClient.chat.postMessage({
           channel: channelId,
-          text: `⏹️ PR 리뷰 폴링 중지: ${sessions.join(', ')}`,
+          text: `⏹️ PR review polling stopped: ${sessions.join(', ')}`,
         });
       }
       return true;
@@ -309,7 +402,7 @@ export class MultiAgentSlackHandler {
           const key = parsed ? `${parsed.owner}/${parsed.repo}#${parsed.prNumber}` : prUrl;
           await this.mainWebClient.chat.postMessage({
             channel: channelId,
-            text: `👀 *PR Review Poller 시작* — ${key}\n60초 간격으로 새 리뷰 코멘트를 감지합니다. 중지하려면 "PR 중지"라고 입력하세요.`,
+            text: `👀 *PR Review Poller started* — ${key}\nPolling for new review comments every 60 seconds. Type "PR stop" to stop.`,
           });
         }
       }
@@ -326,8 +419,7 @@ export class MultiAgentSlackHandler {
    */
   async handleMessage(
     event: SlackMentionEvent,
-    cleanContent: string,
-    historyContext?: string
+    cleanContent: string
   ): Promise<SlackMultiAgentResponse | null> {
     // Build message context (extract mentioned agents from original text)
     const context = this.buildMessageContext(event, cleanContent);
@@ -357,7 +449,7 @@ export class MultiAgentSlackHandler {
     // Process all selected agents in parallel
     const results = await Promise.allSettled(
       selection.selectedAgents.map((agentId) =>
-        this.processAgentResponse(agentId, context, cleanContent, historyContext)
+        this.processAgentResponse(agentId, context, cleanContent)
       )
     );
 
@@ -404,8 +496,7 @@ export class MultiAgentSlackHandler {
   private async processAgentResponse(
     agentId: string,
     context: MessageContext,
-    userMessage: string,
-    historyContext?: string
+    userMessage: string
   ): Promise<SlackAgentResponse | null> {
     const agent = this.orchestrator.getAgent(agentId);
     if (!agent) {
@@ -419,11 +510,13 @@ export class MultiAgentSlackHandler {
     // Build context for this agent
     const agentContext = this.sharedContext.buildContextForAgent(context.channelId, agentId, 5);
 
-    // Build full prompt with context
+    // Build full prompt with context.
+    // NOTE: Do NOT inject historyContext into persistent processes — the CLI process
+    // already retains conversation memory across turns. Injecting historyContext causes
+    // duplicate messages in Claude's context, making old messages appear "just conversed"
+    // and creating cross-agent context confusion.
+    // Only inject agentContext (other agents' messages) for inter-agent awareness.
     let fullPrompt = cleanMessage;
-    if (historyContext) {
-      fullPrompt = `${historyContext}\n\n${cleanMessage}`;
-    }
     if (agentContext) {
       fullPrompt = `${agentContext}\n\n${fullPrompt}`;
     }
@@ -452,6 +545,40 @@ export class MultiAgentSlackHandler {
         ]);
       } finally {
         clearTimeout(timeoutHandle!);
+      }
+
+      const bgDelegation = this.delegationManager.parseDelegation(agentId, result.response);
+      if (bgDelegation && bgDelegation.background) {
+        const check = this.delegationManager.isDelegationAllowed(
+          bgDelegation.fromAgentId,
+          bgDelegation.toAgentId
+        );
+        if (check.allowed) {
+          const toAgent = this.orchestrator.getAgent(bgDelegation.toAgentId);
+          this.backgroundTaskManager.submit({
+            description: bgDelegation.task.substring(0, 200),
+            prompt: bgDelegation.task,
+            agentId: bgDelegation.toAgentId,
+            requestedBy: agentId,
+            channelId: context.channelId,
+            source: 'slack',
+          });
+          this.logger.log(
+            `[MultiAgentSlack] Background delegation: ${agentId} → ${bgDelegation.toAgentId} (async)`
+          );
+
+          const displayResponse =
+            bgDelegation.originalContent ||
+            `🔄 Background task submitted to *${toAgent?.display_name ?? bgDelegation.toAgentId}*`;
+          const formattedResponse = this.formatAgentResponse(agent, displayResponse);
+          return {
+            agentId,
+            agent,
+            content: formattedResponse,
+            rawContent: displayResponse,
+            duration: result.duration_ms,
+          };
+        }
       }
 
       // Format response with agent prefix
@@ -686,6 +813,18 @@ export class MultiAgentSlackHandler {
       /* ignore reaction errors */
     }
 
+    const botMentionDescription = cleanContent.substring(0, 200);
+
+    this.systemReminder.notify({
+      type: 'delegation-started',
+      taskId: '',
+      description: botMentionDescription,
+      agentId: targetAgentId,
+      requestedBy: senderAgentId ?? 'main',
+      channelId: event.channel,
+      timestamp: Date.now(),
+    });
+
     try {
       const response = await this.processAgentResponse(
         targetAgentId,
@@ -703,6 +842,17 @@ export class MultiAgentSlackHandler {
       );
 
       if (response) {
+        this.systemReminder.notify({
+          type: 'delegation-completed',
+          taskId: '',
+          description: botMentionDescription,
+          agentId: targetAgentId,
+          requestedBy: senderAgentId ?? 'main',
+          channelId: event.channel,
+          duration: response.duration,
+          timestamp: Date.now(),
+        });
+
         const threadTs = event.thread_ts || event.ts;
         await this.sendAgentResponses(event.channel, threadTs, [response], mainWebClient);
         this.orchestrator.recordAgentResponse(targetAgentId, event.channel, response.messageId);
@@ -749,6 +899,43 @@ export class MultiAgentSlackHandler {
         (id) => id !== response.agentId
       );
       if (mentionedAgentIds.length === 0) continue;
+
+      // Hard gate: block malformed delegations from can_delegate agents
+      const senderAgent = this.orchestrator.getAgent(response.agentId);
+      if (senderAgent?.can_delegate && isDelegationAttempt(response.rawContent)) {
+        const validation = validateDelegationFormat(response.rawContent);
+        if (!validation.valid) {
+          this.logger.warn(
+            `[Delegation] BLOCKED ${response.agentId} — missing: ${validation.missingSections.join(', ')}`
+          );
+
+          // Post warning to channel so the agent sees the feedback
+          try {
+            const warningMsg =
+              `⚠️ *Delegation blocked* — missing sections: ${validation.missingSections.join(', ')}\n` +
+              `Re-send with all 6 sections: TASK, EXPECTED OUTCOME, MUST DO, MUST NOT DO, REQUIRED TOOLS, CONTEXT`;
+            const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
+            if (hasOwnBot) {
+              await this.multiBotManager.replyAsAgent(
+                response.agentId,
+                channelId,
+                threadTs,
+                warningMsg
+              );
+            } else {
+              await mainWebClient.chat.postMessage({
+                channel: channelId,
+                text: warningMsg,
+                thread_ts: threadTs,
+              });
+            }
+          } catch {
+            /* ignore warning post errors */
+          }
+
+          continue; // Skip routing — do not forward to target agents
+        }
+      }
 
       this.logger.log(
         `[MultiAgentSlack] Auto-routing mentions from ${response.agentId}: → ${mentionedAgentIds.join(', ')}`
@@ -820,6 +1007,14 @@ export class MultiAgentSlackHandler {
    */
   getMultiBotManager(): SlackMultiBotManager {
     return this.multiBotManager;
+  }
+
+  getBackgroundTaskManager(): BackgroundTaskManager {
+    return this.backgroundTaskManager;
+  }
+
+  getSystemReminder(): SystemReminderService {
+    return this.systemReminder;
   }
 
   /**
@@ -920,6 +1115,7 @@ export class MultiAgentSlackHandler {
       clearInterval(this.mentionCleanupInterval);
       this.mentionCleanupInterval = undefined;
     }
+    this.backgroundTaskManager.destroy();
     this.processManager.stopAll();
     await this.multiBotManager.stopAll();
   }

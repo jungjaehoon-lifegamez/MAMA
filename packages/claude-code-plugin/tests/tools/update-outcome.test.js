@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { initDB, closeDB } from '../../src/core/db-manager.js';
+import { initDB, closeDB } from '@jungjaehoon/mama-core/db-manager';
 
 // Test database path (isolated)
 const TEST_DB_PATH = path.join(

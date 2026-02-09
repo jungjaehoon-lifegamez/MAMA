@@ -68,3 +68,7 @@ export { DelegationManager } from './delegation-manager.js';
 // UltraWork Manager
 export type { UltraWorkSession, UltraWorkStep } from './ultrawork.js';
 export { UltraWorkManager } from './ultrawork.js';
+
+// Delegation Format Validator
+export type { DelegationValidation } from './delegation-format-validator.js';
+export { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';

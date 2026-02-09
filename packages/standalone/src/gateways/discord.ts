@@ -87,6 +87,8 @@ export class DiscordGateway implements Gateway {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessageReactions,
       ],
       partials: [Partials.Channel], // Required for DM support
     });
@@ -115,6 +117,7 @@ export class DiscordGateway implements Gateway {
       if (this.multiAgentHandler) {
         this.multiAgentHandler.setBotUserId(client.user.id);
         this.multiAgentHandler.setMainBotToken(this.token);
+        this.multiAgentHandler.setDiscordClient(client);
         // Initialize agent-specific bots (async, don't block)
         this.multiAgentHandler.initializeMultiBots().catch((err) => {
           console.error('[Discord] Failed to initialize multi-bots:', err);
@@ -190,9 +193,22 @@ export class DiscordGateway implements Gateway {
             .recordAgentMessage(message.channel.id, agent, message.content, message.id);
         }
 
-        // When mention_delegation is enabled, MultiBotManager's onMention handles
-        // agent-to-agent routing directly — skip orchestrator to avoid dual processing
         if (this.multiAgentHandler.isMentionDelegationEnabled()) {
+          if (this.client.user && message.mentions.has(this.client.user)) {
+            // Main bot (LEAD) isn't in MultiBotManager — route via delegation chain
+            const senderAgent = this.multiAgentHandler.getOrchestrator().getAgent(agentBotId);
+            if (senderAgent) {
+              await this.multiAgentHandler.routeResponseMentions(message, [
+                {
+                  agentId: agentBotId,
+                  agent: senderAgent,
+                  content: message.content,
+                  rawContent: message.content,
+                  duration: 0,
+                },
+              ]);
+            }
+          }
           return;
         }
 
@@ -207,7 +223,7 @@ export class DiscordGateway implements Gateway {
         }
         return;
       }
-      // Message from main bot - record and trigger agent-to-agent if it's from an agent
+      // Message from main bot - record to shared context
       if (agentBotId === 'main' || message.author.id === this.client.user?.id) {
         const agentId = this.multiAgentHandler
           .getOrchestrator()
@@ -219,17 +235,20 @@ export class DiscordGateway implements Gateway {
               .getSharedContext()
               .recordAgentMessage(message.channel.id, agent, message.content, message.id);
           }
-          // Trigger other agents to respond (agent-to-agent via main bot)
-          const cleanContent = this.cleanMessageContent(message.content);
-          const multiAgentResult = await this.multiAgentHandler.handleMessage(
-            message,
-            cleanContent
-          );
-          if (multiAgentResult && multiAgentResult.responses.length > 0) {
-            await this.multiAgentHandler.sendAgentResponses(message, multiAgentResult.responses);
-            console.log(
-              `[Discord] Agent-to-agent (main): ${agentId} → ${multiAgentResult.selectedAgents.join(', ')}`
+          // When mention_delegation is enabled, routeResponseMentions already handles
+          // delegation from LEAD's responses — skip to avoid duplicate processing
+          if (!this.multiAgentHandler.isMentionDelegationEnabled()) {
+            const cleanContent = this.cleanMessageContent(message.content);
+            const multiAgentResult = await this.multiAgentHandler.handleMessage(
+              message,
+              cleanContent
             );
+            if (multiAgentResult && multiAgentResult.responses.length > 0) {
+              await this.multiAgentHandler.sendAgentResponses(message, multiAgentResult.responses);
+              console.log(
+                `[Discord] Agent-to-agent (main): ${agentId} → ${multiAgentResult.selectedAgents.join(', ')}`
+              );
+            }
           }
         }
         return;
@@ -375,6 +394,16 @@ export class DiscordGateway implements Gateway {
       await (message.channel as { sendTyping: () => Promise<void> }).sendTyping();
     }
 
+    // Add eyes emoji to indicate processing
+    try {
+      await message.react('👀');
+    } catch (err) {
+      console.warn(
+        '[Discord] Failed to add reaction emoji:',
+        err instanceof Error ? err.message : err
+      );
+    }
+
     // Build message history context for Claude (OpenClaw style)
     const historyContext = channelHistory.formatForContext(message.channel.id, message.id);
     if (historyContext) {
@@ -409,14 +438,11 @@ export class DiscordGateway implements Gateway {
       },
     };
 
+    let processingSuccess = false;
     try {
       // Check if multi-agent mode should handle this message
       if (this.multiAgentHandler?.isEnabled()) {
-        const multiAgentResult = await this.multiAgentHandler.handleMessage(
-          message,
-          cleanContent,
-          historyContext
-        );
+        const multiAgentResult = await this.multiAgentHandler.handleMessage(message, cleanContent);
 
         if (multiAgentResult && multiAgentResult.responses.length > 0) {
           // Multi-agent handled the message
@@ -458,9 +484,15 @@ export class DiscordGateway implements Gateway {
             },
           });
 
+          // Route delegation mentions from agent responses
+          if (this.multiAgentHandler.isMentionDelegationEnabled()) {
+            await this.multiAgentHandler.routeResponseMentions(message, multiAgentResult.responses);
+          }
+
           console.log(
             `[Discord] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
           );
+          processingSuccess = true;
           return; // Multi-agent handled it
         }
         // If multi-agent returns null, fall through to regular processing
@@ -476,6 +508,9 @@ export class DiscordGateway implements Gateway {
 
       await this.sendResponse(message, response);
 
+      // Only mark as success if sendResponse completes without error
+      processingSuccess = true;
+
       this.emitEvent({
         type: 'message_sent',
         source: 'discord',
@@ -490,8 +525,18 @@ export class DiscordGateway implements Gateway {
       // Keep attachments in history for reference in subsequent turns
       // (localPath allows "that image" references to work)
       console.log(`[Discord] Kept attachments for future reference: ${message.channel.id}`);
+    } catch (error) {
+      console.error('[Discord] Message processing failed:', error);
+      processingSuccess = false;
+      throw error;
     } finally {
       clearInterval(typingInterval);
+      // Add conditional reaction based on processing success
+      try {
+        await message.react(processingSuccess ? '✅' : '❌');
+      } catch {
+        /* ignore reaction errors */
+      }
     }
   }
 

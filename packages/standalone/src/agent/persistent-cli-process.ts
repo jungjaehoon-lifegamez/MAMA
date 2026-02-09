@@ -47,6 +47,10 @@ export interface PersistentProcessOptions {
   requestTimeout?: number;
   /** Environment variables to pass to the Claude CLI process */
   env?: Record<string, string>;
+  /** Structurally allowed tools (--allowedTools CLI flag) */
+  allowedTools?: string[];
+  /** Structurally disallowed tools (--disallowedTools CLI flag) */
+  disallowedTools?: string[];
 }
 
 export interface ToolUseBlock {
@@ -175,9 +179,22 @@ export class PersistentClaudeProcess extends EventEmitter {
     const args = this.buildArgs();
     console.log(`[PersistentCLI] Spawning: claude ${args.join(' ')}`);
 
+    // Clean environment: Remove conflicting MAMA_* variables before merging
+    const cleanEnv = { ...process.env };
+    if (this.options.env) {
+      // If we're setting MAMA_DISABLE_HOOKS, remove MAMA_HOOK_FEATURES
+      if ('MAMA_DISABLE_HOOKS' in this.options.env) {
+        delete cleanEnv.MAMA_HOOK_FEATURES;
+      }
+      // If we're setting MAMA_HOOK_FEATURES, remove MAMA_DISABLE_HOOKS
+      if ('MAMA_HOOK_FEATURES' in this.options.env) {
+        delete cleanEnv.MAMA_DISABLE_HOOKS;
+      }
+    }
+
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...(this.options.env || {}) },
+      env: { ...cleanEnv, ...(this.options.env || {}) },
     });
 
     // Set up event handlers
@@ -237,7 +254,16 @@ export class PersistentClaudeProcess extends EventEmitter {
       args.push('--dangerously-skip-permissions');
     }
 
-    // Add MAMA workspace for file access
+    // Structural tool enforcement via CLI flags
+    if (this.options.allowedTools?.length) {
+      args.push('--allowedTools', ...this.options.allowedTools);
+    }
+    if (this.options.disallowedTools?.length) {
+      args.push('--disallowedTools', ...this.options.disallowedTools);
+    }
+
+    // Add MAMA workspace for file access (NOT full ~/.mama which leaks logs/config)
+    // Personas are already injected via --system-prompt, no need for ~/.mama/personas
     const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
     args.push('--add-dir', mamaWorkspace);
 

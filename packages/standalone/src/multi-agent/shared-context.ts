@@ -78,6 +78,26 @@ export class SharedContextManager {
   }
 
   /**
+   * Record a system/automated message (e.g., PR Review Poller)
+   * Shows up in context but isn't from a human or a specific agent.
+   */
+  recordSystemMessage(
+    channelId: string,
+    displayName: string,
+    content: string,
+    messageId?: string
+  ): void {
+    this.recordMessage(channelId, {
+      agentId: 'system',
+      displayName,
+      content,
+      timestamp: Date.now(),
+      messageId,
+      isHuman: false,
+    });
+  }
+
+  /**
    * Record an agent message
    */
   recordAgentMessage(

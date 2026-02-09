@@ -10,7 +10,7 @@
  */
 
 // eslint-disable-next-line no-unused-vars
-const { info } = require('./debug-logger');
+const { info } = require('@jungjaehoon/mama-core/debug-logger');
 
 /**
  * Response Formatter for search results
@@ -109,13 +109,13 @@ class ResponseFormatter {
 
       // 5-layer narrative fields
       decision: decision.decision,
-      reasoning: decision.reasoning || null, // 구체성·추론
-      evidence: decision.evidence || null, // 증거
-      alternatives: decision.alternatives || null, // 긴장 (대안)
-      risks: decision.risks || null, // 긴장 (리스크)
+      reasoning: decision.reasoning || null, // specificity & reasoning
+      evidence: decision.evidence || null, // evidence
+      alternatives: decision.alternatives || null, // tension (alternatives)
+      risks: decision.risks || null, // tension (risks)
 
       // Metadata
-      outcome: decision.outcome || null, // 연속성
+      outcome: decision.outcome || null, // continuity
       confidence: decision.confidence !== undefined ? decision.confidence : null,
       user_involvement: decision.user_involvement || null,
 

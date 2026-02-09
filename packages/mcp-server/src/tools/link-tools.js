@@ -6,7 +6,7 @@
  * @module link-tools
  */
 
-const mama = require('../mama/mama-api.js');
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 /**
  * Propose Link Tool (Story 3.1)

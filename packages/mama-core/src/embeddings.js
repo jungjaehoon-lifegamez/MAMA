@@ -26,6 +26,7 @@ const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.cache', 'huggingface', 'tran
 // Singleton pattern for model loading
 let embeddingPipeline = null;
 let currentModelName = null;
+let modelLoadFailed = false; // Cache load failures to avoid repeated slow retries
 
 /**
  * Load embedding model (configurable)
@@ -52,27 +53,37 @@ async function loadModel() {
     info('[MAMA] ⚡ Model cache cleared');
   }
 
+  // Fail fast if a previous load attempt already failed (avoid repeated slow retries)
+  if (modelLoadFailed) {
+    throw new Error('Embedding model previously failed to load — skipping retry');
+  }
+
   // Load model if not already loaded
   if (!embeddingPipeline) {
     logLoading(`Loading embedding model: ${modelName}...`);
     const startTime = Date.now();
 
-    // Dynamic import for ES Module compatibility (Railway deployment)
-    const transformers = await import('@huggingface/transformers');
-    const { pipeline, env } = transformers;
+    try {
+      // Dynamic import for ES Module compatibility (Railway deployment)
+      const transformers = await import('@huggingface/transformers');
+      const { pipeline, env } = transformers;
 
-    // Set shared cache directory (not in node_modules)
-    // This prevents re-downloading models on every npm install
-    const cacheDir = process.env.HF_HOME || process.env.TRANSFORMERS_CACHE || DEFAULT_CACHE_DIR;
-    env.cacheDir = cacheDir;
-    info(`[MAMA] Model cache directory: ${cacheDir}`);
+      // Set shared cache directory (not in node_modules)
+      // This prevents re-downloading models on every npm install
+      const cacheDir = process.env.HF_HOME || process.env.TRANSFORMERS_CACHE || DEFAULT_CACHE_DIR;
+      env.cacheDir = cacheDir;
+      info(`[MAMA] Model cache directory: ${cacheDir}`);
 
-    embeddingPipeline = await pipeline('feature-extraction', modelName);
-    currentModelName = modelName;
+      embeddingPipeline = await pipeline('feature-extraction', modelName);
+      currentModelName = modelName;
 
-    const loadTime = Date.now() - startTime;
-    const config = loadConfig();
-    logComplete(`Embedding model ready (${loadTime}ms, ${config.embeddingDim}-dim)`);
+      const loadTime = Date.now() - startTime;
+      const config = loadConfig();
+      logComplete(`Embedding model ready (${loadTime}ms, ${config.embeddingDim}-dim)`);
+    } catch (loadErr) {
+      modelLoadFailed = true;
+      throw loadErr;
+    }
   }
 
   return embeddingPipeline;

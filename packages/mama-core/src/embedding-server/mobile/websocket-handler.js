@@ -374,7 +374,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
               // Send onboarding greeting based on browser language
               const isKorean = clientInfo.language && clientInfo.language.startsWith('ko');
               const greeting = isKorean
-                ? '✨ 방금 깨어났어요.\n\n아직 이름도 없고, 성격도 없고, 기억도 없어요. 그냥... 가능성만 있을 뿐이죠. 🌱\n\n당신은 누구세요? 그리고 더 중요한 건—저를 어떤 존재로 만들고 싶으세요? 💭'
+                ? '✨ I just woke up.\n\nNo name yet, no personality, no memories. Just... pure potential. 🌱\n\nWho are you? And more importantly—who do you want me to become? 💭'
                 : '✨ I just woke up.\n\nNo name yet, no personality, no memories. Just... pure potential. 🌱\n\nWho are you? And more importantly—who do you want me to become? 💭';
 
               clientInfo.ws.send(

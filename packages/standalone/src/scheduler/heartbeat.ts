@@ -113,27 +113,27 @@ export class HeartbeatScheduler {
       // Build heartbeat prompt
       const prompt = `[HEARTBEAT POLL]
 
-현재 시간: ${new Date().toLocaleString('ko-KR')}
+Current time: ${new Date().toISOString()}
 
-HEARTBEAT.md 내용:
-${heartbeatContent || '(없음)'}
+HEARTBEAT.md contents:
+${heartbeatContent || '(none)'}
 
-지시사항:
-1. HEARTBEAT.md 확인
-2. 할 일이 있으면 처리하고 결과 보고
-3. 없으면 "HEARTBEAT_OK"만 응답
-4. 사용자에게 알릴 중요한 것이 있으면 알림 메시지 작성
+Instructions:
+1. Check HEARTBEAT.md
+2. If there are tasks, process them and report results
+3. If none, respond with "HEARTBEAT_OK" only
+4. If there is something important to notify the user about, compose a notification message
 
-응답 형식:
-- 할 일 없음: HEARTBEAT_OK
-- 알림 있음: NOTIFY: [메시지 내용]
-- 작업 완료: DONE: [완료 내용]`;
+Response format:
+- No tasks: HEARTBEAT_OK
+- Notification: NOTIFY: [message content]
+- Task completed: DONE: [completion details]`;
 
       // Run agent loop
       const result = await this.agentLoop.run(prompt);
       const response = result.response.trim();
 
-      memoryLogger.logEvent('하트비트', response.substring(0, 100));
+      memoryLogger.logEvent('heartbeat', response.substring(0, 100));
 
       // Handle response
       if (response === 'HEARTBEAT_OK') {
@@ -154,7 +154,7 @@ ${heartbeatContent || '(없음)'}
       }
     } catch (error) {
       console.error('[Heartbeat] Error:', error);
-      memoryLogger.logEvent('하트비트 에러', String(error));
+      memoryLogger.logEvent('heartbeat error', String(error));
     }
   }
 
