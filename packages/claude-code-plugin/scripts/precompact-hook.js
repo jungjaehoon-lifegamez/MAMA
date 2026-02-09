@@ -97,9 +97,6 @@ async function getSavedTopicsFromDB() {
           if (item.topic) {
             topics.add(item.topic.toLowerCase());
           }
-          if (item.decision) {
-            topics.add(item.decision.toLowerCase());
-          }
         }
       }
     }

@@ -113,7 +113,7 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   describe('Feature Guard: MAMA_DISABLE_HOOKS', () => {
-    it('should produce no output when MAMA_DISABLE_HOOKS=true', async () => {
+    it('should output contracts disabled when MAMA_DISABLE_HOOKS=true', async () => {
       const result = await execHookWithStdin(
         PRETOOLUSE_HOOK,
         { tool_name: 'Edit', tool_input: { file_path: '/path/to/test.js' } },

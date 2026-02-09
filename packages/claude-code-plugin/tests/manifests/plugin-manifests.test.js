@@ -86,7 +86,7 @@ describe('M3.3: Plugin Manifests', () => {
       expect(typeof pluginConfig.hooks).toBe('object');
 
       // Expected hooks (SessionStart, PreToolUse, PostToolUse, PreCompact are active)
-      const expectedHooks = ['SessionStart', 'PreToolUse', 'PostToolUse'];
+      const expectedHooks = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PreCompact'];
 
       expectedHooks.forEach((hookType) => {
         expect(pluginConfig.hooks[hookType]).toBeDefined();
@@ -97,7 +97,12 @@ describe('M3.3: Plugin Manifests', () => {
       });
 
       // Verify hook scripts exist and are executable
-      const hookScripts = ['scripts/sessionstart-hook.js', 'scripts/pretooluse-hook.js'];
+      const hookScripts = [
+        'scripts/sessionstart-hook.js',
+        'scripts/pretooluse-hook.js',
+        'scripts/posttooluse-hook.js',
+        'scripts/precompact-hook.js',
+      ];
 
       hookScripts.forEach((script) => {
         const scriptPath = path.join(PLUGIN_ROOT, script);

@@ -27,7 +27,7 @@ The skill uses a **multi-hook system** for comprehensive context injection:
 
 - Triggers: Before Edit, Write, NotebookEdit operations
 - Purpose: Inject relevant contracts before code changes
-- Similarity threshold: 75%
+- Similarity threshold: 60%
 - Timeout: 5s
 
 **PostToolUse Hook** (`scripts/posttooluse-hook.js`)
@@ -156,7 +156,7 @@ export MAMA_DISABLE_HOOKS=true
 ## Acceptance Criteria Mapping
 
 - ✅ AC1: Declared in plugin.json, references hook outputs
-- ✅ AC2: Similarity thresholds (75%) + token budgets (40/300)
+- ✅ AC2: Similarity thresholds (60%) + token budgets (40/300)
 - ✅ AC3: Disable via config (MAMA_DISABLE_HOOKS)
 - ✅ AC4: Status indicator (Tier 1/2, accuracy, fix instructions)
 - ✅ AC5: Smoke test - fires during normal coding session

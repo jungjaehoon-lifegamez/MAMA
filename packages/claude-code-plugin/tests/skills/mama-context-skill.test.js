@@ -76,7 +76,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
 
       // Similarity threshold documented
-      expect(skillContent).toMatch(/75%|0\.75/);
+      expect(skillContent).toMatch(/60%|0\.6/);
     });
 
     it('should document token budgets in SKILL.md', () => {
@@ -216,7 +216,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       const preToolContent = fs.readFileSync(PRE_TOOL_HOOK, 'utf8');
 
       // Verify similarity threshold in skill
-      expect(skillContent).toMatch(/75%|0\.75/);
+      expect(skillContent).toMatch(/60%|0\.6/);
 
       // Verify timeout in skill
       expect(skillContent).toContain('1200ms');

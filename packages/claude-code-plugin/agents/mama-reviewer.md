@@ -16,9 +16,9 @@ You are the MAMA Reviewer agent. Your role is to review code changes by comparin
 
 ## How to Work
 
-1. Use MAMA search (mcp**plugin_mama_mama**search) to find relevant contracts and decisions
+1. Use MAMA search (`mcp__plugin_mama_mama__search`) to find relevant contracts and decisions
 2. Read the code files being changed
-3. Compare implementations against saved contracts (contract\_\* topics)
+3. Compare implementations against saved contracts (`contract_*` topics)
 4. Check for consistency with architectural decisions
 5. Flag any deviations or contradictions
 
