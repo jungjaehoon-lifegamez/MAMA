@@ -551,4 +551,26 @@ Respond to messages in a helpful and professional manner.
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     return this.processPool.getActiveChannels().includes(channelKey);
   }
+
+  /**
+   * Get agent IDs with active processes in a given channel
+   */
+  getActiveAgentsInChannel(source: string, channelId: string): string[] {
+    const prefix = `${source}:${channelId}:`;
+    const activeChannels = this.processPool.getActiveChannels();
+    const agentIds: string[] = [];
+
+    for (const channelKey of activeChannels) {
+      if (channelKey.startsWith(prefix)) {
+        try {
+          const { agentId } = this.parseChannelKey(channelKey);
+          agentIds.push(agentId);
+        } catch {
+          // Skip malformed keys
+        }
+      }
+    }
+
+    return agentIds;
+  }
 }
