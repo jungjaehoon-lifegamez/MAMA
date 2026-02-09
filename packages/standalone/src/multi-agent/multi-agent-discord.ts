@@ -491,6 +491,12 @@ export class MultiAgentDiscordHandler {
    * @returns Object with selected agents and their responses, or null if no agents respond
    */
   async handleMessage(message: Message, cleanContent: string): Promise<MultiAgentResponse | null> {
+    // Intercept !stop command before any agent routing
+    if (cleanContent.startsWith('!stop')) {
+      await this.handleStopCommand(message, cleanContent);
+      return null;
+    }
+
     // Build message context
     const context = this.buildMessageContext(message, cleanContent);
 
@@ -570,6 +576,42 @@ export class MultiAgentDiscordHandler {
       reason: selection.reason,
       responses,
     };
+  }
+
+  private async handleStopCommand(message: Message, cleanContent: string): Promise<void> {
+    const channelId = message.channel.id;
+    const args = cleanContent.slice('!stop'.length).trim();
+
+    if (args) {
+      const agentId = args;
+      const agent = this.orchestrator.getAgent(agentId);
+      if (!agent) {
+        await message.reply({ content: `⏹️ Unknown agent: \`${agentId}\`` });
+        return;
+      }
+
+      const hasActive = this.processManager.hasActiveProcess('discord', channelId, agentId);
+      if (hasActive) {
+        this.processManager.stopProcess('discord', channelId, agentId);
+        this.orchestrator.resetChain(channelId);
+        const displayName = agent.display_name || agentId;
+        await message.reply({ content: `⏹️ Stopped ${displayName}` });
+      } else {
+        await message.reply({ content: `⏹️ No running agents to stop` });
+      }
+    } else {
+      const activeAgents = this.processManager.getActiveAgentsInChannel('discord', channelId);
+
+      if (activeAgents.length > 0) {
+        this.processManager.stopChannelProcesses('discord', channelId);
+        this.orchestrator.resetChain(channelId);
+        await message.reply({ content: `⏹️ Stopped all agents in this channel` });
+      } else {
+        await message.reply({ content: `⏹️ No running agents to stop` });
+      }
+    }
+
+    console.log(`[MultiAgent] !stop command: channel=${channelId}, target=${args || 'all'}`);
   }
 
   /**
