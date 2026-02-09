@@ -259,8 +259,19 @@ export class MultiAgentDiscordHandler {
       }
 
       // Force this specific agent to respond
+      const mentionDescription = cleanContent.substring(0, 200);
       let mentionResponse: AgentResponse | null = null;
       try {
+        this.systemReminder.notify({
+          type: 'delegation-started',
+          taskId: '',
+          description: mentionDescription,
+          agentId,
+          requestedBy: senderAgentId ?? message.author.tag,
+          channelId: message.channel.id,
+          timestamp: Date.now(),
+        });
+
         mentionResponse = await this.processAgentResponse(
           agentId,
           {
@@ -278,6 +289,17 @@ export class MultiAgentDiscordHandler {
         );
 
         if (mentionResponse) {
+          this.systemReminder.notify({
+            type: 'delegation-completed',
+            taskId: '',
+            description: mentionDescription,
+            agentId,
+            requestedBy: senderAgentId ?? message.author.tag,
+            channelId: message.channel.id,
+            duration: mentionResponse.duration,
+            timestamp: Date.now(),
+          });
+
           await this.sendAgentResponses(message, [mentionResponse]);
           this.orchestrator.recordAgentResponse(
             agentId,
@@ -1265,6 +1287,21 @@ export class MultiAgentDiscordHandler {
       /* ignore */
     }
 
+    const truncatedDescription = sourceResponse.rawContent
+      .replace(/<@!?\d+>/g, '')
+      .trim()
+      .substring(0, 200);
+
+    this.systemReminder.notify({
+      type: 'delegation-started',
+      taskId: '',
+      description: truncatedDescription,
+      agentId: targetAgentId,
+      requestedBy: sourceResponse.agentId,
+      channelId,
+      timestamp: Date.now(),
+    });
+
     try {
       let delegationContent = sourceResponse.rawContent.replace(/<@!?\d+>/g, '').trim();
 
@@ -1311,6 +1348,17 @@ export class MultiAgentDiscordHandler {
       );
 
       if (response) {
+        this.systemReminder.notify({
+          type: 'delegation-completed',
+          taskId: '',
+          description: truncatedDescription,
+          agentId: targetAgentId,
+          requestedBy: sourceResponse.agentId,
+          channelId,
+          duration: response.duration,
+          timestamp: Date.now(),
+        });
+
         await this.sendAgentResponses(originalMessage, [response]);
         this.orchestrator.recordAgentResponse(
           targetAgentId,
