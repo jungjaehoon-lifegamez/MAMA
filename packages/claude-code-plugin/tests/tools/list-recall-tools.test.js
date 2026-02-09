@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { listDecisionsTool } from '../../src/tools/list-decisions.js';
 import { recallDecisionTool } from '../../src/tools/recall-decision.js';
 import { saveDecisionTool } from '../../src/tools/save-decision.js';
-import { initDB, getAdapter, closeDB } from '../../src/core/db-manager.js';
+import { initDB, getAdapter, closeDB } from '@jungjaehoon/mama-core/db-manager';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';

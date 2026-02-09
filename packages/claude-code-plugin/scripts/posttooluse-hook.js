@@ -32,12 +32,15 @@ const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 // Add core to require path
 require('module').globalPaths.push(CORE_PATH);
 
-const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
+const { info, warn, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 // Memory store for DB initialization and direct contract saving
-const { initDB, getDB, insertDecisionWithEmbedding, queryVectorSearch } = require(
-  path.join(CORE_PATH, 'memory-store')
-);
-const { loadConfig } = require(path.join(CORE_PATH, 'config-loader'));
+const {
+  initDB,
+  getDB,
+  insertDecisionWithEmbedding,
+  queryVectorSearch,
+} = require('@jungjaehoon/mama-core/memory-store');
+const { loadConfig } = require('@jungjaehoon/mama-core/config-loader');
 
 // MAMA v2: Contract extraction
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
@@ -583,9 +586,9 @@ function logContractAnalysis(action, details = {}) {
 async function checkSimilarDecision(decision) {
   try {
     // Lazy load embeddings and vector search (only on Tier 1)
-    const { initDB } = require(path.join(CORE_PATH, 'db-manager'));
-    const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
-    const { vectorSearch } = require(path.join(CORE_PATH, 'memory-store'));
+    const { initDB } = require('@jungjaehoon/mama-core/db-manager');
+    const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
+    const { vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
 
     // Initialize DB first
     await initDB();

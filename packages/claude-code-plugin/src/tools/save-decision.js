@@ -9,7 +9,7 @@
  * @module save-decision
  */
 
-const mama = require('../core/mama-api.js');
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 const CONTRACT_TOPIC_PREFIXES = [
   'contract_get_',

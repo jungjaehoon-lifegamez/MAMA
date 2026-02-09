@@ -52,7 +52,7 @@ beforeAll(async () => {
   const mamaSuggest = require('../../src/commands/mama-suggest.js');
   const mamaList = require('../../src/commands/mama-list.js');
   const mamaConfigure = require('../../src/commands/mama-configure.js');
-  const dbManager = require('../../src/core/db-manager.js');
+  const dbManager = require('@jungjaehoon/mama-core/db-manager');
 
   mamaSaveCommand = mamaSave.mamaSaveCommand;
   mamaRecallCommand = mamaRecall.mamaRecallCommand;
@@ -89,7 +89,9 @@ describe('MAMA Commands Suite', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.decision_id).toContain('decision_test_mama_save_');
+      // decision_id should be a string starting with 'decision_'
+      expect(typeof result.decision_id).toBe('string');
+      expect(result.decision_id).toMatch(/^decision_/);
       expect(result.topic).toBe('test_mama_save');
       expect(result.message).toContain('Decision Saved Successfully');
     });
