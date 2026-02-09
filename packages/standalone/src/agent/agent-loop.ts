@@ -41,6 +41,9 @@ import type {
 } from './types.js';
 import { AgentError } from './types.js';
 import { buildContextPrompt } from './context-prompt-builder.js';
+import { PostToolHandler } from './post-tool-handler.js';
+import { StopContinuationHandler } from './stop-continuation-handler.js';
+import { PreCompactHandler } from './pre-compact-handler.js';
 
 /**
  * Default configuration
@@ -199,6 +202,10 @@ export class AgentLoop {
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
   private readonly usePersistentCLI: boolean;
+  private readonly postToolHandler: PostToolHandler | null;
+  private readonly stopContinuationHandler: StopContinuationHandler | null;
+  private readonly preCompactHandler: PreCompactHandler | null;
+  private preCompactInjected = false;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -312,6 +319,45 @@ export class AgentLoop {
     this.useLanes = options.useLanes ?? false;
     this.sessionKey = options.sessionKey ?? 'default';
     this.sessionPool = getSessionPool();
+
+    // Initialize PostToolHandler (fire-and-forget after tool execution)
+    if (options.postToolUse?.enabled) {
+      this.postToolHandler = new PostToolHandler(
+        (name, input) => this.mcpExecutor.execute(name, input as GatewayToolInput),
+        { enabled: true, contractSaveLimit: options.postToolUse.contractSaveLimit }
+      );
+      console.log('[AgentLoop] PostToolHandler enabled');
+    } else {
+      this.postToolHandler = null;
+    }
+
+    // Initialize PreCompactHandler (unsaved decision detection)
+    if (options.preCompact?.enabled) {
+      this.preCompactHandler = new PreCompactHandler(
+        (name, input) => this.mcpExecutor.execute(name, input as GatewayToolInput),
+        { enabled: true, maxDecisionsToDetect: options.preCompact.maxDecisionsToDetect }
+      );
+      console.log('[AgentLoop] PreCompactHandler enabled');
+    } else {
+      this.preCompactHandler = null;
+    }
+
+    // Initialize StopContinuationHandler (opt-in auto-resume)
+    if (options.stopContinuation?.enabled) {
+      this.stopContinuationHandler = new StopContinuationHandler({
+        enabled: true,
+        maxRetries: options.stopContinuation.maxRetries ?? 3,
+        completionMarkers: options.stopContinuation.completionMarkers ?? [
+          'DONE',
+          '완료',
+          '✅',
+          'TASK_COMPLETE',
+        ],
+      });
+      console.log('[AgentLoop] StopContinuationHandler enabled');
+    } else {
+      this.stopContinuationHandler = null;
+    }
 
     if (!this.systemPromptOverride) {
       loadComposedSystemPrompt(true);
@@ -623,7 +669,34 @@ export class AgentLoop {
         totalUsage.output_tokens += response.usage.output_tokens;
 
         // Track tokens in session pool for auto-reset at 80% context
-        this.sessionPool.updateTokens(channelKey, response.usage.input_tokens);
+        const tokenStatus = this.sessionPool.updateTokens(channelKey, response.usage.input_tokens);
+
+        // PreCompact: inject compaction summary when approaching context limit
+        if (tokenStatus.nearThreshold && this.preCompactHandler && !this.preCompactInjected) {
+          this.preCompactInjected = true;
+          try {
+            const historyText = history.map((msg) => {
+              if (typeof msg.content === 'string') return msg.content;
+              return (msg.content as ContentBlock[])
+                .filter((b): b is TextBlock => b.type === 'text')
+                .map((b) => b.text)
+                .join('\n');
+            });
+            const compactResult = await this.preCompactHandler.process(historyText);
+            if (compactResult.compactionPrompt) {
+              history.push({
+                role: 'user',
+                content: [{ type: 'text', text: compactResult.compactionPrompt }],
+              });
+              console.log(
+                `[AgentLoop] PreCompact: injected compaction summary (${compactResult.unsavedDecisions.length} unsaved decisions detected)`
+              );
+            }
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`[AgentLoop] PreCompact error (non-blocking):`, message);
+          }
+        }
 
         // Add assistant response to history
         history.push({
@@ -644,6 +717,21 @@ export class AgentLoop {
 
         // Check stop conditions
         if (response.stop_reason === 'end_turn') {
+          // StopContinuation: check if response looks incomplete before breaking
+          if (this.stopContinuationHandler) {
+            const finalText = this.extractTextFromContent(response.content);
+            const decision = this.stopContinuationHandler.analyzeResponse(channelKey, finalText);
+            if (decision.shouldContinue && decision.continuationPrompt) {
+              console.log(
+                `[AgentLoop] StopContinuation: auto-continuing (attempt ${decision.attempt}, reason: ${decision.reason})`
+              );
+              history.push({
+                role: 'user',
+                content: [{ type: 'text', text: decision.continuationPrompt }],
+              });
+              continue;
+            }
+          }
           break;
         }
 
@@ -740,6 +828,9 @@ export class AgentLoop {
 
         // Notify tool use callback
         this.onToolUse?.(toolUse.name, toolUse.input, toolResult);
+
+        // PostToolUse: auto-extract contracts (fire-and-forget)
+        this.postToolHandler?.processInBackground(toolUse.name, toolUse.input, toolResult);
       } catch (error) {
         isError = true;
         result = error instanceof Error ? error.message : String(error);
@@ -845,6 +936,13 @@ export class AgentLoop {
    */
   private removeToolCallBlocks(text: string): string {
     return text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '').trim();
+  }
+
+  private extractTextFromContent(content: ContentBlock[]): string {
+    return content
+      .filter((block): block is TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n');
   }
 
   /**
