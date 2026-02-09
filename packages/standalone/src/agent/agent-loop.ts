@@ -349,7 +349,7 @@ export class AgentLoop {
         maxRetries: options.stopContinuation.maxRetries ?? 3,
         completionMarkers: options.stopContinuation.completionMarkers ?? [
           'DONE',
-          '완료',
+          'FINISHED',
           '✅',
           'TASK_COMPLETE',
         ],
@@ -468,7 +468,7 @@ export class AgentLoop {
     let consecutiveToolCalls = 0;
     let lastToolName = '';
     const MAX_CONSECUTIVE_SAME_TOOL = 5;
-    const EMERGENCY_MAX_TURNS = Math.min(this.maxTurns * 2, 50); // Hard cap at 50
+    const EMERGENCY_MAX_TURNS = Math.max(this.maxTurns + 10, 50); // Always above maxTurns
 
     // Track channel key for session release
     const channelKey = buildChannelKey(
@@ -524,6 +524,12 @@ export class AgentLoop {
         this.agent.setSystemPrompt(fullPrompt);
       } else {
         console.log(`[AgentLoop] No systemPrompt in options, using default`);
+      }
+
+      // Reset StopContinuation state for this channel to prevent leaking
+      // retry counts from previous invocations
+      if (this.stopContinuationHandler) {
+        this.stopContinuationHandler.resetChannel(channelKey);
       }
 
       // Add initial user message with content blocks

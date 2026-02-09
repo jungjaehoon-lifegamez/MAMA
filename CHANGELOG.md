@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Internationalization** (2026-02-09)
 
 - **Full English Translation** - Converted 538+ Korean strings to English across 35 files (CLI, gateways, onboarding, multi-agent, personas, skills, scheduler)
-- **English Persona Templates** - Translated 3 builtin personas (sisyphus, developer, reviewer) to English in `templates/personas/`
+- **English Persona Templates** - Translated 3 built-in personas (sisyphus, developer, reviewer) to English in `templates/personas/`
 - **i18n Default Language** - Changed default language from `ko` to `en` in i18n-messages and message-router
 - **Korean Regex Preserved** - Korean category routing patterns remain functional for Korean-speaking users
 
