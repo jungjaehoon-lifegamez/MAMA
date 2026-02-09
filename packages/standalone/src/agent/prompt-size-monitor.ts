@@ -166,7 +166,8 @@ export class PromptSizeMonitor {
           ...layer,
           content: layer.content.slice(0, safeKeep) + truncationMarker,
         };
-        currentTotal = currentTotal - excess + truncationMarker.length;
+        // Fix: The actual new layer size is safeKeep + truncationMarker.length
+        currentTotal = currentTotal - layer.content.length + safeKeep + truncationMarker.length;
         truncatedLayers.push(layer.name);
       }
     }
