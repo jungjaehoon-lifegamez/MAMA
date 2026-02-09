@@ -94,12 +94,13 @@ describe('Story M2.2: PreToolUse Hook', () => {
       }
     });
 
-    it('should be a standalone script without module exports', () => {
+    it('should follow standalone main() pattern with handler export', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      // Script uses main() pattern, not module.exports
+      // Script uses main() pattern with module.exports handler
       expect(content).toContain('async function main()');
       expect(content).toContain('main()');
+      expect(content).toContain('module.exports');
     });
   });
 
