@@ -27,7 +27,9 @@ export type SystemReminderType =
   | 'task-started'
   | 'task-completed'
   | 'task-failed'
-  | 'all-tasks-complete';
+  | 'all-tasks-complete'
+  | 'delegation-started'
+  | 'delegation-completed';
 
 /**
  * A single system reminder event
@@ -98,6 +100,8 @@ interface ReminderLabels {
   taskCompleted: string;
   taskFailed: string;
   allTasksComplete: string;
+  delegationStarted: string;
+  delegationCompleted: string;
   id: string;
   agent: string;
   task: string;
@@ -115,6 +119,8 @@ const labels: Record<ReminderLanguage, ReminderLabels> = {
     taskCompleted: 'Background Task Completed',
     taskFailed: 'Background Task Failed',
     allTasksComplete: 'All Background Tasks Complete',
+    delegationStarted: 'Delegation Started',
+    delegationCompleted: 'Delegation Completed',
     id: 'ID',
     agent: 'Agent',
     task: 'Task',
@@ -130,6 +136,8 @@ const labels: Record<ReminderLanguage, ReminderLabels> = {
     taskCompleted: '백그라운드 작업 완료',
     taskFailed: '백그라운드 작업 실패',
     allTasksComplete: '모든 백그라운드 작업 완료',
+    delegationStarted: '위임 시작',
+    delegationCompleted: '위임 완료',
     id: 'ID',
     agent: '에이전트',
     task: '작업',
@@ -288,7 +296,12 @@ export class SystemReminderService {
       return;
     }
 
-    if (reminder.type === 'task-started' || reminder.type === 'all-tasks-complete') {
+    if (
+      reminder.type === 'task-started' ||
+      reminder.type === 'all-tasks-complete' ||
+      reminder.type === 'delegation-started' ||
+      reminder.type === 'delegation-completed'
+    ) {
       const message = this.formatChatMessage(reminder);
       await this.sendToAllCallbacks(reminder.channelId, message);
       return;
@@ -345,6 +358,28 @@ export class SystemReminderService {
 
       case 'all-tasks-complete':
         return this.enforceLimit(`\uD83D\uDCCB **${l.allTasksComplete}**`);
+
+      case 'delegation-started':
+        return this.enforceLimit(
+          [
+            `\uD83D\uDD00 **${l.delegationStarted}**`,
+            `**${l.agent}:** ${reminder.agentId}`,
+            `**${l.task}:** ${reminder.description}`,
+            `**${l.requestedBy}:** ${reminder.requestedBy}`,
+          ].join('\n')
+        );
+
+      case 'delegation-completed': {
+        const dLines = [
+          `\u2705 **${l.delegationCompleted}**`,
+          `**${l.agent}:** ${reminder.agentId}`,
+        ];
+        if (reminder.duration !== undefined) {
+          dLines.push(`**${l.duration}:** ${formatDuration(reminder.duration)}`);
+        }
+        dLines.push(`**${l.task}:** ${reminder.description}`);
+        return this.enforceLimit(dLines.join('\n'));
+      }
 
       default:
         return '';
@@ -446,13 +481,15 @@ export class SystemReminderService {
 
     const entries = recent.map((r) => {
       const status =
-        r.type === 'task-completed'
+        r.type === 'task-completed' || r.type === 'delegation-completed'
           ? '\u2705'
           : r.type === 'task-failed'
             ? '\u274C'
             : r.type === 'task-started'
               ? '\uD83D\uDD04'
-              : '\uD83D\uDCCB';
+              : r.type === 'delegation-started'
+                ? '\uD83D\uDD00'
+                : '\uD83D\uDCCB';
 
       let line = `${status} ${r.taskId}: ${r.description} (${l.agent}: ${r.agentId})`;
 
