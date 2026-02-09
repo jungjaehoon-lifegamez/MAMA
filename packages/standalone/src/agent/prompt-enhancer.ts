@@ -24,6 +24,8 @@ interface CacheEntry {
 
 interface KeywordDetector {
   type: string;
+  /** Higher priority wins when multiple detectors match (only highest fires) */
+  priority: number;
   patterns: RegExp[];
   message: string;
 }
@@ -42,32 +44,27 @@ const KEYWORD_DETECTORS: KeywordDetector[] = [
   // ─────────────────────────────────────────────────────────────────────────
   {
     type: 'ultrawork',
+    priority: 30,
     patterns: [
-      // English
+      // English — explicit trigger forms only (no generic words like "autonomous")
       /\bultrawork\b/i,
       /\bulw\b/i,
       /\[ultrawork\]/i,
       /\[ulw\]/i,
       /\[ulw[- ]?loop\]/i,
-      /\bdeep[- ]?work\b/i,
-      /\bautonomous\b/i,
-      /\bfull[- ]?auto\b/i,
       // Korean
       /울트라워크/i,
       /자율\s*작업/i,
       /자율\s*모드/i,
-      /딥\s*워크/i,
       /완전\s*자동/i,
       // Japanese
       /ウルトラワーク/i,
       /自律作業/i,
       /自律モード/i,
-      /ディープワーク/i,
       // Chinese
       /超级工作/i,
       /自主工作/i,
       /自主模式/i,
-      /深度工作/i,
       // Vietnamese
       /siêu\s*công\s*việc/i,
       /tự\s*động\s*hoàn\s*toàn/i,
@@ -205,6 +202,7 @@ Before declaring DONE:
   // ─────────────────────────────────────────────────────────────────────────
   {
     type: 'search',
+    priority: 10,
     patterns: [
       // English
       /\bsearch[- ]mode\b/i,
@@ -305,18 +303,16 @@ After gathering all results:
   // ─────────────────────────────────────────────────────────────────────────
   {
     type: 'analyze',
+    priority: 20,
     patterns: [
-      // English
+      // English — explicit triggers and compound phrases only (no single words like "investigate")
       /\banalyze[- ]mode\b/i,
       /\[analyze[- ]?mode\]/i,
-      /\binvestigate\b/i,
+      /\[analyze\]/i,
       /\bresearch\b.*\b(deep|thorough)\b/i,
       /\bdebug\b.*\b(deep|thorough)\b/i,
       /\broot\s*cause\b/i,
-      /\bdiagnose\b/i,
       /\banalyze\b.*\b(thoroughly|deeply|carefully)\b/i,
-      /\bdeep\s*dive\b/i,
-      /\bdeep\s*analysis\b/i,
       /\bwhy\s+(does|is|did)\b.*\b(fail|break|error|crash|wrong|bug)\b/i,
       // Korean
       /분석\s*모드/i,
@@ -440,19 +436,22 @@ export class PromptEnhancer {
     }
 
     const cleanText = userMessage.replace(/```[\s\S]*?```/g, '').replace(/`[^`]+`/g, '');
-    const detected: string[] = [];
 
-    for (const detector of KEYWORD_DETECTORS) {
+    // Sort detectors by priority DESC — only highest-priority match fires
+    const sorted = [...KEYWORD_DETECTORS].sort((a, b) => b.priority - a.priority);
+
+    for (const detector of sorted) {
       for (const pattern of detector.patterns) {
         if (pattern.test(cleanText)) {
-          detected.push(detector.message);
-          console.log(`[PromptEnhancer] Keyword detected: ${detector.type}`);
-          break;
+          console.log(
+            `[PromptEnhancer] Keyword detected: ${detector.type} (priority=${detector.priority})`
+          );
+          return detector.message;
         }
       }
     }
 
-    return detected.join('\n\n---\n\n');
+    return '';
   }
 
   discoverAgentsMd(workspacePath: string): string {

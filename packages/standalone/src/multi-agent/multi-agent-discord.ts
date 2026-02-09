@@ -1674,6 +1674,7 @@ export class MultiAgentDiscordHandler {
       this.cleanupInterval = null;
     }
 
+    this.backgroundTaskManager.destroy();
     this.processManager.stopAll();
     this.prReviewPoller.stopAll();
     await this.multiBotManager.stopAll();

@@ -43,7 +43,7 @@ export interface ContinuationDecision {
 const DEFAULT_CONFIG: StopContinuationConfig = {
   enabled: false,
   maxRetries: 3,
-  completionMarkers: ['DONE', '완료', '✅', 'TASK_COMPLETE'],
+  completionMarkers: ['DONE', 'FINISHED', '✅', 'TASK_COMPLETE'],
 };
 
 /**
