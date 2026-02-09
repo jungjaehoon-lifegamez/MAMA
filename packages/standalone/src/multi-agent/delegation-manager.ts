@@ -5,6 +5,10 @@
  * Parses DELEGATE::{agent_id}::{task} patterns from agent responses
  * and executes the delegation workflow.
  *
+ * Supports two delegation modes:
+ * - **Synchronous:** DELEGATE::{agent_id}::{task} — waits for result
+ * - **Background:** DELEGATE_BG::{agent_id}::{task} — returns immediately, runs async
+ *
  * Constraints:
  * - Only Tier 1 agents with can_delegate=true can delegate
  * - Maximum delegation depth of 1 (no re-delegation)
@@ -26,6 +30,8 @@ export interface DelegationRequest {
   task: string;
   /** Original response content (without the DELEGATE pattern) */
   originalContent: string;
+  /** Whether this is a background (async) delegation */
+  background: boolean;
 }
 
 /**
@@ -55,8 +61,8 @@ export type DelegationExecuteCallback = (
   prompt: string
 ) => Promise<{ response: string; duration_ms: number }>;
 
-/** DELEGATE pattern: DELEGATE::{agent_id}::{task} (agent_id supports hyphens) */
 const DELEGATE_PATTERN = /DELEGATE::([\w-]+)::(.+)/s;
+const DELEGATE_BG_PATTERN = /DELEGATE_BG::([\w-]+)::(.+)/s;
 
 /**
  * Delegation Manager
@@ -73,25 +79,29 @@ export class DelegationManager {
     this.agents = new Map(agents.map((a) => [a.id, a]));
   }
 
-  /**
-   * Parse a delegation request from an agent's response.
-   * Returns null if no delegation pattern is found.
-   */
   parseDelegation(agentId: string, response: string): DelegationRequest | null {
+    const bgMatch = response.match(DELEGATE_BG_PATTERN);
+    if (bgMatch) {
+      const originalContent = response.replace(DELEGATE_BG_PATTERN, '').trim();
+      return {
+        fromAgentId: agentId,
+        toAgentId: bgMatch[1],
+        task: bgMatch[2].trim(),
+        originalContent,
+        background: true,
+      };
+    }
+
     const match = response.match(DELEGATE_PATTERN);
     if (!match) return null;
 
-    const toAgentId = match[1];
-    const task = match[2].trim();
-
-    // Strip the DELEGATE pattern from original content
     const originalContent = response.replace(DELEGATE_PATTERN, '').trim();
-
     return {
       fromAgentId: agentId,
-      toAgentId,
-      task,
+      toAgentId: match[1],
+      task: match[2].trim(),
       originalContent,
+      background: false,
     };
   }
 
