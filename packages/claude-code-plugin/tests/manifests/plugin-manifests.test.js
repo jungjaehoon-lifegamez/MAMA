@@ -85,8 +85,8 @@ describe('M3.3: Plugin Manifests', () => {
       expect(pluginConfig.hooks).toBeDefined();
       expect(typeof pluginConfig.hooks).toBe('object');
 
-      // Expected hooks (SessionStart and UserPromptSubmit are active)
-      const expectedHooks = ['SessionStart', 'UserPromptSubmit'];
+      // Expected hooks (SessionStart, PreToolUse, PostToolUse, PreCompact are active)
+      const expectedHooks = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PreCompact'];
 
       expectedHooks.forEach((hookType) => {
         expect(pluginConfig.hooks[hookType]).toBeDefined();
@@ -97,7 +97,12 @@ describe('M3.3: Plugin Manifests', () => {
       });
 
       // Verify hook scripts exist and are executable
-      const hookScripts = ['scripts/sessionstart-hook.js', 'scripts/userpromptsubmit-hook.js'];
+      const hookScripts = [
+        'scripts/sessionstart-hook.js',
+        'scripts/pretooluse-hook.js',
+        'scripts/posttooluse-hook.js',
+        'scripts/precompact-hook.js',
+      ];
 
       hookScripts.forEach((script) => {
         const scriptPath = path.join(PLUGIN_ROOT, script);
@@ -141,22 +146,7 @@ describe('M3.3: Plugin Manifests', () => {
       expect(pluginConfig.hooks).toBeDefined();
       expect(typeof pluginConfig.hooks).toBe('object');
       expect(pluginConfig.hooks.SessionStart).toBeDefined();
-      expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
-    });
-
-    it('should register UserPromptSubmit hook correctly', () => {
-      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
-      const hooksConfig = pluginConfig.hooks;
-
-      const userPromptMatcherGroups = hooksConfig.UserPromptSubmit;
-      expect(userPromptMatcherGroups).toBeDefined();
-      expect(userPromptMatcherGroups.length).toBeGreaterThan(0);
-
-      // 3-level nesting: access hooks array inside matcher group
-      const hookHandlers = userPromptMatcherGroups[0].hooks;
-      expect(hookHandlers).toBeDefined();
-      expect(hookHandlers.length).toBeGreaterThan(0);
-      expect(hookHandlers[0].command).toContain('userpromptsubmit-hook.js');
+      expect(pluginConfig.hooks.PreToolUse).toBeDefined();
     });
 
     it('should have PreToolUse and PostToolUse hooks enabled for MAMA v2', () => {
@@ -311,9 +301,8 @@ describe('M3.3: Plugin Manifests', () => {
 
       // Updated validation script checks hook scripts exist (inline hooks)
       expect(output).toMatch(/Hook|hooks/i);
-      expect(output).toContain('userpromptsubmit-hook.js');
       expect(output).toContain('sessionstart-hook.js');
-      // Note: pretooluse and posttooluse scripts exist but are not registered
+      expect(output).toContain('pretooluse-hook.js');
     });
 
     it('should show summary with pass count', () => {
