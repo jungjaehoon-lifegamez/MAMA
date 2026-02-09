@@ -42,7 +42,7 @@ jobs:
         run: pnpm install --ignore-scripts
 
       - name: Publish to npmjs.org
-        run: npm publish --access public || echo "npmjs: Version already published, skipping"
+        run: npm publish --access public || echo "Already published on npmjs, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -53,7 +53,7 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
 
       - name: Publish to GitHub Packages
-        run: npm publish --access public || echo "github: Version already published, skipping"
+        run: npm publish --access public || echo "Already published on GitHub Packages, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -91,7 +91,7 @@ jobs:
           cat package.json
 
       - name: Publish to npmjs.org
-        run: npm publish --access public || echo "npmjs: Version already published, skipping"
+        run: npm publish --access public || echo "Already published on npmjs, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -102,7 +102,7 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
 
       - name: Publish to GitHub Packages
-        run: npm publish --access public || echo "github: Version already published, skipping"
+        run: npm publish --access public || echo "Already published on GitHub Packages, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -140,7 +140,7 @@ jobs:
           cat package.json
 
       - name: Publish to npmjs.org
-        run: npm publish --access public || echo "npmjs: Version already published, skipping"
+        run: npm publish --access public || echo "Already published on npmjs, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -151,7 +151,7 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
 
       - name: Publish to GitHub Packages
-        run: npm publish --access public || echo "github: Version already published, skipping"
+        run: npm publish --access public || echo "Already published on GitHub Packages, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -193,7 +193,7 @@ jobs:
           cat package.json
 
       - name: Publish to npmjs.org
-        run: npm publish --access public || echo "npmjs: Version already published, skipping"
+        run: npm publish --access public || echo "Already published on npmjs, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -204,6 +204,6 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
 
       - name: Publish to GitHub Packages
-        run: npm publish --access public || echo "github: Version already published, skipping"
+        run: npm publish --access public || echo "Already published on GitHub Packages, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
