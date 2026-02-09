@@ -168,4 +168,4 @@ export class I18n {
 /**
  * Default i18n instance (can be configured)
  */
-export const defaultI18n = new I18n('ko'); // Default to Korean to maintain backward compatibility
+export const defaultI18n = new I18n('en'); // Default to English

@@ -1,8 +1,8 @@
 /**
  * Claude API Client for MAMA Standalone
  *
- * Uses Claude Messages API with OAuth tokens (OpenClaw Gateway 방식 이식).
- * @anthropic-ai/sdk의 authToken 옵션 사용 (pi-ai 방식)
+ * Uses Claude Messages API with OAuth tokens (ported from OpenClaw Gateway approach).
+ * Uses @anthropic-ai/sdk's authToken option (pi-ai approach)
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -76,7 +76,7 @@ export class ClaudeClient {
       return this.client;
     }
 
-    // Create new client with OAuth token (pi-ai 방식)
+    // Create new client with OAuth token (pi-ai approach)
     // CRITICAL: apiKey MUST be null (not empty string!) for OAuth to work
     this.client = new Anthropic({
       apiKey: null as unknown as string, // Must be null for OAuth!

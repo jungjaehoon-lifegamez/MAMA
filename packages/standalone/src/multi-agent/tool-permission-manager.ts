@@ -262,7 +262,7 @@ export class ToolPermissionManager {
     lines.push('This allows the coordinator to continue orchestrating the workflow.');
     lines.push('');
     lines.push('**Format:**');
-    lines.push(`- End your response with: "<@${coordinatorUserId}> [결과 요약]"`);
+    lines.push(`- End your response with: "<@${coordinatorUserId}> [result summary]"`);
     lines.push('- Include: what you found/did, issues discovered, and your recommendation');
     lines.push('');
 
