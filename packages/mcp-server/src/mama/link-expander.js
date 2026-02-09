@@ -9,8 +9,8 @@
  * @date 2025-11-25
  */
 
-const { info, error: logError } = require('./debug-logger');
-const { getAdapter } = require('./db-manager');
+const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
+const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
 
 /**
  * Link Expander for decision graph traversal

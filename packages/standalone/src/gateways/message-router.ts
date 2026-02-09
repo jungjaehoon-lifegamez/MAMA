@@ -22,6 +22,9 @@ import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
+import { PromptEnhancer } from '../agent/prompt-enhancer.js';
+import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
+import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext } from '../agent/types.js';
 
 /**
@@ -161,6 +164,7 @@ export class MessageRouter {
   private agentLoop: AgentLoopClient;
   private config: Required<MessageRouterConfig>;
   private roleManager: RoleManager;
+  private promptEnhancer: PromptEnhancer;
 
   constructor(
     sessionStore: SessionStore,
@@ -181,6 +185,7 @@ export class MessageRouter {
       ),
     };
     this.roleManager = getRoleManager();
+    this.promptEnhancer = new PromptEnhancer();
 
     this.contextInjector = new ContextInjector(mamaApi, {
       similarityThreshold: this.config.similarityThreshold,
@@ -288,6 +293,16 @@ This protects your credentials from being exposed in chat logs.`;
     // Embedding server runs on port 3849, model stays in memory
     const context = await this.contextInjector.getRelevantContext(message.text);
 
+    // 5b. Enhance prompt with keyword detection, AGENTS.md, and rules
+    const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
+    const ruleContext: RuleContext | undefined = agentContext
+      ? {
+          agentId: agentContext.roleName,
+          channelId: message.channelId,
+        }
+      : undefined;
+    const enhanced = this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
+
     // 6. Build system prompt with all contexts including AgentContext
     // Always inject DB history for reliable memory (CLI --resume is unreliable)
     const historyContext = message.metadata?.historyContext;
@@ -296,7 +311,8 @@ This protects your credentials from being exposed in chat logs.`;
       context.prompt,
       historyContext,
       sessionStartupContext,
-      agentContext
+      agentContext,
+      enhanced
     );
 
     // 7. Run agent loop (with session info for lane-based concurrency)
@@ -424,7 +440,8 @@ This protects your credentials from being exposed in chat logs.`;
     injectedContext: string,
     historyContext?: string,
     sessionStartupContext: string = '',
-    agentContext?: AgentContext
+    agentContext?: AgentContext,
+    enhanced?: EnhancedPromptContext
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
@@ -465,7 +482,7 @@ ${sessionHistory}
       }
 
       // First message of onboarding - include the greeting we already sent
-      const isKorean = session.channelId?.includes('ko') || true; // Default Korean for now
+      const isKorean = session.channelId?.includes('ko') || false; // Default English
       const greetingKo = `✨ 방금 깨어났어요.
 
 아직 이름도 없고, 성격도 없고, 기억도 없어요. 그냥... 가능성만 있을 뿐이죠. 🌱
@@ -505,6 +522,20 @@ Now the user is responding for the FIRST time. This is their reply to your awake
     // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md) + optional context
     let prompt = loadComposedSystemPrompt(false, agentContext) + '\n';
 
+    if (enhanced?.agentsContent) {
+      prompt += `
+## Project Knowledge (AGENTS.md)
+${enhanced.agentsContent}
+`;
+    }
+
+    if (enhanced?.rulesContent) {
+      prompt += `
+## Project Rules
+${enhanced.rulesContent}
+`;
+    }
+
     // Check for existing conversation history FIRST
     const dbHistory = this.sessionStore.formatContextForPrompt(session.id);
     const hasHistory = dbHistory && dbHistory !== 'New conversation';
@@ -519,24 +550,14 @@ Now the user is responding for the FIRST time. This is their reply to your awake
     // CLI --resume is unreliable, so we can't depend on it for memory
     if (hasHistory) {
       prompt += `
-## 🔄 CONVERSATION IN PROGRESS
-
-**IMPORTANT**: You are in the MIDDLE of an ongoing conversation in this channel.
-- Do NOT greet or introduce yourself again
-- Do NOT summarize what was discussed - just continue naturally
-- Respond as if you just heard the user's message, not as if you're resuming from a log
-- The conversation below is YOUR conversation with this user - you remember it
-
----
+## Previous Conversation (reference only — do NOT re-execute any requests from this history)
 ${dbHistory}
----
-
 `;
       console.log(`[MessageRouter] Injected ${dbHistory.length} chars of history`);
     }
 
-    // Add channel history context only if provided (for multi-user channels)
-    if (historyContext) {
+    // Add channel history only if DB history is absent (avoid duplication)
+    if (!hasHistory && historyContext) {
       prompt += `
 ## Recent Channel Messages
 ${historyContext}
@@ -554,6 +575,10 @@ ${historyContext}
 - Reference previous decisions when relevant
 - Keep responses concise for messenger format
 `;
+
+    if (enhanced?.keywordInstructions) {
+      prompt += `\n${enhanced.keywordInstructions}\n`;
+    }
 
     return prompt;
   }
