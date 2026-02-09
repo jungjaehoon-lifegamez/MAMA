@@ -30,6 +30,12 @@ const execFileAsync = promisify(execFile);
 /** Default timeout for agent responses (15 minutes — must accommodate sub-agent spawns) */
 const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
 
+/** Delay before showing progress message (ms) — fast requests never show it */
+const PROGRESS_DELAY_MS = 5_000;
+
+/** Minimum interval between progress message edits (ms) — Discord rate limit safety */
+const PROGRESS_EDIT_INTERVAL_MS = 3_000;
+
 /** Phase emoji progression: 👀 → 🔍/💻 → 🔧 → 📝 → ✅ */
 const PHASE_EMOJIS = ['👀', '🔍', '💻', '🔧', '📝', '✅'] as const;
 
@@ -717,8 +723,100 @@ export class MultiAgentDiscordHandler {
       // Build onToolUse callback for emoji progression (accumulate, don't replace)
       const addedEmojis = new Set<string>();
       const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
+
+      // Progress tracking state
+      let toolCount = 0;
+      const startTime = Date.now();
+      let progressMessage: Message | null = null;
+      let progressDelayHandle: ReturnType<typeof setTimeout> | null = null;
+      let lastEditTime = 0;
+      let pendingEditHandle: ReturnType<typeof setTimeout> | null = null;
+
+      /** Build progress message content (elapsed time only — no tool/code details exposed) */
+      const buildProgressContent = (): string => {
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        return `⏳ 작업 중... (${elapsed}s)`;
+      };
+
+      /** Send or edit the progress message (debounced to 1 edit per 3s) */
+      const updateProgressMessage = (): void => {
+        if (!discordMessage) return;
+
+        const now = Date.now();
+        const timeSinceLastEdit = now - lastEditTime;
+
+        if (progressMessage) {
+          // Already have a message — debounce edits
+          if (timeSinceLastEdit >= PROGRESS_EDIT_INTERVAL_MS) {
+            lastEditTime = now;
+            progressMessage.edit(buildProgressContent()).catch(() => {
+              /* ignore — message may be deleted */
+            });
+          } else if (!pendingEditHandle) {
+            // Schedule a deferred edit
+            const delay = PROGRESS_EDIT_INTERVAL_MS - timeSinceLastEdit;
+            pendingEditHandle = setTimeout(() => {
+              pendingEditHandle = null;
+              if (progressMessage) {
+                lastEditTime = Date.now();
+                progressMessage.edit(buildProgressContent()).catch(() => {
+                  /* ignore */
+                });
+              }
+            }, delay);
+          }
+        }
+      };
+
+      /** Start the delayed progress message (fires after PROGRESS_DELAY_MS of first tool use) */
+      const scheduleProgressStart = (): void => {
+        if (progressDelayHandle || progressMessage || !discordMessage) return;
+        progressDelayHandle = setTimeout(async () => {
+          progressDelayHandle = null;
+          if (!discordMessage) return;
+          try {
+            const content = buildProgressContent();
+            if (hasOwnBot) {
+              progressMessage = await this.multiBotManager.sendAsAgent(
+                agentId,
+                discordMessage.channel.id,
+                content
+              );
+            } else if ('send' in discordMessage.channel) {
+              progressMessage = await (
+                discordMessage.channel as { send: (c: string) => Promise<Message> }
+              ).send(content);
+            }
+            lastEditTime = Date.now();
+          } catch {
+            /* ignore — channel may be unavailable */
+          }
+        }, PROGRESS_DELAY_MS);
+      };
+
+      /** Clean up all progress tracking resources */
+      const cleanupProgress = async (): Promise<void> => {
+        if (progressDelayHandle) {
+          clearTimeout(progressDelayHandle);
+          progressDelayHandle = null;
+        }
+        if (pendingEditHandle) {
+          clearTimeout(pendingEditHandle);
+          pendingEditHandle = null;
+        }
+        if (progressMessage) {
+          try {
+            await progressMessage.delete();
+          } catch {
+            /* ignore — message may already be deleted */
+          }
+          progressMessage = null;
+        }
+      };
+
       const onToolUse = discordMessage
         ? (name: string) => {
+            // Existing emoji reaction behavior
             const emoji = toolToPhaseEmoji(name);
             if (emoji && !addedEmojis.has(emoji)) {
               addedEmojis.add(emoji);
@@ -734,20 +832,31 @@ export class MultiAgentDiscordHandler {
                 });
               }
             }
+
+            // Progress message tracking
+            toolCount++;
+            scheduleProgressStart();
+            updateProgressMessage();
           }
         : undefined;
 
       // Send message and get response (with timeout, properly cleaned up)
       let timeoutHandle: ReturnType<typeof setTimeout>;
-      const result = await Promise.race([
-        process.sendMessage(fullPrompt, onToolUse ? { onToolUse } : undefined),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () => reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)),
-            AGENT_TIMEOUT_MS
-          );
-        }),
-      ]);
+      let result;
+      try {
+        result = await Promise.race([
+          process.sendMessage(fullPrompt, onToolUse ? { onToolUse } : undefined),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(
+              () =>
+                reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)),
+              AGENT_TIMEOUT_MS
+            );
+          }),
+        ]);
+      } finally {
+        await cleanupProgress();
+      }
       clearTimeout(timeoutHandle!);
 
       const resolvedResponse = this.resolveResponseMentions(result.response);
