@@ -215,6 +215,51 @@ describe('Story M2.2: PreToolUse Hook', () => {
     });
   });
 
+  describe('Rules Injection for Write Tools', () => {
+    it('should import directory-walker for rules injection', () => {
+      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
+      expect(content).toContain('directory-walker');
+      expect(content).toContain('findAgentsMdFiles');
+    });
+
+    it('should import rules-finder for rules injection', () => {
+      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
+      expect(content).toContain('rules-finder');
+      expect(content).toContain('findRuleFiles');
+    });
+
+    it('should import dynamic-truncator for budget management', () => {
+      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
+      expect(content).toContain('dynamic-truncator');
+      expect(content).toContain('truncateMultiple');
+    });
+
+    it('should import session-cache for deduplication', () => {
+      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
+      expect(content).toContain('session-cache');
+      expect(content).toContain('hasContentHash');
+      expect(content).toContain('addContentHash');
+    });
+
+    it('should check agents and rules features for write tools', () => {
+      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
+      // The rules injection block for write tools
+      expect(content).toContain("features.has('agents') || features.has('rules')");
+    });
+
+    it('should use smaller budget for write tool rules (4000 chars)', () => {
+      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
+      expect(content).toContain('maxTotalChars: 4000');
+    });
+
+    it('should prepend rules context to message content', () => {
+      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
+      expect(content).toContain('rulesContext');
+      // rulesContext is prepended before contract message
+      expect(content).toMatch(/rulesContext.*messageContent/s);
+    });
+  });
+
   describe('Integration', () => {
     it('should handle missing stdin gracefully', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');

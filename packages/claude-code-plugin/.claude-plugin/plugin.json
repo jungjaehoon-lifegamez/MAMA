@@ -24,6 +24,7 @@
     "./commands/configure.md"
   ],
   "skills": ["./skills/mama-context"],
+  "agents": "./agents/",
   "hooks": {
     "SessionStart": [
       {
@@ -107,6 +108,17 @@
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/precompact-hook.js",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/stop-hook.js",
+            "timeout": 5
           }
         ]
       }

@@ -450,6 +450,60 @@ async function main() {
     process.exit(0);
   }
 
+  // === RULES/AGENTS INJECTION FOR WRITE TOOLS ===
+  // Same logic as Read path, but with smaller budget to leave room for contracts
+  let rulesContext = '';
+  if (features.has('agents') || features.has('rules')) {
+    const { findAgentsMdFiles, findProjectRoot } = require(
+      path.join(CORE_PATH, 'directory-walker')
+    );
+    const { findRuleFiles } = require(path.join(CORE_PATH, 'rules-finder'));
+    const { truncateMultiple } = require(path.join(CORE_PATH, 'dynamic-truncator'));
+    const { hasContentHash, addContentHash, createContentHash } = require(
+      path.join(CORE_PATH, 'session-cache')
+    );
+
+    const projectRoot = findProjectRoot(filePath) || input.cwd || process.cwd();
+    const contextEntries = [];
+
+    if (features.has('agents')) {
+      const agentsMdFiles = findAgentsMdFiles(filePath, { projectRoot });
+      for (const agentsMd of agentsMdFiles) {
+        const hash = createContentHash(agentsMd.content);
+        if (hasContentHash(hash)) {
+          continue;
+        }
+        addContentHash(hash);
+        contextEntries.push({
+          content: `[Directory Context: ${agentsMd.path}]\n${agentsMd.content}`,
+          path: agentsMd.path,
+          priority: agentsMd.distance,
+        });
+      }
+    }
+
+    if (features.has('rules')) {
+      const ruleFiles = findRuleFiles(filePath, { projectRoot });
+      for (const rule of ruleFiles) {
+        const hash = createContentHash(rule.content);
+        if (hasContentHash(hash)) {
+          continue;
+        }
+        addContentHash(hash);
+        contextEntries.push({
+          content: `[Rule: ${rule.path}] (${rule.matchReason})\n${rule.content}`,
+          path: rule.path,
+          priority: rule.distance + 10,
+        });
+      }
+    }
+
+    if (contextEntries.length > 0) {
+      const truncated = truncateMultiple(contextEntries, { maxTotalChars: 4000 });
+      rulesContext = truncated.map((e) => e.content).join('\n\n---\n\n');
+    }
+  }
+
   // Extract search query from file path AND content
   const fileName = filePath.split('/').pop() || '';
   const newContent = input.tool_input?.new_string || input.tool_input?.content || '';
@@ -554,6 +608,11 @@ async function main() {
   }
 
   markSeen(session.state, 'pre');
+
+  // Prepend rules context if available
+  if (rulesContext) {
+    messageContent = rulesContext + '\n\n---\n\n' + messageContent;
+  }
 
   // PreToolUse: exit(0) + stdout JSON with hookSpecificOutput to show message and allow tool
   // exit(2) blocks the tool, exit(0) allows it
