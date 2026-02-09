@@ -11,12 +11,12 @@ import type { ExecutionLogStore } from './cron-handler.js';
 /**
  * Default heartbeat prompt for scheduled reports
  */
-export const DEFAULT_HEARTBEAT_PROMPT = `🚨 종합보고 체크리스트:
-1. MAMA 로드: load_checkpoint
-2. 데이터 수집: 최근 활동 검색
-3. 보고서 작성: 요약 생성
-4. 메신저 전송 (설정된 경우)
-5. MAMA 저장: checkpoint`;
+export const DEFAULT_HEARTBEAT_PROMPT = `🚨 Comprehensive Report Checklist:
+1. Load MAMA: load_checkpoint
+2. Data collection: Search recent activity
+3. Write report: Generate summary
+4. Send to messenger (if configured)
+5. Save to MAMA: checkpoint`;
 
 /**
  * Heartbeat execution tracker interface

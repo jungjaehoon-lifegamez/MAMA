@@ -482,7 +482,7 @@ ${sessionHistory}
       }
 
       // First message of onboarding - include the greeting we already sent
-      const isKorean = session.channelId?.includes('ko') || true; // Default Korean for now
+      const isKorean = session.channelId?.includes('ko') || false; // Default English
       const greetingKo = `✨ 방금 깨어났어요.
 
 아직 이름도 없고, 성격도 없고, 기억도 없어요. 그냥... 가능성만 있을 뿐이죠. 🌱

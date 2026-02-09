@@ -610,7 +610,7 @@ export class GatewayToolExecutor {
       child.unref();
       return {
         success: true,
-        output: 'mama-os 재시작이 3초 후에 실행됩니다. 현재 세션은 종료됩니다.',
+        output: 'mama-os restart will execute in 3 seconds. Current session will be terminated.',
       };
     }
 
