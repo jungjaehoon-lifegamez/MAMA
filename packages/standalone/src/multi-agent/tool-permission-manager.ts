@@ -153,8 +153,14 @@ export class ToolPermissionManager {
     const lines: string[] = [];
     lines.push('## Delegation');
     lines.push('');
-    lines.push('You can delegate tasks to other agents using the format:');
+    lines.push('You can delegate tasks to other agents using two modes:');
+    lines.push('');
+    lines.push('**Synchronous (wait for result):**');
     lines.push('`DELEGATE::{agent_id}::{task description}`');
+    lines.push('');
+    lines.push('**Background (fire and forget — result notified in chat):**');
+    lines.push('`DELEGATE_BG::{agent_id}::{task description}`');
+    lines.push('Use DELEGATE_BG when you want to continue your work without waiting.');
     lines.push('');
     lines.push('Available agents for delegation:');
 
@@ -167,6 +173,7 @@ export class ToolPermissionManager {
     lines.push('**Rules:**');
     lines.push("- Only delegate when the task matches another agent's expertise");
     lines.push('- Delegation depth is limited to 1 (no re-delegation)');
+    lines.push('- Use DELEGATE_BG for independent tasks that do not block your current work');
     lines.push('');
 
     return lines.join('\n');

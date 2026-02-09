@@ -438,6 +438,8 @@ ${agentList}
 **Instructions:**
 - Break down the task into steps
 - Delegate specialized work using: DELEGATE::{agent_id}::{task description}
+- For independent tasks that don't block you: DELEGATE_BG::{agent_id}::{task description}
+  (Background delegation — you continue working, result is notified in chat when done)
 - End your response with "DONE" when the overall task is complete
 - Stay focused on the task and be efficient`;
   }

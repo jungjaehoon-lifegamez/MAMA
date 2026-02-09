@@ -15,6 +15,9 @@ import type { PersistentProcessOptions } from '../agent/persistent-cli-process.j
 import { splitForDiscord } from '../gateways/message-splitter.js';
 import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
+import { BackgroundTaskManager, type BackgroundTask } from './background-task-manager.js';
+import { SystemReminderService } from './system-reminder.js';
+import { DelegationManager } from './delegation-manager.js';
 import { getChannelHistory } from '../gateways/channel-history.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
@@ -67,6 +70,9 @@ export class MultiAgentDiscordHandler {
   private messageQueue: AgentMessageQueue;
   private prReviewPoller: PRReviewPoller;
   private promptEnhancer: PromptEnhancer;
+  private backgroundTaskManager: BackgroundTaskManager;
+  private systemReminder: SystemReminderService;
+  private delegationManager: DelegationManager;
 
   /** Discord client reference for main bot channel sends */
   private discordClient: { channels: { fetch: (id: string) => Promise<unknown> } } | null = null;
@@ -107,6 +113,61 @@ export class MultiAgentDiscordHandler {
     this.messageQueue = new AgentMessageQueue();
     this.prReviewPoller = new PRReviewPoller();
     this.promptEnhancer = new PromptEnhancer();
+
+    const agentConfigs = Object.entries(config.agents).map(([id, cfg]) => ({ id, ...cfg }));
+    this.delegationManager = new DelegationManager(agentConfigs);
+
+    this.backgroundTaskManager = new BackgroundTaskManager(
+      async (agentId: string, prompt: string): Promise<string> => {
+        const process = await this.processManager.getProcess('discord', 'background', agentId);
+        const result = await process.sendMessage(prompt);
+        return result.response;
+      },
+      { maxConcurrentPerAgent: 2, maxTotalConcurrent: 5 }
+    );
+
+    this.systemReminder = new SystemReminderService({
+      batchWindowMs: 2000,
+      enableChatNotifications: true,
+    });
+
+    this.backgroundTaskManager.on('task-started', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-started',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        timestamp: Date.now(),
+      });
+    });
+
+    this.backgroundTaskManager.on('task-completed', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-completed',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        duration: task.duration,
+        timestamp: Date.now(),
+      });
+    });
+
+    this.backgroundTaskManager.on('task-failed', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-failed',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        error: task.error,
+        timestamp: Date.now(),
+      });
+    });
 
     // Periodic cleanup of expired queued messages and mention dedup entries
     this.cleanupInterval = setInterval(() => {
@@ -311,6 +372,19 @@ export class MultiAgentDiscordHandler {
     }
 
     this.discordClient = client;
+
+    this.systemReminder.registerCallback(async (channelId, message) => {
+      const ch = await client.channels.fetch(channelId);
+      if (ch && 'send' in (ch as Record<string, unknown>)) {
+        const chunks = splitForDiscord(message);
+        for (const chunk of chunks) {
+          await (ch as { send: (opts: { content: string }) => Promise<unknown> }).send({
+            content: chunk,
+          });
+        }
+      }
+    }, 'discord');
+
     if (this.prReviewPoller.hasMessageSender()) return;
 
     this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
@@ -612,12 +686,43 @@ export class MultiAgentDiscordHandler {
       ]);
       clearTimeout(timeoutHandle!);
 
-      // Resolve @Name mentions in LLM response to <@userId> format
       const resolvedResponse = this.resolveResponseMentions(result.response);
 
-      // Format response with agent prefix
-      const formattedResponse = this.formatAgentResponse(agent, resolvedResponse);
+      const bgDelegation = this.delegationManager.parseDelegation(agentId, resolvedResponse);
+      if (bgDelegation && bgDelegation.background) {
+        const check = this.delegationManager.isDelegationAllowed(
+          bgDelegation.fromAgentId,
+          bgDelegation.toAgentId
+        );
+        if (check.allowed) {
+          const toAgent = this.orchestrator.getAgent(bgDelegation.toAgentId);
+          this.backgroundTaskManager.submit({
+            description: bgDelegation.task.substring(0, 200),
+            prompt: bgDelegation.task,
+            agentId: bgDelegation.toAgentId,
+            requestedBy: agentId,
+            channelId: context.channelId,
+            source: 'discord',
+          });
+          console.log(
+            `[MultiAgent] Background delegation: ${agentId} → ${bgDelegation.toAgentId} (async)`
+          );
 
+          const displayResponse =
+            bgDelegation.originalContent ||
+            `🔄 Background task submitted to **${toAgent?.display_name ?? bgDelegation.toAgentId}**`;
+          const formattedResponse = this.formatAgentResponse(agent, displayResponse);
+          return {
+            agentId,
+            agent,
+            content: formattedResponse,
+            rawContent: displayResponse,
+            duration: result.duration_ms,
+          };
+        }
+      }
+
+      const formattedResponse = this.formatAgentResponse(agent, resolvedResponse);
       return {
         agentId,
         agent,
@@ -976,9 +1081,14 @@ export class MultiAgentDiscordHandler {
     return this.multiBotManager;
   }
 
-  /**
-   * Check if mention-based delegation is enabled
-   */
+  getBackgroundTaskManager(): BackgroundTaskManager {
+    return this.backgroundTaskManager;
+  }
+
+  getSystemReminder(): SystemReminderService {
+    return this.systemReminder;
+  }
+
   isMentionDelegationEnabled(): boolean {
     return this.config.mention_delegation === true;
   }
