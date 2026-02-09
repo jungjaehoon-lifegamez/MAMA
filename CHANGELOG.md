@@ -33,6 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Contract Extractor** - 5 extractors for API, function, type, SQL, and GraphQL contracts (661 lines)
 - **256 New Tests** - Full coverage for all 4 hook modules
 
+**Plugin Hook Redesign (oh-my-opencode style)** (2026-02-08)
+
+- **UserPromptSubmit Rewrite** - Rewritten from 421→143 lines, keyword-only trigger with dynamic truncation
+- **PreToolUse AGENTS.md Injection** - Read tool path injects AGENTS.md and .rules files for agent context
+- **SubagentStop Hook** - Result verification on subagent completion
+- **PreCompact Hook** - Detects unsaved decisions at 80% context capacity, injects compression prompt
+- **Session Cache** - 198-line module for caching session state across hook invocations
+- **Directory Walker** - Recursive project structure discovery for AGENTS.md files
+- **Rules Finder** - Locates and aggregates .rules files from project hierarchy
+- **Dynamic Truncator** - Intelligent token-budget truncation for hook output
+- **MAMA_HOOK_FEATURES** - Granular feature control env var (`keywords,rules,agents`)
+
 **PR Review Poller & Commit Workflow** (2026-02-09)
 
 - **PR Review Poller** - Polls GitHub PR review comments and routes Reviewer → LEAD chain
