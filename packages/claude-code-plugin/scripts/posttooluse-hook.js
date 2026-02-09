@@ -984,10 +984,6 @@ async function main() {
     }
 
     // Correct Claude Code JSON format with hookSpecificOutput
-    const systemMessage = hasCodeChange
-      ? `⚠️ MAMA v2 CRITICAL: Execute Task tool below to extract contracts and prevent future bugs | ${topic} (${latencyMs}ms)`
-      : `💾 MAMA suggests saving: ${topic} (${latencyMs}ms)`;
-
     const response = {
       decision: 'allow',
       message: additionalContext,
@@ -997,7 +993,7 @@ async function main() {
     if (process.env.MAMA_DEBUG === 'true') {
       console.error('🔍 [MAMA DEBUG] Hook outputting response:');
       console.error(`🔍 [MAMA DEBUG] - hasCodeChange: ${hasCodeChange}`);
-      console.error(`🔍 [MAMA DEBUG] - systemMessage: ${systemMessage}`);
+      console.error(`🔍 [MAMA DEBUG] - topic: ${topic} (${latencyMs}ms)`);
       console.error(`🔍 [MAMA DEBUG] - additionalContext length: ${additionalContext.length}`);
     }
 

@@ -345,6 +345,19 @@ export class AgentProcessPool {
    *
    * @returns Map<agentId, PoolStatus>
    */
+  /**
+   * Check if an agent has busy processes matching a channel key prefix
+   *
+   * @param agentId - Agent ID
+   * @param channelKeyPrefix - Channel key prefix to match (e.g. "discord:123:")
+   * @returns true if any busy process matches the prefix
+   */
+  hasBusyProcessForChannel(agentId: string, channelKeyPrefix: string): boolean {
+    const pool = this.pools.get(agentId);
+    if (!pool) return false;
+    return pool.some((p) => p.busy && p.channelKey.startsWith(channelKeyPrefix));
+  }
+
   getAllPoolStatuses(): Map<string, PoolStatus> {
     const statuses = new Map<string, PoolStatus>();
     for (const agentId of this.pools.keys()) {
