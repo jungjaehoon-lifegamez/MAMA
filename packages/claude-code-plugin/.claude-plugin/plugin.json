@@ -24,6 +24,7 @@
     "./commands/configure.md"
   ],
   "skills": ["./skills/mama-context"],
+  "agents": "./agents/",
   "hooks": {
     "SessionStart": [
       {
@@ -36,28 +37,7 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/userpromptsubmit-hook.js",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js",
-            "timeout": 2
-          }
-        ]
-      },
       {
         "matcher": "Edit",
         "hooks": [
@@ -84,17 +64,6 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/subagentstop-hook.js",
             "timeout": 5
           }
         ]
