@@ -32,6 +32,9 @@ importers:
       '@huggingface/transformers':
         specifier: ^3.0.0
         version: 3.8.0
+      '@jungjaehoon/mama-core':
+        specifier: workspace:^1.0.2
+        version: link:../mama-core
       better-sqlite3:
         specifier: ^11.0.0
         version: 11.10.0

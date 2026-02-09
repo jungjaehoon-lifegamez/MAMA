@@ -22,8 +22,8 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 
-const { vectorSearch, initDB } = require(path.join(CORE_PATH, 'memory-store'));
-const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
+const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/memory-store');
+const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 const { shouldShowLong, markSeen } = require(path.join(CORE_PATH, 'session-utils'));
 

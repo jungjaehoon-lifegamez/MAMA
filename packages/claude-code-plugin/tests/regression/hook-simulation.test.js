@@ -120,7 +120,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
     process.env.MAMA_DB_PATH = TEST_DB_PATH;
 
     // Dynamic imports to ensure env vars are set BEFORE modules load
-    const dbManager = await import('../../src/core/db-manager.js');
+    const dbManager = await import('@jungjaehoon/mama-core/db-manager');
     initDB = dbManager.initDB;
     closeDB = dbManager.closeDB;
 
@@ -167,95 +167,34 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
   // PreToolUse Hook Simulation
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  describe.skip('PreToolUse Hook Simulation', () => {
-    // Skipped: PreToolUse hook requires MCP server running for realistic timing
-    // Tests timeout or get killed without proper MCP server connection
-    it('should execute successfully with Read tool payload', async () => {
-      const result = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
-        FILE_PATH: '/path/to/db-manager.js',
-      });
+  describe('PreToolUse Hook Simulation', () => {
+    // Architecture (Feb 2025): Standalone script, reads JSON from stdin,
+    // outputs via stdout (hookSpecificOutput) or stderr (allow decisions).
+    // Grep/Glob: allow via stderr. Read: lightweight (agents/rules). Edit/Write: contract search.
 
-      // exitCode can be 0 or null (killed by timeout) in test env
-      expect(result.exitCode === 0 || result.exitCode === null).toBe(true);
-
-      // Should complete within latency budget (relaxed for test env without MCP server)
-      console.log(`[Regression] PreToolUse (Read) latency: ${result.latency}ms`);
-      expect(result.latency).toBeLessThan(15000);
-    });
-
-    it('should execute successfully with Grep tool payload', async () => {
+    it('should execute Grep tool and allow freely', async () => {
       const result = await execHook(PRETOOLUSE_HOOK, {
         TOOL_NAME: 'Grep',
         GREP_PATTERN: 'embeddings',
       });
 
-      // exitCode can be 0 or null (killed by timeout) in test env
-      expect(result.exitCode === 0 || result.exitCode === null).toBe(true);
-
-      console.log(`[Regression] PreToolUse (Grep) latency: ${result.latency}ms`);
-      expect(result.latency).toBeLessThan(15000);
-    });
-
-    it('should execute successfully with Edit tool payload', async () => {
-      const result = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Edit',
-        FILE_PATH: '/path/to/mama-api.js',
-      });
-
-      // exitCode can be 0 or null (killed by timeout) in test env
-      expect(result.exitCode === 0 || result.exitCode === null).toBe(true);
-
-      console.log(`[Regression] PreToolUse (Edit) latency: ${result.latency}ms`);
-      // Latency can be high when MCP server is not running (test env)
-      expect(result.latency).toBeLessThan(15000);
-    });
-
-    it('should output JSON response with hook info', async () => {
-      const result = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
-        FILE_PATH: '/path/to/test.js',
-      });
-
       expect(result.exitCode).toBe(0);
-
-      // Should contain JSON allow response (Feb 2025 format change)
-      if (result.stdout) {
-        expect(result.stdout).toContain('decision');
-        expect(result.stdout).toContain('allow');
-        // May contain hookSpecificOutput with PreToolUse info if contracts found
-      }
+      // Grep outputs allow decision to stderr (fast path, no injection)
+      expect(result.stderr).toContain('allow');
+      console.log(`[Regression] PreToolUse (Grep) latency: ${result.latency}ms`);
+      expect(result.latency).toBeLessThan(5000);
     });
 
-    it('should respect rate limiting', async () => {
-      // First execution
-      const first = await execHook(PRETOOLUSE_HOOK, {
+    it('should execute Read tool via lightweight path', async () => {
+      const result = await execHook(PRETOOLUSE_HOOK, {
         TOOL_NAME: 'Read',
-        FILE_PATH: '/path/to/test1.js',
+        FILE_PATH: '/path/to/db-manager.js',
       });
 
-      expect(first.exitCode).toBe(0);
-
-      // Second execution immediately after (should be rate limited)
-      const second = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
-        FILE_PATH: '/path/to/test2.js',
-      });
-
-      expect(second.exitCode).toBe(0);
-
-      // Rate limiting may cause silent exit (no output) or reduced results
-      // This is expected behavior - hook should not spam on rapid operations
-
-      // Third execution after delay (should succeed)
-      await new Promise((resolve) => setTimeout(resolve, 1100)); // Wait 1.1s (> 1s rate limit)
-
-      const third = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
-        FILE_PATH: '/path/to/test3.js',
-      });
-
-      expect(third.exitCode).toBe(0);
+      // Read path: checks agents/rules only (no DB), may exit with 0
+      expect(result.exitCode).toBe(0);
+      console.log(`[Regression] PreToolUse (Read) latency: ${result.latency}ms`);
+      expect(result.latency).toBeLessThan(5000);
     });
 
     it('should handle unsupported tool gracefully', async () => {
@@ -263,22 +202,32 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
         TOOL_NAME: 'UnsupportedTool',
       });
 
-      // Should exit cleanly - outputs JSON allow response (Feb 2025 change)
+      // Unknown tools get allow via stderr (line 431 in hook)
       expect(result.exitCode).toBe(0);
-      // Now outputs JSON allow response for all cases
-      expect(result.stdout).toContain('decision');
+      expect(result.stderr).toContain('allow');
     });
 
-    it.skip('should respect MAMA_DISABLE_HOOKS flag', async () => {
-      // TODO: PreToolUse hook doesn't currently check MAMA_DISABLE_HOOKS
+    it('should respect MAMA_DISABLE_HOOKS flag', async () => {
       const result = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
+        TOOL_NAME: 'Edit',
         FILE_PATH: '/path/to/test.js',
         MAMA_DISABLE_HOOKS: 'true',
       });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toBe(''); // No output when disabled
+      // When disabled via hook-features.js, outputs allow + "MAMA hooks disabled"
+      expect(result.stderr).toContain('MAMA hooks disabled');
+    });
+
+    it('should skip non-code files for Edit tool', async () => {
+      const result = await execHook(PRETOOLUSE_HOOK, {
+        TOOL_NAME: 'Edit',
+        FILE_PATH: '/path/to/README.md', // .md is in SKIP_PATTERNS
+      });
+
+      expect(result.exitCode).toBe(0);
+      // Non-code files get silent allow via stderr
+      expect(result.stderr).toContain('allow');
     });
   });
 
@@ -388,13 +337,11 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
   // Cross-Hook Integration Tests
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  describe.skip('Cross-Hook Integration', () => {
-    // Skipped: Requires MCP server for PreToolUse hook
-    it('should execute all hooks without errors', async () => {
+  describe('Cross-Hook Integration', () => {
+    it('should execute all hooks in parallel without errors', async () => {
       const results = await Promise.all([
         execHook(PRETOOLUSE_HOOK, {
-          TOOL_NAME: 'Read',
-          FILE_PATH: '/path/to/test.js',
+          TOOL_NAME: 'Grep', // Use Grep for fast path
         }),
         execHook(POSTTOOLUSE_HOOK, {
           TOOL_NAME: 'Write',
@@ -405,42 +352,29 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
         }),
       ]);
 
-      // All hooks should succeed
+      // All hooks should succeed (exit 0 or 2 for PostToolUse)
       results.forEach((result, i) => {
-        expect(result.exitCode).toBe(0);
+        expect(result.exitCode === 0 || result.exitCode === 2).toBe(true);
         console.log(`[Regression] Hook ${i + 1} latency: ${result.latency}ms`);
       });
 
-      // Total latency should be reasonable (parallel execution)
-      // Note: Can be slow in test env without MCP server running
+      // Parallel execution should complete within reasonable time
       const totalLatency = Math.max(...results.map((r) => r.latency));
-      expect(totalLatency).toBeLessThan(15000);
+      expect(totalLatency).toBeLessThan(5000);
     });
 
-    it('should maintain consistent output format across hooks', async () => {
-      const preResult = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
-        FILE_PATH: '/path/to/test.js',
-      });
+    it('should all exit cleanly when MAMA_DISABLE_HOOKS is set', async () => {
+      const disableEnv = { MAMA_DISABLE_HOOKS: 'true' };
 
-      const postResult = await execHook(POSTTOOLUSE_HOOK, {
-        TOOL_NAME: 'Write',
-        FILE_PATH: '/path/to/test.js',
-      });
+      const results = await Promise.all([
+        execHook(PRETOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Edit' }),
+        execHook(POSTTOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Write' }),
+        execHook(USERPROMPTSUBMIT_HOOK, { ...disableEnv, USER_PROMPT: 'Test' }),
+      ]);
 
-      const userResult = await execHook(USERPROMPTSUBMIT_HOOK, {
-        USER_PROMPT: 'Test prompt',
-      });
-
-      // All should have consistent tier formatting (if output exists)
-      [preResult, postResult, userResult].forEach((result) => {
-        if (result.stdout) {
-          // Should match tier badge format: 🟢 Tier 1, 🟡 Tier 2, or 🔴 Tier 3
-          const hasTier = /Tier [1-3]/.test(result.stdout);
-          if (hasTier) {
-            expect(result.stdout).toMatch(/[🟢🟡🔴] Tier [1-3]/u);
-          }
-        }
+      results.forEach((result) => {
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toBe(''); // No injection when disabled
       });
     });
   });
@@ -450,22 +384,14 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   describe('Performance: Hook Latency Budget', () => {
-    it.skip('should maintain p95 latency < 100ms for PreToolUse', async () => {
-      // Skip: Requires running MCP server for realistic latency
+    it('should maintain fast latency for Grep (fast path)', async () => {
       const latencies = [];
 
-      // Run 20 times to measure p95
-      for (let i = 0; i < 20; i++) {
-        // Clear rate limit to allow execution
-        if (fs.existsSync(RATE_LIMIT_FILE)) {
-          fs.unlinkSync(RATE_LIMIT_FILE);
-        }
-
+      for (let i = 0; i < 10; i++) {
         const result = await execHook(PRETOOLUSE_HOOK, {
-          TOOL_NAME: 'Read',
-          FILE_PATH: `/path/to/test${i}.js`,
+          TOOL_NAME: 'Grep',
+          GREP_PATTERN: `test_pattern_${i}`,
         });
-
         latencies.push(result.latency);
       }
 
@@ -473,45 +399,10 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       const p95Index = Math.floor(latencies.length * 0.95) - 1;
       const p95Latency = latencies[p95Index];
 
-      console.log(`[Regression] PreToolUse p95 latency: ${p95Latency}ms`);
+      console.log(`[Regression] PreToolUse (Grep fast path) p95 latency: ${p95Latency}ms`);
 
-      // AC #2: Hook latency budget (generous for CI environment)
-      // Real-world p95 should be < 100ms, but CI overhead may increase this
-      expect(p95Latency).toBeLessThan(500); // 500ms budget for CI
-    });
-
-    it.skip('should not degrade performance with large decision count', async () => {
-      // Skip: Requires running MCP server for realistic latency
-      // Add 50 more decisions (total 55)
-      for (let i = 0; i < 50; i++) {
-        await saveDecisionTool.handler(
-          {
-            topic: `perf_test_${i}`,
-            decision: `Performance test decision ${i}`,
-            reasoning: `Testing hook performance with large dataset ${i}`,
-            confidence: 0.5,
-          },
-          mockContext
-        );
-      }
-
-      // Clear rate limit
-      if (fs.existsSync(RATE_LIMIT_FILE)) {
-        fs.unlinkSync(RATE_LIMIT_FILE);
-      }
-
-      // Measure latency with large dataset
-      const result = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
-        FILE_PATH: '/path/to/test.js',
-      });
-
-      expect(result.exitCode).toBe(0);
-
-      console.log(`[Regression] PreToolUse with 55 decisions: ${result.latency}ms`);
-
-      // Should still be fast even with larger dataset
-      expect(result.latency).toBeLessThan(1000);
+      // Grep fast path should be very quick (no DB, no embeddings)
+      expect(p95Latency).toBeLessThan(1000);
     });
   });
 
@@ -519,54 +410,33 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
   // Error Handling and Edge Cases
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  describe.skip('Error Handling', () => {
-    // Skipped: Requires MCP server for realistic error handling tests
+  describe('Error Handling', () => {
     it('should handle missing environment variables gracefully', async () => {
-      // PreToolUse without TOOL_NAME - outputs JSON allow response
+      // PreToolUse without TOOL_NAME - unknown tool path, allow via stderr
       const preResult = await execHook(PRETOOLUSE_HOOK, {});
-
-      expect(preResult.exitCode).toBe(0); // Should exit cleanly
-      // Now outputs JSON allow response even without tool (Feb 2025 change)
-      expect(preResult.stdout).toContain('decision');
-      expect(preResult.stdout).toContain('allow');
+      expect(preResult.exitCode).toBe(0);
+      expect(preResult.stderr).toContain('allow');
 
       // PostToolUse without TOOL_NAME
       const postResult = await execHook(POSTTOOLUSE_HOOK, {});
-
       expect(postResult.exitCode).toBe(0);
-      // PostToolUse outputs to stderr when no valid input
 
       // UserPromptSubmit without USER_PROMPT
       const userResult = await execHook(USERPROMPTSUBMIT_HOOK, {});
-
       expect(userResult.exitCode).toBe(0);
       expect(userResult.stdout).toBe('');
     });
 
     it('should handle database connection failures gracefully', async () => {
-      // Use non-existent database path
+      // Use non-existent database path with Edit tool (triggers DB access)
       const result = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
+        TOOL_NAME: 'Edit',
         FILE_PATH: '/path/to/test.js',
         MAMA_DB_PATH: '/nonexistent/path/mama.db',
       });
 
-      // Should not crash - graceful degradation
-      // exitCode may be 0 or null depending on timeout/error handling
-      expect(result.exitCode === 0 || result.exitCode === null).toBe(true);
-
-      // May have error in stderr, but should not block tool execution
-      // This is expected Tier 3 behavior (degraded mode)
-    });
-
-    it('should timeout if execution takes too long', async () => {
-      const result = await execHook(PRETOOLUSE_HOOK, {
-        TOOL_NAME: 'Read',
-        FILE_PATH: '/path/to/test.js',
-      });
-
-      // Should complete before timeout (15s max, allowing for MCP timeout)
-      expect(result.latency).toBeLessThan(15000);
+      // Should not crash - graceful degradation via catch handler
+      expect(result.exitCode).toBe(0);
     });
   });
 });
