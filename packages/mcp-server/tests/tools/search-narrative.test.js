@@ -10,12 +10,24 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { initDB, closeDB, getAdapter } from '@jungjaehoon/mama-core/db-manager';
 import { saveDecisionTool } from '../../src/tools/save-decision.js';
 import { searchNarrativeTool } from '../../src/tools/search-narrative.js';
+import { generateEmbedding } from '@jungjaehoon/mama-core/embeddings';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 
 // Test database path (isolated from production)
 const TEST_DB_PATH = path.join(os.tmpdir(), `mama-test-search-narrative-${Date.now()}.db`);
+
+// Check if embedding model is available (may fail on CI with corrupted ONNX model)
+let embeddingsAvailable = true;
+try {
+  await generateEmbedding('test');
+} catch {
+  embeddingsAvailable = false;
+  console.warn(
+    '[search-narrative.test] Embedding model unavailable — skipping semantic search tests'
+  );
+}
 
 // Mock tool context
 const mockContext = {
@@ -132,7 +144,7 @@ describe('search_narrative MCP Tool', () => {
     });
   });
 
-  describe('Semantic Search', () => {
+  describe.skipIf(!embeddingsAvailable)('Semantic Search', () => {
     it('should find decisions by semantic search', async () => {
       const result = await searchNarrativeTool.handler(
         {
@@ -174,7 +186,7 @@ describe('search_narrative MCP Tool', () => {
     });
   });
 
-  describe('Output Modes', () => {
+  describe.skipIf(!embeddingsAvailable)('Output Modes', () => {
     it('should format results in full mode', async () => {
       const result = await searchNarrativeTool.handler(
         {
@@ -232,7 +244,7 @@ describe('search_narrative MCP Tool', () => {
     });
   });
 
-  describe('Link Expansion', () => {
+  describe.skipIf(!embeddingsAvailable)('Link Expansion', () => {
     it('should return no links when depth=0', async () => {
       const result = await searchNarrativeTool.handler(
         {
@@ -251,7 +263,7 @@ describe('search_narrative MCP Tool', () => {
     // These would be added in a more comprehensive test setup
   });
 
-  describe('Metadata', () => {
+  describe.skipIf(!embeddingsAvailable)('Metadata', () => {
     it('should include search metadata in response', async () => {
       const result = await searchNarrativeTool.handler(
         {
