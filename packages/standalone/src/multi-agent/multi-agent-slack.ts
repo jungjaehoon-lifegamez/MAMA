@@ -211,7 +211,18 @@ export class MultiAgentSlackHandler {
       const mentionedAgentIds = this.extractMentionedAgentIds(event.text);
 
       // Force this specific agent to respond
+      const mentionDescription = cleanContent.substring(0, 200);
       try {
+        this.systemReminder.notify({
+          type: 'delegation-started',
+          taskId: '',
+          description: mentionDescription,
+          agentId,
+          requestedBy: senderAgentId ?? event.user,
+          channelId: event.channel,
+          timestamp: Date.now(),
+        });
+
         const response = await this.processAgentResponse(
           agentId,
           {
@@ -228,6 +239,17 @@ export class MultiAgentSlackHandler {
         );
 
         if (response) {
+          this.systemReminder.notify({
+            type: 'delegation-completed',
+            taskId: '',
+            description: mentionDescription,
+            agentId,
+            requestedBy: senderAgentId ?? event.user,
+            channelId: event.channel,
+            duration: response.duration,
+            timestamp: Date.now(),
+          });
+
           const threadTs = event.thread_ts || event.ts;
           await this.sendAgentResponses(event.channel, threadTs, [response]);
           this.orchestrator.recordAgentResponse(agentId, event.channel, response.messageId);
@@ -791,6 +813,18 @@ export class MultiAgentSlackHandler {
       /* ignore reaction errors */
     }
 
+    const botMentionDescription = cleanContent.substring(0, 200);
+
+    this.systemReminder.notify({
+      type: 'delegation-started',
+      taskId: '',
+      description: botMentionDescription,
+      agentId: targetAgentId,
+      requestedBy: senderAgentId ?? 'main',
+      channelId: event.channel,
+      timestamp: Date.now(),
+    });
+
     try {
       const response = await this.processAgentResponse(
         targetAgentId,
@@ -808,6 +842,17 @@ export class MultiAgentSlackHandler {
       );
 
       if (response) {
+        this.systemReminder.notify({
+          type: 'delegation-completed',
+          taskId: '',
+          description: botMentionDescription,
+          agentId: targetAgentId,
+          requestedBy: senderAgentId ?? 'main',
+          channelId: event.channel,
+          duration: response.duration,
+          timestamp: Date.now(),
+        });
+
         const threadTs = event.thread_ts || event.ts;
         await this.sendAgentResponses(event.channel, threadTs, [response], mainWebClient);
         this.orchestrator.recordAgentResponse(targetAgentId, event.channel, response.messageId);
