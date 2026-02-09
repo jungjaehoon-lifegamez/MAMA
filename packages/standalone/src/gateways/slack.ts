@@ -72,6 +72,10 @@ export class SlackGateway implements Gateway {
   private multiAgentHandler: MultiAgentSlackHandler | null = null;
   private botToken: string;
 
+  // Dedup: prevent double processing from app_mention + message events
+  private processedMessages = new Map<string, number>();
+  private static readonly DEDUP_TTL_MS = 30_000;
+
   // Safe logger instance
   private logger = createSafeLogger('SlackGateway');
 
@@ -157,12 +161,13 @@ export class SlackGateway implements Gateway {
         await ack();
         await this.handleMessage(event as SlackMessageEvent, false);
       } catch (error) {
-        this.logger.error('Error handling Slack message:', error);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        this.logger.error('Error handling Slack message:', errMsg);
         this.emitEvent({
           type: 'error',
           source: 'slack',
           timestamp: new Date(),
-          error: error instanceof Error ? error : new Error(String(error)),
+          error: error instanceof Error ? error : new Error(errMsg),
         });
       }
     });
@@ -173,12 +178,13 @@ export class SlackGateway implements Gateway {
         await ack();
         await this.handleMessage(event as SlackMessageEvent, true);
       } catch (error) {
-        this.logger.error('Error handling Slack mention:', error);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        this.logger.error('Error handling Slack mention:', errMsg);
         this.emitEvent({
           type: 'error',
           source: 'slack',
           timestamp: new Date(),
-          error: error instanceof Error ? error : new Error(String(error)),
+          error: error instanceof Error ? new Error(error.message) : new Error(String(error)),
         });
       }
     });
@@ -188,6 +194,27 @@ export class SlackGateway implements Gateway {
    * Handle incoming Slack message
    */
   private async handleMessage(event: SlackMessageEvent, isMention: boolean): Promise<void> {
+    // Dedup: Slack fires both app_mention and message events for the same @mention.
+    // app_mention (isMention=true) always processes and marks the key.
+    // message (isMention=false) skips if already handled by app_mention.
+    if (!event.bot_id) {
+      const dedupKey = event.ts;
+      if (isMention) {
+        // app_mention: always process, mark as handled
+        this.processedMessages.set(dedupKey, Date.now());
+      } else if (this.processedMessages.has(dedupKey)) {
+        // message event: skip if app_mention already handled it
+        return;
+      }
+      // Periodic cleanup
+      if (this.processedMessages.size > 100) {
+        const now = Date.now();
+        for (const [key, time] of this.processedMessages) {
+          if (now - time > SlackGateway.DEDUP_TTL_MS) this.processedMessages.delete(key);
+        }
+      }
+    }
+
     // Record ALL messages to channel history (for conversation context)
     const channelHistory = getChannelHistory();
     const senderName = event.bot_id ? (event.bot_id === 'auto-route' ? 'Agent' : 'Bot') : 'User';
@@ -326,14 +353,7 @@ export class SlackGateway implements Gateway {
         this.logger.warn(`[Slack] Failed to add reaction: ${errDetail}`);
       }
 
-      // Build conversation history context (like Discord's channel-history)
-      const historyContext = channelHistory.formatForContext(event.channel, event.ts);
-
-      const multiAgentResult = await this.multiAgentHandler.handleMessage(
-        event,
-        cleanContent,
-        historyContext || undefined
-      );
+      const multiAgentResult = await this.multiAgentHandler.handleMessage(event, cleanContent);
 
       if (multiAgentResult && multiAgentResult.responses.length > 0) {
         // Replace eyes with checkmark on completion
@@ -408,17 +428,8 @@ export class SlackGateway implements Gateway {
 
         return; // Multi-agent handled it
       }
-      // No multi-agent response; remove eyes reaction before falling through
-      try {
-        await this.webClient.reactions.remove({
-          channel: event.channel,
-          timestamp: event.ts,
-          name: 'eyes',
-        });
-      } catch {
-        /* ignore reaction errors */
-      }
-      // Fall through to regular processing
+      // No multi-agent response; keep eyes reaction as "thinking" indicator
+      // Fall through to regular processing (eyes will be replaced after response)
     }
 
     // Normalize message for router
@@ -438,6 +449,24 @@ export class SlackGateway implements Gateway {
 
     // Send response in thread
     await this.sendResponse(event, result.response);
+
+    // Replace eyes with checkmark after response sent (only in multi-agent mode)
+    if (this.multiAgentHandler?.isEnabled()) {
+      try {
+        await this.webClient.reactions.remove({
+          channel: event.channel,
+          timestamp: event.ts,
+          name: 'eyes',
+        });
+        await this.webClient.reactions.add({
+          channel: event.channel,
+          timestamp: event.ts,
+          name: 'white_check_mark',
+        });
+      } catch {
+        /* ignore reaction errors */
+      }
+    }
 
     // Emit message sent event
     this.emitEvent({

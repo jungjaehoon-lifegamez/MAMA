@@ -1,19 +1,19 @@
 /**
  * Auto-Recall Module for MAMA Standalone
  *
- * OpenClaw 플러그인의 auto-recall 로직을 standalone으로 이식.
- * 에이전트 시작 전에 관련 메모리를 자동으로 검색하여 컨텍스트에 주입.
+ * Ported from OpenClaw plugin's auto-recall logic to standalone.
+ * Automatically searches related memories before agent start and injects into context.
  *
  * Features:
- * - 프롬프트 기반 시맨틱 검색
- * - 최근 체크포인트 로드
- * - 관련 결정 컨텍스트 주입
+ * - Prompt-based semantic search
+ * - Recent checkpoint loading
+ * - Related decision context injection
  */
 
 import path from 'node:path';
 import os from 'node:os';
 
-// MAMA API interface (mama-server의 mama-api.js와 동일)
+// MAMA API interface (same as mama-server's mama-api.js)
 interface MAMADecision {
   id: string;
   topic: string;
@@ -42,7 +42,7 @@ let initialized = false;
 let mamaApi: any = null;
 
 /**
- * Format reasoning with link extraction (OpenClaw 로직 재사용)
+ * Format reasoning with link extraction (reused from OpenClaw logic)
  */
 function formatReasoning(reasoning: string, maxLen: number = 80): string {
   if (!reasoning) return '';
@@ -75,16 +75,12 @@ async function initMAMA(dbPath?: string): Promise<void> {
   process.env.MAMA_DB_PATH = finalDbPath;
 
   try {
-    // Dynamic import of mama-server modules
-    const mamaModulePath = path.dirname(
-      require.resolve('@jungjaehoon/mama-server/src/mama/mama-api.js')
-    );
-
-    mamaApi = require(path.join(mamaModulePath, 'mama-api.js'));
+    // Dynamic import of mama-core modules
+    mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
     // Initialize database
-    const memoryStore = require(path.join(mamaModulePath, 'memory-store.js'));
-    await memoryStore.initDB();
+    const dbManager = require('@jungjaehoon/mama-core/db-manager');
+    await dbManager.initDB();
 
     initialized = true;
     console.log(`[AutoRecall] MAMA initialized (db: ${finalDbPath})`);
@@ -95,27 +91,27 @@ async function initMAMA(dbPath?: string): Promise<void> {
 }
 
 /**
- * Auto-recall 결과 타입
+ * Auto-recall result type
  */
 export interface AutoRecallResult {
-  /** 주입할 컨텍스트 문자열 */
+  /** Context string to inject */
   context: string;
-  /** 시맨틱 검색 결과 수 */
+  /** Number of semantic search results */
   semanticMatches: number;
-  /** 최근 결정 수 */
+  /** Number of recent decisions */
   recentDecisions: number;
-  /** 체크포인트 존재 여부 */
+  /** Whether a checkpoint exists */
   hasCheckpoint: boolean;
 }
 
 /**
- * 프롬프트 기반 auto-recall 실행
+ * Execute prompt-based auto-recall
  *
- * OpenClaw의 before_agent_start 훅 로직을 standalone으로 이식.
+ * Ported from OpenClaw's before_agent_start hook logic to standalone.
  *
- * @param userPrompt - 사용자 프롬프트 (시맨틱 검색 쿼리로 사용)
- * @param options - 옵션
- * @returns AutoRecallResult 또는 null (메모리 없음)
+ * @param userPrompt - User prompt (used as semantic search query)
+ * @param options - Options
+ * @returns AutoRecallResult or null (no memories found)
  */
 export async function autoRecall(
   userPrompt: string,
@@ -137,7 +133,7 @@ export async function autoRecall(
     const recentLimit = options.recentLimit ?? 3;
     const threshold = options.threshold ?? 0.5;
 
-    // 1. 시맨틱 검색 (프롬프트가 충분히 길 때만)
+    // 1. Semantic search (only when prompt is long enough)
     let semanticResults: MAMADecision[] = [];
     if (userPrompt && userPrompt.length >= 5) {
       try {
@@ -151,7 +147,7 @@ export async function autoRecall(
       }
     }
 
-    // 2. 체크포인트 로드
+    // 2. Load checkpoint
     let checkpoint: MAMACheckpoint | null = null;
     try {
       checkpoint = await mamaApi.loadCheckpoint();
@@ -159,7 +155,7 @@ export async function autoRecall(
       console.error('[AutoRecall] Checkpoint load error:', err.message);
     }
 
-    // 3. 최근 결정 로드 (시맨틱 결과가 없을 때만)
+    // 3. Load recent decisions (only when no semantic results)
     let recentDecisions: MAMADecision[] = [];
     if (semanticResults.length === 0) {
       try {
@@ -169,17 +165,17 @@ export async function autoRecall(
       }
     }
 
-    // 4. 컨텍스트가 없으면 null 반환
+    // 4. Return null if no context found
     if (!checkpoint && semanticResults.length === 0 && recentDecisions.length === 0) {
       return null;
     }
 
-    // 5. 컨텍스트 문자열 생성
+    // 5. Build context string
     let content = '<relevant-memories>\n';
     content += '# MAMA Memory Context\n\n';
 
     if (semanticResults.length > 0) {
-      content += '## 관련 결정 (시맨틱 매치)\n\n';
+      content += '## Related Decisions (Semantic Match)\n\n';
       semanticResults.forEach((r) => {
         const pct = Math.round((r.similarity || 0) * 100);
         content += `- **${r.topic}** [${pct}%]: ${r.decision}`;
@@ -191,16 +187,21 @@ export async function autoRecall(
     }
 
     if (checkpoint) {
-      const ts = new Date(checkpoint.timestamp).toLocaleString('ko-KR');
-      content += `## 마지막 체크포인트 (${ts})\n\n`;
-      content += `**요약:** ${checkpoint.summary}\n\n`;
+      let ts: string;
+      try {
+        ts = new Date(checkpoint.timestamp).toISOString();
+      } catch {
+        ts = String(checkpoint.timestamp);
+      }
+      content += `## Last Checkpoint (${ts})\n\n`;
+      content += `**Summary:** ${checkpoint.summary}\n\n`;
       if (checkpoint.next_steps) {
-        content += `**다음 단계:** ${checkpoint.next_steps}\n\n`;
+        content += `**Next Steps:** ${checkpoint.next_steps}\n\n`;
       }
     }
 
     if (recentDecisions.length > 0) {
-      content += '## 최근 결정\n\n';
+      content += '## Recent Decisions\n\n';
       recentDecisions.forEach((d) => {
         content += `- **${d.topic}**: ${d.decision}`;
         if (d.outcome) content += ` (${d.outcome})`;
@@ -228,14 +229,14 @@ export async function autoRecall(
 }
 
 /**
- * MAMA API 직접 접근 (고급 사용)
+ * Direct MAMA API access (advanced usage)
  */
 export function getMAMAApi(): any {
   return mamaApi;
 }
 
 /**
- * 초기화 상태 확인
+ * Check initialization status
  */
 export function isInitialized(): boolean {
   return initialized;

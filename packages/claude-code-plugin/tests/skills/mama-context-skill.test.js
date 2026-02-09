@@ -264,13 +264,16 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
       const userPromptContent = fs.readFileSync(USER_PROMPT_HOOK, 'utf8');
 
-      // Verify similarity threshold consistency
+      // Verify similarity threshold in skill
       expect(skillContent).toMatch(/75%|0\.75/);
-      expect(userPromptContent).toMatch(/0\.75|75/);
 
-      // Verify timeout consistency (1200ms - optimized with SessionStart pre-warming)
+      // Verify timeout in skill
       expect(skillContent).toContain('1200ms');
-      expect(userPromptContent).toMatch(/1200/);
+
+      // UserPromptSubmit is now keyword-detection-only (no memory injection)
+      // Verify it has keyword detection capability
+      expect(userPromptContent).toContain('detectKeywords');
+      expect(userPromptContent).toContain('KEYWORD_DETECTORS');
     });
 
     it('should reference related stories in SKILL.md', () => {

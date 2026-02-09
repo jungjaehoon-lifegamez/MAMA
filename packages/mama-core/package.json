@@ -19,7 +19,11 @@
     "./debug-logger": "./src/debug-logger.js",
     "./decision-formatter": "./src/decision-formatter.js",
     "./memory-inject": "./src/memory-inject.js",
-    "./ollama-client": "./src/ollama-client.js"
+    "./ollama-client": "./src/ollama-client.js",
+    "./errors": "./src/errors.js",
+    "./time-formatter": "./src/time-formatter.js",
+    "./outcome-tracker": "./src/outcome-tracker.js",
+    "./query-intent": "./src/query-intent.js"
   },
   "scripts": {
     "test": "vitest run",
@@ -47,7 +51,7 @@
   },
   "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
   "publishConfig": {
-    "registry": "https://registry.npmjs.org",
+    "registry": "https://npm.pkg.github.com",
     "access": "public"
   },
   "engines": {

@@ -148,25 +148,25 @@ describe('PIDManager', () => {
     it('should format seconds correctly', () => {
       const now = Date.now();
       const startedAt = now - 30000; // 30 seconds ago
-      expect(getUptime(startedAt)).toBe('30초');
+      expect(getUptime(startedAt)).toBe('30s');
     });
 
     it('should format minutes correctly', () => {
       const now = Date.now();
       const startedAt = now - (5 * 60 + 30) * 1000; // 5 minutes 30 seconds ago
-      expect(getUptime(startedAt)).toBe('5분 30초');
+      expect(getUptime(startedAt)).toBe('5m 30s');
     });
 
     it('should format hours correctly', () => {
       const now = Date.now();
       const startedAt = now - (2 * 60 * 60 + 15 * 60) * 1000; // 2 hours 15 minutes ago
-      expect(getUptime(startedAt)).toBe('2시간 15분');
+      expect(getUptime(startedAt)).toBe('2h 15m');
     });
 
     it('should format days correctly', () => {
       const now = Date.now();
       const startedAt = now - (1 * 24 * 60 * 60 + 3 * 60 * 60) * 1000; // 1 day 3 hours ago
-      expect(getUptime(startedAt)).toBe('1일 3시간');
+      expect(getUptime(startedAt)).toBe('1d 3h');
     });
   });
 });
