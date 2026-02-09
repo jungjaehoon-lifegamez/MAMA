@@ -100,8 +100,9 @@ async function getSavedTopicsFromDB() {
         }
       }
     }
-  } catch {
+  } catch (error) {
     // DB not available, fall back to transcript-only analysis
+    console.error(`[MAMA] PreCompact DB fallback: ${error.message}`);
   }
 
   return topics;
@@ -114,7 +115,18 @@ function filterUnsaved(candidates, savedTopics) {
   return candidates.filter((candidate) => {
     const lowerCandidate = candidate.toLowerCase();
     for (const savedTopic of savedTopics) {
-      if (lowerCandidate.includes(savedTopic) || savedTopic.includes(lowerCandidate)) {
+      // Use word boundary regex to avoid partial substring matches
+      // e.g. saved topic "auth" should not filter out "authentication flow"
+      const escaped = savedTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+      if (regex.test(lowerCandidate)) {
+        return false;
+      }
+      // Also check reverse: candidate appears within saved topic
+      // e.g. candidate "Use JWT tokens" matches saved "use jwt tokens for auth"
+      const escapedCandidate = lowerCandidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const reverseRegex = new RegExp(`\\b${escapedCandidate}\\b`, 'i');
+      if (reverseRegex.test(savedTopic)) {
         return false;
       }
     }

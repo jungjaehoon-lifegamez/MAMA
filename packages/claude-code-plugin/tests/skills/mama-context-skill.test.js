@@ -196,7 +196,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       try {
         execSync(`node ${PRE_TOOL_HOOK}`, {
           encoding: 'utf8',
-          timeout: 5000,
+          timeout: 3000,
           stdio: 'pipe',
         });
       } catch (err) {
@@ -206,7 +206,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       }
 
       const elapsed = Date.now() - startTime;
-      expect(elapsed).toBeLessThan(5000);
+      expect(elapsed).toBeLessThan(3000);
     });
   });
 

@@ -55,7 +55,7 @@ The skill uses a **multi-hook system** for comprehensive context injection:
 
 **Why teaser?**
 
-- Must be lightweight to avoid token bloat
+- Hooks fire on code changes → Must be lightweight
 - Claude infers relevance from topic + similarity + time
 - Full details available via `/mama-recall` if needed
 - Avoids token bloat (250 tokens → 40 tokens)
