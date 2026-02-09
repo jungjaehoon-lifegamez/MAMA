@@ -193,9 +193,22 @@ export class DiscordGateway implements Gateway {
             .recordAgentMessage(message.channel.id, agent, message.content, message.id);
         }
 
-        // When mention_delegation is enabled, MultiBotManager's onMention handles
-        // agent-to-agent routing directly — skip orchestrator to avoid dual processing
         if (this.multiAgentHandler.isMentionDelegationEnabled()) {
+          if (this.client.user && message.mentions.has(this.client.user)) {
+            // Main bot (LEAD) isn't in MultiBotManager — route via delegation chain
+            const senderAgent = this.multiAgentHandler.getOrchestrator().getAgent(agentBotId);
+            if (senderAgent) {
+              await this.multiAgentHandler.routeResponseMentions(message, [
+                {
+                  agentId: agentBotId,
+                  agent: senderAgent,
+                  content: message.content,
+                  rawContent: message.content,
+                  duration: 0,
+                },
+              ]);
+            }
+          }
           return;
         }
 

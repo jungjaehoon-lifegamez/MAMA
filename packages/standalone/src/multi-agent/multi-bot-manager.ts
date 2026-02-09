@@ -142,17 +142,12 @@ export class MultiBotManager {
 
     // Listen for messages mentioning this agent bot
     client.on('messageCreate', (msg) => {
-      // Allow agent bot messages through for mention-based delegation
       if (msg.author.bot) {
         const senderAgentId = this.isFromAgentBot(msg);
-        // Ignore non-agent bots and the main bot
-        if (!senderAgentId || senderAgentId === 'main') return;
-        // Ignore own messages (self-mention prevention)
+        if (!senderAgentId) return;
         if (msg.author.id === bot.userId) return;
       }
-      // Check if this bot is mentioned
       if (!bot.userId || !msg.mentions.has(bot.userId)) return;
-      // Forward to callback
       if (this.onMentionCallback) {
         console.log(`[MultiBotManager] Agent ${agentId} mentioned by ${msg.author.tag}`);
         this.onMentionCallback(agentId, msg);
