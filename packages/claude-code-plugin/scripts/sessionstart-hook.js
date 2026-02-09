@@ -16,7 +16,7 @@
  *
  * Environment Variables:
  * - CLAUDE_ENV_FILE: File path for persisting env vars (provided by Claude Code)
- * - MAMA_DISABLE_HOOKS: Set to "true" to disable hook
+ * - Feature flags: Hook activation is controlled via getEnabledFeatures() (see hook-features.js)
  *
  * @module sessionstart-hook
  */
