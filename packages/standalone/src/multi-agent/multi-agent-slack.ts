@@ -1115,6 +1115,7 @@ export class MultiAgentSlackHandler {
       clearInterval(this.mentionCleanupInterval);
       this.mentionCleanupInterval = undefined;
     }
+    this.backgroundTaskManager.destroy();
     this.processManager.stopAll();
     await this.multiBotManager.stopAll();
   }

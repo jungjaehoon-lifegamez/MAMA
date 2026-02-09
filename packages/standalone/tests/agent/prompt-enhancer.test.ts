@@ -76,8 +76,8 @@ describe('PromptEnhancer', () => {
       expect(result).toContain('ANALYSIS MODE');
     });
 
-    it('should detect "investigate" keyword for analyze mode', () => {
-      const result = enhancer.detectKeywords('investigate this crash');
+    it('should detect "[analyze]" explicit trigger for analyze mode', () => {
+      const result = enhancer.detectKeywords('[analyze] this crash');
       expect(result).toContain('ANALYSIS MODE');
     });
 
@@ -119,12 +119,11 @@ describe('PromptEnhancer', () => {
       expect(result).toBe('');
     });
 
-    it('should combine multiple keyword matches with --- separator', () => {
-      const message = 'ultrawork and also investigate this issue';
+    it('should return only highest-priority match when multiple detectors match', () => {
+      const message = 'ultrawork and also root cause analysis';
       const result = enhancer.detectKeywords(message);
       expect(result).toContain('ULTRAWORK MODE ACTIVATED');
-      expect(result).toContain('ANALYSIS MODE');
-      expect(result).toContain('---');
+      expect(result).not.toContain('ANALYSIS MODE');
     });
 
     it('should detect keywords outside code blocks even when code blocks are present', () => {
@@ -144,8 +143,8 @@ describe('PromptEnhancer', () => {
       expect(enhancer.detectKeywords('자율 작업으로 해줘')).toContain('ULTRAWORK MODE ACTIVATED');
     });
 
-    it('should detect Korean "딥 워크"', () => {
-      expect(enhancer.detectKeywords('딥 워크로 시작')).toContain('ULTRAWORK MODE ACTIVATED');
+    it('should detect Korean "완전 자동"', () => {
+      expect(enhancer.detectKeywords('완전 자동으로 해줘')).toContain('ULTRAWORK MODE ACTIVATED');
     });
 
     it('should detect Japanese "ウルトラワーク"', () => {
@@ -172,20 +171,16 @@ describe('PromptEnhancer', () => {
       );
     });
 
-    it('should detect English "deep work"', () => {
-      expect(enhancer.detectKeywords('do this in deep work mode')).toContain(
-        'ULTRAWORK MODE ACTIVATED'
-      );
+    it('should detect Japanese "自律モード"', () => {
+      expect(enhancer.detectKeywords('自律モードで進めて')).toContain('ULTRAWORK MODE ACTIVATED');
     });
 
-    it('should detect English "autonomous"', () => {
-      expect(enhancer.detectKeywords('run autonomous please')).toContain(
-        'ULTRAWORK MODE ACTIVATED'
-      );
+    it('should detect Korean "자율 모드"', () => {
+      expect(enhancer.detectKeywords('자율 모드로 진행해')).toContain('ULTRAWORK MODE ACTIVATED');
     });
 
-    it('should detect English "full auto"', () => {
-      expect(enhancer.detectKeywords('full auto mode on')).toContain('ULTRAWORK MODE ACTIVATED');
+    it('should detect Chinese "自主模式"', () => {
+      expect(enhancer.detectKeywords('请用自主模式进行')).toContain('ULTRAWORK MODE ACTIVATED');
     });
 
     // Multilingual: search
@@ -260,14 +255,14 @@ describe('PromptEnhancer', () => {
       );
     });
 
-    it('should detect English "deep dive"', () => {
-      expect(enhancer.detectKeywords('do a deep dive into the auth module')).toContain(
+    it('should detect English "why does fail" pattern for analyze mode', () => {
+      expect(enhancer.detectKeywords('why does the test fail after deployment')).toContain(
         'ANALYSIS MODE'
       );
     });
 
-    it('should detect English "diagnose"', () => {
-      expect(enhancer.detectKeywords('diagnose why the test is failing')).toContain(
+    it('should detect English "analyze thoroughly" for analyze mode', () => {
+      expect(enhancer.detectKeywords('analyze thoroughly the memory allocation')).toContain(
         'ANALYSIS MODE'
       );
     });

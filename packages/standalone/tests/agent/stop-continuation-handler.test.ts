@@ -35,8 +35,8 @@ describe('StopContinuationHandler', () => {
       expect(decision.reason).toBe('complete');
     });
 
-    it('should detect 완료 marker in last 3 lines', () => {
-      const response = 'Line 1\nLine 2\n완료';
+    it('should detect FINISHED marker in last 3 lines', () => {
+      const response = 'Line 1\nLine 2\nFINISHED';
       const decision = handler.analyzeResponse('channel1', response);
       expect(decision.shouldContinue).toBe(false);
       expect(decision.reason).toBe('complete');

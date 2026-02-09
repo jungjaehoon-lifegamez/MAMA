@@ -557,20 +557,27 @@ Respond to messages in a helpful and professional manner.
    */
   getActiveAgentsInChannel(source: string, channelId: string): string[] {
     const prefix = `${source}:${channelId}:`;
-    const activeChannels = this.processPool.getActiveChannels();
-    const agentIds: string[] = [];
+    const agentIdSet = new Set<string>();
 
-    for (const channelKey of activeChannels) {
+    // 1. Check processPool (pool_size=1 agents)
+    for (const channelKey of this.processPool.getActiveChannels()) {
       if (channelKey.startsWith(prefix)) {
         try {
           const { agentId } = this.parseChannelKey(channelKey);
-          agentIds.push(agentId);
+          agentIdSet.add(agentId);
         } catch {
           // Skip malformed keys
         }
       }
     }
 
-    return agentIds;
+    // 2. Check agentProcessPool (pool_size>1 agents)
+    for (const [agentId, status] of this.agentProcessPool.getAllPoolStatuses()) {
+      if (status.busy > 0) {
+        agentIdSet.add(agentId);
+      }
+    }
+
+    return Array.from(agentIdSet);
   }
 }
