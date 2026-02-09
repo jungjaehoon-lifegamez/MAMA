@@ -22,6 +22,9 @@ import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js'
 import { PRReviewPoller } from './pr-review-poller.js';
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
+import { BackgroundTaskManager, type BackgroundTask } from './background-task-manager.js';
+import { SystemReminderService } from './system-reminder.js';
+import { DelegationManager } from './delegation-manager.js';
 
 /** Default timeout for agent responses (15 minutes - longer than Discord due to Slack's slower Socket Mode relay and complex thread routing) */
 const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -50,6 +53,9 @@ export class MultiAgentSlackHandler {
   private multiBotManager: SlackMultiBotManager;
   private messageQueue: AgentMessageQueue;
   private prReviewPoller: PRReviewPoller;
+  private backgroundTaskManager: BackgroundTaskManager;
+  private systemReminder: SystemReminderService;
+  private delegationManager: DelegationManager;
   private logger = createSafeLogger('MultiAgentSlack');
 
   /** Main Slack WebClient for posting system messages (heartbeat) */
@@ -81,6 +87,61 @@ export class MultiAgentSlackHandler {
     this.multiBotManager = new SlackMultiBotManager(config);
     this.messageQueue = new AgentMessageQueue();
     this.prReviewPoller = new PRReviewPoller();
+
+    const agentConfigs = Object.entries(config.agents).map(([id, cfg]) => ({ id, ...cfg }));
+    this.delegationManager = new DelegationManager(agentConfigs);
+
+    this.backgroundTaskManager = new BackgroundTaskManager(
+      async (agentId: string, prompt: string): Promise<string> => {
+        const process = await this.processManager.getProcess('slack', 'background', agentId);
+        const result = await process.sendMessage(prompt);
+        return result.response;
+      },
+      { maxConcurrentPerAgent: 2, maxTotalConcurrent: 5 }
+    );
+
+    this.systemReminder = new SystemReminderService({
+      batchWindowMs: 2000,
+      enableChatNotifications: true,
+    });
+
+    this.backgroundTaskManager.on('task-started', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-started',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        timestamp: Date.now(),
+      });
+    });
+
+    this.backgroundTaskManager.on('task-completed', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-completed',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        duration: task.duration,
+        timestamp: Date.now(),
+      });
+    });
+
+    this.backgroundTaskManager.on('task-failed', ({ task }: { task: BackgroundTask }) => {
+      this.systemReminder.notify({
+        type: 'task-failed',
+        taskId: task.id,
+        description: task.description,
+        agentId: task.agentId,
+        requestedBy: task.requestedBy,
+        channelId: task.channelId,
+        error: task.error,
+        timestamp: Date.now(),
+      });
+    });
 
     // Start periodic cleanup of processed mentions (every 60 seconds)
     this.mentionCleanupInterval = setInterval(() => {
@@ -218,6 +279,13 @@ export class MultiAgentSlackHandler {
    */
   setMainWebClient(client: WebClient): void {
     this.mainWebClient = client;
+
+    this.systemReminder.registerCallback(async (channelId, message) => {
+      const chunks = splitForSlack(message);
+      for (const chunk of chunks) {
+        await client.chat.postMessage({ channel: channelId, text: chunk });
+      }
+    }, 'slack');
 
     // Only set PR poller sender if not already configured (e.g., by reviewer bot)
     if (!this.prReviewPoller.hasMessageSender?.()) {
@@ -455,6 +523,40 @@ export class MultiAgentSlackHandler {
         ]);
       } finally {
         clearTimeout(timeoutHandle!);
+      }
+
+      const bgDelegation = this.delegationManager.parseDelegation(agentId, result.response);
+      if (bgDelegation && bgDelegation.background) {
+        const check = this.delegationManager.isDelegationAllowed(
+          bgDelegation.fromAgentId,
+          bgDelegation.toAgentId
+        );
+        if (check.allowed) {
+          const toAgent = this.orchestrator.getAgent(bgDelegation.toAgentId);
+          this.backgroundTaskManager.submit({
+            description: bgDelegation.task.substring(0, 200),
+            prompt: bgDelegation.task,
+            agentId: bgDelegation.toAgentId,
+            requestedBy: agentId,
+            channelId: context.channelId,
+            source: 'slack',
+          });
+          this.logger.log(
+            `[MultiAgentSlack] Background delegation: ${agentId} → ${bgDelegation.toAgentId} (async)`
+          );
+
+          const displayResponse =
+            bgDelegation.originalContent ||
+            `🔄 Background task submitted to *${toAgent?.display_name ?? bgDelegation.toAgentId}*`;
+          const formattedResponse = this.formatAgentResponse(agent, displayResponse);
+          return {
+            agentId,
+            agent,
+            content: formattedResponse,
+            rawContent: displayResponse,
+            duration: result.duration_ms,
+          };
+        }
       }
 
       // Format response with agent prefix
@@ -860,6 +962,14 @@ export class MultiAgentSlackHandler {
    */
   getMultiBotManager(): SlackMultiBotManager {
     return this.multiBotManager;
+  }
+
+  getBackgroundTaskManager(): BackgroundTaskManager {
+    return this.backgroundTaskManager;
+  }
+
+  getSystemReminder(): SystemReminderService {
+    return this.systemReminder;
   }
 
   /**
