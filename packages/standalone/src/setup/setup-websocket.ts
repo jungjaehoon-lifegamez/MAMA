@@ -216,14 +216,14 @@ async function sendInitialGreeting(clientInfo: ClientInfo): Promise<void> {
 
   if (hasBootstrap) {
     greeting = isKorean
-      ? '안녕하세요! 👋\n\n저는 MAMA예요. 당신에 대해 알아가고 싶어요. 간단한 대화로 시작할까요?'
+      ? "Hi! 👋\n\nI'm MAMA. I'd love to get to know you. Shall we start with a simple conversation?"
       : "Hi! 👋\n\nI'm MAMA. I'd love to get to know you. Shall we start with a simple conversation?";
 
     clientInfo.discoveryPhase = 1;
     clientInfo.sessionProfilePath = `~/.mama/profiles/session_${Date.now()}`;
   } else {
     greeting = isKorean
-      ? '안녕하세요! MAMA Standalone 설정을 도와드리겠습니다.\n\nDiscord 봇, Slack 봇, 또는 다른 플랫폼 중 어떤 것을 설정하시겠어요?'
+      ? "Hello! I'll help you set up MAMA Standalone.\n\nWhich platform would you like to configure - Discord bot, Slack bot, or another platform?"
       : "Hello! I'll help you set up MAMA Standalone.\n\nWhich platform would you like to configure - Discord bot, Slack bot, or another platform?";
 
     clientInfo.quizState = 'idle';
@@ -241,7 +241,7 @@ async function sendInitialGreeting(clientInfo: ClientInfo): Promise<void> {
         type: 'progress',
         step: 1,
         total: 7,
-        label: isKorean ? '✨ 깨어나는 중...' : '✨ Awakening...',
+        label: '✨ Awakening...',
       })
     );
   }
@@ -268,7 +268,7 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
       ws.send(
         JSON.stringify({
           type: 'error',
-          message: 'Claude 인증 실패. Claude Code에 로그인되어 있는지 확인하세요.',
+          message: 'Claude authentication failed. Please verify you are logged into Claude Code.',
         })
       );
       ws.close();
@@ -409,7 +409,7 @@ async function handleClientMessage(clientInfo: ClientInfo, message: any): Promis
     clientInfo.ws.send(
       JSON.stringify({
         type: 'error',
-        message: error instanceof Error ? error.message : 'Claude API 호출 실패',
+        message: error instanceof Error ? error.message : 'Claude API call failed',
       })
     );
   }

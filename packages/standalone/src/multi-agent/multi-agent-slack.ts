@@ -380,13 +380,13 @@ export class MultiAgentSlackHandler {
       if (sessions.length === 0) {
         await this.mainWebClient.chat.postMessage({
           channel: channelId,
-          text: '📭 활성 PR 폴링이 없습니다.',
+          text: '📭 No active PR polling sessions.',
         });
       } else {
         this.prReviewPoller.stopAll();
         await this.mainWebClient.chat.postMessage({
           channel: channelId,
-          text: `⏹️ PR 리뷰 폴링 중지: ${sessions.join(', ')}`,
+          text: `⏹️ PR review polling stopped: ${sessions.join(', ')}`,
         });
       }
       return true;
@@ -402,7 +402,7 @@ export class MultiAgentSlackHandler {
           const key = parsed ? `${parsed.owner}/${parsed.repo}#${parsed.prNumber}` : prUrl;
           await this.mainWebClient.chat.postMessage({
             channel: channelId,
-            text: `👀 *PR Review Poller 시작* — ${key}\n60초 간격으로 새 리뷰 코멘트를 감지합니다. 중지하려면 "PR 중지"라고 입력하세요.`,
+            text: `👀 *PR Review Poller started* — ${key}\nPolling for new review comments every 60 seconds. Type "PR stop" to stop.`,
           });
         }
       }
