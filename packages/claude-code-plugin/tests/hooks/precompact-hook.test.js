@@ -8,17 +8,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
 
 const hookPath = path.join(__dirname, '../../scripts/precompact-hook.js');
 const hook = require(hookPath);
 
 const originalEnv = { ...process.env };
 
-describe('PreCompact Hook - Decision Preservation', () => {
+describe('Story M4.1: PreCompact Hook - Decision Preservation', () => {
   beforeEach(() => {
     process.env = { ...originalEnv };
   });
