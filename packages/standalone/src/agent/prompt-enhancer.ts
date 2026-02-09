@@ -474,7 +474,7 @@ export class PromptEnhancer {
         const dirName = basename(currentDir);
         if (SKIP_DIRS.has(dirName)) {
           currentDir = dirname(currentDir);
-          depth++;
+          // Fix: Don't increment depth for skipped directories
           continue;
         }
 
@@ -483,7 +483,7 @@ export class PromptEnhancer {
           // Skip project root AGENTS.md (loaded by Claude Code's --add-dir)
           if (projectRoot && currentDir === projectRoot) {
             currentDir = dirname(currentDir);
-            depth++;
+            // Fix: Don't increment depth for skipped files
             continue;
           }
 
