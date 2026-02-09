@@ -179,9 +179,22 @@ export class PersistentClaudeProcess extends EventEmitter {
     const args = this.buildArgs();
     console.log(`[PersistentCLI] Spawning: claude ${args.join(' ')}`);
 
+    // Clean environment: Remove conflicting MAMA_* variables before merging
+    const cleanEnv = { ...process.env };
+    if (this.options.env) {
+      // If we're setting MAMA_DISABLE_HOOKS, remove MAMA_HOOK_FEATURES
+      if ('MAMA_DISABLE_HOOKS' in this.options.env) {
+        delete cleanEnv.MAMA_HOOK_FEATURES;
+      }
+      // If we're setting MAMA_HOOK_FEATURES, remove MAMA_DISABLE_HOOKS
+      if ('MAMA_HOOK_FEATURES' in this.options.env) {
+        delete cleanEnv.MAMA_DISABLE_HOOKS;
+      }
+    }
+
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...(this.options.env || {}) },
+      env: { ...cleanEnv, ...(this.options.env || {}) },
     });
 
     // Set up event handlers
