@@ -71,7 +71,7 @@ interface PollSession {
   repo: string;
   prNumber: number;
   channelId: string;
-  interval: ReturnType<typeof setInterval>;
+  timeoutId: ReturnType<typeof setTimeout> | null;
   seenCommentIds: Set<number>;
   seenReviewIds: Set<number>;
   addressedCommentIds: Set<number>;
@@ -186,11 +186,7 @@ export class PRReviewPoller {
       lastHeadSha,
       startedAt: Date.now(),
       isPolling: false, // Initialize polling state
-      interval: setInterval(() => {
-        this.poll(sessionKey).catch((err) => {
-          this.logger.error(`[PRPoller] Poll error for ${sessionKey}:`, err);
-        });
-      }, POLL_INTERVAL_MS),
+      timeoutId: null, // Will be set by scheduleNextPoll
     };
 
     this.sessions.set(sessionKey, session);
@@ -198,7 +194,7 @@ export class PRReviewPoller {
       `[PRPoller] Started polling ${sessionKey} (${seenCommentIds.size} existing comments, interval: ${POLL_INTERVAL_MS / 1000}s)`
     );
 
-    // Run first poll immediately (then every POLL_INTERVAL_MS)
+    // Run first poll immediately, then schedule next
     this.poll(sessionKey).catch((err) => {
       this.logger.error(`[PRPoller] Initial poll error for ${sessionKey}:`, err);
     });
@@ -216,7 +212,9 @@ export class PRReviewPoller {
     const sessionKey = `${parsed.owner}/${parsed.repo}#${parsed.prNumber}`;
     const session = this.sessions.get(sessionKey);
     if (session) {
-      clearInterval(session.interval);
+      if (session.timeoutId) {
+        clearTimeout(session.timeoutId);
+      }
       this.sessions.delete(sessionKey);
       this.logger.log(`[PRPoller] Stopped polling ${sessionKey}`);
     }
@@ -227,7 +225,9 @@ export class PRReviewPoller {
    */
   stopAll(): void {
     for (const [key, session] of this.sessions) {
-      clearInterval(session.interval);
+      if (session.timeoutId) {
+        clearTimeout(session.timeoutId);
+      }
       this.logger.log(`[PRPoller] Stopped polling ${key}`);
     }
     this.sessions.clear();
@@ -250,6 +250,20 @@ export class PRReviewPoller {
       prNumber: s.prNumber,
       channelId: s.channelId,
     }));
+  }
+
+  /**
+   * Schedule the next poll cycle for a session
+   */
+  private scheduleNextPoll(sessionKey: string): void {
+    const session = this.sessions.get(sessionKey);
+    if (!session) return;
+
+    session.timeoutId = setTimeout(() => {
+      this.poll(sessionKey).catch((err) => {
+        this.logger.error(`[PRPoller] Poll error for ${sessionKey}:`, err);
+      });
+    }, POLL_INTERVAL_MS);
   }
 
   /**
@@ -279,7 +293,9 @@ export class PRReviewPoller {
       // Auto-stop after max duration
       if (Date.now() - session.startedAt > MAX_POLL_DURATION_MS) {
         this.logger.log(`[PRPoller] Max duration reached for ${sessionKey}, stopping`);
-        clearInterval(session.interval);
+        if (session.timeoutId) {
+          clearTimeout(session.timeoutId);
+        }
         this.sessions.delete(sessionKey);
         await this.sendMessage(
           session.channelId,
@@ -293,7 +309,9 @@ export class PRReviewPoller {
         const prState = await this.fetchPRState(session.owner, session.repo, session.prNumber);
         if (prState === 'MERGED' || prState === 'CLOSED') {
           this.logger.log(`[PRPoller] PR ${sessionKey} is ${prState}, stopping`);
-          clearInterval(session.interval);
+          if (session.timeoutId) {
+            clearTimeout(session.timeoutId);
+          }
           this.sessions.delete(sessionKey);
           await this.sendMessage(
             session.channelId,
@@ -331,7 +349,9 @@ export class PRReviewPoller {
                 }
               }
             } finally {
-              clearInterval(session.interval);
+              if (session.timeoutId) {
+                clearTimeout(session.timeoutId);
+              }
               this.sessions.delete(sessionKey);
             }
             return;
@@ -485,6 +505,11 @@ export class PRReviewPoller {
     } finally {
       // Always reset polling flag to allow next poll
       session.isPolling = false;
+
+      // Schedule next poll if session still exists
+      if (this.sessions.has(sessionKey)) {
+        this.scheduleNextPoll(sessionKey);
+      }
     }
   }
 
