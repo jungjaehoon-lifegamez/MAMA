@@ -353,9 +353,12 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
         }),
       ]);
 
-      // All hooks should succeed (exit 0 or 2 for PostToolUse)
+      // PreToolUse and UserPromptSubmit should exit 0; PostToolUse may exit 0 or 2
+      const [preToolUse, postToolUse, userPromptSubmit] = results;
+      expect(preToolUse.exitCode).toBe(0);
+      expect([0, 2]).toContain(postToolUse.exitCode);
+      expect(userPromptSubmit.exitCode).toBe(0);
       results.forEach((result, i) => {
-        expect([0, 2]).toContain(result.exitCode);
         console.log(`[Regression] Hook ${i + 1} latency: ${result.latency}ms`);
       });
 

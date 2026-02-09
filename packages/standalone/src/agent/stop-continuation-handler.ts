@@ -274,12 +274,13 @@ export class StopContinuationHandler {
         ? previousResponse.slice(-CONTINUATION_CONTEXT_LENGTH)
         : previousResponse;
 
+    const markers = this.config.completionMarkers.map((m) => `"${m}"`).join(' or ');
     return (
       `Continue from where you left off. Your previous response ended with:\n` +
       `---\n` +
       `${tail}\n` +
       `---\n` +
-      `Continue the task. When done, end your response with "DONE" or "완료".`
+      `Continue the task. When done, end your response with ${markers}.`
     );
   }
 }

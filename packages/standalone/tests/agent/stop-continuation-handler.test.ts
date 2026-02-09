@@ -426,8 +426,8 @@ describe('StopContinuationHandler', () => {
     it('should include instruction to end with completion marker', () => {
       const response = "I'll continue.";
       const decision = handler.analyzeResponse('channel1', response);
-      expect(decision.continuationPrompt).toContain('DONE');
-      expect(decision.continuationPrompt).toContain('완료');
+      expect(decision.continuationPrompt).toContain('"DONE"');
+      expect(decision.continuationPrompt).toContain('"FINISHED"');
     });
 
     it('should include context markers', () => {

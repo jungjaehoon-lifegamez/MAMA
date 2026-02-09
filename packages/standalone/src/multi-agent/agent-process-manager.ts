@@ -571,9 +571,9 @@ Respond to messages in a helpful and professional manner.
       }
     }
 
-    // 2. Check agentProcessPool (pool_size>1 agents)
-    for (const [agentId, status] of this.agentProcessPool.getAllPoolStatuses()) {
-      if (status.busy > 0) {
+    // 2. Check agentProcessPool (pool_size>1 agents) — only include agents serving this channel
+    for (const [agentId] of this.agentProcessPool.getAllPoolStatuses()) {
+      if (this.agentProcessPool.hasBusyProcessForChannel(agentId, prefix)) {
         agentIdSet.add(agentId);
       }
     }
