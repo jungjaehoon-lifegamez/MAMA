@@ -20,7 +20,6 @@ const __dirname = path.dirname(__filename);
 const PLUGIN_ROOT = path.resolve(__dirname, '../..');
 const PLUGIN_JSON_PATH = path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json');
 const SKILL_PATH = path.join(PLUGIN_ROOT, 'skills', 'mama-context', 'SKILL.md');
-const USER_PROMPT_HOOK = path.join(PLUGIN_ROOT, 'scripts', 'userpromptsubmit-hook.js');
 const PRE_TOOL_HOOK = path.join(PLUGIN_ROOT, 'scripts', 'pretooluse-hook.js');
 
 describe('M3.2: Auto-context Skill Wrapper', () => {
@@ -61,33 +60,14 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
 
       expect(pluginConfig.hooks).toBeDefined();
 
-      // Check if hooks are defined as external reference or inline
-      if (typeof pluginConfig.hooks === 'string') {
-        // External reference format (e.g., "./hooks/hooks.json")
-        expect(pluginConfig.hooks).toContain('hooks.json');
+      // PreToolUse (contract injection) and PostToolUse (contract detection) are active
+      expect(pluginConfig.hooks.PreToolUse).toBeDefined();
+      expect(pluginConfig.hooks.PostToolUse).toBeDefined();
 
-        // Load and validate the external hooks file (resolve relative to plugin.json location)
-        const hooksPath = path.resolve(path.dirname(PLUGIN_JSON_PATH), pluginConfig.hooks);
-        expect(fs.existsSync(hooksPath)).toBe(true);
-
-        const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
-        const hooksConfig = hooksFile.hooks || hooksFile; // Support both nested and flat structure
-
-        // Only UserPromptSubmit is active (PreToolUse/PostToolUse disabled for efficiency)
-        expect(hooksConfig.UserPromptSubmit).toBeDefined();
-
-        // Verify hooks reference correct scripts
-        const userPromptHook = hooksConfig.UserPromptSubmit[0];
-        expect(userPromptHook.command).toContain('userpromptsubmit-hook.js');
-      } else {
-        // Inline format with 3-level nesting (event -> matcher groups -> hook handlers)
-        expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
-
-        // Verify hooks reference correct scripts (3-level nesting)
-        const matcherGroup = pluginConfig.hooks.UserPromptSubmit[0];
-        const hookHandler = matcherGroup.hooks[0];
-        expect(hookHandler.command).toContain('userpromptsubmit-hook.js');
-      }
+      // Verify hooks reference correct scripts (3-level nesting)
+      const matcherGroup = pluginConfig.hooks.PreToolUse[0];
+      const hookHandler = matcherGroup.hooks[0];
+      expect(hookHandler.command).toContain('pretooluse-hook.js');
     });
   });
 
@@ -95,8 +75,8 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
     it('should document similarity thresholds in SKILL.md', () => {
       const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
 
-      // UserPromptSubmit: 75% threshold
-      expect(skillContent).toMatch(/75%|0\.75/);
+      // Similarity threshold documented
+      expect(skillContent).toMatch(/60%|0\.6/);
     });
 
     it('should document token budgets in SKILL.md', () => {
@@ -176,44 +156,16 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
     });
 
     it('should have executable hook scripts', () => {
-      expect(fs.existsSync(USER_PROMPT_HOOK)).toBe(true);
       expect(fs.existsSync(PRE_TOOL_HOOK)).toBe(true);
 
       // Check shebang
-      const userPromptContent = fs.readFileSync(USER_PROMPT_HOOK, 'utf8');
-      expect(userPromptContent.startsWith('#!/usr/bin/env node')).toBe(true);
-
       const preToolContent = fs.readFileSync(PRE_TOOL_HOOK, 'utf8');
       expect(preToolContent.startsWith('#!/usr/bin/env node')).toBe(true);
 
       // Check executable permissions (Unix only - Windows doesn't use execute bits)
       if (process.platform !== 'win32') {
-        const userPromptStat = fs.statSync(USER_PROMPT_HOOK);
-        expect(userPromptStat.mode & 0o111).toBeGreaterThan(0); // At least one execute bit
-
         const preToolStat = fs.statSync(PRE_TOOL_HOOK);
         expect(preToolStat.mode & 0o111).toBeGreaterThan(0);
-      }
-    });
-
-    it('should trigger UserPromptSubmit hook on prompt', () => {
-      // Simulate user prompt
-      process.env.USER_PROMPT = 'How should I handle authentication?';
-
-      try {
-        const output = execSync(`node ${USER_PROMPT_HOOK}`, {
-          encoding: 'utf8',
-          timeout: 2000, // 2s timeout
-          stdio: 'pipe',
-        });
-
-        // Should produce output (even if no decisions found)
-        // Output might be empty if no matching decisions, which is OK
-        expect(typeof output).toBe('string');
-      } catch (err) {
-        // Timeout or error is acceptable (may not have DB initialized)
-        // Just verify hook is executable
-        expect(err.code).toBeDefined();
       }
     });
 
@@ -236,51 +188,47 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       }
     });
 
-    it('should complete hook within 500ms timeout', () => {
-      process.env.USER_PROMPT = 'test prompt';
+    it('should complete PreToolUse hook within timeout', () => {
+      process.env.TOOL_NAME = 'Grep';
 
       const startTime = Date.now();
 
       try {
-        execSync(`node ${USER_PROMPT_HOOK}`, {
+        execSync(`node ${PRE_TOOL_HOOK}`, {
           encoding: 'utf8',
-          timeout: 600, // Slightly higher than AC requirement to allow for execution overhead
+          timeout: 3000,
           stdio: 'pipe',
         });
       } catch (err) {
-        // Check if timeout occurred (would be killed by timeout, not completed)
         if (err.killed && err.signal === 'SIGTERM') {
-          throw new Error('Hook exceeded 500ms timeout requirement');
+          throw new Error('Hook exceeded timeout requirement');
         }
       }
 
       const elapsed = Date.now() - startTime;
-      expect(elapsed).toBeLessThan(700); // Allow for execution overhead + model loading
+      expect(elapsed).toBeLessThan(3000);
     });
   });
 
   describe('Integration: Skill + Hooks + Commands', () => {
     it('should have consistent configuration across skill and hooks', () => {
       const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
-      const userPromptContent = fs.readFileSync(USER_PROMPT_HOOK, 'utf8');
+      const preToolContent = fs.readFileSync(PRE_TOOL_HOOK, 'utf8');
 
       // Verify similarity threshold in skill
-      expect(skillContent).toMatch(/75%|0\.75/);
+      expect(skillContent).toMatch(/60%|0\.6/);
 
       // Verify timeout in skill
       expect(skillContent).toContain('1200ms');
 
-      // UserPromptSubmit is now keyword-detection-only (no memory injection)
-      // Verify it has keyword detection capability
-      expect(userPromptContent).toContain('detectKeywords');
-      expect(userPromptContent).toContain('KEYWORD_DETECTORS');
+      // PreToolUse handles contract checking for Edit/Write
+      expect(preToolContent).toContain('WRITE_TOOLS');
     });
 
     it('should reference related stories in SKILL.md', () => {
       const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
 
       expect(skillContent).toContain('M3.2'); // This story
-      expect(skillContent).toContain('M2.1'); // UserPromptSubmit
       expect(skillContent).toContain('M2.2'); // PreToolUse
       expect(skillContent).toContain('M2.4'); // Transparency banner
     });
@@ -305,47 +253,26 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       expect(pluginConfig.hooks).toBeDefined();
     });
 
-    it('should have required hook configurations (UserPromptSubmit + PreToolUse + PostToolUse for MAMA v2)', () => {
+    it('should have required hook configurations (PreToolUse + PostToolUse for MAMA v2)', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
 
-      // Handle external reference or inline format
-      if (typeof pluginConfig.hooks === 'string') {
-        // External reference - load the hooks file (resolve relative to plugin.json location)
-        const hooksPath = path.resolve(path.dirname(PLUGIN_JSON_PATH), pluginConfig.hooks);
-        const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
-        const hooksConfig = hooksFile.hooks || hooksFile; // Support both nested and flat structure
-
-        // MAMA v2: UserPromptSubmit (context) + PreToolUse (contract injection) + PostToolUse (contract extraction)
-        expect(hooksConfig.UserPromptSubmit).toBeDefined();
-        expect(hooksConfig.PreToolUse).toBeDefined();
-        expect(hooksConfig.PostToolUse).toBeDefined();
-      } else {
-        // Inline format
-        expect(pluginConfig.hooks.UserPromptSubmit).toBeDefined();
-        expect(pluginConfig.hooks.PreToolUse).toBeDefined();
-        expect(pluginConfig.hooks.PostToolUse).toBeDefined();
-      }
+      // Inline format
+      expect(pluginConfig.hooks.SessionStart).toBeDefined();
+      expect(pluginConfig.hooks.PreToolUse).toBeDefined();
+      expect(pluginConfig.hooks.PostToolUse).toBeDefined();
     });
 
     it('should use ${CLAUDE_PLUGIN_ROOT} for portable paths', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+      const hooksConfig = pluginConfig.hooks;
 
-      let hooksConfig;
-      if (typeof pluginConfig.hooks === 'string') {
-        // External reference - load the hooks file (resolve relative to plugin.json location)
-        const hooksPath = path.resolve(path.dirname(PLUGIN_JSON_PATH), pluginConfig.hooks);
-        const hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
-        hooksConfig = hooksFile.hooks || hooksFile; // Support both nested and flat structure
-      } else {
-        // Inline format
-        hooksConfig = pluginConfig.hooks;
-      }
-
-      // Only UserPromptSubmit is active (3-level nesting: event -> matcher groups -> hook handlers)
+      // All hooks use portable paths (3-level nesting: event -> matcher groups -> hook handlers)
       const allHookCommands = [];
-      hooksConfig.UserPromptSubmit.forEach((matcherGroup) => {
-        matcherGroup.hooks.forEach((handler) => {
-          allHookCommands.push(handler.command);
+      Object.values(hooksConfig).forEach((matcherGroups) => {
+        matcherGroups.forEach((matcherGroup) => {
+          matcherGroup.hooks.forEach((handler) => {
+            allHookCommands.push(handler.command);
+          });
         });
       });
 

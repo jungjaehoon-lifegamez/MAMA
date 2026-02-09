@@ -7,6 +7,7 @@ node_modules/
 .claude/
 .agent/
 .bmad/
+.omc/
 # Lock files (pnpm-lock.yaml is tracked, others are not)
 package-lock.json
 yarn.lock
