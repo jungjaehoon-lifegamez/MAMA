@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-beta] - 2026-02-09
+
+### Added
+
+**Internationalization** (2026-02-09)
+
+- **Full English Translation** - Converted 538+ Korean strings to English across 35 files
+  - CLI commands (init, setup, run, status, stop) — all user-facing messages
+  - Gateway handlers (Discord, Slack) — progress indicators, PR review notifications
+  - Onboarding wizard (9 phases) — awakening dialogue, personality quiz, security docs
+  - Multi-agent system — i18n defaults, delegation messages, system reminders
+  - Skills, scheduler, memory logger — all remaining Korean strings
+- **English Persona Templates** - Translated 3 builtin personas to English
+  - `sisyphus.md` — Tier 1 Orchestrator
+  - `developer.md` — Tier 2 Implementation Specialist
+  - `reviewer.md` — Tier 3 Code Quality Guardian
+- **i18n Default Language** — Changed from `ko` to `en` in i18n-messages and message-router
+- **Korean Regex Preserved** — Category routing patterns still support Korean users
+
+**Multi-Agent Discord Fixes** (2026-02-08)
+
+- **DELEGATE:: Syntax Detection** — `extractMentionedAgentIds()` detects delegation patterns for routing
+- **Bidirectional Bot Mention Routing** — Bot-to-bot mentions route correctly in both directions
+- **Live Progress Indicator** — `Working... (Xs)` shown during long-running Discord requests
+- **Infinite Loop Prevention** — Chain length limit + global cooldown prevent runaway loops
+- **Opt-in Port Auto-Kill** — Port conflict resolution requires explicit opt-in
+- **REVIEW→DEV Routing Fix** — Unblocked mention routing during APPROVE cooldown
+
+**Agent Hooks** (2026-02-09)
+
+- **PostToolUse Handler** — Auto-extracts contracts after Write/Edit operations (fire-and-forget)
+- **PreCompact Handler** — Detects unsaved decisions at 80% context capacity
+- **StopContinuation Handler** — Auto-resumes incomplete responses (opt-in, max 3 retries)
+- **Contract Extractor** — 5 extractors: API, function, type, SQL, GraphQL (661 lines)
+- **256 New Tests** — Full coverage for all hook modules
+
+**Other Features** (2026-02-08)
+
+- **!stop Command** — Interrupt running agents from Discord
+- **Delegation System Reminders** — Started/completed notifications in Discord and Slack
+- **BackgroundTaskManager & SystemReminderService** — Async task delegation infrastructure
+- **Content Dedup** — YAML frontmatter filtering and prompt size monitoring
+- **PromptEnhancer** — Native keyword detection, AGENTS.md injection (44 tests)
+
+### Changed
+
+- **MessageQueue TTL** — Increased from 3 minutes to 10 minutes (agents need 200s+ for complex tasks)
+- **Sisyphus Persona** — SOLO mode restricted to typo-level changes (≤5 lines); everything else delegates
+- **isKorean Default** — Message router defaults to `false` (English-first)
+- **i18n Default** — Default language switched from `ko` to `en`
+
+### Fixed
+
+- **Cross-Channel Batch Corruption** — Fixed batch processing across different Discord channels
+- **Duplicate Session Cache Entries** — Prevented duplicate entries in session cache
+- **Env Var Conflicts** — Clean conflicting MAMA environment variables in persistent CLI process
+- **Graceful Shutdown** — Improved stop command reliability
+- **Magic Number Extraction** — Replaced hardcoded values with named constants
+
 ## [0.4.0] - 2026-02-07
 
 ### Added

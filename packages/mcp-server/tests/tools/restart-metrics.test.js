@@ -13,8 +13,8 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { getRestartMetricsTool } from '../../src/tools/quality-metrics-tools.js';
-import { initDB, getAdapter, closeDB } from '../../src/mama/memory-store.js';
-import mama from '../../src/mama/mama-api.js';
+import { initDB, getAdapter, closeDB } from '@jungjaehoon/mama-core/memory-store';
+import mama from '@jungjaehoon/mama-core/mama-api';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';

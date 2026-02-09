@@ -16,7 +16,7 @@
  *
  * Environment Variables:
  * - CLAUDE_ENV_FILE: File path for persisting env vars (provided by Claude Code)
- * - MAMA_DISABLE_HOOKS: Set to "true" to disable hook
+ * - Feature flags: Hook activation is controlled via getEnabledFeatures() (see hook-features.js)
  *
  * @module sessionstart-hook
  */
@@ -27,11 +27,12 @@ const fs = require('fs');
 // Get paths relative to script location
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
+const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 
 // Add core to require path
 require('module').globalPaths.push(CORE_PATH);
 
-const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
+const { info, warn, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 
 // Configuration
 const MAX_WARMUP_MS = 8000; // Allow up to 8s for initial model load
@@ -80,7 +81,7 @@ async function warmEmbeddingModel() {
 
   try {
     // Lazy load embeddings module
-    const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
+    const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 
     // Generate a dummy embedding to force model load
     const warmupText = 'MAMA warmup initialization';
@@ -111,7 +112,7 @@ async function warmDatabase() {
   const startTime = Date.now();
 
   try {
-    const { initDB } = require(path.join(CORE_PATH, 'memory-store'));
+    const { initDB } = require('@jungjaehoon/mama-core/memory-store');
     await initDB();
 
     const latencyMs = Date.now() - startTime;
@@ -131,7 +132,7 @@ async function warmDatabase() {
  */
 async function queryRecentContext() {
   try {
-    const { getAdapter } = require(path.join(CORE_PATH, 'memory-store'));
+    const { getAdapter } = require('@jungjaehoon/mama-core/memory-store');
     const adapter = getAdapter();
 
     // Query recent 5 decisions (excluding checkpoints)
@@ -300,16 +301,10 @@ async function ensureDependencies() {
  * Main hook handler
  */
 async function main() {
-  if (process.env.MAMA_DISABLE_HOOKS === 'true') {
-    info('[SessionStart] MAMA hooks disabled, skipping warmup');
-    return;
-  }
-
-  // Skip if running inside MAMA Standalone daemon
-  // MAMA OS uses Gateway Tools for auto-recall, not plugin hooks
-  if (process.env.MAMA_DAEMON === '1') {
-    info('[SessionStart] Running inside MAMA daemon, skipping hook (using Gateway Tools)');
-    return;
+  const features = getEnabledFeatures();
+  if (features.size === 0) {
+    info('[SessionStart] All hooks disabled');
+    process.exit(0);
   }
 
   // Check if this is a resume/compact event (not a fresh session start)

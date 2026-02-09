@@ -10,7 +10,7 @@
  * @module update-outcome
  */
 
-const mama = require('../core/mama-api.js');
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 /**
  * Update outcome tool definition

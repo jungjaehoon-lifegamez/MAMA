@@ -11,6 +11,8 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
+import { PromptSizeMonitor } from './prompt-size-monitor.js';
+import type { PromptLayer } from './prompt-size-monitor.js';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
@@ -39,6 +41,9 @@ import type {
 } from './types.js';
 import { AgentError } from './types.js';
 import { buildContextPrompt } from './context-prompt-builder.js';
+import { PostToolHandler } from './post-tool-handler.js';
+import { StopContinuationHandler } from './stop-continuation-handler.js';
+import { PreCompactHandler } from './pre-compact-handler.js';
 
 /**
  * Default configuration
@@ -197,6 +202,10 @@ export class AgentLoop {
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
   private readonly usePersistentCLI: boolean;
+  private readonly postToolHandler: PostToolHandler | null;
+  private readonly stopContinuationHandler: StopContinuationHandler | null;
+  private readonly preCompactHandler: PreCompactHandler | null;
+  private preCompactInjected = false;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -241,6 +250,18 @@ export class AgentLoop {
     const defaultSystemPrompt = gatewayToolsPrompt
       ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
       : basePrompt;
+
+    // Monitor prompt size
+    const monitor = new PromptSizeMonitor();
+    const checkResult = monitor.check([
+      { name: 'base', content: basePrompt, priority: 1 },
+      ...(gatewayToolsPrompt
+        ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
+        : []),
+    ]);
+    if (checkResult.warning) {
+      console.warn(`[AgentLoop] ${checkResult.warning}`);
+    }
 
     // Choose CLI mode: Persistent (fast, experimental) or Standard (stable)
     this.usePersistentCLI = options.usePersistentCLI ?? false;
@@ -298,6 +319,45 @@ export class AgentLoop {
     this.useLanes = options.useLanes ?? false;
     this.sessionKey = options.sessionKey ?? 'default';
     this.sessionPool = getSessionPool();
+
+    // Initialize PostToolHandler (fire-and-forget after tool execution)
+    if (options.postToolUse?.enabled) {
+      this.postToolHandler = new PostToolHandler(
+        (name, input) => this.mcpExecutor.execute(name, input as GatewayToolInput),
+        { enabled: true, contractSaveLimit: options.postToolUse.contractSaveLimit }
+      );
+      console.log('[AgentLoop] PostToolHandler enabled');
+    } else {
+      this.postToolHandler = null;
+    }
+
+    // Initialize PreCompactHandler (unsaved decision detection)
+    if (options.preCompact?.enabled) {
+      this.preCompactHandler = new PreCompactHandler(
+        (name, input) => this.mcpExecutor.execute(name, input as GatewayToolInput),
+        { enabled: true, maxDecisionsToDetect: options.preCompact.maxDecisionsToDetect }
+      );
+      console.log('[AgentLoop] PreCompactHandler enabled');
+    } else {
+      this.preCompactHandler = null;
+    }
+
+    // Initialize StopContinuationHandler (opt-in auto-resume)
+    if (options.stopContinuation?.enabled) {
+      this.stopContinuationHandler = new StopContinuationHandler({
+        enabled: true,
+        maxRetries: options.stopContinuation.maxRetries ?? 3,
+        completionMarkers: options.stopContinuation.completionMarkers ?? [
+          'DONE',
+          'FINISHED',
+          '✅',
+          'TASK_COMPLETE',
+        ],
+      });
+      console.log('[AgentLoop] StopContinuationHandler enabled');
+    } else {
+      this.stopContinuationHandler = null;
+    }
 
     if (!this.systemPromptOverride) {
       loadComposedSystemPrompt(true);
@@ -404,6 +464,12 @@ export class AgentLoop {
     let turn = 0;
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
 
+    // Infinite loop prevention
+    let consecutiveToolCalls = 0;
+    let lastToolName = '';
+    const MAX_CONSECUTIVE_SAME_TOOL = 5;
+    const EMERGENCY_MAX_TURNS = Math.max(this.maxTurns + 10, 50); // Always above maxTurns
+
     // Track channel key for session release
     const channelKey = buildChannelKey(
       options?.source ?? 'default',
@@ -435,18 +501,35 @@ export class AgentLoop {
 
     try {
       if (options?.systemPrompt) {
-        // Append Gateway Tools to the provided system prompt
-        // This ensures tools are always available regardless of what MessageRouter provides
         const gatewayToolsPrompt = this.isGatewayMode ? getGatewayToolsPrompt() : '';
         const fullPrompt = gatewayToolsPrompt
           ? `${options.systemPrompt}\n\n---\n\n${gatewayToolsPrompt}`
           : options.systemPrompt;
+
+        // Monitor prompt size
+        const monitor = new PromptSizeMonitor();
+        const checkResult = monitor.check([
+          { name: 'systemPrompt', content: options.systemPrompt, priority: 1 },
+          ...(gatewayToolsPrompt
+            ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
+            : []),
+        ]);
+        if (checkResult.warning) {
+          console.warn(`[AgentLoop] ${checkResult.warning}`);
+        }
+
         console.log(
           `[AgentLoop] Setting systemPrompt: ${fullPrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
         );
         this.agent.setSystemPrompt(fullPrompt);
       } else {
         console.log(`[AgentLoop] No systemPrompt in options, using default`);
+      }
+
+      // Reset StopContinuation state for this channel to prevent leaking
+      // retry counts from previous invocations
+      if (this.stopContinuationHandler) {
+        this.stopContinuationHandler.resetChannel(channelKey);
       }
 
       // Add initial user message with content blocks
@@ -457,6 +540,16 @@ export class AgentLoop {
 
       while (turn < this.maxTurns) {
         turn++;
+
+        // Emergency brake: prevent infinite loops
+        if (turn >= EMERGENCY_MAX_TURNS) {
+          throw new AgentError(
+            `Emergency stop: Agent loop exceeded emergency maximum turns (${EMERGENCY_MAX_TURNS})`,
+            'EMERGENCY_MAX_TURNS',
+            undefined,
+            false
+          );
+        }
 
         let response: ClaudeResponse;
 
@@ -598,7 +691,34 @@ export class AgentLoop {
         totalUsage.output_tokens += response.usage.output_tokens;
 
         // Track tokens in session pool for auto-reset at 80% context
-        this.sessionPool.updateTokens(channelKey, response.usage.input_tokens);
+        const tokenStatus = this.sessionPool.updateTokens(channelKey, response.usage.input_tokens);
+
+        // PreCompact: inject compaction summary when approaching context limit
+        if (tokenStatus.nearThreshold && this.preCompactHandler && !this.preCompactInjected) {
+          this.preCompactInjected = true;
+          try {
+            const historyText = history.map((msg) => {
+              if (typeof msg.content === 'string') return msg.content;
+              return (msg.content as ContentBlock[])
+                .filter((b): b is TextBlock => b.type === 'text')
+                .map((b) => b.text)
+                .join('\n');
+            });
+            const compactResult = await this.preCompactHandler.process(historyText);
+            if (compactResult.compactionPrompt) {
+              history.push({
+                role: 'user',
+                content: [{ type: 'text', text: compactResult.compactionPrompt }],
+              });
+              console.log(
+                `[AgentLoop] PreCompact: injected compaction summary (${compactResult.unsavedDecisions.length} unsaved decisions detected)`
+              );
+            }
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`[AgentLoop] PreCompact error (non-blocking):`, message);
+          }
+        }
 
         // Add assistant response to history
         history.push({
@@ -619,6 +739,21 @@ export class AgentLoop {
 
         // Check stop conditions
         if (response.stop_reason === 'end_turn') {
+          // StopContinuation: check if response looks incomplete before breaking
+          if (this.stopContinuationHandler) {
+            const finalText = this.extractTextFromContent(response.content);
+            const decision = this.stopContinuationHandler.analyzeResponse(channelKey, finalText);
+            if (decision.shouldContinue && decision.continuationPrompt) {
+              console.log(
+                `[AgentLoop] StopContinuation: auto-continuing (attempt ${decision.attempt}, reason: ${decision.reason})`
+              );
+              history.push({
+                role: 'user',
+                content: [{ type: 'text', text: decision.continuationPrompt }],
+              });
+              continue;
+            }
+          }
           break;
         }
 
@@ -633,6 +768,30 @@ export class AgentLoop {
 
         // Handle tool use
         if (response.stop_reason === 'tool_use') {
+          // Check for infinite loop patterns in tool usage
+          const toolUseBlocks = response.content.filter(
+            (block): block is ToolUseBlock => block.type === 'tool_use'
+          );
+
+          if (toolUseBlocks.length > 0) {
+            const currentToolName = toolUseBlocks[0].name;
+
+            if (currentToolName === lastToolName) {
+              consecutiveToolCalls++;
+              if (consecutiveToolCalls >= MAX_CONSECUTIVE_SAME_TOOL) {
+                throw new AgentError(
+                  `Infinite loop detected: Tool "${currentToolName}" called ${consecutiveToolCalls} times consecutively`,
+                  'INFINITE_LOOP_DETECTED',
+                  undefined,
+                  false
+                );
+              }
+            } else {
+              consecutiveToolCalls = 1;
+              lastToolName = currentToolName;
+            }
+          }
+
           const toolResults = await this.executeTools(response.content);
 
           // Add tool results to history
@@ -694,14 +853,30 @@ export class AgentLoop {
       let isError = false;
 
       try {
+        // PreToolUse: search MAMA for contracts before Write operations
+        let contractContext = '';
+        if (toolUse.name === 'Write' && toolUse.input) {
+          contractContext = await this.searchContractsForTool(
+            toolUse.name,
+            toolUse.input as GatewayToolInput
+          );
+        }
+
         const toolResult = await this.mcpExecutor.execute(
           toolUse.name,
           toolUse.input as GatewayToolInput
         );
         result = JSON.stringify(toolResult, null, 2);
 
+        if (contractContext) {
+          result = `${contractContext}\n\n---\n\n${result}`;
+        }
+
         // Notify tool use callback
         this.onToolUse?.(toolUse.name, toolUse.input, toolResult);
+
+        // PostToolUse: auto-extract contracts (fire-and-forget)
+        this.postToolHandler?.processInBackground(toolUse.name, toolUse.input, toolResult);
       } catch (error) {
         isError = true;
         result = error instanceof Error ? error.message : String(error);
@@ -719,6 +894,57 @@ export class AgentLoop {
     }
 
     return results;
+  }
+
+  /**
+   * Search MAMA for contracts related to a tool operation.
+   * Used as PreToolUse interceptor — searches for contract_* topics
+   * related to the file being written/edited.
+   *
+   * Non-blocking: returns empty string if search fails or no contracts found.
+   */
+  private async searchContractsForTool(
+    _toolName: string,
+    input: GatewayToolInput
+  ): Promise<string> {
+    try {
+      const filePath = (input as { path?: string }).path;
+      if (!filePath) {
+        return '';
+      }
+
+      const fileName = filePath.split('/').pop() || filePath;
+      const searchQuery = `contract ${fileName}`;
+
+      const searchResult = await this.mcpExecutor.execute('mama_search', {
+        query: searchQuery,
+        limit: 3,
+      });
+
+      if (searchResult && typeof searchResult === 'object' && 'results' in searchResult) {
+        const typedResult = searchResult as {
+          results: Array<{ topic?: string; decision?: string; confidence?: number }>;
+        };
+        const contractResults = typedResult.results.filter((r) => r.topic?.startsWith('contract_'));
+
+        if (contractResults.length > 0) {
+          const lines = contractResults.map(
+            (r) => `- **${r.topic}**: ${r.decision} (confidence: ${r.confidence ?? 'unknown'})`
+          );
+          return (
+            `## PreToolUse: Related Contracts Found\n\n` +
+            `Before writing to \`${fileName}\`, review these existing contracts:\n\n` +
+            `${lines.join('\n')}\n\n` +
+            `Ensure your changes are consistent with these contracts.`
+          );
+        }
+      }
+
+      return '';
+    } catch {
+      // Non-blocking: silently return empty on any error
+      return '';
+    }
   }
 
   /**
@@ -756,6 +982,13 @@ export class AgentLoop {
    */
   private removeToolCallBlocks(text: string): string {
     return text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '').trim();
+  }
+
+  private extractTextFromContent(content: ContentBlock[]): string {
+    return content
+      .filter((block): block is TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n');
   }
 
   /**
@@ -944,5 +1177,30 @@ export class AgentLoop {
    */
   static getDefaultSystemPrompt(): string {
     return loadSystemPrompt(true);
+  }
+
+  /**
+   * Stop and cleanup the AgentLoop resources
+   */
+  private stopped = false;
+
+  stop(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+
+    try {
+      // Stop persistent CLI if it exists
+      if (this.persistentCLI?.stopAll) {
+        this.persistentCLI.stopAll();
+      }
+
+      // NOTE: sessionPool is a shared global singleton — do NOT dispose here.
+      // It will be cleaned up when the process exits or via a global shutdown handler.
+
+      // Lane manager doesn't have explicit stop method
+      // Let it be cleaned up by garbage collection
+    } catch (error) {
+      console.error('Error during AgentLoop cleanup:', error);
+    }
   }
 }

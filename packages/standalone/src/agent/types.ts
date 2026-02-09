@@ -763,10 +763,38 @@ export interface AgentLoopOptions {
   cliSessionId?: string;
   /**
    * Use persistent CLI process for faster responses (experimental)
-   * When true, keeps Claude CLI process alive for multi-turn conversations
+   * When true, keeps Claude process alive for multi-turn conversations
    * Response time: ~2-3s instead of ~16-30s
    */
   usePersistentCLI?: boolean;
+
+  /**
+   * PostToolUse handler configuration
+   * Auto-extracts API contracts after Write/Edit tool execution and saves to MAMA
+   */
+  postToolUse?: {
+    enabled: boolean;
+    contractSaveLimit?: number;
+  };
+
+  /**
+   * PreCompact handler configuration
+   * Detects unsaved decisions before context window reset
+   */
+  preCompact?: {
+    enabled: boolean;
+    maxDecisionsToDetect?: number;
+  };
+
+  /**
+   * Stop/Continuation handler configuration
+   * Auto-resumes when agent stops with incomplete work (opt-in)
+   */
+  stopContinuation?: {
+    enabled: boolean;
+    maxRetries?: number;
+    completionMarkers?: string[];
+  };
 }
 
 /**
@@ -813,6 +841,8 @@ export type AgentErrorCode =
   | 'RATE_LIMIT'
   | 'MAX_TOKENS'
   | 'MAX_TURNS'
+  | 'EMERGENCY_MAX_TURNS'
+  | 'INFINITE_LOOP_DETECTED'
   | 'NETWORK_ERROR'
   | 'TOOL_ERROR'
   | 'UNKNOWN_TOOL'

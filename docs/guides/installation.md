@@ -25,7 +25,7 @@ node --version
 
 ## Quick Install
 
-### MAMA Standalone (v0.4.0)
+### MAMA Standalone
 
 **Always-on AI agent** with Discord/Slack/Telegram bot support, autonomous loops, and MAMA OS graph viewer.
 

@@ -20,9 +20,10 @@ const fs = require('fs');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
+const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 
-const { vectorSearch, initDB } = require(path.join(CORE_PATH, 'memory-store'));
-const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
+const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/memory-store');
+const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { sanitizeForPrompt } = require(path.join(CORE_PATH, 'prompt-sanitizer'));
 const { shouldShowLong, markSeen } = require(path.join(CORE_PATH, 'session-utils'));
 
@@ -32,8 +33,8 @@ const SIMILARITY_THRESHOLD = 0.6; // Lowered for better contract discovery
 // Tools that WRITE code - need contract check
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
 
-// Tools that READ code - allow freely
-const READ_TOOLS = new Set(['Read', 'Grep', 'Glob']);
+// Tools that READ code - Grep/Glob skip entirely, Read gets lightweight injection
+const READ_TOOLS_SKIP = new Set(['Grep', 'Glob']);
 
 // Code file extensions that should trigger contract search
 const CODE_EXTENSIONS = new Set([
@@ -329,10 +330,10 @@ async function main() {
     fs.appendFileSync(debugLogPath, `[${new Date().toISOString()}] PreToolUse hook called\n`);
   }
 
-  // Check opt-out flag (consistent with posttooluse-hook.js)
-  if (process.env.MAMA_DISABLE_HOOKS === 'true') {
+  const features = getEnabledFeatures();
+  if (!features.has('contracts') && !features.has('rules') && !features.has('agents')) {
     console.error(JSON.stringify({ decision: 'allow', reason: 'MAMA hooks disabled' }));
-    return process.exit(0);
+    process.exit(0);
   }
 
   const stdin = process.stdin;
@@ -352,16 +353,84 @@ async function main() {
   // Get tool name to determine behavior
   const toolName = input.tool_name || process.env.TOOL_NAME || '';
 
-  // READ TOOLS: Allow freely without contract check
-  // We WANT Claude to read code to learn interfaces
-  if (READ_TOOLS.has(toolName)) {
+  // Grep/Glob: Allow freely without any injection
+  if (READ_TOOLS_SKIP.has(toolName)) {
     console.error(JSON.stringify({ decision: 'allow', reason: '' }));
     process.exit(0);
   }
 
-  // WRITE TOOLS: Check for contracts before allowing
+  // === LIGHTWEIGHT READ PATH ===
+  // Only inject AGENTS.md and rules, no DB/embeddings
+  if (toolName === 'Read') {
+    if (!features.has('agents') && !features.has('rules')) {
+      console.error(JSON.stringify({ decision: 'allow', reason: 'features disabled' }));
+      process.exit(0);
+    }
+
+    const { findAgentsMdFiles, findProjectRoot } = require(
+      path.join(CORE_PATH, 'directory-walker')
+    );
+    const { findRuleFiles } = require(path.join(CORE_PATH, 'rules-finder'));
+    const { truncateMultiple } = require(path.join(CORE_PATH, 'dynamic-truncator'));
+    const { hasContentHash, addContentHash, createContentHash } = require(
+      path.join(CORE_PATH, 'session-cache')
+    );
+
+    const filePath = input.tool_input?.file_path || input.file_path || process.env.FILE_PATH || '';
+    const projectRoot = findProjectRoot(filePath) || input.cwd || process.cwd();
+    const contextEntries = [];
+
+    if (features.has('agents')) {
+      const agentsMdFiles = findAgentsMdFiles(filePath, { projectRoot });
+      for (const agentsMd of agentsMdFiles) {
+        const hash = createContentHash(agentsMd.content);
+        if (hasContentHash(hash)) {
+          continue;
+        }
+        addContentHash(hash);
+        contextEntries.push({
+          content: `[Directory Context: ${agentsMd.path}]\n${agentsMd.content}`,
+          path: agentsMd.path,
+          priority: agentsMd.distance,
+        });
+      }
+    }
+
+    if (features.has('rules')) {
+      const ruleFiles = findRuleFiles(filePath, { projectRoot });
+      for (const rule of ruleFiles) {
+        const hash = createContentHash(rule.content);
+        if (hasContentHash(hash)) {
+          continue;
+        }
+        addContentHash(hash);
+        contextEntries.push({
+          content: `[Rule: ${rule.path}] (${rule.matchReason})\n${rule.content}`,
+          path: rule.path,
+          priority: rule.distance + 10,
+        });
+      }
+    }
+
+    if (contextEntries.length === 0) {
+      console.error(JSON.stringify({ decision: 'allow', reason: 'no context found' }));
+      process.exit(0);
+    }
+
+    const truncated = truncateMultiple(contextEntries, { maxTotalChars: 8000 });
+    const contextText = truncated.map((e) => e.content).join('\n\n---\n\n');
+
+    const output = {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        additionalContext: contextText,
+      },
+    };
+    console.log(JSON.stringify(output));
+    process.exit(0);
+  }
+
   if (!WRITE_TOOLS.has(toolName)) {
-    // Unknown tool - allow silently
     console.error(JSON.stringify({ decision: 'allow', reason: '' }));
     process.exit(0);
   }

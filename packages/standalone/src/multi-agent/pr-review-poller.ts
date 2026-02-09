@@ -8,8 +8,9 @@
  * 1. Agent pushes and posts PR URL in channel
  * 2. Poller detects URL → starts polling `gh api` every 60s
  * 3. New review comments → formatted and sent to Slack as @Sisyphus mention
- * 4. Sisyphus delegates fix to DevBot → DevBot fixes → pushes
- * 5. Poller detects new comments or Approved → loop continues or ends
+ * 4. Sisyphus analyzes severity → delegates fixes to @DevBot
+ * 5. DevBot fixes → @Reviewer → approve or request changes
+ * 6. Poller detects new comments or Approved → loop continues or ends
  */
 
 import { execFile } from 'child_process';
@@ -70,11 +71,13 @@ interface PollSession {
   repo: string;
   prNumber: number;
   channelId: string;
-  interval: ReturnType<typeof setInterval>;
+  timeoutId: ReturnType<typeof setTimeout> | null;
   seenCommentIds: Set<number>;
   seenReviewIds: Set<number>;
   addressedCommentIds: Set<number>;
+  seenUnresolvedThreadIds: Map<string, number>; // id → last reported timestamp
   lastHeadSha: string | null;
+  isPolling: boolean; // Prevent concurrent polling
   startedAt: number;
 }
 
@@ -91,6 +94,7 @@ type MessageSender = (channelId: string, text: string) => Promise<void>;
 export class PRReviewPoller {
   private sessions: Map<string, PollSession> = new Map();
   private messageSender: MessageSender | null = null;
+  private onBatchComplete: ((channelId: string) => Promise<void>) | null = null;
   private logger = console;
 
   /**
@@ -108,8 +112,16 @@ export class PRReviewPoller {
   }
 
   /**
+   * Set callback fired after all message chunks for a poll cycle are sent.
+   * Used by Discord handler to trigger agent processing once (not per-chunk).
+   */
+  setOnBatchComplete(callback: (channelId: string) => Promise<void>): void {
+    this.onBatchComplete = callback;
+  }
+
+  /**
    * Set the target agent's Slack user ID for @mentions in review messages
-   * (typically the developer bot, who should fix the review comments)
+   * (typically the orchestrator/Sisyphus, who analyzes and delegates to DevBot)
    */
   private targetAgentUserId?: string;
   setTargetAgentUserId(userId: string): void {
@@ -170,19 +182,22 @@ export class PRReviewPoller {
       seenCommentIds,
       seenReviewIds,
       addressedCommentIds: new Set<number>(),
+      seenUnresolvedThreadIds: new Map<string, number>(),
       lastHeadSha,
       startedAt: Date.now(),
-      interval: setInterval(() => {
-        this.poll(sessionKey).catch((err) => {
-          this.logger.error(`[PRPoller] Poll error for ${sessionKey}:`, err);
-        });
-      }, POLL_INTERVAL_MS),
+      isPolling: false, // Initialize polling state
+      timeoutId: null, // Will be set by scheduleNextPoll
     };
 
     this.sessions.set(sessionKey, session);
     this.logger.log(
       `[PRPoller] Started polling ${sessionKey} (${seenCommentIds.size} existing comments, interval: ${POLL_INTERVAL_MS / 1000}s)`
     );
+
+    // Run first poll immediately, then schedule next
+    this.poll(sessionKey).catch((err) => {
+      this.logger.error(`[PRPoller] Initial poll error for ${sessionKey}:`, err);
+    });
 
     return true;
   }
@@ -197,7 +212,9 @@ export class PRReviewPoller {
     const sessionKey = `${parsed.owner}/${parsed.repo}#${parsed.prNumber}`;
     const session = this.sessions.get(sessionKey);
     if (session) {
-      clearInterval(session.interval);
+      if (session.timeoutId) {
+        clearTimeout(session.timeoutId);
+      }
       this.sessions.delete(sessionKey);
       this.logger.log(`[PRPoller] Stopped polling ${sessionKey}`);
     }
@@ -208,7 +225,9 @@ export class PRReviewPoller {
    */
   stopAll(): void {
     for (const [key, session] of this.sessions) {
-      clearInterval(session.interval);
+      if (session.timeoutId) {
+        clearTimeout(session.timeoutId);
+      }
       this.logger.log(`[PRPoller] Stopped polling ${key}`);
     }
     this.sessions.clear();
@@ -222,199 +241,323 @@ export class PRReviewPoller {
   }
 
   /**
+   * Get session details for active polling sessions (for auto-commit)
+   */
+  getSessionDetails(): { owner: string; repo: string; prNumber: number; channelId: string }[] {
+    return Array.from(this.sessions.values()).map((s) => ({
+      owner: s.owner,
+      repo: s.repo,
+      prNumber: s.prNumber,
+      channelId: s.channelId,
+    }));
+  }
+
+  /**
+   * Schedule the next poll cycle for a session
+   */
+  private scheduleNextPoll(sessionKey: string): void {
+    const session = this.sessions.get(sessionKey);
+    if (!session) return;
+
+    session.timeoutId = setTimeout(() => {
+      this.poll(sessionKey).catch((err) => {
+        this.logger.error(`[PRPoller] Poll error for ${sessionKey}:`, err);
+      });
+    }, POLL_INTERVAL_MS);
+  }
+
+  /**
    * Poll a single PR for new comments/reviews
    */
   private async poll(sessionKey: string): Promise<void> {
     const session = this.sessions.get(sessionKey);
     if (!session) return;
 
-    // Auto-stop after max duration
-    if (Date.now() - session.startedAt > MAX_POLL_DURATION_MS) {
-      this.logger.log(`[PRPoller] Max duration reached for ${sessionKey}, stopping`);
-      clearInterval(session.interval);
-      this.sessions.delete(sessionKey);
-      await this.sendMessage(
-        session.channelId,
-        `⏰ *PR Review Poller* — ${sessionKey} 폴링 2시간 경과로 자동 중지. 재시작하려면 PR URL을 다시 게시하세요.`
+    // Prevent concurrent polling
+    if (session.isPolling) {
+      this.logger.log(
+        `[PRPoller] Skipping concurrent poll for ${sessionKey} (already in progress)`
       );
       return;
     }
 
-    // Check PR state first
+    session.isPolling = true;
+    // Track if any new data is found (for onBatchComplete trigger)
+    let hasNewData = false;
+
     try {
-      const prState = await this.fetchPRState(session.owner, session.repo, session.prNumber);
-      if (prState === 'MERGED' || prState === 'CLOSED') {
-        this.logger.log(`[PRPoller] PR ${sessionKey} is ${prState}, stopping`);
-        clearInterval(session.interval);
+      this.logger.log(
+        `[PRPoller] Polling ${sessionKey} (seen: ${session.seenCommentIds.size} comments, ${session.seenReviewIds.size} reviews)`
+      );
+
+      // Auto-stop after max duration
+      if (Date.now() - session.startedAt > MAX_POLL_DURATION_MS) {
+        this.logger.log(`[PRPoller] Max duration reached for ${sessionKey}, stopping`);
+        if (session.timeoutId) {
+          clearTimeout(session.timeoutId);
+        }
         this.sessions.delete(sessionKey);
         await this.sendMessage(
           session.channelId,
-          `✅ *PR Review Poller* — ${sessionKey} ${prState}. 폴링 종료.`
+          `⏰ *PR Review Poller* — ${sessionKey} auto-stopped after 2h. Re-post the PR URL to restart.`
         );
         return;
       }
-    } catch {
-      // Ignore state check errors, continue polling
-    }
 
-    // Fetch new reviews
-    try {
-      const reviews = await this.fetchReviews(session.owner, session.repo, session.prNumber);
-      const newReviews = reviews.filter((r) => !session.seenReviewIds.has(r.id));
-
-      for (const review of newReviews) {
-        session.seenReviewIds.add(review.id);
-
-        if (review.state === 'APPROVED') {
-          try {
-            await this.sendMessage(
-              session.channelId,
-              `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. 폴링 종료.`
-            );
-          } finally {
-            clearInterval(session.interval);
-            this.sessions.delete(sessionKey);
+      // Check PR state first
+      try {
+        const prState = await this.fetchPRState(session.owner, session.repo, session.prNumber);
+        if (prState === 'MERGED' || prState === 'CLOSED') {
+          this.logger.log(`[PRPoller] PR ${sessionKey} is ${prState}, stopping`);
+          if (session.timeoutId) {
+            clearTimeout(session.timeoutId);
           }
-          return;
-        }
-
-        if (review.state === 'CHANGES_REQUESTED') {
+          this.sessions.delete(sessionKey);
           await this.sendMessage(
             session.channelId,
-            `🔴 *PR Review* — ${sessionKey} **CHANGES REQUESTED** by ${review.user.login}`
+            `✅ *PR Review Poller* — ${sessionKey} ${prState}. Polling stopped.`
           );
+          return;
+        }
+      } catch {
+        // Ignore state check errors, continue polling
+      }
+
+      // Fetch new reviews
+      try {
+        const reviews = await this.fetchReviews(session.owner, session.repo, session.prNumber);
+        const newReviews = reviews.filter((r) => !session.seenReviewIds.has(r.id));
+
+        for (const review of newReviews) {
+          session.seenReviewIds.add(review.id);
+
+          if (review.state === 'APPROVED') {
+            try {
+              await this.sendMessage(
+                session.channelId,
+                `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. Polling stopped.`
+              );
+
+              hasNewData = true; // Set flag for APPROVED review
+
+              // Trigger onBatchComplete for LEAD agent to handle commit+push
+              if (this.onBatchComplete) {
+                try {
+                  await this.onBatchComplete(session.channelId);
+                } catch (err) {
+                  this.logger.error(`[PRPoller] onBatchComplete error after APPROVE:`, err);
+                }
+              }
+            } finally {
+              if (session.timeoutId) {
+                clearTimeout(session.timeoutId);
+              }
+              this.sessions.delete(sessionKey);
+            }
+            return;
+          }
+
+          if (review.state === 'CHANGES_REQUESTED') {
+            await this.sendMessage(
+              session.channelId,
+              `🔴 *PR Review* — ${sessionKey} **CHANGES REQUESTED** by ${review.user.login}`
+            );
+            hasNewData = true; // Set flag for CHANGES_REQUESTED review
+          }
+        }
+      } catch (err) {
+        this.logger.error(`[PRPoller] Failed to fetch reviews:`, err);
+      }
+
+      // Detect new push (HEAD SHA changed)
+      let newPush = false;
+      let changedFiles: string[] = [];
+      try {
+        const currentSha = await this.fetchHeadSha(session.owner, session.repo, session.prNumber);
+        if (session.lastHeadSha && currentSha !== session.lastHeadSha) {
+          newPush = true;
+          changedFiles = await this.fetchChangedFiles(
+            session.owner,
+            session.repo,
+            session.lastHeadSha,
+            currentSha
+          );
+          this.logger.log(
+            `[PRPoller] New push detected for ${sessionKey}: ${session.lastHeadSha.substring(0, 7)} → ${currentSha.substring(0, 7)} (${changedFiles.length} files changed)`
+          );
+          session.lastHeadSha = currentSha;
+        } else if (!session.lastHeadSha) {
+          session.lastHeadSha = currentSha;
+        }
+      } catch (err) {
+        this.logger.error(`[PRPoller] Failed to detect push:`, err);
+      }
+
+      // Fetch comments once (avoid N+1 API calls between handlePostPush and standard flow)
+      let allComments: PRComment[] = [];
+      try {
+        allComments = await this.fetchComments(session.owner, session.repo, session.prNumber);
+      } catch (err) {
+        this.logger.error(`[PRPoller] Failed to fetch comments:`, err);
+        return; // Cannot proceed without comments
+      }
+
+      // After a push, check unresolved threads and auto-reply to addressed ones
+      if (newPush && changedFiles.length > 0) {
+        try {
+          await this.handlePostPush(session, sessionKey, changedFiles, allComments);
+        } catch (err) {
+          this.logger.error(`[PRPoller] Failed to handle post-push:`, err);
         }
       }
-    } catch (err) {
-      this.logger.error(`[PRPoller] Failed to fetch reviews:`, err);
-    }
 
-    // Detect new push (HEAD SHA changed)
-    let newPush = false;
-    let changedFiles: string[] = [];
-    try {
-      const currentSha = await this.fetchHeadSha(session.owner, session.repo, session.prNumber);
-      if (session.lastHeadSha && currentSha !== session.lastHeadSha) {
-        newPush = true;
-        changedFiles = await this.fetchChangedFiles(
+      // Standard flow: filter and send new comments
+      try {
+        const newComments = allComments.filter(
+          (c) => !session.seenCommentIds.has(c.id) && !session.addressedCommentIds.has(c.id)
+        );
+
+        if (newComments.length === 0) {
+          this.logger.log(
+            `[PRPoller] No new comments for ${sessionKey} (total: ${allComments.length})`
+          );
+        } else {
+          // Format and send new comments
+          const formatted = this.formatComments(sessionKey, newComments);
+          const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
+          await this.sendMessage(session.channelId, `${mention}${formatted}`);
+
+          // Mark as seen only after successful send
+          for (const c of newComments) {
+            session.seenCommentIds.add(c.id);
+          }
+
+          // Set flag to trigger onBatchComplete
+          hasNewData = true;
+
+          this.logger.log(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
+        }
+      } catch (err) {
+        this.logger.error(`[PRPoller] Failed to process comments:`, err);
+      }
+
+      // Check unresolved threads every cycle (not just after push)
+      try {
+        const threads = await this.fetchUnresolvedThreads(
           session.owner,
           session.repo,
-          session.lastHeadSha,
-          currentSha
+          session.prNumber
         );
+        const allUnresolved = threads.filter((t) => !t.isResolved);
+        const now = Date.now();
+        const REMIND_INTERVAL_MS = 5 * 60 * 1000; // Re-remind after 5 minutes
+
+        // New = never seen, or seen but still unresolved after remind interval
+        const toReport = allUnresolved.filter((t) => {
+          const lastReported = session.seenUnresolvedThreadIds.get(t.id);
+          if (!lastReported) return true; // never reported
+          return now - lastReported >= REMIND_INTERVAL_MS; // stale reminder
+        });
+
         this.logger.log(
-          `[PRPoller] New push detected for ${sessionKey}: ${session.lastHeadSha.substring(0, 7)} → ${currentSha.substring(0, 7)} (${changedFiles.length} files changed)`
+          `[PRPoller] Unresolved threads: ${allUnresolved.length} total, ${toReport.length} to report (of ${threads.length} fetched)`
         );
-        session.lastHeadSha = currentSha;
-      } else if (!session.lastHeadSha) {
-        session.lastHeadSha = currentSha;
-      }
-    } catch (err) {
-      this.logger.error(`[PRPoller] Failed to detect push:`, err);
-    }
 
-    // Fetch comments once (avoid N+1 API calls between handlePostPush and standard flow)
-    let allComments: PRComment[] = [];
-    try {
-      allComments = await this.fetchComments(session.owner, session.repo, session.prNumber);
-    } catch (err) {
-      this.logger.error(`[PRPoller] Failed to fetch comments:`, err);
-      return; // Cannot proceed without comments
-    }
+        if (toReport.length > 0) {
+          hasNewData = true;
+          // More accurate reminder detection: only if ALL threads are already seen
+          const seenCount = toReport.filter((t) =>
+            session.seenUnresolvedThreadIds.has(t.id)
+          ).length;
+          const isReminder = seenCount === toReport.length && seenCount > 0;
+          const prefix = isReminder ? '🔔 *Reminder*: ' : '';
+          const formatted = this.formatUnresolvedThreads(sessionKey, toReport, threads.length);
+          const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
+          await this.sendMessage(session.channelId, `${mention}${prefix}${formatted}`);
 
-    // After a push, check unresolved threads and auto-reply to addressed ones
-    if (newPush && changedFiles.length > 0) {
-      try {
-        await this.handlePostPush(session, sessionKey, changedFiles, allComments);
+          for (const t of toReport) {
+            session.seenUnresolvedThreadIds.set(t.id, now);
+          }
+          this.logger.log(
+            `[PRPoller] Sent ${toReport.length} unresolved threads for ${sessionKey}${isReminder ? ' (reminder)' : ''}`
+          );
+        }
+
+        // Clean up resolved threads from seen map
+        const unresolvedIds = new Set(allUnresolved.map((t) => t.id));
+        for (const [id] of session.seenUnresolvedThreadIds) {
+          if (!unresolvedIds.has(id)) {
+            session.seenUnresolvedThreadIds.delete(id);
+          }
+        }
       } catch (err) {
-        this.logger.error(`[PRPoller] Failed to handle post-push:`, err);
-      }
-    }
-
-    // Standard flow: filter and send new comments
-    try {
-      const newComments = allComments.filter(
-        (c) => !session.seenCommentIds.has(c.id) && !session.addressedCommentIds.has(c.id)
-      );
-
-      if (newComments.length === 0) return;
-
-      // Format and send
-      const formatted = this.formatComments(sessionKey, newComments);
-      const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
-      await this.sendMessage(session.channelId, `${mention}${formatted}`);
-
-      // Mark as seen only after successful send
-      for (const c of newComments) {
-        session.seenCommentIds.add(c.id);
+        this.logger.error(`[PRPoller] Failed to check unresolved threads:`, err);
       }
 
-      this.logger.log(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
-    } catch (err) {
-      this.logger.error(`[PRPoller] Failed to process comments:`, err);
+      // Notify batch complete — triggers agent processing once after all chunks (only when new data found)
+      if (hasNewData && this.onBatchComplete) {
+        try {
+          await this.onBatchComplete(session.channelId);
+        } catch (err) {
+          this.logger.error(`[PRPoller] onBatchComplete error:`, err);
+        }
+      }
+    } finally {
+      // Always reset polling flag to allow next poll
+      session.isPolling = false;
+
+      // Schedule next poll if session still exists
+      if (this.sessions.has(sessionKey)) {
+        this.scheduleNextPoll(sessionKey);
+      }
     }
   }
 
   /**
-   * Format PR comments for Slack message
+   * Format PR comments for Slack message (simplified count format)
    */
   private formatComments(sessionKey: string, comments: PRComment[]): string {
-    // Group by severity (detect from body)
-    const critical: string[] = [];
-    const major: string[] = [];
-    const minor: string[] = [];
-    const other: string[] = [];
+    // Count by severity (detect from body)
+    let critical = 0;
+    let major = 0;
+    let minor = 0;
+    let other = 0;
 
     for (const c of comments) {
-      const location = c.path ? `\`${c.path}${c.line ? `:${c.line}` : ''}\`` : '';
-      const body = c.body.length > 200 ? c.body.substring(0, 200) + '...' : c.body;
-      const entry = `${location} — ${body} _(${c.user.login})_`;
-
-      // Detect severity from body content
+      // Use full body for severity detection
       const bodyLower = c.body.toLowerCase();
+
+      // Detect severity from full body content
       if (
         bodyLower.includes('critical') ||
         bodyLower.includes('bug') ||
         bodyLower.includes('security') ||
         bodyLower.includes('high')
       ) {
-        critical.push(entry);
+        critical++;
       } else if (
         bodyLower.includes('medium') ||
         bodyLower.includes('should') ||
         bodyLower.includes('major')
       ) {
-        major.push(entry);
+        major++;
       } else if (
         bodyLower.includes('nit') ||
         bodyLower.includes('minor') ||
         bodyLower.includes('low') ||
         bodyLower.includes('suggestion')
       ) {
-        minor.push(entry);
+        minor++;
       } else {
-        other.push(entry);
+        other++;
       }
     }
 
-    let msg = `📝 *PR Review Comments* — ${sessionKey} (${comments.length}건 새 코멘트)\n\n`;
-
-    if (critical.length > 0) {
-      msg += `*🔴 Critical/High:*\n${critical.map((e) => `• ${e}`).join('\n')}\n\n`;
-    }
-    if (major.length > 0) {
-      msg += `*🟡 Medium:*\n${major.map((e) => `• ${e}`).join('\n')}\n\n`;
-    }
-    if (minor.length > 0) {
-      msg += `*🔵 Minor/Nit:*\n${minor.map((e) => `• ${e}`).join('\n')}\n\n`;
-    }
-    if (other.length > 0) {
-      msg += `*💬 Other:*\n${other.map((e) => `• ${e}`).join('\n')}\n\n`;
-    }
-
-    msg += `위 코멘트를 분석하고 DevBot에게 수정을 위임하세요.`;
-
-    return msg;
+    return (
+      `📝 PR ${sessionKey} review update\n` +
+      `• New comments: ${comments.length} (🔴 ${critical} / 🟡 ${major} / 🔵 ${minor})\n` +
+      `👉 Check the PR for details`
+    );
   }
 
   /**
@@ -430,7 +573,7 @@ export class PRReviewPoller {
         '--jq',
         '.[] | {id, path, line, body, user: {login: .user.login}, created_at}',
       ],
-      { timeout: 30000 }
+      { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }
     );
 
     if (!stdout.trim()) return [];
@@ -534,7 +677,7 @@ export class PRReviewPoller {
 
     // Report still-unresolved threads to Slack
     if (stillUnresolved.length > 0) {
-      const formatted = this.formatUnresolvedThreads(sessionKey, stillUnresolved);
+      const formatted = this.formatUnresolvedThreads(sessionKey, stillUnresolved, threads.length);
       const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
       await this.sendMessage(session.channelId, `${mention}${formatted}`);
       this.logger.log(
@@ -544,22 +687,18 @@ export class PRReviewPoller {
   }
 
   /**
-   * Format unresolved threads for Slack message
+   * Format unresolved threads for Slack message (simplified count format)
    */
-  private formatUnresolvedThreads(sessionKey: string, threads: ReviewThread[]): string {
-    let msg = `⚠️ *미해결 PR 코멘트* — ${sessionKey} (${threads.length}건 미해결)\n\n`;
-    msg += `Push 후에도 아직 resolve 되지 않은 코멘트입니다:\n\n`;
-
-    for (const thread of threads) {
-      const first = thread.comments[0];
-      if (!first) continue;
-      const location = first.path ? `\`${first.path}${first.line ? `:${first.line}` : ''}\`` : '';
-      const body = first.body.length > 150 ? first.body.substring(0, 150) + '...' : first.body;
-      msg += `• ${location} — ${body} _(${first.author})_\n`;
+  private formatUnresolvedThreads(
+    sessionKey: string,
+    threads: ReviewThread[],
+    totalThreads?: number
+  ): string {
+    if (totalThreads !== undefined) {
+      const resolved = totalThreads - threads.length;
+      return `⚠️ PR ${sessionKey} thread status: ${resolved} resolved / ${threads.length} unresolved`;
     }
-
-    msg += `\n위 미해결 코멘트를 분석하고 DevBot에게 수정을 위임하세요.`;
-    return msg;
+    return `⚠️ PR ${sessionKey} unresolved threads: ${threads.length}`;
   }
 
   /**
@@ -574,7 +713,7 @@ export class PRReviewPoller {
       query($owner: String!, $repo: String!, $prNumber: Int!) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $prNumber) {
-            reviewThreads(first: 100) {
+            reviewThreads(last: 100) {
               totalCount
               nodes {
                 id
@@ -616,6 +755,17 @@ export class PRReviewPoller {
 
     const result = JSON.parse(stdout || '{"totalCount":0,"nodes":[]}');
     const nodes = result.nodes || [];
+
+    // Debug: log isResolved distribution
+    const unresolvedInRaw = nodes.filter(
+      (n: Record<string, unknown>) => n.isResolved === false
+    ).length;
+    const resolvedInRaw = nodes.filter(
+      (n: Record<string, unknown>) => n.isResolved === true
+    ).length;
+    this.logger.log(
+      `[PRPoller] GraphQL raw: ${nodes.length} nodes, ${unresolvedInRaw} unresolved, ${resolvedInRaw} resolved, ${nodes.length - unresolvedInRaw - resolvedInRaw} other`
+    );
 
     // Warn if GraphQL pagination caps are hit
     if (result.totalCount > 100) {
@@ -765,6 +915,25 @@ export class PRReviewPoller {
       this.logger.error('[PRPoller] No message sender configured');
       return;
     }
-    await this.messageSender(channelId, text);
+
+    // Discord has a 2000 char limit; split long messages
+    this.logger.log(`[PRPoller] sendMessage: ${text.length} chars`);
+    if (text.length <= 1900) {
+      await this.messageSender(channelId, text);
+      return;
+    }
+
+    // Split by lines, keeping chunks under 1900 chars
+    const lines = text.split('\n');
+    let chunk = '';
+    for (const line of lines) {
+      if (chunk.length + line.length + 1 > 1900) {
+        if (chunk) await this.messageSender(channelId, chunk);
+        chunk = line;
+      } else {
+        chunk += (chunk ? '\n' : '') + line;
+      }
+    }
+    if (chunk) await this.messageSender(channelId, chunk);
   }
 }

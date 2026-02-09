@@ -395,6 +395,7 @@ multi_agent:
       bot_token: 'DISCORD_BOT_TOKEN_2'
       tier: 1 # Full access for code changes
       auto_continue: true
+      pool_size: 3 # Enable 3 parallel processes for this agent
       auto_respond_keywords: ['bug', 'code', 'implement', '구현']
 
     reviewer:
@@ -432,6 +433,38 @@ multi_agent:
     max_chain_length: 10
     global_cooldown_ms: 2000
 ```
+
+### Process Pool (Parallel Execution)
+
+Each agent runs as a separate Claude CLI subprocess. By default, each agent has **1 process** (sequential execution). Configure `pool_size` to enable parallel task execution per agent.
+
+```yaml
+multi_agent:
+  agents:
+    developer:
+      pool_size: 5 # 5 parallel Claude CLI processes for this agent
+```
+
+**How it works:**
+
+- When a task arrives and all processes are busy, a new process is spawned (up to `pool_size`)
+- Idle processes are reused automatically (no cold start penalty)
+- Processes auto-terminate after 5 minutes of inactivity (`idleTimeoutMs`)
+- Hung processes (busy > 15 minutes) are auto-killed (`hungTimeoutMs`)
+
+**Pool status per agent:**
+
+| State   | Description                         |
+| ------- | ----------------------------------- |
+| `total` | Total processes currently in pool   |
+| `busy`  | Processes handling active requests  |
+| `idle`  | Processes ready for immediate reuse |
+
+**Default:** `pool_size: 1` (sequential execution, safe default)
+
+**Recommendation:** Start with `pool_size: 3` for implementation agents (Developer) and keep `pool_size: 1` for advisory agents (Reviewer, Explorer).
+
+> **Note:** Each process spawns a separate Claude CLI subprocess. Higher pool sizes increase memory and API usage proportionally.
 
 ### Delegation
 
@@ -817,5 +850,4 @@ The multi-agent swarm architecture was inspired by [oh-my-opencode](https://gith
 ---
 
 **Author:** SpineLift Team
-**Version:** 0.4.0
 **Last Updated:** 2026-02-06

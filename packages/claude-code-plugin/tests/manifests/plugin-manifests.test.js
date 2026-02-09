@@ -19,7 +19,6 @@ const __dirname = path.dirname(__filename);
 
 const PLUGIN_ROOT = path.resolve(__dirname, '../..');
 const PLUGIN_JSON_PATH = path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json');
-const MCP_JSON_PATH = path.join(PLUGIN_ROOT, '.mcp.json');
 const README_PATH = path.join(PLUGIN_ROOT, 'README.md');
 const VALIDATION_SCRIPT = path.join(PLUGIN_ROOT, 'scripts', 'validate-manifests.js');
 
@@ -190,78 +189,9 @@ describe('M3.3: Plugin Manifests', () => {
     });
   });
 
-  describe.skip('AC3: .mcp.json includes stdio configuration', () => {
-    // Skipped: .mcp.json was deleted (Feb 2025)
-    // MCP server configuration is now handled externally
-    it('should have valid .mcp.json file', () => {
-      expect(fs.existsSync(MCP_JSON_PATH)).toBe(true);
-
-      const content = fs.readFileSync(MCP_JSON_PATH, 'utf8');
-      const mcpConfig = JSON.parse(content);
-
-      expect(mcpConfig).toBeDefined();
-      expect(mcpConfig.mcpServers).toBeDefined();
-    });
-
-    it('should configure MAMA server with stdio transport', () => {
-      const mcpConfig = JSON.parse(fs.readFileSync(MCP_JSON_PATH, 'utf8'));
-
-      expect(mcpConfig.mcpServers.mama).toBeDefined();
-
-      const mamaServer = mcpConfig.mcpServers.mama;
-      // Accept both 'node' (local dev) and 'npx' (production)
-      expect(['node', 'npx']).toContain(mamaServer.command);
-      expect(mamaServer.args).toBeDefined();
-      expect(Array.isArray(mamaServer.args)).toBe(true);
-
-      // Validate args based on command type
-      if (mamaServer.command === 'npx') {
-        expect(mamaServer.args).toContain('@jungjaehoon/mama-server');
-      } else if (mamaServer.command === 'node') {
-        // Local dev: args should contain server.js path
-        expect(mamaServer.args.some((arg) => arg.endsWith('server.js'))).toBe(true);
-      }
-    });
-
-    it('should include required environment variables', () => {
-      const mcpConfig = JSON.parse(fs.readFileSync(MCP_JSON_PATH, 'utf8'));
-
-      const mamaServer = mcpConfig.mcpServers.mama;
-      expect(mamaServer.env).toBeDefined();
-
-      // Production config only needs embedding model
-      // Database path and transport are handled by MCP server defaults
-      expect(mamaServer.env.MAMA_EMBEDDING_MODEL).toBeDefined();
-      expect(mamaServer.env.MAMA_EMBEDDING_MODEL).toContain('Xenova/');
-    });
-
-    it('should use npm package for portability', () => {
-      const mcpConfig = JSON.parse(fs.readFileSync(MCP_JSON_PATH, 'utf8'));
-
-      const mamaServer = mcpConfig.mcpServers.mama;
-
-      // Accept both 'node' (local dev) and 'npx' (production)
-      expect(['node', 'npx']).toContain(mamaServer.command);
-
-      if (mamaServer.command === 'npx') {
-        // Production: uses npm package (most portable)
-        expect(mamaServer.args).toContain('@jungjaehoon/mama-server');
-        const argsStr = JSON.stringify(mamaServer.args);
-        expect(argsStr).toContain('@jungjaehoon');
-      } else if (mamaServer.command === 'node') {
-        // Local dev: uses direct path (acceptable for development)
-        expect(mamaServer.args.some((arg) => arg.includes('server.js'))).toBe(true);
-      }
-    });
-
-    it('should include description for MAMA server', () => {
-      const mcpConfig = JSON.parse(fs.readFileSync(MCP_JSON_PATH, 'utf8'));
-
-      const mamaServer = mcpConfig.mcpServers.mama;
-      expect(mamaServer.description).toBeDefined();
-      expect(mamaServer.description).toContain('MAMA');
-    });
-  });
+  // AC3: .mcp.json was intentionally removed (Feb 2025).
+  // MCP server configuration is now handled externally via Claude Desktop settings.
+  // Tests for .mcp.json have been removed as the file no longer exists.
 
   describe('AC4: README references manifest files', () => {
     it('should have README.md file', () => {
@@ -316,8 +246,7 @@ describe('M3.3: Plugin Manifests', () => {
       }
     });
 
-    it('should run validation (with expected .mcp.json warning)', () => {
-      // Note: .mcp.json was deleted (Feb 2025) so validation shows 1 error
+    it('should run validation with zero errors', () => {
       let output = '';
       try {
         output = execSync(`node ${VALIDATION_SCRIPT}`, {
@@ -330,7 +259,6 @@ describe('M3.3: Plugin Manifests', () => {
 
       // Should validate plugin.json successfully
       expect(output).toContain('plugin.json: Valid JSON');
-      // .mcp.json should also pass now that it's restored
       expect(output).toContain('❌ Errors: 0');
     });
 
@@ -348,11 +276,6 @@ describe('M3.3: Plugin Manifests', () => {
       expect(output).toContain('plugin.json: Valid JSON');
       expect(output).toContain('plugin.json has name');
       expect(output).toContain('plugin.json has version');
-    });
-
-    it.skip('should validate .mcp.json structure', () => {
-      // Skipped: .mcp.json was deleted (Feb 2025)
-      // MCP server configuration is now external
     });
 
     it('should verify all commands exist', () => {
@@ -376,7 +299,6 @@ describe('M3.3: Plugin Manifests', () => {
     });
 
     it('should verify hook scripts exist', () => {
-      // Note: validation script exits with error because .mcp.json is missing (expected)
       let output = '';
       try {
         output = execSync(`node ${VALIDATION_SCRIPT}`, {
@@ -395,21 +317,19 @@ describe('M3.3: Plugin Manifests', () => {
     });
 
     it('should show summary with pass count', () => {
-      // Note: .mcp.json was intentionally deleted (Feb 2025), so validation shows 1 error
-      // The validation script is catching this as expected
+      let output = '';
       try {
-        execSync(`node ${VALIDATION_SCRIPT}`, {
+        output = execSync(`node ${VALIDATION_SCRIPT}`, {
           encoding: 'utf8',
           stdio: 'pipe',
         });
       } catch (err) {
-        // Script exits with error because .mcp.json is missing, which is expected
-        const output = err.stdout || '';
-        expect(output).toContain('Validation Summary');
-        expect(output).toMatch(/✅ Passed: \d+/);
-        // .mcp.json missing is expected - 1 error
-        expect(output).toMatch(/❌ Errors: 1/);
+        output = err.stdout || '';
       }
+
+      expect(output).toContain('Validation Summary');
+      expect(output).toMatch(/✅ Passed: \d+/);
+      expect(output).toContain('❌ Errors: 0');
     });
   });
 
@@ -428,11 +348,6 @@ describe('M3.3: Plugin Manifests', () => {
       );
 
       expect(pluginConfig.version).toBe(packageJson.version);
-    });
-
-    it.skip('should reference same embedding model in .mcp.json and docs', () => {
-      // Skipped: .mcp.json was deleted (Feb 2025)
-      // MCP server configuration is now handled externally
     });
   });
 });

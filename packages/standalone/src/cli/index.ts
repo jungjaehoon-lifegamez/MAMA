@@ -36,13 +36,13 @@ const program = new Command();
 program
   .name('mama')
   .description('MAMA Standalone - Always-on AI Assistant powered by Claude Pro')
-  .version(VERSION, '-v, --version', '버전 정보 출력');
+  .version(VERSION, '-v, --version', 'Print version information');
 
 program
   .command('init')
-  .description('MAMA 설정 초기화')
-  .option('-f, --force', '기존 설정 덮어쓰기')
-  .option('--skip-auth-check', '인증 확인 건너뛰기 (테스트용)')
+  .description('Initialize MAMA configuration')
+  .option('-f, --force', 'Overwrite existing configuration')
+  .option('--skip-auth-check', 'Skip authentication check (for testing)')
   .action(async (options) => {
     await initCommand({
       force: options.force,
@@ -52,9 +52,9 @@ program
 
 program
   .command('setup')
-  .description('대화형 설정 마법사 (Claude가 도와드립니다)')
-  .option('-p, --port <port>', '포트 번호', '3848')
-  .option('--no-browser', '브라우저 자동 열기 끄기')
+  .description('Interactive setup wizard (guided by Claude)')
+  .option('-p, --port <port>', 'Port number', '3848')
+  .option('--no-browser', 'Disable automatic browser opening')
   .action(async (options) => {
     await setupCommand({
       port: parseInt(options.port),
@@ -64,31 +64,31 @@ program
 
 program
   .command('start')
-  .description('MAMA 에이전트 시작')
-  .option('-f, --foreground', 'Foreground에서 실행')
+  .description('Start MAMA agent')
+  .option('-f, --foreground', 'Run in foreground')
   .action(async (options) => {
     await startCommand({ foreground: options.foreground });
   });
 
 program
   .command('stop')
-  .description('MAMA 에이전트 종료')
+  .description('Stop MAMA agent')
   .action(async () => {
     await stopCommand();
   });
 
 program
   .command('status')
-  .description('MAMA 에이전트 상태 확인')
+  .description('Check MAMA agent status')
   .action(async () => {
     await statusCommand();
   });
 
 program
   .command('run')
-  .description('단일 프롬프트 실행 (테스트용)')
-  .argument('<prompt>', '실행할 프롬프트')
-  .option('-v, --verbose', '상세 출력')
+  .description('Run a single prompt (for testing)')
+  .argument('<prompt>', 'Prompt to execute')
+  .option('-v, --verbose', 'Verbose output')
   .action(async (prompt, options) => {
     await runCommand({ prompt, verbose: options.verbose });
   });

@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - mama-os@0.5.0-beta: Internationalization, Multi-Agent Fixes & Agent Hooks
+
+**Internationalization** (2026-02-09)
+
+- **Full English Translation** - Converted 538+ Korean strings to English across 35 files (CLI, gateways, onboarding, multi-agent, personas, skills, scheduler)
+- **English Persona Templates** - Translated 3 built-in personas (sisyphus, developer, reviewer) to English in `templates/personas/`
+- **i18n Default Language** - Changed default language from `ko` to `en` in i18n-messages and message-router
+- **Korean Regex Preserved** - Korean category routing patterns remain functional for Korean-speaking users
+
+**Multi-Agent Discord Fixes** (2026-02-08)
+
+- **DELEGATE:: Syntax Detection** - `extractMentionedAgentIds()` now detects `DELEGATE::agent::task` patterns for proper routing
+- **Bidirectional Bot Mention Routing** - Bot-to-bot mentions now route correctly in both directions
+- **Live Progress Indicator** - Shows `Working... (Xs)` during long-running Discord requests
+- **Infinite Loop Prevention** - Chain length limit and global cooldown prevent runaway agent loops
+- **Opt-in Port Auto-Kill** - Port conflict resolution now requires explicit opt-in
+- **REVIEW→DEV Routing Fix** - Unblocked mention routing during APPROVE cooldown period
+
+**Agent Hooks** (2026-02-09)
+
+- **PostToolUse Handler** - Auto-extracts API/function/type contracts after Write/Edit operations
+- **PreCompact Handler** - Detects unsaved decisions when context reaches 80% capacity, injects compression prompt
+- **StopContinuation Handler** - Auto-resumes incomplete agent responses (opt-in, max 3 retries)
+- **Contract Extractor** - 5 extractors for API, function, type, SQL, and GraphQL contracts (661 lines)
+- **256 New Tests** - Full coverage for all 4 hook modules
+
+**Plugin Hook Redesign (oh-my-opencode style)** (2026-02-08)
+
+- **UserPromptSubmit Rewrite** - Rewritten from 421→143 lines, keyword-only trigger with dynamic truncation
+- **PreToolUse AGENTS.md Injection** - Read tool path injects AGENTS.md and .rules files for agent context
+- **SubagentStop Hook** - Result verification on subagent completion
+- **PreCompact Hook** - Detects unsaved decisions at 80% context capacity, injects compression prompt
+- **Session Cache** - 198-line module for caching session state across hook invocations
+- **Directory Walker** - Recursive project structure discovery for AGENTS.md files
+- **Rules Finder** - Locates and aggregates .rules files from project hierarchy
+- **Dynamic Truncator** - Intelligent token-budget truncation for hook output
+- **MAMA_HOOK_FEATURES** - Granular feature control env var (`keywords,rules,agents`)
+
+**PR Review Poller & Commit Workflow** (2026-02-09)
+
+- **PR Review Poller** - Polls GitHub PR review comments and routes Reviewer → LEAD chain
+- **5-Minute Reminders** - Unresolved PR review threads trigger periodic reminders
+- **Commit+Push Instructions** - Reviewer APPROVE propagates to LEAD with commit workflow
+- **Nitpick Severity Level** - PR analysis now distinguishes nitpick-level comments
+
+**Other Features** (2026-02-08)
+
+- **!stop Command** - Interrupt running agents from Discord with `!stop` prefix
+- **Delegation System Reminders** - delegation-started/completed notifications in Discord and Slack
+- **BackgroundTaskManager** - Async task delegation with SystemReminderService
+- **Content Dedup** - YAML frontmatter filtering and prompt size monitoring
+- **PromptEnhancer** - Native keyword detection, AGENTS.md and rules injection (44 tests)
+
+### Changed - mama-os@0.5.0-beta
+
+- **MessageQueue TTL** - Increased from 3 minutes to 10 minutes (agents take 200s+ on complex tasks)
+- **Sisyphus Persona** - Tightened SOLO threshold: only typo-level changes (≤5 lines), everything else delegates to DevBot
+- **isKorean Default** - Message router defaults to `false` (English-first)
+
+### Fixed - mama-os@0.5.0-beta
+
+- **Discord Message Length** - Corrected message splitting to respect 2000-char limit (was 3900), preventing `Invalid Form Body` errors
+- **Cross-Channel Batch Corruption** - Fixed batch processing across different Discord channels
+- **Duplicate Session Cache** - Prevented duplicate entries in session cache
+- **Env Var Conflicts** - Clean conflicting MAMA environment variables in persistent CLI process
+- **Graceful Shutdown** - Improved stop command reliability
+
 ### Added - mama-os@0.4.0: Multi-Agent Swarm & Agent Provisioning
 
 **Builtin Agent Personas & Auto-Provisioning** (2026-02-07)

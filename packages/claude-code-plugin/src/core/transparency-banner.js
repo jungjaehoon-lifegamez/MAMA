@@ -12,7 +12,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { info, warn } = require('./debug-logger');
+const { info, warn } = require('@jungjaehoon/mama-core/debug-logger');
 
 // Tier transition log file
 const PLUGIN_ROOT = path.resolve(__dirname, '../..');

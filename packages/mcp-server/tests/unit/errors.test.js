@@ -19,7 +19,7 @@ import {
   ErrorCodes,
   wrapError,
   isMAMAError,
-} from '../../src/mama/errors.js';
+} from '@jungjaehoon/mama-core/errors';
 
 describe('Story 8.3: Typed Error Classes', () => {
   describe('MAMAError (base class)', () => {

@@ -21,8 +21,8 @@ import {
   executeLinkCleanupTool,
   validateCleanupResultTool,
 } from '../../src/tools/link-tools.js';
-import mama from '../../src/mama/mama-api.js';
-import { initDB, getAdapter, closeDB } from '../../src/mama/memory-store.js';
+import mama from '@jungjaehoon/mama-core/mama-api';
+import { initDB, getAdapter, closeDB } from '@jungjaehoon/mama-core/memory-store';
 
 const TEST_DB_PATH = path.join(os.tmpdir(), `mama-link-cleanup-${Date.now()}.db`);
 const BACKUP_DIR = path.join(process.env.HOME, '.claude', 'mama-backups');

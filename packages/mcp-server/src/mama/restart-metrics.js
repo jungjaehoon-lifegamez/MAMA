@@ -9,7 +9,7 @@
  * @date 2025-11-25
  */
 
-const { info, error: logError } = require('./debug-logger');
+const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 
 /**
  * Restart metrics storage

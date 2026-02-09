@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 describe('Story M1.1: Core Module Exports', () => {
   describe('mama-api.js exports', () => {
     it('should export mama object with required methods', async () => {
-      const mama = await import('../../src/mama/mama-api.js');
+      const mama = await import('@jungjaehoon/mama-core/mama-api');
 
       expect(mama.default).toBeDefined();
       expect(typeof mama.default.save).toBe('function');
@@ -24,7 +24,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('embeddings.js exports', () => {
     it('should export generateEmbedding function', async () => {
-      const embeddings = await import('../../src/mama/embeddings.js');
+      const embeddings = await import('@jungjaehoon/mama-core/embeddings');
 
       expect(embeddings.generateEmbedding).toBeDefined();
       expect(typeof embeddings.generateEmbedding).toBe('function');
@@ -33,7 +33,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('decision-tracker.js exports', () => {
     it('should export learnDecision function', async () => {
-      const tracker = await import('../../src/mama/decision-tracker.js');
+      const tracker = await import('@jungjaehoon/mama-core/decision-tracker');
 
       expect(tracker.learnDecision).toBeDefined();
       expect(typeof tracker.learnDecision).toBe('function');
@@ -42,7 +42,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('outcome-tracker.js exports', () => {
     it('should export required functions', async () => {
-      const outcome = await import('../../src/mama/outcome-tracker.js');
+      const outcome = await import('@jungjaehoon/mama-core/outcome-tracker');
 
       expect(outcome.analyzeOutcome).toBeDefined();
       expect(outcome.markOutcome).toBeDefined();
@@ -53,7 +53,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('decision-formatter.js exports', () => {
     it('should export formatting functions', async () => {
-      const formatter = await import('../../src/mama/decision-formatter.js');
+      const formatter = await import('@jungjaehoon/mama-core/decision-formatter');
 
       expect(formatter.formatRecall).toBeDefined();
       expect(formatter.formatList).toBeDefined();
@@ -64,7 +64,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('relevance-scorer.js exports', () => {
     it('should export scoring functions', async () => {
-      const scorer = await import('../../src/mama/relevance-scorer.js');
+      const scorer = await import('@jungjaehoon/mama-core/relevance-scorer');
 
       expect(scorer.calculateRelevance).toBeDefined();
       expect(scorer.selectTopDecisions).toBeDefined();
@@ -75,7 +75,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('memory-store.js exports', () => {
     it('should export required functions', async () => {
-      const store = await import('../../src/mama/memory-store.js');
+      const store = await import('@jungjaehoon/mama-core/memory-store');
 
       expect(store.queryDecisionGraph).toBeDefined();
       expect(store.getDB).toBeDefined();
@@ -88,7 +88,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('query-intent.js exports', () => {
     it('should export analyzeIntent function', async () => {
-      const intent = await import('../../src/mama/query-intent.js');
+      const intent = await import('@jungjaehoon/mama-core/query-intent');
 
       expect(intent.analyzeIntent).toBeDefined();
       expect(typeof intent.analyzeIntent).toBe('function');
@@ -97,7 +97,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('time-formatter.js exports', () => {
     it('should export formatTimeAgo function', async () => {
-      const timeFormatter = await import('../../src/mama/time-formatter.js');
+      const timeFormatter = await import('@jungjaehoon/mama-core/time-formatter');
 
       expect(timeFormatter.formatTimeAgo).toBeDefined();
       expect(typeof timeFormatter.formatTimeAgo).toBe('function');
@@ -106,7 +106,7 @@ describe('Story M1.1: Core Module Exports', () => {
 
   describe('debug-logger.js exports', () => {
     it('should export logging functions', async () => {
-      const logger = await import('../../src/mama/debug-logger.js');
+      const logger = await import('@jungjaehoon/mama-core/debug-logger');
 
       expect(logger.info).toBeDefined();
       expect(logger.error).toBeDefined();
