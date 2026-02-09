@@ -7,7 +7,7 @@
  * Architecture (Feb 2025 rewrite):
  * - Standalone script reading JSON from stdin (no exports)
  * - Edit/Write: contract search via MAMA DB + embeddings
- * - Read: lightweight path (agents, rules only, no DB)
+ * - Read: allow freely (OMC handles rules/AGENTS.md injection)
  * - Grep/Glob: allow freely without injection
  * - Feature gating via hook-features.js (MAMA_DISABLE_HOOKS support)
  */
@@ -173,15 +173,13 @@ describe('Story M2.2: PreToolUse Hook', () => {
 
       expect(result.exitCode).toBe(0);
       // When disabled, outputs allow decision via stderr
-      expect(result.stderr).toContain('MAMA hooks disabled');
+      expect(result.stderr).toContain('contracts disabled');
     });
 
-    it('should check for contracts/rules/agents features', () => {
+    it('should check for contracts feature', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
       expect(content).toContain("features.has('contracts')");
-      expect(content).toContain("features.has('rules')");
-      expect(content).toContain("features.has('agents')");
     });
   });
 
