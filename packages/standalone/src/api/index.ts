@@ -36,6 +36,8 @@ export interface ApiServerOptions {
   heartbeatTracker?: HeartbeatTracker;
   /** Heartbeat execution callback */
   onHeartbeat?: (prompt: string) => Promise<{ success: boolean; error?: string }>;
+  /** Enable automatic process killing on port conflicts (default: false) */
+  enableAutoKillPort?: boolean;
 }
 
 /**
@@ -64,6 +66,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     logStore = new InMemoryLogStore(),
     heartbeatTracker = new InMemoryHeartbeatTracker(),
     onHeartbeat,
+    enableAutoKillPort = false,
   } = options;
 
   const app = express();
@@ -168,19 +171,21 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
               `Port ${attemptPort} in use (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${RETRY_DELAY_MS}ms...`
             );
             if (attempt === 0) {
-              // First retry: show what's using the port but don't kill it
+              // First retry: show what's using the port
               console.error(
                 `\n❌ Port ${attemptPort} is already in use.\n\n` +
                   `Options:\n` +
                   `1. Stop the process using port ${attemptPort}\n` +
                   `2. Use a different port: MAMA_API_PORT=<port> mama start\n` +
-                  `3. Enable port fallback: MAMA_API_PORT_FALLBACK=true mama start\n`
+                  `3. Enable port fallback: MAMA_API_PORT_FALLBACK=true mama start\n` +
+                  `4. Enable auto-kill: enableAutoKillPort=true (USE WITH CAUTION)\n`
               );
 
               // Try to identify the process (informational only)
+              let processInfo = '';
               try {
                 const { execSync } = require('child_process');
-                const processInfo = execSync(
+                processInfo = execSync(
                   `lsof -i :${attemptPort} 2>/dev/null | grep LISTEN || echo ""`,
                   {
                     timeout: 2000,
@@ -192,6 +197,23 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
                 }
               } catch {
                 /* ignore - lsof might not be available */
+              }
+
+              // Auto-kill process if explicitly enabled (opt-in)
+              if (enableAutoKillPort && processInfo.trim()) {
+                console.warn(
+                  `⚠️  AUTO-KILL ENABLED: Attempting to kill process on port ${attemptPort}`
+                );
+                try {
+                  const { execSync } = require('child_process');
+                  execSync(`kill -9 $(lsof -ti:${attemptPort})`, { timeout: 3000 });
+                  console.log(`✅ Process on port ${attemptPort} killed successfully`);
+                  // Continue with current attempt instead of waiting
+                  continue;
+                } catch (killError) {
+                  console.error(`❌ Failed to kill process on port ${attemptPort}:`, killError);
+                  // Fall through to normal retry logic
+                }
               }
             }
             await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
