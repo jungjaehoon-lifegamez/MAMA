@@ -7,7 +7,7 @@
  * Generates a 7-section compaction prompt (ported from standalone pre-compact-handler.ts).
  *
  * stdin: { transcript_path }
- * stdout: { hookSpecificOutput: { hookEventName, additionalContext } }
+ * stdout: { continue: true, systemMessage: "..." }
  */
 
 const path = require('path');
@@ -241,12 +241,12 @@ async function main() {
 
   if (candidates.length === 0) {
     // Even without unsaved decisions, output the 7-section compaction prompt
+    // Note: hookSpecificOutput only supports PreToolUse, UserPromptSubmit, PostToolUse
+    // Use systemMessage for PreCompact hooks
     const compactionPrompt = buildCompactionPrompt(transcript, []);
     const output = {
-      hookSpecificOutput: {
-        hookEventName: 'PreCompact',
-        additionalContext: compactionPrompt,
-      },
+      continue: true,
+      systemMessage: compactionPrompt,
     };
     console.log(JSON.stringify(output));
     process.exit(0);
@@ -257,18 +257,18 @@ async function main() {
   const unsaved = filterUnsaved(candidates, savedTopics);
 
   // Build combined output: warning + compaction prompt
+  // Note: hookSpecificOutput only supports PreToolUse, UserPromptSubmit, PostToolUse
+  // Use systemMessage for PreCompact hooks
   const warningMessage = buildWarningMessage(unsaved);
   const compactionPrompt = buildCompactionPrompt(transcript, unsaved);
 
-  const additionalContext = warningMessage
+  const systemMessage = warningMessage
     ? `${warningMessage}\n\n---\n\n${compactionPrompt}`
     : compactionPrompt;
 
   const output = {
-    hookSpecificOutput: {
-      hookEventName: 'PreCompact',
-      additionalContext,
-    },
+    continue: true,
+    systemMessage,
   };
 
   console.log(JSON.stringify(output));

@@ -216,8 +216,8 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe(''); // No output when disabled
-      // When disabled via hook-features.js, outputs allow + "MAMA hooks disabled"
-      expect(result.stderr).toContain('MAMA hooks disabled');
+      // When disabled via hook-features.js, outputs allow + "contracts disabled"
+      expect(result.stderr).toContain('contracts disabled');
     });
 
     it('should skip non-code files for Edit tool', async () => {

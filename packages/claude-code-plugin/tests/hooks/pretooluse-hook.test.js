@@ -7,7 +7,7 @@
  * Architecture (Feb 2025 rewrite):
  * - Standalone script reading JSON from stdin (no exports)
  * - Edit/Write: contract search via MAMA DB + embeddings
- * - Read: lightweight path (agents, rules only, no DB)
+ * - Read: allow freely (OMC handles rules/AGENTS.md injection)
  * - Grep/Glob: allow freely without injection
  * - Feature gating via hook-features.js (MAMA_DISABLE_HOOKS support)
  */
@@ -173,15 +173,13 @@ describe('Story M2.2: PreToolUse Hook', () => {
 
       expect(result.exitCode).toBe(0);
       // When disabled, outputs allow decision via stderr
-      expect(result.stderr).toContain('MAMA hooks disabled');
+      expect(result.stderr).toContain('contracts disabled');
     });
 
-    it('should check for contracts/rules/agents features', () => {
+    it('should check for contracts feature', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
       expect(content).toContain("features.has('contracts')");
-      expect(content).toContain("features.has('rules')");
-      expect(content).toContain("features.has('agents')");
     });
   });
 
@@ -212,51 +210,6 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(content).toContain('MAMA Contract Reference');
       expect(content).toContain('Expected request fields');
       expect(content).toContain('Expected response shape');
-    });
-  });
-
-  describe('Rules Injection for Write Tools', () => {
-    it('should import directory-walker for rules injection', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      expect(content).toContain('directory-walker');
-      expect(content).toContain('findAgentsMdFiles');
-    });
-
-    it('should import rules-finder for rules injection', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      expect(content).toContain('rules-finder');
-      expect(content).toContain('findRuleFiles');
-    });
-
-    it('should import dynamic-truncator for budget management', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      expect(content).toContain('dynamic-truncator');
-      expect(content).toContain('truncateMultiple');
-    });
-
-    it('should import session-cache for deduplication', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      expect(content).toContain('session-cache');
-      expect(content).toContain('hasContentHash');
-      expect(content).toContain('addContentHash');
-    });
-
-    it('should check agents and rules features for write tools', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      // The rules injection block for write tools
-      expect(content).toContain("features.has('agents') || features.has('rules')");
-    });
-
-    it('should use smaller budget for write tool rules (4000 chars)', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      expect(content).toContain('maxTotalChars: 4000');
-    });
-
-    it('should prepend rules context to message content', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      expect(content).toContain('rulesContext');
-      // rulesContext is prepended before contract message
-      expect(content).toMatch(/rulesContext.*messageContent/s);
     });
   });
 

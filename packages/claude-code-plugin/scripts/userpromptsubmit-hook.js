@@ -136,107 +136,6 @@ const KEYWORD_DETECTORS = [
   },
 ];
 
-/**
- * Category routing: maps topic keywords to MAMA search query hints.
- * Ported from standalone's category-router.ts pattern.
- * When a user prompt matches a category, the corresponding searchHint
- * is appended to guide MAMA memory retrieval.
- */
-const CATEGORY_ROUTES = [
-  {
-    name: 'test',
-    patterns: [
-      /\btest(s|ing)?\b/i,
-      /\bspec\b/i,
-      /\bunit\s*test/i,
-      /\bintegration\s*test/i,
-      /\be2e\b/i,
-      /\bcoverage\b/i,
-      /테스트/,
-      /단위\s*테스트/,
-      /통합\s*테스트/,
-    ],
-    searchHint: 'test strategy testing patterns coverage',
-  },
-  {
-    name: 'deploy',
-    patterns: [
-      /\bdeploy(ment|ing)?\b/i,
-      /\brelease\b/i,
-      /\bpublish(ing)?\b/i,
-      /\bci\s*\/?\s*cd\b/i,
-      /\bpipeline\b/i,
-      /배포/,
-      /릴리스/,
-      /퍼블리시/,
-    ],
-    searchHint: 'deployment release publish pipeline CI/CD',
-  },
-  {
-    name: 'refactor',
-    patterns: [
-      /\brefactor(ing)?\b/i,
-      /\brestructure\b/i,
-      /\barchitect(ure)?\b/i,
-      /\breorganize\b/i,
-      /\bclean\s*up\b/i,
-      /리팩토링/,
-      /구조\s*변경/,
-      /아키텍처/,
-    ],
-    searchHint: 'architecture refactoring design patterns structure',
-  },
-  {
-    name: 'security',
-    patterns: [
-      /\bsecur(ity|e)\b/i,
-      /\bauth(entication|orization)?\b/i,
-      /\bpermission(s)?\b/i,
-      /\bvulnerabilit(y|ies)\b/i,
-      /보안/,
-      /인증/,
-      /권한/,
-    ],
-    searchHint: 'security authentication authorization permissions',
-  },
-  {
-    name: 'performance',
-    patterns: [
-      /\bperformance\b/i,
-      /\boptimiz(e|ation)\b/i,
-      /\bslow\b/i,
-      /\bfast(er)?\b/i,
-      /\bbenchmark\b/i,
-      /\bcach(e|ing)\b/i,
-      /성능/,
-      /최적화/,
-      /캐시/,
-    ],
-    searchHint: 'performance optimization caching benchmark',
-  },
-];
-
-/**
- * Detect category matches in text and return search hints.
- * Returns array of matched categories with their searchHint.
- */
-function detectCategories(text) {
-  if (!text || typeof text !== 'string') {
-    return [];
-  }
-  const cleanText = text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]+`/g, '');
-  const matched = [];
-  for (const category of CATEGORY_ROUTES) {
-    for (const pattern of category.patterns) {
-      if (pattern.test(cleanText)) {
-        matched.push(category);
-        break;
-      }
-    }
-  }
-  return matched;
-}
-
 function detectKeywords(text) {
   if (!text || typeof text !== 'string') {
     return [];
@@ -260,9 +159,7 @@ module.exports = {
   handler: main,
   main,
   detectKeywords,
-  detectCategories,
   KEYWORD_DETECTORS,
-  CATEGORY_ROUTES,
   getEnabledFeatures,
 };
 
@@ -292,33 +189,15 @@ async function main() {
   }
 
   const detected = detectKeywords(prompt);
-  const categories = detectCategories(prompt);
 
-  if (detected.length === 0 && categories.length === 0) {
+  if (detected.length === 0) {
     process.exit(0);
-  }
-
-  const parts = [];
-
-  // Keyword mode messages
-  if (detected.length > 0) {
-    parts.push(...detected.map((d) => d.message));
-  }
-
-  // Category search hints
-  if (categories.length > 0) {
-    const categoryNames = categories.map((c) => c.name).join(', ');
-    const hints = categories.map((c) => c.searchHint).join(' ');
-    parts.push(
-      `[mama-context] Detected topic: ${categoryNames}. ` +
-        `When searching MAMA memory, prioritize: ${hints}`
-    );
   }
 
   const output = {
     hookSpecificOutput: {
       hookEventName: 'UserPromptSubmit',
-      additionalContext: parts.join('\n\n---\n\n'),
+      additionalContext: detected.map((d) => d.message).join('\n\n---\n\n'),
     },
   };
 

@@ -331,8 +331,8 @@ async function main() {
   }
 
   const features = getEnabledFeatures();
-  if (!features.has('contracts') && !features.has('rules') && !features.has('agents')) {
-    console.error(JSON.stringify({ decision: 'allow', reason: 'MAMA hooks disabled' }));
+  if (!features.has('contracts')) {
+    console.error(JSON.stringify({ decision: 'allow', reason: 'MAMA contracts disabled' }));
     process.exit(0);
   }
 
@@ -359,74 +359,9 @@ async function main() {
     process.exit(0);
   }
 
-  // === LIGHTWEIGHT READ PATH ===
-  // Only inject AGENTS.md and rules, no DB/embeddings
+  // Read tool: allow freely (OMC handles rules/AGENTS.md injection)
   if (toolName === 'Read') {
-    if (!features.has('agents') && !features.has('rules')) {
-      console.error(JSON.stringify({ decision: 'allow', reason: 'features disabled' }));
-      process.exit(0);
-    }
-
-    const { findAgentsMdFiles, findProjectRoot } = require(
-      path.join(CORE_PATH, 'directory-walker')
-    );
-    const { findRuleFiles } = require(path.join(CORE_PATH, 'rules-finder'));
-    const { truncateMultiple } = require(path.join(CORE_PATH, 'dynamic-truncator'));
-    const { hasContentHash, addContentHash, createContentHash } = require(
-      path.join(CORE_PATH, 'session-cache')
-    );
-
-    const filePath = input.tool_input?.file_path || input.file_path || process.env.FILE_PATH || '';
-    const projectRoot = findProjectRoot(filePath) || input.cwd || process.cwd();
-    const contextEntries = [];
-
-    if (features.has('agents')) {
-      const agentsMdFiles = findAgentsMdFiles(filePath, { projectRoot });
-      for (const agentsMd of agentsMdFiles) {
-        const hash = createContentHash(agentsMd.content);
-        if (hasContentHash(hash)) {
-          continue;
-        }
-        addContentHash(hash);
-        contextEntries.push({
-          content: `[Directory Context: ${agentsMd.path}]\n${agentsMd.content}`,
-          path: agentsMd.path,
-          priority: agentsMd.distance,
-        });
-      }
-    }
-
-    if (features.has('rules')) {
-      const ruleFiles = findRuleFiles(filePath, { projectRoot });
-      for (const rule of ruleFiles) {
-        const hash = createContentHash(rule.content);
-        if (hasContentHash(hash)) {
-          continue;
-        }
-        addContentHash(hash);
-        contextEntries.push({
-          content: `[Rule: ${rule.path}] (${rule.matchReason})\n${rule.content}`,
-          path: rule.path,
-          priority: rule.distance + 10,
-        });
-      }
-    }
-
-    if (contextEntries.length === 0) {
-      console.error(JSON.stringify({ decision: 'allow', reason: 'no context found' }));
-      process.exit(0);
-    }
-
-    const truncated = truncateMultiple(contextEntries, { maxTotalChars: 8000 });
-    const contextText = truncated.map((e) => e.content).join('\n\n---\n\n');
-
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        additionalContext: contextText,
-      },
-    };
-    console.log(JSON.stringify(output));
+    console.error(JSON.stringify({ decision: 'allow', reason: '' }));
     process.exit(0);
   }
 
@@ -448,60 +383,6 @@ async function main() {
     const response = { decision: 'allow', reason: '' };
     console.error(JSON.stringify(response));
     process.exit(0);
-  }
-
-  // === RULES/AGENTS INJECTION FOR WRITE TOOLS ===
-  // Same logic as Read path, but with smaller budget to leave room for contracts
-  let rulesContext = '';
-  if (features.has('agents') || features.has('rules')) {
-    const { findAgentsMdFiles, findProjectRoot } = require(
-      path.join(CORE_PATH, 'directory-walker')
-    );
-    const { findRuleFiles } = require(path.join(CORE_PATH, 'rules-finder'));
-    const { truncateMultiple } = require(path.join(CORE_PATH, 'dynamic-truncator'));
-    const { hasContentHash, addContentHash, createContentHash } = require(
-      path.join(CORE_PATH, 'session-cache')
-    );
-
-    const projectRoot = findProjectRoot(filePath) || input.cwd || process.cwd();
-    const contextEntries = [];
-
-    if (features.has('agents')) {
-      const agentsMdFiles = findAgentsMdFiles(filePath, { projectRoot });
-      for (const agentsMd of agentsMdFiles) {
-        const hash = createContentHash(agentsMd.content);
-        if (hasContentHash(hash)) {
-          continue;
-        }
-        addContentHash(hash);
-        contextEntries.push({
-          content: `[Directory Context: ${agentsMd.path}]\n${agentsMd.content}`,
-          path: agentsMd.path,
-          priority: agentsMd.distance,
-        });
-      }
-    }
-
-    if (features.has('rules')) {
-      const ruleFiles = findRuleFiles(filePath, { projectRoot });
-      for (const rule of ruleFiles) {
-        const hash = createContentHash(rule.content);
-        if (hasContentHash(hash)) {
-          continue;
-        }
-        addContentHash(hash);
-        contextEntries.push({
-          content: `[Rule: ${rule.path}] (${rule.matchReason})\n${rule.content}`,
-          path: rule.path,
-          priority: rule.distance + 10,
-        });
-      }
-    }
-
-    if (contextEntries.length > 0) {
-      const truncated = truncateMultiple(contextEntries, { maxTotalChars: 4000 });
-      rulesContext = truncated.map((e) => e.content).join('\n\n---\n\n');
-    }
   }
 
   // Extract search query from file path AND content
@@ -608,11 +489,6 @@ async function main() {
   }
 
   markSeen(session.state, 'pre');
-
-  // Prepend rules context if available
-  if (rulesContext) {
-    messageContent = rulesContext + '\n\n---\n\n' + messageContent;
-  }
 
   // PreToolUse: exit(0) + stdout JSON with hookSpecificOutput to show message and allow tool
   // exit(2) blocks the tool, exit(0) allows it
