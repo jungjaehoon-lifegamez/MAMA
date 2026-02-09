@@ -1158,11 +1158,14 @@ export class MultiAgentDiscordHandler {
   }
 
   /**
-   * Extract agent IDs from <@USER_ID> mentions in message content
+   * Extract agent IDs from <@USER_ID> mentions AND DELEGATE::{agent_id}:: patterns
+   * in message content. Both syntaxes route to the same delegation flow.
    */
   private extractMentionedAgentIds(content: string): string[] {
-    const mentionPattern = /<@!?(\d+)>/g;
     const agentIds: string[] = [];
+
+    // 1. Discord native mentions: <@USER_ID> or <@!USER_ID>
+    const mentionPattern = /<@!?(\d+)>/g;
     let match;
 
     while ((match = mentionPattern.exec(content)) !== null) {
@@ -1173,6 +1176,16 @@ export class MultiAgentDiscordHandler {
       } else if (agentId === 'main' && this.config.default_agent) {
         // Main bot userId maps to the default agent (LEAD)
         agentIds.push(this.config.default_agent);
+      }
+    }
+
+    // 2. DELEGATE::{agent_id}:: and DELEGATE_BG::{agent_id}:: syntax
+    const delegatePattern = /DELEGATE(?:_BG)?::([\w-]+)::/g;
+    while ((match = delegatePattern.exec(content)) !== null) {
+      const targetAgentId = match[1];
+      // Only add if it's a known agent and not already in the list
+      if (this.orchestrator.getAgent(targetAgentId) && !agentIds.includes(targetAgentId)) {
+        agentIds.push(targetAgentId);
       }
     }
 
@@ -1331,6 +1344,7 @@ export class MultiAgentDiscordHandler {
 
     const truncatedDescription = sourceResponse.rawContent
       .replace(/<@!?\d+>/g, '')
+      .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
       .trim()
       .substring(0, 200);
 
@@ -1345,7 +1359,10 @@ export class MultiAgentDiscordHandler {
     });
 
     try {
-      let delegationContent = sourceResponse.rawContent.replace(/<@!?\d+>/g, '').trim();
+      let delegationContent = sourceResponse.rawContent
+        .replace(/<@!?\d+>/g, '')
+        .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
+        .trim();
 
       const defaultAgentId = this.config.default_agent;
       if (
