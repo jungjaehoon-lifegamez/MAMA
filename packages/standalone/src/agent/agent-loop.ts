@@ -464,6 +464,12 @@ export class AgentLoop {
     let turn = 0;
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
 
+    // Infinite loop prevention
+    let consecutiveToolCalls = 0;
+    let lastToolName = '';
+    const MAX_CONSECUTIVE_SAME_TOOL = 5;
+    const EMERGENCY_MAX_TURNS = Math.min(this.maxTurns * 2, 50); // Hard cap at 50
+
     // Track channel key for session release
     const channelKey = buildChannelKey(
       options?.source ?? 'default',
@@ -528,6 +534,16 @@ export class AgentLoop {
 
       while (turn < this.maxTurns) {
         turn++;
+
+        // Emergency brake: prevent infinite loops
+        if (turn >= EMERGENCY_MAX_TURNS) {
+          throw new AgentError(
+            `Emergency stop: Agent loop exceeded emergency maximum turns (${EMERGENCY_MAX_TURNS})`,
+            'EMERGENCY_MAX_TURNS',
+            undefined,
+            false
+          );
+        }
 
         let response: ClaudeResponse;
 
@@ -746,6 +762,30 @@ export class AgentLoop {
 
         // Handle tool use
         if (response.stop_reason === 'tool_use') {
+          // Check for infinite loop patterns in tool usage
+          const toolUseBlocks = response.content.filter(
+            (block): block is ToolUseBlock => block.type === 'tool_use'
+          );
+
+          if (toolUseBlocks.length > 0) {
+            const currentToolName = toolUseBlocks[0].name;
+
+            if (currentToolName === lastToolName) {
+              consecutiveToolCalls++;
+              if (consecutiveToolCalls >= MAX_CONSECUTIVE_SAME_TOOL) {
+                throw new AgentError(
+                  `Infinite loop detected: Tool "${currentToolName}" called ${consecutiveToolCalls} times consecutively`,
+                  'INFINITE_LOOP_DETECTED',
+                  undefined,
+                  false
+                );
+              }
+            } else {
+              consecutiveToolCalls = 1;
+              lastToolName = currentToolName;
+            }
+          }
+
           const toolResults = await this.executeTools(response.content);
 
           // Add tool results to history

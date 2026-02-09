@@ -841,6 +841,8 @@ export type AgentErrorCode =
   | 'RATE_LIMIT'
   | 'MAX_TOKENS'
   | 'MAX_TURNS'
+  | 'EMERGENCY_MAX_TURNS'
+  | 'INFINITE_LOOP_DETECTED'
   | 'NETWORK_ERROR'
   | 'TOOL_ERROR'
   | 'UNKNOWN_TOOL'
