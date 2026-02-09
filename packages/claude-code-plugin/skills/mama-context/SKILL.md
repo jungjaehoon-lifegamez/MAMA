@@ -7,11 +7,9 @@ description: Always-on background context injection from MAMA memory. Automatica
 
 ## Overview
 
-This skill provides **automatic background context injection** using MAMA's hook system. It runs silently and shows relevant past decisions when you submit a prompt (UserPromptSubmit hook).
+This skill provides **automatic background context injection** using MAMA's hook system. It runs silently and surfaces relevant past decisions when you edit code (PreToolUse hook) and tracks changes (PostToolUse hook).
 
 **Philosophy:** Gentle hints, not intrusive walls of text. Claude sees topic + time, decides if relevant.
-
-> **Note (Feb 2025):** All hooks are now active. PreToolUse provides contract-aware context injection for Read/Grep operations. PostToolUse tracks Write/Edit outcomes.
 
 ---
 
@@ -25,18 +23,11 @@ The skill uses a **multi-hook system** for comprehensive context injection:
 - Purpose: Initialize MAMA, pre-warm embedding model
 - Timeout: 15s
 
-**UserPromptSubmit Hook** (`scripts/userpromptsubmit-hook.js`)
-
-- Triggers: Every user prompt
-- Similarity threshold: 75%
-- Token budget: 40 tokens (teaser format)
-- Timeout: 10s
-- Output: Topic + similarity + time
-
 **PreToolUse Hook** (`scripts/pretooluse-hook.js`)
 
-- Triggers: Before Read, Grep operations
-- Purpose: Inject relevant contracts before file access
+- Triggers: Before Edit, Write, NotebookEdit operations
+- Purpose: Inject relevant contracts before code changes
+- Similarity threshold: 75%
 - Timeout: 5s
 
 **PostToolUse Hook** (`scripts/posttooluse-hook.js`)
@@ -44,6 +35,12 @@ The skill uses a **multi-hook system** for comprehensive context injection:
 - Triggers: After Write, Edit operations
 - Purpose: Track code changes, suggest decision saves
 - Timeout: 5s
+
+**PreCompact Hook** (`scripts/precompact-hook.js`)
+
+- Triggers: Before context compaction
+- Purpose: Preserve unsaved decisions in compacted context
+- Timeout: 10s
 
 ---
 
@@ -58,7 +55,7 @@ The skill uses a **multi-hook system** for comprehensive context injection:
 
 **Why teaser?**
 
-- Hook fires on every prompt → Must be lightweight
+- Must be lightweight to avoid token bloat
 - Claude infers relevance from topic + similarity + time
 - Full details available via `/mama-recall` if needed
 - Avoids token bloat (250 tokens → 40 tokens)
@@ -136,10 +133,9 @@ export MAMA_DISABLE_HOOKS=true
 **Hook Integration:**
 
 - SessionStart: `scripts/sessionstart-hook.js` (initialization)
-- UserPromptSubmit: `scripts/userpromptsubmit-hook.js` (context teaser)
-- PreToolUse: `scripts/pretooluse-hook.js` (contract injection for Read/Grep)
+- PreToolUse: `scripts/pretooluse-hook.js` (contract injection for Edit/Write)
 - PostToolUse: `scripts/posttooluse-hook.js` (outcome tracking for Write/Edit)
-- Shared core: `src/core/memory-inject.js`
+- PreCompact: `scripts/precompact-hook.js` (decision preservation)
 
 **Performance:**
 
@@ -160,7 +156,7 @@ export MAMA_DISABLE_HOOKS=true
 ## Acceptance Criteria Mapping
 
 - ✅ AC1: Declared in plugin.json, references hook outputs
-- ✅ AC2: Similarity thresholds (75%/70%) + token budgets (40/300)
+- ✅ AC2: Similarity thresholds (75%) + token budgets (40/300)
 - ✅ AC3: Disable via config (MAMA_DISABLE_HOOKS)
 - ✅ AC4: Status indicator (Tier 1/2, accuracy, fix instructions)
 - ✅ AC5: Smoke test - fires during normal coding session
@@ -169,9 +165,9 @@ export MAMA_DISABLE_HOOKS=true
 
 ## Example Output
 
-**User types:** "How should I handle authentication?"
+**User edits a file related to authentication:**
 
-**Skill injects (via UserPromptSubmit hook):**
+**Skill injects (via PreToolUse hook):**
 
 ```
 💡 MAMA: 1 related
@@ -194,12 +190,8 @@ export MAMA_DISABLE_HOOKS=true
 **Testing:**
 
 ```bash
-# Test UserPromptSubmit hook
-export USER_PROMPT="authentication strategy"
-node mama-plugin/scripts/userpromptsubmit-hook.js
-
 # Test PreToolUse hook
-export TOOL_NAME="Read"
+export TOOL_NAME="Edit"
 export FILE_PATH="src/auth.ts"
 node mama-plugin/scripts/pretooluse-hook.js
 ```
@@ -207,13 +199,13 @@ node mama-plugin/scripts/pretooluse-hook.js
 **Architecture:**
 
 ```
-User Prompt
+Code Edit/Write
     ↓
-UserPromptSubmit Hook (500ms timeout)
+PreToolUse Hook (5s timeout)
     ↓
-memory-inject.js (generate embedding, search, score)
+Contract search (generate embedding, search, score)
     ↓
-Teaser Format (40 tokens)
+Contract injection to Claude
     ↓
 Claude sees context
 ```
@@ -227,14 +219,13 @@ Claude sees context
 3. **Non-intrusive:** Hints, not walls of text
 4. **Opt-out:** User control via config (MAMA_DISABLE_HOOKS)
 5. **Graceful degradation:** Tier 2 fallback if embeddings unavailable
-6. **Multi-hook system:** SessionStart + UserPromptSubmit + PreToolUse + PostToolUse
+6. **Multi-hook system:** SessionStart + PreToolUse + PostToolUse + PreCompact
 
 ---
 
 ## Related
 
 - Story M3.2 (this skill)
-- Story M2.1 (UserPromptSubmit hook)
 - Story M2.2 (PreToolUse hook)
 - Story M2.4 (Transparency banner)
 - Architecture: `docs/MAMA-ARCHITECTURE.md` (Decision 4 - Hook Implementation)

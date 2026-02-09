@@ -3,9 +3,9 @@
  *
  * Story M4.2: Regression & Simulation Harness
  * AC #3: Stdin-based hook simulation feeds JSON payloads via stdin
- *        and verifies keyword detection, AGENTS.md injection, and feature guards.
+ *        and verifies PreToolUse contract checking and feature guards.
  *
- * @date 2026-02-08
+ * @date 2026-02-09
  */
 
 import { describe, it, expect } from 'vitest';
@@ -16,7 +16,6 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const USERPROMPTSUBMIT_HOOK = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
 const PRETOOLUSE_HOOK = path.join(__dirname, '../../scripts/pretooluse-hook.js');
 
 /**
@@ -73,72 +72,11 @@ function execHookWithStdin(scriptPath, stdinData, env = {}, timeoutMs = 10000) {
 
 describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // UserPromptSubmit: Keyword Detection via Stdin
+  // PreToolUse: Tool Routing via Stdin
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  describe('UserPromptSubmit: Keyword Detection via Stdin', () => {
-    it('should detect [ultrawork] keyword and output ULTRAWORK MODE', async () => {
-      const result = await execHookWithStdin(
-        USERPROMPTSUBMIT_HOOK,
-        {
-          prompt: '[ultrawork] refactor the auth module',
-        },
-        { MAMA_HOOK_FEATURES: 'keywords' }
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).not.toBe('');
-
-      const parsed = JSON.parse(result.stdout);
-      expect(parsed.hookSpecificOutput).toBeDefined();
-      expect(parsed.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
-      expect(parsed.hookSpecificOutput.additionalContext).toContain('[ultrawork-mode]');
-    });
-
-    it('should detect [analyze-mode] keyword and output ANALYSIS MODE', async () => {
-      const result = await execHookWithStdin(
-        USERPROMPTSUBMIT_HOOK,
-        {
-          prompt: '[analyze-mode] investigate the memory leak',
-        },
-        { MAMA_HOOK_FEATURES: 'keywords' }
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).not.toBe('');
-
-      const parsed = JSON.parse(result.stdout);
-      expect(parsed.hookSpecificOutput).toBeDefined();
-      expect(parsed.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
-      expect(parsed.hookSpecificOutput.additionalContext).toContain('[analyze-mode]');
-    });
-
-    it('should produce no output for normal text (exit 0, empty stdout)', async () => {
-      const result = await execHookWithStdin(USERPROMPTSUBMIT_HOOK, {
-        prompt: 'How should I implement the login page?',
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toBe('');
-    });
-
-    it('should NOT detect keywords inside code blocks', async () => {
-      const result = await execHookWithStdin(USERPROMPTSUBMIT_HOOK, {
-        prompt:
-          'Here is some code:\n```\nconst mode = "[ultrawork]";\nconsole.log(mode);\n```\nPlease review it.',
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toBe('');
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // PreToolUse Read: AGENTS.md Injection via Stdin
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  describe('PreToolUse Read: AGENTS.md Injection via Stdin', () => {
-    it('should inject AGENTS.md context when reading a file under a project with AGENTS.md', async () => {
+  describe('PreToolUse: Tool Routing via Stdin', () => {
+    it('should allow Read tool freely', async () => {
       const result = await execHookWithStdin(
         PRETOOLUSE_HOOK,
         {
@@ -151,49 +89,39 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
       );
 
       expect(result.exitCode).toBe(0);
+      // Read now allows freely (OMC handles rules injection)
+      expect(result.stderr).toContain('allow');
+    });
 
-      if (result.stdout) {
-        const parsed = JSON.parse(result.stdout);
-        expect(parsed.hookSpecificOutput).toBeDefined();
-        expect(parsed.hookSpecificOutput.hookEventName).toBe('PreToolUse');
-        expect(parsed.hookSpecificOutput.additionalContext).toContain('AGENTS.md');
-      } else {
-        // Validate that no stdout is expected for this scenario
-        expect(result.stdout).toBeDefined();
-      }
+    it('should allow Grep tool freely', async () => {
+      const result = await execHookWithStdin(
+        PRETOOLUSE_HOOK,
+        {
+          tool_name: 'Grep',
+          tool_input: { pattern: 'test' },
+        },
+        {}
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain('allow');
     });
   });
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Feature Guard: MAMA_DAEMON and MAMA_HOOK_FEATURES
+  // Feature Guard: MAMA_DISABLE_HOOKS
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  describe('Feature Guard: MAMA_DAEMON and MAMA_HOOK_FEATURES', () => {
-    it('should produce no output when MAMA_DAEMON=1 without MAMA_HOOK_FEATURES', async () => {
+  describe('Feature Guard: MAMA_DISABLE_HOOKS', () => {
+    it('should produce no output when MAMA_DISABLE_HOOKS=true', async () => {
       const result = await execHookWithStdin(
-        USERPROMPTSUBMIT_HOOK,
-        { prompt: '[ultrawork] do something' },
-        { MAMA_DAEMON: '1' }
+        PRETOOLUSE_HOOK,
+        { tool_name: 'Edit', tool_input: { file_path: '/path/to/test.js' } },
+        { MAMA_DISABLE_HOOKS: 'true' }
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toBe('');
-    });
-
-    it('should detect keywords when MAMA_DAEMON=1 + MAMA_HOOK_FEATURES=keywords', async () => {
-      const result = await execHookWithStdin(
-        USERPROMPTSUBMIT_HOOK,
-        { prompt: '[ultrawork] refactor everything' },
-        { MAMA_DAEMON: '1', MAMA_HOOK_FEATURES: 'keywords' }
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).not.toBe('');
-
-      const parsed = JSON.parse(result.stdout);
-      expect(parsed.hookSpecificOutput).toBeDefined();
-      expect(parsed.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
-      expect(parsed.hookSpecificOutput.additionalContext).toContain('[ultrawork-mode]');
+      expect(result.stderr).toContain('contracts disabled');
     });
   });
 });

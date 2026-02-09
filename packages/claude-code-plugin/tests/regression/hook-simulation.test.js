@@ -31,7 +31,6 @@ const TEST_DB_PATH = path.join(os.tmpdir(), `mama-hook-regression-${Date.now()}.
 // Hook script paths
 const PRETOOLUSE_HOOK = path.join(__dirname, '../../scripts/pretooluse-hook.js');
 const POSTTOOLUSE_HOOK = path.join(__dirname, '../../scripts/posttooluse-hook.js');
-const USERPROMPTSUBMIT_HOOK = path.join(__dirname, '../../scripts/userpromptsubmit-hook.js');
 
 // Rate limit file (cleanup needed)
 const RATE_LIMIT_FILE = path.join(__dirname, '../../.pretooluse-last-run');
@@ -285,56 +284,6 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
   });
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // UserPromptSubmit Hook Simulation
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  describe('UserPromptSubmit Hook Simulation', () => {
-    it('should execute successfully with user prompt payload', async () => {
-      const result = await execHook(USERPROMPTSUBMIT_HOOK, {
-        USER_PROMPT: 'How should I implement the regression harness?',
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr).toBe('');
-
-      console.log(`[Regression] UserPromptSubmit latency: ${result.latency}ms`);
-      expect(result.latency).toBeLessThan(1000);
-    });
-
-    it('should output transparency banner with tier info', async () => {
-      const result = await execHook(USERPROMPTSUBMIT_HOOK, {
-        USER_PROMPT: 'Test prompt',
-      });
-
-      expect(result.exitCode).toBe(0);
-
-      // Should contain transparency banner
-      if (result.stdout) {
-        expect(result.stdout).toMatch(/UserPromptSubmit|Tier/);
-      }
-    });
-
-    it('should handle empty prompt gracefully', async () => {
-      const result = await execHook(USERPROMPTSUBMIT_HOOK, {
-        USER_PROMPT: '',
-      });
-
-      // Should exit cleanly (no context injection for empty prompt)
-      expect(result.exitCode).toBe(0);
-    });
-
-    it('should respect MAMA_DISABLE_HOOKS flag', async () => {
-      const result = await execHook(USERPROMPTSUBMIT_HOOK, {
-        USER_PROMPT: 'Test prompt',
-        MAMA_DISABLE_HOOKS: 'true',
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toBe(''); // No output when disabled
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // Cross-Hook Integration Tests
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -348,16 +297,11 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
           TOOL_NAME: 'Write',
           FILE_PATH: '/path/to/new.js',
         }),
-        execHook(USERPROMPTSUBMIT_HOOK, {
-          USER_PROMPT: 'Test prompt',
-        }),
       ]);
 
-      // PreToolUse and UserPromptSubmit should exit 0; PostToolUse may exit 0 or 2
-      const [preToolUse, postToolUse, userPromptSubmit] = results;
+      const [preToolUse, postToolUse] = results;
       expect(preToolUse.exitCode).toBe(0);
       expect([0, 2]).toContain(postToolUse.exitCode);
-      expect(userPromptSubmit.exitCode).toBe(0);
       results.forEach((result, i) => {
         console.log(`[Regression] Hook ${i + 1} latency: ${result.latency}ms`);
       });
@@ -373,7 +317,6 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       const results = await Promise.all([
         execHook(PRETOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Edit' }),
         execHook(POSTTOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Write' }),
-        execHook(USERPROMPTSUBMIT_HOOK, { ...disableEnv, USER_PROMPT: 'Test' }),
       ]);
 
       results.forEach((result) => {
@@ -424,11 +367,6 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       // PostToolUse without TOOL_NAME
       const postResult = await execHook(POSTTOOLUSE_HOOK, {});
       expect(postResult.exitCode).toBe(0);
-
-      // UserPromptSubmit without USER_PROMPT
-      const userResult = await execHook(USERPROMPTSUBMIT_HOOK, {});
-      expect(userResult.exitCode).toBe(0);
-      expect(userResult.stdout).toBe('');
     });
 
     it('should handle database connection failures gracefully', async () => {
