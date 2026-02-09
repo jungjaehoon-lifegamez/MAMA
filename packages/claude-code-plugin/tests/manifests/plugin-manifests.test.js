@@ -246,8 +246,7 @@ describe('M3.3: Plugin Manifests', () => {
       }
     });
 
-    it('should run validation (with expected .mcp.json warning)', () => {
-      // Note: .mcp.json was deleted (Feb 2025) so validation shows 1 error
+    it('should run validation with zero errors', () => {
       let output = '';
       try {
         output = execSync(`node ${VALIDATION_SCRIPT}`, {
@@ -260,7 +259,6 @@ describe('M3.3: Plugin Manifests', () => {
 
       // Should validate plugin.json successfully
       expect(output).toContain('plugin.json: Valid JSON');
-      // .mcp.json should also pass now that it's restored
       expect(output).toContain('❌ Errors: 0');
     });
 
@@ -301,7 +299,6 @@ describe('M3.3: Plugin Manifests', () => {
     });
 
     it('should verify hook scripts exist', () => {
-      // Note: validation script exits with error because .mcp.json is missing (expected)
       let output = '';
       try {
         output = execSync(`node ${VALIDATION_SCRIPT}`, {
@@ -320,21 +317,19 @@ describe('M3.3: Plugin Manifests', () => {
     });
 
     it('should show summary with pass count', () => {
-      // Note: .mcp.json was intentionally deleted (Feb 2025), so validation shows 1 error
-      // The validation script is catching this as expected
+      let output = '';
       try {
-        execSync(`node ${VALIDATION_SCRIPT}`, {
+        output = execSync(`node ${VALIDATION_SCRIPT}`, {
           encoding: 'utf8',
           stdio: 'pipe',
         });
       } catch (err) {
-        // Script exits with error because .mcp.json is missing, which is expected
-        const output = err.stdout || '';
-        expect(output).toContain('Validation Summary');
-        expect(output).toMatch(/✅ Passed: \d+/);
-        // .mcp.json missing is expected - 1 error
-        expect(output).toMatch(/❌ Errors: 1/);
+        output = err.stdout || '';
       }
+
+      expect(output).toContain('Validation Summary');
+      expect(output).toMatch(/✅ Passed: \d+/);
+      expect(output).toContain('❌ Errors: 0');
     });
   });
 

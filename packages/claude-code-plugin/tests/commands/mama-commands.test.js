@@ -89,9 +89,9 @@ describe('MAMA Commands Suite', () => {
       });
 
       expect(result.success).toBe(true);
-      // decision_id should be a string starting with 'decision_'
+      // decision_id should be a string starting with 'decision_test_mama_save'
       expect(typeof result.decision_id).toBe('string');
-      expect(result.decision_id).toMatch(/^decision_/);
+      expect(result.decision_id).toMatch(/^decision_test_mama_save/);
       expect(result.topic).toBe('test_mama_save');
       expect(result.message).toContain('Decision Saved Successfully');
     });

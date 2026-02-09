@@ -215,6 +215,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       });
 
       expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe(''); // No output when disabled
       // When disabled via hook-features.js, outputs allow + "MAMA hooks disabled"
       expect(result.stderr).toContain('MAMA hooks disabled');
     });
@@ -243,7 +244,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       });
 
       // PostToolUse uses exit(2)+stderr for visibility (Feb 2025 change)
-      expect(result.exitCode === 0 || result.exitCode === 2).toBe(true);
+      expect([0, 2]).toContain(result.exitCode);
 
       console.log(`[Regression] PostToolUse (Write) latency: ${result.latency}ms`);
       expect(result.latency).toBeLessThan(1000);
@@ -256,7 +257,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       });
 
       // PostToolUse uses exit(2)+stderr for visibility (Feb 2025 change)
-      expect(result.exitCode === 0 || result.exitCode === 2).toBe(true);
+      expect([0, 2]).toContain(result.exitCode);
 
       console.log(`[Regression] PostToolUse (Edit) latency: ${result.latency}ms`);
       expect(result.latency).toBeLessThan(1000);
@@ -354,7 +355,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
 
       // All hooks should succeed (exit 0 or 2 for PostToolUse)
       results.forEach((result, i) => {
-        expect(result.exitCode === 0 || result.exitCode === 2).toBe(true);
+        expect([0, 2]).toContain(result.exitCode);
         console.log(`[Regression] Hook ${i + 1} latency: ${result.latency}ms`);
       });
 

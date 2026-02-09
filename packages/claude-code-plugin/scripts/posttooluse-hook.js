@@ -12,8 +12,8 @@
  * - FILE_PATH: File/directory path for the operation (optional)
  * - DIFF_CONTENT: Code diff or change description (optional)
  * - CONVERSATION_CONTEXT: Recent conversation for reasoning extraction (optional)
- * - MAMA_DISABLE_HOOKS: Set to "true" to disable hook (opt-out)
  * - MAMA_DISABLE_AUTO_SAVE: Set to "true" to disable auto-save (privacy mode)
+ * - Feature flags: Hook activation is controlled via getEnabledFeatures() (see hook-features.js)
  *
  * Output: Auto-save suggestion to stdout (or nothing if disabled/no match)
  * Exit codes: 0 (success), 1 (error)
