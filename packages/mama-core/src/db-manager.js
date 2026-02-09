@@ -230,8 +230,16 @@ async function insertDecisionWithEmbedding(decision) {
     info(
       `[db-manager] Generating embedding for decision (topic length: ${decision.topic?.length || 0})`
     );
-    const embedding = await generateEnhancedEmbedding(decision);
-    info(`[db-manager] Embedding generated: ${embedding ? embedding.length : 'null'} dimensions`);
+    let embedding = null;
+    try {
+      embedding = await generateEnhancedEmbedding(decision);
+      info(`[db-manager] Embedding generated: ${embedding ? embedding.length : 'null'} dimensions`);
+    } catch (embGenErr) {
+      // Non-fatal: save decision without embedding (e.g. ONNX model unavailable on CI)
+      logError(
+        `[db-manager] ⚠️ Embedding generation failed, saving without vector: ${embGenErr.message}`
+      );
+    }
 
     // SQLite: Synchronous transaction including embedding
     // eslint-disable-next-line no-unused-vars
@@ -286,7 +294,7 @@ async function insertDecisionWithEmbedding(decision) {
 
       // Insert embedding in same transaction to ensure rowid matching
       info(`[db-manager] Vector search enabled: ${adapter.vectorSearchEnabled}`);
-      if (adapter.vectorSearchEnabled) {
+      if (adapter.vectorSearchEnabled && embedding) {
         try {
           info(`[db-manager] Inserting embedding for rowid: ${rowid}`);
           adapter.insertEmbedding(rowid, embedding);
