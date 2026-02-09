@@ -47,7 +47,7 @@ describe('Story M4.2: Workflow Simulation - Regression Harness', () => {
     process.env.MAMA_DB_PATH = TEST_DB_PATH;
 
     // Use require to ensure we share the same module instance as the tools (which use require)
-    const dbManager = require('../../src/core/db-manager.js');
+    const dbManager = require('@jungjaehoon/mama-core/db-manager');
     initDB = dbManager.initDB;
     getAdapter = dbManager.getAdapter;
     closeDB = dbManager.closeDB;

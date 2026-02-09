@@ -10,8 +10,8 @@
  * @module commands/mama-save
  */
 
-const mama = require('../core/mama-api');
-const { info, error: logError } = require('../core/debug-logger');
+const mama = require('@jungjaehoon/mama-core/mama-api');
+const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 
 /**
  * Save a decision to MAMA memory
@@ -40,7 +40,7 @@ async function mamaSaveCommand(args = {}) {
     // Call mama.save() API
     info('[mama-save] Saving decision to MAMA...');
 
-    const decisionId = await mama.save({
+    const result = await mama.save({
       topic: args.topic,
       decision: args.decision,
       reasoning: args.reasoning,
@@ -50,6 +50,8 @@ async function mamaSaveCommand(args = {}) {
       failure_reason: args.failure_reason || null,
       limitation: args.limitation || null,
     });
+
+    const decisionId = result.id;
 
     info(`[mama-save] ✅ Decision saved successfully: ${decisionId}`);
 

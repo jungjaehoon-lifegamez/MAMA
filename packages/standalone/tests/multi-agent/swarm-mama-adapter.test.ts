@@ -5,7 +5,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createMamaApiAdapter } from '../../src/multi-agent/swarm/swarm-mama-adapter.js';
 
-describe('SwarmMamaAdapter', () => {
+// mama-core is available via workspace dependency and initializes DB + embedding model
+// on first call (~3-5s), so async tests need extended timeout
+describe('SwarmMamaAdapter', { timeout: 15000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Suppress console output from mama-core to avoid stderr noise
@@ -26,16 +28,12 @@ describe('SwarmMamaAdapter', () => {
       expect(typeof adapter.search).toBe('function');
     });
 
-    it('should return empty array when mama-core is not available', async () => {
-      // When mama-core is not available or suggest() fails,
-      // the adapter should gracefully return []
+    it('should return array from search (mama-core available via workspace)', async () => {
       const adapter = createMamaApiAdapter();
 
-      // Since mama-core may not be available in test environment,
-      // we just verify that it doesn't throw
+      // mama-core is available - should not throw, returns array
       const results = await adapter.search('test query');
 
-      // Should return array (may be empty if mama-core not available)
       expect(Array.isArray(results)).toBe(true);
     });
 

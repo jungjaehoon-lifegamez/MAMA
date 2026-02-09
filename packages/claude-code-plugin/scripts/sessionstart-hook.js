@@ -32,7 +32,7 @@ const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 // Add core to require path
 require('module').globalPaths.push(CORE_PATH);
 
-const { info, warn, error: logError } = require(path.join(CORE_PATH, 'debug-logger'));
+const { info, warn, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 
 // Configuration
 const MAX_WARMUP_MS = 8000; // Allow up to 8s for initial model load
@@ -81,7 +81,7 @@ async function warmEmbeddingModel() {
 
   try {
     // Lazy load embeddings module
-    const { generateEmbedding } = require(path.join(CORE_PATH, 'embeddings'));
+    const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 
     // Generate a dummy embedding to force model load
     const warmupText = 'MAMA warmup initialization';
@@ -112,7 +112,7 @@ async function warmDatabase() {
   const startTime = Date.now();
 
   try {
-    const { initDB } = require(path.join(CORE_PATH, 'memory-store'));
+    const { initDB } = require('@jungjaehoon/mama-core/memory-store');
     await initDB();
 
     const latencyMs = Date.now() - startTime;
@@ -132,7 +132,7 @@ async function warmDatabase() {
  */
 async function queryRecentContext() {
   try {
-    const { getAdapter } = require(path.join(CORE_PATH, 'memory-store'));
+    const { getAdapter } = require('@jungjaehoon/mama-core/memory-store');
     const adapter = getAdapter();
 
     // Query recent 5 decisions (excluding checkpoints)
