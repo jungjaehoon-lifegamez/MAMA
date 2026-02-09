@@ -51,7 +51,7 @@ async function mamaSaveCommand(args = {}) {
       limitation: args.limitation || null,
     });
 
-    const decisionId = result.id;
+    const decisionId = result?.id ?? result;
 
     info(`[mama-save] ✅ Decision saved successfully: ${decisionId}`);
 
