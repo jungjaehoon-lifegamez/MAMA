@@ -18,6 +18,9 @@ jobs:
   publish-mama-core:
     if: startsWith(github.ref, 'refs/tags/core-v') || startsWith(github.ref, 'refs/tags/mama-core-')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     defaults:
       run:
         working-directory: packages/mama-core
@@ -38,14 +41,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --ignore-scripts
 
-      - name: Publish to npm
-        run: npm publish --access public || echo "Version already published, skipping"
+      - name: Publish to npmjs.org
+        run: npm publish --access public || echo "npmjs: Version already published, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Setup Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access public || echo "github: Version already published, skipping"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-mcp-server:
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/mcp-server-')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     defaults:
       run:
         working-directory: packages/mcp-server
@@ -73,14 +90,28 @@ jobs:
           sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
           cat package.json
 
-      - name: Publish to npm
-        run: npm publish --access public || echo "Version already published, skipping"
+      - name: Publish to npmjs.org
+        run: npm publish --access public || echo "npmjs: Version already published, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Setup Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access public || echo "github: Version already published, skipping"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-openclaw-plugin:
     if: startsWith(github.ref, 'refs/tags/openclaw-v') || startsWith(github.ref, 'refs/tags/openclaw-plugin-')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     defaults:
       run:
         working-directory: packages/openclaw-plugin
@@ -103,20 +134,34 @@ jobs:
 
       - name: Replace workspace protocol
         run: |
-          # Replace workspace:* with actual version from mcp-server
-          MCP_VERSION=$(node -p "require('../mcp-server/package.json').version")
-          sed -i "s/\"workspace:\*\"/\"^$MCP_VERSION\"/" package.json
+          # Replace workspace:* with actual version from mama-core
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
           cat package.json
 
-      - name: Publish to npm
-        run: npm publish --access public || echo "Version already published, skipping"
+      - name: Publish to npmjs.org
+        run: npm publish --access public || echo "npmjs: Version already published, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Setup Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access public || echo "github: Version already published, skipping"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Publish mama-os (standalone)
   publish-mama-os:
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/os-v') || startsWith(github.ref, 'refs/tags/mama-os-') || startsWith(github.ref, 'refs/tags/standalone-v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     defaults:
       run:
         working-directory: packages/standalone
@@ -147,7 +192,18 @@ jobs:
           sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
           cat package.json
 
-      - name: Publish to npm
-        run: npm publish --access public || echo "Version already published, skipping"
+      - name: Publish to npmjs.org
+        run: npm publish --access public || echo "npmjs: Version already published, skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Setup Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access public || echo "github: Version already published, skipping"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

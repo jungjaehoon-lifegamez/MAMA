@@ -10,9 +10,9 @@ MAMA is a pnpm workspace-based monorepo with five packages:
 
 | Package            | Location                       | Deployment Target  | npm Name                     | Version    |
 | ------------------ | ------------------------------ | ------------------ | ---------------------------- | ---------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`       | 0.5.0 |
-| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server`   | 1.7.3      |
-| MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`     | 1.0.3      |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`       | 0.5.1 |
+| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server`   | 1.7.4      |
+| MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`     | 1.0.4      |
 | Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                       | 1.7.6      |
 | OpenClaw Plugin    | `packages/openclaw-plugin/`    | OpenClaw Plugins   | `@jungjaehoon/openclaw-mama` | 0.4.1      |
 
@@ -59,9 +59,9 @@ Synchronize versions across these files before deployment:
 
 | File                                       | Field     | Current Version |
 | ------------------------------------------ | --------- | --------------- |
-| `packages/standalone/package.json`         | `version` | 0.5.0      |
-| `packages/mcp-server/package.json`         | `version` | 1.7.3           |
-| `packages/mama-core/package.json`          | `version` | 1.0.3           |
+| `packages/standalone/package.json`         | `version` | 0.5.1      |
+| `packages/mcp-server/package.json`         | `version` | 1.7.4           |
+| `packages/mama-core/package.json`          | `version` | 1.0.4           |
 | `packages/claude-code-plugin/package.json` | `version` | 1.7.6           |
 | `packages/openclaw-plugin/package.json`    | `version` | 0.4.1           |
 

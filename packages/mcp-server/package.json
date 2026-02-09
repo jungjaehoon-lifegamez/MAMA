@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-server",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "description": "MAMA MCP Server - Memory-Augmented MCP Assistant for Claude Code & Desktop",
   "main": "src/server.js",
   "bin": {
@@ -34,7 +34,6 @@
   },
   "homepage": "https://github.com/jungjaehoon-lifegamez/MAMA#readme",
   "publishConfig": {
-    "registry": "https://registry.npmjs.org",
     "access": "public"
   },
   "engines": {
