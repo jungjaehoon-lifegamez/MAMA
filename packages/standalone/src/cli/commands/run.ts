@@ -26,8 +26,8 @@ export async function runCommand(options: RunOptions): Promise<void> {
 
   // Check config exists
   if (!configExists()) {
-    console.log('⚠️  설정 파일이 없습니다.');
-    console.log('   먼저 초기화하세요: mama init\n');
+    console.log('⚠️  Configuration file not found.');
+    console.log('   Please initialize first: mama init\n');
     process.exit(1);
   }
 
@@ -36,12 +36,14 @@ export async function runCommand(options: RunOptions): Promise<void> {
   try {
     config = await loadConfig();
   } catch (error) {
-    console.error(`설정 로드 실패: ${error instanceof Error ? error.message : String(error)}\n`);
+    console.error(
+      `Failed to load configuration: ${error instanceof Error ? error.message : String(error)}\n`
+    );
     process.exit(1);
   }
 
   // Check OAuth token
-  process.stdout.write('OAuth 토큰 확인... ');
+  process.stdout.write('Verifying OAuth token... ');
   let oauthManager: OAuthManager;
   try {
     oauthManager = new OAuthManager();
@@ -49,8 +51,8 @@ export async function runCommand(options: RunOptions): Promise<void> {
     console.log('✓');
   } catch (error) {
     console.log('❌');
-    console.error(`\nOAuth 토큰 오류: ${error instanceof Error ? error.message : String(error)}`);
-    console.error('Claude Code에 다시 로그인하세요.\n');
+    console.error(`\nOAuth token error: ${error instanceof Error ? error.message : String(error)}`);
+    console.error('Please log in to Claude Code again.\n');
     process.exit(1);
   }
 
@@ -92,12 +94,14 @@ export async function runCommand(options: RunOptions): Promise<void> {
     console.log('\n📤 Response:\n');
     console.log(result.response);
     console.log('\n─'.repeat(50));
-    console.log(`\n✓ 완료 (${result.turns} turns, ${elapsed}s)`);
+    console.log(`\n✓ Complete (${result.turns} turns, ${elapsed}s)`);
     console.log(
       `  Tokens: ${result.totalUsage.input_tokens} input / ${result.totalUsage.output_tokens} output\n`
     );
   } catch (error) {
-    console.error(`\n❌ 실행 실패: ${error instanceof Error ? error.message : String(error)}\n`);
+    console.error(
+      `\n❌ Execution failed: ${error instanceof Error ? error.message : String(error)}\n`
+    );
     process.exit(1);
   }
 }

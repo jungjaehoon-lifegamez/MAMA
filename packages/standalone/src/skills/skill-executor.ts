@@ -244,22 +244,22 @@ export class SkillExecutor {
         console.error(`[SkillExecutor] Empty response from agent loop`);
         return {
           success: false,
-          error: '응답이 비어있습니다. 다시 시도해주세요.',
+          error: 'Response is empty. Please try again.',
           duration: Date.now() - startTime,
         };
       }
 
       // Check for common failure patterns
       const failurePatterns = [
-        '읽을 수 없',
-        '인식할 수 없',
-        '확인할 수 없',
+        '읽을 수 없', // Korean: "cannot read" (KEEP for Korean response detection)
+        '인식할 수 없', // Korean: "cannot recognize"
+        '확인할 수 없', // Korean: "cannot verify"
         'cannot read',
         'unable to',
         'I cannot',
         "I can't",
-        '죄송합니다',
-        '이미지가 없',
+        '죄송합니다', // Korean: "sorry"
+        '이미지가 없', // Korean: "no image"
       ];
 
       const lowerResponse = response.toLowerCase();
@@ -316,13 +316,13 @@ export class SkillExecutor {
 
     // Add user input
     if (input.text) {
-      parts.push(`\n---\n사용자 요청: ${input.text}`);
+      parts.push(`\n---\nUser request: ${input.text}`);
     }
 
     // Add attachment info
     if (input.attachments && input.attachments.length > 0) {
       const attachmentInfo = input.attachments.map((a) => `- ${a.filename} (${a.type})`).join('\n');
-      parts.push(`\n첨부 파일:\n${attachmentInfo}`);
+      parts.push(`\nAttached files:\n${attachmentInfo}`);
     }
 
     return parts.join('\n');
@@ -351,7 +351,7 @@ export class SkillExecutor {
         const htmlPath = await this.saveAsHtml(skill, response, originalImages);
         files.push({ path: htmlPath, type: 'html', description: 'Generated HTML' });
         const summary = response.length > 200 ? response.substring(0, 200) + '...' : response;
-        return { response: `${skill.name} 완료했습니다.\n\n**결과 요약:**\n${summary}`, files };
+        return { response: `${skill.name} completed.\n\n**Result Summary:**\n${summary}`, files };
       }
 
       case 'html-screenshot': {
@@ -380,9 +380,9 @@ export class SkillExecutor {
 
         // Return detailed response with context
         const summary = response.length > 200 ? response.substring(0, 200) + '...' : response;
-        const attachmentInfo = input.attachments?.map((a) => a.filename).join(', ') || '이미지';
+        const attachmentInfo = input.attachments?.map((a) => a.filename).join(', ') || 'image';
         return {
-          response: `${skill.name} 완료했습니다.\n\n**원본:** ${attachmentInfo}\n**결과 요약:**\n${summary}`,
+          response: `${skill.name} completed.\n\n**Original:** ${attachmentInfo}\n**Result Summary:**\n${summary}`,
           files,
         };
       }
@@ -556,13 +556,13 @@ ${content}
 <body>
   <div class="container">
     <div class="panel">
-      <div class="panel-header">📷 원본</div>
+      <div class="panel-header">📷 Original</div>
       <div class="panel-content">
         <img src="${imageDataUrl}" alt="Original" class="original-image">
       </div>
     </div>
     <div class="panel">
-      <div class="panel-header">📝 번역</div>
+      <div class="panel-header">📝 Translation</div>
       <div class="panel-content translation">
         ${translatedHtml}
       </div>

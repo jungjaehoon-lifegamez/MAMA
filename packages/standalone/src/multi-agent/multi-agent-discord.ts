@@ -737,7 +737,7 @@ export class MultiAgentDiscordHandler {
       /** Build progress message content (elapsed time only — no tool/code details exposed) */
       const buildProgressContent = (): string => {
         const elapsed = Math.round((Date.now() - startTime) / 1000);
-        return `⏳ 작업 중... (${elapsed}s)`;
+        return `⏳ Working... (${elapsed}s)`;
       };
 
       /** Send or edit the progress message (debounced to 1 edit per 3s) */

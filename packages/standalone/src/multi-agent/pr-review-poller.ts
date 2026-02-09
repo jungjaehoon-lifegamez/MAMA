@@ -554,9 +554,9 @@ export class PRReviewPoller {
     }
 
     return (
-      `📝 PR ${sessionKey} 리뷰 업데이트\n` +
-      `• 새 코멘트: ${comments.length}개 (🔴 ${critical} / 🟡 ${major} / 🔵 ${minor})\n` +
-      `👉 상세 내용은 PR에서 직접 확인하세요`
+      `📝 PR ${sessionKey} review update\n` +
+      `• New comments: ${comments.length} (🔴 ${critical} / 🟡 ${major} / 🔵 ${minor})\n` +
+      `👉 Check the PR for details`
     );
   }
 
@@ -696,9 +696,9 @@ export class PRReviewPoller {
   ): string {
     if (totalThreads !== undefined) {
       const resolved = totalThreads - threads.length;
-      return `⚠️ PR ${sessionKey} 스레드 상태: 해결됨 ${resolved}개 / 미해결 ${threads.length}개`;
+      return `⚠️ PR ${sessionKey} thread status: ${resolved} resolved / ${threads.length} unresolved`;
     }
-    return `⚠️ PR ${sessionKey} 미해결 스레드: ${threads.length}개`;
+    return `⚠️ PR ${sessionKey} unresolved threads: ${threads.length}`;
   }
 
   /**
