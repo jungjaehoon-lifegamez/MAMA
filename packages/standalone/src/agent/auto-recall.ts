@@ -187,7 +187,12 @@ export async function autoRecall(
     }
 
     if (checkpoint) {
-      const ts = new Date(checkpoint.timestamp).toISOString();
+      let ts: string;
+      try {
+        ts = new Date(checkpoint.timestamp).toISOString();
+      } catch {
+        ts = String(checkpoint.timestamp);
+      }
       content += `## Last Checkpoint (${ts})\n\n`;
       content += `**Summary:** ${checkpoint.summary}\n\n`;
       if (checkpoint.next_steps) {
