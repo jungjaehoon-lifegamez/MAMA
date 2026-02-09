@@ -324,9 +324,9 @@ describe('Story M2.3: PostToolUse Hook', () => {
       expect(content).toContain('privacy mode');
     });
 
-    it('should also support MAMA_DISABLE_HOOKS', () => {
-      const scriptPath = path.join(__dirname, '../../scripts/posttooluse-hook.js');
-      const content = fs.readFileSync(scriptPath, 'utf8');
+    it('should also support MAMA_DISABLE_HOOKS via hook-features', () => {
+      const hookFeaturesPath = path.join(__dirname, '../../src/core/hook-features.js');
+      const content = fs.readFileSync(hookFeaturesPath, 'utf8');
 
       expect(content).toContain('MAMA_DISABLE_HOOKS');
       expect(content).toContain('process.env.MAMA_DISABLE_HOOKS');

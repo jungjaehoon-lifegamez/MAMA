@@ -20,40 +20,40 @@ import { BOOTSTRAP_TEMPLATE } from '../../onboarding/bootstrap-template.js';
  */
 const CLAUDE_MD_TEMPLATE = `# MAMA
 
-저는 MAMA, 지속적 메모리를 가진 AI 비서입니다.
+I am MAMA, an AI assistant with persistent memory.
 
-## 워크스페이스 (중요!)
+## Workspace (Important!)
 
-**모든 파일 작업은 아래 경로에서만 수행하세요:**
+**All file operations must be performed only in the paths below:**
 
-| 용도 | 경로 |
-|------|------|
-| 작업 디렉토리 | \`~/.mama/workspace/\` |
-| 스킬 저장 | \`~/.mama/skills/\` |
-| 스크립트 | \`~/.mama/workspace/scripts/\` |
-| 데이터 | \`~/.mama/workspace/data/\` |
-| 로그 | \`~/.mama/logs/\` |
+| Purpose | Path |
+|---------|------|
+| Working directory | \`~/.mama/workspace/\` |
+| Skills storage | \`~/.mama/skills/\` |
+| Scripts | \`~/.mama/workspace/scripts/\` |
+| Data | \`~/.mama/workspace/data/\` |
+| Logs | \`~/.mama/logs/\` |
 
-**절대 사용 금지:**
-- \`~/.openclaw/\` - 다른 프로젝트
-- \`~/project/\` - 사용자 프로젝트 (명시적 요청 없이 수정 금지)
+**Never use:**
+- \`~/.openclaw/\` - Different project
+- \`~/project/\` - User project (do not modify without explicit request)
 
-## 메모리 시스템
+## Memory System
 
-MAMA는 결정의 진화를 추적합니다:
+MAMA tracks the evolution of decisions:
 
 \`\`\`
-결정 v1 (실패) → v2 (부분 성공) → v3 (성공)
+Decision v1 (failed) → v2 (partial success) → v3 (success)
 \`\`\`
 
-과거 결정을 검색하면 전체 맥락을 볼 수 있습니다.
+Searching past decisions provides full context.
 
-## 사용 가능한 명령어
+## Available Commands
 
-- \`mama start\` - 에이전트 시작
-- \`mama stop\` - 에이전트 중지
-- \`mama status\` - 상태 확인
-- \`mama run <command>\` - 일회성 명령 실행
+- \`mama start\` - Start agent
+- \`mama stop\` - Stop agent
+- \`mama status\` - Check status
+- \`mama run <command>\` - Run one-off command
 `;
 
 /**
@@ -70,17 +70,17 @@ export interface InitOptions {
  * Execute init command
  */
 export async function initCommand(options: InitOptions = {}): Promise<void> {
-  console.log('\n🔧 MAMA Standalone 초기화\n');
+  console.log('\n🔧 MAMA Standalone Initialization\n');
 
   if (!options.skipAuthCheck) {
     const credentialsPath = expandPath('~/.claude/.credentials.json');
-    process.stdout.write('Claude Code 인증 확인... ');
+    process.stdout.write('Checking Claude Code authentication... ');
 
     if (!existsSync(credentialsPath)) {
       console.log('❌');
-      console.error('\n⚠️  Claude Code 인증 파일을 찾을 수 없습니다.');
-      console.error(`   예상 경로: ${credentialsPath}`);
-      console.error('\n   Claude Code를 먼저 설치하고 로그인하세요:');
+      console.error('\n⚠️  Claude Code credentials file not found.');
+      console.error(`   Expected path: ${credentialsPath}`);
+      console.error('\n   Please install and log in to Claude Code first:');
       console.error('   https://claude.ai/code\n');
       process.exit(1);
     }
@@ -89,48 +89,48 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
 
   // Check if config already exists
   if (configExists() && !options.force) {
-    console.log(`\n⚠️  설정 파일이 이미 존재합니다: ${getConfigPath()}`);
-    console.log('   덮어쓰려면 --force 옵션을 사용하세요.\n');
+    console.log(`\n⚠️  Configuration file already exists: ${getConfigPath()}`);
+    console.log('   Use --force option to overwrite.\n');
     process.exit(1);
   }
 
   // Create config
-  process.stdout.write('설정 파일 생성 중... ');
+  process.stdout.write('Creating configuration file... ');
   try {
     const configPath = await createDefaultConfig(options.force);
     console.log('✓');
-    console.log(`\n${configPath} 생성 완료\n`);
+    console.log(`\n${configPath} created successfully\n`);
   } catch (error) {
     console.log('❌');
     console.error(
-      `\n설정 파일 생성 실패: ${error instanceof Error ? error.message : String(error)}\n`
+      `\nFailed to create configuration file: ${error instanceof Error ? error.message : String(error)}\n`
     );
     process.exit(1);
   }
 
   // Create directory structure
   const directories = [
-    { path: '~/.mama/skills', label: '스킬 디렉토리' },
-    { path: '~/.mama/workspace', label: '워크스페이스' },
-    { path: '~/.mama/workspace/scripts', label: '스크립트 디렉토리' },
-    { path: '~/.mama/workspace/data', label: '데이터 디렉토리' },
-    { path: '~/.mama/logs', label: '로그 디렉토리' },
+    { path: '~/.mama/skills', label: 'Skills directory' },
+    { path: '~/.mama/workspace', label: 'Workspace' },
+    { path: '~/.mama/workspace/scripts', label: 'Scripts directory' },
+    { path: '~/.mama/workspace/data', label: 'Data directory' },
+    { path: '~/.mama/logs', label: 'Logs directory' },
   ];
 
   for (const dir of directories) {
     const expandedPath = expandPath(dir.path);
-    process.stdout.write(`${dir.label} 생성 중... `);
+    process.stdout.write(`Creating ${dir.label}... `);
     try {
       if (!existsSync(expandedPath)) {
         await mkdir(expandedPath, { recursive: true });
         console.log('✓');
       } else {
-        console.log('(이미 존재)');
+        console.log('(already exists)');
       }
     } catch (error) {
       console.log('❌');
       console.error(
-        `\n${dir.label} 생성 실패: ${error instanceof Error ? error.message : String(error)}\n`
+        `\nFailed to create ${dir.label}: ${error instanceof Error ? error.message : String(error)}\n`
       );
       process.exit(1);
     }
@@ -138,10 +138,10 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
 
   // Create CLAUDE.md
   const claudeMdPath = expandPath('~/.mama/CLAUDE.md');
-  process.stdout.write('CLAUDE.md 생성 중... ');
+  process.stdout.write('Creating CLAUDE.md... ');
   try {
     if (existsSync(claudeMdPath) && !options.force) {
-      console.log('(이미 존재)');
+      console.log('(already exists)');
     } else {
       await writeFile(claudeMdPath, CLAUDE_MD_TEMPLATE, 'utf-8');
       console.log('✓');
@@ -149,16 +149,16 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
   } catch (error) {
     console.log('❌');
     console.error(
-      `\nCLAUDE.md 생성 실패: ${error instanceof Error ? error.message : String(error)}\n`
+      `\nFailed to create CLAUDE.md: ${error instanceof Error ? error.message : String(error)}\n`
     );
     process.exit(1);
   }
 
   const bootstrapPath = expandPath('~/.mama/BOOTSTRAP.md');
-  process.stdout.write('BOOTSTRAP.md 생성 중... ');
+  process.stdout.write('Creating BOOTSTRAP.md... ');
   try {
     if (existsSync(bootstrapPath) && !options.force) {
-      console.log('(이미 존재)');
+      console.log('(already exists)');
     } else {
       await writeFile(bootstrapPath, BOOTSTRAP_TEMPLATE, 'utf-8');
       console.log('✓');
@@ -166,15 +166,15 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
   } catch (error) {
     console.log('❌');
     console.error(
-      `\nBOOTSTRAP.md 생성 실패: ${error instanceof Error ? error.message : String(error)}\n`
+      `\nFailed to create BOOTSTRAP.md: ${error instanceof Error ? error.message : String(error)}\n`
     );
     process.exit(1);
   }
 
   // Show next steps
-  console.log('\n다음 단계:');
-  console.log('  mama setup    대화형 설정 마법사 (처음 실행)');
-  console.log('  mama start    에이전트 시작');
-  console.log('  mama status   상태 확인');
+  console.log('\nNext steps:');
+  console.log('  mama setup    Interactive setup wizard (first run)');
+  console.log('  mama start    Start agent');
+  console.log('  mama status   Check status');
   console.log('');
 }

@@ -1,6 +1,5 @@
 # MAMA OS - Unified Web Interface
 
-**Version:** 0.4.0
 **Category:** Explanation (Conceptual Understanding)  
 **Audience:** Users wanting to understand what MAMA OS is and why it exists
 

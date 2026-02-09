@@ -344,7 +344,7 @@ Key docs:
 - @jungjaehoon/mama-server v1.6.6 - MCP Server
 - @jungjaehoon/mama-core v1.0.1 - Shared Core
 - mama v1.6.6 - Claude Code Plugin
-- @jungjaehoon/openclaw-mama v0.4.1 - OpenClaw Plugin
+- @jungjaehoon/openclaw-mama - OpenClaw Plugin
 
 **Infrastructure:**
 
