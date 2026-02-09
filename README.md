@@ -343,7 +343,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 | [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.5.1 | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.4      | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.0.4      | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.6      | Claude Code plugin                           | Claude Marketplace |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.7      | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1      | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
