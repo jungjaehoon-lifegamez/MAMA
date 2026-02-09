@@ -294,6 +294,7 @@ export class BackgroundTaskManager extends EventEmitter {
 
     console.log(`${LOG_PREFIX} Task cancelled: ${task.id}`);
     this.emit('task-failed', { task } satisfies BackgroundTaskEvent);
+    this._processQueue();
 
     return true;
   }
@@ -459,7 +460,8 @@ export class BackgroundTaskManager extends EventEmitter {
     );
     this.emit('task-started', { task } satisfies BackgroundTaskEvent);
 
-    this.executeTask(task.agentId, task.prompt)
+    Promise.resolve()
+      .then(() => this.executeTask(task.agentId, task.prompt))
       .then((result) => {
         this._completeTask(task, result);
       })
