@@ -4,7 +4,7 @@
  * Tests:
  * - Basic enqueue/drain flow
  * - Queue size limit (5 messages, oldest dropped)
- * - TTL expiration (3 minutes)
+ * - TTL expiration (10 minutes)
  * - Multiple agents with independent queues
  * - Drain callback execution
  * - Busy process handling (no re-queue)
@@ -120,9 +120,9 @@ describe('AgentMessageQueue', () => {
   });
 
   describe('TTL expiration', () => {
-    it('should skip expired messages (older than 3 minutes)', async () => {
+    it('should skip expired messages (older than 10 minutes)', async () => {
       const now = Date.now();
-      const threeMinutesAgo = now - 3 * 60 * 1000 - 1000; // 3min + 1s ago
+      const threeMinutesAgo = now - 10 * 60 * 1000 - 1000; // 10min + 1s ago
 
       queue.enqueue('agent-1', {
         prompt: 'Expired message',
@@ -156,13 +156,13 @@ describe('AgentMessageQueue', () => {
 
     it('should clear expired messages with clearExpired()', () => {
       const now = Date.now();
-      const threeMinutesAgo = now - 3 * 60 * 1000 - 1000;
+      const tenMinutesAgo = now - 10 * 60 * 1000 - 1000;
 
       queue.enqueue('agent-1', {
         prompt: 'Expired',
         channelId: 'ch-1',
         source: 'slack',
-        enqueuedAt: threeMinutesAgo,
+        enqueuedAt: tenMinutesAgo,
       });
 
       queue.enqueue('agent-2', {

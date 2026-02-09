@@ -151,15 +151,15 @@ export function getUptime(startedAt: number): string {
   const days = Math.floor(hours / 24);
 
   if (days > 0) {
-    return `${days}일 ${hours % 24}시간`;
+    return `${days}d ${hours % 24}h`;
   }
   if (hours > 0) {
-    return `${hours}시간 ${minutes % 60}분`;
+    return `${hours}h ${minutes % 60}m`;
   }
   if (minutes > 0) {
-    return `${minutes}분 ${seconds % 60}초`;
+    return `${minutes}m ${seconds % 60}s`;
   }
-  return `${seconds}초`;
+  return `${seconds}s`;
 }
 
 /**

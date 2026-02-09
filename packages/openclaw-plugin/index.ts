@@ -1,13 +1,13 @@
 /**
  * MAMA OpenClaw Plugin - Direct Gateway Integration
  *
- * NO HTTP/REST - MAMA 로직을 Gateway에 직접 임베드
- * better-sqlite3 + sqlite-vec로 벡터 검색
+ * NO HTTP/REST - Embeds MAMA logic directly into the Gateway
+ * Vector search via better-sqlite3 + sqlite-vec
  *
  * Features:
  * - 4 native tools: mama_search, mama_save, mama_load_checkpoint, mama_update
- * - Auto-recall: 에이전트 시작 시 유저 프롬프트 기반 시맨틱 검색
- * - Auto-capture: 에이전트 종료 시 중요 결정 자동 저장
+ * - Auto-recall: Semantic search based on user prompt at agent start
+ * - Auto-capture: Auto-save important decisions at agent end
  */
 
 import { Type, type Static } from '@sinclair/typebox';
@@ -15,7 +15,7 @@ import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import path from 'node:path';
 import os from 'node:os';
 
-// MAMA 모듈 경로 - workspace dependency에서 resolve
+// MAMA module path - resolve from workspace dependency
 const MAMA_MODULE_PATH = path.dirname(require.resolve('@jungjaehoon/mama-core/mama-api'));
 
 // MAMA API interface for type safety (matching actual mama-api.js implementation)
@@ -183,7 +183,7 @@ const mamaPlugin = {
       'config' in api ? (api as { config?: PluginConfig }).config : undefined;
 
     // =====================================================
-    // Auto-recall: 유저 프롬프트 기반 시맨틱 검색
+    // Auto-recall: Semantic search based on user prompt
     // =====================================================
     api.on('before_agent_start', async (event: any) => {
       try {
@@ -193,7 +193,7 @@ const mamaPlugin = {
 
         const mamaApi = getMAMA();
 
-        // 1. 유저 프롬프트가 있으면 시맨틱 검색 수행
+        // 1. Perform semantic search if user prompt exists
         let semanticResults: MAMADecision[] = [];
         if (userPrompt && userPrompt.length >= 5) {
           try {
@@ -204,16 +204,16 @@ const mamaPlugin = {
           }
         }
 
-        // 2. 최근 체크포인트 로드
+        // 2. Load latest checkpoint
         const checkpoint = await mamaApi.loadCheckpoint();
 
-        // 3. 최근 결정들 로드 (시맨틱 검색 결과가 없을 때만)
+        // 3. Load recent decisions (only when no semantic search results)
         let recentDecisions: MAMADecision[] = [];
         if (semanticResults.length === 0) {
           recentDecisions = await mamaApi.list({ limit: 3 });
         }
 
-        // 4. 컨텍스트가 있으면 주입
+        // 4. Inject context if available
         if (checkpoint || semanticResults.length > 0 || recentDecisions.length > 0) {
           let content = '<relevant-memories>\n';
           content += '# MAMA Memory Context\n\n';
@@ -264,7 +264,7 @@ const mamaPlugin = {
     });
 
     // =====================================================
-    // Auto-capture: 에이전트 종료 시 결정 자동 저장
+    // Auto-capture: Auto-save decisions at agent end
     // =====================================================
     api.on('agent_end', async (event: any) => {
       if (!event.success || !event.messages || event.messages.length === 0) {
@@ -274,7 +274,7 @@ const mamaPlugin = {
       try {
         await initMAMA(config);
 
-        // 메시지에서 텍스트 추출
+        // Extract text from messages
         const texts: string[] = [];
         for (const msg of event.messages) {
           if (!msg || typeof msg !== 'object') continue;
@@ -294,7 +294,7 @@ const mamaPlugin = {
           }
         }
 
-        // 결정 패턴 감지
+        // Detect decision patterns
         const decisionPatterns = [
           /decided|결정|선택|chose|use.*instead|going with/i,
           /will use|사용할|approach|방식|strategy/i,
@@ -313,8 +313,8 @@ const mamaPlugin = {
 
           // Auto-save detected decision (logged only, not actually saved without explicit topic)
           console.log(`[MAMA] Auto-capture candidate: ${text.substring(0, 50)}...`);
-          // Note: 실제 저장은 명시적 topic이 필요하므로 로그만 남김
-          // 향후 LLM을 통한 topic 추출 기능 추가 가능
+          // Note: Actual save requires an explicit topic, so only logging for now
+          // Future: Add topic extraction via LLM
         }
       } catch (err: any) {
         console.error('[MAMA] Auto-capture error:', err.message);
@@ -322,7 +322,7 @@ const mamaPlugin = {
     });
 
     // =====================================================
-    // mama_search - 시맨틱 메모리 검색
+    // mama_search - Semantic memory search
     // =====================================================
     api.registerTool({
       name: 'mama_search',
@@ -397,7 +397,7 @@ const mamaPlugin = {
     });
 
     // =====================================================
-    // mama_save - 결정 또는 체크포인트 저장
+    // mama_save - Save decision or checkpoint
     // =====================================================
     api.registerTool({
       name: 'mama_save',
@@ -526,7 +526,7 @@ const mamaPlugin = {
     });
 
     // =====================================================
-    // mama_load_checkpoint - 체크포인트 로드
+    // mama_load_checkpoint - Load checkpoint
     // =====================================================
     api.registerTool({
       name: 'mama_load_checkpoint',
@@ -583,7 +583,7 @@ Also returns recent decisions for context.`,
     });
 
     // =====================================================
-    // mama_update - 결과 업데이트
+    // mama_update - Update outcome
     // =====================================================
     api.registerTool({
       name: 'mama_update',

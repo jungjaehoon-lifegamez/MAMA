@@ -7,7 +7,7 @@
  * Features:
  * - Per-agent FIFO queue
  * - Max 5 messages per agent (oldest dropped when full)
- * - 3-minute TTL (expired messages skipped)
+ * - 10-minute TTL (expired messages skipped)
  * - Auto-drain on agent 'idle' event
  *
  * Sprint 3 F7
@@ -49,7 +49,7 @@ export interface QueuedMessage {
 }
 
 const MAX_QUEUE_SIZE = 5;
-const MESSAGE_TTL_MS = 3 * 60 * 1000; // 3 minutes
+const MESSAGE_TTL_MS = 10 * 60 * 1000; // 10 minutes (agents can take 200s+ on complex tasks)
 
 /**
  * Agent Message Queue Manager

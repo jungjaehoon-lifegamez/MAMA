@@ -250,9 +250,9 @@ async function handleRequest(req, res) {
 <body style="font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #1a1a2e; color: #eee;">
   <div style="text-align: center; padding: 2rem;">
     <h1>🧠 MAMA Viewer</h1>
-    <p>Viewer와 Chat 기능은 <strong>Standalone</strong> 모드에서만 사용 가능합니다.</p>
+    <p>Viewer and Chat features are only available in <strong>Standalone</strong> mode.</p>
     <p style="color: #888; margin-top: 1rem;">Start Standalone: <code style="background: #333; padding: 0.25rem 0.5rem; border-radius: 4px;">mama start</code></p>
-    <p style="color: #666; font-size: 0.9rem; margin-top: 2rem;">현재: MCP Server (embedding only)</p>
+    <p style="color: #666; font-size: 0.9rem; margin-top: 2rem;">Current: MCP Server (embedding only)</p>
   </div>
 </body>
 </html>`);
