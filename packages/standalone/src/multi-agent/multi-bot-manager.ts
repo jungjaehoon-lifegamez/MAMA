@@ -40,7 +40,8 @@ export class MultiBotManager {
   private mainBotToken: string | null = null;
 
   /** Callback for when an agent bot receives a mention */
-  private onMentionCallback: ((agentId: string, message: Message) => void) | null = null;
+  private onMentionCallback: ((agentId: string, message: Message) => void | Promise<void>) | null =
+    null;
 
   constructor(config: MultiAgentConfig) {
     this.config = config;
@@ -63,7 +64,7 @@ export class MultiBotManager {
   /**
    * Register callback for when an agent bot receives a mention
    */
-  onMention(callback: (agentId: string, message: Message) => void): void {
+  onMention(callback: (agentId: string, message: Message) => void | Promise<void>): void {
     this.onMentionCallback = callback;
   }
 
@@ -150,7 +151,12 @@ export class MultiBotManager {
       if (!bot.userId || !msg.mentions.has(bot.userId)) return;
       if (this.onMentionCallback) {
         console.log(`[MultiBotManager] Agent ${agentId} mentioned by ${msg.author.tag}`);
-        this.onMentionCallback(agentId, msg);
+        Promise.resolve(this.onMentionCallback(agentId, msg)).catch((err) => {
+          console.error(
+            `[MultiBotManager] onMention callback failed for ${agentId}:`,
+            err instanceof Error ? err.message : err
+          );
+        });
       }
     });
 
