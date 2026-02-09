@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Contract Extractor** - 5 extractors for API, function, type, SQL, and GraphQL contracts (661 lines)
 - **256 New Tests** - Full coverage for all 4 hook modules
 
+**PR Review Poller & Commit Workflow** (2026-02-09)
+
+- **PR Review Poller** - Polls GitHub PR review comments and routes Reviewer → LEAD chain
+- **5-Minute Reminders** - Unresolved PR review threads trigger periodic reminders
+- **Commit+Push Instructions** - Reviewer APPROVE propagates to LEAD with commit workflow
+- **Nitpick Severity Level** - PR analysis now distinguishes nitpick-level comments
+
 **Other Features** (2026-02-08)
 
 - **!stop Command** - Interrupt running agents from Discord with `!stop` prefix
@@ -49,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed - mama-os@0.5.0-beta
 
+- **Discord Message Length** - Corrected message splitting to respect 2000-char limit (was 3900), preventing `Invalid Form Body` errors
 - **Cross-Channel Batch Corruption** - Fixed batch processing across different Discord channels
 - **Duplicate Session Cache** - Prevented duplicate entries in session cache
 - **Env Var Conflicts** - Clean conflicting MAMA environment variables in persistent CLI process
