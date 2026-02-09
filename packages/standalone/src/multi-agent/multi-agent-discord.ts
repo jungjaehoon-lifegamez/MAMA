@@ -212,12 +212,14 @@ export class MultiAgentDiscordHandler {
       if (this.processedMentions.has(dedupKey)) return;
       this.processedMentions.set(dedupKey, Date.now());
 
-      // Block agent-to-agent mentions during post-APPROVE cooldown
+      // Block agent-to-LEAD mentions during post-APPROVE cooldown
+      // Only blocks mentions targeting the default (LEAD) agent — not other agents like DEV
       const approveCooldown = this.approveProcessedChannels.get(message.channel.id);
       if (
         message.author.bot &&
         approveCooldown &&
-        Date.now() - approveCooldown < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
+        Date.now() - approveCooldown < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS &&
+        agentId === this.config.default_agent
       ) {
         return;
       }
