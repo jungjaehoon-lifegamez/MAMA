@@ -540,4 +540,18 @@ export class BackgroundTaskManager extends EventEmitter {
     }
     return count;
   }
+
+  destroy(): void {
+    for (const taskId of [...this.pendingQueue]) {
+      this.cancelTask(taskId);
+    }
+    for (const taskId of [...this.runningSet]) {
+      this.cancelTask(taskId);
+    }
+    this.tasks.clear();
+    this.pendingQueue = [];
+    this.completedList = [];
+    this.removeAllListeners();
+    console.log(`${LOG_PREFIX} Destroyed — all tasks cancelled, listeners removed`);
+  }
 }
