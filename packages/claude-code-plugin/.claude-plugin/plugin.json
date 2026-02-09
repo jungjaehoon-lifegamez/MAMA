@@ -24,7 +24,6 @@
     "./commands/configure.md"
   ],
   "skills": ["./skills/mama-context"],
-  "agents": "./agents/",
   "hooks": {
     "SessionStart": [
       {
