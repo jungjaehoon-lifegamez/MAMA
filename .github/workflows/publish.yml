@@ -66,6 +66,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --ignore-scripts
 
+      - name: Replace workspace protocol
+        run: |
+          # Replace workspace:* with actual version from mama-core
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
+          cat package.json
+
       - name: Publish to npm
         run: npm publish --access public || echo "Version already published, skipping"
         env:
