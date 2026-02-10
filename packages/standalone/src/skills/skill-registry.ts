@@ -242,21 +242,36 @@ export class SkillRegistry {
     await mkdir(installDir, { recursive: true });
 
     try {
-      let content: string;
+      let content: string | null = null;
+      let savedAs = 'SKILL.md';
 
-      if (source === 'cowork') {
-        content = await fetchRawGitHub(
-          `https://raw.githubusercontent.com/anthropics/knowledge-work-plugins/main/${name}/SKILL.md`
-        );
-      } else if (source === 'openclaw') {
-        content = await fetchRawGitHub(
-          `https://raw.githubusercontent.com/openclaw/openclaw/main/skills/${name}/SKILL.md`
-        );
-      } else {
+      const baseUrl =
+        source === 'cowork'
+          ? `https://raw.githubusercontent.com/anthropics/knowledge-work-plugins/main/${name}`
+          : source === 'openclaw'
+            ? `https://raw.githubusercontent.com/openclaw/openclaw/main/skills/${name}`
+            : null;
+
+      if (!baseUrl) {
         throw new Error(`Cannot install from source: ${source}`);
       }
 
-      await writeFile(join(installDir, 'SKILL.md'), content);
+      // Try SKILL.md first, then README.md
+      for (const filename of ['SKILL.md', 'README.md']) {
+        try {
+          content = await fetchRawGitHub(`${baseUrl}/${filename}`);
+          savedAs = filename;
+          break;
+        } catch {
+          continue;
+        }
+      }
+
+      if (!content) {
+        throw new Error(`No SKILL.md or README.md found for ${source}/${name}`);
+      }
+
+      await writeFile(join(installDir, savedAs), content);
 
       // Set enabled by default
       const state = await loadState();
@@ -297,7 +312,7 @@ export class SkillRegistry {
   }
 
   /**
-   * Get SKILL.md content for a skill
+   * Get SKILL.md content for a skill (local or remote)
    */
   async getContent(source: SkillSource, name: string): Promise<string | null> {
     // Check installed first
@@ -314,6 +329,34 @@ export class SkillRegistry {
       } catch {
         return null;
       }
+    }
+
+    // Fetch from remote for uninstalled catalog skills
+    try {
+      if (source === 'cowork') {
+        // Try SKILL.md first, then README.md
+        for (const filename of ['SKILL.md', 'README.md']) {
+          try {
+            return await fetchRawGitHub(
+              `https://raw.githubusercontent.com/anthropics/knowledge-work-plugins/main/${name}/${filename}`
+            );
+          } catch {
+            continue;
+          }
+        }
+      } else if (source === 'openclaw') {
+        for (const filename of ['SKILL.md', 'README.md']) {
+          try {
+            return await fetchRawGitHub(
+              `https://raw.githubusercontent.com/openclaw/openclaw/main/skills/${name}/${filename}`
+            );
+          } catch {
+            continue;
+          }
+        }
+      }
+    } catch {
+      // Remote fetch failed
     }
 
     return null;
