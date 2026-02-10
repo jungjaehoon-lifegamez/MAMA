@@ -246,7 +246,7 @@ export class SkillRegistry {
 
       if (source === 'cowork') {
         content = await fetchRawGitHub(
-          `https://raw.githubusercontent.com/anthropics/knowledge-work-plugins/main/plugins/${name}/SKILL.md`
+          `https://raw.githubusercontent.com/anthropics/knowledge-work-plugins/main/${name}/SKILL.md`
         );
       } else if (source === 'openclaw') {
         content = await fetchRawGitHub(
@@ -372,13 +372,15 @@ export class SkillRegistry {
   }
 
   private async fetchCoworkCatalog(): Promise<CatalogSkill[]> {
+    // Cowork plugins are at the repo root (each top-level dir is a plugin)
     const data = (await fetchGitHub(
-      'https://api.github.com/repos/anthropics/knowledge-work-plugins/contents/plugins'
+      'https://api.github.com/repos/anthropics/knowledge-work-plugins/contents'
     )) as Array<{ name: string; type: string }>;
 
     const skills: CatalogSkill[] = [];
     for (const item of data) {
-      if (item.type !== 'dir') continue;
+      // Skip non-dirs and hidden/meta directories
+      if (item.type !== 'dir' || item.name.startsWith('.')) continue;
       skills.push({
         id: item.name,
         name: item.name.replace(/-/g, ' '),
@@ -386,7 +388,7 @@ export class SkillRegistry {
         source: 'cowork',
         installed: false,
         enabled: false,
-        remotePath: `plugins/${item.name}`,
+        remotePath: item.name,
       });
     }
 
