@@ -262,4 +262,8 @@ export class API {
   static async getSkillContent(name, source = 'mama') {
     return this.get(`/api/skills/${encodeURIComponent(name)}/readme`, { source });
   }
+
+  static async installSkillFromUrl(url) {
+    return this.post('/api/skills/install-url', { url });
+  }
 }

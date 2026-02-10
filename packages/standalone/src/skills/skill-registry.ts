@@ -4,7 +4,7 @@
  * Manages skills from 3 sources:
  * - MAMA: Built-in templates + user-installed (~/.mama/skills/mama/)
  * - Cowork: GitHub anthropics/knowledge-work-plugins
- * - OpenClaw: GitHub openclaw/openclaw/skills
+ * - External: GitHub URL-based plugins (~/.mama/skills/external/)
  *
  * Provides install/uninstall/toggle/search across all sources.
  */
@@ -13,7 +13,7 @@ import { readdir, readFile, stat, mkdir, writeFile, rm } from 'fs/promises';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 
-export type SkillSource = 'mama' | 'cowork' | 'openclaw';
+export type SkillSource = 'mama' | 'cowork' | 'external';
 
 export interface CatalogSkill {
   id: string;
@@ -40,7 +40,7 @@ const STATE_FILE = join(SKILLS_BASE, 'state.json');
  * Skill state (enabled/disabled tracking)
  */
 interface SkillState {
-  [skillId: string]: { enabled: boolean };
+  [skillId: string]: { enabled: boolean; repoUrl?: string };
 }
 
 async function loadState(): Promise<SkillState> {
@@ -109,7 +109,7 @@ export class SkillRegistry {
     const skills: CatalogSkill[] = [];
     const state = await loadState();
 
-    for (const source of ['mama', 'cowork', 'openclaw'] as SkillSource[]) {
+    for (const source of ['mama', 'cowork', 'external'] as SkillSource[]) {
       const sourceDir = join(SKILLS_BASE, source);
       try {
         const entries = await readdir(sourceDir, { withFileTypes: true });
@@ -169,7 +169,9 @@ export class SkillRegistry {
    * Get catalog from a remote source (cached 1 hour)
    */
   async getCatalog(source: SkillSource | 'all' = 'all'): Promise<CatalogSkill[]> {
-    const sources: SkillSource[] = source === 'all' ? ['cowork', 'openclaw'] : [source];
+    // Only cowork has a remote catalog; external skills are installed via URL
+    const sources: SkillSource[] =
+      source === 'all' ? ['cowork'] : source === 'external' ? [] : [source];
     const results: CatalogSkill[] = [];
     const installed = await this.getInstalled();
     const installedIds = new Set(installed.map((s) => `${s.source}/${s.id}`));
@@ -177,7 +179,6 @@ export class SkillRegistry {
     for (const src of sources) {
       const cached = this.catalogCache.get(src);
       if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-        // Update installed status from current state
         results.push(
           ...cached.skills.map((s) => ({
             ...s,
@@ -188,8 +189,7 @@ export class SkillRegistry {
       }
 
       try {
-        const skills =
-          src === 'cowork' ? await this.fetchCoworkCatalog() : await this.fetchOpenClawCatalog();
+        const skills = await this.fetchCoworkCatalog();
 
         this.catalogCache.set(src, { skills, fetchedAt: Date.now() });
         results.push(
@@ -200,7 +200,6 @@ export class SkillRegistry {
         );
       } catch (error) {
         console.error(`[SkillRegistry] Failed to fetch ${src} catalog:`, error);
-        // Return cached if available (even if stale)
         if (cached) {
           results.push(...cached.skills);
         }
@@ -253,11 +252,7 @@ export class SkillRegistry {
 
     try {
       const repoConfig =
-        source === 'cowork'
-          ? { repo: 'anthropics/knowledge-work-plugins', prefix: name }
-          : source === 'openclaw'
-            ? { repo: 'openclaw/openclaw', prefix: `skills/${name}` }
-            : null;
+        source === 'cowork' ? { repo: 'anthropics/knowledge-work-plugins', prefix: name } : null;
 
       if (!repoConfig) {
         throw new Error(`Cannot install from source: ${source}`);
@@ -302,6 +297,9 @@ export class SkillRegistry {
       state[`${source}/${name}`] = { enabled: true };
       await saveState(state);
 
+      // Auto-merge MCP config if .mcp.json exists
+      await this.mergeMcpConfig(installDir, `${source}/${name}`);
+
       return { success: true, path: installDir, files: downloadedCount };
     } catch (error) {
       // Clean up on failure
@@ -315,9 +313,119 @@ export class SkillRegistry {
   }
 
   /**
+   * Install a plugin from a GitHub URL
+   *
+   * Supports:
+   * - https://github.com/{owner}/{repo}
+   * - https://github.com/{owner}/{repo}/tree/{branch}/{subpath}
+   *
+   * Reuses getRepoTree() + fetchRawGitHub() for efficient download.
+   */
+  async installFromUrl(
+    url: string
+  ): Promise<{ success: boolean; path: string; files: number; name: string }> {
+    const parsed = this.parseGitHubUrl(url);
+    if (!parsed) {
+      throw new Error(`Invalid GitHub URL: ${url}`);
+    }
+
+    const { owner, repo, branch, subpath } = parsed;
+    const name = subpath ? basename(subpath) : repo;
+    const installDir = join(SKILLS_BASE, 'external', name);
+    await mkdir(installDir, { recursive: true });
+
+    try {
+      const fullRepo = `${owner}/${repo}`;
+      const tree = await this.getRepoTree(fullRepo, branch);
+      const prefix = subpath || '';
+      const files = tree.filter(
+        (f: { path: string; type: string }) =>
+          f.type === 'blob' && (prefix ? f.path.startsWith(`${prefix}/`) : true)
+      );
+
+      if (files.length === 0) {
+        throw new Error(`No files found at ${url}`);
+      }
+
+      const rawBase = `https://raw.githubusercontent.com/${fullRepo}/${branch}`;
+      let downloadedCount = 0;
+
+      for (const file of files) {
+        const relativePath = prefix ? file.path.slice(prefix.length + 1) : file.path;
+        if (!relativePath) continue;
+        const targetPath = join(installDir, relativePath);
+        const targetDir = join(targetPath, '..');
+        await mkdir(targetDir, { recursive: true });
+
+        try {
+          const content = await fetchRawGitHub(`${rawBase}/${file.path}`);
+          await writeFile(targetPath, content);
+          downloadedCount++;
+        } catch {
+          console.warn(`[SkillRegistry] Failed to download: ${file.path}`);
+        }
+      }
+
+      if (downloadedCount === 0) {
+        throw new Error(`Failed to download any files from ${url}`);
+      }
+
+      // Save state with repoUrl metadata
+      const state = await loadState();
+      state[`external/${name}`] = { enabled: true, repoUrl: url } as SkillState[string];
+      await saveState(state);
+
+      // Auto-merge MCP config if .mcp.json exists
+      await this.mergeMcpConfig(installDir, `external/${name}`);
+
+      return { success: true, path: installDir, files: downloadedCount, name };
+    } catch (error) {
+      try {
+        await rm(installDir, { recursive: true });
+      } catch {
+        /* ignore */
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Parse GitHub URL into components
+   */
+  private parseGitHubUrl(
+    url: string
+  ): { owner: string; repo: string; branch: string; subpath: string } | null {
+    try {
+      const u = new URL(url);
+      if (u.hostname !== 'github.com') return null;
+
+      const parts = u.pathname.replace(/^\//, '').replace(/\/$/, '').split('/');
+      if (parts.length < 2) return null;
+
+      const owner = parts[0];
+      const repo = parts[1];
+
+      // https://github.com/owner/repo/tree/branch/subpath
+      if (parts[2] === 'tree' && parts.length >= 4) {
+        const branch = parts[3];
+        const subpath = parts.slice(4).join('/');
+        return { owner, repo, branch, subpath };
+      }
+
+      // https://github.com/owner/repo
+      return { owner, repo, branch: 'main', subpath: '' };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Uninstall a skill
    */
   async uninstall(source: SkillSource, name: string): Promise<void> {
+    // Remove MCP config entries before deleting files
+    await this.removeMcpConfig(`${source}/${name}`);
+
     const installDir = join(SKILLS_BASE, source, name);
     await rm(installDir, { recursive: true, force: true });
 
@@ -358,21 +466,10 @@ export class SkillRegistry {
     // Fetch from remote for uninstalled catalog skills
     try {
       if (source === 'cowork') {
-        // Try SKILL.md first, then README.md
         for (const filename of ['SKILL.md', 'README.md']) {
           try {
             return await fetchRawGitHub(
               `https://raw.githubusercontent.com/anthropics/knowledge-work-plugins/main/${name}/${filename}`
-            );
-          } catch {
-            continue;
-          }
-        }
-      } else if (source === 'openclaw') {
-        for (const filename of ['SKILL.md', 'README.md']) {
-          try {
-            return await fetchRawGitHub(
-              `https://raw.githubusercontent.com/openclaw/openclaw/main/skills/${name}/${filename}`
             );
           } catch {
             continue;
@@ -404,17 +501,21 @@ export class SkillRegistry {
   /**
    * Get repo file tree (cached 1 hour, single API call)
    */
-  private async getRepoTree(repo: string): Promise<Array<{ path: string; type: string }>> {
-    const cached = this.treeCache.get(repo);
+  private async getRepoTree(
+    repo: string,
+    branch = 'main'
+  ): Promise<Array<{ path: string; type: string }>> {
+    const cacheKey = `${repo}@${branch}`;
+    const cached = this.treeCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
       return cached.tree;
     }
 
     const data = (await fetchGitHub(
-      `https://api.github.com/repos/${repo}/git/trees/main?recursive=1`
+      `https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1`
     )) as { tree: Array<{ path: string; type: string }> };
 
-    this.treeCache.set(repo, { tree: data.tree, fetchedAt: Date.now() });
+    this.treeCache.set(cacheKey, { tree: data.tree, fetchedAt: Date.now() });
     return data.tree;
   }
 
@@ -479,25 +580,113 @@ export class SkillRegistry {
     return skills;
   }
 
-  private async fetchOpenClawCatalog(): Promise<CatalogSkill[]> {
-    const data = (await fetchGitHub(
-      'https://api.github.com/repos/openclaw/openclaw/contents/skills'
-    )) as Array<{ name: string; type: string }>;
+  // ===========================================================================
+  // MCP Config Management
+  // ===========================================================================
 
-    const skills: CatalogSkill[] = [];
-    for (const item of data) {
-      if (item.type !== 'dir') continue;
-      skills.push({
-        id: item.name,
-        name: item.name.replace(/-/g, ' '),
-        description: `OpenClaw skill: ${item.name}`,
-        source: 'openclaw',
-        installed: false,
-        enabled: false,
-        remotePath: `skills/${item.name}`,
-      });
+  private static readonly MCP_CONFIG_PATH = join(homedir(), '.mama', 'mama-mcp-config.json');
+
+  /**
+   * Merge .mcp.json from a skill directory into the global MCP config.
+   * Tags each server entry with `_installedBy` for tracking.
+   */
+  async mergeMcpConfig(skillDir: string, skillKey: string): Promise<void> {
+    const mcpJsonPath = join(skillDir, '.mcp.json');
+    try {
+      await stat(mcpJsonPath);
+    } catch {
+      return; // No .mcp.json — nothing to merge
     }
 
-    return skills;
+    try {
+      const mcpData = JSON.parse(await readFile(mcpJsonPath, 'utf-8')) as {
+        mcpServers?: Record<string, unknown>;
+      };
+      if (!mcpData.mcpServers || Object.keys(mcpData.mcpServers).length === 0) return;
+
+      const globalConfig = await this.loadMcpConfig();
+
+      for (const [serverName, serverConfig] of Object.entries(mcpData.mcpServers)) {
+        globalConfig.mcpServers[serverName] = {
+          ...(serverConfig as Record<string, unknown>),
+          _installedBy: skillKey,
+        };
+      }
+
+      await this.saveMcpConfig(globalConfig);
+      console.log(
+        `[SkillRegistry] Merged MCP config from ${skillKey} (${Object.keys(mcpData.mcpServers).length} servers)`
+      );
+    } catch (error) {
+      console.warn(`[SkillRegistry] Failed to merge MCP config for ${skillKey}:`, error);
+    }
+  }
+
+  /**
+   * Remove MCP server entries installed by a specific skill.
+   */
+  async removeMcpConfig(skillKey: string): Promise<void> {
+    try {
+      const globalConfig = await this.loadMcpConfig();
+      let removed = 0;
+
+      for (const [serverName, serverConfig] of Object.entries(globalConfig.mcpServers)) {
+        if ((serverConfig as Record<string, unknown>)._installedBy === skillKey) {
+          delete globalConfig.mcpServers[serverName];
+          removed++;
+        }
+      }
+
+      if (removed > 0) {
+        await this.saveMcpConfig(globalConfig);
+        console.log(`[SkillRegistry] Removed ${removed} MCP server(s) from ${skillKey}`);
+      }
+    } catch {
+      // Config file doesn't exist or parse error — nothing to remove
+    }
+  }
+
+  /**
+   * Migrate existing installed plugins: merge any .mcp.json that hasn't been merged yet.
+   * Called once at server startup.
+   */
+  async migrateExistingMcpConfigs(): Promise<void> {
+    const globalConfig = await this.loadMcpConfig();
+    const existingKeys = new Set(
+      Object.values(globalConfig.mcpServers)
+        .map((s) => (s as Record<string, unknown>)._installedBy as string | undefined)
+        .filter(Boolean)
+    );
+
+    for (const source of ['mama', 'cowork', 'external'] as SkillSource[]) {
+      const sourceDir = join(SKILLS_BASE, source);
+      try {
+        const entries = await readdir(sourceDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const skillKey = `${source}/${entry.name}`;
+          if (existingKeys.has(skillKey)) continue;
+
+          const skillDir = join(sourceDir, entry.name);
+          await this.mergeMcpConfig(skillDir, skillKey);
+        }
+      } catch {
+        // Source directory doesn't exist
+      }
+    }
+  }
+
+  private async loadMcpConfig(): Promise<{ mcpServers: Record<string, unknown> }> {
+    try {
+      const data = await readFile(SkillRegistry.MCP_CONFIG_PATH, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      return { mcpServers: {} };
+    }
+  }
+
+  private async saveMcpConfig(config: { mcpServers: Record<string, unknown> }): Promise<void> {
+    await mkdir(join(homedir(), '.mama'), { recursive: true });
+    await writeFile(SkillRegistry.MCP_CONFIG_PATH, JSON.stringify(config, null, 2));
   }
 }

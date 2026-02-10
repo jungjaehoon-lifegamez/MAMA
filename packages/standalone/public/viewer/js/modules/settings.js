@@ -22,6 +22,7 @@ export class SettingsModule {
   constructor() {
     this.config = null;
     this.initialized = false;
+    this.backendListenersInitialized = false;
   }
 
   /**
@@ -34,6 +35,7 @@ export class SettingsModule {
     this.initialized = true;
 
     await this.loadSettings();
+    this.initBackendModelBinding();
   }
 
   /**
@@ -107,10 +109,12 @@ export class SettingsModule {
     this.setValue('settings-heartbeat-quiet-end', this.config.heartbeat?.quiet_end ?? 8);
 
     // Agent
-    this.setSelectValue(
-      'settings-agent-model',
-      this.config.agent?.model || 'claude-sonnet-4-20250514'
-    );
+    const backend = this.config.agent?.backend || 'claude';
+    const model = this.config.agent?.model || 'claude-sonnet-4-20250514';
+    this.setSelectValue('settings-agent-backend', backend);
+    this.updateModelOptions(backend, model);
+    this.setValue('settings-agent-model', this.getNormalizedModelForBackend(backend, model));
+    this.updatePersistentCliToggle(backend, this.config.agent?.use_persistent_cli || false);
     this.setValue('settings-agent-max-turns', this.config.agent?.max_turns || 10);
     this.setValue(
       'settings-agent-timeout',
@@ -309,9 +313,9 @@ export class SettingsModule {
   }
 
   /**
-   * Save settings to API
+   * Save settings and restart daemon to apply changes
    */
-  async saveSettings() {
+  async saveAndRestart() {
     this.setStatus('Saving...');
 
     try {
@@ -329,11 +333,17 @@ export class SettingsModule {
         throw new Error(result.message || `HTTP ${response.status}`);
       }
 
-      this.setStatus('Saved!', 'success');
-      showToast('Settings saved successfully');
+      this.setStatus('Saved! Restarting...', 'success');
+      showToast('Settings saved. Restarting daemon...');
 
-      // Reload to get updated masked values
-      setTimeout(() => this.loadSettings(), 1500);
+      // Trigger restart after save
+      try {
+        await fetch('/api/restart', { method: 'POST' });
+      } catch {
+        // Expected: connection drops when server exits
+      }
+
+      this.setStatus('Restarting... page will reconnect automatically', '');
     } catch (error) {
       console.error('[Settings] Save error:', error);
       this.setStatus(`Error: ${error.message}`, 'error');
@@ -345,6 +355,9 @@ export class SettingsModule {
    * Collect form data into config update object
    */
   collectFormData() {
+    const backend = this.getSelectValue('settings-agent-backend') || 'claude';
+    const model = this.getValue('settings-agent-model');
+    const useClaudeCli = backend === 'claude';
     return {
       discord: {
         enabled: this.getCheckbox('settings-discord-enabled'),
@@ -370,13 +383,95 @@ export class SettingsModule {
         quiet_start: parseInt(this.getValue('settings-heartbeat-quiet-start') || '23', 10),
         quiet_end: parseInt(this.getValue('settings-heartbeat-quiet-end') || '8', 10),
       },
+      use_claude_cli: useClaudeCli,
       agent: {
-        model: this.getSelectValue('settings-agent-model'),
+        backend,
+        use_persistent_cli: useClaudeCli
+          ? this.getCheckbox('settings-agent-persistent-cli')
+          : false,
+        model: model || (backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514'),
         max_turns: parseInt(this.getValue('settings-agent-max-turns') || '10', 10),
         timeout: parseInt(this.getValue('settings-agent-timeout') || '300', 10) * 1000,
         tools: this.collectToolModeData(),
       },
     };
+  }
+
+  initBackendModelBinding() {
+    if (this.backendListenersInitialized) {
+      return;
+    }
+    this.backendListenersInitialized = true;
+    const backendSelect = document.getElementById('settings-agent-backend');
+    if (!backendSelect) {
+      return;
+    }
+    backendSelect.addEventListener('change', () => {
+      const backend = this.getSelectValue('settings-agent-backend') || 'claude';
+      const currentModel = this.getValue('settings-agent-model');
+      this.updateModelOptions(backend, currentModel);
+      this.setValue(
+        'settings-agent-model',
+        this.getNormalizedModelForBackend(backend, currentModel)
+      );
+      this.updatePersistentCliToggle(backend, this.getCheckbox('settings-agent-persistent-cli'));
+    });
+  }
+
+  updatePersistentCliToggle(backend, isChecked) {
+    const checkbox = document.getElementById('settings-agent-persistent-cli');
+    if (!checkbox) {
+      return;
+    }
+    if (backend === 'codex') {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+      checkbox.title = 'Persistent CLI is supported for Claude backend only';
+    } else {
+      checkbox.disabled = false;
+      checkbox.title = '';
+      checkbox.checked = Boolean(isChecked);
+    }
+  }
+
+  updateModelOptions(backend, currentModel) {
+    const datalist = document.getElementById('settings-agent-model-list');
+    if (!datalist) {
+      return;
+    }
+    const claudeModels = [
+      { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 (Recommended)' },
+      { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
+      { value: 'claude-haiku-3-5-20241022', label: 'Claude Haiku 3.5' },
+    ];
+    const codexModels = [
+      { value: 'gpt-5.2', label: 'GPT-5.2 (Recommended)' },
+      { value: 'gpt-5.1', label: 'GPT-5.1' },
+      { value: 'gpt-4.1', label: 'GPT-4.1' },
+    ];
+    const list = backend === 'codex' ? codexModels : claudeModels;
+    datalist.innerHTML = list
+      .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
+      .join('');
+    const normalized = this.getNormalizedModelForBackend(backend, currentModel);
+    const input = document.getElementById('settings-agent-model');
+    if (input && normalized) {
+      input.placeholder = backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
+    }
+  }
+
+  getNormalizedModelForBackend(backend, model) {
+    if (!model) {
+      return backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
+    }
+    const isClaudeModel = /^claude-/i.test(model);
+    if (backend === 'codex' && isClaudeModel) {
+      return 'gpt-5.2';
+    }
+    if (backend === 'claude' && !isClaudeModel) {
+      return 'claude-sonnet-4-20250514';
+    }
+    return model;
   }
 
   /**
@@ -634,7 +729,7 @@ export class SettingsModule {
       const sourceColors = {
         mama: 'bg-yellow-100 text-yellow-700',
         cowork: 'bg-blue-100 text-blue-700',
-        openclaw: 'bg-green-100 text-green-700',
+        external: 'bg-purple-100 text-purple-700',
       };
 
       container.innerHTML = `

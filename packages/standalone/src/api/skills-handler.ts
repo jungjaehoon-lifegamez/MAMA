@@ -29,7 +29,7 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
     '/catalog',
     asyncHandler(async (req, res) => {
       const source = (req.query.source as string) || 'all';
-      const validSources = ['all', 'mama', 'cowork', 'openclaw'];
+      const validSources = ['all', 'mama', 'cowork', 'external'];
       if (!validSources.includes(source)) {
         throw new ApiError(`Invalid source: ${source}`, 400, 'BAD_REQUEST');
       }
@@ -59,12 +59,30 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
       const body = req.body as { source?: string; name?: string };
       validateRequired(body as unknown as Record<string, unknown>, ['source', 'name']);
 
-      const validSources = ['cowork', 'openclaw'];
+      const validSources = ['cowork', 'external'];
       if (!validSources.includes(body.source!)) {
         throw new ApiError(`Cannot install from source: ${body.source}`, 400, 'BAD_REQUEST');
       }
 
       const result = await registry.install(body.source as SkillSource, body.name!);
+      res.json(result);
+    })
+  );
+
+  // POST /api/skills/install-url — install from GitHub URL
+  router.post(
+    '/install-url',
+    asyncHandler(async (req, res) => {
+      const body = req.body as { url?: string };
+      if (!body.url || typeof body.url !== 'string') {
+        throw new ApiError('Field "url" is required', 400, 'BAD_REQUEST');
+      }
+
+      if (!body.url.startsWith('https://github.com/')) {
+        throw new ApiError('Only GitHub URLs are supported', 400, 'BAD_REQUEST');
+      }
+
+      const result = await registry.installFromUrl(body.url);
       res.json(result);
     })
   );

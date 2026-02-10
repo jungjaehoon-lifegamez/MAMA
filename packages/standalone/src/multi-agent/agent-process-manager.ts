@@ -399,10 +399,12 @@ ${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBac
 
     return `## Installed Skills (PRIORITY)
 
-**IMPORTANT:** The following skills/plugins are installed and active.
-When a user message contains [Installed Skill Command] or references
-a command like /start, /update, etc., you MUST find the matching
-command file below and follow its instructions EXACTLY.
+**IMPORTANT:** The following skills/plugins are installed by the user.
+When a user message contains [INSTALLED PLUGIN COMMAND] you MUST:
+1. Find the matching "commands/{name}.md" section below
+2. Follow its instructions EXACTLY as written
+3. DO NOT use the Skill tool — these are NOT system skills
+4. DO NOT match to bmad, oh-my-claudecode, or any built-in skill
 
 ${skillBlocks.join('\n\n---\n\n')}
 `;

@@ -183,6 +183,10 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.model is required');
   }
 
+  if (config.agent.backend && !['claude', 'codex'].includes(config.agent.backend)) {
+    errors.push('agent.backend must be "claude" or "codex"');
+  }
+
   if (config.agent.max_turns < 1 || config.agent.max_turns > 100) {
     errors.push('agent.max_turns must be between 1 and 100');
   }
