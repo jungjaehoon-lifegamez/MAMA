@@ -1955,6 +1955,39 @@ async function handleMultiAgentUpdateAgentRequest(
     const currentAgent = config.multi_agent.agents[agentId];
     const updatedAgent = { ...currentAgent };
 
+    // Validate critical field types before applying
+    const validationErrors: string[] = [];
+    if (
+      body.tier !== undefined &&
+      (typeof body.tier !== 'number' || body.tier < 1 || body.tier > 3)
+    ) {
+      validationErrors.push('tier must be a number between 1 and 3');
+    }
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      validationErrors.push('enabled must be a boolean');
+    }
+    if (
+      body.cooldown_ms !== undefined &&
+      (typeof body.cooldown_ms !== 'number' || body.cooldown_ms < 0)
+    ) {
+      validationErrors.push('cooldown_ms must be a non-negative number');
+    }
+    if (body.can_delegate !== undefined && typeof body.can_delegate !== 'boolean') {
+      validationErrors.push('can_delegate must be a boolean');
+    }
+
+    if (validationErrors.length > 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'VALIDATION_ERROR',
+          message: validationErrors.join(', '),
+        })
+      );
+      return;
+    }
+
     if (body.name !== undefined) updatedAgent.name = body.name;
     if (body.display_name !== undefined) updatedAgent.display_name = body.display_name;
     if (body.tier !== undefined) updatedAgent.tier = body.tier;

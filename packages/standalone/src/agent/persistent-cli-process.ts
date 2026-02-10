@@ -473,7 +473,7 @@ export class PersistentClaudeProcess extends EventEmitter {
               };
               this.toolUseBlocks.push(toolUse);
               this.currentCallbacks?.onToolUse?.(toolName, block.input ?? {});
-              console.log(`[PersistentCLI] Tool use: ${block.name}`);
+              console.log(`[PersistentCLI] Tool use: ${toolName}`);
             }
           }
         }
