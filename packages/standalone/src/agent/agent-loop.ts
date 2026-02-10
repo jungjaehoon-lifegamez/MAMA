@@ -115,8 +115,35 @@ function loadSystemPrompt(verbose = false): string {
  * @param context - Optional AgentContext for role-aware prompt injection
  */
 /**
+ * Recursively collect all .md files from a directory (sync)
+ */
+function collectMarkdownFiles(dir: string, prefix = ''): Array<{ path: string; content: string }> {
+  const results: Array<{ path: string; content: string }> = [];
+  if (!existsSync(dir)) return results;
+
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const fullPath = join(dir, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        results.push(...collectMarkdownFiles(fullPath, relativePath));
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        results.push({ path: relativePath, content: readFileSync(fullPath, 'utf-8') });
+      }
+    }
+  } catch {
+    // Read failed
+  }
+  return results;
+}
+
+/**
  * Load installed & enabled skills from ~/.mama/skills/
- * Returns skill content blocks for system prompt injection
+ * Returns skill content blocks for system prompt injection.
+ * Reads all .md files recursively (commands/, skills/, etc.)
  */
 function loadInstalledSkills(verbose = false): string[] {
   const skillsBase = join(homedir(), '.mama', 'skills');
@@ -147,20 +174,16 @@ function loadInstalledSkills(verbose = false): string[] {
         // Skip disabled skills
         if (state[stateKey]?.enabled === false) continue;
 
-        // Try SKILL.md, then README.md
         const skillDir = join(sourceDir, entry.name);
-        let content: string | null = null;
-        for (const filename of ['SKILL.md', 'skill.md', 'README.md']) {
-          const fp = join(skillDir, filename);
-          if (existsSync(fp)) {
-            content = readFileSync(fp, 'utf-8');
-            break;
-          }
-        }
+        const mdFiles = collectMarkdownFiles(skillDir);
 
-        if (content) {
-          blocks.push(`# [Skill: ${source}/${entry.name}]\n\n${content}`);
-          if (verbose) console.log(`[AgentLoop] Loaded skill: ${source}/${entry.name}`);
+        if (mdFiles.length > 0) {
+          const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
+          blocks.push(`# [Skill: ${source}/${entry.name}]\n\n${parts.join('\n\n---\n\n')}`);
+          if (verbose)
+            console.log(
+              `[AgentLoop] Loaded skill: ${source}/${entry.name} (${mdFiles.length} files)`
+            );
         }
       }
     } catch {
