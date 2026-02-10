@@ -353,6 +353,84 @@ Key docs:
 - Build system functional
 - npm publishing configured
 
+## Release & Deployment
+
+### 1. MAMA OS (packages/standalone/) → npm
+
+```bash
+# 1. Version bump
+# Edit packages/standalone/package.json "version" field
+# Update CHANGELOG.md with new version entry
+
+# 2. Commit & tag
+git add packages/standalone/package.json CHANGELOG.md
+git commit -m "chore(release): bump mama-os to vX.Y.Z"
+git tag vX.Y.Z
+git push origin main --tags
+
+# 3. Create GitHub Release (triggers GitHub Actions auto-publish)
+gh release create vX.Y.Z --title "vX.Y.Z" --notes "See CHANGELOG.md"
+
+# 4. Verify
+npm view @jungjaehoon/mama-os version
+```
+
+- **Target**: npmjs.org (`@jungjaehoon/mama-os`)
+- **Trigger**: GitHub Release → `.github/workflows/publish.yml`
+- **Install**: `npx @jungjaehoon/mama-os@latest`
+
+### 2. MCP Server (packages/mcp-server/) → npm
+
+```bash
+# Same flow as MAMA OS but with mcp-server version
+# Edit packages/mcp-server/package.json
+git tag mcp-server-vX.Y.Z
+gh release create mcp-server-vX.Y.Z --title "MCP Server vX.Y.Z"
+```
+
+- **Target**: npmjs.org (`@jungjaehoon/mama-server`)
+- **Install**: `npx @jungjaehoon/mama-server`
+
+### 3. MAMA Core (packages/mama-core/) → npm
+
+```bash
+# Edit packages/mama-core/package.json
+git tag mama-core-vX.Y.Z
+gh release create mama-core-vX.Y.Z --title "MAMA Core vX.Y.Z"
+```
+
+- **Target**: npmjs.org (`@jungjaehoon/mama-core`)
+
+### 4. Claude Code Plugin (packages/claude-code-plugin/) → Git
+
+```bash
+# 1. Version bump (BOTH files must match!)
+# Edit packages/claude-code-plugin/package.json "version"
+# Edit packages/claude-code-plugin/.claude-plugin/plugin.json "version"
+
+# 2. Commit & push
+git add packages/claude-code-plugin/package.json packages/claude-code-plugin/.claude-plugin/plugin.json
+git commit -m "chore(release): bump plugin version to X.Y.Z"
+git push origin main
+```
+
+- **Target**: Git repository (no npm publish)
+- **Distribution**: Symlink (`~/.claude/plugins/repos/mama`) or marketplace
+- **Important**: `plugin.json` and `package.json` versions must match (test enforces this)
+
+### 5. Hotfix Release (MAMA OS)
+
+```bash
+# Quick fix → commit → tag → release in one flow
+git add <changed-files>
+git commit -m "fix(standalone): description"
+# Bump version in package.json + CHANGELOG.md
+git add packages/standalone/package.json CHANGELOG.md
+git commit -m "chore(release): bump mama-os to vX.Y.Z"
+git tag vX.Y.Z && git push origin main --tags
+gh release create vX.Y.Z --title "vX.Y.Z" --notes "Hotfix: description"
+```
+
 ## Important Constraints
 
 1. **Never rewrite working code** - Check mcp-server/src/mama/ first
