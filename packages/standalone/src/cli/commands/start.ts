@@ -35,9 +35,7 @@ import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer } from '../../api/index.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { createGraphHandler } = require('../../api/graph-api.js');
+import { createGraphHandler } from '../../api/graph-api.js';
 import http from 'node:http';
 
 // Port configuration — single source of truth
@@ -1217,8 +1215,6 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   apiServer.app.use((req, res, next) => {
     if (req.path.startsWith('/api/session')) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const http = require('http');
       const bodyData = req.body ? JSON.stringify(req.body) : '';
       const options = {
         hostname: 'localhost',
@@ -1292,8 +1288,6 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         });
       } else if (url.pathname === '/ws') {
         // Proxy chat WebSocket to embedding server
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const http = require('http');
         const options = {
           hostname: '127.0.0.1',
           port: EMBEDDING_PORT,

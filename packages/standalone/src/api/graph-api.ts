@@ -454,7 +454,6 @@ async function handleSimilarRequest(
 
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
     });
     res.end(
       JSON.stringify({
@@ -720,11 +719,29 @@ async function handleCheckpointsRequest(_req: IncomingMessage, res: ServerRespon
 
 function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
   return async function graphHandler(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const url = new URL(req.url!, `http://${req.headers.host}`);
+    if (!req.url) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Bad Request');
+      return true;
+    }
+
+    const url = new URL(req.url, `http://${req.headers.host}`);
     const pathname = url.pathname;
     const params = url.searchParams;
 
     console.log('[GraphHandler] Request:', req.method, pathname);
+
+    // Set CORS headers for all requests
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    // Handle preflight OPTIONS requests
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return true;
+    }
 
     // Route: GET / - redirect to /viewer
     if (pathname === '/' && req.method === 'GET') {
@@ -1352,6 +1369,22 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
 
 async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    // Security: This endpoint is only accessible on localhost (127.0.0.1/::1)
+    // The API server binds to localhost only and is not exposed externally
+
+    // Check authentication first
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required. Set Authorization header with valid token.',
+        })
+      );
+      return;
+    }
+
     const body = await readBody(req);
 
     const currentConfig = loadMAMAConfig();
@@ -1395,10 +1428,30 @@ async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerRespon
 }
 
 function maskToken(token: string): string {
-  if (!token || token.length < 8) {
-    return '***[short]***';
+  if (!token || token.length < 4) {
+    return '***[redacted]***';
   }
-  return '***[' + token.length + ' chars]***';
+  return '***[redacted]***';
+}
+
+function isAuthenticated(req: IncomingMessage): boolean {
+  const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
+  if (!adminToken) {
+    console.warn(
+      '[GraphAPI] No admin token configured. Set MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN environment variable.'
+    );
+    return false;
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return false;
+  }
+
+  // Support both "Bearer token" and "token" formats
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+
+  return token === adminToken;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1420,11 +1473,12 @@ function maskAgentsTokens(agents: Record<string, any>): Record<string, any> {
   return masked;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+/* eslint-disable @typescript-eslint/no-explicit-any */
 function mergeConfigUpdates(
   current: Record<string, any>,
   updates: Record<string, unknown>
 ): Record<string, any> {
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   const merged = { ...current };
 
   if (updates.agent) {
@@ -1448,8 +1502,13 @@ function mergeConfigUpdates(
       enabled: discordUpdates.enabled,
       default_channel_id: discordUpdates.default_channel_id || current.discord?.default_channel_id,
     };
-    if (discordUpdates.token && !(discordUpdates.token as string).startsWith('****')) {
-      merged.discord.token = discordUpdates.token;
+    if (discordUpdates.token && typeof discordUpdates.token === 'string') {
+      const isMasked =
+        discordUpdates.token === '***[redacted]***' ||
+        (discordUpdates.token.startsWith('***[') && discordUpdates.token.endsWith(']***'));
+      if (!isMasked) {
+        merged.discord.token = discordUpdates.token;
+      }
     }
   }
 
@@ -1459,11 +1518,21 @@ function mergeConfigUpdates(
       ...current.slack,
       enabled: slackUpdates.enabled,
     };
-    if (slackUpdates.bot_token && !(slackUpdates.bot_token as string).startsWith('****')) {
-      merged.slack.bot_token = slackUpdates.bot_token;
+    if (slackUpdates.bot_token && typeof slackUpdates.bot_token === 'string') {
+      const isMasked =
+        slackUpdates.bot_token === '***[redacted]***' ||
+        (slackUpdates.bot_token.startsWith('***[') && slackUpdates.bot_token.endsWith(']***'));
+      if (!isMasked) {
+        merged.slack.bot_token = slackUpdates.bot_token;
+      }
     }
-    if (slackUpdates.app_token && !(slackUpdates.app_token as string).startsWith('****')) {
-      merged.slack.app_token = slackUpdates.app_token;
+    if (slackUpdates.app_token && typeof slackUpdates.app_token === 'string') {
+      const isMasked =
+        slackUpdates.app_token === '***[redacted]***' ||
+        (slackUpdates.app_token.startsWith('***[') && slackUpdates.app_token.endsWith(']***'));
+      if (!isMasked) {
+        merged.slack.app_token = slackUpdates.app_token;
+      }
     }
   }
 
@@ -1473,8 +1542,13 @@ function mergeConfigUpdates(
       ...current.telegram,
       enabled: telegramUpdates.enabled,
     };
-    if (telegramUpdates.token && !(telegramUpdates.token as string).startsWith('****')) {
-      merged.telegram.token = telegramUpdates.token;
+    if (telegramUpdates.token && typeof telegramUpdates.token === 'string') {
+      const isMasked =
+        telegramUpdates.token === '***[redacted]***' ||
+        (telegramUpdates.token.startsWith('***[') && telegramUpdates.token.endsWith(']***'));
+      if (!isMasked) {
+        merged.telegram.token = telegramUpdates.token;
+      }
     }
   }
 
@@ -1484,8 +1558,14 @@ function mergeConfigUpdates(
       ...current.chatwork,
       enabled: chatworkUpdates.enabled,
     };
-    if (chatworkUpdates.api_token && !(chatworkUpdates.api_token as string).startsWith('****')) {
-      merged.chatwork.api_token = chatworkUpdates.api_token;
+    if (chatworkUpdates.api_token && typeof chatworkUpdates.api_token === 'string') {
+      const isMasked =
+        chatworkUpdates.api_token === '***[redacted]***' ||
+        (chatworkUpdates.api_token.startsWith('***[') &&
+          chatworkUpdates.api_token.endsWith(']***'));
+      if (!isMasked) {
+        merged.chatwork.api_token = chatworkUpdates.api_token;
+      }
     }
   }
 
@@ -1506,20 +1586,31 @@ function mergeConfigUpdates(
           ...agentUpdates,
         };
 
-        if (agentUpdates.bot_token && (agentUpdates.bot_token as string).startsWith('****')) {
-          merged.multi_agent.agents[agentId].bot_token = currentAgent.bot_token;
+        if (agentUpdates.bot_token && typeof agentUpdates.bot_token === 'string') {
+          const isMasked =
+            agentUpdates.bot_token === '***[redacted]***' ||
+            (agentUpdates.bot_token.startsWith('***[') && agentUpdates.bot_token.endsWith(']***'));
+          if (isMasked) {
+            merged.multi_agent.agents[agentId].bot_token = currentAgent.bot_token;
+          }
         }
-        if (
-          agentUpdates.slack_bot_token &&
-          (agentUpdates.slack_bot_token as string).startsWith('****')
-        ) {
-          merged.multi_agent.agents[agentId].slack_bot_token = currentAgent.slack_bot_token;
+        if (agentUpdates.slack_bot_token && typeof agentUpdates.slack_bot_token === 'string') {
+          const isMasked =
+            agentUpdates.slack_bot_token === '***[redacted]***' ||
+            (agentUpdates.slack_bot_token.startsWith('***[') &&
+              agentUpdates.slack_bot_token.endsWith(']***'));
+          if (isMasked) {
+            merged.multi_agent.agents[agentId].slack_bot_token = currentAgent.slack_bot_token;
+          }
         }
-        if (
-          agentUpdates.slack_app_token &&
-          (agentUpdates.slack_app_token as string).startsWith('****')
-        ) {
-          merged.multi_agent.agents[agentId].slack_app_token = currentAgent.slack_app_token;
+        if (agentUpdates.slack_app_token && typeof agentUpdates.slack_app_token === 'string') {
+          const isMasked =
+            agentUpdates.slack_app_token === '***[redacted]***' ||
+            (agentUpdates.slack_app_token.startsWith('***[') &&
+              agentUpdates.slack_app_token.endsWith(']***'));
+          if (isMasked) {
+            merged.multi_agent.agents[agentId].slack_app_token = currentAgent.slack_app_token;
+          }
         }
       }
     }
@@ -1852,7 +1943,7 @@ async function handleMultiAgentUpdateAgentRequest(
 
     const isMaskedToken = (token: unknown): boolean => {
       if (typeof token !== 'string') return false;
-      return /^\*{4}.{0,4}$/.test(token);
+      return token === '***[redacted]***' || (token.startsWith('***[') && token.endsWith(']***'));
     };
 
     if (body.bot_token && !isMaskedToken(body.bot_token)) {

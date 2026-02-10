@@ -108,10 +108,8 @@ export interface PromptResult {
 
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onToolUse?: (name: string, input: any) => void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onFinal?: (response: any) => void;
+  onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  onFinal?: (response: { content: string; toolUseBlocks: ToolUseBlock[] }) => void;
   onError?: (error: Error) => void;
 }
 
