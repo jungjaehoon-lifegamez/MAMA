@@ -60,13 +60,22 @@ export interface ToolUseBlock {
   input: Record<string, unknown>;
 }
 
+export interface ContentBlock {
+  type: 'text' | 'tool_use' | 'tool_result';
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+  tool_use_id?: string;
+  content?: string | Array<{ type: string; text?: string }>;
+}
+
 export interface StreamMessage {
   type: 'system' | 'assistant' | 'result' | 'error' | 'user';
   subtype?: string;
   message?: {
     role: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    content: any[];
+    content: ContentBlock[];
     model?: string;
     id?: string;
     usage?: {
@@ -455,14 +464,15 @@ export class PersistentClaudeProcess extends EventEmitter {
               this.accumulatedText += block.text || '';
               this.currentCallbacks?.onDelta?.(block.text || '');
             } else if (block.type === 'tool_use') {
+              const toolName = block.name ?? 'unknown';
               const toolUse: ToolUseBlock = {
                 type: 'tool_use',
                 id: block.id || `tool_${randomUUID()}`,
-                name: block.name,
+                name: toolName,
                 input: block.input || {},
               };
               this.toolUseBlocks.push(toolUse);
-              this.currentCallbacks?.onToolUse?.(block.name, block.input);
+              this.currentCallbacks?.onToolUse?.(toolName, block.input ?? {});
               console.log(`[PersistentCLI] Tool use: ${block.name}`);
             }
           }
