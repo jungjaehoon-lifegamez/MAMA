@@ -36,6 +36,7 @@ import { createApiServer } from '../../api/index.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
+import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
 
 // Port configuration — single source of truth
@@ -865,9 +866,12 @@ export async function runAgentLoop(
   tokenKeepAlive.start();
 
   // Start API server
+  const skillRegistry = new SkillRegistry();
   const apiServer = createApiServer({
     scheduler,
     port: API_PORT,
+    db,
+    skillRegistry,
     onHeartbeat: async (prompt) => {
       try {
         await agentLoop.run(prompt);
