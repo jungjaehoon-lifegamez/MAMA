@@ -251,15 +251,15 @@ export class API {
     return this.post('/api/skills/install', { source, name });
   }
 
-  static async uninstallSkill(name) {
-    return this.del(`/api/skills/${encodeURIComponent(name)}`);
+  static async uninstallSkill(name, source = 'mama') {
+    return this.del(`/api/skills/${encodeURIComponent(name)}?source=${source}`);
   }
 
-  static async toggleSkill(name, enabled) {
-    return this.put(`/api/skills/${encodeURIComponent(name)}`, { enabled });
+  static async toggleSkill(name, enabled, source = 'mama') {
+    return this.put(`/api/skills/${encodeURIComponent(name)}`, { enabled, source });
   }
 
-  static async getSkillContent(name) {
-    return this.get(`/api/skills/${encodeURIComponent(name)}/readme`);
+  static async getSkillContent(name, source = 'mama') {
+    return this.get(`/api/skills/${encodeURIComponent(name)}/readme`, { source });
   }
 }

@@ -125,6 +125,10 @@ export class SettingsModule {
 
     // Multi-Agent Team (F3)
     this.populateMultiAgentSection();
+
+    // Skills + Token Budget
+    this.populateSkillsSection();
+    this.populateTokenSection();
   }
 
   /**
@@ -603,5 +607,89 @@ export class SettingsModule {
       }
       alert(`Failed to update agent: ${error.message}`);
     }
+  }
+
+  /**
+   * Populate installed skills section
+   */
+  async populateSkillsSection() {
+    const container = document.getElementById('settings-skills-container');
+    if (!container) {
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/skills');
+      if (!response.ok) {
+        container.innerHTML = '<p class="text-xs text-gray-400">Skills API not available</p>';
+        return;
+      }
+
+      const { skills } = await response.json();
+      if (!skills || skills.length === 0) {
+        container.innerHTML = '<p class="text-xs text-gray-400">No skills installed</p>';
+        return;
+      }
+
+      const sourceColors = {
+        mama: 'bg-yellow-100 text-yellow-700',
+        cowork: 'bg-blue-100 text-blue-700',
+        openclaw: 'bg-green-100 text-green-700',
+      };
+
+      container.innerHTML = `
+        <div class="space-y-1.5">
+          ${skills
+            .map(
+              (s) => `
+            <div class="flex items-center justify-between py-1">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-gray-900">${escapeHtml(s.name)}</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded ${sourceColors[s.source] || 'bg-gray-100 text-gray-600'}">${s.source}</span>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" ${s.enabled !== false ? 'checked' : ''}
+                  onchange="settingsModule.toggleSkill('${s.source}', '${s.id}', this.checked)"
+                  class="sr-only peer">
+                <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
+              </label>
+            </div>
+          `
+            )
+            .join('')}
+        </div>
+      `;
+    } catch (error) {
+      console.warn('[Settings] Skills load error:', error);
+      container.innerHTML = '<p class="text-xs text-gray-400">Failed to load skills</p>';
+    }
+  }
+
+  /**
+   * Toggle skill enabled/disabled from settings
+   */
+  async toggleSkill(source, name, enabled) {
+    try {
+      await fetch(`/api/skills/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, source }),
+      });
+    } catch (error) {
+      console.error('[Settings] Skill toggle failed:', error);
+    }
+  }
+
+  /**
+   * Populate token budget section from config
+   */
+  populateTokenSection() {
+    const budget = this.config?.token_budget;
+    if (!budget) {
+      return;
+    }
+
+    this.setValue('settings-token-daily-limit', budget.daily_limit || '');
+    this.setValue('settings-token-alert-threshold', budget.alert_threshold || '');
   }
 }
