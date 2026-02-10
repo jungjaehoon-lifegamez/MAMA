@@ -32,7 +32,7 @@ import {
 } from '../../gateways/index.js';
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
-import { createApiServer } from '../../api/index.js';
+import { createApiServer, insertTokenUsage } from '../../api/index.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -520,6 +520,13 @@ export async function runAgentLoop(
         reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
       }
       console.log(`[Tool] ${toolName} → ${JSON.stringify(result).slice(0, 80)}`);
+    },
+    onTokenUsage: (record) => {
+      try {
+        insertTokenUsage(db, record);
+      } catch {
+        /* ignore */
+      }
     },
   });
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');
