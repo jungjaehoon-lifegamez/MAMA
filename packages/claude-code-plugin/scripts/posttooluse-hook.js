@@ -99,10 +99,30 @@ function isLowPriorityPath(filePath) {
 }
 
 /**
- * Check if a contract with the same topic and identical decision already exists.
- * This prevents noise from repeatedly saving the same unchanged contract.
+ * Determine if a contract is high-value enough to auto-save to MAMA.
+ * Only system boundary contracts (API endpoints, DB schemas, GraphQL schemas)
+ * are saved automatically. Function signatures and type definitions are
+ * still displayed but NOT persisted — they change too frequently and create noise.
  *
- * @param {string} topic - The contract topic (e.g., 'contract_fetchUserData')
+ * @param {Object} contract - Extracted contract object
+ * @returns {boolean} true if contract should be auto-saved
+ */
+function isHighValueContract(contract) {
+  const AUTO_SAVE_TYPES = ['api_endpoint', 'sql_schema', 'graphql_schema'];
+  if (!AUTO_SAVE_TYPES.includes(contract.type)) {
+    return false;
+  }
+  if ((contract.confidence || 0) < 0.8) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Check if a contract with the same topic and equivalent decision already exists.
+ * Uses normalized comparison (whitespace, case) to catch near-duplicates.
+ *
+ * @param {string} topic - The contract topic (e.g., 'contract_get_api_users')
  * @param {string} decision - The contract decision text
  * @returns {boolean} - true if duplicate exists (should skip), false otherwise
  */
@@ -110,28 +130,27 @@ function isDuplicateContract(topic, decision) {
   try {
     const db = getDB();
     if (!db) {
-      return false; // Can't check, allow save
+      return false;
     }
-    // Query for existing decision with same topic
     const existing = db
       .prepare('SELECT decision FROM decisions WHERE topic = ? ORDER BY created_at DESC LIMIT 1')
       .get(topic);
 
     if (!existing) {
-      return false; // No existing contract with this topic
+      return false;
     }
 
-    // Exact match = duplicate
-    if (existing.decision === decision) {
-      info(`[Hook] Skipping duplicate contract: ${topic} (exact match)`);
+    // Normalize: collapse whitespace, trim, lowercase for fuzzy match
+    const normalize = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (normalize(existing.decision) === normalize(decision)) {
+      info(`[Hook] Skipping duplicate contract: ${topic}`);
       return true;
     }
 
-    // Not a duplicate - will create supersedes edge automatically
     return false;
   } catch (err) {
     warn(`[Hook] Duplicate check failed: ${err.message}`);
-    return false; // Allow save on error
+    return false;
   }
 }
 
@@ -882,12 +901,20 @@ async function main() {
         if (allContracts.length > 0) {
           info(`[Hook] Auto-extracted ${allContracts.length} contracts`);
 
-          // AUTO-SAVE: Directly save extracted contracts to MAMA
+          // AUTO-SAVE: Only persist high-value system boundary contracts
+          // (API endpoints, SQL/GraphQL schemas). Function signatures and
+          // type definitions are displayed but NOT saved — they create noise.
+          const saveable = allContracts.filter(isHighValueContract);
           let savedCount = 0;
+          if (saveable.length < allContracts.length) {
+            info(
+              `[Hook] Filtered ${allContracts.length - saveable.length}/${allContracts.length} low-value contracts (function sigs, type defs)`
+            );
+          }
           try {
             await initDB();
-            for (const contract of allContracts.slice(0, 3)) {
-              // Limit to 3 contracts per edit
+            for (const contract of saveable.slice(0, 3)) {
+              // Limit to 3 high-value contracts per edit
               // Build name based on contract type
               let contractName;
               let contractDecision;
@@ -899,14 +926,19 @@ async function main() {
                   .replace(/^_/, '');
                 contractName = `${method}_${pathPart}`;
                 contractDecision = `${contract.method || 'UNKNOWN'} ${contract.path || '/unknown'} expects ${contract.request || '{...}'}, returns ${contract.response || '{...}'}`;
-              } else if (contract.type === 'function_signature') {
-                // Function signature: include full params
-                contractName = contract.name || 'unknown';
-                const params = Array.isArray(contract.params) ? contract.params.join(', ') : '';
-                const returnType = contract.returnType || 'unknown';
-                contractDecision = `${contract.name}(${params}) → ${returnType}`;
+              } else if (contract.type === 'sql_schema') {
+                // SQL schema: use table name + columns
+                contractName = `sql_${contract.table || 'unknown'}`;
+                const op = contract.operation === 'CREATE_TABLE' ? 'CREATE TABLE' : 'ALTER TABLE';
+                const cols = Array.isArray(contract.columns) ? contract.columns.join(', ') : '';
+                contractDecision = `${op} ${contract.table || 'unknown'} (${cols})`;
+              } else if (contract.type === 'graphql_schema') {
+                // GraphQL schema: use kind + name + fields
+                contractName = `gql_${contract.name || 'unknown'}`;
+                const fields = Array.isArray(contract.fields) ? contract.fields.join(', ') : '';
+                contractDecision = `${contract.kind || 'type'} ${contract.name || 'unknown'} { ${fields} }`;
               } else {
-                // Type def, SQL schema, etc.
+                // Fallback (shouldn't reach here after isHighValueContract filter)
                 contractName = contract.name || 'unknown';
                 contractDecision =
                   contract.signature || contract.definition || contract.name || 'unknown';
