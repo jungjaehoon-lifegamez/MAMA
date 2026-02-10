@@ -74,6 +74,29 @@ export const SkillsModule = {
       });
     }
 
+    // URL install
+    const urlBtn = document.getElementById('skills-url-install-btn');
+    if (urlBtn) {
+      urlBtn.addEventListener('click', () => {
+        const input = document.getElementById('skills-url-input');
+        const url = input?.value?.trim();
+        if (url) {
+          this.installFromUrl(url);
+        }
+      });
+    }
+    const urlInput = document.getElementById('skills-url-input');
+    if (urlInput) {
+      urlInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const url = e.target.value.trim();
+          if (url) {
+            this.installFromUrl(url);
+          }
+        }
+      });
+    }
+
     // Filter buttons
     const filterBar = document.getElementById('skills-filter-bar');
     if (filterBar) {
@@ -200,7 +223,7 @@ export const SkillsModule = {
     const sourceColors = {
       mama: 'bg-yellow-900/30 text-yellow-400',
       cowork: 'bg-blue-900/30 text-blue-400',
-      openclaw: 'bg-green-900/30 text-green-400',
+      external: 'bg-purple-900/30 text-purple-400',
     };
     const badgeClass = sourceColors[skill.source] || 'bg-gray-700 text-gray-400';
     const enabledClass = skill.enabled !== false ? 'border-green-500/30' : 'border-gray-700';
@@ -262,6 +285,34 @@ export const SkillsModule = {
       console.error('[Skills] Install failed:', error);
       alert(`Failed to install ${name}: ${error.message}`);
       this.render();
+    }
+  },
+
+  /**
+   * Install from GitHub URL
+   */
+  async installFromUrl(url) {
+    const btn = document.getElementById('skills-url-install-btn');
+    const input = document.getElementById('skills-url-input');
+    try {
+      if (btn) {
+        btn.textContent = 'Installing...';
+        btn.disabled = true;
+      }
+      await API.installSkillFromUrl(url);
+      if (input) {
+        input.value = '';
+      }
+      await this.loadSkills();
+      this.render();
+    } catch (error) {
+      console.error('[Skills] URL install failed:', error);
+      alert(`Failed to install from URL: ${error.message}`);
+    } finally {
+      if (btn) {
+        btn.textContent = 'Install URL';
+        btn.disabled = false;
+      }
     }
   },
 

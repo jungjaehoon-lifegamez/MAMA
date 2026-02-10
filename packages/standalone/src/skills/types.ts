@@ -69,7 +69,7 @@ export interface SkillDefinition {
   /** Source file path */
   filePath?: string;
   /** Skill source platform */
-  source?: 'mama' | 'cowork' | 'openclaw';
+  source?: 'mama' | 'cowork' | 'external';
   /** Extended metadata (e.g. OpenClaw requirements) */
   metadata?: Record<string, unknown>;
   /** Whether skill is installed locally */

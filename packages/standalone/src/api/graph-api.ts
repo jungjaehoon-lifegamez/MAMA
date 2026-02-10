@@ -264,6 +264,12 @@ async function handleGraphRequest(
 }
 
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  // When mounted as Express middleware, body is already parsed by express.json()
+  const expressBody = (req as unknown as { body?: Record<string, unknown> }).body;
+  if (expressBody && typeof expressBody === 'object') {
+    return Promise.resolve(expressBody);
+  }
+
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => {
@@ -990,6 +996,53 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: POST /api/restart - graceful restart via mama CLI
+    // No auth required: server is localhost-only, restart is a local admin action
+    if (pathname === '/api/restart' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Restarting...' }));
+      // Prefer systemd restart when running as a service; otherwise spawn detached daemon.
+      setTimeout(() => {
+        console.log('[API] Restart requested via API — spawning new daemon');
+        const { spawn: spawnChild } = require('node:child_process');
+        const { openSync, writeFileSync } = require('node:fs');
+        const { homedir: getHome } = require('node:os');
+        const { join: joinPath } = require('node:path');
+
+        const isSystemd =
+          Boolean(process.env.INVOCATION_ID) || Boolean(process.env.SYSTEMD_EXEC_PID);
+
+        if (isSystemd) {
+          spawnChild('systemctl', ['--user', 'restart', 'mama-os'], {
+            detached: true,
+            stdio: 'ignore',
+          }).unref();
+          process.exit(0);
+          return;
+        }
+
+        // Spawn detached daemon directly, then exit current process
+        // Cannot use `mama start` because it checks PID (current process still alive)
+        const script = process.argv[1];
+        const logDir = joinPath(getHome(), '.mama', 'logs');
+        const logFile = joinPath(logDir, 'daemon.log');
+        const out = openSync(logFile, 'a');
+        const child = spawnChild(process.execPath, [script, 'daemon'], {
+          detached: true,
+          stdio: ['ignore', out, out],
+          cwd: getHome(),
+          env: { ...process.env, MAMA_DAEMON: '1' },
+        });
+        child.unref();
+        if (child.pid) {
+          const pidFile = joinPath(getHome(), '.mama', 'mama.pid');
+          writeFileSync(pidFile, String(child.pid));
+        }
+        process.exit(0);
+      }, 500);
+      return true;
+    }
+
     // Route: GET /api/memory/export - export decisions
     if (pathname === '/api/memory/export' && req.method === 'GET') {
       await handleExportRequest(req, res, params);
@@ -1379,21 +1432,8 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
 
 async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    // Security: This endpoint is only accessible on localhost (127.0.0.1/::1)
-    // The API server binds to localhost only and is not exposed externally
-
-    // Check authentication first
-    if (!isAuthenticated(req)) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          error: true,
-          code: 'UNAUTHORIZED',
-          message: 'Authentication required. Set Authorization header with valid token.',
-        })
-      );
-      return;
-    }
+    // Security: localhost-only binding is the access control boundary
+    // No token auth needed for local admin actions via Viewer UI
 
     const body = await readBody(req);
 
@@ -1494,6 +1534,10 @@ function mergeConfigUpdates(
 ): Record<string, any> {
   /* eslint-enable @typescript-eslint/no-explicit-any */
   const merged = { ...current };
+
+  if (updates.use_claude_cli !== undefined) {
+    merged.use_claude_cli = updates.use_claude_cli;
+  }
 
   if (updates.agent) {
     merged.agent = {

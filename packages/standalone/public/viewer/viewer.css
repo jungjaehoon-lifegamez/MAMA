@@ -57,6 +57,94 @@
   line-height: 1.4;
 }
 
+/* Chat panel sizing + scroll behavior fixes */
+#chat-panel {
+  width: min(92vw, 420px);
+  height: min(75vh, 560px);
+  resize: both;
+  overflow: auto;
+  box-sizing: border-box;
+  min-width: 280px;
+  min-height: 320px;
+  max-width: 96vw;
+  max-height: 85vh;
+}
+.chat-panel-draggable {
+  position: fixed !important;
+  right: auto !important;
+  bottom: auto !important;
+}
+.no-scroll {
+  overflow: hidden !important;
+  touch-action: none !important;
+}
+
+/* Custom resize handle (works on mobile) */
+.chat-resize-handle {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 18px;
+  height: 18px;
+  background:
+    linear-gradient(135deg, transparent 50%, #D4C4E0 50%) 0 0/100% 100% no-repeat;
+  border-radius: 3px;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0.8;
+}
+
+/* Sidebar resize handle (mobile row-resize) */
+#sidebar-resize-handle.sidebar-resize-handle--row {
+  width: 100%;
+  height: 6px;
+  cursor: row-resize;
+  background: transparent;
+}
+#sidebar-resize-handle.sidebar-resize-handle--row::after {
+  content: '';
+  display: block;
+  width: 36px;
+  height: 3px;
+  margin: 1px auto;
+  border-radius: 9999px;
+  background: #D4C4E0;
+}
+
+/* Memory viewer mobile layout */
+@media (max-width: 768px) {
+  #tab-memory .flex-1.flex.min-h-0.relative {
+    flex-direction: column;
+  }
+  #checkpoint-sidebar {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+    max-height: 35vh;
+  }
+  #sidebar-resize-handle {
+    display: none;
+  }
+  #graph-container {
+    min-height: 45vh;
+  }
+  #graph-canvas {
+    min-height: 45vh;
+  }
+}
+#chat-messages {
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.chat-message,
+.chat-message .message-content {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 @keyframes float {
   0%, 100% { transform: translate(0, 0) scale(1); }
   33% { transform: translate(30px, -30px) scale(1.05); }
@@ -415,6 +503,24 @@
 }
 #detail-modal-header:active {
   cursor: grabbing;
+}
+.decision-resize-handle,
+#detail-modal-header {
+  touch-action: none;
+}
+.decision-resize-handle {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 22px;
+  height: 22px;
+  background:
+    linear-gradient(135deg, transparent 50%, #D4C4E0 50%) 0 0/100% 100% no-repeat;
+  border-radius: 3px;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0.8;
+  pointer-events: auto;
 }
 
 /* Legend panel collapse */

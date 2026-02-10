@@ -711,6 +711,8 @@ export interface StreamingContext {
  * Agent loop configuration options
  */
 export interface AgentLoopOptions {
+  /** Backend to use for CLI execution */
+  backend?: 'claude' | 'codex';
   /** System prompt for Claude */
   systemPrompt?: string;
   /** Maximum number of conversation turns (default: 10) */

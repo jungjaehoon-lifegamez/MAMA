@@ -441,15 +441,22 @@ export class ChatModule {
     this.enableSend(false);
 
     // Rewrite /command → natural language to avoid Claude CLI interception
-    // Reference installed skills so the agent knows to look at plugin commands
+    // Must be explicit enough to override built-in skills (BMAD, etc.)
     let agentMessage = message;
     if (message.startsWith('/')) {
       const parts = message.slice(1).split(' ');
       const cmd = parts[0];
       const args = parts.slice(1).join(' ');
-      agentMessage = args
-        ? `[Installed Skill Command] Execute the /${cmd} command from your installed skills. Arguments: ${args}`
-        : `[Installed Skill Command] Execute the /${cmd} command from your installed skills. Follow the instructions in the matching command file exactly.`;
+      agentMessage = [
+        `[INSTALLED PLUGIN COMMAND — DO NOT USE SKILL TOOL]`,
+        `Look in your system prompt under "Installed Skills (PRIORITY)" for the "commands/${cmd}.md" section.`,
+        `Execute ONLY the instructions from that installed plugin command file.`,
+        `DO NOT invoke the Skill tool. DO NOT match to bmad or any other built-in skill.`,
+        `This command comes from a user-installed Cowork/OpenClaw plugin, not a system skill.`,
+        args ? `User arguments: ${args}` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
     }
 
     this.ws.send(
@@ -760,7 +767,7 @@ export class ChatModule {
 
           container.scrollTo({
             top: container.scrollHeight,
-            behavior: 'smooth',
+            behavior: 'auto',
           });
         }
         this.rafPending = false;
@@ -1641,12 +1648,174 @@ export class ChatModule {
   initFloating() {
     const bubble = document.getElementById('chat-bubble');
     const closeBtn = document.getElementById('chat-close');
+    const resizeHandle = document.getElementById('chat-resize-handle');
+    const panel = document.getElementById('chat-panel');
+    const header = document.getElementById('chat-header');
 
     if (bubble) {
       bubble.addEventListener('click', () => this.togglePanel());
     }
     if (closeBtn) {
       closeBtn.addEventListener('click', () => this.togglePanel(false));
+    }
+
+    if (panel && header) {
+      let dragging = false;
+      let startX = 0;
+      let startY = 0;
+      let startLeft = 0;
+      let startTop = 0;
+
+      const startDrag = (clientX, clientY) => {
+        dragging = true;
+        const rect = panel.getBoundingClientRect();
+        startX = clientX;
+        startY = clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        panel.classList.add('chat-panel-draggable');
+        document.body.style.userSelect = 'none';
+      };
+
+      const doDrag = (clientX, clientY) => {
+        if (!dragging) {
+          return;
+        }
+        const dx = clientX - startX;
+        const dy = clientY - startY;
+        const nextLeft = Math.max(8, Math.min(window.innerWidth - 80, startLeft + dx));
+        const nextTop = Math.max(8, Math.min(window.innerHeight - 80, startTop + dy));
+        panel.style.left = `${nextLeft}px`;
+        panel.style.top = `${nextTop}px`;
+      };
+
+      const endDrag = () => {
+        if (!dragging) {
+          return;
+        }
+        dragging = false;
+        document.body.style.userSelect = '';
+        document.body.classList.remove('no-scroll');
+        this.savePanelState(panel);
+      };
+
+      header.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startDrag(e.clientX, e.clientY);
+      });
+      window.addEventListener('mousemove', (e) => doDrag(e.clientX, e.clientY));
+      window.addEventListener('mouseup', endDrag);
+
+      header.addEventListener(
+        'touchstart',
+        (e) => {
+          const touch = e.touches[0];
+          if (!touch) {
+            return;
+          }
+          e.preventDefault();
+          startDrag(touch.clientX, touch.clientY);
+          document.body.classList.add('no-scroll');
+        },
+        { passive: false }
+      );
+      window.addEventListener(
+        'touchmove',
+        (e) => {
+          const touch = e.touches[0];
+          if (!touch) {
+            return;
+          }
+          if (!dragging) {
+            return;
+          }
+          e.preventDefault();
+          doDrag(touch.clientX, touch.clientY);
+        },
+        { passive: false }
+      );
+      window.addEventListener('touchend', endDrag);
+    }
+
+    if (resizeHandle && panel) {
+      let resizing = false;
+      let startX = 0;
+      let startY = 0;
+      let startW = 0;
+      let startH = 0;
+
+      const startResize = (clientX, clientY) => {
+        resizing = true;
+        const rect = panel.getBoundingClientRect();
+        startX = clientX;
+        startY = clientY;
+        startW = rect.width;
+        startH = rect.height;
+        document.body.style.userSelect = 'none';
+      };
+
+      const doResize = (clientX, clientY) => {
+        if (!resizing) {
+          return;
+        }
+        const dx = clientX - startX;
+        const dy = clientY - startY;
+        const minW = 280;
+        const minH = 320;
+        const maxW = Math.min(window.innerWidth * 0.96, 800);
+        const maxH = Math.min(window.innerHeight * 0.85, 900);
+        const nextW = Math.max(minW, Math.min(maxW, startW + dx));
+        const nextH = Math.max(minH, Math.min(maxH, startH + dy));
+        panel.style.width = `${nextW}px`;
+        panel.style.height = `${nextH}px`;
+      };
+
+      const endResize = () => {
+        if (!resizing) {
+          return;
+        }
+        resizing = false;
+        document.body.style.userSelect = '';
+        document.body.classList.remove('no-scroll');
+        this.savePanelState(panel);
+      };
+
+      resizeHandle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startResize(e.clientX, e.clientY);
+      });
+      window.addEventListener('mousemove', (e) => doResize(e.clientX, e.clientY));
+      window.addEventListener('mouseup', endResize);
+
+      resizeHandle.addEventListener(
+        'touchstart',
+        (e) => {
+          const touch = e.touches[0];
+          if (!touch) {
+            return;
+          }
+          e.preventDefault();
+          startResize(touch.clientX, touch.clientY);
+          document.body.classList.add('no-scroll');
+        },
+        { passive: false }
+      );
+      window.addEventListener(
+        'touchmove',
+        (e) => {
+          const touch = e.touches[0];
+          if (!touch) {
+            return;
+          }
+          if (!resizing) {
+            return;
+          }
+          e.preventDefault();
+          doResize(touch.clientX, touch.clientY);
+        },
+        { passive: false }
+      );
+      window.addEventListener('touchend', endResize);
     }
 
     document.addEventListener('keydown', (e) => {
@@ -1675,6 +1844,7 @@ export class ChatModule {
     if (shouldOpen) {
       panel.classList.remove('hidden');
       panel.classList.add('animate-slide-up');
+      this.restorePanelState(panel);
       if (bubble) {
         bubble.classList.add('scale-0');
       }
@@ -1695,6 +1865,50 @@ export class ChatModule {
       if (bubble) {
         bubble.classList.remove('scale-0');
       }
+    }
+  }
+
+  /**
+   * Persist panel size + position
+   */
+  savePanelState(panel) {
+    try {
+      const rect = panel.getBoundingClientRect();
+      const state = {
+        width: rect.width,
+        height: rect.height,
+        left: rect.left,
+        top: rect.top,
+      };
+      localStorage.setItem('mama_chat_panel_state', JSON.stringify(state));
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  /**
+   * Restore panel size + position
+   */
+  restorePanelState(panel) {
+    try {
+      const raw = localStorage.getItem('mama_chat_panel_state');
+      if (!raw) {
+        return;
+      }
+      const state = JSON.parse(raw);
+      if (state.width) {
+        panel.style.width = `${state.width}px`;
+      }
+      if (state.height) {
+        panel.style.height = `${state.height}px`;
+      }
+      if (state.left !== undefined && state.top !== undefined) {
+        panel.classList.add('chat-panel-draggable');
+        panel.style.left = `${state.left}px`;
+        panel.style.top = `${state.top}px`;
+      }
+    } catch {
+      // ignore storage errors
     }
   }
 
