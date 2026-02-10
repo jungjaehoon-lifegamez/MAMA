@@ -80,13 +80,6 @@ void _matchToolPattern;
  * Tries multiple paths: project root, ~/.mama, /etc/mama
  */
 function loadSystemPrompt(verbose = false): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { readFileSync, existsSync } = require('fs');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { join } = require('path');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { homedir } = require('os');
-
   const searchPaths = [
     // User home - MAMA standalone config (priority)
     join(homedir(), '.mama/CLAUDE.md'),
@@ -122,13 +115,6 @@ function loadSystemPrompt(verbose = false): string {
  * @param context - Optional AgentContext for role-aware prompt injection
  */
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { readFileSync, existsSync } = require('fs');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { join } = require('path');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { homedir } = require('os');
-
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
 
