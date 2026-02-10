@@ -7,7 +7,7 @@
  * implement platform-specific messaging and formatting.
  */
 
-import type { MultiAgentConfig, AgentPersonaConfig } from './types.js';
+import type { MultiAgentConfig, AgentPersonaConfig, ChainState } from './types.js';
 import { MultiAgentOrchestrator } from './orchestrator.js';
 import { AgentProcessManager } from './agent-process-manager.js';
 import { getSharedContextManager, type SharedContextManager } from './shared-context.js';
@@ -270,7 +270,7 @@ export abstract class MultiAgentHandlerBase {
   /**
    * Get chain state for a channel (for debugging)
    */
-  getChainState(channelId: string) {
+  getChainState(channelId: string): ChainState {
     return this.orchestrator.getChainState(channelId);
   }
 
