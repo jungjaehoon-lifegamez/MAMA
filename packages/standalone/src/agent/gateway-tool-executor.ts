@@ -11,7 +11,7 @@
  * - Path-based tools (Read, Write) also check path permissions
  */
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { execSync, spawn } from 'child_process';
 import type {
@@ -499,12 +499,18 @@ export class GatewayToolExecutor {
    * Checks path permissions based on current AgentContext
    */
   private async executeRead(input: {
-    path: string;
+    path?: string;
+    file_path?: string;
+    file?: string;
   }): Promise<{ success: boolean; content?: string; error?: string }> {
-    const { path: filePath } = input;
+    // Accept common parameter name variations
+    const filePath = input.path || input.file_path || input.file;
 
     if (!filePath) {
-      return { success: false, error: 'Path is required' };
+      return {
+        success: false,
+        error: `Path is required. Use: {"name": "Read", "input": {"path": "/file/path"}}`,
+      };
     }
 
     // Expand ~ to home directory
@@ -531,6 +537,21 @@ export class GatewayToolExecutor {
     }
 
     try {
+      // Guard against reading huge files (e.g. daemon.log) that would blow up the prompt
+      const MAX_READ_BYTES = 200_000; // 200KB
+      const fileSize = statSync(expandedPath).size;
+      if (fileSize > MAX_READ_BYTES) {
+        const truncated = readFileSync(expandedPath, { encoding: 'utf-8', flag: 'r' }).slice(
+          0,
+          MAX_READ_BYTES
+        );
+        return {
+          success: true,
+          content:
+            truncated +
+            `\n\n[Truncated: file is ${(fileSize / 1024).toFixed(0)}KB, showing first ${MAX_READ_BYTES / 1000}KB]`,
+        };
+      }
       const content = readFileSync(expandedPath, 'utf-8');
       return { success: true, content };
     } catch (err) {
