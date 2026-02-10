@@ -101,6 +101,15 @@ export class MultiAgentDiscordHandler {
   /** Channel-safe batch data accumulation (prevents cross-channel data contamination) */
   private batchData = new Map<string, string[]>();
 
+  /** Maximum batch size per channel to prevent memory exhaustion */
+  private static readonly MAX_BATCH_SIZE = 100;
+
+  /** Batch data TTL to prevent indefinite accumulation */
+  private static readonly BATCH_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+  /** Track batch creation time for TTL cleanup */
+  private batchTimestamps = new Map<string, number>();
+
   /** Tracks channels where APPROVE+commit was processed (prevents congratulation loops) */
   private approveProcessedChannels = new Map<string, number>();
 
