@@ -9,6 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { timingSafeEqual } from 'node:crypto';
 import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type {
@@ -107,6 +108,15 @@ async function getAllEdges(): Promise<GraphEdge[]> {
   }));
 }
 
+function safeParseJsonArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 async function getAllCheckpoints(): Promise<CheckpointData[]> {
   const adapter = getAdapter();
 
@@ -136,7 +146,7 @@ async function getAllCheckpoints(): Promise<CheckpointData[]> {
     id: row.id,
     timestamp: row.timestamp,
     summary: row.summary,
-    open_files: row.open_files ? (JSON.parse(row.open_files) as string[]) : [],
+    open_files: row.open_files ? safeParseJsonArray(row.open_files) : [],
     next_steps: row.next_steps,
     status: row.status,
   }));
@@ -303,7 +313,7 @@ async function handleUpdateRequest(req: IncomingMessage, res: ServerResponse): P
       JSON.stringify({
         success: true,
         id: body.id,
-        outcome: (body.outcome as string).toUpperCase(),
+        outcome: String(body.outcome).toUpperCase(),
       })
     );
   } catch (error: unknown) {
@@ -574,7 +584,7 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
       topic: body.topic,
       decision: body.decision,
       reasoning: body.reasoning,
-      confidence: body.confidence || 0.8,
+      confidence: body.confidence ?? 0.8,
     });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1451,7 +1461,11 @@ function isAuthenticated(req: IncomingMessage): boolean {
   // Support both "Bearer token" and "token" formats
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
 
-  return token === adminToken;
+  // Use timing-safe comparison to prevent timing side-channel attacks
+  if (token.length !== adminToken.length) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(token), Buffer.from(adminToken));
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1877,6 +1891,19 @@ async function handleMultiAgentUpdateAgentRequest(
   pathname: string
 ): Promise<void> {
   try {
+    // Security: require authentication for config-writing endpoint
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required. Set Authorization header with valid token.',
+        })
+      );
+      return;
+    }
+
     const match = pathname.match(/\/api\/multi-agent\/agents\/([^/]+)/);
     if (!match) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
