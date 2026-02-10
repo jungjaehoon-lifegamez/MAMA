@@ -145,7 +145,7 @@ function collectMarkdownFiles(dir: string, prefix = ''): Array<{ path: string; c
  * Returns skill content blocks for system prompt injection.
  * Reads all .md files recursively (commands/, skills/, etc.)
  */
-function loadInstalledSkills(verbose = false): string[] {
+export function loadInstalledSkills(verbose = false): string[] {
   const skillsBase = join(homedir(), '.mama', 'skills');
   const stateFile = join(skillsBase, 'state.json');
   const blocks: string[] = [];
@@ -211,6 +211,24 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
     }
   }
 
+  // Load installed & enabled skills (HIGH PRIORITY — before CLAUDE.md)
+  const skillBlocks = loadInstalledSkills(verbose);
+  if (skillBlocks.length > 0) {
+    const skillDirective = [
+      '# Installed Skills (PRIORITY)',
+      '',
+      '**IMPORTANT:** The following skills/plugins are installed and active.',
+      'When a user message contains [Installed Skill Command] or references a',
+      'command like /start, /update, etc., you MUST find the matching command',
+      'file below and follow its instructions EXACTLY. Do NOT fall back to',
+      'generic system behavior.',
+      '',
+      skillBlocks.join('\n\n---\n\n'),
+    ].join('\n');
+    layers.push(skillDirective);
+    if (verbose) console.log(`[AgentLoop] Injected ${skillBlocks.length} installed skills`);
+  }
+
   // Add context prompt if AgentContext is provided (role awareness)
   if (context) {
     const contextPrompt = buildContextPrompt(context);
@@ -224,13 +242,6 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   // Load CLAUDE.md (base instructions)
   const claudeMd = loadSystemPrompt(verbose);
   layers.push(claudeMd);
-
-  // Load installed & enabled skills from ~/.mama/skills/
-  const skillBlocks = loadInstalledSkills(verbose);
-  if (skillBlocks.length > 0) {
-    layers.push(`# Installed Skills\n\n${skillBlocks.join('\n\n---\n\n')}`);
-    if (verbose) console.log(`[AgentLoop] Injected ${skillBlocks.length} installed skills`);
-  }
 
   return layers.join('\n\n---\n\n');
 }

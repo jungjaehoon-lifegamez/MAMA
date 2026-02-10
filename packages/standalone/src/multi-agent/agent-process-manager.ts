@@ -11,6 +11,7 @@
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
+import { loadInstalledSkills } from '../agent/agent-loop.js';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
@@ -381,10 +382,29 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${resolvedPersona}
 
-${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Guidelines
+${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}${this.buildSkillsPrompt()}
+## Guidelines
 - Stay in character as ${agentConfig.name}
 - Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
 - Your trigger prefix is: ${agentConfig.trigger_prefix}
+`;
+  }
+
+  /**
+   * Build installed skills prompt section
+   */
+  private buildSkillsPrompt(): string {
+    const skillBlocks = loadInstalledSkills();
+    if (skillBlocks.length === 0) return '';
+
+    return `## Installed Skills (PRIORITY)
+
+**IMPORTANT:** The following skills/plugins are installed and active.
+When a user message contains [Installed Skill Command] or references
+a command like /start, /update, etc., you MUST find the matching
+command file below and follow its instructions EXACTLY.
+
+${skillBlocks.join('\n\n---\n\n')}
 `;
   }
 
