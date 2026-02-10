@@ -429,6 +429,7 @@ export class ChatModule {
 
   /**
    * Send a message directly to the agent (bypass command parsing)
+   * Rewrites /command to avoid Claude CLI slash command interception
    */
   sendRaw(message) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -439,11 +440,23 @@ export class ChatModule {
     this.addUserMessage(message);
     this.enableSend(false);
 
+    // Rewrite /command → natural language to avoid Claude CLI interception
+    // Reference installed skills so the agent knows to look at plugin commands
+    let agentMessage = message;
+    if (message.startsWith('/')) {
+      const parts = message.slice(1).split(' ');
+      const cmd = parts[0];
+      const args = parts.slice(1).join(' ');
+      agentMessage = args
+        ? `[Installed Skill Command] Execute the /${cmd} command from your installed skills. Arguments: ${args}`
+        : `[Installed Skill Command] Execute the /${cmd} command from your installed skills. Follow the instructions in the matching command file exactly.`;
+    }
+
     this.ws.send(
       JSON.stringify({
         type: 'send',
         sessionId: this.sessionId,
-        content: message,
+        content: agentMessage,
       })
     );
 
@@ -451,7 +464,7 @@ export class ChatModule {
       this.memoryModule.showRelatedForMessage(message);
     }
 
-    console.log('[Chat] Forwarded to agent:', message);
+    console.log('[Chat] Forwarded to agent:', agentMessage);
     this.resetIdleTimer();
   }
 
