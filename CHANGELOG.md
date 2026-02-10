@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-02-10
+
+### Fixed
+
+- Gateway Read tool file size guard (200KB limit) preventing 10MB+ prompt overflow from large files (e.g. daemon.log)
+- Gateway Read tool parameter flexibility: accept `path`, `file_path`, and `file` to prevent agent hallucination from failed tool calls
+- Gateway tools system info: replaced incorrect `systemctl` commands with `mama status/stop/start`
+- Added tool call rules to prevent agent fabrication when tools fail
+
 ## [0.6.0] - 2026-02-10
 
 ### Added
