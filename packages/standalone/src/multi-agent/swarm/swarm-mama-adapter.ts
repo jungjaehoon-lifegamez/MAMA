@@ -42,7 +42,7 @@ export function createMamaApiAdapter(): MamaApiClient {
     async search(query: string, limit?: number): Promise<SearchResult[]> {
       try {
         // Dynamically require mama-core (CommonJS module)
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const mama = require('@jungjaehoon/mama-core/mama-api');
 
         if (!mama || !mama.suggest) {
@@ -79,7 +79,7 @@ export function createMamaApiAdapter(): MamaApiClient {
         );
 
         return searchResults;
-      } catch (error) {
+      } catch (error: unknown) {
         // Graceful fallback - log error but don't throw
         console.warn('[SwarmMamaAdapter] Failed to search MAMA:', error);
         return [];
@@ -104,7 +104,7 @@ export async function saveSwarmCheckpoint(
 ): Promise<void> {
   try {
     // Dynamically require mama-core (CommonJS module)
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mama = require('@jungjaehoon/mama-core/mama-api');
 
     if (!mama || !mama.saveCheckpoint) {
@@ -118,7 +118,7 @@ export async function saveSwarmCheckpoint(
     console.log(
       `[SwarmMamaAdapter] Saved checkpoint for session ${sessionId}: ${summary.substring(0, 60)}...`
     );
-  } catch (error) {
+  } catch (error: unknown) {
     // Graceful fallback - log error but don't throw
     console.warn('[SwarmMamaAdapter] Failed to save checkpoint:', error);
   }

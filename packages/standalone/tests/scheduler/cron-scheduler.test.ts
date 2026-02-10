@@ -2,7 +2,7 @@
  * Unit tests for CronScheduler
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { CronScheduler, SchedulerError } from '../../src/scheduler/index.js';
 import type { JobConfig, JobEvent } from '../../src/scheduler/types.js';
 

@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { unlinkSync, existsSync } from 'fs';
+import type _Database from 'better-sqlite3';
 
 describe('SwarmTaskRunner', () => {
   let runner: SwarmTaskRunner;
@@ -18,7 +19,7 @@ describe('SwarmTaskRunner', () => {
   let mockAgentProcessManager: AgentProcessManager;
   let dbPath: string;
   let sessionId: string;
-  let db: any;
+  let db: ReturnType<typeof manager.getDatabase>;
 
   beforeEach(() => {
     // Create temporary DB file and manager
@@ -47,7 +48,7 @@ describe('SwarmTaskRunner', () => {
       getProcess: vi.fn().mockResolvedValue(mockProcess),
       releaseProcess: vi.fn(),
       getAgentProcessPool: vi.fn().mockReturnValue(mockAgentProcessPool),
-    } as any;
+    } as unknown as AgentProcessManager;
 
     runner = new SwarmTaskRunner(manager, mockAgentProcessManager, { maxRetries: 0 });
 
@@ -184,7 +185,9 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(errorProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        errorProcess
+      );
 
       const taskParams: CreateTaskParams[] = [
         { session_id: sessionId, description: 'Failing task', category: 'test', wave: 1 },
@@ -230,7 +233,9 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(false),
         sendMessage: vi.fn(),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(busyProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        busyProcess
+      );
 
       // Listen for task-deferred event
       const deferredListener = vi.fn();
@@ -254,7 +259,10 @@ describe('SwarmTaskRunner', () => {
       );
 
       // Task should be back to pending (not failed in DB)
-      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as Record<
+        string,
+        unknown
+      >;
       expect(task.status).toBe('pending');
       expect(task.retry_count).toBe(0); // Should NOT increment
     });
@@ -274,7 +282,9 @@ describe('SwarmTaskRunner', () => {
           session_id: 'test-session',
         }),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(readyProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        readyProcess
+      );
 
       const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
@@ -299,7 +309,9 @@ describe('SwarmTaskRunner', () => {
           session_id: 'test-session',
         }),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(readyProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        readyProcess
+      );
 
       const deferredListener = vi.fn();
       runner.on('task-deferred', deferredListener);
@@ -361,7 +373,7 @@ describe('SwarmTaskRunner', () => {
         sendMessage: vi.fn().mockResolvedValue({ response: 'done', usage: {}, session_id: 'test' }),
       };
 
-      (mockAgentProcessManager.getProcess as any)
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(failProcess)
         .mockResolvedValueOnce(successProcess);
 
@@ -455,7 +467,7 @@ describe('SwarmTaskRunner', () => {
           files_owned: ['file2.ts'],
         },
       ];
-      const [task1Id, task2Id] = manager.addTasks(sessionId, taskParams);
+      const [task1Id, _task2Id] = manager.addTasks(sessionId, taskParams);
 
       // Claim first task
       const db = manager.getDatabase();
@@ -503,7 +515,9 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Failed')),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        failProcess
+      );
 
       const taskParams: CreateTaskParams[] = [
         { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
@@ -600,7 +614,9 @@ describe('SwarmTaskRunner', () => {
       };
 
       const runnerWithContext = new SwarmTaskRunner(manager, mockAgentProcessManager, {
-        contextInjector: mockContextInjector as any,
+        contextInjector: mockContextInjector as unknown as NonNullable<
+          ConstructorParameters<typeof SwarmTaskRunner>[2]
+        >['contextInjector'],
       });
 
       const taskParams: CreateTaskParams[] = [
@@ -621,8 +637,8 @@ describe('SwarmTaskRunner', () => {
       );
 
       // Verify enriched description was sent to agent
-      const sentMessage = (mockAgentProcessManager.getProcess as any).mock.results[0].value
-        .sendMessage.mock.calls[0][0];
+      const sentMessage = (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mock
+        .results[0].value.sendMessage.mock.calls[0][0];
       expect(sentMessage).toContain('## Related decisions:');
       expect(sentMessage).toContain('Task:');
       expect(sentMessage).toContain('Implement authentication');
@@ -637,8 +653,8 @@ describe('SwarmTaskRunner', () => {
       await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
       // Verify original description was sent unchanged
-      const sentMessage = (mockAgentProcessManager.getProcess as any).mock.results[0].value
-        .sendMessage.mock.calls[0][0];
+      const sentMessage = (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mock
+        .results[0].value.sendMessage.mock.calls[0][0];
       expect(sentMessage).toBe('Some task');
     });
 
@@ -648,7 +664,9 @@ describe('SwarmTaskRunner', () => {
       };
 
       const runnerWithContext = new SwarmTaskRunner(manager, mockAgentProcessManager, {
-        contextInjector: mockContextInjector as any,
+        contextInjector: mockContextInjector as unknown as NonNullable<
+          ConstructorParameters<typeof SwarmTaskRunner>[2]
+        >['contextInjector'],
       });
 
       const taskParams: CreateTaskParams[] = [
@@ -672,8 +690,8 @@ describe('SwarmTaskRunner', () => {
       expect(result.status).toBe('completed');
 
       // Verify original description was sent
-      const sentMessage = (mockAgentProcessManager.getProcess as any).mock.results[0].value
-        .sendMessage.mock.calls[0][0];
+      const sentMessage = (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mock
+        .results[0].value.sendMessage.mock.calls[0][0];
       expect(sentMessage).toBe('Task with failed context');
     });
 
@@ -687,7 +705,9 @@ describe('SwarmTaskRunner', () => {
       };
 
       const runnerWithContext = new SwarmTaskRunner(manager, mockAgentProcessManager, {
-        contextInjector: mockContextInjector as any,
+        contextInjector: mockContextInjector as unknown as NonNullable<
+          ConstructorParameters<typeof SwarmTaskRunner>[2]
+        >['contextInjector'],
       });
 
       const taskParams: CreateTaskParams[] = [
@@ -698,8 +718,8 @@ describe('SwarmTaskRunner', () => {
       await runnerWithContext.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
       // Verify original description was sent
-      const sentMessage = (mockAgentProcessManager.getProcess as any).mock.results[0].value
-        .sendMessage.mock.calls[0][0];
+      const sentMessage = (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mock
+        .results[0].value.sendMessage.mock.calls[0][0];
       expect(sentMessage).toBe('Task with no context');
     });
   });
@@ -720,7 +740,9 @@ describe('SwarmTaskRunner', () => {
       const failProcess = {
         sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        failProcess
+      );
 
       const result = await retryRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
@@ -737,7 +759,10 @@ describe('SwarmTaskRunner', () => {
 
       // Task should be back to pending in DB
       const db = manager.getDatabase();
-      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as Record<
+        string,
+        unknown
+      >;
       expect(task.status).toBe('pending');
       expect(task.retry_count).toBe(1);
     });
@@ -757,7 +782,9 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        failProcess
+      );
 
       const result = await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
@@ -772,7 +799,10 @@ describe('SwarmTaskRunner', () => {
 
       // Task should be failed in DB
       const db = manager.getDatabase();
-      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as Record<
+        string,
+        unknown
+      >;
       expect(task.status).toBe('failed');
     });
 
@@ -801,7 +831,9 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Execution failed')),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        failProcess
+      );
 
       const result = await customRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
@@ -827,13 +859,18 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('First attempt failed')),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        failProcess
+      );
 
       await retryRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
 
       // Task should be pending with retry_count = 1
       const db = manager.getDatabase();
-      let task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      let task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as Record<
+        string,
+        unknown
+      >;
       expect(task.status).toBe('pending');
       expect(task.retry_count).toBe(1);
 
@@ -842,6 +879,7 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockResolvedValue({ response: 'Task completed successfully' }),
       };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(successProcess);
 
       const result = await retryRunner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
@@ -850,6 +888,7 @@ describe('SwarmTaskRunner', () => {
       expect(result.status).toBe('completed');
       expect(completedSpy).toHaveBeenCalled();
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
       expect(task.status).toBe('completed');
     });
@@ -881,7 +920,9 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Failed')),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        failProcess
+      );
 
       const taskParams: CreateTaskParams[] = [
         { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
@@ -907,7 +948,9 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(false),
         sendMessage: vi.fn(),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(busyProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        busyProcess
+      );
 
       const taskParams: CreateTaskParams[] = [
         { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
@@ -940,7 +983,7 @@ describe('SwarmTaskRunner', () => {
       const mockManagerWithRelease = {
         getProcess: vi.fn().mockResolvedValue(mockProcessWithRelease),
         releaseProcess: vi.fn(),
-      } as any;
+      } as unknown as AgentProcessManager;
 
       const runnerWithRelease = new SwarmTaskRunner(manager, mockManagerWithRelease, {
         maxRetries: 0,
@@ -1078,7 +1121,9 @@ describe('SwarmTaskRunner', () => {
         isReady: vi.fn().mockReturnValue(true),
         sendMessage: vi.fn().mockRejectedValue(new Error('Task failed')),
       };
-      (mockAgentProcessManager.getProcess as any).mockResolvedValueOnce(failProcess);
+      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        failProcess
+      );
 
       const taskParams: CreateTaskParams[] = [
         { session_id: sessionId, description: 'Failing task', category: 'test', wave: 1 },

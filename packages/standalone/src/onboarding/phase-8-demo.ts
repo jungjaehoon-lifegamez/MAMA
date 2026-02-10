@@ -105,7 +105,7 @@ interface User {
   name: string;
   email: string;
   role: 'admin' | 'user' | 'guest';
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }`;
           const analysis = {
             type: 'TypeScript Interface',
@@ -328,7 +328,7 @@ export const PHASE_8_TOOL: ToolDefinition = {
 /**
  * Handler for demonstrate_capability tool
  */
-export async function handleDemoTool(input: DemoToolInput): Promise<any> {
+export async function handleDemoTool(input: DemoToolInput): Promise<Record<string, unknown>> {
   const demoType = input.demo_type || 'all';
   const interactive = input.interactive !== false;
   const saveLog = input.save_log !== false;

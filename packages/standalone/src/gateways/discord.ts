@@ -178,6 +178,138 @@ export class DiscordGateway implements Gateway {
    * Handle incoming Discord message
    */
   private async handleMessage(message: Message): Promise<void> {
+    // 1. Classify - handle bot messages
+    const classification = await this.classifyMessage(message);
+    if (!classification) return; // bot message, already handled or ignored
+
+    const isDM = message.channel.type === ChannelType.DM;
+    const isMentioned = message.mentions.has(this.client.user!);
+
+    // Debug logging
+    console.log(
+      `[Discord] Message received: "${message.content.substring(0, 50)}..." from ${message.author.tag}`
+    );
+    console.log(
+      `[Discord] isDM: ${isDM}, isMentioned: ${isMentioned}, channelId: ${message.channel.id}`
+    );
+
+    // Log incoming message
+    const memoryLogger = getMemoryLogger();
+    memoryLogger.logMessage('Discord', message.author.tag, message.content, false);
+
+    const cleanContent = this.cleanMessageContent(message.content);
+
+    // 2. Collect attachments + history
+    const attachmentInfo = await this.collectAttachments(message, cleanContent);
+
+    // Check if we should respond to this message
+    if (!this.shouldRespond(message, isDM, isMentioned)) {
+      console.log('[Discord] Skipping - shouldRespond returned false');
+      return;
+    }
+
+    // Emit message received event
+    this.emitEvent({
+      type: 'message_received',
+      source: 'discord',
+      timestamp: new Date(),
+      data: {
+        channelId: message.channel.id,
+        userId: message.author.id,
+        isDM,
+        isMentioned,
+      },
+    });
+
+    if (!cleanContent.trim() && attachmentInfo.effectiveAttachments.length === 0) {
+      return; // Don't process empty messages without attachments
+    }
+
+    // Start typing indicator
+    const typingInterval = setInterval(() => {
+      if ('sendTyping' in message.channel) {
+        (message.channel as { sendTyping: () => Promise<void> }).sendTyping().catch(() => {});
+      }
+    }, 5000);
+    if ('sendTyping' in message.channel) {
+      await (message.channel as { sendTyping: () => Promise<void> }).sendTyping();
+    }
+
+    // Add eyes emoji to indicate processing
+    try {
+      await message.react('👀');
+    } catch (err) {
+      console.warn(
+        '[Discord] Failed to add reaction emoji:',
+        err instanceof Error ? err.message : err
+      );
+    }
+
+    // Build message history context for Claude (OpenClaw style)
+    const channelHistory = getChannelHistory();
+    const historyContext = channelHistory.formatForContext(message.channel.id, message.id);
+    if (historyContext) {
+      console.log(
+        `[Discord] Built historyContext (${historyContext.length} chars):`,
+        historyContext.substring(0, 200)
+      );
+    } else {
+      console.log(`[Discord] No historyContext - empty history`);
+    }
+
+    // Get channel name for session display
+    const channelName = this.getChannelDisplayName(message);
+
+    // Normalize message for router - ALL messages go to Claude
+    const normalizedMessage: NormalizedMessage = {
+      source: 'discord',
+      channelId: message.channel.id,
+      channelName,
+      userId: message.author.id,
+      text: cleanContent,
+      contentBlocks:
+        attachmentInfo.contentBlocks.length > 0 ? attachmentInfo.contentBlocks : undefined,
+      metadata: {
+        guildId: message.guild?.id,
+        username: message.author.username,
+        messageId: message.id,
+        historyContext,
+        attachments:
+          attachmentInfo.effectiveAttachments.length > 0
+            ? attachmentInfo.effectiveAttachments
+            : undefined,
+      },
+    };
+
+    // 3. Dispatch to agent
+    let processingSuccess = false;
+    try {
+      await this.dispatchToAgent(message, cleanContent, normalizedMessage, attachmentInfo);
+      processingSuccess = true;
+    } catch (error) {
+      console.error('[Discord] Message processing failed:', error);
+      processingSuccess = false;
+      throw error;
+    } finally {
+      clearInterval(typingInterval);
+      // Add conditional reaction based on processing success
+      try {
+        await message.react(processingSuccess ? '✅' : '❌');
+      } catch {
+        /* ignore reaction errors */
+      }
+    }
+  }
+
+  /**
+   * Classify message type and handle multi-agent bot messages.
+   * Returns null if the message was fully handled (bot-to-bot routing)
+   * or should be ignored, or classification info for further processing.
+   */
+  private async classifyMessage(message: Message): Promise<{
+    handled: boolean;
+    isBot: boolean;
+  } | null> {
     // Multi-agent mode: detect messages from our agent bots
     if (message.author.bot && this.multiAgentHandler) {
       const agentBotId = this.multiAgentHandler.getMultiBotManager().isFromAgentBot(message);
@@ -209,7 +341,7 @@ export class DiscordGateway implements Gateway {
               ]);
             }
           }
-          return;
+          return null;
         }
 
         // Fallback: pass to multi-agent handler for cross-agent conversation
@@ -221,7 +353,7 @@ export class DiscordGateway implements Gateway {
             `[Discord] Agent-to-agent: ${agentBotId} → ${multiAgentResult.selectedAgents.join(', ')}`
           );
         }
-        return;
+        return null;
       }
       // Message from main bot - record to shared context
       if (agentBotId === 'main' || message.author.id === this.client.user?.id) {
@@ -251,28 +383,27 @@ export class DiscordGateway implements Gateway {
             }
           }
         }
-        return;
+        return null;
       }
     }
 
     // Ignore other bot messages (not part of our multi-agent system)
-    if (message.author.bot) return;
+    if (message.author.bot) return null;
 
-    const isDM = message.channel.type === ChannelType.DM;
-    const isMentioned = message.mentions.has(this.client.user!);
+    return { handled: false, isBot: false };
+  }
 
-    // Debug logging
-    console.log(
-      `[Discord] Message received: "${message.content.substring(0, 50)}..." from ${message.author.tag}`
-    );
-    console.log(
-      `[Discord] isDM: ${isDM}, isMentioned: ${isMentioned}, channelId: ${message.channel.id}`
-    );
-
-    // Log incoming message
-    const memoryLogger = getMemoryLogger();
-    memoryLogger.logMessage('Discord', message.author.tag, message.content, false);
-
+  /**
+   * Collect attachments from message, record to history, and resolve effective attachments.
+   */
+  private async collectAttachments(
+    message: Message,
+    cleanContent: string
+  ): Promise<{
+    attachments: MessageAttachment[];
+    effectiveAttachments: MessageAttachment[];
+    contentBlocks: ContentBlock[];
+  }> {
     // Download all attachments (images, documents, etc.)
     const attachments: MessageAttachment[] = [];
     for (const [, attachment] of message.attachments) {
@@ -310,28 +441,6 @@ export class DiscordGateway implements Gateway {
     console.log(
       `[Discord] Recorded to history: ${message.channel.id} (${channelHistory.getHistory(message.channel.id).length} entries)`
     );
-
-    // Check if we should respond to this message
-    if (!this.shouldRespond(message, isDM, isMentioned)) {
-      console.log('[Discord] Skipping - shouldRespond returned false');
-      return;
-    }
-
-    // Emit message received event
-    this.emitEvent({
-      type: 'message_received',
-      source: 'discord',
-      timestamp: new Date(),
-      data: {
-        channelId: message.channel.id,
-        userId: message.author.id,
-        isDM,
-        isMentioned,
-      },
-    });
-
-    // Remove mentions from message content
-    const cleanContent = this.cleanMessageContent(message.content);
 
     // Get attachments from history if current message has none
     // Only reuse attachments if message contains action keywords (번역, 분석, translate, etc.)
@@ -380,164 +489,101 @@ export class DiscordGateway implements Gateway {
       }
     }
 
-    if (!cleanContent.trim() && effectiveAttachments.length === 0) {
-      return; // Don't process empty messages without attachments
-    }
-
-    // Start typing indicator
-    const typingInterval = setInterval(() => {
-      if ('sendTyping' in message.channel) {
-        (message.channel as { sendTyping: () => Promise<void> }).sendTyping().catch(() => {});
-      }
-    }, 5000);
-    if ('sendTyping' in message.channel) {
-      await (message.channel as { sendTyping: () => Promise<void> }).sendTyping();
-    }
-
-    // Add eyes emoji to indicate processing
-    try {
-      await message.react('👀');
-    } catch (err) {
-      console.warn(
-        '[Discord] Failed to add reaction emoji:',
-        err instanceof Error ? err.message : err
-      );
-    }
-
-    // Build message history context for Claude (OpenClaw style)
-    const historyContext = channelHistory.formatForContext(message.channel.id, message.id);
-    if (historyContext) {
-      console.log(
-        `[Discord] Built historyContext (${historyContext.length} chars):`,
-        historyContext.substring(0, 200)
-      );
-    } else {
-      console.log(`[Discord] No historyContext - empty history`);
-    }
-
     // Convert attachments to content blocks (OpenClaw-style)
     const contentBlocks: ContentBlock[] = await this.buildContentBlocks(effectiveAttachments);
 
-    // Get channel name for session display
-    const channelName = this.getChannelDisplayName(message);
+    return { attachments, effectiveAttachments, contentBlocks };
+  }
 
-    // Normalize message for router - ALL messages go to Claude
-    const normalizedMessage: NormalizedMessage = {
-      source: 'discord',
-      channelId: message.channel.id,
-      channelName,
-      userId: message.author.id,
-      text: cleanContent,
-      contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
-      metadata: {
-        guildId: message.guild?.id,
-        username: message.author.username,
-        messageId: message.id,
-        historyContext,
-        attachments: effectiveAttachments.length > 0 ? effectiveAttachments : undefined,
-      },
-    };
+  /**
+   * Dispatch message to multi-agent or single-agent processing.
+   */
+  private async dispatchToAgent(
+    message: Message,
+    cleanContent: string,
+    normalizedMessage: NormalizedMessage,
+    _attachmentInfo: { effectiveAttachments: MessageAttachment[] }
+  ): Promise<void> {
+    const channelHistory = getChannelHistory();
 
-    let processingSuccess = false;
-    try {
-      // Check if multi-agent mode should handle this message
-      if (this.multiAgentHandler?.isEnabled()) {
-        const multiAgentResult = await this.multiAgentHandler.handleMessage(message, cleanContent);
+    // Check if multi-agent mode should handle this message
+    if (this.multiAgentHandler?.isEnabled()) {
+      const multiAgentResult = await this.multiAgentHandler.handleMessage(message, cleanContent);
 
-        if (multiAgentResult && multiAgentResult.responses.length > 0) {
-          // Multi-agent handled the message
-          const sentMessages = await this.multiAgentHandler.sendAgentResponses(
-            message,
-            multiAgentResult.responses
-          );
+      if (multiAgentResult && multiAgentResult.responses.length > 0) {
+        // Multi-agent handled the message
+        const sentMessages = await this.multiAgentHandler.sendAgentResponses(
+          message,
+          multiAgentResult.responses
+        );
 
-          // Record bot responses to history with correct agent attribution.
-          // sentMessages is a flat array of chunks; track offset per response.
-          let msgIndex = 0;
-          for (const agentResp of multiAgentResult.responses) {
-            const chunkCount = splitForDiscord(agentResp.content).length;
-            for (let c = 0; c < chunkCount && msgIndex < sentMessages.length; c++) {
-              const sentMsg = sentMessages[msgIndex++];
-              channelHistory.record(message.channel.id, {
-                messageId: sentMsg.id,
-                sender: agentResp.agent.display_name || this.client.user?.username || 'MAMA',
-                userId: agentResp.agentId || this.client.user?.id || '',
-                body: sentMsg.content,
-                timestamp: Date.now(),
-                isBot: true,
-              });
-            }
+        // Record bot responses to history with correct agent attribution.
+        // sentMessages is a flat array of chunks; track offset per response.
+        let msgIndex = 0;
+        for (const agentResp of multiAgentResult.responses) {
+          const chunkCount = splitForDiscord(agentResp.content).length;
+          for (let c = 0; c < chunkCount && msgIndex < sentMessages.length; c++) {
+            const sentMsg = sentMessages[msgIndex++];
+            channelHistory.record(message.channel.id, {
+              messageId: sentMsg.id,
+              sender: agentResp.agent.display_name || this.client.user?.username || 'MAMA',
+              userId: agentResp.agentId || this.client.user?.id || '',
+              body: sentMsg.content,
+              timestamp: Date.now(),
+              isBot: true,
+            });
           }
-
-          this.emitEvent({
-            type: 'message_sent',
-            source: 'discord',
-            timestamp: new Date(),
-            data: {
-              channelId: message.channel.id,
-              responseLength: multiAgentResult.responses.reduce(
-                (sum, r) => sum + r.content.length,
-                0
-              ),
-              multiAgent: true,
-              agents: multiAgentResult.selectedAgents,
-            },
-          });
-
-          // Route delegation mentions from agent responses
-          if (this.multiAgentHandler.isMentionDelegationEnabled()) {
-            await this.multiAgentHandler.routeResponseMentions(message, multiAgentResult.responses);
-          }
-
-          console.log(
-            `[Discord] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
-          );
-          processingSuccess = true;
-          return; // Multi-agent handled it
         }
-        // If multi-agent returns null, fall through to regular processing
+
+        this.emitEvent({
+          type: 'message_sent',
+          source: 'discord',
+          timestamp: new Date(),
+          data: {
+            channelId: message.channel.id,
+            responseLength: multiAgentResult.responses.reduce(
+              (sum, r) => sum + r.content.length,
+              0
+            ),
+            multiAgent: true,
+            agents: multiAgentResult.selectedAgents,
+          },
+        });
+
+        // Route delegation mentions from agent responses
+        if (this.multiAgentHandler.isMentionDelegationEnabled()) {
+          await this.multiAgentHandler.routeResponseMentions(message, multiAgentResult.responses);
+        }
+
+        console.log(
+          `[Discord] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
+        );
+        return; // Multi-agent handled it
       }
-
-      // Regular single-agent processing
-      let response: string;
-      let duration: number;
-
-      const routerResult = await this.messageRouter.process(normalizedMessage);
-      response = routerResult.response;
-      duration = routerResult.duration;
-
-      await this.sendResponse(message, response);
-
-      // Only mark as success if sendResponse completes without error
-      processingSuccess = true;
-
-      this.emitEvent({
-        type: 'message_sent',
-        source: 'discord',
-        timestamp: new Date(),
-        data: {
-          channelId: message.channel.id,
-          responseLength: response.length,
-          duration,
-        },
-      });
-
-      // Keep attachments in history for reference in subsequent turns
-      // (localPath allows "that image" references to work)
-      console.log(`[Discord] Kept attachments for future reference: ${message.channel.id}`);
-    } catch (error) {
-      console.error('[Discord] Message processing failed:', error);
-      processingSuccess = false;
-      throw error;
-    } finally {
-      clearInterval(typingInterval);
-      // Add conditional reaction based on processing success
-      try {
-        await message.react(processingSuccess ? '✅' : '❌');
-      } catch {
-        /* ignore reaction errors */
-      }
+      // If multi-agent returns null, fall through to regular processing
     }
+
+    // Regular single-agent processing
+    const routerResult = await this.messageRouter.process(normalizedMessage);
+    const response = routerResult.response;
+    const duration = routerResult.duration;
+
+    await this.sendResponse(message, response);
+
+    this.emitEvent({
+      type: 'message_sent',
+      source: 'discord',
+      timestamp: new Date(),
+      data: {
+        channelId: message.channel.id,
+        responseLength: response.length,
+        duration,
+      },
+    });
+
+    // Keep attachments in history for reference in subsequent turns
+    // (localPath allows "that image" references to work)
+    console.log(`[Discord] Kept attachments for future reference: ${message.channel.id}`);
   }
 
   /**
@@ -632,15 +678,15 @@ export class DiscordGateway implements Gateway {
 
     // Extract file paths from response (outbound files to send)
     const filePathPattern =
-      /(?:파일 위치|파일 경로|File|Path|saved at|저장됨):\s*\**([\/~][^\s\n*]+)/gi;
-    const outboundPattern = /\/home\/[^\/]+\/\.mama\/workspace\/media\/outbound\/[^\s\n*]+/g;
+      /(?:파일 위치|파일 경로|File|Path|saved at|저장됨):\s*\**([/~][^\s\n*]+)/gi;
+    const outboundPattern = /\/home\/[^/]+\/\.mama\/workspace\/media\/outbound\/[^\s\n*]+/g;
 
     const filePaths: string[] = [];
     let match;
 
     // Helper to clean markdown/punctuation from file paths
     const cleanPath = (p: string) =>
-      p.replace(/[\*\`\[\]\(\)]+$/g, '').replace(/^~/, process.env.HOME || '');
+      p.replace(/[*`[\]()]+$/g, '').replace(/^~/, process.env.HOME || '');
 
     // Find explicit file location markers
     while ((match = filePathPattern.exec(response)) !== null) {

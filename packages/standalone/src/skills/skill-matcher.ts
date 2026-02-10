@@ -115,7 +115,7 @@ function matchPatterns(
       if (regex.test(text)) {
         return { matched: true, pattern, confidence: 0.8 };
       }
-    } catch (e) {
+    } catch {
       console.warn(`[SkillMatcher] Invalid pattern: ${pattern}`);
     }
   }

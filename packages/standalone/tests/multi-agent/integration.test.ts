@@ -10,7 +10,7 @@
  * - MultiAgentOrchestrator
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { MultiAgentOrchestrator } from '../../src/multi-agent/orchestrator.js';
 import { ToolPermissionManager } from '../../src/multi-agent/tool-permission-manager.js';
 import { CategoryRouter } from '../../src/multi-agent/category-router.js';
@@ -492,7 +492,7 @@ describe('Edge Cases', () => {
     });
 
     let callCount = 0;
-    const executeCallback = vi.fn().mockImplementation(async (agentId: string) => {
+    const executeCallback = vi.fn().mockImplementation(async (_agentId: string) => {
       callCount++;
       if (callCount === 1) {
         // Lead delegates to non-existent agent

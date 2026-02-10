@@ -271,7 +271,7 @@ describe('StreamingCallbackManager', () => {
       expect(mockGateway.editMessageThrottled).toHaveBeenCalledTimes(4);
 
       // Verify each call has the accumulated text
-      const calls = (mockGateway.editMessageThrottled as any).mock.calls;
+      const calls = (mockGateway.editMessageThrottled as ReturnType<typeof vi.fn>).mock.calls;
       expect(calls[0][1]).toBe('Hello');
       expect(calls[1][1]).toBe('Hello ');
       expect(calls[2][1]).toBe('Hello world');

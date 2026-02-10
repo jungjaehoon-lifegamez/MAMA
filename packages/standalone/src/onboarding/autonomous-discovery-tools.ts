@@ -14,15 +14,15 @@ interface DiscoveryToolInput {
   details?: string;
 }
 
-interface DiscoveryTool {
+export interface DiscoveryTool {
   name: string;
   description: string;
   input_schema: {
     type: 'object';
-    properties: Record<string, any>;
+    properties: Record<string, unknown>;
     required: string[];
   };
-  handler: (input: any) => Promise<any>;
+  handler: (input: DiscoveryToolInput) => Promise<Record<string, unknown>>;
 }
 
 function getProfileDir(sessionId: string): string {
@@ -167,7 +167,14 @@ ${input.insight}
         const timestamp = formatTimestamp();
 
         let content = '';
-        const scores: Record<string, any> = {};
+        const scores: Record<
+          string,
+          {
+            score: number;
+            evidence: string;
+            updated: string;
+          }
+        > = {};
 
         if (existsSync(personalityFile)) {
           const existingContent = await readFile(personalityFile, 'utf-8');

@@ -15,15 +15,15 @@ interface SummaryToolInput {
   additional_notes?: string;
 }
 
-interface Tool {
+export interface Tool {
   name: string;
   description: string;
   input_schema: {
     type: 'object';
-    properties: Record<string, any>;
+    properties: Record<string, unknown>;
     required: string[];
   };
-  handler: (input: any) => Promise<any>;
+  handler: (input: SummaryToolInput) => Promise<Record<string, unknown>>;
 }
 
 async function aggregateInsights(): Promise<{
@@ -33,7 +33,13 @@ async function aggregateInsights(): Promise<{
   bootstrap?: string;
   files: string[];
 }> {
-  const insights: any = { files: [] };
+  const insights: {
+    identity?: string;
+    user?: string;
+    soul?: string;
+    bootstrap?: string;
+    files: string[];
+  } = { files: [] };
   const mamaHome = expandPath('~/.mama');
 
   const profileFiles = [
@@ -48,7 +54,9 @@ async function aggregateInsights(): Promise<{
     if (existsSync(filePath)) {
       try {
         const content = await readFile(filePath, 'utf-8');
-        insights[key] = content;
+        if (key === 'identity' || key === 'user' || key === 'soul' || key === 'bootstrap') {
+          insights[key] = content;
+        }
         insights.files.push(file);
       } catch (error) {
         console.error(`Failed to read ${file}:`, error);
@@ -59,7 +67,13 @@ async function aggregateInsights(): Promise<{
   return insights;
 }
 
-function formatSummary(insights: any): string {
+function formatSummary(insights: {
+  identity?: string;
+  user?: string;
+  soul?: string;
+  bootstrap?: string;
+  files: string[];
+}): string {
   const { identity, user, soul, bootstrap, files } = insights;
 
   let summary = `# 🎯 Discovery Summary\n\n`;
@@ -103,7 +117,16 @@ function formatSummary(insights: any): string {
   return summary;
 }
 
-async function saveSummary(insights: any, additionalNotes?: string): Promise<void> {
+async function saveSummary(
+  insights: {
+    identity?: string;
+    user?: string;
+    soul?: string;
+    bootstrap?: string;
+    files: string[];
+  },
+  additionalNotes?: string
+): Promise<void> {
   const mamaHome = expandPath('~/.mama');
   const summaryPath = `${mamaHome}/summary.md`;
 

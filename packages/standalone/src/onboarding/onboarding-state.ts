@@ -168,6 +168,7 @@ export function clearOnboardingState(): void {
 
   if (existsSync(statePath)) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const fs = require('node:fs');
       fs.unlinkSync(statePath);
       console.log('[OnboardingState] Cleared state (onboarding complete)');

@@ -373,7 +373,7 @@ describe('UltraWorkManager', () => {
       await new Promise((r) => setTimeout(r, 10));
 
       // Stop it
-      const stopped = manager.stopSession('ch1');
+      const _stopped = manager.stopSession('ch1');
 
       // Unblock so the promise can resolve
       resolve!();

@@ -699,6 +699,7 @@ export type GatewayToolResult =
  */
 export interface StreamingContext {
   useStreaming: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   placeholderMessage?: any;
 }
 
@@ -897,6 +898,7 @@ export interface GatewayToolExecutorOptions {
   /** Database path for MAMA (default: ~/.claude/mama-memory.db) */
   mamaDbPath?: string;
   /** Session store for checkpoint conversation access */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sessionStore?: any;
   /** Custom MAMA API instance for testing */
   mamaApi?: MAMAApiInterface;
@@ -911,6 +913,7 @@ export interface MAMAApiInterface {
     summary: string,
     openFiles: string[],
     nextSteps: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recentConversation?: any[]
   ): Promise<SaveResult>;
   listDecisions(options?: { limit?: number }): Promise<unknown[]>;
