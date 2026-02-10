@@ -5,7 +5,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   SwarmAntiPatternDetector,
-  type AntiPatternDetectorOptions,
   type AntiPatternWarning,
 } from '../../src/multi-agent/swarm/swarm-anti-pattern-detector.js';
 import type { MamaApiClient, SearchResult } from '../../src/gateways/context-injector.js';

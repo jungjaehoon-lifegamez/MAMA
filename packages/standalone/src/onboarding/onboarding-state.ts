@@ -5,7 +5,7 @@
  * from where they left off if the session is interrupted.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -168,8 +168,7 @@ export function clearOnboardingState(): void {
 
   if (existsSync(statePath)) {
     try {
-      const fs = require('node:fs');
-      fs.unlinkSync(statePath);
+      unlinkSync(statePath);
       console.log('[OnboardingState] Cleared state (onboarding complete)');
     } catch (error) {
       console.error('[OnboardingState] Failed to clear state:', error);

@@ -35,8 +35,7 @@ import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer } from '../../api/index.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
-
-const { createGraphHandler } = require('../../api/graph-api.js');
+import { createGraphHandler } from '../../api/graph-api.js';
 import http from 'node:http';
 
 // Port configuration — single source of truth
@@ -46,6 +45,7 @@ const API_PORT = 3847;
 const EMBEDDING_PORT = 3849;
 
 // MAMA embedding server (keeps model in memory)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let embeddingServer: any = null;
 
 /**
@@ -162,8 +162,11 @@ async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
 }
 
 async function startEmbeddingServerIfAvailable(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   messageRouter?: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sessionStore?: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   graphHandler?: any
 ): Promise<void> {
   const port = EMBEDDING_PORT;
@@ -176,6 +179,7 @@ async function startEmbeddingServerIfAvailable(
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const embeddingServerModule = require('@jungjaehoon/mama-core/embedding-server');
     embeddingServer = await embeddingServerModule.startEmbeddingServer(port, {
       messageRouter,
@@ -190,6 +194,7 @@ async function startEmbeddingServerIfAvailable(
       await embeddingServerModule.warmModel();
       console.log('✓ Embedding model preloaded');
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     console.warn('[EmbeddingServer] Failed to start (optional):', err.message);
   }
@@ -443,6 +448,7 @@ export async function runAgentLoop(
 
   // Reasoning collector for Discord display
   let reasoningLog: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let turnCount = 0;
   let autoRecallUsed = false;
 
@@ -455,8 +461,10 @@ export async function runAgentLoop(
 
   if (!personaComplete) {
     console.log('⚙️  Onboarding mode (persona not found)');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const {
       COMPLETE_AUTONOMOUS_PROMPT,
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
     } = require('../../onboarding/complete-autonomous-prompt.js');
     systemPrompt = COMPLETE_AUTONOMOUS_PROMPT;
 
@@ -569,6 +577,7 @@ export async function runAgentLoop(
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     runWithContent: async (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       content: any[],
       options?: { userId?: string; source?: string; channelId?: string; systemPrompt?: string }
     ) => {
@@ -612,13 +621,16 @@ export async function runAgentLoop(
   };
 
   // Initialize message router with MAMA database
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { initDB } = require('@jungjaehoon/mama-core/db-manager');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const {
     suggest,
     save,
     updateOutcome,
     loadCheckpoint,
     list: listDecisions,
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
   } = require('@jungjaehoon/mama-core');
 
   // Initialize MAMA database first
@@ -639,8 +651,9 @@ export async function runAgentLoop(
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);
 
   // Prepare graph handler options (will be populated after gateways init)
-  let graphHandlerOptions: {
+  const graphHandlerOptions: {
     getAgentStates?: () => Map<string, string>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     getSwarmTasks?: (limit?: number) => Array<any>;
   } = {};
 
@@ -755,6 +768,7 @@ export async function runAgentLoop(
             ORDER BY completed_at DESC, claimed_at DESC
             LIMIT ?
           `);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return stmt.all(limit) as Array<any>;
         } catch (err) {
           console.error('[GraphAPI] Failed to fetch swarm tasks:', err);
@@ -1201,7 +1215,6 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   apiServer.app.use((req, res, next) => {
     if (req.path.startsWith('/api/session')) {
-      const http = require('http');
       const bodyData = req.body ? JSON.stringify(req.body) : '';
       const options = {
         hostname: 'localhost',
@@ -1214,6 +1227,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
           'content-length': Buffer.byteLength(bodyData),
         },
       };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const proxy = http.request(options, (proxyRes: any) => {
         res.writeHead(proxyRes.statusCode, proxyRes.headers);
         proxyRes.pipe(res, { end: true });
@@ -1262,17 +1276,18 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     console.log('✓ Setup WebSocket handler ready for /setup-ws');
 
     // Handle ALL WebSocket upgrades manually
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     apiServer.server.on('upgrade', (request: any, socket: any, head: any) => {
       const url = new URL(request.url || '', `http://${request.headers.host}`);
 
       if (url.pathname === '/setup-ws') {
         // Handle setup WebSocket locally
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         setupWss.handleUpgrade(request, socket, head, (ws: any) => {
           setupWss.emit('connection', ws, request);
         });
       } else if (url.pathname === '/ws') {
         // Proxy chat WebSocket to embedding server
-        const http = require('http');
         const options = {
           hostname: '127.0.0.1',
           port: EMBEDDING_PORT,
@@ -1285,6 +1300,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         };
 
         const proxyReq = http.request(options);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         proxyReq.on('upgrade', (proxyRes: any, proxySocket: any, _proxyHead: any) => {
           socket.write(
             `HTTP/1.1 101 Switching Protocols\r\n` +

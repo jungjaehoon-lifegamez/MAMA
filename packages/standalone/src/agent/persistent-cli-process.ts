@@ -60,12 +60,22 @@ export interface ToolUseBlock {
   input: Record<string, unknown>;
 }
 
+export interface ContentBlock {
+  type: 'text' | 'tool_use' | 'tool_result';
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+  tool_use_id?: string;
+  content?: string | Array<{ type: string; text?: string }>;
+}
+
 export interface StreamMessage {
   type: 'system' | 'assistant' | 'result' | 'error' | 'user';
   subtype?: string;
   message?: {
     role: string;
-    content: any[];
+    content: ContentBlock[];
     model?: string;
     id?: string;
     usage?: {
@@ -107,8 +117,8 @@ export interface PromptResult {
 
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
-  onToolUse?: (name: string, input: any) => void;
-  onFinal?: (response: any) => void;
+  onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  onFinal?: (response: { content: string; toolUseBlocks: ToolUseBlock[] }) => void;
   onError?: (error: Error) => void;
 }
 
@@ -412,7 +422,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       try {
         const event = JSON.parse(line) as StreamMessage;
         this.processEvent(event);
-      } catch (e) {
+      } catch {
         console.warn(`[PersistentCLI] Failed to parse JSON: ${line.substring(0, 100)}...`);
       }
     }
@@ -424,7 +434,7 @@ export class PersistentClaudeProcess extends EventEmitter {
         const event = JSON.parse(this.outputBuffer) as StreamMessage;
         this.processEvent(event);
         this.outputBuffer = ''; // Clear buffer after successful parse
-      } catch (e) {
+      } catch {
         // Not complete JSON yet, wait for more data
       }
     }
@@ -454,15 +464,16 @@ export class PersistentClaudeProcess extends EventEmitter {
               this.accumulatedText += block.text || '';
               this.currentCallbacks?.onDelta?.(block.text || '');
             } else if (block.type === 'tool_use') {
+              const toolName = block.name ?? 'unknown';
               const toolUse: ToolUseBlock = {
                 type: 'tool_use',
                 id: block.id || `tool_${randomUUID()}`,
-                name: block.name,
+                name: toolName,
                 input: block.input || {},
               };
               this.toolUseBlocks.push(toolUse);
-              this.currentCallbacks?.onToolUse?.(block.name, block.input);
-              console.log(`[PersistentCLI] Tool use: ${block.name}`);
+              this.currentCallbacks?.onToolUse?.(toolName, block.input ?? {});
+              console.log(`[PersistentCLI] Tool use: ${toolName}`);
             }
           }
         }

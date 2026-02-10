@@ -11,7 +11,7 @@ export type MessageSource = 'discord' | 'slack' | 'telegram' | 'chatwork' | 'mob
  * Content block for multimodal input (OpenClaw-style)
  */
 export interface ContentBlock {
-  type: 'text' | 'image';
+  type: 'text' | 'image' | 'document';
   text?: string;
   localPath?: string; // For image path reference
   source?: {
@@ -328,20 +328,6 @@ export interface PluginLogger {
 export interface AgentLoopInterface {
   run(prompt: string): Promise<{ response: string }>;
   runWithContent(content: ContentBlock[]): Promise<{ response: string }>;
-}
-
-/**
- * Content block for multimodal messages
- */
-export interface ContentBlock {
-  type: 'text' | 'image';
-  text?: string;
-  localPath?: string; // For image path reference
-  source?: {
-    type: 'base64';
-    media_type: string;
-    data: string;
-  };
 }
 
 /**

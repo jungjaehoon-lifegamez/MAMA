@@ -5,7 +5,7 @@
  * via Discord @mentions instead of internal DELEGATE:: patterns.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ToolPermissionManager } from '../../src/multi-agent/tool-permission-manager.js';
 import { MultiBotManager } from '../../src/multi-agent/multi-bot-manager.js';
 import type {
@@ -269,7 +269,7 @@ describe('Mention Delegation', () => {
 
       const mockMessage = {
         author: { id: 'main-bot-id', bot: true },
-      } as any;
+      } as { author: { id: string; bot: boolean } };
 
       expect(multiBotManager.isFromAgentBot(mockMessage)).toBe('main');
     });
@@ -277,7 +277,7 @@ describe('Mention Delegation', () => {
     it('should return null for non-agent bot messages', () => {
       const mockMessage = {
         author: { id: 'random-bot-id', bot: true },
-      } as any;
+      } as { author: { id: string; bot: boolean } };
 
       expect(multiBotManager.isFromAgentBot(mockMessage)).toBeNull();
     });

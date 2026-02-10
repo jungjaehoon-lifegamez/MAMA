@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { ChannelHistory, setChannelHistory } from '../../src/gateways/channel-history.js';
+import { ChannelHistory } from '../../src/gateways/channel-history.js';
 import type { HistoryEntry } from '../../src/gateways/channel-history.js';
 
 describe('ChannelHistory - SQLite Persistence', () => {
@@ -217,7 +217,7 @@ describe('ChannelHistory - SQLite Persistence', () => {
       ).run('channel-1', 'recent-msg', 'Bob', 'bob', 'Recent', oneDayAgo + 12 * 60 * 60 * 1000, 0);
 
       // Cleanup
-      const cleaned = (history as any).cleanupDb();
+      const _cleaned = (history as unknown as { cleanupDb: () => void }).cleanupDb();
 
       const remaining = db.prepare('SELECT COUNT(*) as count FROM channel_messages').get() as {
         count: number;
@@ -245,7 +245,7 @@ describe('ChannelHistory - SQLite Persistence', () => {
       }
 
       // Should log cleanup (check manually or mock console.log)
-      const cleaned = (history as any).cleanupDb();
+      const cleaned = (history as unknown as { cleanupDb: () => void }).cleanupDb();
       // Can't easily test console.log without mocking, but ensure no crash
       expect(cleaned).toBeUndefined();
     });

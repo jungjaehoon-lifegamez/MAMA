@@ -521,7 +521,7 @@ export class PRReviewPoller {
     let critical = 0;
     let major = 0;
     let minor = 0;
-    let other = 0;
+    let _other = 0;
 
     for (const c of comments) {
       // Use full body for severity detection
@@ -549,7 +549,7 @@ export class PRReviewPoller {
       ) {
         minor++;
       } else {
-        other++;
+        _other++;
       }
     }
 

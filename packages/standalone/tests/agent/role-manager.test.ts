@@ -2,7 +2,7 @@
  * Unit tests for RoleManager
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { RoleManager, getRoleManager, resetRoleManager } from '../../src/agent/role-manager.js';
 import type { RolesConfig, RoleConfig } from '../../src/cli/config/types.js';
 

@@ -6,7 +6,6 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
-import { AgentError } from '../../src/agent/types.js';
 import type { OAuthManager } from '../../src/auth/index.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 
@@ -150,7 +149,7 @@ describe('AgentLoop', () => {
   describe('error handling', () => {
     it('should handle max turns exceeded', async () => {
       const { ClaudeCLIWrapper } = await import('../../src/agent/claude-cli-wrapper.js');
-      (ClaudeCLIWrapper as any).mockImplementation(() => ({
+      (ClaudeCLIWrapper as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
         resetSession: vi.fn(),
         setSystemPrompt: vi.fn(),
         setSessionId: vi.fn(),
