@@ -97,7 +97,7 @@ describe('CliRunner', () => {
     });
 
     it('should throw on CLI error', async () => {
-      const error = new Error('CLI failed') as any;
+      const error = new Error('CLI failed') as Error & { status: number; stderr: string };
       error.status = 1;
       error.stderr = 'Error occurred';
       mockExecSync.mockImplementation(() => {
@@ -173,7 +173,7 @@ describe('CliRunner', () => {
 
   describe('timeout', () => {
     it('should throw on timeout', async () => {
-      const error = new Error('ETIMEDOUT') as any;
+      const error = new Error('ETIMEDOUT') as Error & { killed: boolean };
       error.killed = true;
       mockExecSync.mockImplementation(() => {
         throw error;

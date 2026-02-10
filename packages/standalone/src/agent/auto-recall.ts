@@ -39,6 +39,7 @@ interface MAMASuggestResult {
 
 // Singleton state
 let initialized = false;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mamaApi: any = null;
 
 /**
@@ -48,7 +49,7 @@ function formatReasoning(reasoning: string, maxLen: number = 80): string {
   if (!reasoning) return '';
 
   // Extract link patterns
-  const linkMatch = reasoning.match(/(builds_on|debates|synthesizes):\s*[\w\[\],\s_-]+/i);
+  const linkMatch = reasoning.match(/(builds_on|debates|synthesizes):\s*[\w[\],\s_-]+/i);
 
   // Truncate main reasoning
   const truncated = reasoning.length > maxLen ? reasoning.substring(0, maxLen) + '...' : reasoning;
@@ -76,14 +77,17 @@ async function initMAMA(dbPath?: string): Promise<void> {
 
   try {
     // Dynamic import of mama-core modules
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
     // Initialize database
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const dbManager = require('@jungjaehoon/mama-core/db-manager');
     await dbManager.initDB();
 
     initialized = true;
     console.log(`[AutoRecall] MAMA initialized (db: ${finalDbPath})`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     console.error('[AutoRecall] MAMA init failed:', err.message);
     // Don't throw - auto-recall should be optional
@@ -142,6 +146,7 @@ export async function autoRecall(
           threshold,
         });
         semanticResults = searchResult?.results || [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         console.error('[AutoRecall] Semantic search error:', err.message);
       }
@@ -151,6 +156,7 @@ export async function autoRecall(
     let checkpoint: MAMACheckpoint | null = null;
     try {
       checkpoint = await mamaApi.loadCheckpoint();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       console.error('[AutoRecall] Checkpoint load error:', err.message);
     }
@@ -160,6 +166,7 @@ export async function autoRecall(
     if (semanticResults.length === 0) {
       try {
         recentDecisions = await mamaApi.listDecisions({ limit: recentLimit });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         console.error('[AutoRecall] Recent decisions error:', err.message);
       }
@@ -222,6 +229,7 @@ export async function autoRecall(
       recentDecisions: recentDecisions.length,
       hasCheckpoint: !!checkpoint,
     };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     console.error('[AutoRecall] Error:', err.message);
     return null;
@@ -231,6 +239,7 @@ export async function autoRecall(
 /**
  * Direct MAMA API access (advanced usage)
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getMAMAApi(): any {
   return mamaApi;
 }

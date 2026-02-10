@@ -8,7 +8,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DiscordGateway } from '../../src/gateways/discord.js';
 import { MessageRouter } from '../../src/gateways/message-router.js';
-import type { GatewayEvent } from '../../src/gateways/types.js';
 
 // Mock discord.js
 vi.mock('discord.js', () => {

@@ -2,7 +2,7 @@
  * Tests for Multi-Agent Orchestrator
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { MultiAgentOrchestrator } from '../../src/multi-agent/orchestrator.js';
 import type { MultiAgentConfig, MessageContext } from '../../src/multi-agent/types.js';
 

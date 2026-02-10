@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { parseFrontmatter, matchesContext } from '../../src/agent/yaml-frontmatter.js';
-import type { AppliesTo, RuleContext } from '../../src/agent/yaml-frontmatter.js';
+import type { AppliesTo } from '../../src/agent/yaml-frontmatter.js';
 
 describe('parseFrontmatter()', () => {
   it('should extract applies_to from valid frontmatter', () => {

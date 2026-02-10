@@ -5,7 +5,7 @@
  * translated into --allowedTools/--disallowedTools CLI flags.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { PersistentClaudeProcess } from '../../src/agent/persistent-cli-process.js';
 
 // Access private buildArgs via prototype trick: construct instance, then call
@@ -15,7 +15,7 @@ function getBuildArgs(options: Record<string, unknown>): string[] {
     ...options,
   });
   // buildArgs is private, access via any cast
-  return (instance as any).buildArgs();
+  return (instance as unknown as { buildArgs: () => string[] }).buildArgs();
 }
 
 describe('PersistentClaudeProcess buildArgs() tool flags', () => {

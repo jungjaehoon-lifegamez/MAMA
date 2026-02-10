@@ -25,10 +25,10 @@ export interface SecurityTool {
   description: string;
   input_schema: {
     type: 'object';
-    properties: Record<string, any>;
+    properties: Record<string, unknown>;
     required: string[];
   };
-  handler: (input: SecurityToolInput) => Promise<any>;
+  handler: (input: SecurityToolInput) => Promise<Record<string, unknown>>;
 }
 
 const SECURITY_RISKS = {

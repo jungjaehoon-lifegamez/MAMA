@@ -165,6 +165,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         try {
           await tryListen();
           break; // Success
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (err: any) {
           if (err.code === 'EADDRINUSE' && attempt < MAX_RETRIES) {
             console.warn(
@@ -184,6 +185,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
               // Try to identify the process (informational only)
               let processInfo = '';
               try {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
                 const { execSync } = require('child_process');
                 processInfo = execSync(
                   `lsof -i :${attemptPort} 2>/dev/null | grep LISTEN || echo ""`,
@@ -205,6 +207,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
                   `⚠️  AUTO-KILL ENABLED: Attempting to kill process on port ${attemptPort}`
                 );
                 try {
+                  // eslint-disable-next-line @typescript-eslint/no-require-imports
                   const { execSync } = require('child_process');
                   execSync(`kill -9 $(lsof -ti:${attemptPort})`, { timeout: 3000 });
                   console.log(`✅ Process on port ${attemptPort} killed successfully`);

@@ -80,10 +80,6 @@ void _matchToolPattern;
  * Tries multiple paths: project root, ~/.mama, /etc/mama
  */
 function loadSystemPrompt(verbose = false): string {
-  const { readFileSync, existsSync } = require('fs');
-  const { join } = require('path');
-  const { homedir } = require('os');
-
   const searchPaths = [
     // User home - MAMA standalone config (priority)
     join(homedir(), '.mama/CLAUDE.md'),
@@ -119,10 +115,6 @@ function loadSystemPrompt(verbose = false): string {
  * @param context - Optional AgentContext for role-aware prompt injection
  */
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
-  const { readFileSync, existsSync } = require('fs');
-  const { join } = require('path');
-  const { homedir } = require('os');
-
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
 
@@ -460,7 +452,7 @@ export class AgentLoop {
     options?: AgentLoopOptions
   ): Promise<AgentLoopResult> {
     const history: Message[] = [];
-    let totalUsage = { input_tokens: 0, output_tokens: 0 };
+    const totalUsage = { input_tokens: 0, output_tokens: 0 };
     let turn = 0;
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
 
@@ -675,6 +667,7 @@ export class AgentLoop {
           ? parsedToolCalls.length > 0
           : piResult.hasToolUse || false;
 
+        // eslint-disable-next-line prefer-const
         response = {
           id: `msg_${Date.now()}`,
           type: 'message' as const,
@@ -1033,6 +1026,7 @@ export class AgentLoop {
         } else if (Array.isArray(content)) {
           const parts: string[] = [];
 
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           for (const block of content as any[]) {
             if (block.type === 'text') {
               parts.push(block.text);
@@ -1056,7 +1050,9 @@ export class AgentLoop {
                 );
               } else if (block.source?.data) {
                 // Base64 image - save to workspace and reference it
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
                 const fs = require('fs');
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
                 const path = require('path');
                 const mediaDir = path.join(
                   process.env.HOME || '',
@@ -1113,6 +1109,7 @@ export class AgentLoop {
           text = content;
         } else if (Array.isArray(content)) {
           const parts: string[] = [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           for (const block of content as any[]) {
             if (block.type === 'text') {
               parts.push(block.text);
@@ -1124,7 +1121,9 @@ export class AgentLoop {
               );
             } else if (block.type === 'image' && block.source?.data) {
               // Base64-encoded image — save to disk so persistent CLI can read it
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
               const fs = require('fs');
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
               const path = require('path');
               const mediaDir = path.join(
                 process.env.HOME || '',
