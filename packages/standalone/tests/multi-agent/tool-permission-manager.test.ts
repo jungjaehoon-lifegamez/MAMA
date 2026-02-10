@@ -101,7 +101,7 @@ describe('ToolPermissionManager', () => {
     });
 
     it('should fall back to Tier 2 (read-only) for unsupported tier values', () => {
-      const agent = makeAgent({ tier: 99 as any });
+      const agent = makeAgent({ tier: 99 as unknown as 1 | 2 | 3 });
       const perms = manager.resolvePermissions(agent);
       // Should NOT get Tier 1 all-access (fail-open)
       expect(perms.allowed).not.toEqual(['*']);

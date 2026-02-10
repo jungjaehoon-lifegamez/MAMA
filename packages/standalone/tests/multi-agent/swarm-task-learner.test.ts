@@ -4,10 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EventEmitter } from 'events';
-import {
-  SwarmTaskLearner,
-  type SwarmTaskLearnerOptions,
-} from '../../src/multi-agent/swarm/swarm-task-learner.js';
+import { SwarmTaskLearner } from '../../src/multi-agent/swarm/swarm-task-learner.js';
 import type {
   SwarmTaskRunner,
   TaskExecutionResult,
@@ -158,7 +155,7 @@ describe('SwarmTaskLearner', () => {
       mockRunner.emit('task-completed', result);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const savedDecision = (mockSaveFn.mock.calls[0][0] as any).decision;
+      const savedDecision = (mockSaveFn.mock.calls[0][0] as { decision: string }).decision;
       expect(savedDecision.length).toBe(200);
       expect(savedDecision).toContain('...');
     });

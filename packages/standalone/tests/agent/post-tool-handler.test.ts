@@ -221,7 +221,7 @@ describe('PostToolHandler', () => {
 
   describe('processInBackground() - deduplication', () => {
     it('should skip contracts that already exist (same topic and decision)', async () => {
-      executeTool.mockImplementation((toolName, input) => {
+      executeTool.mockImplementation((toolName, _input) => {
         if (toolName === 'mama_search') {
           return Promise.resolve({
             results: [

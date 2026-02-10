@@ -247,6 +247,8 @@ export class PostToolHandler {
         reasoning: formatted.reasoning,
         confidence: formatted.confidence,
       });
-    } catch {}
+    } catch {
+      // intentionally empty
+    }
   }
 }

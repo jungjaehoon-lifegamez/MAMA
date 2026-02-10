@@ -4,20 +4,31 @@
  * HTTP API endpoints for Graph Viewer.
  * Provides /graph endpoint for fetching decisions and edges data.
  * Provides /viewer endpoint for serving HTML viewer.
- *
- * Story 1.1: Graph API 엔드포인트 추가
- * Story 1.3: Viewer HTML 서빙
- *
- * @module graph-api
- * @version 1.1.0
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const yaml = require('js-yaml');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { timingSafeEqual } from 'node:crypto';
+import yaml from 'js-yaml';
+import type { IncomingMessage, ServerResponse } from 'http';
+import type {
+  GraphNode,
+  GraphEdge,
+  SimilarityEdge,
+  CheckpointData,
+  GraphHandlerOptions,
+  MemoryStats,
+  SessionStats,
+  GraphHandlerFn,
+} from './graph-api-types.js';
+
+// mama-core is pure JS with no .d.ts — require + any is intentional
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getAdapter, initDB, vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Config paths
@@ -32,12 +43,7 @@ const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const FAVICON_PATH = path.join(__dirname, '../../public/favicon.ico');
 
-/**
- * Get all decisions as graph nodes
- *
- * @returns {Promise<Array>} Array of node objects
- */
-async function getAllNodes() {
+async function getAllNodes(): Promise<GraphNode[]> {
   const adapter = getAdapter();
 
   const stmt = adapter.prepare(`
@@ -53,7 +59,15 @@ async function getAllNodes() {
     ORDER BY created_at DESC
   `);
 
-  const rows = stmt.all();
+  const rows = stmt.all() as Array<{
+    id: string;
+    topic: string;
+    decision: string;
+    reasoning: string;
+    outcome: string | null;
+    confidence: number | null;
+    created_at: number;
+  }>;
 
   return rows.map((row) => ({
     id: row.id,
@@ -66,12 +80,7 @@ async function getAllNodes() {
   }));
 }
 
-/**
- * Get all decision edges
- *
- * @returns {Promise<Array>} Array of edge objects
- */
-async function getAllEdges() {
+async function getAllEdges(): Promise<GraphEdge[]> {
   const adapter = getAdapter();
 
   const stmt = adapter.prepare(`
@@ -84,7 +93,12 @@ async function getAllEdges() {
     ORDER BY created_at DESC
   `);
 
-  const rows = stmt.all();
+  const rows = stmt.all() as Array<{
+    from_id: string;
+    to_id: string;
+    relationship: string;
+    reason: string | null;
+  }>;
 
   return rows.map((row) => ({
     from: row.from_id,
@@ -94,12 +108,16 @@ async function getAllEdges() {
   }));
 }
 
-/**
- * Get all checkpoints
- *
- * @returns {Promise<Array>} Array of checkpoint objects
- */
-async function getAllCheckpoints() {
+function safeParseJsonArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function getAllCheckpoints(): Promise<CheckpointData[]> {
   const adapter = getAdapter();
 
   const stmt = adapter.prepare(`
@@ -115,67 +133,45 @@ async function getAllCheckpoints() {
     LIMIT 50
   `);
 
-  const rows = stmt.all();
+  const rows = stmt.all() as Array<{
+    id: string;
+    timestamp: number;
+    summary: string;
+    open_files: string | null;
+    next_steps: string;
+    status: string | null;
+  }>;
 
   return rows.map((row) => ({
     id: row.id,
     timestamp: row.timestamp,
     summary: row.summary,
-    open_files: row.open_files ? JSON.parse(row.open_files) : [],
+    open_files: row.open_files ? safeParseJsonArray(row.open_files) : [],
     next_steps: row.next_steps,
     status: row.status,
   }));
 }
 
-/**
- * Get unique topics from nodes
- *
- * @param {Array} nodes - Array of node objects
- * @returns {Array<string>} Unique topics
- */
-function getUniqueTopics(nodes) {
+function getUniqueTopics(nodes: GraphNode[]): string[] {
   const topicSet = new Set(nodes.map((n) => n.topic));
   return Array.from(topicSet).sort();
 }
 
-/**
- * Filter nodes by topic
- *
- * @param {Array} nodes - Array of node objects
- * @param {string} topic - Topic to filter by
- * @returns {Array} Filtered nodes
- */
-function filterNodesByTopic(nodes, topic) {
+function filterNodesByTopic(nodes: GraphNode[], topic: string): GraphNode[] {
   return nodes.filter((n) => n.topic === topic);
 }
 
-/**
- * Filter edges to only include those connected to given nodes
- *
- * @param {Array} edges - Array of edge objects
- * @param {Array} nodes - Array of node objects (filtered)
- * @returns {Array} Filtered edges
- */
-function filterEdgesByNodes(edges, nodes) {
+function filterEdgesByNodes(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[] {
   const nodeIds = new Set(nodes.map((n) => n.id));
   return edges.filter((e) => nodeIds.has(e.from) || nodeIds.has(e.to));
 }
 
-/**
- * Serve static file with appropriate content type
- *
- * @param {Object} res - HTTP response
- * @param {string} filePath - Path to file
- * @param {string} contentType - MIME type
- */
-function serveStaticFile(res, filePath, contentType) {
+function serveStaticFile(res: ServerResponse, filePath: string, contentType: string): void {
   try {
-    // Binary content types should be read without encoding
     const isBinary = contentType.startsWith('image/') || contentType === 'application/octet-stream';
     const content = isBinary ? fs.readFileSync(filePath) : fs.readFileSync(filePath, 'utf8');
-    const etag = `"${Date.now()}"`; // Force browser to reload
+    const etag = `"${Date.now()}"`;
 
-    // Only add charset for text content types
     const fullContentType = isBinary ? contentType : `${contentType}; charset=utf-8`;
 
     res.writeHead(200, {
@@ -186,79 +182,53 @@ function serveStaticFile(res, filePath, contentType) {
       ETag: etag,
     });
     res.end(content);
-  } catch (error) {
-    console.error(`[GraphAPI] Static file error: ${error.message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] Static file error: ${message}`);
     res.writeHead(500, { 'Content-Type': 'text/plain' });
-    res.end('Error loading file: ' + error.message);
+    res.end('Error loading file: ' + message);
   }
 }
 
-/**
- * Handle GET /viewer request - serve HTML viewer
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-function handleViewerRequest(req, res) {
+function handleViewerRequest(_req: IncomingMessage, res: ServerResponse): void {
   serveStaticFile(res, VIEWER_HTML_PATH, 'text/html');
 }
 
-/**
- * Handle GET /viewer.css request
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-function handleCssRequest(req, res) {
+function handleCssRequest(_req: IncomingMessage, res: ServerResponse): void {
   serveStaticFile(res, VIEWER_CSS_PATH, 'text/css');
 }
 
-/**
- * Handle GET /viewer.js request
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-function handleJsRequest(req, res) {
+function handleJsRequest(_req: IncomingMessage, res: ServerResponse): void {
   serveStaticFile(res, VIEWER_JS_PATH, 'application/javascript');
 }
 
-/**
- * Handle GET /graph request
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- * @param {URLSearchParams} params - Query parameters
- */
-async function handleGraphRequest(req, res, params) {
+async function handleGraphRequest(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: URLSearchParams
+): Promise<void> {
   const startTime = Date.now();
 
   try {
-    // Ensure DB is initialized
     await initDB();
 
-    // Get all data
     let nodes = await getAllNodes();
     let edges = await getAllEdges();
 
-    // Apply topic filter if provided
     const topicFilter = params.get('topic');
     if (topicFilter) {
       nodes = filterNodesByTopic(nodes, topicFilter);
       edges = filterEdgesByNodes(edges, nodes);
     }
 
-    // Add similarity edges for clustering if requested
     const includeCluster = params.get('cluster') === 'true';
-    let similarityEdges = [];
+    let similarityEdges: SimilarityEdge[] = [];
     if (includeCluster) {
       similarityEdges = await getSimilarityEdges();
-      // Filter to only include edges for visible nodes
       const nodeIds = new Set(nodes.map((n) => n.id));
       similarityEdges = similarityEdges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to));
     }
 
-    // Build meta object
     const allTopics = topicFilter ? [topicFilter] : getUniqueTopics(nodes);
     const meta = {
       total_nodes: nodes.length,
@@ -269,8 +239,7 @@ async function handleGraphRequest(req, res, params) {
 
     const latency = Date.now() - startTime;
 
-    // Send response
-    res.writeHead(200);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         nodes,
@@ -280,30 +249,35 @@ async function handleGraphRequest(req, res, params) {
         latency,
       })
     );
-  } catch (error) {
-    console.error(`[GraphAPI] Error: ${error.message}`);
-    res.writeHead(500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] Error: ${message}`);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'INTERNAL_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Read request body as JSON
- */
-function readBody(req) {
+function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk) => (data += chunk));
+    req.on('data', (chunk: Buffer) => {
+      data += chunk;
+      if (data.length > 1_048_576) {
+        req.destroy();
+        reject(new Error('Request body too large (max 1MB)'));
+        return;
+      }
+    });
     req.on('end', () => {
       try {
-        resolve(JSON.parse(data));
-      } catch (e) {
+        resolve(JSON.parse(data) as Record<string, unknown>);
+      } catch {
         reject(new Error('Invalid JSON'));
       }
     });
@@ -311,18 +285,12 @@ function readBody(req) {
   });
 }
 
-/**
- * Handle POST /graph/update request - update decision outcome
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleUpdateRequest(req, res) {
+async function handleUpdateRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const body = await readBody(req);
 
     if (!body.id || !body.outcome) {
-      res.writeHead(400);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           error: true,
@@ -333,71 +301,63 @@ async function handleUpdateRequest(req, res) {
       return;
     }
 
-    // Ensure DB is initialized
     await initDB();
 
-    // Update outcome using mama-api
     await mama.updateOutcome(body.id, {
       outcome: body.outcome,
       failure_reason: body.reason,
     });
 
-    res.writeHead(200);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         success: true,
         id: body.id,
-        outcome: body.outcome.toUpperCase(),
+        outcome: String(body.outcome).toUpperCase(),
       })
     );
-  } catch (error) {
-    console.error(`[GraphAPI] Update error: ${error.message}`);
-    res.writeHead(500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] Update error: ${message}`);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'UPDATE_FAILED',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Get similarity edges for layout clustering
- * Returns edges between highly similar decisions (threshold > 0.7)
- *
- * @returns {Promise<Array>} Array of similarity edge objects
- */
-async function getSimilarityEdges() {
+async function getSimilarityEdges(): Promise<SimilarityEdge[]> {
   const adapter = getAdapter();
 
-  // Get all decisions (embeddings stored in vss_memories table)
   const stmt = adapter.prepare(`
     SELECT id, topic, decision FROM decisions
     ORDER BY created_at DESC
     LIMIT 100
   `);
-  const decisions = stmt.all(); // better-sqlite3 is synchronous
+  const decisions = stmt.all() as Array<{ id: string; topic: string; decision: string }>;
 
   if (decisions.length < 2) {
     return [];
   }
 
-  const similarityEdges = [];
-  const similarityEdgeKeys = new Set(); // O(1) duplicate checking
+  const similarityEdges: SimilarityEdge[] = [];
+  const similarityEdgeKeys = new Set<string>();
 
-  // For each decision, find its most similar peers
   for (const decision of decisions.slice(0, 50)) {
-    // Limit to first 50 for performance
     try {
       const query = `${decision.topic} ${decision.decision}`;
       const embedding = await generateEmbedding(query);
-      const similar = await vectorSearch(embedding, 3, 0.7); // Top 3 with >70% similarity
+      const similar = (await vectorSearch(embedding, 3, 0.7)) as Array<{
+        id: string;
+        similarity: number;
+      }>;
 
       for (const s of similar) {
         if (s.id !== decision.id && s.similarity > 0.7) {
-          // Avoid duplicates (A->B and B->A) using Set for O(1) lookup
           const edgeKey = [decision.id, s.id].sort().join('|');
           if (!similarityEdgeKeys.has(edgeKey)) {
             similarityEdges.push({
@@ -410,29 +370,27 @@ async function getSimilarityEdges() {
           }
         }
       }
-    } catch (e) {
-      console.error(`[GraphAPI] Similarity search error for ${decision.id}:`, e.message);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[GraphAPI] Similarity search error for ${decision.id}:`, msg);
     }
   }
 
   return similarityEdges;
 }
 
-/**
- * Handle GET /graph/similar request - find similar decisions
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- * @param {URLSearchParams} params - Query parameters (id required)
- */
-async function handleSimilarRequest(req, res, params) {
+async function handleSimilarRequest(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: URLSearchParams
+): Promise<void> {
   const startTime = Date.now();
   try {
     const decisionId = params.get('id');
     console.log(`[GraphAPI] Similar request for decision: ${decisionId}`);
 
     if (!decisionId) {
-      res.writeHead(400);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           error: true,
@@ -443,21 +401,21 @@ async function handleSimilarRequest(req, res, params) {
       return;
     }
 
-    // Ensure DB is initialized
     console.log(`[GraphAPI] Initializing DB...`);
     await initDB();
 
-    // Get the decision by ID
     console.log(`[GraphAPI] Fetching decision ${decisionId}...`);
     const adapter = getAdapter();
     const stmt = adapter.prepare(`
       SELECT topic, decision, reasoning FROM decisions WHERE id = ?
     `);
-    const decision = stmt.get(decisionId);
+    const decision = stmt.get(decisionId) as
+      | { topic: string; decision: string; reasoning: string }
+      | undefined;
 
     if (!decision) {
       console.log(`[GraphAPI] Decision ${decisionId} not found`);
-      res.writeHead(404);
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           error: true,
@@ -468,32 +426,35 @@ async function handleSimilarRequest(req, res, params) {
       return;
     }
 
-    // Build search query from decision content
     const searchQuery = `${decision.topic} ${decision.decision}`;
     console.log(
       `[GraphAPI] Searching for similar decisions with query: "${searchQuery.substring(0, 50)}..."`
     );
 
-    // Use mama.suggest for semantic search
     const searchStart = Date.now();
     const results = await mama.suggest(searchQuery, {
-      limit: 6, // Get 6 to filter out self
+      limit: 6,
       threshold: 0.5,
     });
     console.log(`[GraphAPI] Semantic search completed in ${Date.now() - searchStart}ms`);
 
-    // Filter out the current decision and format results
-    let similar = [];
+    let similar: Array<{
+      id: string;
+      topic: string;
+      decision: string;
+      similarity: number;
+      outcome: string | null;
+    }> = [];
     if (results && results.results) {
-      similar = results.results
+      similar = (results.results as Array<Record<string, unknown>>)
         .filter((r) => r.id !== decisionId)
         .slice(0, 5)
         .map((r) => ({
-          id: r.id,
-          topic: r.topic,
-          decision: r.decision,
-          similarity: r.similarity || r.final_score || 0.5,
-          outcome: r.outcome,
+          id: r.id as string,
+          topic: r.topic as string,
+          decision: r.decision as string,
+          similarity: (r.similarity ?? r.final_score ?? 0.5) as number,
+          outcome: (r.outcome ?? null) as string | null,
         }));
     }
 
@@ -503,7 +464,6 @@ async function handleSimilarRequest(req, res, params) {
 
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
     });
     res.end(
       JSON.stringify({
@@ -513,35 +473,33 @@ async function handleSimilarRequest(req, res, params) {
       })
     );
     console.log(`[GraphAPI] Response sent for ${decisionId}`);
-  } catch (error) {
-    console.error(`[GraphAPI] Similar error: ${error.message}`);
-    console.error(`[GraphAPI] Similar error stack:`, error.stack);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error(`[GraphAPI] Similar error: ${message}`);
+    console.error(`[GraphAPI] Similar error stack:`, stack);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'SEARCH_FAILED',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle GET /api/mama/search request - semantic search for decisions
- * Story 4-1: Memory tab search for mobile chat
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- * @param {URLSearchParams} params - Query parameters (q required, limit optional)
- */
-async function handleMamaSearchRequest(req, res, params) {
+async function handleMamaSearchRequest(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: URLSearchParams
+): Promise<void> {
   try {
     const query = params.get('q');
     const limit = Math.min(parseInt(params.get('limit') || '10', 10), 20);
 
     if (!query) {
-      res.writeHead(400);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           error: true,
@@ -552,31 +510,37 @@ async function handleMamaSearchRequest(req, res, params) {
       return;
     }
 
-    // Ensure DB is initialized
     await initDB();
 
-    // Use mama.suggest for semantic search
     const searchResults = await mama.suggest(query, {
       limit: limit,
-      threshold: 0.3, // Lower threshold to show more results
+      threshold: 0.3,
     });
 
-    // Format results for mobile display
-    let results = [];
+    let results: Array<{
+      id: string;
+      topic: string;
+      decision: string;
+      reasoning: string;
+      outcome: string | null;
+      confidence: number | null;
+      similarity: number;
+      created_at: number;
+    }> = [];
     if (searchResults && searchResults.results) {
-      results = searchResults.results.map((r) => ({
-        id: r.id,
-        topic: r.topic,
-        decision: r.decision,
-        reasoning: r.reasoning,
-        outcome: r.outcome,
-        confidence: r.confidence,
-        similarity: r.similarity || r.final_score || 0.5,
-        created_at: r.created_at,
+      results = (searchResults.results as Array<Record<string, unknown>>).map((r) => ({
+        id: r.id as string,
+        topic: r.topic as string,
+        decision: r.decision as string,
+        reasoning: r.reasoning as string,
+        outcome: (r.outcome ?? null) as string | null,
+        confidence: (r.confidence ?? null) as number | null,
+        similarity: (r.similarity ?? r.final_score ?? 0.5) as number,
+        created_at: r.created_at as number,
       }));
     }
 
-    res.writeHead(200);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         query,
@@ -584,33 +548,26 @@ async function handleMamaSearchRequest(req, res, params) {
         count: results.length,
       })
     );
-  } catch (error) {
-    console.error(`[GraphAPI] MAMA search error: ${error.message}`);
-    res.writeHead(500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] MAMA search error: ${message}`);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'SEARCH_FAILED',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle POST /api/mama/save request - save a new decision
- * Story 4-2: Save decisions from mobile chat UI
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleMamaSaveRequest(req, res) {
+async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const body = await readBody(req);
 
-    // Validate required fields
     if (!body.topic || !body.decision || !body.reasoning) {
-      res.writeHead(400);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           error: true,
@@ -621,18 +578,16 @@ async function handleMamaSaveRequest(req, res) {
       return;
     }
 
-    // Ensure DB is initialized
     await initDB();
 
-    // Save decision using mama.saveDecision
     const result = await mama.saveDecision({
       topic: body.topic,
       decision: body.decision,
       reasoning: body.reasoning,
-      confidence: body.confidence || 0.8,
+      confidence: body.confidence ?? 0.8,
     });
 
-    res.writeHead(200);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         success: true,
@@ -640,33 +595,29 @@ async function handleMamaSaveRequest(req, res) {
         message: 'Decision saved successfully',
       })
     );
-  } catch (error) {
-    console.error(`[GraphAPI] MAMA save error: ${error.message}`);
-    res.writeHead(500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] MAMA save error: ${message}`);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'SAVE_FAILED',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle POST /api/checkpoint/save request - save session checkpoint
- * Story 4-3: Auto checkpoint feature for mobile chat
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleCheckpointSaveRequest(req, res) {
+async function handleCheckpointSaveRequest(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
   try {
     const body = await readBody(req);
 
-    // Validate required fields
     if (!body.summary) {
-      res.writeHead(400);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           error: true,
@@ -677,17 +628,15 @@ async function handleCheckpointSaveRequest(req, res) {
       return;
     }
 
-    // Ensure DB is initialized
     await initDB();
 
-    // Save checkpoint using mama.saveCheckpoint
     const checkpointId = await mama.saveCheckpoint(
       body.summary,
       body.open_files || [],
       body.next_steps || ''
     );
 
-    res.writeHead(200);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         success: true,
@@ -695,36 +644,31 @@ async function handleCheckpointSaveRequest(req, res) {
         message: 'Checkpoint saved successfully',
       })
     );
-  } catch (error) {
-    console.error(`[GraphAPI] Checkpoint save error: ${error.message}`);
-    res.writeHead(500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] Checkpoint save error: ${message}`);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'SAVE_FAILED',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle GET /api/checkpoint/load request - load latest checkpoint
- * Story 4-3: Session resume feature for mobile chat
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleCheckpointLoadRequest(req, res) {
+async function handleCheckpointLoadRequest(
+  _req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
   try {
-    // Ensure DB is initialized
     await initDB();
 
-    // Load latest checkpoint using mama.loadCheckpoint
     const checkpoint = await mama.loadCheckpoint();
 
     if (!checkpoint) {
-      res.writeHead(404);
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           error: true,
@@ -735,138 +679,135 @@ async function handleCheckpointLoadRequest(req, res) {
       return;
     }
 
-    res.writeHead(200);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         success: true,
         checkpoint,
       })
     );
-  } catch (error) {
-    console.error(`[GraphAPI] Checkpoint load error: ${error.message}`);
-    res.writeHead(500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] Checkpoint load error: ${message}`);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'LOAD_FAILED',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle GET /checkpoints request - list all checkpoints
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleCheckpointsRequest(req, res) {
+async function handleCheckpointsRequest(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    // Ensure DB is initialized
     await initDB();
 
     const checkpoints = await getAllCheckpoints();
 
-    res.writeHead(200);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         checkpoints,
         count: checkpoints.length,
       })
     );
-  } catch (error) {
-    console.error(`[GraphAPI] Checkpoints error: ${error.message}`);
-    res.writeHead(500);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] Checkpoints error: ${message}`);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'CHECKPOINTS_FAILED',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Create route handler for graph API
- *
- * Returns a function that handles /graph and /viewer requests within the existing
- * embedding-http-server request handler.
- *
- * @returns {Function} Route handler function
- */
-/**
- * Create graph handler with optional dependencies
- *
- * @param {Object} options - Optional dependencies for multi-agent endpoints
- * @param {Function} options.getAgentStates - Returns Map<string, string> of agentId -> state
- * @param {Function} options.getSwarmTasks - Returns Array<SwarmTask> for recent delegations
- */
-function createGraphHandler(options = {}) {
-  return async function graphHandler(req, res) {
-    // Parse URL
+function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
+  return async function graphHandler(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    if (!req.url) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Bad Request');
+      return true;
+    }
+
     const url = new URL(req.url, `http://${req.headers.host}`);
     const pathname = url.pathname;
     const params = url.searchParams;
 
     console.log('[GraphHandler] Request:', req.method, pathname);
 
+    // Set CORS headers for all requests
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    // Handle preflight OPTIONS requests
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return true;
+    }
+
     // Route: GET / - redirect to /viewer
     if (pathname === '/' && req.method === 'GET') {
       console.log('[GraphHandler] Redirecting / to /viewer');
       res.writeHead(302, { Location: '/viewer' });
       res.end();
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET /viewer - serve HTML viewer
     if (pathname === '/viewer' && req.method === 'GET') {
       console.log('[GraphHandler] Serving viewer.html');
       handleViewerRequest(req, res);
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer/viewer.css - serve stylesheet
     if (pathname === '/viewer/viewer.css' && (req.method === 'GET' || req.method === 'HEAD')) {
       handleCssRequest(req, res);
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer.css - serve stylesheet (legacy path)
     if (pathname === '/viewer.css' && (req.method === 'GET' || req.method === 'HEAD')) {
       handleCssRequest(req, res);
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer.js - serve JavaScript
     if (pathname === '/viewer.js' && (req.method === 'GET' || req.method === 'HEAD')) {
       handleJsRequest(req, res);
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /sw.js - serve Service Worker
     if (pathname === '/sw.js' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, SW_JS_PATH, 'application/javascript');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer/sw.js - serve Service Worker (alternative path)
     if (pathname === '/viewer/sw.js' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, SW_JS_PATH, 'application/javascript');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer/manifest.json - serve PWA manifest
     if (pathname === '/viewer/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /favicon.ico - serve favicon
     if (pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, FAVICON_PATH, 'image/x-icon');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer/icons/*.png - serve PWA icons
@@ -875,10 +816,10 @@ function createGraphHandler(options = {}) {
       pathname.endsWith('.png') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop();
+      const fileName = pathname.split('/').pop()!;
       const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
       serveStaticFile(res, filePath, 'image/png');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer/icons/*.svg - serve SVG icons
@@ -887,10 +828,10 @@ function createGraphHandler(options = {}) {
       pathname.endsWith('.svg') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop();
+      const fileName = pathname.split('/').pop()!;
       const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
       serveStaticFile(res, filePath, 'image/svg+xml');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer/js/utils/*.js - serve utility modules
@@ -899,10 +840,10 @@ function createGraphHandler(options = {}) {
       pathname.endsWith('.js') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop();
+      const fileName = pathname.split('/').pop()!;
       const filePath = path.join(VIEWER_DIR, 'js', 'utils', fileName);
       serveStaticFile(res, filePath, 'application/javascript');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /viewer/js/modules/*.js - serve feature modules
@@ -911,10 +852,10 @@ function createGraphHandler(options = {}) {
       pathname.endsWith('.js') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop();
+      const fileName = pathname.split('/').pop()!;
       const filePath = path.join(VIEWER_DIR, 'js', 'modules', fileName);
       serveStaticFile(res, filePath, 'application/javascript');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /js/utils/*.js - serve utility modules (legacy path)
@@ -923,10 +864,10 @@ function createGraphHandler(options = {}) {
       pathname.endsWith('.js') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop();
+      const fileName = pathname.split('/').pop()!;
       const filePath = path.join(VIEWER_DIR, 'js', 'utils', fileName);
       serveStaticFile(res, filePath, 'application/javascript');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET/HEAD /js/modules/*.js - serve feature modules (legacy path)
@@ -935,117 +876,23 @@ function createGraphHandler(options = {}) {
       pathname.endsWith('.js') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop();
+      const fileName = pathname.split('/').pop()!;
       const filePath = path.join(VIEWER_DIR, 'js', 'modules', fileName);
       serveStaticFile(res, filePath, 'application/javascript');
-      return true; // Request handled
-    }
-
-    // Route: GET /viewer.css - serve stylesheet (legacy path)
-    if (pathname === '/viewer.css' && req.method === 'GET') {
-      handleCssRequest(req, res);
-      return true; // Request handled
-    }
-
-    // Route: GET /viewer.js - serve JavaScript
-    if (pathname === '/viewer.js' && req.method === 'GET') {
-      handleJsRequest(req, res);
-      return true; // Request handled
-    }
-
-    // Route: GET /sw.js - serve Service Worker
-    if (pathname === '/sw.js' && req.method === 'GET') {
-      serveStaticFile(res, SW_JS_PATH, 'application/javascript');
-      return true; // Request handled
-    }
-
-    // Route: GET /viewer/sw.js - serve Service Worker (alternative path)
-    if (pathname === '/viewer/sw.js' && req.method === 'GET') {
-      serveStaticFile(res, SW_JS_PATH, 'application/javascript');
-      return true; // Request handled
-    }
-
-    // Route: GET /viewer/manifest.json - serve PWA manifest
-    if (pathname === '/viewer/manifest.json' && req.method === 'GET') {
-      serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
-      return true; // Request handled
-    }
-
-    // Route: GET /viewer/icons/*.png - serve PWA icons
-    if (
-      pathname.startsWith('/viewer/icons/') &&
-      pathname.endsWith('.png') &&
-      req.method === 'GET'
-    ) {
-      const fileName = pathname.split('/').pop();
-      const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
-      serveStaticFile(res, filePath, 'image/png');
-      return true; // Request handled
-    }
-
-    // Route: GET /viewer/icons/*.svg - serve SVG icons
-    if (
-      pathname.startsWith('/viewer/icons/') &&
-      pathname.endsWith('.svg') &&
-      req.method === 'GET'
-    ) {
-      const fileName = pathname.split('/').pop();
-      const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
-      serveStaticFile(res, filePath, 'image/svg+xml');
-      return true; // Request handled
-    }
-
-    // Route: GET /viewer/js/utils/*.js - serve utility modules
-    if (
-      pathname.startsWith('/viewer/js/utils/') &&
-      pathname.endsWith('.js') &&
-      req.method === 'GET'
-    ) {
-      const fileName = pathname.split('/').pop();
-      const filePath = path.join(VIEWER_DIR, 'js', 'utils', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true; // Request handled
-    }
-
-    // Route: GET /viewer/js/modules/*.js - serve feature modules
-    if (
-      pathname.startsWith('/viewer/js/modules/') &&
-      pathname.endsWith('.js') &&
-      req.method === 'GET'
-    ) {
-      const fileName = pathname.split('/').pop();
-      const filePath = path.join(VIEWER_DIR, 'js', 'modules', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true; // Request handled
-    }
-
-    // Route: GET /js/utils/*.js - serve utility modules (legacy path)
-    if (pathname.startsWith('/js/utils/') && pathname.endsWith('.js') && req.method === 'GET') {
-      const fileName = pathname.split('/').pop();
-      const filePath = path.join(VIEWER_DIR, 'js', 'utils', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true; // Request handled
-    }
-
-    // Route: GET /js/modules/*.js - serve feature modules (legacy path)
-    if (pathname.startsWith('/js/modules/') && pathname.endsWith('.js') && req.method === 'GET') {
-      const fileName = pathname.split('/').pop();
-      const filePath = path.join(VIEWER_DIR, 'js', 'modules', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET /graph/similar - find similar decisions (check before /graph)
     if (pathname === '/graph/similar' && req.method === 'GET') {
       console.log('[GraphHandler] Routing to handleSimilarRequest');
       await handleSimilarRequest(req, res, params);
-      return true; // Request handled
+      return true;
     }
 
-    // Route: POST /graph/update - update decision outcome (Story 3.3)
+    // Route: POST /graph/update - update decision outcome
     if (pathname === '/graph/update' && req.method === 'POST') {
       await handleUpdateRequest(req, res);
-      return true; // Request handled
+      return true;
     }
 
     // Route: GET /graph - API endpoint
@@ -1054,7 +901,7 @@ function createGraphHandler(options = {}) {
       return true;
     }
 
-    // Alias: GET /api/graph → /graph
+    // Alias: GET /api/graph -> /graph
     if (pathname === '/api/graph' && req.method === 'GET') {
       await handleGraphRequest(req, res, params);
       return true;
@@ -1066,19 +913,19 @@ function createGraphHandler(options = {}) {
       return true;
     }
 
-    // Alias: GET /api/checkpoints → /checkpoints
+    // Alias: GET /api/checkpoints -> /checkpoints
     if (pathname === '/api/checkpoints' && req.method === 'GET') {
       await handleCheckpointsRequest(req, res);
       return true;
     }
 
-    // Route: GET /api/mama/search - semantic search for decisions (Story 4-1)
+    // Route: GET /api/mama/search - semantic search for decisions
     if (pathname === '/api/mama/search' && req.method === 'GET') {
       await handleMamaSearchRequest(req, res, params);
       return true;
     }
 
-    // Alias: GET /api/search → /api/mama/search (with query param conversion)
+    // Alias: GET /api/search -> /api/mama/search (with query param conversion)
     if (pathname === '/api/search' && req.method === 'GET') {
       const query = params.get('query');
       if (query) {
@@ -1088,31 +935,31 @@ function createGraphHandler(options = {}) {
       return true;
     }
 
-    // Route: POST /api/mama/save - save a new decision (Story 4-2)
+    // Route: POST /api/mama/save - save a new decision
     if (pathname === '/api/mama/save' && req.method === 'POST') {
       await handleMamaSaveRequest(req, res);
       return true;
     }
 
-    // Alias: POST /api/save → /api/mama/save
+    // Alias: POST /api/save -> /api/mama/save
     if (pathname === '/api/save' && req.method === 'POST') {
       await handleMamaSaveRequest(req, res);
       return true;
     }
 
-    // Alias: POST /api/update → /graph/update
+    // Alias: POST /api/update -> /graph/update
     if (pathname === '/api/update' && req.method === 'POST') {
       await handleUpdateRequest(req, res);
       return true;
     }
 
-    // Route: POST /api/checkpoint/save - save session checkpoint (Story 4-3)
+    // Route: POST /api/checkpoint/save - save session checkpoint
     if (pathname === '/api/checkpoint/save' && req.method === 'POST') {
       await handleCheckpointSaveRequest(req, res);
       return true;
     }
 
-    // Route: GET /api/checkpoint/load - load latest checkpoint (Story 4-3)
+    // Route: GET /api/checkpoint/load - load latest checkpoint
     if (pathname === '/api/checkpoint/load' && req.method === 'GET') {
       await handleCheckpointLoadRequest(req, res);
       return true;
@@ -1125,76 +972,68 @@ function createGraphHandler(options = {}) {
       return true;
     }
 
-    // Route: GET /api/dashboard/status - dashboard status (Phase 4)
+    // Route: GET /api/dashboard/status - dashboard status
     if (pathname === '/api/dashboard/status' && req.method === 'GET') {
       await handleDashboardStatusRequest(req, res);
       return true;
     }
 
-    // Route: GET /api/config - get current config (Phase 5)
+    // Route: GET /api/config - get current config
     if (pathname === '/api/config' && req.method === 'GET') {
       await handleGetConfigRequest(req, res);
       return true;
     }
 
-    // Route: PUT /api/config - update config (Phase 5)
+    // Route: PUT /api/config - update config
     if (pathname === '/api/config' && req.method === 'PUT') {
       await handleUpdateConfigRequest(req, res);
       return true;
     }
 
-    // Route: GET /api/memory/export - export decisions (Phase 6)
+    // Route: GET /api/memory/export - export decisions
     if (pathname === '/api/memory/export' && req.method === 'GET') {
       await handleExportRequest(req, res, params);
       return true;
     }
 
-    // Route: GET /api/multi-agent/status - get multi-agent system status (Sprint 3 F4)
+    // Route: GET /api/multi-agent/status - get multi-agent system status
     if (pathname === '/api/multi-agent/status' && req.method === 'GET') {
       await handleMultiAgentStatusRequest(req, res, options);
       return true;
     }
 
-    // Route: GET /api/multi-agent/agents - get all agents config (Sprint 3 F4)
+    // Route: GET /api/multi-agent/agents - get all agents config
     if (pathname === '/api/multi-agent/agents' && req.method === 'GET') {
       await handleMultiAgentAgentsRequest(req, res);
       return true;
     }
 
-    // Route: PUT /api/multi-agent/agents/:id - update agent config (Sprint 3 F4)
+    // Route: PUT /api/multi-agent/agents/:id - update agent config
     if (pathname.startsWith('/api/multi-agent/agents/') && req.method === 'PUT') {
       await handleMultiAgentUpdateAgentRequest(req, res, pathname);
       return true;
     }
 
-    // Route: GET /api/multi-agent/delegations - get recent delegations (Sprint 3 F4)
+    // Route: GET /api/multi-agent/delegations - get recent delegations
     if (pathname === '/api/multi-agent/delegations' && req.method === 'GET') {
       await handleMultiAgentDelegationsRequest(req, res, options);
       return true;
     }
 
-    return false; // Request not handled
+    return false;
   };
 }
 
-/**
- * Handle GET /api/dashboard/status - get system status for dashboard
- * Phase 4: Simplified config-based status (no process monitoring)
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleDashboardStatusRequest(req, res) {
+async function handleDashboardStatusRequest(
+  _req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
   try {
-    // Load config
     const config = loadMAMAConfig();
 
-    // Get memory stats from database
     await initDB();
     const memoryStats = await getMemoryStats();
 
-    // Build gateway status from config (simplified: config exists = configured)
-    // Include channel info for each gateway
     const gateways = {
       discord: {
         configured: !!config.discord?.token,
@@ -1218,7 +1057,6 @@ async function handleDashboardStatusRequest(req, res) {
       },
     };
 
-    // Heartbeat status
     const heartbeat = {
       enabled: config.heartbeat?.enabled ?? false,
       interval: config.heartbeat?.interval ?? 1800000,
@@ -1226,7 +1064,6 @@ async function handleDashboardStatusRequest(req, res) {
       quietEnd: config.heartbeat?.quiet_end ?? 8,
     };
 
-    // Agent config
     const agent = {
       model: config.agent?.model || 'claude-sonnet-4-20250514',
       maxTurns: config.agent?.max_turns ?? 10,
@@ -1234,7 +1071,6 @@ async function handleDashboardStatusRequest(req, res) {
       tools: config.agent?.tools || { gateway: ['*'], mcp: [] },
     };
 
-    // Get session statistics
     const sessionStats = getSessionStats();
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1251,41 +1087,37 @@ async function handleDashboardStatusRequest(req, res) {
         },
       })
     );
-  } catch (error) {
-    console.error(`[GraphAPI] Dashboard status error: ${error.message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[GraphAPI] Dashboard status error: ${message}`);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'DASHBOARD_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Load MAMA config from ~/.mama/config.yaml
- * Returns empty object if file doesn't exist
- */
-function loadMAMAConfig() {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function loadMAMAConfig(): Record<string, any> {
   try {
     if (!fs.existsSync(MAMA_CONFIG_PATH)) {
       console.log('[GraphAPI] Config file not found:', MAMA_CONFIG_PATH);
       return {};
     }
     const content = fs.readFileSync(MAMA_CONFIG_PATH, 'utf8');
-    return yaml.load(content) || {};
-  } catch (error) {
-    console.error('[GraphAPI] Config load error:', error.message);
+    return (yaml.load(content) as Record<string, unknown>) || {};
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Config load error:', message);
     return {};
   }
 }
 
-/**
- * Get memory statistics from database
- */
-async function getMemoryStats() {
+async function getMemoryStats(): Promise<MemoryStats> {
   try {
     const adapter = getAdapter();
 
@@ -1293,23 +1125,21 @@ async function getMemoryStats() {
     const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
     const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
 
-    // Total decisions
-    const totalResult = adapter.prepare('SELECT COUNT(*) as count FROM decisions').get();
+    const totalResult = adapter.prepare('SELECT COUNT(*) as count FROM decisions').get() as
+      | { count: number }
+      | undefined;
     const total = totalResult?.count ?? 0;
 
-    // This week
     const weekResult = adapter
       .prepare('SELECT COUNT(*) as count FROM decisions WHERE created_at > ?')
-      .get(weekAgo);
+      .get(weekAgo) as { count: number } | undefined;
     const thisWeek = weekResult?.count ?? 0;
 
-    // This month
     const monthResult = adapter
       .prepare('SELECT COUNT(*) as count FROM decisions WHERE created_at > ?')
-      .get(monthAgo);
+      .get(monthAgo) as { count: number } | undefined;
     const thisMonth = monthResult?.count ?? 0;
 
-    // Outcomes
     const outcomeResults = adapter
       .prepare(
         `
@@ -1319,14 +1149,13 @@ async function getMemoryStats() {
       GROUP BY outcome
     `
       )
-      .all();
+      .all() as Array<{ outcome: string | null; count: number }>;
 
-    const outcomes = {};
+    const outcomes: Record<string, number> = {};
     for (const row of outcomeResults) {
       outcomes[row.outcome?.toLowerCase() ?? 'unknown'] = row.count;
     }
 
-    // Top topics
     const topicResults = adapter
       .prepare(
         `
@@ -1338,10 +1167,11 @@ async function getMemoryStats() {
       LIMIT 5
     `
       )
-      .all();
+      .all() as Array<{ topic: string; count: number }>;
 
-    // Total checkpoints
-    const checkpointResult = adapter.prepare('SELECT COUNT(*) as count FROM checkpoints').get();
+    const checkpointResult = adapter.prepare('SELECT COUNT(*) as count FROM checkpoints').get() as
+      | { count: number }
+      | undefined;
     const checkpoints = checkpointResult?.count ?? 0;
 
     return {
@@ -1352,8 +1182,9 @@ async function getMemoryStats() {
       outcomes,
       topTopics: topicResults,
     };
-  } catch (error) {
-    console.error('[GraphAPI] Memory stats error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Memory stats error:', message);
     return {
       total: 0,
       thisWeek: 0,
@@ -1365,16 +1196,10 @@ async function getMemoryStats() {
   }
 }
 
-/**
- * Get session statistics from sessions database
- * Shows active sessions per source/channel
- */
-function getSessionStats() {
+function getSessionStats(): SessionStats {
   try {
-    // Session DB path is derived from config.database.path
-    // Default: ~/.claude/mama-memory.db → ~/.claude/mama-sessions.db
     const config = loadMAMAConfig();
-    const memoryDbPath = config.database?.path || '~/.claude/mama-memory.db';
+    const memoryDbPath: string = config.database?.path || '~/.claude/mama-memory.db';
     const expandedPath = memoryDbPath.startsWith('~/')
       ? path.join(os.homedir(), memoryDbPath.slice(2))
       : memoryDbPath;
@@ -1384,10 +1209,10 @@ function getSessionStats() {
       return { total: 0, bySource: {}, channels: [] };
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Database = require('better-sqlite3');
     const sessionsDb = new Database(sessionsDbPath);
 
-    // Get session counts by source
     const bySourceRows = sessionsDb
       .prepare(
         `
@@ -1396,16 +1221,15 @@ function getSessionStats() {
         GROUP BY source
       `
       )
-      .all();
+      .all() as Array<{ source: string; count: number }>;
 
-    const bySource = {};
+    const bySource: Record<string, number> = {};
     let total = 0;
     for (const row of bySourceRows) {
       bySource[row.source] = row.count;
       total += row.count;
     }
 
-    // Get recent active channels with message counts and channel names
     const channelRows = sessionsDb
       .prepare(
         `
@@ -1420,7 +1244,13 @@ function getSessionStats() {
         LIMIT 10
       `
       )
-      .all();
+      .all() as Array<{
+      source: string;
+      channel_id: string;
+      channel_name: string | null;
+      last_active: number;
+      message_count: number;
+    }>;
 
     const channels = channelRows.map((row) => ({
       source: row.source,
@@ -1433,26 +1263,21 @@ function getSessionStats() {
     sessionsDb.close();
 
     return { total, bySource, channels };
-  } catch (error) {
-    console.error('[GraphAPI] Session stats error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Session stats error:', message);
     return { total: 0, bySource: {}, channels: [] };
   }
 }
 
-/**
- * Handle GET /api/config - get current configuration
- * Phase 5: Settings Management
- */
-async function handleGetConfigRequest(req, res) {
+async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const config = loadMAMAConfig();
 
-    // Mask sensitive tokens (show only last 4 chars)
     const maskedConfig = {
       version: config.version || 1,
       agent: {
         ...(config.agent || {}),
-        // Expose tools config for transparency (no black box)
         tools: config.agent?.tools || {
           gateway: ['*'],
           mcp: [],
@@ -1493,7 +1318,6 @@ async function handleGetConfigRequest(req, res) {
         quiet_start: 23,
         quiet_end: 8,
       },
-      // Role-based permissions (Phase: Agent Role Awareness)
       roles: config.roles || {
         definitions: {
           os_agent: {
@@ -1520,7 +1344,6 @@ async function handleGetConfigRequest(req, res) {
           chatwork: 'chat_bot',
         },
       },
-      // Multi-agent configuration (Sprint 3)
       multi_agent: config.multi_agent
         ? {
             enabled: config.multi_agent.enabled || false,
@@ -1540,34 +1363,44 @@ async function handleGetConfigRequest(req, res) {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(maskedConfig));
-  } catch (error) {
-    console.error('[GraphAPI] Get config error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Get config error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'CONFIG_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle PUT /api/config - update configuration
- * Phase 5: Settings Management
- */
-async function handleUpdateConfigRequest(req, res) {
+async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    // Security: This endpoint is only accessible on localhost (127.0.0.1/::1)
+    // The API server binds to localhost only and is not exposed externally
+
+    // Check authentication first
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required. Set Authorization header with valid token.',
+        })
+      );
+      return;
+    }
+
     const body = await readBody(req);
 
-    // Load current config
     const currentConfig = loadMAMAConfig();
 
-    // Merge updates (preserve existing tokens if masked value sent)
     const updatedConfig = mergeConfigUpdates(currentConfig, body);
 
-    // Validate
     const errors = validateConfigUpdate(updatedConfig);
     if (errors.length > 0) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1581,7 +1414,6 @@ async function handleUpdateConfigRequest(req, res) {
       return;
     }
 
-    // Save config
     saveMAMAConfig(updatedConfig);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1591,35 +1423,55 @@ async function handleUpdateConfigRequest(req, res) {
         message: 'Configuration saved successfully',
       })
     );
-  } catch (error) {
-    console.error('[GraphAPI] Update config error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Update config error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'CONFIG_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Mask a token to show only last 4 characters
- */
-function maskToken(token) {
-  if (!token || token.length < 8) {
-    return '****';
+function maskToken(token: string): string {
+  if (!token || token.length < 4) {
+    return '***[redacted]***';
   }
-  return '****' + token.slice(-4);
+  return '***[redacted]***';
 }
 
-/**
- * Mask tokens in multi-agent config
- * Returns agents object with masked bot tokens
- */
-function maskAgentsTokens(agents) {
-  const masked = {};
+function isAuthenticated(req: IncomingMessage): boolean {
+  const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
+  if (!adminToken) {
+    console.warn(
+      '[GraphAPI] No admin token configured. Set MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN environment variable.'
+    );
+    return false;
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return false;
+  }
+
+  // Support both "Bearer token" and "token" formats
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+
+  // Use timing-safe comparison to prevent timing side-channel attacks
+  if (token.length !== adminToken.length) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(token), Buffer.from(adminToken));
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function maskAgentsTokens(agents: Record<string, any>): Record<string, any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const masked: Record<string, any> = {};
   for (const [id, agent] of Object.entries(agents)) {
     masked[id] = { ...agent };
     if (agent.bot_token) {
@@ -1635,103 +1487,144 @@ function maskAgentsTokens(agents) {
   return masked;
 }
 
-/**
- * Merge config updates, preserving existing tokens if masked value sent
- */
-function mergeConfigUpdates(current, updates) {
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function mergeConfigUpdates(
+  current: Record<string, any>,
+  updates: Record<string, unknown>
+): Record<string, any> {
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   const merged = { ...current };
 
-  // Agent config
   if (updates.agent) {
     merged.agent = {
       ...current.agent,
-      ...updates.agent,
+      ...(updates.agent as Record<string, unknown>),
     };
   }
 
-  // Heartbeat config
   if (updates.heartbeat) {
     merged.heartbeat = {
       ...current.heartbeat,
-      ...updates.heartbeat,
+      ...(updates.heartbeat as Record<string, unknown>),
     };
   }
 
-  // Discord config
   if (updates.discord) {
+    const discordUpdates = updates.discord as Record<string, unknown>;
     merged.discord = {
       ...current.discord,
-      enabled: updates.discord.enabled,
-      default_channel_id: updates.discord.default_channel_id || current.discord?.default_channel_id,
+      enabled: discordUpdates.enabled,
+      default_channel_id: discordUpdates.default_channel_id || current.discord?.default_channel_id,
     };
-    // Only update token if not masked
-    if (updates.discord.token && !updates.discord.token.startsWith('****')) {
-      merged.discord.token = updates.discord.token;
+    if (discordUpdates.token && typeof discordUpdates.token === 'string') {
+      const isMasked =
+        discordUpdates.token === '***[redacted]***' ||
+        (discordUpdates.token.startsWith('***[') && discordUpdates.token.endsWith(']***'));
+      if (!isMasked) {
+        merged.discord.token = discordUpdates.token;
+      }
     }
   }
 
-  // Slack config
   if (updates.slack) {
+    const slackUpdates = updates.slack as Record<string, unknown>;
     merged.slack = {
       ...current.slack,
-      enabled: updates.slack.enabled,
+      enabled: slackUpdates.enabled,
     };
-    if (updates.slack.bot_token && !updates.slack.bot_token.startsWith('****')) {
-      merged.slack.bot_token = updates.slack.bot_token;
+    if (slackUpdates.bot_token && typeof slackUpdates.bot_token === 'string') {
+      const isMasked =
+        slackUpdates.bot_token === '***[redacted]***' ||
+        (slackUpdates.bot_token.startsWith('***[') && slackUpdates.bot_token.endsWith(']***'));
+      if (!isMasked) {
+        merged.slack.bot_token = slackUpdates.bot_token;
+      }
     }
-    if (updates.slack.app_token && !updates.slack.app_token.startsWith('****')) {
-      merged.slack.app_token = updates.slack.app_token;
+    if (slackUpdates.app_token && typeof slackUpdates.app_token === 'string') {
+      const isMasked =
+        slackUpdates.app_token === '***[redacted]***' ||
+        (slackUpdates.app_token.startsWith('***[') && slackUpdates.app_token.endsWith(']***'));
+      if (!isMasked) {
+        merged.slack.app_token = slackUpdates.app_token;
+      }
     }
   }
 
-  // Telegram config
   if (updates.telegram) {
+    const telegramUpdates = updates.telegram as Record<string, unknown>;
     merged.telegram = {
       ...current.telegram,
-      enabled: updates.telegram.enabled,
+      enabled: telegramUpdates.enabled,
     };
-    if (updates.telegram.token && !updates.telegram.token.startsWith('****')) {
-      merged.telegram.token = updates.telegram.token;
+    if (telegramUpdates.token && typeof telegramUpdates.token === 'string') {
+      const isMasked =
+        telegramUpdates.token === '***[redacted]***' ||
+        (telegramUpdates.token.startsWith('***[') && telegramUpdates.token.endsWith(']***'));
+      if (!isMasked) {
+        merged.telegram.token = telegramUpdates.token;
+      }
     }
   }
 
-  // Chatwork config
   if (updates.chatwork) {
+    const chatworkUpdates = updates.chatwork as Record<string, unknown>;
     merged.chatwork = {
       ...current.chatwork,
-      enabled: updates.chatwork.enabled,
+      enabled: chatworkUpdates.enabled,
     };
-    if (updates.chatwork.api_token && !updates.chatwork.api_token.startsWith('****')) {
-      merged.chatwork.api_token = updates.chatwork.api_token;
+    if (chatworkUpdates.api_token && typeof chatworkUpdates.api_token === 'string') {
+      const isMasked =
+        chatworkUpdates.api_token === '***[redacted]***' ||
+        (chatworkUpdates.api_token.startsWith('***[') &&
+          chatworkUpdates.api_token.endsWith(']***'));
+      if (!isMasked) {
+        merged.chatwork.api_token = chatworkUpdates.api_token;
+      }
     }
   }
 
-  // Multi-agent config (Sprint 3)
   if (updates.multi_agent) {
+    const multiAgentUpdates = updates.multi_agent as Record<string, unknown>;
     merged.multi_agent = {
       ...current.multi_agent,
-      ...updates.multi_agent,
+      ...multiAgentUpdates,
     };
 
-    // Merge agents, preserving existing tokens if masked
-    if (updates.multi_agent.agents) {
+    if (multiAgentUpdates.agents) {
+      const agentUpdatesMap = multiAgentUpdates.agents as Record<string, Record<string, unknown>>;
       merged.multi_agent.agents = { ...current.multi_agent?.agents };
-      for (const [agentId, agentUpdates] of Object.entries(updates.multi_agent.agents)) {
+      for (const [agentId, agentUpdates] of Object.entries(agentUpdatesMap)) {
         const currentAgent = current.multi_agent?.agents?.[agentId] || {};
         merged.multi_agent.agents[agentId] = {
           ...currentAgent,
           ...agentUpdates,
         };
 
-        // Preserve existing tokens if masked
-        if (agentUpdates.bot_token && agentUpdates.bot_token.startsWith('****')) {
-          merged.multi_agent.agents[agentId].bot_token = currentAgent.bot_token;
+        if (agentUpdates.bot_token && typeof agentUpdates.bot_token === 'string') {
+          const isMasked =
+            agentUpdates.bot_token === '***[redacted]***' ||
+            (agentUpdates.bot_token.startsWith('***[') && agentUpdates.bot_token.endsWith(']***'));
+          if (isMasked) {
+            merged.multi_agent.agents[agentId].bot_token = currentAgent.bot_token;
+          }
         }
-        if (agentUpdates.slack_bot_token && agentUpdates.slack_bot_token.startsWith('****')) {
-          merged.multi_agent.agents[agentId].slack_bot_token = currentAgent.slack_bot_token;
+        if (agentUpdates.slack_bot_token && typeof agentUpdates.slack_bot_token === 'string') {
+          const isMasked =
+            agentUpdates.slack_bot_token === '***[redacted]***' ||
+            (agentUpdates.slack_bot_token.startsWith('***[') &&
+              agentUpdates.slack_bot_token.endsWith(']***'));
+          if (isMasked) {
+            merged.multi_agent.agents[agentId].slack_bot_token = currentAgent.slack_bot_token;
+          }
         }
-        if (agentUpdates.slack_app_token && agentUpdates.slack_app_token.startsWith('****')) {
-          merged.multi_agent.agents[agentId].slack_app_token = currentAgent.slack_app_token;
+        if (agentUpdates.slack_app_token && typeof agentUpdates.slack_app_token === 'string') {
+          const isMasked =
+            agentUpdates.slack_app_token === '***[redacted]***' ||
+            (agentUpdates.slack_app_token.startsWith('***[') &&
+              agentUpdates.slack_app_token.endsWith(']***'));
+          if (isMasked) {
+            merged.multi_agent.agents[agentId].slack_app_token = currentAgent.slack_app_token;
+          }
         }
       }
     }
@@ -1740,11 +1633,9 @@ function mergeConfigUpdates(current, updates) {
   return merged;
 }
 
-/**
- * Validate config update
- */
-function validateConfigUpdate(config) {
-  const errors = [];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function validateConfigUpdate(config: Record<string, any>): string[] {
+  const errors: string[] = [];
 
   if (config.agent) {
     if (config.agent.max_turns && (config.agent.max_turns < 1 || config.agent.max_turns > 100)) {
@@ -1764,13 +1655,10 @@ function validateConfigUpdate(config) {
   return errors;
 }
 
-/**
- * Save MAMA config to ~/.mama/config.yaml
- */
-function saveMAMAConfig(config) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function saveMAMAConfig(config: Record<string, any>): void {
   const configDir = path.dirname(MAMA_CONFIG_PATH);
 
-  // Ensure directory exists
   if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
   }
@@ -1791,22 +1679,21 @@ ${content}`;
   console.log('[GraphAPI] Config saved to:', MAMA_CONFIG_PATH);
 }
 
-/**
- * Handle GET /api/memory/export - export decisions
- * Phase 6: Memory Analytics
- * Supports formats: json, markdown, csv
- */
-async function handleExportRequest(req, res, params) {
+async function handleExportRequest(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: URLSearchParams
+): Promise<void> {
   try {
     const format = params.get('format') || 'json';
 
-    // Ensure DB is initialized
     await initDB();
 
-    // Get all decisions
     const decisions = await getAllNodes();
 
-    let content, contentType, filename;
+    let content: string;
+    let contentType: string;
+    let filename: string;
 
     switch (format) {
       case 'markdown':
@@ -1832,23 +1719,21 @@ async function handleExportRequest(req, res, params) {
       'Content-Disposition': `attachment; filename="${filename}"`,
     });
     res.end(content);
-  } catch (error) {
-    console.error('[GraphAPI] Export error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Export error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'EXPORT_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Export decisions to Markdown format
- */
-function exportToMarkdown(decisions) {
+function exportToMarkdown(decisions: GraphNode[]): string {
   const lines = [
     '# MAMA Decisions Export',
     '',
@@ -1882,41 +1767,43 @@ function exportToMarkdown(decisions) {
   return lines.join('\n');
 }
 
-/**
- * Handle GET /api/multi-agent/status - get multi-agent system status
- * Sprint 3 F4: Dashboard agent status panel
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleMultiAgentStatusRequest(req, res, options = {}) {
+async function handleMultiAgentStatusRequest(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  options: GraphHandlerOptions = {}
+): Promise<void> {
   try {
     const config = loadMAMAConfig();
     const multiAgentConfig = config.multi_agent || { enabled: false, agents: {} };
 
-    // Get real-time agent states if available
     const agentStatesMap = options.getAgentStates ? options.getAgentStates() : null;
 
-    // Build agents array with status
-    const agents = [];
+    const agents: Array<{
+      id: string;
+      name: string;
+      tier: number;
+      model: string;
+      status: string;
+      lastActivity: null;
+    }> = [];
     if (multiAgentConfig.enabled && multiAgentConfig.agents) {
-      for (const [id, agentConfig] of Object.entries(multiAgentConfig.agents)) {
-        // Determine status: real-time if available, else disabled/online from config
+      for (const [id, agentConfig] of Object.entries(multiAgentConfig.agents) as Array<
+        [string, Record<string, unknown>]
+      >) {
         let status = 'online';
         if (agentConfig.enabled === false) {
           status = 'disabled';
         } else if (agentStatesMap && agentStatesMap.has(id)) {
-          // Real-time status from AgentProcessManager
-          status = agentStatesMap.get(id);
+          status = agentStatesMap.get(id)!;
         }
 
         agents.push({
           id,
-          name: agentConfig.name || id,
-          tier: agentConfig.tier || 1,
-          model: agentConfig.model || config.agent?.model || 'claude-sonnet-4-20250514',
+          name: (agentConfig.name as string) || id,
+          tier: (agentConfig.tier as number) || 1,
+          model: (agentConfig.model as string) || config.agent?.model || 'claude-sonnet-4-20250514',
           status,
-          lastActivity: null, // TODO: track from CLI process manager (future)
+          lastActivity: null,
         });
       }
     }
@@ -1926,39 +1813,38 @@ async function handleMultiAgentStatusRequest(req, res, options = {}) {
       JSON.stringify({
         enabled: multiAgentConfig.enabled || false,
         agents,
-        recentDelegations: [], // Moved to /delegations endpoint
-        activeChains: 0, // TODO: track from chain manager (future)
+        recentDelegations: [],
+        activeChains: 0,
       })
     );
-  } catch (error) {
-    console.error('[GraphAPI] Multi-agent status error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Multi-agent status error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'MULTI_AGENT_STATUS_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle GET /api/multi-agent/agents - get all agents config
- * Sprint 3 F4: Settings UI agent list
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleMultiAgentAgentsRequest(req, res) {
+async function handleMultiAgentAgentsRequest(
+  _req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
   try {
     const config = loadMAMAConfig();
     const multiAgentConfig = config.multi_agent || { enabled: false, agents: {} };
 
-    // Convert agents object to array with masked tokens
-    const agentsList = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const agentsList: Array<Record<string, any>> = [];
     if (multiAgentConfig.agents) {
-      for (const [id, agentConfig] of Object.entries(multiAgentConfig.agents)) {
+      for (const [id, agentConfig] of Object.entries(multiAgentConfig.agents) as Array<
+        [string, Record<string, unknown>]
+      >) {
         agentsList.push({
           id,
           name: agentConfig.name || id,
@@ -1968,12 +1854,12 @@ async function handleMultiAgentAgentsRequest(req, res) {
           enabled: agentConfig.enabled !== false,
           persona_file: agentConfig.persona_file || null,
           trigger_prefix: agentConfig.trigger_prefix || null,
-          bot_token: agentConfig.bot_token ? maskToken(agentConfig.bot_token) : null,
+          bot_token: agentConfig.bot_token ? maskToken(agentConfig.bot_token as string) : null,
           slack_bot_token: agentConfig.slack_bot_token
-            ? maskToken(agentConfig.slack_bot_token)
+            ? maskToken(agentConfig.slack_bot_token as string)
             : null,
           slack_app_token: agentConfig.slack_app_token
-            ? maskToken(agentConfig.slack_app_token)
+            ? maskToken(agentConfig.slack_app_token as string)
             : null,
           auto_respond_keywords: agentConfig.auto_respond_keywords || [],
           cooldown_ms: agentConfig.cooldown_ms || 5000,
@@ -1985,30 +1871,39 @@ async function handleMultiAgentAgentsRequest(req, res) {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ agents: agentsList }));
-  } catch (error) {
-    console.error('[GraphAPI] Multi-agent agents list error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Multi-agent agents list error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'MULTI_AGENT_AGENTS_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle PUT /api/multi-agent/agents/:id - update agent config
- * Sprint 3 F4: Settings UI agent update
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- * @param {string} pathname - Request pathname
- */
-async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
+async function handleMultiAgentUpdateAgentRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string
+): Promise<void> {
   try {
-    // Extract agent ID from URL (n1: improved regex to exclude slashes)
+    // Security: require authentication for config-writing endpoint
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required. Set Authorization header with valid token.',
+        })
+      );
+      return;
+    }
+
     const match = pathname.match(/\/api\/multi-agent\/agents\/([^/]+)/);
     if (!match) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2024,7 +1919,6 @@ async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
 
     const agentId = match[1];
 
-    // m1: Validate agent ID format (alphanumeric, underscore, hyphen only)
     if (!/^[a-z0-9_-]+$/i.test(agentId)) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
@@ -2039,7 +1933,6 @@ async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
 
     const body = await readBody(req);
 
-    // Load current config
     const config = loadMAMAConfig();
     if (!config.multi_agent) {
       config.multi_agent = { enabled: false, agents: {} };
@@ -2059,49 +1952,60 @@ async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
       return;
     }
 
-    // Merge updates, preserve existing tokens if masked
     const currentAgent = config.multi_agent.agents[agentId];
     const updatedAgent = { ...currentAgent };
 
-    // Update non-token fields
-    if (body.name !== undefined) {
-      updatedAgent.name = body.name;
+    // Validate critical field types before applying
+    const validationErrors: string[] = [];
+    if (
+      body.tier !== undefined &&
+      (typeof body.tier !== 'number' || body.tier < 1 || body.tier > 3)
+    ) {
+      validationErrors.push('tier must be a number between 1 and 3');
     }
-    if (body.display_name !== undefined) {
-      updatedAgent.display_name = body.display_name;
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      validationErrors.push('enabled must be a boolean');
     }
-    if (body.tier !== undefined) {
-      updatedAgent.tier = body.tier;
+    if (
+      body.cooldown_ms !== undefined &&
+      (typeof body.cooldown_ms !== 'number' || body.cooldown_ms < 0)
+    ) {
+      validationErrors.push('cooldown_ms must be a non-negative number');
     }
-    if (body.model !== undefined) {
-      updatedAgent.model = body.model;
+    if (body.can_delegate !== undefined && typeof body.can_delegate !== 'boolean') {
+      validationErrors.push('can_delegate must be a boolean');
     }
-    if (body.enabled !== undefined) {
-      updatedAgent.enabled = body.enabled;
+
+    if (validationErrors.length > 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'VALIDATION_ERROR',
+          message: validationErrors.join(', '),
+        })
+      );
+      return;
     }
-    if (body.persona_file !== undefined) {
-      updatedAgent.persona_file = body.persona_file;
-    }
-    if (body.trigger_prefix !== undefined) {
-      updatedAgent.trigger_prefix = body.trigger_prefix;
-    }
-    if (body.auto_respond_keywords !== undefined) {
+
+    if (body.name !== undefined) updatedAgent.name = body.name;
+    if (body.display_name !== undefined) updatedAgent.display_name = body.display_name;
+    if (body.tier !== undefined) updatedAgent.tier = body.tier;
+    if (body.model !== undefined) updatedAgent.model = body.model;
+    if (body.enabled !== undefined) updatedAgent.enabled = body.enabled;
+    if (body.persona_file !== undefined) updatedAgent.persona_file = body.persona_file;
+    if (body.trigger_prefix !== undefined) updatedAgent.trigger_prefix = body.trigger_prefix;
+    if (body.auto_respond_keywords !== undefined)
       updatedAgent.auto_respond_keywords = body.auto_respond_keywords;
-    }
-    if (body.cooldown_ms !== undefined) {
-      updatedAgent.cooldown_ms = body.cooldown_ms;
-    }
-    if (body.can_delegate !== undefined) {
-      updatedAgent.can_delegate = body.can_delegate;
-    }
-    if (body.tool_permissions !== undefined) {
-      updatedAgent.tool_permissions = body.tool_permissions;
-    }
+    if (body.cooldown_ms !== undefined) updatedAgent.cooldown_ms = body.cooldown_ms;
+    if (body.can_delegate !== undefined) updatedAgent.can_delegate = body.can_delegate;
+    if (body.tool_permissions !== undefined) updatedAgent.tool_permissions = body.tool_permissions;
 
-    // Helper: check if token is masked (****xxxx pattern)
-    const isMaskedToken = (token) => /^\*{4}.{0,4}$/.test(token);
+    const isMaskedToken = (token: unknown): boolean => {
+      if (typeof token !== 'string') return false;
+      return token === '***[redacted]***' || (token.startsWith('***[') && token.endsWith(']***'));
+    };
 
-    // Only update tokens if not masked
     if (body.bot_token && !isMaskedToken(body.bot_token)) {
       updatedAgent.bot_token = body.bot_token;
     }
@@ -2112,7 +2016,6 @@ async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
       updatedAgent.slack_app_token = body.slack_app_token;
     }
 
-    // Save updated config
     config.multi_agent.agents[agentId] = updatedAgent;
     saveMAMAConfig(config);
 
@@ -2123,34 +2026,40 @@ async function handleMultiAgentUpdateAgentRequest(req, res, pathname) {
         message: `Agent '${agentId}' updated successfully`,
       })
     );
-  } catch (error) {
-    console.error('[GraphAPI] Multi-agent update agent error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Multi-agent update agent error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'MULTI_AGENT_UPDATE_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Handle GET /api/multi-agent/delegations - get recent delegation logs
- * Sprint 3 F4: Dashboard delegation chain visualization
- *
- * @param {Object} req - HTTP request
- * @param {Object} res - HTTP response
- */
-async function handleMultiAgentDelegationsRequest(req, res, options = {}) {
+async function handleMultiAgentDelegationsRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: GraphHandlerOptions = {}
+): Promise<void> {
   try {
-    // Parse URL for query parameters
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const url = new URL(req.url!, `http://${req.headers.host}`);
     const limit = parseInt(url.searchParams.get('limit') || '20', 10);
 
-    // Get swarm tasks if available
-    let delegations = [];
+    let delegations: Array<{
+      id: string;
+      description: string;
+      category: string;
+      wave: number;
+      status: string;
+      claimedBy: string | null;
+      claimedAt: number | null;
+      completedAt: number | null;
+      result: string | null;
+    }> = [];
     if (options.getSwarmTasks) {
       try {
         const tasks = options.getSwarmTasks(limit);
@@ -2165,8 +2074,9 @@ async function handleMultiAgentDelegationsRequest(req, res, options = {}) {
           completedAt: task.completed_at,
           result: task.result,
         }));
-      } catch (err) {
-        console.error('[GraphAPI] Failed to fetch swarm tasks:', err.message);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[GraphAPI] Failed to fetch swarm tasks:', msg);
       }
     }
 
@@ -2177,24 +2087,22 @@ async function handleMultiAgentDelegationsRequest(req, res, options = {}) {
         count: delegations.length,
       })
     );
-  } catch (error) {
-    console.error('[GraphAPI] Multi-agent delegations error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Multi-agent delegations error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         error: true,
         code: 'MULTI_AGENT_DELEGATIONS_ERROR',
-        message: error.message,
+        message,
       })
     );
   }
 }
 
-/**
- * Export decisions to CSV format
- */
-function exportToCSV(decisions) {
-  const escapeCSV = (str) => {
+function exportToCSV(decisions: GraphNode[]): string {
+  const escapeCSV = (str: string | null | undefined): string => {
     if (!str) {
       return '';
     }
@@ -2223,9 +2131,8 @@ function exportToCSV(decisions) {
   return lines.join('\n');
 }
 
-module.exports = {
+export {
   createGraphHandler,
-  // Exported for testing
   getAllNodes,
   getAllEdges,
   getAllCheckpoints,
@@ -2236,3 +2143,11 @@ module.exports = {
   VIEWER_CSS_PATH,
   VIEWER_JS_PATH,
 };
+
+export type {
+  GraphNode,
+  GraphEdge,
+  SimilarityEdge,
+  CheckpointData,
+  GraphHandlerOptions,
+} from './graph-api-types.js';

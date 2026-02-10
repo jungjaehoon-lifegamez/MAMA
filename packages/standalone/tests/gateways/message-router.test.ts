@@ -2,7 +2,7 @@
  * Unit tests for MessageRouter
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
