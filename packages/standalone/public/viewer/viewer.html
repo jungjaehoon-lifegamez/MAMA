@@ -774,6 +774,30 @@
               </div>
             </section>
 
+            <!-- Installed Skills -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Installed Skills</h2>
+              <div id="settings-skills-container" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <p class="text-xs text-gray-500">Loading skills...</p>
+              </div>
+              <p class="text-[10px] text-gray-400 mt-1">Skills directory: ~/.mama/skills/</p>
+            </section>
+
+            <!-- Token Budget -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Token Budget</h2>
+              <div class="bg-white border border-gray-200 rounded-lg p-2.5 space-y-2">
+                <div>
+                  <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Daily Token Limit</label>
+                  <input type="number" id="settings-token-daily-limit" placeholder="e.g. 1000000" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Cost Alert Threshold (USD)</label>
+                  <input type="number" id="settings-token-alert-threshold" step="0.01" placeholder="e.g. 5.00" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
+                </div>
+              </div>
+            </section>
+
             <!-- Action Buttons -->
             <div class="flex items-center justify-between pt-4 border-t border-gray-200 border-mama-lavender-dark">
               <button onclick="settingsModule.resetForm()" class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-mama-lavender-light hover:bg-gray-200 hover:bg-mama-lavender-light rounded-lg transition-colors">
@@ -1010,20 +1034,43 @@
           </div>
         </div>
 
-        <!-- Skills Marketplace Tab (replaces Chat) -->
+        <!-- Skills Marketplace Tab -->
         <div class="tab-content" id="tab-skills">
-          <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full">
-            <div class="flex-1 flex flex-col items-center justify-center text-center p-12 text-gray-500">
-              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-4 opacity-50">
-                <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                <path d="M2 17l10 5 10-5" />
-                <path d="M2 12l10 5 10-5" />
-              </svg>
-              <h3 class="text-lg font-semibold text-mama-black mb-2">Skills Marketplace</h3>
-              <p class="text-sm text-gray-600 max-w-sm leading-relaxed">
-                Browse, install, and manage skills from MAMA, Cowork, and OpenClaw.
-              </p>
-              <p class="text-xs text-gray-400 mt-4">Coming soon in E3</p>
+          <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full overflow-y-auto">
+            <!-- Search Bar -->
+            <div class="mb-4">
+              <input id="skills-search" type="text"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                placeholder="Search skills...">
+            </div>
+
+            <!-- Filter Bar -->
+            <div id="skills-filter-bar" class="flex gap-2 mb-4 flex-wrap">
+              <button data-filter="all" class="px-3 py-1 text-xs rounded-full bg-yellow-400 text-gray-900 font-medium">All</button>
+              <button data-filter="installed" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">Installed</button>
+              <button data-filter="mama" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">MAMA</button>
+              <button data-filter="cowork" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">Cowork</button>
+              <button data-filter="openclaw" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">OpenClaw</button>
+            </div>
+
+            <!-- Skills Content (rendered by skills.js) -->
+            <div id="skills-content">
+              <div class="flex items-center justify-center p-12 text-gray-500">
+                <p class="text-sm">Loading skills...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Skill Detail Modal -->
+        <div id="skill-detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl mx-4">
+            <div class="flex items-center justify-between p-4 border-b border-gray-700">
+              <h2 class="text-lg font-bold text-white">Skill Details</h2>
+              <button onclick="window.skillsModule && window.skillsModule.closeDetail()"
+                class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <div id="skill-detail-content" class="p-4 overflow-y-auto flex-1 text-sm text-gray-300">
             </div>
           </div>
         </div>
@@ -1298,12 +1345,14 @@
       import { MemoryModule } from '/viewer/js/modules/memory.js';
       import { DashboardModule } from '/viewer/js/modules/dashboard.js';
       import { SettingsModule } from '/viewer/js/modules/settings.js';
+      import { SkillsModule } from '/viewer/js/modules/skills.js';
 
       const memory = new MemoryModule();
       const chat = new ChatModule(memory);
       const graph = new GraphModule();
       const dashboard = new DashboardModule();
       const settings = new SettingsModule();
+      const skills = SkillsModule;
 
       // Expose modules globally for debugging and onclick handlers
       window.chatModule = chat;
@@ -1311,6 +1360,7 @@
       window.memoryModule = memory;
       window.dashboardModule = dashboard;
       window.settingsModule = settings;
+      window.skillsModule = skills;
 
       // Quiz choice button handler
       window.sendQuizChoice = (choice) => {
@@ -1342,6 +1392,8 @@
           dashboard.init();
         } else if (tabName === 'settings') {
           settings.init();
+        } else if (tabName === 'skills') {
+          skills.init();
         } else if (tabName === 'memory') {
           // Initialize sidebar state for current screen size
           updateCheckpointSidebarForScreenSize();
