@@ -187,6 +187,14 @@ export class AgentLoop {
   private readonly model: string;
   private readonly onTurn?: (turn: TurnInfo) => void;
   private readonly onToolUse?: (toolName: string, input: unknown, result: unknown) => void;
+  private readonly onTokenUsage?: (record: {
+    channel_key: string;
+    agent_id?: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens?: number;
+    cost_usd?: number;
+  }) => void;
   private readonly laneManager: LaneManager;
   private readonly useLanes: boolean;
   private sessionKey: string;
@@ -306,6 +314,7 @@ export class AgentLoop {
     this.model = options.model ?? 'claude-sonnet-4-20250514';
     this.onTurn = options.onTurn;
     this.onToolUse = options.onToolUse;
+    this.onTokenUsage = options.onTokenUsage;
 
     this.laneManager = getGlobalLaneManager();
     this.useLanes = options.useLanes ?? false;
@@ -682,6 +691,21 @@ export class AgentLoop {
         // Update usage
         totalUsage.input_tokens += response.usage.input_tokens;
         totalUsage.output_tokens += response.usage.output_tokens;
+
+        // Record token usage
+        if (this.onTokenUsage) {
+          try {
+            this.onTokenUsage({
+              channel_key: channelKey,
+              agent_id: this.model,
+              input_tokens: response.usage.input_tokens,
+              output_tokens: response.usage.output_tokens,
+              cache_read_tokens: (response.usage as any).cache_read_input_tokens || 0,
+            });
+          } catch {
+            // Ignore recording errors - never break the agent loop
+          }
+        }
 
         // Track tokens in session pool for auto-reset at 80% context
         const tokenStatus = this.sessionPool.updateTokens(channelKey, response.usage.input_tokens);

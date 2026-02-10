@@ -51,6 +51,19 @@ export interface PersistentProcessOptions {
   allowedTools?: string[];
   /** Structurally disallowed tools (--disallowedTools CLI flag) */
   disallowedTools?: string[];
+  /** Optional callback for recording token usage */
+  onTokenUsage?: (record: {
+    channel_key: string;
+    agent_id?: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens?: number;
+    cost_usd?: number;
+  }) => void;
+  /** Channel key for token usage tracking */
+  channelKey?: string;
+  /** Agent ID for token usage tracking */
+  agentId?: string;
 }
 
 export interface ToolUseBlock {
@@ -145,10 +158,19 @@ export class PersistentClaudeProcess extends EventEmitter {
   private toolUseBlocks: ToolUseBlock[] = [];
   private accumulatedText: string = '';
   private startPromise: Promise<void> | null = null;
+  private onTokenUsage?: (record: {
+    channel_key: string;
+    agent_id?: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens?: number;
+    cost_usd?: number;
+  }) => void;
 
   constructor(options: PersistentProcessOptions) {
     super();
     this.options = options;
+    this.onTokenUsage = options.onTokenUsage;
 
     // Register default error handler to prevent Node crash if no listeners attached
     this.on('error', (err) => {
@@ -498,6 +520,22 @@ export class PersistentClaudeProcess extends EventEmitter {
             toolUseBlocks: this.toolUseBlocks.length > 0 ? this.toolUseBlocks : undefined,
             hasToolUse: this.toolUseBlocks.length > 0,
           };
+
+          // Record token usage
+          if (this.onTokenUsage) {
+            try {
+              this.onTokenUsage({
+                channel_key: this.options.channelKey || 'cli',
+                agent_id: this.options.agentId || undefined,
+                input_tokens: event.usage?.input_tokens || 0,
+                output_tokens: event.usage?.output_tokens || 0,
+                cache_read_tokens: event.usage?.cache_read_input_tokens || 0,
+                cost_usd: event.total_cost_usd || undefined,
+              });
+            } catch {
+              /* ignore recording errors */
+            }
+          }
 
           console.log(
             `[PersistentCLI] Request complete (${event.duration_ms}ms, ${this.toolUseBlocks.length} tools)`

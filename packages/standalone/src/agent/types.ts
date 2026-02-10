@@ -796,6 +796,19 @@ export interface AgentLoopOptions {
     maxRetries?: number;
     completionMarkers?: string[];
   };
+
+  /**
+   * Token usage recording callback
+   * Called after each API response to track token consumption
+   */
+  onTokenUsage?: (record: {
+    channel_key: string;
+    agent_id?: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens?: number;
+    cost_usd?: number;
+  }) => void;
 }
 
 /**
