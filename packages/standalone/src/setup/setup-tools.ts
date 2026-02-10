@@ -5,12 +5,15 @@ interface SetupTool {
   description: string;
   input_schema: {
     type: 'object';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     properties: Record<string, any>;
     required: string[];
   };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handler: (input: any) => Promise<any>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createSetupTools(clientInfo: any): SetupTool[] {
   return [
     {
@@ -35,6 +38,7 @@ export function createSetupTools(clientInfo: any): SetupTool[] {
         const config = await loadConfig();
 
         const keys = key.split('.');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let current: any = config;
 
         for (let i = 0; i < keys.length - 1; i++) {
@@ -90,6 +94,7 @@ export function createSetupTools(clientInfo: any): SetupTool[] {
             };
           }
 
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const data: any = await response.json();
 
           return {

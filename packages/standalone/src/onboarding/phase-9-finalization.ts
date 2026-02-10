@@ -294,7 +294,7 @@ This guide includes:
  */
 export function createPhase9Tool(
   onComplete: () => void
-): ToolDefinition & { handler: (input: any) => Promise<any> } {
+): ToolDefinition & { handler: (input: FinalizationInput) => Promise<Record<string, unknown>> } {
   return {
     name: 'complete_onboarding',
     description:

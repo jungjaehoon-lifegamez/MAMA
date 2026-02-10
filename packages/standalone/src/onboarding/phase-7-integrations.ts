@@ -681,13 +681,26 @@ export async function handleSaveMultiAgent(input: {
     const config = await loadConfig();
 
     // Transform simple agent config to full AgentPersonaConfig format
-    const agents: Record<string, any> = {};
+    const agents: Record<
+      string,
+      {
+        id: string;
+        name: string;
+        display_name: string;
+        tier: 1 | 2 | 3;
+        model: string;
+        enabled: boolean;
+        trigger_prefix: string;
+        persona_file: string;
+      }
+    > = {};
     if (input.agents) {
       for (const [id, agent] of Object.entries(input.agents)) {
         agents[id] = {
+          id,
           name: agent.name,
           display_name: agent.name,
-          tier: agent.tier,
+          tier: agent.tier as 1 | 2 | 3,
           model: agent.model || 'claude-sonnet-4-20250514',
           enabled: agent.enabled,
           trigger_prefix: `!${id.toLowerCase()}`,
@@ -701,9 +714,10 @@ export async function handleSaveMultiAgent(input: {
       agents,
       loop_prevention: {
         max_chain_length: 3,
-        cooldown_seconds: 300,
+        global_cooldown_ms: 2000,
+        chain_window_ms: 60000,
       },
-    } as any;
+    };
 
     await saveConfig(config);
 

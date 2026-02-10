@@ -3,11 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import {
-  AgentProcessPool,
-  type AgentProcessPoolOptions,
-  type PoolStatus,
-} from '../../src/multi-agent/agent-process-pool.js';
+import { AgentProcessPool } from '../../src/multi-agent/agent-process-pool.js';
 import type { PersistentClaudeProcess } from '../../src/agent/persistent-cli-process.js';
 
 describe('AgentProcessPool', () => {

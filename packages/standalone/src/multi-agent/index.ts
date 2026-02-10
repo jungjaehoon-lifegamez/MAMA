@@ -37,8 +37,11 @@ export {
   resetSharedContextManager,
 } from './shared-context.js';
 
+// Base Handler
+export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
+export { MultiAgentHandlerBase, AGENT_TIMEOUT_MS } from './multi-agent-base.js';
+
 // Discord Integration
-export type { AgentResponse, MultiAgentResponse } from './multi-agent-discord.js';
 export { MultiAgentDiscordHandler } from './multi-agent-discord.js';
 
 // Multi-Bot Manager

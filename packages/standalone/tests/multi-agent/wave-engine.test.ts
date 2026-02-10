@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SwarmManager } from '../../src/multi-agent/swarm/swarm-manager.js';
 import { executeWaves, executeWave } from '../../src/multi-agent/swarm/wave-engine.js';
-import type { Wave, WaveTask, TaskExecutor } from '../../src/multi-agent/swarm/wave-engine.js';
+import type { Wave, TaskExecutor } from '../../src/multi-agent/swarm/wave-engine.js';
 import type { CreateTaskParams } from '../../src/multi-agent/swarm/swarm-db.js';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
