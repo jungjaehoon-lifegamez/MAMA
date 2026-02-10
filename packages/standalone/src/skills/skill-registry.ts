@@ -92,6 +92,10 @@ async function fetchRawGitHub(url: string): Promise<string> {
 
 export class SkillRegistry {
   private catalogCache: Map<SkillSource, CatalogCache> = new Map();
+  private treeCache: Map<
+    string,
+    { tree: Array<{ path: string; type: string }>; fetchedAt: number }
+  > = new Map();
   private builtinSkillsDir: string;
 
   constructor(builtinSkillsDir?: string) {
@@ -235,50 +239,70 @@ export class SkillRegistry {
   }
 
   /**
-   * Install a skill from remote source
+   * Install a skill/plugin from remote source (full directory)
+   *
+   * Uses Git Tree API (1 request) to list files, then downloads each
+   * from raw.githubusercontent.com (no API rate limit).
    */
-  async install(source: SkillSource, name: string): Promise<{ success: boolean; path: string }> {
+  async install(
+    source: SkillSource,
+    name: string
+  ): Promise<{ success: boolean; path: string; files: number }> {
     const installDir = join(SKILLS_BASE, source, name);
     await mkdir(installDir, { recursive: true });
 
     try {
-      let content: string | null = null;
-      let savedAs = 'SKILL.md';
-
-      const baseUrl =
+      const repoConfig =
         source === 'cowork'
-          ? `https://raw.githubusercontent.com/anthropics/knowledge-work-plugins/main/${name}`
+          ? { repo: 'anthropics/knowledge-work-plugins', prefix: name }
           : source === 'openclaw'
-            ? `https://raw.githubusercontent.com/openclaw/openclaw/main/skills/${name}`
+            ? { repo: 'openclaw/openclaw', prefix: `skills/${name}` }
             : null;
 
-      if (!baseUrl) {
+      if (!repoConfig) {
         throw new Error(`Cannot install from source: ${source}`);
       }
 
-      // Try SKILL.md first, then README.md
-      for (const filename of ['SKILL.md', 'README.md']) {
+      // Fetch full repo tree (single API call, cached per source)
+      const tree = await this.getRepoTree(repoConfig.repo);
+      const files = tree.filter(
+        (f: { path: string; type: string }) =>
+          f.type === 'blob' && f.path.startsWith(`${repoConfig.prefix}/`)
+      );
+
+      if (files.length === 0) {
+        throw new Error(`No files found for ${source}/${name}`);
+      }
+
+      // Download each file
+      const rawBase = `https://raw.githubusercontent.com/${repoConfig.repo}/main`;
+      let downloadedCount = 0;
+
+      for (const file of files) {
+        const relativePath = file.path.slice(repoConfig.prefix.length + 1);
+        const targetPath = join(installDir, relativePath);
+        const targetDir = join(targetPath, '..');
+        await mkdir(targetDir, { recursive: true });
+
         try {
-          content = await fetchRawGitHub(`${baseUrl}/${filename}`);
-          savedAs = filename;
-          break;
+          const content = await fetchRawGitHub(`${rawBase}/${file.path}`);
+          await writeFile(targetPath, content);
+          downloadedCount++;
         } catch {
-          continue;
+          console.warn(`[SkillRegistry] Failed to download: ${file.path}`);
         }
       }
 
-      if (!content) {
-        throw new Error(`No SKILL.md or README.md found for ${source}/${name}`);
+      if (downloadedCount === 0) {
+        throw new Error(`Failed to download any files for ${source}/${name}`);
       }
-
-      await writeFile(join(installDir, savedAs), content);
 
       // Set enabled by default
       const state = await loadState();
       state[`${source}/${name}`] = { enabled: true };
       await saveState(state);
 
-      return { success: true, path: installDir };
+      return { success: true, path: installDir, files: downloadedCount };
     } catch (error) {
       // Clean up on failure
       try {
@@ -376,6 +400,23 @@ export class SkillRegistry {
   // ===========================================================================
   // Private helpers
   // ===========================================================================
+
+  /**
+   * Get repo file tree (cached 1 hour, single API call)
+   */
+  private async getRepoTree(repo: string): Promise<Array<{ path: string; type: string }>> {
+    const cached = this.treeCache.get(repo);
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+      return cached.tree;
+    }
+
+    const data = (await fetchGitHub(
+      `https://api.github.com/repos/${repo}/git/trees/main?recursive=1`
+    )) as { tree: Array<{ path: string; type: string }> };
+
+    this.treeCache.set(repo, { tree: data.tree, fetchedAt: Date.now() });
+    return data.tree;
+  }
 
   private async findSkillFile(dir: string): Promise<string | null> {
     for (const name of ['SKILL.md', 'skill.md', 'README.md']) {
