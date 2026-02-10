@@ -422,11 +422,37 @@ export class ChatModule {
         this.commandHelp();
         break;
       default:
-        this.addSystemMessage(
-          `Unknown command: /${command}. Type /help for available commands.`,
-          'error'
-        );
+        // Forward unrecognized commands to agent as regular messages
+        this.sendRaw(message);
     }
+  }
+
+  /**
+   * Send a message directly to the agent (bypass command parsing)
+   */
+  sendRaw(message) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.addSystemMessage('Not connected. Please connect to a session first.', 'error');
+      return;
+    }
+
+    this.addUserMessage(message);
+    this.enableSend(false);
+
+    this.ws.send(
+      JSON.stringify({
+        type: 'send',
+        sessionId: this.sessionId,
+        content: message,
+      })
+    );
+
+    if (this.memoryModule) {
+      this.memoryModule.showRelatedForMessage(message);
+    }
+
+    console.log('[Chat] Forwarded to agent:', message);
+    this.resetIdleTimer();
   }
 
   /**
