@@ -119,7 +119,7 @@ export class MCPExecutor {
    * @returns Tool execution result
    * @throws AgentError on tool errors
    */
-  async execute(toolName: string, input: any): Promise<any> {
+  async execute(toolName: string, input: unknown): Promise<unknown> {
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(
         `Unknown tool: ${toolName}. Valid tools: ${VALID_TOOLS.join(', ')}`,
@@ -200,6 +200,7 @@ export class MCPExecutor {
         reasoning: decisionInput.reasoning,
         confidence: decisionInput.confidence ?? 0.5,
         type: 'user_decision', // mama-api expects 'user_decision' not 'decision'
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any);
     }
 

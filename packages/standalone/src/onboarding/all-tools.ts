@@ -32,37 +32,37 @@ export function createAllOnboardingToolsWithHandlers(callbacks?: {
 }): Array<{
   name: string;
   description: string;
-  input_schema: any;
-  handler: (input: any) => Promise<any>;
+  input_schema: unknown;
+  handler: (input: Record<string, unknown>) => Promise<unknown>;
 }> {
   const toolsWithHandlers: Array<{
     name: string;
     description: string;
-    input_schema: any;
-    handler: (input: any) => Promise<any>;
+    input_schema: unknown;
+    handler: (input: Record<string, unknown>) => Promise<unknown>;
   }> = [];
 
   // Add discovery tools (already have handlers)
   for (const tool of AUTONOMOUS_DISCOVERY_TOOLS) {
-    toolsWithHandlers.push(tool as any);
+    toolsWithHandlers.push(tool as (typeof toolsWithHandlers)[number]);
   }
 
   // Add phase 5 tool (already has handler)
-  toolsWithHandlers.push(PHASE_5_TOOL as any);
+  toolsWithHandlers.push(PHASE_5_TOOL as (typeof toolsWithHandlers)[number]);
 
   // Add phase 6 tool (already has handler)
-  toolsWithHandlers.push(PHASE_6_TOOL as any);
+  toolsWithHandlers.push(PHASE_6_TOOL as (typeof toolsWithHandlers)[number]);
 
   // Add phase 7 tool with handler
   toolsWithHandlers.push({
     ...PHASE_7_TOOL,
-    handler: async (input: any) => {
+    handler: async (input: Record<string, unknown>) => {
       const mamaHome = expandPath('~/.mama');
       const integrationsPath = `${mamaHome}/integrations.md`;
 
       // Generate integrations guide based on role
-      const role = input.role || 'custom';
-      const selectedIntegrations = (input.selected_integrations || 'discord')
+      const role = (input.role as string) || 'custom';
+      const selectedIntegrations = ((input.selected_integrations as string) || 'discord')
         .split(',')
         .map((s: string) => s.trim());
 
@@ -93,8 +93,13 @@ export function createAllOnboardingToolsWithHandlers(callbacks?: {
   // Add save_integration_token tool with handler
   toolsWithHandlers.push({
     ...SAVE_INTEGRATION_TOKEN_TOOL,
-    handler: async (input: any) => {
-      const { platform, token, guild_id, chat_id } = input;
+    handler: async (input: Record<string, unknown>) => {
+      const { platform, token, guild_id, chat_id } = input as {
+        platform?: string;
+        token?: string;
+        guild_id?: string;
+        chat_id?: string;
+      };
 
       if (!platform || !token) {
         return { success: false, error: 'platform and token are required' };
@@ -142,8 +147,11 @@ export function createAllOnboardingToolsWithHandlers(callbacks?: {
   // Add phase 8 tool with handler
   toolsWithHandlers.push({
     ...PHASE_8_TOOL,
-    handler: async (input: any) => {
-      const { demo_type, skip_demo } = input;
+    handler: async (input: Record<string, unknown>) => {
+      const { demo_type, skip_demo } = input as {
+        demo_type?: string;
+        skip_demo?: boolean;
+      };
 
       if (skip_demo) {
         completePhase(8);

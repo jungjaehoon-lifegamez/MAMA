@@ -8,7 +8,7 @@ import type { SlackMentionEvent } from '../multi-agent/slack-multi-bot-manager.j
 export interface SlackEventValidationError extends Error {
   name: 'SlackEventValidationError';
   field?: string;
-  value?: any;
+  value?: unknown;
 }
 
 export interface ValidationOptions {
@@ -31,7 +31,7 @@ const DEFAULT_OPTIONS: Required<ValidationOptions> = {
   allowBotMessages: true,
   forbiddenPatterns: [],
   stripMarkdown: true,
-  allowedCharacters: /^[\w\s\-_.,!?@#$%&*()+=[\]{}|\\:";'<>\/`~]*$/,
+  allowedCharacters: /^[\w\s\-_.,!?@#$%&*()+=[\]{}|\\:";'<>/`~]*$/,
   useWhitelistValidation: false,
 };
 
@@ -99,6 +99,7 @@ export function sanitizeMessageContent(content: string, options: ValidationOptio
   }
 
   // Remove null bytes and other control characters (except newlines and tabs)
+  // eslint-disable-next-line no-control-regex
   sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 
   // Basic HTML/script injection prevention
@@ -245,7 +246,7 @@ export function validateMentionEvent(
 export function createValidationError(
   message: string,
   field?: string,
-  value?: any
+  value?: unknown
 ): SlackEventValidationError {
   const error = new Error(message) as SlackEventValidationError;
   error.name = 'SlackEventValidationError';
@@ -296,7 +297,7 @@ export const ValidationPresets = {
       /\$\{.*\}/g, // Template literals
     ],
     stripMarkdown: true,
-    allowedCharacters: /^[a-zA-Z0-9\s\-_.!?@#%&*()+=[\]{}|:";'\/`~]*$/,
+    allowedCharacters: /^[a-zA-Z0-9\s\-_.!?@#%&*()+=[\]{}|:";'/`~]*$/,
     useWhitelistValidation: true,
   } as ValidationOptions,
 
@@ -306,7 +307,7 @@ export const ValidationPresets = {
     allowBotMessages: true,
     forbiddenPatterns: [/<script[^>]*>.*?<\/script>/gi, /javascript:/gi],
     stripMarkdown: true,
-    allowedCharacters: /^[\w\s\-_.,!?@#$%&*()+=[\]{}|\\:";'<>\/`~]*$/,
+    allowedCharacters: /^[\w\s\-_.,!?@#$%&*()+=[\]{}|\\:";'<>/`~]*$/,
     useWhitelistValidation: false,
   } as ValidationOptions,
 

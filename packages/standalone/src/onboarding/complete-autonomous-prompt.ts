@@ -922,10 +922,10 @@ If they ask about automation or scheduled tasks:
 >
 > Run tasks automatically at scheduled times:
 >
-> \`/cron add \"0 9 * * *\" \"Tell me today's tasks\"\`
+> \`/cron add "0 9 * * *" "Tell me today's tasks"\`
 > → Daily 9 AM task reminder
 >
-> \`/cron add \"0 18 * * 5\" \"Write weekly report\"\`
+> \`/cron add "0 18 * * 5" "Write weekly report"\`
 > → Weekly report every Friday 6 PM
 >
 > **View cron jobs:** \`/cron list\`

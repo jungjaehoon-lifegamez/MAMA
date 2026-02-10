@@ -95,10 +95,10 @@ export function sanitizeString(value: string, options: SanitizationOptions = {})
  * Recursively sanitizes an object, preserving structure but sanitizing string values
  */
 export function sanitizeObject(
-  obj: any,
+  obj: unknown,
   options: SanitizationOptions = {},
   seen: WeakSet<object> = new WeakSet()
-): any {
+): unknown {
   if (obj === null || obj === undefined) {
     return obj;
   }
@@ -120,7 +120,7 @@ export function sanitizeObject(
   if (typeof obj === 'object') {
     if (seen.has(obj)) return '[Circular]';
     seen.add(obj);
-    const sanitized: any = {};
+    const sanitized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
       // Sanitize both key and value
       const sanitizedKey = sanitizeString(key, options);
@@ -136,14 +136,14 @@ export function sanitizeObject(
  * Main sanitization function for logging
  * Accepts any type and returns a sanitized version safe for logging
  */
-export function sanitizeForLogging(data: any, options: SanitizationOptions = {}): any {
+export function sanitizeForLogging(data: unknown, options: SanitizationOptions = {}): unknown {
   return sanitizeObject(data, options);
 }
 
 /**
  * Safe console.log that automatically sanitizes all arguments
  */
-export function safeLog(message: string, ...args: any[]): void {
+export function safeLog(message: string, ...args: unknown[]): void {
   const sanitizedMessage = sanitizeString(message);
   const sanitizedArgs = args.map((arg) => sanitizeForLogging(arg));
   console.log(sanitizedMessage, ...sanitizedArgs);
@@ -152,7 +152,7 @@ export function safeLog(message: string, ...args: any[]): void {
 /**
  * Safe console.error that automatically sanitizes all arguments
  */
-export function safeError(message: string, ...args: any[]): void {
+export function safeError(message: string, ...args: unknown[]): void {
   const sanitizedMessage = sanitizeString(message);
   const sanitizedArgs = args.map((arg) => sanitizeForLogging(arg));
   console.error(sanitizedMessage, ...sanitizedArgs);
@@ -161,7 +161,7 @@ export function safeError(message: string, ...args: any[]): void {
 /**
  * Safe console.warn that automatically sanitizes all arguments
  */
-export function safeWarn(message: string, ...args: any[]): void {
+export function safeWarn(message: string, ...args: unknown[]): void {
   const sanitizedMessage = sanitizeString(message);
   const sanitizedArgs = args.map((arg) => sanitizeForLogging(arg));
   console.warn(sanitizedMessage, ...sanitizedArgs);
@@ -208,27 +208,27 @@ export function createSafeLogger(prefix?: string) {
   const currentLogLevel = getLogLevelFromEnv();
 
   return {
-    debug: (message: string, ...args: any[]) => {
+    debug: (message: string, ...args: unknown[]) => {
       if (currentLogLevel <= LogLevel.DEBUG) {
         safeLog(logPrefix + '[DEBUG] ' + message, ...args);
       }
     },
-    log: (message: string, ...args: any[]) => {
+    log: (message: string, ...args: unknown[]) => {
       if (currentLogLevel <= LogLevel.INFO) {
         safeLog(logPrefix + message, ...args);
       }
     },
-    info: (message: string, ...args: any[]) => {
+    info: (message: string, ...args: unknown[]) => {
       if (currentLogLevel <= LogLevel.INFO) {
         safeLog(logPrefix + '[INFO] ' + message, ...args);
       }
     },
-    warn: (message: string, ...args: any[]) => {
+    warn: (message: string, ...args: unknown[]) => {
       if (currentLogLevel <= LogLevel.WARN) {
         safeWarn(logPrefix + message, ...args);
       }
     },
-    error: (message: string, ...args: any[]) => {
+    error: (message: string, ...args: unknown[]) => {
       if (currentLogLevel <= LogLevel.ERROR) {
         safeError(logPrefix + message, ...args);
       }

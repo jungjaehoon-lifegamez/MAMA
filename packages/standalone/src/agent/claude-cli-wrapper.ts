@@ -25,7 +25,6 @@ import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import os from 'os';
 import path from 'path';
-
 export interface ClaudeCLIWrapperOptions {
   model?: string;
   sessionId?: string;
@@ -44,7 +43,8 @@ export interface ClaudeCLIWrapperOptions {
 
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
-  onToolUse?: (name: string, input: any) => void;
+  onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFinal?: (response: any) => void;
   onError?: (error: Error) => void;
 }
@@ -246,7 +246,7 @@ export class ClaudeCLIWrapper {
               callbacks?.onToolUse?.(event.name, event.input);
               console.log(`[ClaudeCLI] Tool use detected: ${event.name}`);
             }
-          } catch (e) {
+          } catch {
             // Not JSON yet, accumulate more
           }
         }

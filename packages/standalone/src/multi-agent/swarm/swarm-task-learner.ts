@@ -81,7 +81,7 @@ export class SwarmTaskLearner {
     // Check mama-core availability if no saveFn provided
     if (!this.options.saveFn) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const mama = require('@jungjaehoon/mama-core/mama-api');
         if (!mama || !mama.save) {
           console.warn('[SwarmTaskLearner] mama-core save() not available, learning disabled');
@@ -204,7 +204,7 @@ export class SwarmTaskLearner {
   /**
    * Save to MAMA DB with error handling (fire-and-forget)
    */
-  private saveToMama(params: any, eventType: string, taskId: string): void {
+  private saveToMama(params: Parameters<SaveFunction>[0], eventType: string, taskId: string): void {
     const saveFn = this.options.saveFn || this.getMamaSave();
 
     if (!saveFn) {
@@ -242,7 +242,7 @@ export class SwarmTaskLearner {
    */
   private getMamaSave(): SaveFunction | null {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const mama = require('@jungjaehoon/mama-core/mama-api');
       return mama?.save || null;
     } catch {

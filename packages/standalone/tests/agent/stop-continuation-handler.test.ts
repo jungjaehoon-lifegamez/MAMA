@@ -562,7 +562,7 @@ describe('StopContinuationHandler', () => {
 
     it('should handle very long channel keys', () => {
       const longKey = 'a'.repeat(1000);
-      const decision = handler.analyzeResponse(longKey, 'test');
+      const _decision = handler.analyzeResponse(longKey, 'test');
       expect(handler.getAttemptCount(longKey)).toBe(0);
     });
 

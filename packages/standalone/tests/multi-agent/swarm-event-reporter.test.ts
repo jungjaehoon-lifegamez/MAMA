@@ -128,7 +128,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('task-completed', result);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain(
         'This is a very long result message that should be truncated to 80 characters '
       );
@@ -147,7 +147,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('task-completed', result);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).not.toContain('Some result');
     });
   });
@@ -171,6 +171,7 @@ describe('SwarmEventReporter', () => {
         'test-channel-123',
         expect.stringContaining('❌ Task `fail-tas` failed')
       );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((mockSendMessage as any).mock.calls[0][1]).toContain(
         'Error: Execution failed due to network error'
       );
@@ -190,7 +191,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('task-failed', result);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message.length).toBeLessThan(200); // Should be truncated
       expect(message).toContain('...');
     });
@@ -213,7 +214,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('task-failed', result);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('Agent: `test-agent`');
     });
   });
@@ -234,7 +235,7 @@ describe('SwarmEventReporter', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(mockSendMessage).toHaveBeenCalledOnce();
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('🔄 Task `retry-ta` retrying (attempt 1/3)');
     });
 
@@ -257,7 +258,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('task-retried', result, 2, 3);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('🔄 Task `task-id` retrying (attempt 2/3)');
       expect(message).toContain('Error: Network timeout occurred while processing the request');
     });
@@ -276,7 +277,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('task-retried', result, 1, 3);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).not.toContain('Some error');
     });
   });
@@ -296,7 +297,7 @@ describe('SwarmEventReporter', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(mockSendMessage).toHaveBeenCalledOnce();
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('⏸️ Task `deferred` deferred — agent `developer` busy');
     });
 
@@ -318,7 +319,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('task-deferred', result);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('⏸️ Task `task-id` deferred — agent `developer` busy');
       expect(message).toContain('Reason: Agent process busy, task deferred');
     });
@@ -332,7 +333,7 @@ describe('SwarmEventReporter', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(mockSendMessage).toHaveBeenCalledOnce();
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('🏁 Session');
       expect(message).toContain('complete — all tasks finished');
     });
@@ -351,7 +352,7 @@ describe('SwarmEventReporter', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(mockSendMessage).toHaveBeenCalledOnce();
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('⚠️ File conflict: task `task-123` shares files with `conflict`');
     });
 
@@ -371,7 +372,7 @@ describe('SwarmEventReporter', () => {
       );
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('Files: file1.ts, file2.ts, file3.ts');
     });
 
@@ -395,7 +396,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('file-conflict', 'task-id', manyFiles, ['task-a']);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message).toContain('(+2 more)');
     });
   });
@@ -415,7 +416,7 @@ describe('SwarmEventReporter', () => {
       mockRunner.emit('task-failed', result);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const message = (mockSendMessage as any).mock.calls[0][1];
+      const message = (mockSendMessage as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(message.length).toBeLessThanOrEqual(1800);
     });
   });

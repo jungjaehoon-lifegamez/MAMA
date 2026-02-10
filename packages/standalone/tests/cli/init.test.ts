@@ -13,7 +13,7 @@ import { initCommand } from '../../src/cli/commands/init.js';
 import {
   getConfigPath,
   getMAMAHome,
-  configExists,
+  configExists as _configExists,
   loadConfig,
 } from '../../src/cli/config/config-manager.js';
 
@@ -36,11 +36,11 @@ describe('mama init command', () => {
     consoleOutput = [];
     consoleErrors = [];
 
-    vi.spyOn(console, 'log').mockImplementation((...args: any[]) => {
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       consoleOutput.push(args.join(' '));
     });
 
-    vi.spyOn(console, 'error').mockImplementation((...args: any[]) => {
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
       consoleErrors.push(args.join(' '));
     });
 
@@ -186,7 +186,7 @@ describe('mama init command', () => {
       try {
         await initCommand();
         expect.fail('Should have thrown');
-      } catch (error) {
+      } catch {
         expect(exitSpy).toHaveBeenCalledWith(1);
         expect(consoleErrors.some((e) => e.includes('Claude Code'))).toBe(true);
       }
@@ -206,7 +206,7 @@ describe('mama init command', () => {
       try {
         await initCommand({ force: false });
         expect.fail('Should have thrown');
-      } catch (error) {
+      } catch {
         expect(consoleOutput.some((e) => e.includes('already exists'))).toBe(true);
       } finally {
         exitSpy.mockRestore();

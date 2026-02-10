@@ -84,6 +84,7 @@ export class SlackRateLimiter {
   private logger = createSafeLogger('SlackRateLimiter');
 
   /** Queue of pending requests */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private requestQueue: QueuedRequest<any>[] = [];
 
   /** Whether the limiter is currently processing requests */
@@ -294,6 +295,7 @@ export class SlackRateLimiter {
   /**
    * Check if an error is a rate limit error with strict type validation
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private isRateLimitError(error: any): boolean {
     // Ensure error is an object before checking properties
     if (!error || typeof error !== 'object') {

@@ -92,7 +92,7 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
     try {
       await openBrowser(setupUrl);
       console.log('✓');
-    } catch (error) {
+    } catch {
       console.log('⚠️');
       console.log(`   Could not open automatically. Please open manually:`);
       console.log(`   ${setupUrl}`);
@@ -144,7 +144,7 @@ async function openBrowser(url: string): Promise<void> {
 /**
  * Wait for user to press Ctrl+C
  */
-async function waitForExit(server: any): Promise<void> {
+async function waitForExit(server: { close: (callback: () => void) => void }): Promise<void> {
   return new Promise(() => {
     const cleanup = () => {
       console.log('\n\n🛑 Shutting down setup server...');

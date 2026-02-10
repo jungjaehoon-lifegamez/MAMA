@@ -41,7 +41,7 @@ interface QuizChoice {
 const clients = new Map<WebSocket, ClientInfo>();
 
 // @ts-expect-error - Keeping for future use, currently unused after autonomous discovery migration
-function extractName(input: string): string {
+function _extractName(input: string): string {
   let name = input.trim();
 
   const koreanPatterns = [
@@ -123,12 +123,15 @@ function detectProgress(
   return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function executeTools(content: any[], tools: any[]): Promise<any[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const results: any[] = [];
 
   for (const block of content) {
     if (block.type !== 'tool_use') continue;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tool = tools.find((t: any) => t.name === block.name);
     if (!tool) continue;
 
@@ -139,6 +142,7 @@ async function executeTools(content: any[], tools: any[]): Promise<any[]> {
         tool_use_id: block.id,
         content: typeof result === 'string' ? result : JSON.stringify(result),
       });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       results.push({
         type: 'tool_result',
@@ -154,6 +158,7 @@ async function executeTools(content: any[], tools: any[]): Promise<any[]> {
 
 async function processClaudeResponse(
   clientInfo: ClientInfo,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools: any[],
   systemPrompt: string,
   turnCount: number
@@ -165,6 +170,7 @@ async function processClaudeResponse(
 
   const response = await clientInfo.claudeClient!.sendMessage(clientInfo.conversationHistory, {
     system: systemPrompt,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tools: tools.map((t: any) => ({
       name: t.name,
       description: t.description,
@@ -264,7 +270,7 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
     let claudeClient: ClaudeClient | null = null;
     try {
       claudeClient = new ClaudeClient(oauthManager);
-    } catch (error) {
+    } catch {
       ws.send(
         JSON.stringify({
           type: 'error',
@@ -310,6 +316,7 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
   });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handleClientMessage(clientInfo: ClientInfo, message: any): Promise<void> {
   if (message.type === 'init') {
     clientInfo.language = message.language || 'en';

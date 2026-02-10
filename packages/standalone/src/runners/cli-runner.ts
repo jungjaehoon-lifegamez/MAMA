@@ -131,6 +131,7 @@ export class CliRunner implements Runner {
           });
 
           resolve({ stdout, stderr: '', code: 0 });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (error: any) {
           // execSync throws on non-zero exit or timeout
           if (error.killed) {

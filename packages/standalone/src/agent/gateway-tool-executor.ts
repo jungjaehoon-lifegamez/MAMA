@@ -109,6 +109,7 @@ const SENSITIVE_KEYS = ['token', 'bot_token', 'app_token', 'api_token', 'api_key
 export class GatewayToolExecutor {
   private mamaApi: MAMAApiInterface | null = null;
   private readonly mamaDbPath?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private sessionStore?: any;
   private discordGateway: DiscordGatewayInterface | null = null;
   private browserTool: BrowserTool;
@@ -367,6 +368,7 @@ export class GatewayToolExecutor {
         reasoning: decisionInput.reasoning,
         confidence: decisionInput.confidence ?? 0.5,
         type: 'user_decision', // mama-api expects 'user_decision' not 'decision'
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any);
     }
 
@@ -484,7 +486,9 @@ export class GatewayToolExecutor {
     _input: LoadCheckpointInput
   ): Promise<LoadCheckpointResult> {
     const checkpoint = await api.loadCheckpoint();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (checkpoint && (checkpoint as any).recentConversation && this.sessionStore) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.sessionStore.restoreMessages((checkpoint as any).recentConversation);
     }
     return checkpoint;
@@ -622,6 +626,7 @@ export class GatewayToolExecutor {
         timeout: 60000,
       });
       return { success: true, output };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       return {
         success: false,

@@ -16,7 +16,13 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { SessionStore } from './session-store.js';
 import { ContextInjector, type MamaApiClient } from './context-injector.js';
-import type { NormalizedMessage, MessageRouterConfig, Session, RelatedDecision } from './types.js';
+import type {
+  NormalizedMessage,
+  MessageRouterConfig,
+  Session,
+  RelatedDecision,
+  ContentBlock,
+} from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
@@ -26,20 +32,6 @@ import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext } from '../agent/types.js';
-
-/**
- * Content block for multimodal input
- */
-export interface ContentBlock {
-  type: 'text' | 'image' | 'document';
-  text?: string;
-  localPath?: string; // For image path reference
-  source?: {
-    type: 'base64';
-    media_type: string;
-    data: string;
-  };
-}
 
 /**
  * Agent Loop interface for message processing

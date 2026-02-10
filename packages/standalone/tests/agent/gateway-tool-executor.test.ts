@@ -183,7 +183,7 @@ describe('GatewayToolExecutor', () => {
 
       const result = await executor.execute('mama_save', {
         type: 'invalid_type',
-      } as unknown);
+      } as Record<string, unknown>);
 
       expect(result).toMatchObject({
         success: false,
@@ -280,7 +280,7 @@ describe('GatewayToolExecutor', () => {
 
       const result = await executor.execute('mama_update', {
         outcome: 'success',
-      } as unknown);
+      } as Record<string, unknown>);
 
       expect(result).toMatchObject({
         success: false,
@@ -449,7 +449,7 @@ describe('GatewayToolExecutor', () => {
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
       executor.setAgentContext(createViewerContext());
 
-      const result = await executor.execute('os_add_bot', {} as any);
+      const result = await executor.execute('os_add_bot', {} as Record<string, unknown>);
 
       expect(result).toMatchObject({
         success: false,
@@ -474,7 +474,7 @@ describe('GatewayToolExecutor', () => {
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
       executor.setAgentContext(createViewerContext());
 
-      const result = await executor.execute('os_set_permissions', {} as any);
+      const result = await executor.execute('os_set_permissions', {} as Record<string, unknown>);
 
       expect(result).toMatchObject({
         success: false,
@@ -550,6 +550,7 @@ describe('GatewayToolExecutor', () => {
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
       executor.setAgentContext(createViewerContext());
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await executor.execute('os_restart_bot', {} as any);
 
       expect(result).toMatchObject({
@@ -562,6 +563,7 @@ describe('GatewayToolExecutor', () => {
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
       executor.setAgentContext(createViewerContext());
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await executor.execute('os_stop_bot', {} as any);
 
       expect(result).toMatchObject({

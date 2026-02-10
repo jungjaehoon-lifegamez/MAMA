@@ -346,7 +346,7 @@ export class CronScheduler {
    * Convert internal job to public job (without task)
    */
   private toPublicJob(job: InternalJob): CronJob {
-    const { task, ...publicJob } = job;
+    const { task: _task, ...publicJob } = job;
     return publicJob;
   }
 
