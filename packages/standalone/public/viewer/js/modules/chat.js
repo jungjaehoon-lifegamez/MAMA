@@ -568,6 +568,9 @@ export class ChatModule {
 
     this.saveToHistory('assistant', text, timestamp);
 
+    // Show unread badge if floating panel is closed
+    this.showUnreadBadge();
+
     // Auto-play TTS if enabled
     if (this.ttsEnabled && text) {
       console.log('[TTS] Auto-play enabled, speaking assistant message');
@@ -1586,6 +1589,94 @@ export class ChatModule {
     } catch (error) {
       // Silent fail - no checkpoint is okay
       console.log('[Chat] No resumable session');
+    }
+  }
+
+  // =============================================
+  // Floating Chat
+  // =============================================
+
+  /**
+   * Initialize floating chat panel bindings
+   */
+  initFloating() {
+    const bubble = document.getElementById('chat-bubble');
+    const closeBtn = document.getElementById('chat-close');
+
+    if (bubble) {
+      bubble.addEventListener('click', () => this.togglePanel());
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => this.togglePanel(false));
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.isFloatingOpen()) {
+        this.togglePanel(false);
+      }
+    });
+
+    console.log('[Chat] Floating mode initialized');
+  }
+
+  /**
+   * Toggle floating chat panel open/close
+   * @param {boolean} [forceState] - Force open (true) or close (false)
+   */
+  togglePanel(forceState) {
+    const panel = document.getElementById('chat-panel');
+    const bubble = document.getElementById('chat-bubble');
+    const badge = document.getElementById('chat-badge');
+    if (!panel) {
+      return;
+    }
+
+    const shouldOpen = forceState !== undefined ? forceState : panel.classList.contains('hidden');
+
+    if (shouldOpen) {
+      panel.classList.remove('hidden');
+      panel.classList.add('animate-slide-up');
+      if (bubble) {
+        bubble.classList.add('scale-0');
+      }
+      if (badge) {
+        badge.classList.add('hidden');
+      }
+      const input = document.getElementById('chat-input');
+      if (input) {
+        setTimeout(() => input.focus(), 100);
+      }
+      const messages = document.getElementById('chat-messages');
+      if (messages) {
+        messages.scrollTop = messages.scrollHeight;
+      }
+    } else {
+      panel.classList.add('hidden');
+      panel.classList.remove('animate-slide-up');
+      if (bubble) {
+        bubble.classList.remove('scale-0');
+      }
+    }
+  }
+
+  /**
+   * Check if floating panel is open
+   */
+  isFloatingOpen() {
+    const panel = document.getElementById('chat-panel');
+    return panel && !panel.classList.contains('hidden');
+  }
+
+  /**
+   * Show unread badge on bubble when panel is closed
+   */
+  showUnreadBadge() {
+    if (this.isFloatingOpen()) {
+      return;
+    }
+    const badge = document.getElementById('chat-badge');
+    if (badge) {
+      badge.classList.remove('hidden');
     }
   }
 

@@ -185,7 +185,7 @@
               </svg>
               <span class="hidden sm:inline">Dashboard</span>
             </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-bold transition-all bg-mama-yellow text-mama-black shadow-sm flex items-center gap-2" data-tab="chat" onclick="window.switchTab && window.switchTab('chat')">
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="skills" onclick="window.switchTab && window.switchTab('skills')">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
@@ -197,9 +197,11 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
               </svg>
-              <span class="hidden sm:inline">Chat</span>
+              <span class="hidden sm:inline">Skills</span>
             </button>
             <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
               <svg
@@ -429,6 +431,28 @@
                 <div class="animate-pulse space-y-1.5">
                   <div class="h-3 bg-gray-100 rounded w-3/4"></div>
                   <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Cron Monitor -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Cron Monitor</h2>
+              <div id="dashboard-cron" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div class="animate-pulse space-y-1.5">
+                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Token Usage -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Token Usage</h2>
+              <div id="dashboard-tokens" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div class="animate-pulse space-y-1.5">
+                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
                 </div>
               </div>
             </section>
@@ -986,128 +1010,111 @@
           </div>
         </div>
 
-        <div class="tab-content active" id="tab-chat">
+        <!-- Skills Marketplace Tab (replaces Chat) -->
+        <div class="tab-content" id="tab-skills">
           <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full">
-            <div class="flex-1 flex flex-col bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded-xl overflow-hidden shadow-sm min-h-0" id="general-chat">
-              <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-h-0" id="chat-messages">
-                <div class="flex-1 flex flex-col items-center justify-center text-center p-12 text-gray-500">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="48"
-                    height="48"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    class="mb-4 opacity-50"
-                  >
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                  <h3 class="text-lg font-semibold text-gray-900 text-mama-black mb-2">Start a conversation</h3>
-                  <p class="text-sm text-gray-500 text-gray-600 max-w-sm leading-relaxed">
-                    Connect to a Claude session to start chatting. Your conversation will be saved
-                    and can be resumed later.
-                  </p>
-                </div>
+            <div class="flex-1 flex flex-col items-center justify-center text-center p-12 text-gray-500">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-4 opacity-50">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
+              </svg>
+              <h3 class="text-lg font-semibold text-mama-black mb-2">Skills Marketplace</h3>
+              <p class="text-sm text-gray-600 max-w-sm leading-relaxed">
+                Browse, install, and manage skills from MAMA, Cowork, and OpenClaw.
+              </p>
+              <p class="text-xs text-gray-400 mt-4">Coming soon in E3</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Chat (global, visible on all tabs) -->
+        <div id="floating-chat" class="fixed bottom-6 right-6 z-50">
+          <button id="chat-bubble"
+            class="w-14 h-14 rounded-full bg-mama-yellow shadow-yellow flex items-center justify-center hover:scale-110 transition-transform cursor-pointer relative"
+            title="Open Chat">
+            <svg class="w-6 h-6 text-mama-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span id="chat-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
+          </button>
+
+          <div id="chat-panel" class="hidden absolute bottom-[4.5rem] right-0 w-[400px] h-[560px] bg-white rounded-2xl shadow-float border border-mama-lavender-dark flex flex-col overflow-hidden">
+            <!-- Header -->
+            <div class="h-12 bg-mama-yellow/20 flex items-center px-4 border-b border-mama-lavender-dark shrink-0">
+              <svg class="w-5 h-5 text-mama-black mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="font-bold text-mama-black text-sm">MAMA Chat</span>
+              <div class="ml-2 flex items-center gap-1 text-xs text-gray-500" id="chat-status">
+                <span class="status-indicator w-2 h-2 rounded-full bg-red-500"></span>
+                <span>Not connected</span>
               </div>
-
-              <div class="border-t border-gray-200 border-mama-lavender-dark p-4 space-y-3">
-                <div class="flex gap-2">
-                  <textarea
-                    class="flex-1 px-3 py-2 border border-gray-200 border-mama-lavender-dark rounded-lg bg-white bg-mama-lavender-light text-gray-900 text-mama-black placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-mama-yellow disabled:opacity-50 disabled:cursor-not-allowed"
-                    id="chat-input"
-                    placeholder="Type your message..."
-                    rows="2"
-                    disabled
-                  ></textarea>
-                  <button 
-                    class="px-4 py-2 bg-mama-yellow hover:bg-mama-yellow-hover disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors disabled:cursor-not-allowed flex items-center gap-2" 
-                    id="chat-send" 
-                    onclick="sendChatMessage()" 
-                    disabled
-                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <line x1="22" y1="2" x2="11" y2="13" stroke-width="2" stroke-linecap="round"/>
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                    <span>Send</span>
-                  </button>
-                </div>
-
-                  <div class="flex items-center gap-2">
-                    <button
-                      class="p-2 rounded-lg hover:bg-mama-lavender-light transition-colors"
-                      id="chat-tts-toggle"
-                      onclick="toggleTTS()"
-                      title="TTS Off"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                    </button>
-                    <div class="relative">
-                      <span class="text-xs text-gray-600 text-gray-600 cursor-pointer px-2 py-1 hover:bg-mama-lavender-light rounded" id="tts-speed-label" onclick="toggleTTSPopup()">
-                        1.8x
-                      </span>
-                      <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white bg-white border border-gray-200 border-mama-lavender-dark rounded-lg p-3 shadow-lg hidden" id="tts-speed-popup">
-                        <div class="text-center text-sm font-semibold mb-2" id="tts-speed-value">1.8x</div>
-                        <input
-                          type="range"
-                          class="w-full accent-indigo-600"
-                          id="tts-speed-slider"
-                          min="0.5"
-                          max="2.0"
-                          step="0.1"
-                          value="1.8"
-                          oninput="updateTTSSpeed(this.value)"
-                        />
-                      </div>
-                    </div>
-                    <button
-                      class="p-2 rounded-lg hover:bg-mama-lavender-light transition-colors"
-                      id="chat-handsfree-toggle"
-                      onclick="toggleHandsFree()"
-                      title="Hands-free Off"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="2" stroke-width="2"/>
-                        <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                    </button>
-                    <button
-                      class="p-2 rounded-lg hover:bg-mama-lavender-light transition-colors relative"
-                      id="chat-mic"
-                      onclick="toggleVoiceInput()"
-                      title="Voice input"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        <line x1="12" y1="19" x2="12" y2="22" stroke-width="2" stroke-linecap="round"/>
-                      </svg>
-                      <span class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"></span>
-                    </button>
-                  </div>
-                  
-                  <div class="flex items-center gap-2 text-sm text-gray-600 text-gray-600" id="chat-status">
-                    <span class="status-indicator w-2 h-2 rounded-full bg-red-500"></span>
-                    <span>Not connected</span>
-                    <button
-                      class="ml-2 p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors"
-                      onclick="showTunnelSetup()"
-                      title="External Access"
-                    >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="10" stroke-width="2"/>
-                        <line x1="2" y1="12" x2="22" y2="12" stroke-width="2"/>
-                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke-width="2"/>
-                      </svg>
-                    </button>
+              <div class="ml-auto flex items-center gap-1">
+                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-tts-toggle" onclick="toggleTTS()" title="TTS Off">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <div class="relative">
+                  <span class="text-[10px] text-gray-500 cursor-pointer px-1 py-0.5 hover:bg-mama-lavender-light rounded" id="tts-speed-label" onclick="toggleTTSPopup()">1.8x</span>
+                  <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white border border-mama-lavender-dark rounded-lg p-3 shadow-lg hidden" id="tts-speed-popup">
+                    <div class="text-center text-sm font-semibold mb-2" id="tts-speed-value">1.8x</div>
+                    <input type="range" class="w-full accent-mama-yellow" id="tts-speed-slider" min="0.5" max="2.0" step="0.1" value="1.8" oninput="updateTTSSpeed(this.value)" />
                   </div>
                 </div>
+                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-handsfree-toggle" onclick="toggleHandsFree()" title="Hands-free Off">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="2" stroke-width="2"/>
+                    <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <button id="chat-close" class="p-1.5 rounded-lg hover:bg-red-100 transition-colors text-gray-500 hover:text-red-600" title="Close">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/>
+                    <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Messages -->
+            <div class="flex-1 overflow-y-auto p-3 flex flex-col gap-3 min-h-0" id="chat-messages">
+              <div class="flex-1 flex flex-col items-center justify-center text-center p-6 text-gray-400">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-3 opacity-50">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <p class="text-sm">Start a conversation</p>
+              </div>
+            </div>
+
+            <!-- Input -->
+            <div class="border-t border-mama-lavender-dark p-3 space-y-2 shrink-0">
+              <div class="flex gap-2">
+                <textarea
+                  class="flex-1 px-3 py-2 border border-mama-lavender-dark rounded-lg bg-mama-lavender-light text-mama-black placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-mama-yellow disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  id="chat-input" placeholder="Type your message..." rows="1" disabled
+                ></textarea>
+                <button
+                  class="px-3 py-2 bg-mama-yellow hover:bg-mama-yellow-hover disabled:bg-gray-400 text-mama-black rounded-lg font-medium transition-colors disabled:cursor-not-allowed flex items-center"
+                  id="chat-send" onclick="sendChatMessage()" disabled>
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <line x1="22" y1="2" x2="11" y2="13" stroke-width="2" stroke-linecap="round"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="flex items-center gap-1">
+                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors relative" id="chat-mic" onclick="toggleVoiceInput()" title="Voice input">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <line x1="12" y1="19" x2="12" y2="22" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                  <span class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"></span>
+                </button>
+                <span class="text-[10px] text-gray-400 ml-1">Enter to send, Shift+Enter for new line</span>
               </div>
             </div>
           </div>
@@ -1311,7 +1318,7 @@
       };
 
       const STATE = {
-        currentTab: 'chat',
+        currentTab: 'dashboard',
         theme: 'dark',
         graphLoaded: false
       };
@@ -1331,9 +1338,7 @@
           content.classList.toggle('active', content.id === `tab-${tabName}`);
         });
 
-        if (tabName === 'chat') {
-          chat.initSession();
-        } else if (tabName === 'dashboard') {
+        if (tabName === 'dashboard') {
           dashboard.init();
         } else if (tabName === 'settings') {
           settings.init();
@@ -1804,7 +1809,11 @@
         document.documentElement.lang = userLang.split('-')[0];
 
         initTheme();
-        switchTab('chat');
+        // Initialize floating chat (WebSocket + panel bindings)
+        chat.initFloating();
+        chat.initSession();
+        // Default to dashboard tab
+        switchTab('dashboard');
       });
 
       // Cleanup resources on page unload

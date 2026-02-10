@@ -14,6 +14,7 @@
 
 import { escapeHtml } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
+import { API } from '../utils/api.js';
 
 /**
  * Dashboard Module Class
@@ -78,6 +79,26 @@ export class DashboardModule {
         this.delegationsData = { delegations: [], count: 0 };
       }
 
+      // Load cron jobs
+      try {
+        this.cronData = await API.getCronJobs();
+      } catch (e) {
+        console.warn('[Dashboard] Cron data unavailable:', e);
+        this.cronData = null;
+      }
+
+      // Load token summary
+      try {
+        const [summary, byAgent] = await Promise.all([
+          API.getTokenSummary(),
+          API.getTokensByAgent(),
+        ]);
+        this.tokenData = { summary, byAgent };
+      } catch (e) {
+        console.warn('[Dashboard] Token data unavailable:', e);
+        this.tokenData = null;
+      }
+
       this.render();
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
@@ -101,6 +122,8 @@ export class DashboardModule {
     this.renderToolStatus();
     this.renderAgentSwarm(); // Sprint 3 F2
     this.renderTopTopics();
+    this.renderCronJobs();
+    this.renderTokenSummary();
   }
 
   /**
@@ -693,6 +716,179 @@ export class DashboardModule {
       return `${Math.round(ms / 1000)}s`;
     }
     return `${Math.round(ms / 60000)}min`;
+  }
+
+  /**
+   * Render cron jobs section
+   */
+  renderCronJobs() {
+    const container = document.getElementById('dashboard-cron');
+    if (!container) {
+      return;
+    }
+
+    const jobs = this.cronData?.jobs || this.cronData || [];
+
+    if (!Array.isArray(jobs) || jobs.length === 0) {
+      container.innerHTML = `
+        <p class="text-gray-500 text-sm text-center py-4">
+          No cron jobs configured. Add scheduled tasks in config.yaml.
+        </p>
+      `;
+      return;
+    }
+
+    const rows = jobs
+      .map((job) => {
+        const isEnabled = job.enabled !== false;
+        const statusBadge = isEnabled
+          ? '<span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-600">Active</span>'
+          : '<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Paused</span>';
+
+        const nextRun = job.nextRun
+          ? new Date(job.nextRun).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : '-';
+
+        return `
+        <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-medium text-sm text-gray-900 truncate">${escapeHtml(job.name || job.id)}</span>
+              ${statusBadge}
+            </div>
+            <p class="text-xs text-gray-500 mt-0.5">
+              <code class="bg-gray-100 px-1 py-0.5 rounded text-[10px]">${escapeHtml(job.schedule || job.cron || '')}</code>
+              <span class="ml-2">Next: ${nextRun}</span>
+            </p>
+          </div>
+          <div class="flex items-center gap-1 ml-2 shrink-0">
+            <button class="text-xs px-2 py-1 bg-mama-yellow hover:bg-mama-yellow-hover text-mama-black rounded transition-colors"
+              onclick="window.dashboardModule.runCronJob('${escapeHtml(job.id)}')" title="Run Now">
+              Run
+            </button>
+          </div>
+        </div>
+      `;
+      })
+      .join('');
+
+    container.innerHTML = `
+      <div class="space-y-0">
+        ${rows}
+      </div>
+    `;
+  }
+
+  /**
+   * Run a cron job immediately
+   */
+  async runCronJob(id) {
+    try {
+      await API.runCronJob(id);
+      const statusEl = document.getElementById('dashboard-status');
+      if (statusEl) {
+        statusEl.textContent = `Cron job "${id}" triggered`;
+      }
+      await this.loadStatus();
+    } catch (e) {
+      console.error('[Dashboard] Failed to run cron job:', e);
+    }
+  }
+
+  /**
+   * Render token usage summary section
+   */
+  renderTokenSummary() {
+    const container = document.getElementById('dashboard-tokens');
+    if (!container) {
+      return;
+    }
+
+    if (!this.tokenData?.summary) {
+      container.innerHTML = `
+        <p class="text-gray-500 text-sm text-center py-4">
+          Token tracking not yet available. Usage data will appear after conversations.
+        </p>
+      `;
+      return;
+    }
+
+    const s = this.tokenData.summary;
+    const agents = this.tokenData.byAgent?.agents || [];
+
+    const formatTokens = (n) => {
+      if (!n || n === 0) {
+        return '0';
+      }
+      if (n >= 1000000) {
+        return (n / 1000000).toFixed(1) + 'M';
+      }
+      if (n >= 1000) {
+        return (n / 1000).toFixed(1) + 'K';
+      }
+      return n.toString();
+    };
+
+    const formatCost = (usd) => {
+      if (!usd || usd === 0) {
+        return '$0.00';
+      }
+      return '$' + usd.toFixed(2);
+    };
+
+    // Summary cards
+    const periods = [
+      { label: 'Today', tokens: s.today?.tokens, cost: s.today?.cost, icon: '📊' },
+      { label: 'This Week', tokens: s.week?.tokens, cost: s.week?.cost, icon: '📅' },
+      { label: 'This Month', tokens: s.month?.tokens, cost: s.month?.cost, icon: '📆' },
+    ];
+
+    const cards = periods
+      .map(
+        (p) => `
+      <div class="bg-white border border-gray-200 rounded-lg p-2.5 text-center">
+        <span class="text-lg">${p.icon}</span>
+        <p class="text-xl font-bold text-gray-900 mt-1">${formatTokens(p.tokens)}</p>
+        <p class="text-[10px] text-gray-500">${p.label}</p>
+        <p class="text-[10px] text-mama-yellow-hover font-medium">${formatCost(p.cost)}</p>
+      </div>
+    `
+      )
+      .join('');
+
+    // Agent breakdown (mini bar chart)
+    const maxTokens = Math.max(...agents.map((a) => a.tokens || 0), 1);
+    const agentBars = agents
+      .slice(0, 5)
+      .map((a) => {
+        const pct = Math.round(((a.tokens || 0) / maxTokens) * 100);
+        return `
+        <div class="flex items-center gap-2 mb-1.5">
+          <span class="text-xs text-gray-700 w-20 truncate" title="${escapeHtml(a.name || a.id)}">${escapeHtml(a.name || a.id)}</span>
+          <div class="flex-1 bg-gray-200 rounded-full h-2">
+            <div class="bg-mama-yellow h-2 rounded-full transition-all" style="width: ${pct}%"></div>
+          </div>
+          <span class="text-[10px] text-gray-500 w-12 text-right">${formatTokens(a.tokens)}</span>
+        </div>
+      `;
+      })
+      .join('');
+
+    container.innerHTML = `
+      <div class="grid grid-cols-3 gap-2 mb-3">
+        ${cards}
+      </div>
+      ${
+        agents.length > 0
+          ? `
+        <div>
+          <p class="text-xs text-gray-500 mb-2">By Agent:</p>
+          ${agentBars}
+        </div>
+      `
+          : ''
+      }
+    `;
   }
 
   /**

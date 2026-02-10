@@ -28,6 +28,35 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Floating Chat */
+.animate-slide-up {
+  animation: slide-up 0.2s ease-out;
+}
+
+#chat-bubble {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+#chat-bubble.scale-0 {
+  transform: scale(0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+#chat-panel .chat-message {
+  font-size: 0.875rem;
+}
+
+#chat-panel .chat-message .message-content {
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
 @keyframes float {
   0%, 100% { transform: translate(0, 0) scale(1); }
   33% { transform: translate(30px, -30px) scale(1.05); }
