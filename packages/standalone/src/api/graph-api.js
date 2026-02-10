@@ -1559,6 +1559,16 @@ async function handleGetConfigRequest(req, res) {
  */
 async function handleUpdateConfigRequest(req, res) {
   try {
+    // Check authentication
+    const authHeader = req.headers.authorization;
+    const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.ADMIN_API_KEY;
+
+    if (!adminToken || !authHeader || authHeader !== `Bearer ${adminToken}`) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+      return;
+    }
+
     const body = await readBody(req);
 
     // Load current config

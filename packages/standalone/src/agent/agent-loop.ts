@@ -526,8 +526,22 @@ export class AgentLoop {
         content,
       });
 
+      let lastProgressTime = Date.now();
+      let consecutiveNoProgressTurns = 0;
+      const MAX_NO_PROGRESS_TURNS = 3;
+      const TURN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per turn
+
       while (turn < this.maxTurns) {
         turn++;
+        const turnStartTime = Date.now();
+
+        // Check for infinite loop conditions
+        if (turnStartTime - lastProgressTime > TURN_TIMEOUT_MS) {
+          console.warn(
+            `[AgentLoop] Turn ${turn} exceeded timeout of ${TURN_TIMEOUT_MS}ms, breaking loop`
+          );
+          break;
+        }
 
         let response: ClaudeResponse;
 
@@ -760,6 +774,24 @@ export class AgentLoop {
             role: 'user',
             content: toolResults,
           });
+        }
+
+        // Check for progress to prevent infinite loops
+        const currentContent = this.extractTextFromContent(response.content);
+        const hasProgress =
+          currentContent.length > 10 && !currentContent.includes('I need more information');
+
+        if (hasProgress) {
+          lastProgressTime = Date.now();
+          consecutiveNoProgressTurns = 0;
+        } else {
+          consecutiveNoProgressTurns++;
+          if (consecutiveNoProgressTurns >= MAX_NO_PROGRESS_TURNS) {
+            console.warn(
+              `[AgentLoop] No progress for ${MAX_NO_PROGRESS_TURNS} consecutive turns, breaking loop`
+            );
+            break;
+          }
         }
       }
 
