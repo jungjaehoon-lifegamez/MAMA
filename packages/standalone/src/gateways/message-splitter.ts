@@ -64,7 +64,7 @@ export function splitMessage(text: string, options: SplitOptions = {}): string[]
     }
 
     // Find best split point
-    let splitIndex = findBestSplitPoint(remaining, currentMax, splitPoints);
+    const splitIndex = findBestSplitPoint(remaining, currentMax, splitPoints);
 
     // Add chunk
     const prefix = isFirst ? '' : continuationPrefix;

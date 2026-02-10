@@ -30,7 +30,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 describe('ClaudeClient', () => {
   let mockOAuthManager: OAuthManager;
-  let mockCreate: Mock;
+  let _mockCreate: Mock;
 
   const mockToken = 'sk-ant-oat01-test-token';
 
@@ -53,7 +53,7 @@ describe('ClaudeClient', () => {
     } as unknown as OAuthManager;
 
     // Get the mocked create function
-    mockCreate =
+    _mockCreate =
       (Anthropic as unknown as Mock).mock.results[0]?.value?.messages?.create ??
       vi.fn().mockResolvedValue(mockSdkResponse);
 

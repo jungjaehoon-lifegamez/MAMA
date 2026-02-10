@@ -7,40 +7,39 @@
 
 import type { Message } from 'discord.js';
 import type { MultiAgentConfig, MessageContext, AgentPersonaConfig } from './types.js';
-import { MultiAgentOrchestrator } from './orchestrator.js';
-import { AgentProcessManager } from './agent-process-manager.js';
-import { getSharedContextManager, type SharedContextManager } from './shared-context.js';
 import { MultiBotManager } from './multi-bot-manager.js';
 import type { PersistentProcessOptions } from '../agent/persistent-cli-process.js';
 import { splitForDiscord } from '../gateways/message-splitter.js';
-import { AgentMessageQueue, type QueuedMessage } from './agent-message-queue.js';
+import type { QueuedMessage } from './agent-message-queue.js';
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
-import { BackgroundTaskManager, type BackgroundTask } from './background-task-manager.js';
-import { SystemReminderService } from './system-reminder.js';
-import { DelegationManager } from './delegation-manager.js';
 import { getChannelHistory } from '../gateways/channel-history.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import { PRReviewPoller } from './pr-review-poller.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import {
+  MultiAgentHandlerBase,
+  AGENT_TIMEOUT_MS,
+  type AgentResponse,
+  type MultiAgentResponse,
+} from './multi-agent-base.js';
+
+export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
 
 const execFileAsync = promisify(execFile);
 
-/** Default timeout for agent responses (15 minutes — must accommodate sub-agent spawns) */
-const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
-
-/** Delay before showing progress message (ms) — fast requests never show it */
+/** Delay before showing progress message (ms) -- fast requests never show it */
 const PROGRESS_DELAY_MS = 5_000;
 
-/** Minimum interval between progress message edits (ms) — Discord rate limit safety */
+/** Minimum interval between progress message edits (ms) -- Discord rate limit safety */
 const PROGRESS_EDIT_INTERVAL_MS = 3_000;
 
-/** Phase emoji progression: 👀 → 🔍/💻 → 🔧 → 📝 → ✅ */
-const PHASE_EMOJIS = ['👀', '🔍', '💻', '🔧', '📝', '✅'] as const;
+/** Phase emoji progression */
+const _PHASE_EMOJIS = ['👀', '🔍', '💻', '🔧', '📝', '✅'] as const;
 
 /** Map tool names to phase emojis */
-function toolToPhaseEmoji(toolName: string): (typeof PHASE_EMOJIS)[number] | null {
+function toolToPhaseEmoji(toolName: string): (typeof _PHASE_EMOJIS)[number] | null {
   switch (toolName) {
     case 'Task':
     case 'Read':
@@ -67,33 +66,15 @@ function toolToPhaseEmoji(toolName: string): (typeof PHASE_EMOJIS)[number] | nul
  * Should be instantiated and called from the Discord gateway when
  * multi-agent mode is enabled.
  */
-export class MultiAgentDiscordHandler {
-  private config: MultiAgentConfig;
-  private orchestrator: MultiAgentOrchestrator;
-  private processManager: AgentProcessManager;
-  private sharedContext: SharedContextManager;
+export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   private multiBotManager: MultiBotManager;
-  private messageQueue: AgentMessageQueue;
-  private prReviewPoller: PRReviewPoller;
   private promptEnhancer: PromptEnhancer;
-  private backgroundTaskManager: BackgroundTaskManager;
-  private systemReminder: SystemReminderService;
-  private delegationManager: DelegationManager;
 
   /** Discord client reference for main bot channel sends */
   private discordClient: { channels: { fetch: (id: string) => Promise<unknown> } } | null = null;
 
-  /** Whether multi-bot mode is initialized */
-  private multiBotInitialized = false;
-
   /** Tracks which agent:channel combos have received history injection (new session only) */
   private historyInjected = new Set<string>();
-
-  /** Dedup map for delegation mentions with timestamps (prevents double processing) */
-  private processedMentions = new Map<string, number>();
-
-  /** TTL for processed mention entries (5 minutes) */
-  private static readonly MENTION_TTL_MS = 5 * 60 * 1000;
 
   /** Cleanup interval handle for periodic tasks */
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
@@ -104,76 +85,16 @@ export class MultiAgentDiscordHandler {
   /** Tracks channels where APPROVE+commit was processed (prevents congratulation loops) */
   private approveProcessedChannels = new Map<string, number>();
 
-  /** APPROVE cooldown period — blocks agent-to-agent routing after commit (5 minutes) */
+  /** APPROVE cooldown period -- blocks agent-to-agent routing after commit (5 minutes) */
   private static readonly APPROVE_COOLDOWN_MS = 5 * 60 * 1000;
 
   /** Cleanup interval period (1 minute) */
   private static readonly CLEANUP_INTERVAL_MS = 60_000;
 
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
-    this.config = config;
-    this.orchestrator = new MultiAgentOrchestrator(config);
-    this.processManager = new AgentProcessManager(config, processOptions);
-    this.sharedContext = getSharedContextManager();
+    super(config, processOptions);
     this.multiBotManager = new MultiBotManager(config);
-    this.messageQueue = new AgentMessageQueue();
-    this.prReviewPoller = new PRReviewPoller();
     this.promptEnhancer = new PromptEnhancer();
-
-    const agentConfigs = Object.entries(config.agents).map(([id, cfg]) => ({ id, ...cfg }));
-    this.delegationManager = new DelegationManager(agentConfigs);
-
-    this.backgroundTaskManager = new BackgroundTaskManager(
-      async (agentId: string, prompt: string): Promise<string> => {
-        const process = await this.processManager.getProcess('discord', 'background', agentId);
-        const result = await process.sendMessage(prompt);
-        return result.response;
-      },
-      { maxConcurrentPerAgent: 2, maxTotalConcurrent: 5 }
-    );
-
-    this.systemReminder = new SystemReminderService({
-      batchWindowMs: 2000,
-      enableChatNotifications: true,
-    });
-
-    this.backgroundTaskManager.on('task-started', ({ task }: { task: BackgroundTask }) => {
-      this.systemReminder.notify({
-        type: 'task-started',
-        taskId: task.id,
-        description: task.description,
-        agentId: task.agentId,
-        requestedBy: task.requestedBy,
-        channelId: task.channelId,
-        timestamp: Date.now(),
-      });
-    });
-
-    this.backgroundTaskManager.on('task-completed', ({ task }: { task: BackgroundTask }) => {
-      this.systemReminder.notify({
-        type: 'task-completed',
-        taskId: task.id,
-        description: task.description,
-        agentId: task.agentId,
-        requestedBy: task.requestedBy,
-        channelId: task.channelId,
-        duration: task.duration,
-        timestamp: Date.now(),
-      });
-    });
-
-    this.backgroundTaskManager.on('task-failed', ({ task }: { task: BackgroundTask }) => {
-      this.systemReminder.notify({
-        type: 'task-failed',
-        taskId: task.id,
-        description: task.description,
-        agentId: task.agentId,
-        requestedBy: task.requestedBy,
-        channelId: task.channelId,
-        error: task.error,
-        timestamp: Date.now(),
-      });
-    });
 
     // Periodic cleanup of expired queued messages and mention dedup entries
     this.cleanupInterval = setInterval(() => {
@@ -186,17 +107,56 @@ export class MultiAgentDiscordHandler {
     this.setupIdleListeners();
   }
 
+  protected getPlatformName(): 'discord' | 'slack' {
+    return 'discord';
+  }
+
+  formatBold(text: string): string {
+    return `**${text}**`;
+  }
+
   /**
-   * Setup idle event listeners for agent processes (F7)
+   * Extract agent IDs from <@USER_ID> mentions AND DELEGATE::{agent_id}:: patterns
+   * in message content. Both syntaxes route to the same delegation flow.
    */
-  private setupIdleListeners(): void {
-    this.processManager.on('process-created', ({ agentId, process }) => {
-      process.on('idle', async () => {
-        await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
-          await this.sendQueuedResponse(aid, message, response);
-        });
-      });
-    });
+  extractMentionedAgentIds(content: string): string[] {
+    const agentIds: string[] = [];
+
+    // 1. Discord native mentions: <@USER_ID> or <@!USER_ID>
+    const mentionPattern = /<@!?(\d+)>/g;
+    let match;
+
+    while ((match = mentionPattern.exec(content)) !== null) {
+      const userId = match[1];
+      const agentId = this.multiBotManager.resolveAgentIdFromUserId(userId);
+      if (agentId && agentId !== 'main') {
+        agentIds.push(agentId);
+      } else if (agentId === 'main' && this.config.default_agent) {
+        // Main bot userId maps to the default agent (LEAD)
+        agentIds.push(this.config.default_agent);
+      }
+    }
+
+    // 2. DELEGATE::{agent_id}:: and DELEGATE_BG::{agent_id}:: syntax
+    const delegatePattern = /DELEGATE(?:_BG)?::([\w-]+)::/g;
+    while ((match = delegatePattern.exec(content)) !== null) {
+      const targetAgentId = match[1];
+      // Only add if it's a known agent and not already in the list
+      if (this.orchestrator.getAgent(targetAgentId) && !agentIds.includes(targetAgentId)) {
+        agentIds.push(targetAgentId);
+      }
+    }
+
+    return agentIds;
+  }
+
+  protected async platformCleanup(): Promise<void> {
+    // Clear cleanup interval to prevent memory leaks
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    await this.multiBotManager.stopAll();
   }
 
   /**
@@ -213,7 +173,7 @@ export class MultiAgentDiscordHandler {
       this.processedMentions.set(dedupKey, Date.now());
 
       // Block agent-to-LEAD mentions during post-APPROVE cooldown
-      // Only blocks mentions targeting the default (LEAD) agent — not other agents like DEV
+      // Only blocks mentions targeting the default (LEAD) agent -- not other agents like DEV
       const approveCooldown = this.approveProcessedChannels.get(message.channel.id);
       if (
         message.author.bot &&
@@ -323,7 +283,7 @@ export class MultiAgentDiscordHandler {
       } catch (err) {
         console.error(`[MultiAgent] Mention handler error:`, err);
       } finally {
-        // Only add ✅ if agent responded (null = busy/queued, ⏳ already added)
+        // Only add checkmark if agent responded (null = busy/queued)
         if (mentionResponse) {
           try {
             await message.react('✅');
@@ -361,13 +321,13 @@ export class MultiAgentDiscordHandler {
       console.log(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
 
       // PR Review Poller: target Reviewer for @mention in Discord messages.
-      // Reviewer analyzes PR data → summarizes → mentions LEAD with prioritized tasks.
+      // Reviewer analyzes PR data -> summarizes -> mentions LEAD with prioritized tasks.
       const reviewerEntry = this.findReviewerAgent();
       const reviewerTargetId = reviewerEntry?.[0];
       const reviewerUserId = reviewerTargetId ? botUserIdMap.get(reviewerTargetId) : undefined;
       if (reviewerUserId) {
         this.prReviewPoller.setTargetAgentUserId(reviewerUserId);
-        console.log(`[MultiAgent] PR Poller target: ${reviewerTargetId} (reviewer → LEAD)`);
+        console.log(`[MultiAgent] PR Poller target: ${reviewerTargetId} (reviewer -> LEAD)`);
       } else {
         // Fallback: mention LEAD directly
         const orchestratorId = defaultAgentId || 'sisyphus';
@@ -463,7 +423,7 @@ export class MultiAgentDiscordHandler {
         await this.multiBotManager.sendAsAgent(reviewerAgentId, channelId, chunk);
       }
       console.log(
-        `[MultiAgent] PR Poller → LEAD mention sent via ${reviewerAgentId} (${chunks.length} chunks, ${prSummary.length} chars)`
+        `[MultiAgent] PR Poller -> LEAD mention sent via ${reviewerAgentId} (${chunks.length} chunks, ${prSummary.length} chars)`
       );
     });
     console.log('[MultiAgent] PR Review Poller message sender configured for Discord');
@@ -474,13 +434,6 @@ export class MultiAgentDiscordHandler {
    */
   setMainBotToken(token: string): void {
     this.multiBotManager.setMainBotToken(token);
-  }
-
-  /**
-   * Check if multi-agent mode is enabled
-   */
-  isEnabled(): boolean {
-    return this.config.enabled;
   }
 
   /**
@@ -667,14 +620,14 @@ export class MultiAgentDiscordHandler {
     // Build full prompt with context.
     // - agentContext: other agents' recent messages (inter-agent awareness)
     // - historyContext: human-only channel history (LEAD agent only)
-    //   DevBot/Reviewer are sub-agent-like — they get tasks via delegation, not channel history.
+    //   DevBot/Reviewer are sub-agent-like -- they get tasks via delegation, not channel history.
     //   Only LEAD needs channel context to understand the conversation flow.
     let fullPrompt = cleanMessage;
 
     // Inject channel history for the default (LEAD) agent on new sessions only.
     // - Keeps human messages + LEAD's own messages, excludes other bots.
     // - Only on first message per session (subsequent messages are in session memory).
-    // - DevBot/Reviewer get tasks via delegation — they don't need channel history.
+    // - DevBot/Reviewer get tasks via delegation -- they don't need channel history.
     const defaultAgentId = this.config.default_agent;
     const sessionKey = `${agentId}:${context.channelId}`;
     if (agentId === defaultAgentId && !this.historyInjected.has(sessionKey)) {
@@ -727,14 +680,14 @@ export class MultiAgentDiscordHandler {
       const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
 
       // Progress tracking state
-      let toolCount = 0;
+      let _toolCount = 0;
       const startTime = Date.now();
       let progressMessage: Message | null = null;
       let progressDelayHandle: ReturnType<typeof setTimeout> | null = null;
       let lastEditTime = 0;
       let pendingEditHandle: ReturnType<typeof setTimeout> | null = null;
 
-      /** Build progress message content (elapsed time only — no tool/code details exposed) */
+      /** Build progress message content (elapsed time only -- no tool/code details exposed) */
       const buildProgressContent = (): string => {
         const elapsed = Math.round((Date.now() - startTime) / 1000);
         return `⏳ Working... (${elapsed}s)`;
@@ -748,11 +701,11 @@ export class MultiAgentDiscordHandler {
         const timeSinceLastEdit = now - lastEditTime;
 
         if (progressMessage) {
-          // Already have a message — debounce edits
+          // Already have a message -- debounce edits
           if (timeSinceLastEdit >= PROGRESS_EDIT_INTERVAL_MS) {
             lastEditTime = now;
             progressMessage.edit(buildProgressContent()).catch(() => {
-              /* ignore — message may be deleted */
+              /* ignore -- message may be deleted */
             });
           } else if (!pendingEditHandle) {
             // Schedule a deferred edit
@@ -791,7 +744,7 @@ export class MultiAgentDiscordHandler {
             }
             lastEditTime = Date.now();
           } catch {
-            /* ignore — channel may be unavailable */
+            /* ignore -- channel may be unavailable */
           }
         }, PROGRESS_DELAY_MS);
       };
@@ -810,7 +763,7 @@ export class MultiAgentDiscordHandler {
           try {
             await progressMessage.delete();
           } catch {
-            /* ignore — message may already be deleted */
+            /* ignore -- message may already be deleted */
           }
           progressMessage = null;
         }
@@ -836,7 +789,7 @@ export class MultiAgentDiscordHandler {
             }
 
             // Progress message tracking
-            toolCount++;
+            _toolCount++;
             scheduleProgressStart();
             updateProgressMessage();
           }
@@ -880,7 +833,7 @@ export class MultiAgentDiscordHandler {
             source: 'discord',
           });
           console.log(
-            `[MultiAgent] Background delegation: ${agentId} → ${bgDelegation.toAgentId} (async)`
+            `[MultiAgent] Background delegation: ${agentId} -> ${bgDelegation.toAgentId} (async)`
           );
 
           const displayResponse =
@@ -968,22 +921,9 @@ export class MultiAgentDiscordHandler {
   }
 
   /**
-   * Format agent response with display name prefix
-   */
-  private formatAgentResponse(agent: AgentPersonaConfig, response: string): string {
-    // Check if response already has the agent prefix
-    const prefix = `**${agent.display_name}**:`;
-    if (response.startsWith(prefix) || response.startsWith(`**${agent.display_name}**: `)) {
-      return response;
-    }
-
-    return `${prefix} ${response}`;
-  }
-
-  /**
    * Send queued response to Discord (F7: message queue drain callback)
    */
-  private async sendQueuedResponse(
+  protected async sendQueuedResponse(
     agentId: string,
     message: QueuedMessage,
     response: string
@@ -1024,7 +964,7 @@ export class MultiAgentDiscordHandler {
     // Record to shared context
     this.sharedContext.recordAgentMessage(message.channelId, agent, response, '');
 
-    // Mark original Discord message as completed (⏳→✅)
+    // Mark original Discord message as completed
     if (message.discordMessageId && this.discordClient) {
       try {
         const channel = await this.discordClient.channels.fetch(message.channelId);
@@ -1037,7 +977,7 @@ export class MultiAgentDiscordHandler {
           }
         }
       } catch {
-        /* ignore — message may have been deleted */
+        /* ignore -- message may have been deleted */
       }
     }
 
@@ -1142,7 +1082,7 @@ export class MultiAgentDiscordHandler {
    * Checks for Claude CLI tool-use markers that indicate Edit/Write operations.
    */
   private detectSelfImplementation(rawContent: string): boolean {
-    // Claude CLI responses contain tool use results — look for Edit/Write indicators
+    // Claude CLI responses contain tool use results -- look for Edit/Write indicators
     const editIndicators = [
       /\bedit\b.*\bapplied\b/i,
       /\bwrote\b.*\bfile\b/i,
@@ -1162,8 +1102,8 @@ export class MultiAgentDiscordHandler {
    * If diff exceeds thresholds, auto-trigger Reviewer for quality gate.
    *
    * Thresholds (PAIR mode auto-escalation):
-   * - >3 files changed → auto-mention Reviewer
-   * - >200 lines changed → auto-mention Reviewer
+   * - >3 files changed -> auto-mention Reviewer
+   * - >200 lines changed -> auto-mention Reviewer
    */
   private async triggerAutoReviewIfNeeded(
     channelId: string,
@@ -1207,7 +1147,7 @@ export class MultiAgentDiscordHandler {
 
       if (filesChanged > MAX_FILES || totalLines > MAX_LINES) {
         console.log(
-          `[AutoReview] Sisyphus self-implementation exceeded thresholds: ${filesChanged} files, ${totalLines} lines → auto-triggering Reviewer`
+          `[AutoReview] Sisyphus self-implementation exceeded thresholds: ${filesChanged} files, ${totalLines} lines -> auto-triggering Reviewer`
         );
 
         // Find reviewer agent using shared helper
@@ -1215,38 +1155,17 @@ export class MultiAgentDiscordHandler {
         const reviewerAgentId = reviewerEntry?.[0];
 
         if (reviewerAgentId && this.multiBotManager.hasAgentBot(reviewerAgentId)) {
-          const reviewMsg = `⬆️ **Auto-Review Triggered** — ${defaultAgentId} self-implemented but diff exceeded thresholds (${filesChanged} files, ${totalLines} lines). Requesting @Reviewer auto-review.`;
+          const reviewMsg = `⬆️ **Auto-Review Triggered** -- ${defaultAgentId} self-implemented but diff exceeded thresholds (${filesChanged} files, ${totalLines} lines). Requesting @Reviewer auto-review.`;
           await this.multiBotManager.sendAsAgent(reviewerAgentId, channelId, reviewMsg);
         }
       } else {
         console.log(
-          `[AutoReview] Sisyphus self-implementation within thresholds: ${filesChanged} files, ${totalLines} lines — no auto-review needed`
+          `[AutoReview] Sisyphus self-implementation within thresholds: ${filesChanged} files, ${totalLines} lines -- no auto-review needed`
         );
       }
     } catch {
-      // Git not available or not in a repo — skip silently
+      // Git not available or not in a repo -- skip silently
     }
-  }
-
-  /**
-   * Get orchestrator for direct access
-   */
-  getOrchestrator(): MultiAgentOrchestrator {
-    return this.orchestrator;
-  }
-
-  /**
-   * Get process manager for direct access
-   */
-  getProcessManager(): AgentProcessManager {
-    return this.processManager;
-  }
-
-  /**
-   * Get shared context manager
-   */
-  getSharedContext(): SharedContextManager {
-    return this.sharedContext;
   }
 
   /**
@@ -1256,56 +1175,16 @@ export class MultiAgentDiscordHandler {
     return this.multiBotManager;
   }
 
-  getBackgroundTaskManager(): BackgroundTaskManager {
-    return this.backgroundTaskManager;
-  }
-
-  getSystemReminder(): SystemReminderService {
-    return this.systemReminder;
-  }
-
-  isMentionDelegationEnabled(): boolean {
-    return this.config.mention_delegation === true;
-  }
-
   /**
-   * Extract agent IDs from <@USER_ID> mentions AND DELEGATE::{agent_id}:: patterns
-   * in message content. Both syntaxes route to the same delegation flow.
+   * Get status of all agent bots
    */
-  private extractMentionedAgentIds(content: string): string[] {
-    const agentIds: string[] = [];
-
-    // 1. Discord native mentions: <@USER_ID> or <@!USER_ID>
-    const mentionPattern = /<@!?(\d+)>/g;
-    let match;
-
-    while ((match = mentionPattern.exec(content)) !== null) {
-      const userId = match[1];
-      const agentId = this.multiBotManager.resolveAgentIdFromUserId(userId);
-      if (agentId && agentId !== 'main') {
-        agentIds.push(agentId);
-      } else if (agentId === 'main' && this.config.default_agent) {
-        // Main bot userId maps to the default agent (LEAD)
-        agentIds.push(this.config.default_agent);
-      }
-    }
-
-    // 2. DELEGATE::{agent_id}:: and DELEGATE_BG::{agent_id}:: syntax
-    const delegatePattern = /DELEGATE(?:_BG)?::([\w-]+)::/g;
-    while ((match = delegatePattern.exec(content)) !== null) {
-      const targetAgentId = match[1];
-      // Only add if it's a known agent and not already in the list
-      if (this.orchestrator.getAgent(targetAgentId) && !agentIds.includes(targetAgentId)) {
-        agentIds.push(targetAgentId);
-      }
-    }
-
-    return agentIds;
+  getBotStatus(): Record<string, { connected: boolean; username?: string }> {
+    return this.multiBotManager.getStatus();
   }
 
   /**
    * After sending agent responses, check for mentions to other agents and route them.
-   * Discord equivalent of Slack's routeResponseMentions — necessary because Discord
+   * Discord equivalent of Slack's routeResponseMentions -- necessary because Discord
    * bots don't receive their own messages as events.
    */
   async routeResponseMentions(originalMessage: Message, responses: AgentResponse[]): Promise<void> {
@@ -1322,7 +1201,7 @@ export class MultiAgentDiscordHandler {
       const senderAgent = this.orchestrator.getAgent(response.agentId);
 
       // Filter out self-mentions only. All agents can route to any other agent
-      // including LEAD — the receiving LLM agent can reason about whether to
+      // including LEAD -- the receiving LLM agent can reason about whether to
       // respond with new information or acknowledge without repeating.
       const mentionedAgentIds = this.extractMentionedAgentIds(response.rawContent).filter(
         (id) => id !== response.agentId // no self-mention
@@ -1332,13 +1211,13 @@ export class MultiAgentDiscordHandler {
         const validation = validateDelegationFormat(response.rawContent);
         if (!validation.valid) {
           console.warn(
-            `[Delegation] BLOCKED ${response.agentId} — missing: ${validation.missingSections.join(', ')}`
+            `[Delegation] BLOCKED ${response.agentId} -- missing: ${validation.missingSections.join(', ')}`
           );
 
           // Post warning to channel so the agent sees the feedback
           try {
             const warningMsg =
-              `⚠️ **Delegation blocked** — missing sections: ${validation.missingSections.join(', ')}\n` +
+              `⚠️ **Delegation blocked** -- missing sections: ${validation.missingSections.join(', ')}\n` +
               `Re-send with all 6 sections: TASK, EXPECTED OUTCOME, MUST DO, MUST NOT DO, REQUIRED TOOLS, CONTEXT`;
             const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
             if (hasOwnBot) {
@@ -1354,12 +1233,12 @@ export class MultiAgentDiscordHandler {
             /* ignore warning post errors */
           }
 
-          continue; // Skip routing — do not forward to target agents
+          continue; // Skip routing -- do not forward to target agents
         }
       }
 
       console.log(
-        `[MultiAgent] Auto-routing mentions from ${response.agentId}: → ${mentionedAgentIds.join(', ')}`
+        `[MultiAgent] Auto-routing mentions from ${response.agentId}: -> ${mentionedAgentIds.join(', ')}`
       );
 
       const defaultAgentId = this.config.default_agent;
@@ -1437,7 +1316,7 @@ export class MultiAgentDiscordHandler {
       return;
     }
 
-    console.log(`[MultiAgent] Delegated mention: ${sourceResponse.agentId} → ${targetAgentId}`);
+    console.log(`[MultiAgent] Delegated mention: ${sourceResponse.agentId} -> ${targetAgentId}`);
 
     // React on the delegation message (source agent's response), not the user's original message
     const hasOwnBot = this.multiBotManager.hasAgentBot(targetAgentId);
@@ -1496,7 +1375,7 @@ export class MultiAgentDiscordHandler {
         } else {
           delegationContent +=
             '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Execute Phase 3:\n' +
-            '1. `git status` → `git add` → `git commit` → `git push`\n' +
+            '1. `git status` -> `git add` -> `git commit` -> `git push`\n' +
             '**Execute immediately. No praise. Just results.**';
         }
       }
@@ -1514,7 +1393,7 @@ export class MultiAgentDiscordHandler {
           timestamp: originalMessage.createdTimestamp,
         },
         delegationContent,
-        undefined // Don't pass discordMessage — emojis handled here via delegation messageId
+        undefined // Don't pass discordMessage -- emojis handled here via delegation messageId
       );
 
       if (response) {
@@ -1542,7 +1421,7 @@ export class MultiAgentDiscordHandler {
     } catch (err) {
       console.error(`[MultiAgent] Delegated mention error (${targetAgentId}):`, err);
     } finally {
-      // Add ✅ on the delegation message (source agent's response)
+      // Add checkmark on the delegation message (source agent's response)
       try {
         if (hasOwnBot) {
           await this.multiBotManager.reactAsAgent(targetAgentId, channelId, delegationMsgId, '✅');
@@ -1569,7 +1448,7 @@ export class MultiAgentDiscordHandler {
     const mainBotUserId = this.multiBotManager.getMainBotUserId();
     const defaultAgentId = this.config.default_agent;
 
-    // Build pattern → <@userId> lookup
+    // Build pattern -> <@userId> lookup
     const patterns = new Map<string, string>();
     for (const [agentId, agentConfig] of Object.entries(this.config.agents)) {
       let userId = botUserIdMap.get(agentId);
@@ -1596,18 +1475,6 @@ export class MultiAgentDiscordHandler {
     }
 
     return resolved;
-  }
-
-  /**
-   * Clean up old processed mention entries based on TTL
-   */
-  private cleanupProcessedMentions(): void {
-    const now = Date.now();
-    for (const [key, ts] of this.processedMentions) {
-      if (now - ts > MultiAgentDiscordHandler.MENTION_TTL_MS) {
-        this.processedMentions.delete(key);
-      }
-    }
   }
 
   private cleanupApproveChannels(): void {
@@ -1637,7 +1504,7 @@ export class MultiAgentDiscordHandler {
             if ('send' in message.channel) {
               (message.channel as { send: (opts: { content: string }) => Promise<unknown> })
                 .send({
-                  content: `👀 **PR Review Poller Started** — ${key}\nDetecting new review comments every 60 seconds.`,
+                  content: `👀 **PR Review Poller Started** -- ${key}\nDetecting new review comments every 60 seconds.`,
                 })
                 .catch((err) => {
                   console.warn(
@@ -1655,43 +1522,6 @@ export class MultiAgentDiscordHandler {
           console.error(`[MultiAgent] Failed to start PR polling:`, err);
         });
     }
-  }
-
-  /**
-   * Get PR Review Poller instance
-   */
-  getPRReviewPoller(): PRReviewPoller {
-    return this.prReviewPoller;
-  }
-
-  /**
-   * Stop all agent processes and bots
-   */
-  async stopAll(): Promise<void> {
-    // Clear cleanup interval to prevent memory leaks
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
-
-    this.backgroundTaskManager.destroy();
-    this.processManager.stopAll();
-    this.prReviewPoller.stopAll();
-    await this.multiBotManager.stopAll();
-  }
-
-  /**
-   * Get chain state for a channel (for debugging)
-   */
-  getChainState(channelId: string) {
-    return this.orchestrator.getChainState(channelId);
-  }
-
-  /**
-   * Get status of all agent bots
-   */
-  getBotStatus(): Record<string, { connected: boolean; username?: string }> {
-    return this.multiBotManager.getStatus();
   }
 
   /**
@@ -1794,7 +1624,7 @@ export class MultiAgentDiscordHandler {
         .split('\n')
         .map((line) => {
           // Porcelain v1: first 2 chars = status, then space, then path
-          // For renames: "R  old -> new" — use the new path
+          // For renames: "R  old -> new" -- use the new path
           let path = line.substring(2).trimStart();
           if (path.includes(' -> ')) {
             path = path.split(' -> ').pop()?.trim() || '';
@@ -1869,43 +1699,4 @@ export class MultiAgentDiscordHandler {
       return `❌ **Auto Commit Failed**: ${errMsg.substring(0, 200)}`;
     }
   }
-}
-
-/**
- * Response from a single agent
- */
-export interface AgentResponse {
-  /** Agent ID */
-  agentId: string;
-  /** Agent configuration */
-  agent: AgentPersonaConfig;
-  /** Formatted content (with agent prefix) */
-  content: string;
-  /** Raw content from Claude */
-  rawContent: string;
-  /** Response duration in ms */
-  duration?: number;
-  /** Discord message ID (set after sending) */
-  messageId?: string;
-}
-
-/**
- * Multi-agent response result
- */
-export interface MultiAgentResponse {
-  /** Selected agent IDs */
-  selectedAgents: string[];
-  /** Selection reason */
-  reason:
-    | 'explicit_trigger'
-    | 'keyword_match'
-    | 'default_agent'
-    | 'free_chat'
-    | 'category_match'
-    | 'delegation'
-    | 'ultrawork'
-    | 'mention_chain'
-    | 'none';
-  /** Individual agent responses */
-  responses: AgentResponse[];
 }

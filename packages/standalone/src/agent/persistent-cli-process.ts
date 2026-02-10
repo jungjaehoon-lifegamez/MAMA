@@ -65,6 +65,7 @@ export interface StreamMessage {
   subtype?: string;
   message?: {
     role: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     content: any[];
     model?: string;
     id?: string;
@@ -107,7 +108,9 @@ export interface PromptResult {
 
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onToolUse?: (name: string, input: any) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFinal?: (response: any) => void;
   onError?: (error: Error) => void;
 }
@@ -412,7 +415,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       try {
         const event = JSON.parse(line) as StreamMessage;
         this.processEvent(event);
-      } catch (e) {
+      } catch {
         console.warn(`[PersistentCLI] Failed to parse JSON: ${line.substring(0, 100)}...`);
       }
     }
@@ -424,7 +427,7 @@ export class PersistentClaudeProcess extends EventEmitter {
         const event = JSON.parse(this.outputBuffer) as StreamMessage;
         this.processEvent(event);
         this.outputBuffer = ''; // Clear buffer after successful parse
-      } catch (e) {
+      } catch {
         // Not complete JSON yet, wait for more data
       }
     }

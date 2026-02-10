@@ -83,7 +83,7 @@ describe('Swarm DB', () => {
         depends_on: ['task-dep-1', 'task-dep-2'],
       };
 
-      const taskId = createTask(db, params);
+      const _taskId = createTask(db, params);
       const tasks = getTasksBySession(db, 'session1');
 
       expect(tasks[0].priority).toBe(10);
@@ -530,7 +530,10 @@ describe('Swarm DB', () => {
       expect(success).toBe(true);
 
       // Verify task state
-      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as Record<
+        string,
+        unknown
+      >;
       expect(task.status).toBe('pending');
       expect(task.claimed_by).toBeNull();
       expect(task.claimed_at).toBeNull();
@@ -590,7 +593,10 @@ describe('Swarm DB', () => {
       expect(success).toBe(true);
 
       // Verify task state
-      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as Record<
+        string,
+        unknown
+      >;
       expect(task.status).toBe('pending');
       expect(task.claimed_by).toBeNull();
       expect(task.claimed_at).toBeNull();
@@ -614,7 +620,10 @@ describe('Swarm DB', () => {
       expect(success).toBe(true);
 
       // Verify task state
-      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as Record<
+        string,
+        unknown
+      >;
       expect(task.status).toBe('pending');
       expect(task.retry_count).toBe(1);
     });
@@ -632,7 +641,10 @@ describe('Swarm DB', () => {
       expect(success).toBe(false);
 
       // Retry count should not change
-      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
+      const task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as Record<
+        string,
+        unknown
+      >;
       expect(task.retry_count).toBe(0);
     });
 
@@ -647,18 +659,21 @@ describe('Swarm DB', () => {
       // First retry
       claimTask(db, taskId, 'agent1');
       retryTask(db, taskId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
       expect(task.retry_count).toBe(1);
 
       // Second retry
       claimTask(db, taskId, 'agent1');
       retryTask(db, taskId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
       expect(task.retry_count).toBe(2);
 
       // Third retry
       claimTask(db, taskId, 'agent1');
       retryTask(db, taskId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
       expect(task.retry_count).toBe(3);
     });
