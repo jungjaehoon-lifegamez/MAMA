@@ -10,7 +10,7 @@
  * - Loops until stop_reason is "end_turn" or max turns reached
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
@@ -114,6 +114,63 @@ function loadSystemPrompt(verbose = false): string {
  * @param verbose - Enable verbose logging
  * @param context - Optional AgentContext for role-aware prompt injection
  */
+/**
+ * Load installed & enabled skills from ~/.mama/skills/
+ * Returns skill content blocks for system prompt injection
+ */
+function loadInstalledSkills(verbose = false): string[] {
+  const skillsBase = join(homedir(), '.mama', 'skills');
+  const stateFile = join(skillsBase, 'state.json');
+  const blocks: string[] = [];
+
+  // Load state (enabled/disabled tracking)
+  let state: Record<string, { enabled: boolean }> = {};
+  try {
+    if (existsSync(stateFile)) {
+      state = JSON.parse(readFileSync(stateFile, 'utf-8'));
+    }
+  } catch {
+    // No state file
+  }
+
+  const sources = ['mama', 'cowork', 'openclaw'];
+  for (const source of sources) {
+    const sourceDir = join(skillsBase, source);
+    if (!existsSync(sourceDir)) continue;
+
+    try {
+      const entries = readdirSync(sourceDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const stateKey = `${source}/${entry.name}`;
+
+        // Skip disabled skills
+        if (state[stateKey]?.enabled === false) continue;
+
+        // Try SKILL.md, then README.md
+        const skillDir = join(sourceDir, entry.name);
+        let content: string | null = null;
+        for (const filename of ['SKILL.md', 'skill.md', 'README.md']) {
+          const fp = join(skillDir, filename);
+          if (existsSync(fp)) {
+            content = readFileSync(fp, 'utf-8');
+            break;
+          }
+        }
+
+        if (content) {
+          blocks.push(`# [Skill: ${source}/${entry.name}]\n\n${content}`);
+          if (verbose) console.log(`[AgentLoop] Loaded skill: ${source}/${entry.name}`);
+        }
+      }
+    } catch {
+      // Directory read failed
+    }
+  }
+
+  return blocks;
+}
+
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
@@ -144,6 +201,13 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   // Load CLAUDE.md (base instructions)
   const claudeMd = loadSystemPrompt(verbose);
   layers.push(claudeMd);
+
+  // Load installed & enabled skills from ~/.mama/skills/
+  const skillBlocks = loadInstalledSkills(verbose);
+  if (skillBlocks.length > 0) {
+    layers.push(`# Installed Skills\n\n${skillBlocks.join('\n\n---\n\n')}`);
+    if (verbose) console.log(`[AgentLoop] Injected ${skillBlocks.length} installed skills`);
+  }
 
   return layers.join('\n\n---\n\n');
 }
