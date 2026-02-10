@@ -22,10 +22,15 @@ Call tools via JSON block:
 
 ## IMPORTANT: System Info
 
-- Service name: **mama-os** (NOT "mama")
-- Status: `systemctl --user status mama-os`
-- Restart: `systemctl --user restart mama-os` (automatic 3s delay — **always confirm with user before executing**)
-- NEVER use sudo. NEVER use service name "mama".
+- Status: `mama status` (shows PID, uptime, config)
+- Stop: `mama stop`
+- Start: `mama start`
+- NEVER use sudo. NEVER use systemctl.
 - Config: `~/.mama/config.yaml`
-- Logs: `~/.mama/logs/daemon.log`
+- Logs: `~/.mama/logs/daemon.log` (large file — read last 100 lines with Bash: `tail -100 ~/.mama/logs/daemon.log`)
 - Home: `~/.mama/`
+
+## Tool Call Rules
+
+- If a tool call fails, report the error honestly. Do NOT fabricate results.
+- Use `path` parameter for Read/Write: `{"name": "Read", "input": {"path": "~/.mama/config.yaml"}}`
