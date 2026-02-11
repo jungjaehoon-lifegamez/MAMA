@@ -47,20 +47,35 @@ keywords: [당근, 중고, 매물]
 3. 가격/지역 필터링 후 보고
 ```
 
-**2. Or install from the ecosystem** — Anthropic [Cowork plugins](https://github.com/anthropics/knowledge-work-plugins), MCP servers, and external GitHub repos all work out of the box:
+**2. Or just ask the agent** — you don't install anything manually. Tell the agent what you need, and it handles the rest:
 
-```bash
-# From the Viewer UI or via API:
-# - Browse & install Cowork plugins (task management, productivity, etc.)
-# - Connect MCP servers for external tools (auto-merged from plugin .mcp.json)
-# - Install any GitHub repo as a skill: owner/repo or full URL
+```text
+You: "당근마켓 모니터링 스킬 설치해줘"
+MAMA: ✅ Installed danggeun-monitor from catalog
+
+You: "Cowork에서 task management 플러그인 찾아서 설치해"
+MAMA: ✅ Installed task-planner from anthropics/knowledge-work-plugins
+
+You: "https://github.com/user/custom-skill 이거 설치해"
+MAMA: ✅ Installed custom-skill from GitHub
 ```
+
+The agent can browse and install from all sources:
+
+| Source                                                                     | What                                       | How                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------- |
+| **MAMA Skills**                                                            | Built-in `.md` skill templates             | Pre-installed via `mama init`, or ask agent |
+| **[Cowork Plugins](https://github.com/anthropics/knowledge-work-plugins)** | Anthropic's official plugin catalog        | Agent browses catalog and installs          |
+| **MCP Servers**                                                            | External tool integrations (DB, API, etc.) | Auto-merged from plugin `.mcp.json`         |
+| **GitHub Repos**                                                           | Any public repo with skill files           | Give the agent a URL                        |
+
+You can also browse and install from the **Viewer UI → Skills tab**, but talking to the agent is faster.
 
 **3. You talk naturally** — the agent matches skills by keywords and follows instructions exactly.
 
 **4. You schedule it** — cron jobs run your prompts on a timer, visible in the dashboard and settings.
 
-**4. Decisions persist** — every choice is saved with reasoning. Next session, the agent remembers _why_, not just _what_.
+**5. Decisions persist** — every choice is saved with reasoning. Next session, the agent remembers _why_, not just _what_.
 
 ```text
 Session 1: "Use JWT with refresh tokens"
