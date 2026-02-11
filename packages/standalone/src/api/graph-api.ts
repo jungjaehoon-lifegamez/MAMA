@@ -1443,7 +1443,8 @@ async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerRespon
           error: true,
           code: 'UNAUTHORIZED',
           message:
-            'Authentication required. Set MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN environment variable and provide it in the Authorization header.',
+            'Authentication required. Set MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN environment variable ' +
+            'and provide it in the Authorization header.',
         })
       );
       return;
@@ -1453,7 +1454,20 @@ async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerRespon
 
     const currentConfig = loadMAMAConfig();
 
-    const updatedConfig = mergeConfigUpdates(currentConfig, body);
+    let updatedConfig: Record<string, any>;
+    try {
+      updatedConfig = mergeConfigUpdates(currentConfig, body);
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'VALIDATION_ERROR',
+          message: err instanceof Error ? err.message : String(err),
+        })
+      );
+      return;
+    }
 
     const errors = validateConfigUpdate(updatedConfig);
     if (errors.length > 0) {
@@ -1550,6 +1564,9 @@ function mergeConfigUpdates(
   const merged = { ...current };
 
   if (updates.use_claude_cli !== undefined) {
+    if (typeof updates.use_claude_cli !== 'boolean') {
+      throw new Error('use_claude_cli must be a boolean');
+    }
     merged.use_claude_cli = updates.use_claude_cli;
   }
 
@@ -1708,6 +1725,10 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
     if (config.heartbeat.interval && config.heartbeat.interval < 60000) {
       errors.push('heartbeat interval must be at least 60000ms (1 minute)');
     }
+  }
+
+  if (config.use_claude_cli !== undefined && typeof config.use_claude_cli !== 'boolean') {
+    errors.push('use_claude_cli must be a boolean');
   }
 
   return errors;

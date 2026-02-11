@@ -88,7 +88,9 @@ function sleep(ms: number): Promise<void> {
 async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
   const processes = listProcesses();
   const targets = processes.filter((p) => {
-    if (p.pid === primaryPid || p.pid === process.pid) return false;
+    if (p.pid === primaryPid || p.pid === process.pid) {
+      return false;
+    }
     return p.command.includes('mama daemon');
   });
 
@@ -111,7 +113,9 @@ async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
   const maxAttempts = 20; // 2s
   while (attempts < maxAttempts) {
     const stillRunning = targets.some((p) => isProcessRunning(p.pid));
-    if (!stillRunning) break;
+    if (!stillRunning) {
+      break;
+    }
     await sleep(100);
     attempts++;
   }
@@ -137,15 +141,21 @@ function listProcesses(): Array<{ pid: number; command: string }> {
       .filter(Boolean)
       .map((line) => {
         const spaceIdx = line.indexOf(' ');
-        if (spaceIdx === -1) return null;
+        if (spaceIdx === -1) {
+          return null;
+        }
         const pidStr = line.slice(0, spaceIdx).trim();
         const command = line.slice(spaceIdx + 1);
         const pid = parseInt(pidStr, 10);
-        if (!Number.isFinite(pid)) return null;
+        if (!Number.isFinite(pid)) {
+          return null;
+        }
         return { pid, command };
       })
       .filter((p): p is { pid: number; command: string } => p !== null);
-  } catch {
-    return [];
+  } catch (err) {
+    throw new Error(
+      `Failed to list processes: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }

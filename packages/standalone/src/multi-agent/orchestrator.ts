@@ -15,6 +15,7 @@ import type {
 } from './types.js';
 import { DEFAULT_LOOP_PREVENTION } from './types.js';
 import { CategoryRouter } from './category-router.js';
+import { createSafeLogger } from '../utils/log-sanitizer.js';
 
 /**
  * Multi-Agent Orchestrator
@@ -26,6 +27,7 @@ import { CategoryRouter } from './category-router.js';
  * 4. Reset chain state on human messages
  */
 export class MultiAgentOrchestrator {
+  private logger = createSafeLogger('Orchestrator');
   private config: MultiAgentConfig;
   private categoryRouter: CategoryRouter;
 
@@ -276,7 +278,7 @@ export class MultiAgentOrchestrator {
     const maxChainLength = this.getMaxChainLength(channelId);
     if (chainState.length >= maxChainLength) {
       chainState.blocked = true;
-      console.log(
+      this.logger.debug(
         `[Orchestrator] Chain limit reached for channel ${channelId} (${chainState.length}/${maxChainLength})`
       );
     }
@@ -296,7 +298,7 @@ export class MultiAgentOrchestrator {
       this.responseHistory = this.responseHistory.slice(-this.MAX_HISTORY);
     }
 
-    console.log(
+    this.logger.info(
       `[Orchestrator] Recorded response: agent=${agentId}, channel=${channelId}, chain=${chainState.length}`
     );
   }
@@ -307,7 +309,7 @@ export class MultiAgentOrchestrator {
   resetChain(channelId: string): void {
     const chainState = this.chainStates.get(channelId);
     if (chainState) {
-      console.log(
+      this.logger.info(
         `[Orchestrator] Resetting chain for channel ${channelId} (was: ${chainState.length}, blocked: ${chainState.blocked})`
       );
     }
@@ -324,7 +326,9 @@ export class MultiAgentOrchestrator {
    * Override max chain length for a channel (runtime).
    */
   setChannelChainLimit(channelId: string, maxChainLength: number): void {
-    if (maxChainLength <= 0) return;
+    if (maxChainLength <= 0) {
+      throw new Error('maxChainLength must be greater than 0');
+    }
     this.chainLimitOverrides.set(channelId, maxChainLength);
   }
 
@@ -464,5 +468,4 @@ export class MultiAgentOrchestrator {
     this.agentCooldowns.clear();
     this.responseHistory = [];
   }
-
 }

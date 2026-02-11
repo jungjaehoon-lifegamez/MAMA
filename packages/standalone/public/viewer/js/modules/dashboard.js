@@ -15,6 +15,9 @@
 import { escapeHtml } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 import { API } from '../utils/api.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('Dashboard');
 
 /**
  * Dashboard Module Class
@@ -24,6 +27,7 @@ export class DashboardModule {
     this.data = null;
     this.updateInterval = null;
     this.initialized = false;
+    this.onCronClick = null;
   }
 
   /**
@@ -36,13 +40,14 @@ export class DashboardModule {
     this.initialized = true;
 
     // Event delegation for cron job buttons
-    document.addEventListener('click', (e) => {
+    this.onCronClick = (e) => {
       const btn = e.target.closest('[data-cron-id]');
       if (btn) {
         const jobId = btn.getAttribute('data-cron-id');
         this.runCronJob(jobId);
       }
-    });
+    };
+    document.addEventListener('click', this.onCronClick);
 
     await this.loadStatus();
 
@@ -71,7 +76,7 @@ export class DashboardModule {
           this.multiAgentData = { enabled: false, agents: [] };
         }
       } catch (e) {
-        console.warn('[Dashboard] Multi-agent status unavailable:', e);
+        logger.warn('[Dashboard] Multi-agent status unavailable:', e);
         this.multiAgentData = { enabled: false, agents: [] };
       }
 
@@ -84,7 +89,7 @@ export class DashboardModule {
           this.delegationsData = { delegations: [], count: 0 };
         }
       } catch (e) {
-        console.warn('[Dashboard] Delegations unavailable:', e);
+        logger.warn('[Dashboard] Delegations unavailable:', e);
         this.delegationsData = { delegations: [], count: 0 };
       }
 
@@ -92,7 +97,7 @@ export class DashboardModule {
       try {
         this.cronData = await API.getCronJobs();
       } catch (e) {
-        console.warn('[Dashboard] Cron data unavailable:', e);
+        logger.warn('[Dashboard] Cron data unavailable:', e);
         this.cronData = null;
       }
 
@@ -104,14 +109,14 @@ export class DashboardModule {
         ]);
         this.tokenData = { summary, byAgent };
       } catch (e) {
-        console.warn('[Dashboard] Token data unavailable:', e);
+        logger.warn('[Dashboard] Token data unavailable:', e);
         this.tokenData = null;
       }
 
       this.render();
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
-      console.error('[Dashboard] Load error:', error);
+      logger.error('[Dashboard] Load error:', error);
       this.setStatus(`Error: ${error.message}`, 'error');
     }
   }
@@ -800,7 +805,12 @@ export class DashboardModule {
       }
       await this.loadStatus();
     } catch (e) {
-      console.error('[Dashboard] Failed to run cron job:', e);
+      logger.error('[Dashboard] Failed to run cron job:', e);
+      const statusEl = document.getElementById('dashboard-status');
+      if (statusEl) {
+        const message = e instanceof Error ? e.message : String(e);
+        statusEl.textContent = `Cron job "${id}" failed: ${message}`;
+      }
     }
   }
 
@@ -918,6 +928,10 @@ export class DashboardModule {
     if (this.updateInterval) {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
+    }
+    if (this.onCronClick) {
+      document.removeEventListener('click', this.onCronClick);
+      this.onCronClick = null;
     }
   }
 }
