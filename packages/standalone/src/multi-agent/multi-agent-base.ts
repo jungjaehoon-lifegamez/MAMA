@@ -393,7 +393,7 @@ export abstract class MultiAgentHandlerBase {
           calls.push({ name: parsed.name, input: parsed.input || {} });
         }
       } catch (e) {
-        console.warn(`[MultiAgent] Failed to parse tool_call block: ${e}`);
+        this.logger.warn(`Failed to parse tool_call block: ${e}`);
       }
     }
 
@@ -418,8 +418,8 @@ export abstract class MultiAgentHandlerBase {
     const toolCalls = this.parseToolCallsFromText(responseText);
     if (toolCalls.length === 0) return responseText;
 
-    console.log(
-      `[MultiAgent] Executing ${toolCalls.length} gateway tool(s): ${toolCalls.map((t) => t.name).join(', ')}`
+    this.logger.info(
+      `Executing ${toolCalls.length} gateway tool(s): ${toolCalls.map((t) => t.name).join(', ')}`
     );
 
     for (const toolCall of toolCalls) {
@@ -428,13 +428,13 @@ export abstract class MultiAgentHandlerBase {
           toolCall.name,
           toolCall.input as GatewayToolInput
         );
-        console.log(
-          `[MultiAgent] Tool ${toolCall.name} succeeded:`,
+        this.logger.info(
+          `Tool ${toolCall.name} succeeded:`,
           JSON.stringify(result).substring(0, 200)
         );
       } catch (error) {
-        console.error(
-          `[MultiAgent] Tool ${toolCall.name} failed:`,
+        this.logger.error(
+          `Tool ${toolCall.name} failed:`,
           error instanceof Error ? error.message : error
         );
       }
