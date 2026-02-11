@@ -97,3 +97,4 @@ docs/test/
 
 .gemini/
 gha-creds-*.json
+GEMINI.md
