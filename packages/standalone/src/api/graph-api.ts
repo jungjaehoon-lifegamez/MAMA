@@ -1001,8 +1001,14 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     }
 
     // Route: POST /api/restart - graceful restart via mama CLI
-    // No auth required: server is localhost-only, restart is a local admin action
     if (pathname === '/api/restart' && req.method === 'POST') {
+      if (!isAuthenticated(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({ error: true, code: 'UNAUTHORIZED', message: 'Authentication required' })
+        );
+        return true;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'Restarting...' }));
       // Prefer systemd restart when running as a service; otherwise spawn detached daemon.
