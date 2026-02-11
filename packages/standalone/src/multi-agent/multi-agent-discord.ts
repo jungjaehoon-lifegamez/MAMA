@@ -29,6 +29,9 @@ import {
 export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
 
 const execFileAsync = promisify(execFile);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
+const logger = new DebugLogger('MultiAgentDiscord');
 
 /** Delay before showing progress message (ms) -- fast requests never show it */
 const PROGRESS_DELAY_MS = 5_000;
@@ -217,20 +220,20 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         const maxDepth = this.getEffectiveMaxMentionDepth(message.channel.id);
 
         if (chainState.blocked) {
-          console.log(
+          logger.info(
             `[MultiAgent] Mention chain blocked in channel ${message.channel.id}, ignoring`
           );
           return;
         }
         if (chainState.length >= maxDepth) {
-          console.log(
+          logger.info(
             `[MultiAgent] Mention chain depth ${chainState.length} >= max ${maxDepth}, ignoring`
           );
           return;
         }
       }
 
-      console.log(
+      logger.info(
         `[MultiAgent] Mention-triggered: agent=${agentId}, from=${senderAgentId ?? message.author.tag}, content="${cleanContent.substring(0, 50)}"`
       );
 
@@ -317,7 +320,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     const connectedAgents = this.multiBotManager.getConnectedAgents();
     if (connectedAgents.length > 0) {
-      console.log(`[MultiAgent] Multi-bot mode active for: ${connectedAgents.join(', ')}`);
+      logger.info(`[MultiAgent] Multi-bot mode active for: ${connectedAgents.join(', ')}`);
     }
 
     // Pass bot ID map to process manager for mention-based delegation prompts
@@ -336,7 +339,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
       this.processManager.setBotUserIdMap(botUserIdMap);
       this.processManager.setMentionDelegation(true);
-      console.log(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
+      logger.info(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
 
       // PR Review Poller: target LEAD directly.
       // LEAD analyzes → delegates to DevBot → DevBot fixes → Reviewer reviews after.
@@ -345,7 +348,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         const orchestratorUserId = botUserIdMap.get(orchestratorId);
         if (orchestratorUserId) {
           this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
-          console.log(`[MultiAgent] PR Poller target: ${orchestratorId} (LEAD)`);
+          logger.info(`[MultiAgent] PR Poller target: ${orchestratorId} (LEAD)`);
         }
       }
     }
@@ -453,14 +456,14 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         },
       };
       this.messageQueue.enqueue(defaultAgentId, queuedMessage);
-      console.log(
+      logger.info(
         `[MultiAgent] PR Poller -> LEAD notification enqueued (${unresolvedCount} threads)`
       );
 
       // Trigger immediate drain if process is idle or reaped (prevents queue stall)
       this.tryDrainNow(defaultAgentId, 'discord', channelId).catch(() => {});
     });
-    console.log('[MultiAgent] PR Review Poller message sender configured for Discord');
+    logger.info('[MultiAgent] PR Review Poller message sender configured for Discord');
   }
 
   /**
@@ -512,12 +515,12 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     // Select responding agents
     const selection = this.orchestrator.selectRespondingAgents(context);
 
-    console.log(
+    logger.info(
       `[MultiAgent] Selection result: agents=${selection.selectedAgents.join(',')}, reason=${selection.reason}, blocked=${selection.blocked}`
     );
 
     if (selection.blocked) {
-      console.log(`[MultiAgent] Blocked: ${selection.blockReason}`);
+      logger.info(`[MultiAgent] Blocked: ${selection.blockReason}`);
       return null;
     }
 
@@ -607,7 +610,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
     }
 
-    console.log(`[MultiAgent] !stop command: channel=${channelId}, target=${args || 'all'}`);
+    logger.info(`[MultiAgent] !stop command: channel=${channelId}, target=${args || 'all'}`);
   }
 
   /**
@@ -702,18 +705,18 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     const enhanced = this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
     if (enhanced.keywordInstructions) {
       fullPrompt = `${enhanced.keywordInstructions}\n\n${fullPrompt}`;
-      console.log(
+      logger.info(
         `[PromptEnhancer] Keyword detected for agent ${agentId}: ${enhanced.keywordInstructions.length} chars injected`
       );
     }
     if (enhanced.rulesContent) {
       fullPrompt = `## Project Rules\n${enhanced.rulesContent}\n\n${fullPrompt}`;
-      console.log(
+      logger.info(
         `[PromptEnhancer] Rules injected for agent ${agentId}: ${enhanced.rulesContent.length} chars`
       );
     }
 
-    console.log(`[MultiAgent] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`);
+    logger.info(`[MultiAgent] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`);
 
     // Track work start (completed in finally block)
     this.workTracker.startWork(agentId, context.channelId, cleanMessage);
@@ -896,7 +899,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
             });
             submittedCount++;
             submittedAgents.push(delegation.toAgentId);
-            console.log(
+            logger.info(
               `[MultiAgent] Background delegation: ${agentId} -> ${delegation.toAgentId} (async)`
             );
           } else {
@@ -934,7 +937,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       console.error(`[MultiAgent] Failed to get response from ${agentId}:`, error);
 
       if (errMsg.includes('busy')) {
-        console.log(`[MultiAgent] Agent ${agentId} busy, enqueuing message`);
+        logger.info(`[MultiAgent] Agent ${agentId} busy, enqueuing message`);
 
         const queuedMessage: QueuedMessage = {
           prompt: fullPrompt,
@@ -1035,7 +1038,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
             source: 'discord',
           });
           submittedCount++;
-          console.log(
+          logger.info(
             `[MultiAgent] Background delegation (queued): ${agentId} -> ${delegation.toAgentId} (async)`
           );
         } else {
@@ -1097,7 +1100,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
     }
 
-    console.log(`[MultiAgent] Queued message delivered for ${agentId} in ${message.channelId}`);
+    logger.info(`[MultiAgent] Queued message delivered for ${agentId} in ${message.channelId}`);
   }
 
   /**
@@ -1262,7 +1265,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
 
       if (filesChanged > MAX_FILES || totalLines > MAX_LINES) {
-        console.log(
+        logger.info(
           `[AutoReview] Sisyphus self-implementation exceeded thresholds: ${filesChanged} files, ${totalLines} lines -> auto-triggering Reviewer`
         );
 
@@ -1275,7 +1278,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           await this.multiBotManager.sendAsAgent(reviewerAgentId, channelId, reviewMsg);
         }
       } else {
-        console.log(
+        logger.info(
           `[AutoReview] Sisyphus self-implementation within thresholds: ${filesChanged} files, ${totalLines} lines -- no auto-review needed`
         );
       }
@@ -1344,7 +1347,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         }
       }
 
-      console.log(
+      logger.info(
         `[MultiAgent] Auto-routing mentions from ${response.agentId}: -> ${mentionedAgentIds.join(', ')}`
       );
 
@@ -1366,7 +1369,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           lastApprove &&
           Date.now() - lastApprove < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
         ) {
-          console.log(
+          logger.info(
             `[MultiAgent] APPROVE already processed for ${originalMessage.channel.id}, skipping`
           );
           continue;
@@ -1410,7 +1413,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     const chainState = this.orchestrator.getChainState(originalMessage.channel.id);
     const maxDepth = this.config.max_mention_depth ?? 3;
     if (chainState.blocked || chainState.length >= maxDepth) {
-      console.log(`[MultiAgent] Delegation chain blocked/maxed in ${originalMessage.channel.id}`);
+      logger.info(`[MultiAgent] Delegation chain blocked/maxed in ${originalMessage.channel.id}`);
       return;
     }
 
@@ -1420,14 +1423,14 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         (r) => r.from === sourceResponse.agentId && r.to.includes(targetAgentId)
       );
       if (!rule) {
-        console.log(
+        logger.info(
           `[MultiAgent] Delegation blocked by rule: ${sourceResponse.agentId} → ${targetAgentId}`
         );
         return;
       }
     }
 
-    console.log(`[MultiAgent] Delegated mention: ${sourceResponse.agentId} -> ${targetAgentId}`);
+    logger.info(`[MultiAgent] Delegated mention: ${sourceResponse.agentId} -> ${targetAgentId}`);
 
     // React on the delegation message (source agent's response), not the user's original message
     const hasOwnBot = this.multiBotManager.hasAgentBot(targetAgentId);
@@ -1513,7 +1516,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     } catch (err) {
       const isBusy = err instanceof Error && err.message.includes('Process is busy');
       if (isBusy) {
-        console.log(
+        logger.info(
           `[MultiAgent] ${targetAgentId} busy, enqueuing delegation from ${sourceResponse.agentId}`
         );
         this.messageQueue.enqueue(targetAgentId, {
@@ -1571,13 +1574,13 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           } else if (channelId && message) {
             await this.multiBotManager.sendAsAgent(agentId, channelId, message);
           }
-          console.log(`[MultiAgent] discord_send routed through agent bot: ${agentId}`);
+          logger.info(`[MultiAgent] discord_send routed through agent bot: ${agentId}`);
         } else if (this.gatewayToolExecutor) {
           const result = await this.gatewayToolExecutor.execute(
             toolCall.name,
             toolCall.input as Record<string, unknown>
           );
-          console.log(
+          logger.info(
             `[MultiAgent] Tool ${toolCall.name} succeeded:`,
             JSON.stringify(result).substring(0, 200)
           );
@@ -1684,7 +1687,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
                   );
                 });
             }
-            console.log(
+            logger.info(
               `[MultiAgent] PR Poller started for ${key} in Discord channel ${channelId}`
             );
           }
