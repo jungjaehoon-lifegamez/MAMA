@@ -9,107 +9,57 @@
 [![Tests](https://img.shields.io/badge/tests-1097%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://jungjaehoon-lifegamez.github.io/MAMA)
 
-> **MAMA 2.0 Release** - Now with Standalone Agent, Gateway Integrations & MAMA OS
+> Your AI that works while you sleep.
 
-A contract‑first memory system for Claude: it enforces **why** before code, not just what after.
-
-```text
-Regular memory: "Login returns token"
-MAMA:           "Contract: login returns { userId, token, email }. Reasoning: userId needed for dashboard (confirmed in code)."
-```
-
-## 🚀 Why Vibe Coding Breaks After Session 2
-
-**Session 1:** "Claude, make me a login API"  
-→ Works great. You test it. Perfect.
-
-**Session 2:** "Claude, add the frontend login form"  
-→ 404 error. Wrong endpoint. Wrong fields. Nothing connects.
-
-**Why?** Claude forgot the decisions from Session 1.
-
-### Why Regular Memory Doesn't Help
-
-**Regular memory tracks WHAT:**
-
-- "Login endpoint exists"
-- "Returns a token"
-
-**MAMA tracks WHY:**
-
-- "Login returns `{ userId, token, email }` because frontend needs userId for dashboard"
-- "Tried just `token`, but users complained they had to fetch profile separately"
-
-**The difference:** Claude remembers your reasoning, not just facts. No more guessing.
-
-### What MAMA Does (Now)
-
-Tracks your decisions with reasoning:
+MAMA is a **24/7 autonomous AI agent** that lives on your machine. It connects to Discord, Slack, and Telegram — runs scheduled tasks, monitors markets, reviews PRs, and remembers every decision you've ever made together.
 
 ```text
-Session 1: You decide → "Login needs { userId, token, email }"
-           MAMA saves → "Returns userId because dashboard needs it (tried without, users had to refetch)"
-
-Session 2: You ask for backend → Claude checks MAMA
-           Claude sees → Your reasoning, writes matching code
+You: "매시간 당근마켓에서 맥미니 M4 찾아서 알려줘"
+MAMA: ✅ Cron registered (0 * * * *) — skill matched: 당근마켓 모니터링
+      → Fetches listings → Filters by price → Reports to Discord
+      → Repeats every hour. You go to sleep.
 ```
 
-**Result:** Claude follows your decisions. No guessing. No mismatches.
+## What Makes MAMA Different
 
-### How It Works (Contract-First)
+| Feature          | Other AI Tools            | MAMA OS                                                                |
+| ---------------- | ------------------------- | ---------------------------------------------------------------------- |
+| **Memory**       | Forgets after session     | Remembers decisions with reasoning across sessions                     |
+| **Availability** | Only when you're chatting | 24/7 daemon with cron scheduler                                        |
+| **Skills**       | Fixed capabilities        | User-installable `.md` skills — write instructions, agent follows them |
+| **Platforms**    | Single interface          | Discord, Slack, Telegram, Web Dashboard                                |
+| **Agents**       | Single agent              | Multi-Agent Swarm with tiered permissions and delegation               |
 
-**PreToolUse (Before you read/edit):**
+## How It Actually Works
+
+**1. You install a skill** (just a markdown file in `~/.mama/skills/`):
+
+```markdown
+# 당근마켓 모니터링
+
+keywords: [당근, 중고, 매물]
+
+## 지시사항
+
+1. fetch 도구로 당근마켓 검색 URL에 접속
+2. JSON-LD에서 매물 파싱
+3. 가격/지역 필터링 후 보고
+```
+
+**2. You talk naturally** — the agent matches skills by keywords and follows instructions exactly.
+
+**3. You schedule it** — cron jobs run your prompts on a timer, visible in the dashboard and settings.
+
+**4. Decisions persist** — every choice is saved with reasoning. Next session, the agent remembers _why_, not just _what_.
 
 ```text
-MAMA searches contracts → shows Reasoning Summary → blocks guessing if none exist
+Session 1: "Use JWT with refresh tokens"
+           → MAMA saves reasoning: "Tried simple JWT, users complained about frequent logouts"
+
+Session 5: "Add logout endpoint"
+           → Agent checks MAMA → "I see you use JWT with refresh tokens..."
+           → Writes matching code. No guessing.
 ```
-
-**PostToolUse (After you write/edit):**
-
-```text
-You: "Add login API"
-Claude: [writes code]
-MAMA: Detected contract → Requires structured reasoning → Save to MCP
-```
-
-**Manual save:**
-
-```text
-You: /mama:decision topic="auth" decision="JWT with refresh tokens"
-     reasoning="Tried simple JWT, users complained about frequent logouts"
-```
-
-**Next session:**
-
-```text
-You: "Add logout endpoint"
-Claude: [checks MAMA] "I see you use JWT with refresh tokens..."
-        [writes matching code]
-```
-
-**That's it.** Search → Save → Claude remembers.
-
-### Does This Work?
-
-Real test:
-
-- **Session 1:** Backend (Python, snake_case)
-- **Session 2:** Frontend (TypeScript, camelCase)
-- **Result:** Worked first try. Claude remembered the decision, matched the casing.
-
-MAMA reminded Claude of the reasoning, not just the endpoint name.
-
-### Who Needs This
-
-You need MAMA if you've said:
-
-- "Why doesn't frontend connect to backend?"
-- "Claude keeps guessing wrong field names"
-- "I told it yesterday, why did it forget?"
-
-**Without MAMA:** Paste docs → Hope Claude remembers → Claude guesses → Debug
-
-**With MAMA:** Claude remembers your reasoning → No guessing → Everything connects
 
 ## 🤔 Which MAMA Do You Need?
 
@@ -117,17 +67,17 @@ Choose the right package for your use case:
 
 ### 🤖 Want an Always-On AI Agent?
 
-**→ Discord/Slack/Telegram bot**
-**→ Autonomous agent loop**
-**→ Scheduled tasks & heartbeat monitoring**
-**→ Multi-Agent Swarm** - AI agents collaborate with tiered permissions and delegation
+**→ Discord/Slack/Telegram bot with 24/7 agent loop**
+**→ Installable skill system** — drop a `.md` file, agent follows it
+**→ Built-in cron scheduler** — manage from dashboard or settings UI
+**→ Multi-Agent Swarm** — tiered permissions, delegation, UltraWork mode
 
 **Use:** [MAMA OS](packages/standalone/README.md)
 
 ```bash
 npm install -g @jungjaehoon/mama-os
-mama init
-mama start
+mama init    # copies default skills to ~/.mama/skills/
+mama start   # opens web dashboard at localhost:3847
 ```
 
 **Package:** `@jungjaehoon/mama-os` 0.6.1
@@ -352,19 +302,17 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 ## ✨ Key Features
 
-**🔄 Session Continuity** - Save your session state, resume tomorrow with full context. Never lose your flow between sessions. [Learn more →](docs/tutorials/getting-started.md#session-continuity)
+**🧩 Skill System** - Drop a `.md` file in `~/.mama/skills/` and the agent follows it. Write instructions in natural language — no code needed. [Learn more →](packages/standalone/README.md)
 
-**📊 Decision Evolution Tracking** - See how your thinking changed over time, from initial attempts to final solutions. [Learn more →](docs/explanation/decision-graph.md)
+**⏰ Cron Scheduler** - Register recurring tasks from chat, dashboard, or settings UI. Agent executes your prompt on schedule. [Learn more →](packages/standalone/README.md)
 
-**🔍 Semantic Search** - Natural language queries find relevant decisions even if exact keywords don't match. [Learn more →](docs/reference/commands.md#mama-suggest)
+**🧠 Decision Memory** - Every choice is saved with reasoning. Cross-session, cross-language. Claude remembers _why_, not just _what_. [Learn more →](docs/explanation/decision-graph.md)
 
-**🤖 Autonomous Agent** - Run MAMA as a standalone service with Discord, Slack, or Telegram bot support. [Learn more →](packages/standalone/README.md)
+**🤝 Multi-Agent Swarm** - Specialized agents collaborate in Discord with tiered permissions, delegation chains, and autonomous UltraWork sessions. [Learn more →](packages/standalone/README.md#multi-agent-swarm)
 
-**🤝 Multi-Agent Swarm** - Multiple AI agents collaborate in Discord with tiered permissions, delegation chains, and autonomous UltraWork sessions. [Learn more →](packages/standalone/README.md#multi-agent-swarm)
+**🤖 24/7 Agent** - Always-on daemon with Discord, Slack, Telegram gateways. Web dashboard at `localhost:3847`. [Learn more →](packages/standalone/README.md)
 
-**🌐 MAMA OS** - Built-in graph viewer and mobile chat interface for managing memory from anywhere. [Learn more →](packages/standalone/README.md#mama-os)
-
-**🔒 Local-First** - All data stored on your device. No network calls, no external dependencies. [Learn more →](docs/explanation/data-privacy.md)
+**🔒 Local-First** - All data on your device. SQLite + local embeddings. No API calls for core functionality. [Learn more →](docs/explanation/data-privacy.md)
 
 ---
 
@@ -514,4 +462,4 @@ The Multi-Agent Swarm system was inspired by [oh-my-opencode](https://github.com
 ---
 
 **Author**: SpineLift Team
-**Last Updated**: 2026-02-07
+**Last Updated**: 2026-02-12
