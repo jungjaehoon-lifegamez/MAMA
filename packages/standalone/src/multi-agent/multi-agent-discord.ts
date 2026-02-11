@@ -417,6 +417,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         `- \`gh api repos/${session?.owner}/${session?.repo}/pulls/${prNumber}/comments --jq '.[] | {path, line, body}'\` — get review comments`,
         ``,
         `Then delegate fixes to DevBot with DELEGATE_BG::developer::<task>.`,
+        `**CRITICAL: Use ONLY file paths returned by the tools above. NEVER guess or invent file paths.**`,
         `Do NOT fix code yourself. Do NOT involve Reviewer until all fixes are pushed.`,
       ].join('\n');
 
