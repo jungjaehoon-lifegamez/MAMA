@@ -17,6 +17,9 @@ import { BackgroundTaskManager, type BackgroundTask } from './background-task-ma
 import { SystemReminderService } from './system-reminder.js';
 import { DelegationManager } from './delegation-manager.js';
 import { PRReviewPoller } from './pr-review-poller.js';
+import { WorkTracker } from './work-tracker.js';
+import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
+import type { GatewayToolInput } from '../agent/types.js';
 
 /** Default timeout for agent responses (15 minutes -- must accommodate sub-agent spawns) */
 export const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -79,6 +82,8 @@ export abstract class MultiAgentHandlerBase {
   protected backgroundTaskManager: BackgroundTaskManager;
   protected systemReminder: SystemReminderService;
   protected delegationManager: DelegationManager;
+  protected workTracker: WorkTracker;
+  protected gatewayToolExecutor: GatewayToolExecutor | null = null;
 
   /** Whether multi-bot mode is initialized */
   protected multiBotInitialized = false;
@@ -111,6 +116,7 @@ export abstract class MultiAgentHandlerBase {
 
     const agentConfigs = Object.entries(config.agents).map(([id, cfg]) => ({ id, ...cfg }));
     this.delegationManager = new DelegationManager(agentConfigs);
+    this.workTracker = new WorkTracker();
 
     this.backgroundTaskManager = new BackgroundTaskManager(
       async (agentId: string, prompt: string): Promise<string> => {
@@ -120,7 +126,9 @@ export abstract class MultiAgentHandlerBase {
           agentId
         );
         const result = await process.sendMessage(prompt);
-        return result.response;
+        // Execute any gateway tool calls (discord_send, mama_*) from response text
+        const cleaned = await this.executeTextToolCalls(result.response);
+        return cleaned;
       },
       { maxConcurrentPerAgent: 2, maxTotalConcurrent: 5 }
     );
@@ -265,6 +273,108 @@ export abstract class MultiAgentHandlerBase {
    */
   getPRReviewPoller(): PRReviewPoller {
     return this.prReviewPoller;
+  }
+
+  /**
+   * Get work tracker instance
+   */
+  getWorkTracker(): WorkTracker {
+    return this.workTracker;
+  }
+
+  /**
+   * Set the gateway tool executor for handling tool_use blocks from agents.
+   */
+  setGatewayToolExecutor(executor: GatewayToolExecutor): void {
+    this.gatewayToolExecutor = executor;
+  }
+
+  /**
+   * Parse ```tool_call blocks from response text (Gateway Tools mode).
+   * Returns array of parsed tool calls.
+   */
+  protected parseToolCallsFromText(
+    text: string
+  ): Array<{ name: string; input: Record<string, unknown> }> {
+    const toolCallRegex = /```tool_call\s*\n([\s\S]*?)\n```/g;
+    const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+    let match;
+
+    while ((match = toolCallRegex.exec(text)) !== null) {
+      try {
+        const parsed = JSON.parse(match[1].trim());
+        if (parsed.name) {
+          calls.push({ name: parsed.name, input: parsed.input || {} });
+        }
+      } catch (e) {
+        console.warn(`[MultiAgent] Failed to parse tool_call block: ${e}`);
+      }
+    }
+
+    return calls;
+  }
+
+  /**
+   * Remove ```tool_call blocks from text (to avoid showing raw JSON to users).
+   */
+  protected removeToolCallBlocks(text: string): string {
+    return text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '').trim();
+  }
+
+  /**
+   * Parse and execute gateway tool calls from response text.
+   * Returns the cleaned text (with tool_call blocks removed).
+   * Tool calls are fire-and-forget (results not returned to Claude).
+   */
+  protected async executeTextToolCalls(responseText: string): Promise<string> {
+    if (!this.gatewayToolExecutor) return responseText;
+
+    const toolCalls = this.parseToolCallsFromText(responseText);
+    if (toolCalls.length === 0) return responseText;
+
+    console.log(
+      `[MultiAgent] Executing ${toolCalls.length} gateway tool(s): ${toolCalls.map((t) => t.name).join(', ')}`
+    );
+
+    for (const toolCall of toolCalls) {
+      try {
+        const result = await this.gatewayToolExecutor.execute(
+          toolCall.name,
+          toolCall.input as GatewayToolInput
+        );
+        console.log(
+          `[MultiAgent] Tool ${toolCall.name} succeeded:`,
+          JSON.stringify(result).substring(0, 200)
+        );
+      } catch (error) {
+        console.error(
+          `[MultiAgent] Tool ${toolCall.name} failed:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
+    return this.removeToolCallBlocks(responseText);
+  }
+
+  /**
+   * Build agent availability status section for prompt injection.
+   * Shows busy/idle state and queue size for each agent except the current one.
+   */
+  protected buildAgentStatusSection(excludeAgentId: string): string {
+    const states = this.processManager.getAgentStates();
+    const enabledAgents = this.orchestrator.getEnabledAgents();
+    const lines: string[] = ['## Agent Availability'];
+
+    for (const agent of enabledAgents) {
+      if (agent.id === excludeAgentId) continue;
+      const state = states.get(agent.id) ?? 'idle';
+      const queueSize = this.messageQueue.getQueueSize(agent.id);
+      const emoji = state === 'busy' ? '🔴' : state === 'idle' ? '🟢' : '🟡';
+      const queueInfo = queueSize > 0 ? ` (${queueSize} queued)` : '';
+      lines.push(`- ${emoji} **${agent.display_name}**: ${state}${queueInfo}`);
+    }
+    return lines.join('\n');
   }
 
   /**

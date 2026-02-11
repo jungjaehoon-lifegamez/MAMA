@@ -33,6 +33,14 @@ pnpm clean
 
 ### Package-Specific Commands
 
+**Standalone (packages/standalone/):**
+
+```bash
+mama start                   # Start MAMA OS (global CLI, requires: npx @jungjaehoon/mama-os)
+mama stop                    # Stop MAMA OS
+mama status                  # Check status
+```
+
 **MCP Server (packages/mcp-server/):**
 
 ```bash

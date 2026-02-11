@@ -648,6 +648,15 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       fullPrompt = `${agentContext}\n\n${fullPrompt}`;
     }
 
+    // Inject agent availability status, active work, and channel context (Phase 2 + 3)
+    const agentStatus = this.buildAgentStatusSection(agentId);
+    const workSection = this.workTracker.buildWorkSection(agentId);
+    const channelInfo = `## Current Channel\nDiscord channel_id: ${context.channelId}`;
+    const dynamicContext = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
+    if (dynamicContext) {
+      fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
+    }
+
     // Enhance prompt with keyword detection (ultrawork/search/analyze modes)
     const workspacePath = process.env.MAMA_WORKSPACE || '';
     const ruleContext: RuleContext = {
@@ -670,6 +679,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     }
 
     console.log(`[MultiAgent] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`);
+
+    // Track work start (completed in finally block)
+    this.workTracker.startWork(agentId, context.channelId, cleanMessage);
 
     try {
       // Get or create process for this agent in this channel
@@ -814,7 +826,13 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
       clearTimeout(timeoutHandle!);
 
-      const resolvedResponse = this.resolveResponseMentions(result.response);
+      // Execute text-based gateway tool calls (```tool_call blocks in response)
+      // Claude CLI handles built-in tools (Read, Bash, Glob) internally via native tool_use.
+      // Gateway tools (discord_send, mama_*) are requested via text-based tool_call blocks.
+      // discord_send is routed through the agent's own bot (not the main LEAD bot).
+      const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
+
+      const resolvedResponse = this.resolveResponseMentions(cleanedResponse);
 
       const bgDelegation = this.delegationManager.parseDelegation(agentId, resolvedResponse);
       if (bgDelegation && bgDelegation.background) {
@@ -887,6 +905,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
 
       return null;
+    } finally {
+      this.workTracker.completeWork(agentId, context.channelId);
     }
   }
 
@@ -1316,6 +1336,19 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       return;
     }
 
+    // Delegation rule validation (Phase 4)
+    if (this.config.delegation_rules) {
+      const rule = this.config.delegation_rules.find(
+        (r) => r.from === sourceResponse.agentId && r.to.includes(targetAgentId)
+      );
+      if (!rule) {
+        console.log(
+          `[MultiAgent] Delegation blocked by rule: ${sourceResponse.agentId} → ${targetAgentId}`
+        );
+        return;
+      }
+    }
+
     console.log(`[MultiAgent] Delegated mention: ${sourceResponse.agentId} -> ${targetAgentId}`);
 
     // React on the delegation message (source agent's response), not the user's original message
@@ -1437,6 +1470,56 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   }
 
   /**
+   * Execute text-based tool calls, routing discord_send through the agent's own bot.
+   * Non-discord tools fall through to the base executeTextToolCalls.
+   */
+  private async executeAgentToolCalls(agentId: string, responseText: string): Promise<string> {
+    const toolCalls = this.parseToolCallsFromText(responseText);
+    if (toolCalls.length === 0) return responseText;
+
+    const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
+
+    for (const toolCall of toolCalls) {
+      try {
+        if (toolCall.name === 'discord_send' && hasOwnBot) {
+          const input = toolCall.input as {
+            channel_id?: string;
+            message?: string;
+            file_path?: string;
+            image_path?: string;
+          };
+          const channelId = input.channel_id;
+          const filePath = input.file_path || input.image_path;
+          const message = input.message;
+
+          if (channelId && filePath) {
+            await this.multiBotManager.sendFileAsAgent(agentId, channelId, filePath, message);
+          } else if (channelId && message) {
+            await this.multiBotManager.sendAsAgent(agentId, channelId, message);
+          }
+          console.log(`[MultiAgent] discord_send routed through agent bot: ${agentId}`);
+        } else if (this.gatewayToolExecutor) {
+          const result = await this.gatewayToolExecutor.execute(
+            toolCall.name,
+            toolCall.input as Record<string, unknown>
+          );
+          console.log(
+            `[MultiAgent] Tool ${toolCall.name} succeeded:`,
+            JSON.stringify(result).substring(0, 200)
+          );
+        }
+      } catch (error) {
+        console.error(
+          `[MultiAgent] Tool ${toolCall.name} failed:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
+    return this.removeToolCallBlocks(responseText);
+  }
+
+  /**
    * Resolve @Name mentions in LLM response text to <@userId> Discord format.
    * LLMs generate plain text like "@LEAD", "@Sisyphus", "@DevBot" which won't
    * trigger Discord mentions or routeResponseMentions detection.
@@ -1444,12 +1527,21 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   private resolveResponseMentions(text: string): string {
     if (!this.config.mention_delegation) return text;
 
+    // Collect agent IDs already handled by DELEGATE:: / DELEGATE_BG:: patterns
+    // to avoid duplicate delegation via mention resolution
+    const delegatedAgentIds = new Set<string>();
+    const delegateRegex = /DELEGATE(?:_BG)?::(\w+)::/g;
+    let dm;
+    while ((dm = delegateRegex.exec(text)) !== null) {
+      delegatedAgentIds.add(dm[1].toLowerCase());
+    }
+
     const botUserIdMap = this.multiBotManager.getBotUserIdMap();
     const mainBotUserId = this.multiBotManager.getMainBotUserId();
     const defaultAgentId = this.config.default_agent;
 
     // Build pattern -> <@userId> lookup
-    const patterns = new Map<string, string>();
+    const patterns = new Map<string, { mention: string; agentId: string }>();
     for (const [agentId, agentConfig] of Object.entries(this.config.agents)) {
       let userId = botUserIdMap.get(agentId);
       if (!userId && agentId === defaultAgentId && mainBotUserId) {
@@ -1458,17 +1550,21 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       if (!userId) continue;
 
       const mention = `<@${userId}>`;
-      if (agentConfig.name) patterns.set(agentConfig.name.toLowerCase(), mention);
-      if (agentConfig.display_name) patterns.set(agentConfig.display_name.toLowerCase(), mention);
-      patterns.set(agentId.toLowerCase(), mention);
+      if (agentConfig.name) patterns.set(agentConfig.name.toLowerCase(), { mention, agentId });
+      if (agentConfig.display_name)
+        patterns.set(agentConfig.display_name.toLowerCase(), { mention, agentId });
+      patterns.set(agentId.toLowerCase(), { mention, agentId });
     }
     // Also match "LEAD" for the default agent
     if (defaultAgentId && mainBotUserId) {
-      patterns.set('lead', `<@${mainBotUserId}>`);
+      patterns.set('lead', { mention: `<@${mainBotUserId}>`, agentId: defaultAgentId });
     }
 
     let resolved = text;
-    for (const [pattern, mention] of patterns) {
+    for (const [pattern, { mention, agentId }] of patterns) {
+      // Skip mention resolution for agents already in DELEGATE:: patterns
+      if (delegatedAgentIds.has(agentId.toLowerCase())) continue;
+
       // Match @pattern but NOT already-resolved <@pattern
       const regex = new RegExp(`(?<!<)@${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
       resolved = resolved.replace(regex, mention);

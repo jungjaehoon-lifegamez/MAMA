@@ -453,9 +453,20 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       fullPrompt = `${agentContext}\n\n${fullPrompt}`;
     }
 
+    // Inject agent availability status and active work (Phase 2 + 3)
+    const agentStatus = this.buildAgentStatusSection(agentId);
+    const workSection = this.workTracker.buildWorkSection(agentId);
+    const dynamicContext = [agentStatus, workSection].filter(Boolean).join('\n');
+    if (dynamicContext) {
+      fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
+    }
+
     this.logger.log(
       `[MultiAgentSlack] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`
     );
+
+    // Track work start (completed in finally block)
+    this.workTracker.startWork(agentId, context.channelId, cleanMessage);
 
     try {
       // Get or create process for this agent in this channel
@@ -479,7 +490,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         clearTimeout(timeoutHandle!);
       }
 
-      const bgDelegation = this.delegationManager.parseDelegation(agentId, result.response);
+      // Execute text-based gateway tool calls (```tool_call blocks in response)
+      const cleanedResponse = await this.executeTextToolCalls(result.response);
+
+      const bgDelegation = this.delegationManager.parseDelegation(agentId, cleanedResponse);
       if (bgDelegation && bgDelegation.background) {
         const check = this.delegationManager.isDelegationAllowed(
           bgDelegation.fromAgentId,
@@ -514,13 +528,13 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       }
 
       // Format response with agent prefix
-      const formattedResponse = this.formatAgentResponse(agent, result.response);
+      const formattedResponse = this.formatAgentResponse(agent, cleanedResponse);
 
       return {
         agentId,
         agent,
         content: formattedResponse,
-        rawContent: result.response,
+        rawContent: cleanedResponse,
         duration: result.duration_ms,
       };
     } catch (error) {
@@ -544,6 +558,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         return null;
       }
       return null;
+    } finally {
+      this.workTracker.completeWork(agentId, context.channelId);
     }
   }
 

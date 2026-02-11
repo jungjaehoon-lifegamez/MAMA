@@ -408,6 +408,8 @@ export interface MultiAgentConfig {
   mention_delegation?: boolean;
   /** Maximum depth of @mention delegation chains @default 3 */
   max_mention_depth?: number;
+  /** Explicit delegation rules controlling which agents can delegate to which */
+  delegation_rules?: Array<{ from: string; to: string[] }>;
 }
 
 /**
