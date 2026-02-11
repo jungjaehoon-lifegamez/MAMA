@@ -555,6 +555,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         };
 
         this.messageQueue.enqueue(agentId, queuedMessage);
+
+        // Trigger immediate drain if process is idle or reaped
+        this.tryDrainNow(agentId, 'slack', context.channelId).catch(() => {});
+
         return null;
       }
       return null;

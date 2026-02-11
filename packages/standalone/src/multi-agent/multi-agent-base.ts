@@ -191,6 +191,27 @@ export abstract class MultiAgentHandlerBase {
   }
 
   /**
+   * Try to drain queued messages immediately (when no idle process exists to trigger drain).
+   * Creates a new process if needed and drains if the process is idle.
+   */
+  protected async tryDrainNow(agentId: string, source: string, channelId: string): Promise<void> {
+    const queueSize = this.messageQueue.getQueueSize(agentId);
+    if (queueSize === 0) return;
+
+    try {
+      const process = await this.processManager.getProcess(source, channelId, agentId);
+      if (process.isReady()) {
+        console.log(`[MultiAgent] Immediate drain for ${agentId} (queue: ${queueSize})`);
+        await this.messageQueue.drain(agentId, process, async (aid, msg, resp) => {
+          await this.sendQueuedResponse(aid, msg, resp);
+        });
+      }
+    } catch {
+      // Process busy or creation failed — will drain on next idle event
+    }
+  }
+
+  /**
    * Platform-specific queued response handler
    */
   protected abstract sendQueuedResponse(

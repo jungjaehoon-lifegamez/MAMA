@@ -443,6 +443,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       console.log(
         `[MultiAgent] PR Poller -> LEAD notification enqueued (${unresolvedCount} threads)`
       );
+
+      // Trigger immediate drain if process is idle or reaped (prevents queue stall)
+      this.tryDrainNow(defaultAgentId, 'discord', channelId).catch(() => {});
     });
     console.log('[MultiAgent] PR Review Poller message sender configured for Discord');
   }
@@ -930,6 +933,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         };
 
         this.messageQueue.enqueue(agentId, queuedMessage);
+
+        // Trigger immediate drain if process is idle or reaped
+        this.tryDrainNow(agentId, 'discord', context.channelId).catch(() => {});
 
         if (discordMessage) {
           try {

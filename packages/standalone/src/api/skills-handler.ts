@@ -10,6 +10,27 @@ import { asyncHandler, validateRequired } from './error-handler.js';
 import type { SkillRegistry, SkillSource } from '../skills/skill-registry.js';
 
 /**
+ * Validate skill name to prevent path traversal
+ */
+function validateSkillName(name: string): void {
+  if (!name || typeof name !== 'string') {
+    throw new ApiError('Invalid skill name', 400, 'BAD_REQUEST');
+  }
+  // Block path traversal attempts
+  if (name.includes('..') || name.includes('/') || name.includes('\\')) {
+    throw new ApiError('Invalid skill name: path traversal not allowed', 400, 'BAD_REQUEST');
+  }
+  // Block hidden files
+  if (name.startsWith('.')) {
+    throw new ApiError('Invalid skill name: hidden files not allowed', 400, 'BAD_REQUEST');
+  }
+  // Ensure reasonable length
+  if (name.length > 100) {
+    throw new ApiError('Invalid skill name: too long', 400, 'BAD_REQUEST');
+  }
+}
+
+/**
  * Create skills API router
  */
 export function createSkillsRouter(registry: SkillRegistry): Router {
@@ -58,6 +79,7 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
     asyncHandler(async (req, res) => {
       const body = req.body as { source?: string; name?: string };
       validateRequired(body as unknown as Record<string, unknown>, ['source', 'name']);
+      validateSkillName(body.name!);
 
       const validSources = ['cowork', 'external'];
       if (!validSources.includes(body.source!)) {
@@ -91,7 +113,8 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
   router.delete(
     '/:name',
     asyncHandler(async (req, res) => {
-      const name = req.params.name as string;
+      const name = decodeURIComponent(req.params.name as string);
+      validateSkillName(name);
       const source = (req.query.source as SkillSource) || 'mama';
       await registry.uninstall(source, name);
       res.json({ deleted: true });
@@ -102,7 +125,8 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
   router.put(
     '/:name',
     asyncHandler(async (req, res) => {
-      const name = req.params.name as string;
+      const name = decodeURIComponent(req.params.name as string);
+      validateSkillName(name);
       const { enabled, source } = req.body as { enabled?: boolean; source?: SkillSource };
 
       if (enabled === undefined) {
@@ -118,7 +142,8 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
   router.get(
     '/:name/readme',
     asyncHandler(async (req, res) => {
-      const name = req.params.name as string;
+      const name = decodeURIComponent(req.params.name as string);
+      validateSkillName(name);
       const source = (req.query.source as SkillSource) || 'mama';
       const content = await registry.getContent(source, name);
 
