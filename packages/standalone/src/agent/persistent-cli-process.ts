@@ -339,12 +339,18 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.handleTimeout();
       }, timeoutMs);
 
-      // Build and send the message
+      // Strip lone surrogates to prevent API 400 errors
+      // eslint-disable-next-line no-control-regex
+      const safeContent = content.replace(
+        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+        ''
+      );
+
       const message = {
         type: 'user',
         message: {
           role: 'user',
-          content: content,
+          content: safeContent,
         },
       };
 
@@ -410,7 +416,9 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.handleTimeout();
       }, timeoutMs);
 
-      // Build tool_result message with all results in content array
+      // Strip lone surrogates from tool results to prevent API 400 errors
+      // eslint-disable-next-line no-control-regex
+      const surrogateRe = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
       const message = {
         type: 'user',
         message: {
@@ -418,7 +426,7 @@ export class PersistentClaudeProcess extends EventEmitter {
           content: results.map((r) => ({
             type: 'tool_result',
             tool_use_id: r.tool_use_id,
-            content: r.content,
+            content: r.content.replace(surrogateRe, ''),
             is_error: r.is_error,
           })),
         },
