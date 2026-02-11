@@ -14,7 +14,8 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
-import { execSync, spawn } from 'child_process';
+import { execSync, spawn, execFile } from 'child_process';
+import { promisify } from 'util';
 import type {
   GatewayToolName,
   GatewayToolInput,
@@ -108,6 +109,7 @@ const VALID_TOOLS: GatewayToolName[] = [
  * Sensitive patterns that should be masked in config output
  */
 const SENSITIVE_KEYS = ['token', 'bot_token', 'app_token', 'api_token', 'api_key', 'secret'];
+const execFileAsync = promisify(execFile);
 
 export class GatewayToolExecutor {
   private mamaApi: MAMAApiInterface | null = null;
@@ -1415,7 +1417,7 @@ export class GatewayToolExecutor {
   // ============================================================================
 
   private parsePRUrl(url: string): { owner: string; repo: string; prNumber: number } | null {
-    const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+    const match = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/);
     if (!match) return null;
     return { owner: match[1], repo: match[2], prNumber: parseInt(match[3], 10) };
   }
@@ -1443,10 +1445,6 @@ export class GatewayToolExecutor {
     }
 
     try {
-      const { execFile: execFileCb } = await import('child_process');
-      const { promisify } = await import('util');
-      const execFileP = promisify(execFileCb);
-
       const query = `
         query($owner: String!, $repo: String!, $prNumber: Int!) {
           repository(owner: $owner, name: $repo) {
@@ -1465,7 +1463,7 @@ export class GatewayToolExecutor {
         }
       `;
 
-      const { stdout } = await execFileP(
+      const { stdout } = await execFileAsync(
         'gh',
         [
           'api',
