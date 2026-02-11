@@ -165,15 +165,26 @@ export abstract class MultiAgentHandlerBase {
         timestamp: Date.now(),
       });
 
-      // Notify channel so Reviewer/LEAD know the task is done
-      if (task.channelId) {
+      // Wake the requesting agent with the result so workflow continues immediately
+      if (task.channelId && task.requestedBy) {
         const agentName = this.config.agents[task.agentId]?.display_name || task.agentId;
         const durationSec = task.duration ? Math.round(task.duration / 1000) : 0;
         const desc = task.description?.substring(0, 100) || 'task';
-        this.sendChannelNotification(
-          task.channelId,
-          `✅ Delegation Completed\nAgent: ${agentName}\nDuration: ${durationSec}s\nTask: ${desc}`
-        ).catch(() => {});
+        const resultSummary = task.result?.substring(0, 500) || '(no output)';
+
+        const notification: import('./agent-message-queue.js').QueuedMessage = {
+          prompt:
+            `✅ Background task completed.\n` +
+            `Agent: ${agentName} (${durationSec}s)\n` +
+            `Task: ${desc}\n` +
+            `Result: ${resultSummary}`,
+          channelId: task.channelId,
+          source: (task.source as 'discord' | 'slack') || 'discord',
+          enqueuedAt: Date.now(),
+          context: { channelId: task.channelId, userId: 'background-task' },
+        };
+        this.messageQueue.enqueue(task.requestedBy, notification);
+        this.tryDrainNow(task.requestedBy, notification.source, task.channelId).catch(() => {});
       }
     });
 
@@ -189,15 +200,21 @@ export abstract class MultiAgentHandlerBase {
         timestamp: Date.now(),
       });
 
-      // Notify channel so workflow doesn't silently stall
-      if (task.channelId) {
+      // Wake the requesting agent so workflow doesn't silently stall
+      if (task.channelId && task.requestedBy) {
         const agentName = this.config.agents[task.agentId]?.display_name || task.agentId;
         const desc = task.description?.substring(0, 100) || 'task';
         const errMsg = task.error?.substring(0, 150) || 'unknown error';
-        this.sendChannelNotification(
-          task.channelId,
-          `❌ Delegation Failed\nAgent: ${agentName}\nTask: ${desc}\nError: ${errMsg}`
-        ).catch(() => {});
+
+        const notification: import('./agent-message-queue.js').QueuedMessage = {
+          prompt: `❌ Background task failed.\nAgent: ${agentName}\nTask: ${desc}\nError: ${errMsg}`,
+          channelId: task.channelId,
+          source: (task.source as 'discord' | 'slack') || 'discord',
+          enqueuedAt: Date.now(),
+          context: { channelId: task.channelId, userId: 'background-task' },
+        };
+        this.messageQueue.enqueue(task.requestedBy, notification);
+        this.tryDrainNow(task.requestedBy, notification.source, task.channelId).catch(() => {});
       }
     });
   }
