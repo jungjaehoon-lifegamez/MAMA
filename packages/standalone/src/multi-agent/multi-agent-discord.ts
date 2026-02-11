@@ -990,8 +990,47 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       return;
     }
 
+    // Execute gateway tool calls from response
+    const cleanedResponse = await this.executeAgentToolCalls(agentId, response);
+
+    // Parse and submit DELEGATE_BG commands
+    const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
+    let displayResponse = cleanedResponse;
+    if (delegations.length > 0 && delegations[0].background) {
+      let submittedCount = 0;
+      for (const delegation of delegations) {
+        if (!delegation.background) continue;
+        const check = this.delegationManager.isDelegationAllowed(
+          delegation.fromAgentId,
+          delegation.toAgentId
+        );
+        if (check.allowed) {
+          this.backgroundTaskManager.submit({
+            description: delegation.task.substring(0, 200),
+            prompt: delegation.task,
+            agentId: delegation.toAgentId,
+            requestedBy: agentId,
+            channelId: message.channelId,
+            source: 'discord',
+          });
+          submittedCount++;
+          console.log(
+            `[MultiAgent] Background delegation (queued): ${agentId} -> ${delegation.toAgentId} (async)`
+          );
+        } else {
+          console.warn(
+            `[MultiAgent] Delegation denied (queued): ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
+          );
+        }
+      }
+      if (submittedCount > 0) {
+        displayResponse =
+          delegations[0].originalContent || `🔄 ${submittedCount} background task(s) delegated`;
+      }
+    }
+
     // Format response with agent prefix
-    const formattedResponse = this.formatAgentResponse(agent, response);
+    const formattedResponse = this.formatAgentResponse(agent, displayResponse);
 
     const chunks = splitForDiscord(formattedResponse);
     const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
