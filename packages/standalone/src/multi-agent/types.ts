@@ -384,7 +384,7 @@ export interface MessageContext {
  */
 export const DEFAULT_LOOP_PREVENTION: LoopPreventionConfig = {
   max_chain_length: 3,
-  global_cooldown_ms: 2000,
+  global_cooldown_ms: 1000,
   chain_window_ms: 60000,
 };
 

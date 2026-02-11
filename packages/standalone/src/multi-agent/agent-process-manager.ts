@@ -369,15 +369,9 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 
 ## Response Format
 - Prefix: **${agentConfig.display_name}**:
-- **CONCISE**: 1-3 sentences max for status updates and confirmations
-- Max 800 characters for normal responses, 1800 for code/analysis
-- No bullet-point walls, no verbose status reports
-- Just do the work and report the result briefly
+- Do the work thoroughly, then report the result
 - **ALWAYS respond with text** — never reply with only emoji/reactions
-
-## Multi-Agent Context
-- Multiple AI agents in this channel — don't repeat what others already said
-- Keep responses short but always include a text response
+- Multiple AI agents in this channel — be aware of what others have said
 
 ## Persona
 ${resolvedPersona}
