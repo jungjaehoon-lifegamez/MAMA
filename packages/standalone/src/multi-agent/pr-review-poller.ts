@@ -17,6 +17,8 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
 import { homedir } from 'os';
+import { existsSync } from 'fs';
+import { mkdir, readFile, writeFile, unlink } from 'fs/promises';
 
 const execFileAsync = promisify(execFile);
 
@@ -178,16 +180,22 @@ export class PRReviewPoller {
       // Non-critical, will be fetched on first poll
     }
 
-    // Checkout PR branch before starting work
-    const workspaceDir = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
+    // Checkout PR branch before starting work (isolated workspace)
+    const workspaceRoot = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
+    const workspaceDir = await this.prepareWorkspace(workspaceRoot, parsed);
     try {
-      await execFileAsync('gh', ['pr', 'checkout', String(parsed.prNumber)], {
-        timeout: 30000,
-        cwd: workspaceDir,
+      await this.ensureGhAuth();
+      await this.ensureRepo(workspaceDir, parsed.owner, parsed.repo);
+      await this.withWorkspaceLock(workspaceDir, async () => {
+        await execFileAsync('gh', ['pr', 'checkout', String(parsed.prNumber)], {
+          timeout: 30000,
+          cwd: workspaceDir,
+        });
       });
       this.logger.log(`[PRPoller] Checked out PR #${parsed.prNumber} branch in ${workspaceDir}`);
     } catch (err) {
-      this.logger.error(`[PRPoller] Failed to checkout PR branch (continuing anyway):`, err);
+      this.logger.error(`[PRPoller] Failed to checkout PR branch — aborting start:`, err);
+      return false;
     }
 
     const session: PollSession = {
@@ -547,7 +555,9 @@ export class PRReviewPoller {
     }
 
     if (byFile.size > 1) {
-      lines.push(`💡 ${byFile.size} independent files — delegate fixes in parallel (DELEGATE_BG)`);
+      lines.push(
+        `💡 ${byFile.size} files — delegate in parallel when independent; keep coupled changes together (DELEGATE_BG)`
+      );
     }
 
     return lines.join('\n');
@@ -713,7 +723,9 @@ export class PRReviewPoller {
     }
 
     if (byFile.size > 1) {
-      lines.push(`💡 ${byFile.size} independent files — delegate fixes in parallel (DELEGATE_BG)`);
+      lines.push(
+        `💡 ${byFile.size} files — delegate in parallel when independent; keep coupled changes together (DELEGATE_BG)`
+      );
     }
 
     return lines.join('\n');
@@ -889,6 +901,95 @@ export class PRReviewPoller {
     const state = stdout.trim();
     if (state.includes('MERGED')) return 'MERGED';
     return state.toUpperCase(); // "open" → "OPEN", "closed" → "CLOSED"
+  }
+
+  private async prepareWorkspace(
+    workspaceRoot: string,
+    parsed: { owner: string; repo: string; prNumber: number }
+  ): Promise<string> {
+    const sanitize = (value: string): string => value.replace(/[^a-zA-Z0-9_.-]/g, '-');
+    const slug = `${sanitize(parsed.owner)}-${sanitize(parsed.repo)}-pr-${parsed.prNumber}`;
+    const workspaceDir = join(workspaceRoot, 'pr-reviews', slug);
+    await mkdir(workspaceDir, { recursive: true });
+    return workspaceDir;
+  }
+
+  private async ensureGhAuth(): Promise<void> {
+    try {
+      await execFileAsync('gh', ['auth', 'status', '-h', 'github.com'], { timeout: 10000 });
+    } catch (err) {
+      throw new Error(`GitHub CLI not authenticated. Run "gh auth login". ${String(err)}`);
+    }
+  }
+
+  private async ensureRepo(workspaceDir: string, owner: string, repo: string): Promise<void> {
+    const gitDir = join(workspaceDir, '.git');
+    if (!existsSync(gitDir)) {
+      await execFileAsync('gh', ['repo', 'clone', `${owner}/${repo}`, '.'], {
+        timeout: 60000,
+        cwd: workspaceDir,
+      });
+      return;
+    }
+
+    const remoteUrl = await this.getRemoteUrl(workspaceDir);
+    if (!remoteUrl || !this.matchesRepo(remoteUrl, owner, repo)) {
+      throw new Error(
+        `Workspace repo mismatch. Expected ${owner}/${repo} but found ${remoteUrl || 'unknown'}`
+      );
+    }
+  }
+
+  private async getRemoteUrl(workspaceDir: string): Promise<string | null> {
+    try {
+      const { stdout } = await execFileAsync('git', ['config', '--get', 'remote.origin.url'], {
+        timeout: 10000,
+        cwd: workspaceDir,
+      });
+      const url = stdout.trim();
+      return url || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private matchesRepo(remoteUrl: string, owner: string, repo: string): boolean {
+    const match = remoteUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
+    if (!match) return false;
+    return match[1] === `${owner}/${repo}`;
+  }
+
+  private async withWorkspaceLock<T>(workspaceDir: string, task: () => Promise<T>): Promise<T> {
+    const lockPath = join(workspaceDir, '.mama-pr-review.lock');
+    const startedAt = Date.now();
+    const timeoutMs = 30_000;
+
+    let acquired = false;
+    while (!acquired) {
+      try {
+        await writeFile(
+          lockPath,
+          JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+          { flag: 'wx' }
+        );
+        acquired = true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw err;
+        }
+        if (Date.now() - startedAt > timeoutMs) {
+          const existing = await readFile(lockPath, 'utf8').catch(() => '');
+          throw new Error(`Workspace lock timed out. Lock info: ${existing || 'unknown'}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+
+    try {
+      return await task();
+    } finally {
+      await unlink(lockPath).catch(() => undefined);
+    }
   }
 
   /**

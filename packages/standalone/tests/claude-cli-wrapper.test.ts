@@ -1,11 +1,21 @@
 import { randomUUID } from 'crypto';
+import { execSync } from 'child_process';
 import { ClaudeCLIWrapper } from '../src/agent/claude-cli-wrapper.js';
 
 // Skip in CI - these tests require claude CLI to be installed
 const isCI = process.env.CI === 'true';
+const hasClaudeCli = (() => {
+  try {
+    execSync('command -v claude', { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const shouldSkip = isCI || !hasClaudeCli;
 
 describe('ClaudeCLIWrapper', () => {
-  it.skipIf(isCI)(
+  it.skipIf(shouldSkip)(
     'should execute a simple prompt and return usage stats',
     async () => {
       const wrapper = new ClaudeCLIWrapper({ dangerouslySkipPermissions: true });
@@ -43,7 +53,7 @@ describe('ClaudeCLIWrapper', () => {
     expect(result2.response.toLowerCase()).toContain('blue');
   }, 60000);
 
-  it.skipIf(isCI)(
+  it.skipIf(shouldSkip)(
     'should track cumulative costs across multiple calls',
     async () => {
       let totalCost = 0;

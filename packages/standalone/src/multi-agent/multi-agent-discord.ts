@@ -17,6 +17,7 @@ import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import { PRReviewPoller } from './pr-review-poller.js';
 import { execFile } from 'child_process';
+import { homedir as osHomedir } from 'os';
 import { promisify } from 'util';
 import {
   MultiAgentHandlerBase,
@@ -424,8 +425,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       const prLabel = session ? `${session.owner}/${session.repo}#${session.prNumber}` : 'unknown';
       const prNumber = session?.prNumber || 0;
       const unresolvedCount = texts.length;
-      const workspacePath =
-        process.env.MAMA_WORKSPACE || `${process.env.HOME || '/home/deck'}/.mama/workspace`;
+      const workspacePath = process.env.MAMA_WORKSPACE || `${osHomedir()}/.mama/workspace`;
 
       const leadNotification = [
         `📊 PR ${prLabel} has ${unresolvedCount} unresolved review thread(s).`,
@@ -1016,7 +1016,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     // Parse and submit DELEGATE_BG commands
     const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
     let displayResponse = cleanedResponse;
-    if (delegations.length > 0 && delegations[0].background) {
+    const hasBackground = delegations.some((delegation) => delegation.background);
+    if (delegations.length > 0 && hasBackground) {
       let submittedCount = 0;
       for (const delegation of delegations) {
         if (!delegation.background) continue;

@@ -48,6 +48,30 @@ vi.mock('child_process', () => {
         return mockProcess;
       }
     ),
+    execFile: vi.fn(
+      (
+        _command: string,
+        _args: string[],
+        _options: Record<string, unknown>,
+        callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void
+      ): ChildProcess => {
+        if (typeof _options === 'function') {
+          (_options as unknown as typeof callback)?.(null, { stdout: '', stderr: '' });
+        } else if (callback) {
+          callback(null, { stdout: '', stderr: '' });
+        }
+
+        return {
+          pid: 12345,
+          killed: false,
+          stdin: null,
+          stdout: null,
+          stderr: null,
+          on: vi.fn(),
+          kill: vi.fn(),
+        } as unknown as ChildProcess;
+      }
+    ),
     ChildProcess: vi.fn(),
   };
 });
