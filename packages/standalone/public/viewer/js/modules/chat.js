@@ -1703,8 +1703,24 @@ export class ChatModule {
         e.preventDefault();
         startDrag(e.clientX, e.clientY);
       });
-      window.addEventListener('mousemove', (e) => doDrag(e.clientX, e.clientY));
-      window.addEventListener('mouseup', endDrag);
+
+      this._onDragMouseMove = (e) => doDrag(e.clientX, e.clientY);
+      this._onDragMouseUp = endDrag;
+      window.addEventListener('mousemove', this._onDragMouseMove);
+      window.addEventListener('mouseup', this._onDragMouseUp);
+
+      this._onDragTouchMove = (e) => {
+        const touch = e.touches[0];
+        if (!touch) {
+          return;
+        }
+        if (!dragging) {
+          return;
+        }
+        e.preventDefault();
+        doDrag(touch.clientX, touch.clientY);
+      };
+      this._onDragTouchEnd = endDrag;
 
       header.addEventListener(
         'touchstart',
@@ -1719,22 +1735,8 @@ export class ChatModule {
         },
         { passive: false }
       );
-      window.addEventListener(
-        'touchmove',
-        (e) => {
-          const touch = e.touches[0];
-          if (!touch) {
-            return;
-          }
-          if (!dragging) {
-            return;
-          }
-          e.preventDefault();
-          doDrag(touch.clientX, touch.clientY);
-        },
-        { passive: false }
-      );
-      window.addEventListener('touchend', endDrag);
+      window.addEventListener('touchmove', this._onDragTouchMove, { passive: false });
+      window.addEventListener('touchend', this._onDragTouchEnd);
     }
 
     if (resizeHandle && panel) {
@@ -1784,8 +1786,24 @@ export class ChatModule {
         e.preventDefault();
         startResize(e.clientX, e.clientY);
       });
-      window.addEventListener('mousemove', (e) => doResize(e.clientX, e.clientY));
-      window.addEventListener('mouseup', endResize);
+
+      this._onResizeMouseMove = (e) => doResize(e.clientX, e.clientY);
+      this._onResizeMouseUp = endResize;
+      window.addEventListener('mousemove', this._onResizeMouseMove);
+      window.addEventListener('mouseup', this._onResizeMouseUp);
+
+      this._onResizeTouchMove = (e) => {
+        const touch = e.touches[0];
+        if (!touch) {
+          return;
+        }
+        if (!resizing) {
+          return;
+        }
+        e.preventDefault();
+        doResize(touch.clientX, touch.clientY);
+      };
+      this._onResizeTouchEnd = endResize;
 
       resizeHandle.addEventListener(
         'touchstart',
@@ -1800,29 +1818,16 @@ export class ChatModule {
         },
         { passive: false }
       );
-      window.addEventListener(
-        'touchmove',
-        (e) => {
-          const touch = e.touches[0];
-          if (!touch) {
-            return;
-          }
-          if (!resizing) {
-            return;
-          }
-          e.preventDefault();
-          doResize(touch.clientX, touch.clientY);
-        },
-        { passive: false }
-      );
-      window.addEventListener('touchend', endResize);
+      window.addEventListener('touchmove', this._onResizeTouchMove, { passive: false });
+      window.addEventListener('touchend', this._onResizeTouchEnd);
     }
 
-    document.addEventListener('keydown', (e) => {
+    this._onEscapeKey = (e) => {
       if (e.key === 'Escape' && this.isFloatingOpen()) {
         this.togglePanel(false);
       }
-    });
+    };
+    document.addEventListener('keydown', this._onEscapeKey);
 
     console.log('[Chat] Floating mode initialized');
   }
@@ -1964,6 +1969,44 @@ export class ChatModule {
     if (this.isSpeaking) {
       this.speechSynthesis.cancel();
       this.isSpeaking = false;
+    }
+
+    // Clean up window/document event listeners
+    if (this._onDragMouseMove) {
+      window.removeEventListener('mousemove', this._onDragMouseMove);
+      this._onDragMouseMove = null;
+    }
+    if (this._onDragMouseUp) {
+      window.removeEventListener('mouseup', this._onDragMouseUp);
+      this._onDragMouseUp = null;
+    }
+    if (this._onDragTouchMove) {
+      window.removeEventListener('touchmove', this._onDragTouchMove);
+      this._onDragTouchMove = null;
+    }
+    if (this._onDragTouchEnd) {
+      window.removeEventListener('touchend', this._onDragTouchEnd);
+      this._onDragTouchEnd = null;
+    }
+    if (this._onResizeMouseMove) {
+      window.removeEventListener('mousemove', this._onResizeMouseMove);
+      this._onResizeMouseMove = null;
+    }
+    if (this._onResizeMouseUp) {
+      window.removeEventListener('mouseup', this._onResizeMouseUp);
+      this._onResizeMouseUp = null;
+    }
+    if (this._onResizeTouchMove) {
+      window.removeEventListener('touchmove', this._onResizeTouchMove);
+      this._onResizeTouchMove = null;
+    }
+    if (this._onResizeTouchEnd) {
+      window.removeEventListener('touchend', this._onResizeTouchEnd);
+      this._onResizeTouchEnd = null;
+    }
+    if (this._onEscapeKey) {
+      document.removeEventListener('keydown', this._onEscapeKey);
+      this._onEscapeKey = null;
     }
 
     console.log('[Chat] Cleanup completed');
