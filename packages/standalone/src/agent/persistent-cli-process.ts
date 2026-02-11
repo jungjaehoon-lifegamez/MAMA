@@ -30,9 +30,16 @@ import os from 'os';
 import path from 'path';
 import { EventEmitter } from 'events';
 import type { TokenUsageRecord } from './types.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
 const persistentLogger = new DebugLogger('PersistentCLI');
 const poolLogger = new DebugLogger('ProcessPool');
 

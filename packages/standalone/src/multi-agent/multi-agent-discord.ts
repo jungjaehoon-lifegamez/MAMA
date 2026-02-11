@@ -19,6 +19,7 @@ import { PRReviewPoller } from './pr-review-poller.js';
 import { execFile } from 'child_process';
 import { homedir as osHomedir } from 'os';
 import { promisify } from 'util';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   MultiAgentHandlerBase,
   AGENT_TIMEOUT_MS,
@@ -29,8 +30,14 @@ import {
 export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
 
 const execFileAsync = promisify(execFile);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
 const logger = new DebugLogger('MultiAgentDiscord');
 
 /** Delay before showing progress message (ms) -- fast requests never show it */

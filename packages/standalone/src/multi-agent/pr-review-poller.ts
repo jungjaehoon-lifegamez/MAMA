@@ -19,10 +19,17 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { mkdir, readFile, writeFile, unlink } from 'fs/promises';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const execFileAsync = promisify(execFile);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
 
 /** Default polling interval (60 seconds) */
 const POLL_INTERVAL_MS = 60 * 1000;
