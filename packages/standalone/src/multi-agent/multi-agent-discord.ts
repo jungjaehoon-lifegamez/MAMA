@@ -882,6 +882,10 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
             console.log(
               `[MultiAgent] Background delegation: ${agentId} -> ${delegation.toAgentId} (async)`
             );
+          } else {
+            console.warn(
+              `[MultiAgent] Delegation denied: ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
+            );
           }
         }
 
