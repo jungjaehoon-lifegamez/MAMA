@@ -13,6 +13,7 @@
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
 import { join, dirname } from 'path';
+import { homedir } from 'os';
 import { execSync, spawn } from 'child_process';
 import type {
   GatewayToolName,
@@ -648,7 +649,7 @@ export class GatewayToolExecutor {
 
     try {
       const output = execSync(command, {
-        cwd: workdir || process.cwd(),
+        cwd: workdir || process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace'),
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 60000,
