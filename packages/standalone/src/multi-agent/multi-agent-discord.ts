@@ -399,74 +399,50 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         }
       }
 
-      // Inject full details directly into LEAD's process as a prompt
+      // Enqueue lightweight notification for LEAD
       this.orchestrator.resetChain(channelId);
       const defaultAgentId = this.config.default_agent || 'sisyphus';
-      const prDetails = texts.join('\n').slice(0, 6000);
 
+      // Just notify count + PR ref — LEAD uses Bash(gh) to analyze autonomously
       const prLabel = session ? `${session.owner}/${session.repo}#${session.prNumber}` : 'unknown';
-      const leadPrompt = [
-        `[PR REVIEW DATA — internal, not from channel]`,
-        `PR: ${prLabel}`,
+      const prNumber = session?.prNumber || 0;
+      const unresolvedCount = texts.length;
+
+      const leadNotification = [
+        `📊 PR ${prLabel} has ${unresolvedCount} unresolved review thread(s).`,
         ``,
-        `## CRITICAL: You MUST delegate. Do NOT fix code yourself.`,
+        `Use these commands to analyze and fix:`,
+        `- \`gh pr checkout ${prNumber}\` — switch to PR branch`,
+        `- \`gh pr view ${prNumber} --comments\` — see all comments`,
+        `- \`gh api repos/${session?.owner}/${session?.repo}/pulls/${prNumber}/comments --jq '.[] | {path, line, body}'\` — get review comments`,
         ``,
-        `## Workflow`,
-        `1. Run: \`gh pr checkout ${session?.prNumber || '<PR_NUMBER>'}\``,
-        `2. For EACH file with review comments, immediately delegate to DevBot:`,
-        `   DELEGATE_BG::developer::<file>: <fix description based on review comment>`,
-        `3. Different files = separate DELEGATE_BG (parallel)`,
-        `4. Same file with multiple comments = one DELEGATE_BG with all fixes`,
-        `5. Do NOT analyze, summarize, or explain — just delegate`,
-        `6. Do NOT involve Reviewer until DevBot pushes all fixes`,
-        ``,
-        `## Example output format:`,
-        `\`\`\``,
-        `DELEGATE_BG::developer::chat.js:456 — wrap args in XML tags to prevent prompt injection`,
-        `DELEGATE_BG::developer::skills.js:372 — escape source variable with escapeHtml()`,
-        `\`\`\``,
-        ``,
-        `## Review Comments`,
-        prDetails,
+        `Then delegate fixes to DevBot with DELEGATE_BG::developer::<task>.`,
+        `Do NOT fix code yourself. Do NOT involve Reviewer until all fixes are pushed.`,
       ].join('\n');
 
-      // Retry up to 3 times with backoff if LEAD is busy
-      const MAX_RETRIES = 3;
-      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
-          const proc = await this.processManager.getProcess('discord', channelId, defaultAgentId);
-          const result = await proc.sendMessage(leadPrompt);
-          const cleanedResponse = await this.executeTextToolCalls(result.response);
-          const resolvedResponse = this.resolveResponseMentions(cleanedResponse);
-
-          const formattedResponse = `**${this.config.agents[defaultAgentId]?.display_name || 'LEAD'}**: ${resolvedResponse}`;
-          const chunks = splitForDiscord(formattedResponse);
-          for (const chunk of chunks) {
-            const ch = await client.channels.fetch(channelId);
-            if (ch && 'send' in (ch as Record<string, unknown>)) {
-              await (ch as { send: (opts: { content: string }) => Promise<Message> }).send({
-                content: chunk,
-              });
-            }
-          }
-          console.log(
-            `[MultiAgent] PR Poller -> LEAD processed internally (${prDetails.length} chars)`
-          );
-          break; // Success
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          if (errMsg.includes('busy') && attempt < MAX_RETRIES - 1) {
-            const delay = (attempt + 1) * 15000; // 15s, 30s, 45s
-            console.log(
-              `[MultiAgent] PR Poller -> LEAD busy, retry ${attempt + 1}/${MAX_RETRIES} in ${delay / 1000}s`
-            );
-            await new Promise((r) => setTimeout(r, delay));
-          } else {
-            console.error(`[MultiAgent] PR Poller -> LEAD processing failed:`, err);
-            break;
-          }
-        }
+      // Send compact notification to channel
+      const channel = await client.channels.fetch(channelId);
+      if (channel && 'send' in (channel as Record<string, unknown>)) {
+        await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
+          content: `📊 PR ${prLabel} — ${unresolvedCount} unresolved thread(s). <@${this.multiBotManager.getMainBotUserId()}> please review and delegate fixes.`,
+        });
       }
+
+      // Enqueue notification for LEAD (will be picked up when not busy)
+      const queuedMessage: QueuedMessage = {
+        prompt: leadNotification,
+        channelId,
+        source: 'discord',
+        enqueuedAt: Date.now(),
+        context: {
+          channelId,
+          userId: 'pr-poller',
+        },
+      };
+      this.messageQueue.enqueue(defaultAgentId, queuedMessage);
+      console.log(
+        `[MultiAgent] PR Poller -> LEAD notification enqueued (${unresolvedCount} threads)`
+      );
     });
     console.log('[MultiAgent] PR Review Poller message sender configured for Discord');
   }
