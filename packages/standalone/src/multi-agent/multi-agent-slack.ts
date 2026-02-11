@@ -46,7 +46,7 @@ const STATE_EMOJI: Record<string, string> = {
  */
 export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   private multiBotManager: SlackMultiBotManager;
-  private logger = createSafeLogger('MultiAgentSlack');
+  protected logger = createSafeLogger('MultiAgentSlack');
 
   /** Main Slack WebClient for posting system messages (heartbeat) */
   private mainWebClient: WebClient | null = null;
