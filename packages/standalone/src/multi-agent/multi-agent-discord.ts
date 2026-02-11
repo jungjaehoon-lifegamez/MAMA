@@ -320,21 +320,14 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       this.processManager.setMentionDelegation(true);
       console.log(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
 
-      // PR Review Poller: target Reviewer for @mention in Discord messages.
-      // Reviewer analyzes PR data -> summarizes -> mentions LEAD with prioritized tasks.
-      const reviewerEntry = this.findReviewerAgent();
-      const reviewerTargetId = reviewerEntry?.[0];
-      const reviewerUserId = reviewerTargetId ? botUserIdMap.get(reviewerTargetId) : undefined;
-      if (reviewerUserId) {
-        this.prReviewPoller.setTargetAgentUserId(reviewerUserId);
-        console.log(`[MultiAgent] PR Poller target: ${reviewerTargetId} (reviewer -> LEAD)`);
-      } else {
-        // Fallback: mention LEAD directly
+      // PR Review Poller: target LEAD directly.
+      // LEAD analyzes → delegates to DevBot → DevBot fixes → Reviewer reviews after.
+      {
         const orchestratorId = defaultAgentId || 'sisyphus';
         const orchestratorUserId = botUserIdMap.get(orchestratorId);
         if (orchestratorUserId) {
           this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
-          console.log(`[MultiAgent] PR Poller target: ${orchestratorId} (fallback LEAD)`);
+          console.log(`[MultiAgent] PR Poller target: ${orchestratorId} (LEAD)`);
         }
       }
     }
@@ -377,54 +370,73 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     if (this.prReviewPoller.hasMessageSender()) return;
 
+    // Silent message sender — accumulates data for LEAD without posting to channel
     this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
-      const channel = await client.channels.fetch(channelId);
-      if (!channel || !('send' in (channel as Record<string, unknown>))) return;
-
-      await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
-        content: text,
-      });
-
-      // Store texts per channel to prevent cross-channel contamination
-      // Use immutable approach to avoid race conditions
       const currentTexts = this.batchData.get(channelId) || [];
       const cleanText = text.replace(/<@!?\d+>/g, '').trim();
       this.batchData.set(channelId, [...currentTexts, cleanText]);
     });
 
-    // After all chunks sent, send LEAD mention FROM Reviewer bot
-    // with PR data included so LEAD doesn't pick up stale channel history.
+    // After poll cycle: send details directly to LEAD (not to channel).
+    // Channel only gets a progress counter. Reviewer is NOT involved in analysis.
+    // Flow: LEAD analyzes → delegates to DevBot → DevBot fixes → Reviewer reviews
     this.prReviewPoller.setOnBatchComplete(async (channelId: string) => {
-      // Atomically retrieve and clear batch data to prevent race conditions
       const texts = this.batchData.get(channelId) || [];
       if (texts.length === 0) return;
-
-      // Clear immediately to prevent duplicate processing
       this.batchData.delete(channelId);
 
-      // Reset chain so LEAD can delegate freely
-      this.orchestrator.resetChain(channelId);
-
-      const leadUserId = this.multiBotManager.getMainBotUserId();
-      if (!leadUserId) return;
-
-      const reviewerEntry = this.findReviewerAgent();
-      const reviewerAgentId = reviewerEntry?.[0];
-      if (!reviewerAgentId) return;
-
-      // Include PR data with parallel delegation instruction
-      const mentionPrefix = `<@${leadUserId}> PR review comments below — grouped by file.\nFixes for **different files are independent** — use DELEGATE_BG for each file to run them in parallel.\nDo NOT wait for one fix before starting the next.\n\n`;
-      const prSummary = texts.join('\n').slice(0, 2000 - mentionPrefix.length);
-      const fullMsg = `${mentionPrefix}${prSummary}`;
-
-      // Split using Discord-aware splitter (2000 char limit)
-      const chunks = splitForDiscord(fullMsg);
-      for (const chunk of chunks) {
-        await this.multiBotManager.sendAsAgent(reviewerAgentId, channelId, chunk);
+      // Post compact progress counter to channel (resolved/total only)
+      const sessions = this.prReviewPoller.getSessionDetails();
+      const session = sessions.find((s) => s.channelId === channelId);
+      if (session) {
+        const channel = await client.channels.fetch(channelId);
+        if (channel && 'send' in (channel as Record<string, unknown>)) {
+          const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
+          const summary = texts.join(' ').substring(0, 100);
+          await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
+            content: `📊 PR ${prLabel} — ${summary}`,
+          });
+        }
       }
-      console.log(
-        `[MultiAgent] PR Poller -> LEAD mention sent via ${reviewerAgentId} (${chunks.length} chunks, ${prSummary.length} chars)`
-      );
+
+      // Inject full details directly into LEAD's process as a prompt
+      this.orchestrator.resetChain(channelId);
+      const defaultAgentId = this.config.default_agent || 'sisyphus';
+      const prDetails = texts.join('\n').slice(0, 6000);
+
+      const leadPrompt = [
+        `[PR REVIEW DATA — internal, not from channel]`,
+        `Analyze these review comments and delegate fixes to DevBot.`,
+        `For different files, use DELEGATE_BG to run fixes in parallel.`,
+        `Do NOT ask Reviewer to analyze — Reviewer only reviews AFTER DevBot pushes fixes.`,
+        `After all fixes are pushed, tell DevBot to request re-review.`,
+        ``,
+        prDetails,
+      ].join('\n');
+
+      try {
+        const process = await this.processManager.getProcess('discord', channelId, defaultAgentId);
+        const result = await process.sendMessage(leadPrompt);
+        const cleanedResponse = await this.executeTextToolCalls(result.response);
+        const resolvedResponse = this.resolveResponseMentions(cleanedResponse);
+
+        // Send LEAD's response to channel (delegation instructions, etc.)
+        const formattedResponse = `**${this.config.agents[defaultAgentId]?.display_name || 'LEAD'}**: ${resolvedResponse}`;
+        const chunks = splitForDiscord(formattedResponse);
+        for (const chunk of chunks) {
+          const ch = await client.channels.fetch(channelId);
+          if (ch && 'send' in (ch as Record<string, unknown>)) {
+            await (ch as { send: (opts: { content: string }) => Promise<Message> }).send({
+              content: chunk,
+            });
+          }
+        }
+        console.log(
+          `[MultiAgent] PR Poller -> LEAD processed internally (${prDetails.length} chars)`
+        );
+      } catch (err) {
+        console.error(`[MultiAgent] PR Poller -> LEAD processing failed:`, err);
+      }
     });
     console.log('[MultiAgent] PR Review Poller message sender configured for Discord');
   }
@@ -832,9 +844,15 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       // discord_send is routed through the agent's own bot (not the main LEAD bot).
       const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
 
-      const resolvedResponse = this.resolveResponseMentions(cleanedResponse);
+      // Detect API error responses — skip mention resolution and delegation to prevent error loops
+      const isErrorResponse = /API Error:\s*\d{3}\b/.test(cleanedResponse);
+      const resolvedResponse = isErrorResponse
+        ? cleanedResponse
+        : this.resolveResponseMentions(cleanedResponse);
 
-      const bgDelegation = this.delegationManager.parseDelegation(agentId, resolvedResponse);
+      const bgDelegation = isErrorResponse
+        ? null
+        : this.delegationManager.parseDelegation(agentId, resolvedResponse);
       if (bgDelegation && bgDelegation.background) {
         const check = this.delegationManager.isDelegationAllowed(
           bgDelegation.fromAgentId,
