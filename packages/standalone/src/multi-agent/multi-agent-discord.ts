@@ -50,7 +50,7 @@ const PROGRESS_EDIT_INTERVAL_MS = 3_000;
 const _PHASE_EMOJIS = ['👀', '🔍', '💻', '🔧', '📝', '✅'] as const;
 
 /** Max characters allowed for dynamic context blocks to avoid prompt bloat */
-const MAX_DYNAMIC_CONTEXT_CHARS = 1200;
+const MAX_DYNAMIC_CONTEXT_CHARS = 4000;
 
 /** Map tool names to phase emojis */
 function toolToPhaseEmoji(toolName: string): (typeof _PHASE_EMOJIS)[number] | null {
@@ -99,8 +99,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   /** Tracks channels where APPROVE+commit was processed (prevents congratulation loops) */
   private approveProcessedChannels = new Map<string, number>();
 
-  /** APPROVE cooldown period -- blocks agent-to-agent routing after commit (5 minutes) */
-  private static readonly APPROVE_COOLDOWN_MS = 5 * 60 * 1000;
+  /** APPROVE cooldown period -- blocks agent-to-agent routing after commit (30 seconds) */
+  private static readonly APPROVE_COOLDOWN_MS = 30 * 1000;
 
   /** Cleanup interval period (1 minute) */
   private static readonly CLEANUP_INTERVAL_MS = 60_000;
@@ -673,19 +673,17 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     //   Only LEAD needs channel context to understand the conversation flow.
     let fullPrompt = cleanMessage;
 
-    // Inject channel history for the default (LEAD) agent on new sessions only.
-    // - Keeps human messages + LEAD's own messages, excludes other bots.
+    // Inject channel history for all agents on new sessions only.
+    // - Keeps human messages + this agent's own messages, excludes other bots.
     // - Only on first message per session (subsequent messages are in session memory).
-    // - DevBot/Reviewer get tasks via delegation -- they don't need channel history.
-    const defaultAgentId = this.config.default_agent;
     const sessionKey = `${agentId}:${context.channelId}`;
-    if (agentId === defaultAgentId && !this.historyInjected.has(sessionKey)) {
+    if (!this.historyInjected.has(sessionKey)) {
       const channelHistory = getChannelHistory();
-      const leadDisplayName = agent.display_name || agentId;
+      const displayName = agent.display_name || agentId;
       const historyContext = channelHistory.formatForContext(
         context.channelId,
         context.messageId,
-        leadDisplayName // keep human + LEAD's own messages, exclude other bots
+        displayName // keep human + this agent's own messages, exclude other bots
       );
       if (historyContext) {
         fullPrompt = `${historyContext}\n\n${fullPrompt}`;

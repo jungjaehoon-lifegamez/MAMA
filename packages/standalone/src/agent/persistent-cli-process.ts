@@ -311,6 +311,12 @@ export class PersistentClaudeProcess extends EventEmitter {
     const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
     args.push('--add-dir', mamaWorkspace);
 
+    // Add project directory so agents can read/edit project source code
+    const projectDir = process.env.MAMA_PROJECT_DIR;
+    if (projectDir) {
+      args.push('--add-dir', projectDir);
+    }
+
     return args;
   }
 

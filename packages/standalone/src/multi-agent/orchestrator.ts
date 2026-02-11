@@ -371,7 +371,7 @@ export class MultiAgentOrchestrator {
     if (!lastResponse) return true;
 
     const agent = this.getAgent(agentId);
-    const cooldownMs = agent?.cooldown_ms || 5000;
+    const cooldownMs = agent?.cooldown_ms || 1000;
 
     return Date.now() - lastResponse >= cooldownMs;
   }

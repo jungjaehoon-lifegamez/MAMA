@@ -240,7 +240,7 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
     },
     loop_prevention: {
       max_chain_length: 5,
-      global_cooldown_ms: 2000,
+      global_cooldown_ms: 1000,
       chain_window_ms: 60000,
     },
   };
