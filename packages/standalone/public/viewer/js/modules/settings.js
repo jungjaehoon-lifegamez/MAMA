@@ -14,6 +14,9 @@
 
 import { showToast, escapeHtml } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('Settings');
 
 /**
  * Settings Module Class
@@ -61,14 +64,14 @@ export class SettingsModule {
           this.multiAgentData = { agents: [] };
         }
       } catch (e) {
-        console.warn('[Settings] Multi-agent data unavailable:', e);
+        logger.warn('Multi-agent data unavailable:', e);
         this.multiAgentData = { agents: [] };
       }
 
       this.populateForm();
       this.setStatus('');
     } catch (error) {
-      console.error('[Settings] Load error:', error);
+      logger.error('Load error:', error);
       this.setStatus(`Error: ${error.message}`, 'error');
     }
   }
@@ -345,7 +348,7 @@ export class SettingsModule {
 
       this.setStatus('Restarting... page will reconnect automatically', '');
     } catch (error) {
-      console.error('[Settings] Save error:', error);
+      logger.error('Save error:', error);
       this.setStatus(`Error: ${error.message}`, 'error');
       showToast(`Failed to save: ${error.message}`);
     }
@@ -759,9 +762,9 @@ export class SettingsModule {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      console.log(`[Settings] Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`);
+      logger.info(`Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`);
     } catch (error) {
-      console.error('[Settings] Failed to toggle agent:', error);
+      logger.error('Failed to toggle agent:', error);
       // Revert checkbox on error
       const checkbox = document.querySelector(`input[data-agent-id="${agentId}"]`);
       if (checkbox) {
@@ -837,7 +840,7 @@ export class SettingsModule {
         });
       });
     } catch (error) {
-      console.warn('[Settings] Skills load error:', error);
+      logger.warn('Skills load error:', error);
       container.innerHTML = '<p class="text-xs text-gray-400">Failed to load skills</p>';
     }
   }
@@ -856,7 +859,7 @@ export class SettingsModule {
         throw new Error(`HTTP ${response.status}`);
       }
     } catch (error) {
-      console.error('[Settings] Skill toggle failed:', error);
+      logger.error('Skill toggle failed:', error);
       this.populateSkillsSection();
     }
   }
