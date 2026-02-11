@@ -35,6 +35,15 @@ export class DashboardModule {
     }
     this.initialized = true;
 
+    // Event delegation for cron job buttons
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-cron-id]');
+      if (btn) {
+        const jobId = btn.getAttribute('data-cron-id');
+        this.runCronJob(jobId);
+      }
+    });
+
     await this.loadStatus();
 
     // Auto-refresh every 30 seconds
@@ -763,7 +772,7 @@ export class DashboardModule {
           </div>
           <div class="flex items-center gap-1 ml-2 shrink-0">
             <button class="text-xs px-2 py-1 bg-mama-yellow hover:bg-mama-yellow-hover text-mama-black rounded transition-colors"
-              onclick="window.dashboardModule.runCronJob('${escapeHtml(job.id)}')" title="Run Now">
+              data-cron-id="${escapeHtml(job.id)}" title="Run Now">
               Run
             </button>
           </div>

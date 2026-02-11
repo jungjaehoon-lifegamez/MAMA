@@ -224,8 +224,11 @@ export class PersistentClaudeProcess extends EventEmitter {
       }
     }
 
+    // Use MAMA workspace as cwd so agents work in the PR checkout directory
+    const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: mamaWorkspace,
       env: { ...cleanEnv, ...(this.options.env || {}) },
     });
 
