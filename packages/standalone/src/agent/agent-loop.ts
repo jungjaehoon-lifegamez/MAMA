@@ -232,6 +232,28 @@ export function loadInstalledSkills(
     }
   }
 
+  // Also load flat .md skill files from ~/.mama/skills/ root
+  try {
+    const rootEntries = readdirSync(skillsBase, { withFileTypes: true });
+    for (const entry of rootEntries) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
+      const id = entry.name.replace(/\.md$/, '');
+      // Skip if already loaded from subdirectory
+      if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) continue;
+
+      const fullPath = join(skillsBase, entry.name);
+      let content = readFileSync(fullPath, 'utf-8');
+      if (content.length > MAX_SKILL_FILE_CHARS) {
+        content = content.slice(0, MAX_SKILL_FILE_CHARS) + '\n\n[... truncated]';
+      }
+      blocks.push(`# [Skill: mama/${id}]\n\n${content}`);
+      if (verbose) console.log(`[AgentLoop] Loaded root skill: ${id}`);
+    }
+  } catch {
+    // Root directory read failed
+  }
+
   return blocks;
 }
 
@@ -260,11 +282,13 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
       '# Installed Skills (PRIORITY)',
       '',
       '**IMPORTANT:** The following skills/plugins are installed by the user.',
-      'When a user message contains [INSTALLED PLUGIN COMMAND] you MUST:',
-      '1. Find the matching "commands/{name}.md" section below',
-      '2. Follow its instructions EXACTLY as written',
-      '3. DO NOT use the Skill tool — these are NOT system skills',
-      '4. DO NOT match to bmad, oh-my-claudecode, or any built-in skill',
+      'When a user request matches a skill by keywords or description, you MUST:',
+      '1. Find the matching skill section below (check "keywords" in frontmatter or skill name)',
+      '2. Follow its "지시사항" / instructions EXACTLY as written — do NOT improvise alternatives',
+      '3. Use the tools available to you (fetch, Bash, etc.) as the skill directs',
+      '4. DO NOT create separate scripts or files unless the skill explicitly instructs it',
+      '5. For [INSTALLED PLUGIN COMMAND] messages, find matching "commands/{name}.md"',
+      '6. DO NOT use the Skill tool — these are NOT system skills',
       '',
       skillBlocks.join('\n\n---\n\n'),
     ].join('\n');
