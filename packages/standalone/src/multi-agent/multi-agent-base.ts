@@ -151,6 +151,15 @@ export abstract class MultiAgentHandlerBase {
         channelId: task.channelId,
         timestamp: Date.now(),
       });
+
+      // Notify channel so users can see agent activity
+      if (task.channelId) {
+        const agentName = this.config.agents[task.agentId]?.display_name || task.agentId;
+        const desc = task.description?.substring(0, 100) || 'task';
+        this.sendChannelNotification(task.channelId, `🔧 ${agentName} started: ${desc}`).catch(
+          () => {}
+        );
+      }
     });
 
     this.backgroundTaskManager.on('task-completed', ({ task }: { task: BackgroundTask }) => {
@@ -185,6 +194,12 @@ export abstract class MultiAgentHandlerBase {
         };
         this.messageQueue.enqueue(task.requestedBy, notification);
         this.tryDrainNow(task.requestedBy, notification.source, task.channelId).catch(() => {});
+
+        // Notify channel so users can see completion
+        this.sendChannelNotification(
+          task.channelId,
+          `✅ ${agentName} completed (${durationSec}s): ${desc}`
+        ).catch(() => {});
       }
     });
 
@@ -215,6 +230,12 @@ export abstract class MultiAgentHandlerBase {
         };
         this.messageQueue.enqueue(task.requestedBy, notification);
         this.tryDrainNow(task.requestedBy, notification.source, task.channelId).catch(() => {});
+
+        // Notify channel so users can see failure
+        this.sendChannelNotification(
+          task.channelId,
+          `❌ ${agentName} failed: ${desc} — ${errMsg}`
+        ).catch(() => {});
       }
     });
   }
