@@ -42,22 +42,33 @@ export async function runCommand(options: RunOptions): Promise<void> {
     process.exit(1);
   }
 
-  // Check OAuth token
-  process.stdout.write('Verifying OAuth token... ');
+  const backend = config.agent.backend ?? 'claude';
+  process.env.MAMA_BACKEND = backend;
+
   let oauthManager: OAuthManager;
-  try {
+  if (backend === 'codex') {
+    console.log('✓ Codex CLI backend (OAuth handled by Codex login)');
     oauthManager = new OAuthManager();
-    await oauthManager.getToken();
-    console.log('✓');
-  } catch (error) {
-    console.log('❌');
-    console.error(`\nOAuth token error: ${error instanceof Error ? error.message : String(error)}`);
-    console.error('Please log in to Claude Code again.\n');
-    process.exit(1);
+  } else {
+    // Check OAuth token
+    process.stdout.write('Verifying OAuth token... ');
+    try {
+      oauthManager = new OAuthManager();
+      await oauthManager.getToken();
+      console.log('✓');
+    } catch (error) {
+      console.log('❌');
+      console.error(
+        `\nOAuth token error: ${error instanceof Error ? error.message : String(error)}`
+      );
+      console.error('Please log in to Claude Code again.\n');
+      process.exit(1);
+    }
   }
 
   // Create agent loop
   const agentLoop = new AgentLoop(oauthManager, {
+    backend,
     model: config.agent.model,
     maxTurns: config.agent.max_turns,
     onTurn: options.verbose

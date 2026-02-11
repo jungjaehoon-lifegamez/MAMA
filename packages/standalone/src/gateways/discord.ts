@@ -558,9 +558,11 @@ export class DiscordGateway implements Gateway {
         console.log(
           `[Discord] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
         );
-        return; // Multi-agent handled it
       }
-      // If multi-agent returns null, fall through to regular processing
+      // Multi-agent mode owns routing — never fall through to message-router.
+      // If null, the message was either queued (busy), blocked, or had no match.
+      // Falling through would create duplicate responses from a second CLI process.
+      return;
     }
 
     // Regular single-agent processing

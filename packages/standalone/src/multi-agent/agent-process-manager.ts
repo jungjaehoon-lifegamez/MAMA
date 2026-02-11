@@ -11,6 +11,7 @@
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
+import { loadInstalledSkills } from '../agent/agent-loop.js';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
@@ -367,24 +368,56 @@ export class AgentProcessManager extends EventEmitter {
 You are **${agentConfig.display_name}** (ID: ${agentId}).
 
 ## Response Format
-- Always prefix your responses with: **${agentConfig.display_name}**:
-- Example: "**${agentConfig.display_name}**: [your response]"
-- Keep responses under 1800 characters for Discord compatibility
-
-## Multi-Agent Context
-- You are one of multiple AI agents in this channel
-- Other agents may respond to messages too
-- Be collaborative and build on others' contributions
-- Avoid repeating what other agents have said
-- If another agent has already addressed a topic well, acknowledge it briefly
+- Prefix: **${agentConfig.display_name}**:
+- Do the work thoroughly, then report the result
+- **ALWAYS respond with text** — never reply with only emoji/reactions
+- Multiple AI agents in this channel — be aware of what others have said
 
 ## Persona
 ${resolvedPersona}
 
-${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Guidelines
+${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
+
+To use gateway tools, output a JSON block in your response:
+
+\`\`\`tool_call
+{"name": "tool_name", "input": {"param1": "value1"}}
+\`\`\`
+
+Available tools:
+- **discord_send**(channel_id, message?, file_path?) — Send message or file to a Discord channel
+- **mama_search**(query?, type?, limit?) — Search decisions in MAMA memory
+- **mama_save**(type, topic?, decision?, reasoning?, summary?, next_steps?) — Save decision or checkpoint
+- **pr_review_threads**(pr_url) — Fetch unresolved PR review threads (grouped by file, with line/body/author). Use this to autonomously analyze PR feedback.
+
+The channel_id for the current conversation is provided in the message context.
+Tool calls are executed automatically. You do NOT need curl or Bash for these.
+
+${this.buildSkillsPrompt()}
+## Guidelines
 - Stay in character as ${agentConfig.name}
 - Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
 - Your trigger prefix is: ${agentConfig.trigger_prefix}
+`;
+  }
+
+  /**
+   * Build installed skills prompt section
+   */
+  private buildSkillsPrompt(): string {
+    const skillBlocks = loadInstalledSkills();
+    if (skillBlocks.length === 0) return '';
+
+    return `## Installed Skills (PRIORITY)
+
+**IMPORTANT:** The following skills/plugins are installed by the user.
+When a user message contains [INSTALLED PLUGIN COMMAND] you MUST:
+1. Find the matching "commands/{name}.md" section below
+2. Follow its instructions EXACTLY as written
+3. DO NOT use the Skill tool — these are NOT system skills
+4. DO NOT match to bmad, oh-my-claudecode, or any built-in skill
+
+${skillBlocks.join('\n\n---\n\n')}
 `;
   }
 

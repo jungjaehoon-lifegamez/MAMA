@@ -33,6 +33,14 @@ pnpm clean
 
 ### Package-Specific Commands
 
+**Standalone (packages/standalone/):**
+
+```bash
+mama start                   # Start MAMA OS (global CLI, requires: npx @jungjaehoon/mama-os)
+mama stop                    # Stop MAMA OS
+mama status                  # Check status
+```
+
 **MCP Server (packages/mcp-server/):**
 
 ```bash
@@ -61,120 +69,6 @@ pnpm vitest run tests/hooks/pretooluse-hook.test.js
 # Run tests matching pattern
 pnpm vitest run -t "relevance scorer"
 ```
-
-## Architecture
-
-### Two-Package Design
-
-MAMA uses a split architecture to enable code reuse across multiple Claude clients:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              MAMA Plugin Ecosystem                      │
-├─────────────────────────────────────────────────────────┤
-│                                                           │
-│  Claude Code Plugin          Claude Desktop             │
-│  ┌──────────────────┐       ┌──────────────┐            │
-│  │ Commands         │       │  MCP Client  │            │
-│  │ Skills           │───┐   │              │            │
-│  │ Hooks            │   │   └──────────────┘            │
-│  └──────────────────┘   │          │                    │
-│                          │          │                    │
-│                    ┌─────▼──────────▼─────┐             │
-│                    │  MCP Server (stdio)  │             │
-│                    │  @jungjaehoon/mama-server│         │
-│                    └──────────────────────┘             │
-│                              │                           │
-│                    ┌─────────▼──────────┐                │
-│                    │ HTTP Embedding API │                │
-│                    │ port 3847 (local)  │                │
-│                    └─────────▼──────────┘                │
-│                    ┌─────────▼──────────┐                │
-│                    │   Core Components  │                │
-│                    │ - Embeddings       │                │
-│                    │ - SQLite+vec       │                │
-│                    │ - Decision Graph   │                │
-│                    └────────────────────┘                │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Key Points:**
-
-- **MCP Server** is an independent npm package shared by all clients
-- **Plugin** is lightweight (commands/hooks/skills) and references the server via `.mcp.json`
-- One MCP server = shared decision database across all tools
-- Heavy dependencies (better-sqlite3, transformers.js, sqlite-vec) live in the server package
-
-### MCP Server (packages/mcp-server/)
-
-**Core Modules (src/mama/):**
-
-- `mama-api.js` - Main API interface
-- `db-manager.js` - SQLite database initialization
-- `embeddings.js` - Transformers.js embedding generation
-- `memory-store.js` - Decision CRUD operations
-- `relevance-scorer.js` - Semantic similarity scoring
-- `decision-tracker.js` - Decision graph management
-- `transparency-banner.js` - Tier status display
-- `query-intent.js` - Query interpretation
-
-**MCP Tools (4 core tools, v1.3.0):**
-
-The MCP server exposes only 4 tools. Design principle: LLM can infer decision evolution from time-ordered search results. Fewer tools = more LLM flexibility.
-
-| Tool              | Description                                                           |
-| ----------------- | --------------------------------------------------------------------- |
-| `save`            | Save decision (`type='decision'`) or checkpoint (`type='checkpoint'`) |
-| `search`          | Semantic search (with `query`) or list recent items (without `query`) |
-| `update`          | Update decision outcome (case-insensitive: success/failed/partial)    |
-| `load_checkpoint` | Resume previous session                                               |
-
-**Edge Types (v1.3):**
-
-Decisions connect through relationships. Auto-detected from reasoning field:
-
-| Edge Type     | Pattern                                 | Usage                        |
-| ------------- | --------------------------------------- | ---------------------------- |
-| `supersedes`  | (automatic for same topic)              | Newer version replaces older |
-| `builds_on`   | `builds_on: decision_xxx`               | Extends prior work           |
-| `debates`     | `debates: decision_xxx`                 | Presents alternative view    |
-| `synthesizes` | `synthesizes: [decision_a, decision_b]` | Merges multiple approaches   |
-
-**Transport:** Stdio-based MCP protocol (no HTTP server)
-
-### Claude Code Plugin (packages/claude-code-plugin/)
-
-**Commands (commands/):**
-
-- `/mama-save` - Save decisions to memory
-- `/mama-recall` - Search decisions by query
-- `/mama-suggest` - Find related decisions
-- `/mama-list` - Browse all decisions
-- `/mama-configure` - Plugin settings
-
-**Skills (skills/mama-context/):**
-
-- `SKILL.md` - Auto-context injection spec
-- Wraps hooks for background decision surfacing
-
-**Hooks (scripts/):**
-
-- `userpromptsubmit-hook.js` - Inject context on every prompt (75% threshold, 40 token teaser)
-- `pretooluse-hook.js` - Inject context before Read/Edit/Grep (70% threshold, file-specific)
-- `posttooluse-hook.js` - Track decision outcomes after tool execution
-
-**Core Modules (src/core/):**
-
-- Shares some modules with MCP server (db-manager, embeddings, relevance-scorer)
-- `hook-metrics.js` - Hook performance tracking
-- `config-loader.js` - Plugin configuration
-
-**Tests (tests/):**
-
-- Unit tests: 62 (core logic)
-- Integration tests: 39 (hooks, workflows)
-- Regression tests: 33 (bug prevention)
-- 100% pass rate
 
 ## Development Philosophy
 
@@ -264,94 +158,6 @@ All tools follow standard MCP patterns:
 - Input validation via JSON schema
 - Error handling with typed error codes
 - Result format: `{ success: boolean, data?: any, error?: string }`
-
-## Common Tasks
-
-### Adding a New MCP Tool
-
-1. Create tool file in `packages/mcp-server/src/tools/{tool-name}.js`
-2. Export tool definition with schema
-3. Register in `packages/mcp-server/src/server.js`
-4. Add tests in `packages/mcp-server/tests/tools/{tool-name}.test.js`
-5. Update tool list in server.js:setupHandlers()
-
-### Adding a New Command
-
-1. Create `packages/claude-code-plugin/commands/{command-name}.md`
-2. Add frontmatter: description, allowed-tools, model
-3. Register in `.claude-plugin/plugin.json` commands array
-4. Add test in `tests/commands/`
-5. Update docs/reference/commands.md
-
-### Adding a New Hook
-
-1. Create hook script in `packages/claude-code-plugin/scripts/{hook-name}.js`
-2. Export hook handler following hook spec
-3. Create hook config in root (or define inline in plugin.json)
-4. Register in `.claude-plugin/plugin.json` hooks array
-5. Add performance tests (timing, rate limits)
-
-### Modifying Core Logic
-
-1. **First check:** Does this exist in mcp-server/src/mama/?
-2. If yes: Modify there, ensure backward compatibility
-3. If no: Add to server package, export for plugin if needed
-4. Update shared tests in both packages
-5. Run full test suite: `pnpm test`
-
-## Dependencies
-
-### MCP Server
-
-- `@modelcontextprotocol/sdk` - MCP protocol
-- `@huggingface/transformers` - Local embeddings
-- `better-sqlite3` - SQLite database
-- `sqlite-vec` - Vector similarity extension
-
-### Plugin
-
-- Minimal dependencies (chalk for CLI colors)
-- References MCP server via npx
-
-### Development
-
-- `vitest` - Test runner
-- `pnpm` - Package manager (workspaces)
-- Node.js >= 18.0.0
-
-## Documentation Structure
-
-Full docs in `docs/` following Diátaxis framework:
-
-- **Tutorials:** Getting started guides
-- **Guides:** Installation, troubleshooting, workflows
-- **Reference:** Commands, MCP tools, architecture
-- **Development:** Contributing, testing, architecture deep-dives
-
-Key docs:
-
-- [Developer Playbook](docs/development/developer-playbook.md) - Architecture & standards
-- [Deployment Architecture](docs/development/deployment-architecture.md) - How MAMA is distributed
-- [Testing Guide](docs/development/testing.md) - Test suite details
-
-## Monorepo Status
-
-**Current State:** Monorepo fully operational (5 packages)
-
-**Packages:**
-
-- @jungjaehoon/mama-os v0.3.1 - Standalone Agent
-- @jungjaehoon/mama-server v1.6.6 - MCP Server
-- @jungjaehoon/mama-core v1.0.1 - Shared Core
-- mama v1.6.6 - Claude Code Plugin
-- @jungjaehoon/openclaw-mama - OpenClaw Plugin
-
-**Infrastructure:**
-
-- pnpm workspaces configured
-- Tests passing (1000+ tests, 100% pass rate)
-- Build system functional
-- npm publishing configured
 
 ## Release & Deployment
 
