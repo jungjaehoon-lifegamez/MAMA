@@ -514,50 +514,39 @@ export class PRReviewPoller {
   }
 
   /**
-   * Format PR comments for Slack message (simplified count format)
+   * Format PR comments with full details grouped by file.
+   * Enables parallel delegation — independent files can be fixed simultaneously.
    */
   private formatComments(sessionKey: string, comments: PRComment[]): string {
-    // Count by severity (detect from body)
-    let critical = 0;
-    let major = 0;
-    let minor = 0;
-    let _other = 0;
-
+    // Group by file
+    const byFile = new Map<string, PRComment[]>();
     for (const c of comments) {
-      // Use full body for severity detection
-      const bodyLower = c.body.toLowerCase();
-
-      // Detect severity from full body content
-      if (
-        bodyLower.includes('critical') ||
-        bodyLower.includes('bug') ||
-        bodyLower.includes('security') ||
-        bodyLower.includes('high')
-      ) {
-        critical++;
-      } else if (
-        bodyLower.includes('medium') ||
-        bodyLower.includes('should') ||
-        bodyLower.includes('major')
-      ) {
-        major++;
-      } else if (
-        bodyLower.includes('nit') ||
-        bodyLower.includes('minor') ||
-        bodyLower.includes('low') ||
-        bodyLower.includes('suggestion')
-      ) {
-        minor++;
-      } else {
-        _other++;
-      }
+      const key = c.path || '(general)';
+      const list = byFile.get(key) || [];
+      list.push(c);
+      byFile.set(key, list);
     }
 
-    return (
-      `📝 PR ${sessionKey} review update\n` +
-      `• New comments: ${comments.length} (🔴 ${critical} / 🟡 ${major} / 🔵 ${minor})\n` +
-      `👉 Check the PR for details`
-    );
+    const lines: string[] = [
+      `📝 PR ${sessionKey} — ${comments.length} new review comments across ${byFile.size} file(s)`,
+      '',
+    ];
+
+    for (const [file, fileComments] of byFile) {
+      lines.push(`**${file}**`);
+      for (const c of fileComments) {
+        const lineRef = c.line ? `:${c.line}` : '';
+        const body = c.body.length > 200 ? c.body.substring(0, 200) + '…' : c.body;
+        lines.push(`  • L${lineRef} ${body}`);
+      }
+      lines.push('');
+    }
+
+    if (byFile.size > 1) {
+      lines.push(`💡 ${byFile.size} independent files — delegate fixes in parallel (DELEGATE_BG)`);
+    }
+
+    return lines.join('\n');
   }
 
   /**
@@ -687,18 +676,43 @@ export class PRReviewPoller {
   }
 
   /**
-   * Format unresolved threads for Slack message (simplified count format)
+   * Format unresolved threads with details grouped by file.
    */
   private formatUnresolvedThreads(
     sessionKey: string,
     threads: ReviewThread[],
     totalThreads?: number
   ): string {
-    if (totalThreads !== undefined) {
-      const resolved = totalThreads - threads.length;
-      return `⚠️ PR ${sessionKey} thread status: ${resolved} resolved / ${threads.length} unresolved`;
+    const resolvedCount = totalThreads !== undefined ? totalThreads - threads.length : 0;
+    const header = `⚠️ PR ${sessionKey} — ${threads.length} unresolved thread(s)${totalThreads !== undefined ? ` (${resolvedCount} resolved)` : ''}`;
+
+    // Group by file
+    const byFile = new Map<string, ReviewThread[]>();
+    for (const t of threads) {
+      const file = t.comments[0]?.path || '(general)';
+      const list = byFile.get(file) || [];
+      list.push(t);
+      byFile.set(file, list);
     }
-    return `⚠️ PR ${sessionKey} unresolved threads: ${threads.length}`;
+
+    const lines: string[] = [header, ''];
+    for (const [file, fileThreads] of byFile) {
+      lines.push(`**${file}**`);
+      for (const t of fileThreads) {
+        const first = t.comments[0];
+        if (!first) continue;
+        const lineRef = first.line ? `:${first.line}` : '';
+        const body = first.body.length > 200 ? first.body.substring(0, 200) + '…' : first.body;
+        lines.push(`  • L${lineRef} ${body}`);
+      }
+      lines.push('');
+    }
+
+    if (byFile.size > 1) {
+      lines.push(`💡 ${byFile.size} independent files — delegate fixes in parallel (DELEGATE_BG)`);
+    }
+
+    return lines.join('\n');
   }
 
   /**

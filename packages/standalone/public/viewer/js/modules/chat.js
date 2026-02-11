@@ -453,7 +453,7 @@ export class ChatModule {
         `Execute ONLY the instructions from that installed plugin command file.`,
         `DO NOT invoke the Skill tool. DO NOT match to bmad or any other built-in skill.`,
         `This command comes from a user-installed Cowork/OpenClaw plugin, not a system skill.`,
-        args ? `User arguments: ${args}` : '',
+        args ? `User arguments: <user_args>${args}</user_args>` : '',
       ]
         .filter(Boolean)
         .join(' ');

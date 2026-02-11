@@ -412,8 +412,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       const reviewerAgentId = reviewerEntry?.[0];
       if (!reviewerAgentId) return;
 
-      // Include PR data summary in LEAD mention (Discord 2000 char limit per message)
-      const mentionPrefix = `<@${leadUserId}> Please analyze PR review comments and prioritize them for delegation.\n\n`;
+      // Include PR data with parallel delegation instruction
+      const mentionPrefix = `<@${leadUserId}> PR review comments below — grouped by file.\nFixes for **different files are independent** — use DELEGATE_BG for each file to run them in parallel.\nDo NOT wait for one fix before starting the next.\n\n`;
       const prSummary = texts.join('\n').slice(0, 2000 - mentionPrefix.length);
       const fullMsg = `${mentionPrefix}${prSummary}`;
 
