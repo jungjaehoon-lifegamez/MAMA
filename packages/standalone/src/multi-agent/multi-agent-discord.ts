@@ -420,28 +420,42 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         prDetails,
       ].join('\n');
 
-      try {
-        const process = await this.processManager.getProcess('discord', channelId, defaultAgentId);
-        const result = await process.sendMessage(leadPrompt);
-        const cleanedResponse = await this.executeTextToolCalls(result.response);
-        const resolvedResponse = this.resolveResponseMentions(cleanedResponse);
+      // Retry up to 3 times with backoff if LEAD is busy
+      const MAX_RETRIES = 3;
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+          const proc = await this.processManager.getProcess('discord', channelId, defaultAgentId);
+          const result = await proc.sendMessage(leadPrompt);
+          const cleanedResponse = await this.executeTextToolCalls(result.response);
+          const resolvedResponse = this.resolveResponseMentions(cleanedResponse);
 
-        // Send LEAD's response to channel (delegation instructions, etc.)
-        const formattedResponse = `**${this.config.agents[defaultAgentId]?.display_name || 'LEAD'}**: ${resolvedResponse}`;
-        const chunks = splitForDiscord(formattedResponse);
-        for (const chunk of chunks) {
-          const ch = await client.channels.fetch(channelId);
-          if (ch && 'send' in (ch as Record<string, unknown>)) {
-            await (ch as { send: (opts: { content: string }) => Promise<Message> }).send({
-              content: chunk,
-            });
+          const formattedResponse = `**${this.config.agents[defaultAgentId]?.display_name || 'LEAD'}**: ${resolvedResponse}`;
+          const chunks = splitForDiscord(formattedResponse);
+          for (const chunk of chunks) {
+            const ch = await client.channels.fetch(channelId);
+            if (ch && 'send' in (ch as Record<string, unknown>)) {
+              await (ch as { send: (opts: { content: string }) => Promise<Message> }).send({
+                content: chunk,
+              });
+            }
+          }
+          console.log(
+            `[MultiAgent] PR Poller -> LEAD processed internally (${prDetails.length} chars)`
+          );
+          break; // Success
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (errMsg.includes('busy') && attempt < MAX_RETRIES - 1) {
+            const delay = (attempt + 1) * 15000; // 15s, 30s, 45s
+            console.log(
+              `[MultiAgent] PR Poller -> LEAD busy, retry ${attempt + 1}/${MAX_RETRIES} in ${delay / 1000}s`
+            );
+            await new Promise((r) => setTimeout(r, delay));
+          } else {
+            console.error(`[MultiAgent] PR Poller -> LEAD processing failed:`, err);
+            break;
           }
         }
-        console.log(
-          `[MultiAgent] PR Poller -> LEAD processed internally (${prDetails.length} chars)`
-        );
-      } catch (err) {
-        console.error(`[MultiAgent] PR Poller -> LEAD processing failed:`, err);
       }
     });
     console.log('[MultiAgent] PR Review Poller message sender configured for Discord');
