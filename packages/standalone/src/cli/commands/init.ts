@@ -5,7 +5,8 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, copyFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import {
   createDefaultConfig,
@@ -55,6 +56,29 @@ Searching past decisions provides full context.
 - \`mama status\` - Check status
 - \`mama run <command>\` - Run one-off command
 `;
+
+/**
+ * Copy built-in skill templates to user's skills directory (skip existing)
+ */
+async function copyDefaultSkills(skillsDir: string): Promise<void> {
+  const templatesDir = join(__dirname, '..', '..', '..', 'templates', 'skills');
+
+  try {
+    const entries = await readdir(templatesDir);
+    for (const file of entries) {
+      if (!file.endsWith('.md')) continue;
+      const dest = join(skillsDir, file);
+      if (existsSync(dest)) {
+        console.log(`  ${file} (already exists)`);
+        continue;
+      }
+      await copyFile(join(templatesDir, file), dest);
+      console.log(`  ${file} ✓`);
+    }
+  } catch {
+    console.log('  (no template skills found)');
+  }
+}
 
 /**
  * Options for init command
@@ -135,6 +159,11 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
       process.exit(1);
     }
   }
+
+  // Copy default skills
+  const skillsDir = expandPath('~/.mama/skills');
+  process.stdout.write('Copying default skills...\n');
+  await copyDefaultSkills(skillsDir);
 
   // Create CLAUDE.md
   const claudeMdPath = expandPath('~/.mama/CLAUDE.md');

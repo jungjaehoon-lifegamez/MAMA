@@ -5,14 +5,18 @@
  */
 
 import express, { type Express, type Router } from 'express';
+import type Database from 'better-sqlite3';
 import { createCronRouter, InMemoryLogStore, type ExecutionLogStore } from './cron-handler.js';
 import {
   createHeartbeatRouter,
   InMemoryHeartbeatTracker,
   type HeartbeatTracker,
 } from './heartbeat-handler.js';
+import { createTokenRouter, initTokenUsageTable } from './token-handler.js';
+import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
 import { CronScheduler } from '../scheduler/index.js';
+import { SkillRegistry } from '../skills/skill-registry.js';
 
 // Re-export types
 export * from './types.js';
@@ -21,6 +25,8 @@ export { InMemoryLogStore, ScheduleStoreAdapter } from './cron-handler.js';
 export type { HeartbeatTracker } from './heartbeat-handler.js';
 export { InMemoryHeartbeatTracker, DEFAULT_HEARTBEAT_PROMPT } from './heartbeat-handler.js';
 export { asyncHandler, validateRequired, ApiError } from './error-handler.js';
+export { createTokenRouter, initTokenUsageTable, insertTokenUsage } from './token-handler.js';
+export type { TokenUsageRecord } from './token-handler.js';
 
 /**
  * API server options
@@ -38,6 +44,10 @@ export interface ApiServerOptions {
   onHeartbeat?: (prompt: string) => Promise<{ success: boolean; error?: string }>;
   /** Enable automatic process killing on port conflicts (default: false) */
   enableAutoKillPort?: boolean;
+  /** Sessions database instance (for token tracking) */
+  db?: Database.Database;
+  /** Skill registry instance */
+  skillRegistry?: SkillRegistry;
 }
 
 /**
@@ -67,6 +77,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     heartbeatTracker = new InMemoryHeartbeatTracker(),
     onHeartbeat,
     enableAutoKillPort = false,
+    db,
+    skillRegistry,
   } = options;
 
   const app = express();
@@ -91,6 +103,19 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   app.use('/api/cron', cronRouter);
   app.use('/api/heartbeat', heartbeatRouter);
+
+  // Mount token router if database is available
+  if (db) {
+    initTokenUsageTable(db);
+    const tokenRouter = createTokenRouter(db);
+    app.use('/api/tokens', tokenRouter);
+  }
+
+  // Mount skills router if registry is available
+  if (skillRegistry) {
+    const skillsRouter = createSkillsRouter(skillRegistry);
+    app.use('/api/skills', skillsRouter);
+  }
 
   // Health check endpoint
   app.get('/health', (_req, res) => {
