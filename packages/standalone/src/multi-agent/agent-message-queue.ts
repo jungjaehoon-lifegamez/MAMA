@@ -49,7 +49,7 @@ export interface QueuedMessage {
 }
 
 const MAX_QUEUE_SIZE = 5;
-const MESSAGE_TTL_MS = 10 * 60 * 1000; // 10 minutes (agents can take 200s+ on complex tasks)
+const MESSAGE_TTL_MS = 20 * 60 * 1000; // 20 minutes (agents can take 200s+ on complex tasks)
 
 /**
  * Agent Message Queue Manager
