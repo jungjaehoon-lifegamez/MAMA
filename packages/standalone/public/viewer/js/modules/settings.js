@@ -83,21 +83,21 @@ export class SettingsModule {
 
     // Discord
     this.setCheckbox('settings-discord-enabled', this.config.discord?.enabled);
-    this.setValue('settings-discord-token', this.config.discord?.token || '');
+    this.setValue('settings-discord-token', this.config.discord?.token || '', true);
     this.setValue('settings-discord-channel', this.config.discord?.default_channel_id || '');
 
     // Slack
     this.setCheckbox('settings-slack-enabled', this.config.slack?.enabled);
-    this.setValue('settings-slack-bot-token', this.config.slack?.bot_token || '');
-    this.setValue('settings-slack-app-token', this.config.slack?.app_token || '');
+    this.setValue('settings-slack-bot-token', this.config.slack?.bot_token || '', true);
+    this.setValue('settings-slack-app-token', this.config.slack?.app_token || '', true);
 
     // Telegram
     this.setCheckbox('settings-telegram-enabled', this.config.telegram?.enabled);
-    this.setValue('settings-telegram-token', this.config.telegram?.token || '');
+    this.setValue('settings-telegram-token', this.config.telegram?.token || '', true);
 
     // Chatwork
     this.setCheckbox('settings-chatwork-enabled', this.config.chatwork?.enabled);
-    this.setValue('settings-chatwork-token', this.config.chatwork?.api_token || '');
+    this.setValue('settings-chatwork-token', this.config.chatwork?.api_token || '', true);
 
     // Heartbeat
     this.setCheckbox('settings-heartbeat-enabled', this.config.heartbeat?.enabled);
@@ -358,24 +358,44 @@ export class SettingsModule {
     const backend = this.getSelectValue('settings-agent-backend') || 'claude';
     const model = this.getValue('settings-agent-model');
     const useClaudeCli = backend === 'claude';
+
+    // Get token values - if empty and original was masked, keep original
+    const discordToken = this.getTokenValue('settings-discord-token', this.config.discord?.token);
+    const slackBotToken = this.getTokenValue(
+      'settings-slack-bot-token',
+      this.config.slack?.bot_token
+    );
+    const slackAppToken = this.getTokenValue(
+      'settings-slack-app-token',
+      this.config.slack?.app_token
+    );
+    const telegramToken = this.getTokenValue(
+      'settings-telegram-token',
+      this.config.telegram?.token
+    );
+    const chatworkToken = this.getTokenValue(
+      'settings-chatwork-token',
+      this.config.chatwork?.api_token
+    );
+
     return {
       discord: {
         enabled: this.getCheckbox('settings-discord-enabled'),
-        token: this.getValue('settings-discord-token'),
+        token: discordToken,
         default_channel_id: this.getValue('settings-discord-channel'),
       },
       slack: {
         enabled: this.getCheckbox('settings-slack-enabled'),
-        bot_token: this.getValue('settings-slack-bot-token'),
-        app_token: this.getValue('settings-slack-app-token'),
+        bot_token: slackBotToken,
+        app_token: slackAppToken,
       },
       telegram: {
         enabled: this.getCheckbox('settings-telegram-enabled'),
-        token: this.getValue('settings-telegram-token'),
+        token: telegramToken,
       },
       chatwork: {
         enabled: this.getCheckbox('settings-chatwork-enabled'),
-        api_token: this.getValue('settings-chatwork-token'),
+        api_token: chatworkToken,
       },
       heartbeat: {
         enabled: this.getCheckbox('settings-heartbeat-enabled'),
@@ -537,12 +557,54 @@ export class SettingsModule {
 
   /**
    * Helper: Set input value
+   * @param {string} id - Element ID
+   * @param {string} value - Value to set
+   * @param {boolean} isSensitive - If true, treat as sensitive token (keep if masked)
    */
-  setValue(id, value) {
+  setValue(id, value, isSensitive = false) {
     const el = document.getElementById(id);
     if (el) {
-      el.value = value;
+      // For sensitive fields (tokens), preserve placeholder if value is masked
+      if (isSensitive && this.isMaskedToken(value)) {
+        el.placeholder = value;
+        el.value = '';
+      } else {
+        el.value = value;
+      }
     }
+  }
+
+  /**
+   * Check if a token is masked (e.g., "***[redacted]***")
+   */
+  isMaskedToken(token) {
+    if (!token || typeof token !== 'string') {
+      return false;
+    }
+    return token === '***[redacted]***' || (token.startsWith('***[') && token.endsWith(']***'));
+  }
+
+  /**
+   * Get token value from input, preserving original if input is empty and original was masked
+   * @param {string} id - Input element ID
+   * @param {string} originalToken - Original token value from config
+   * @returns {string} Token to send (either new value or original masked token)
+   */
+  getTokenValue(id, originalToken) {
+    const inputValue = this.getValue(id);
+
+    // If user entered a new value, use it
+    if (inputValue && inputValue.trim() !== '') {
+      return inputValue;
+    }
+
+    // If input is empty and original was masked, keep the masked token (backend will preserve it)
+    if (this.isMaskedToken(originalToken)) {
+      return originalToken;
+    }
+
+    // Otherwise return the input value (may be empty)
+    return inputValue;
   }
 
   /**

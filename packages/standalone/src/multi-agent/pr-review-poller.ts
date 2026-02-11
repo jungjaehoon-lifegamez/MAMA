@@ -458,7 +458,7 @@ export class PRReviewPoller {
         );
         const allUnresolved = threads.filter((t) => !t.isResolved);
         const now = Date.now();
-        const REMIND_INTERVAL_MS = 5 * 60 * 1000; // Re-remind after 5 minutes
+        const REMIND_INTERVAL_MS = 60 * 1000; // Re-remind after 1 minute
 
         // New = never seen, or seen but still unresolved after remind interval
         const toReport = allUnresolved.filter((t) => {

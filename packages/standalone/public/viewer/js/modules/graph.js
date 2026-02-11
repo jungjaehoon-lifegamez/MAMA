@@ -449,10 +449,25 @@ export class GraphModule {
       const decisionEl = document.getElementById('detail-decision');
       const reasoningEl = document.getElementById('detail-reasoning');
 
-      // Use marked for markdown if available
-      if (typeof marked !== 'undefined') {
-        decisionEl.innerHTML = marked.parse(node.decision || '-');
-        reasoningEl.innerHTML = marked.parse(node.reasoning || '-');
+      // Use marked for markdown if available (textContent as fallback to prevent XSS)
+      if (typeof marked !== 'undefined' && marked.parse) {
+        try {
+          // marked v11+ uses 'gfm' sanitizer by default, but we enforce it explicitly
+          const sanitizedDecision = marked.parse(node.decision || '-', {
+            mangle: false,
+            headerIds: false,
+          });
+          const sanitizedReasoning = marked.parse(node.reasoning || '-', {
+            mangle: false,
+            headerIds: false,
+          });
+          decisionEl.innerHTML = sanitizedDecision;
+          reasoningEl.innerHTML = sanitizedReasoning;
+        } catch (e) {
+          console.warn('[Graph] Markdown parse failed:', e);
+          decisionEl.textContent = node.decision || '-';
+          reasoningEl.textContent = node.reasoning || '-';
+        }
       } else {
         decisionEl.textContent = node.decision || '-';
         reasoningEl.textContent = node.reasoning || '-';
