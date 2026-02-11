@@ -4,6 +4,7 @@
  * Stop MAMA agent daemon
  */
 
+import { execSync } from 'node:child_process';
 import { isDaemonRunning, deletePid, isProcessRunning } from '../utils/pid-manager.js';
 
 /**
@@ -50,6 +51,9 @@ export async function stopCommand(): Promise<void> {
 
     console.log('✓');
     console.log(`PID ${pid} terminated\n`);
+    // Best-effort cleanup: stop any lingering daemon wrapper processes
+    await stopLingeringDaemonProcesses(pid);
+
     console.log('MAMA has been stopped.\n');
   } catch (error) {
     console.log('❌');
@@ -75,4 +79,73 @@ export async function stopCommand(): Promise<void> {
  */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Stop lingering daemon processes (wrapper shells or orphaned daemon instances).
+ * This prevents "stop" from leaving a self-restarting daemon running.
+ */
+async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
+  const processes = listProcesses();
+  const targets = processes.filter((p) => {
+    if (p.pid === primaryPid || p.pid === process.pid) return false;
+    return p.command.includes('mama daemon');
+  });
+
+  if (targets.length === 0) {
+    return;
+  }
+
+  console.log(`Stopping ${targets.length} lingering daemon process(es)...`);
+
+  for (const proc of targets) {
+    try {
+      process.kill(proc.pid, 'SIGTERM');
+    } catch {
+      // ignore
+    }
+  }
+
+  // Wait briefly for graceful shutdown
+  let attempts = 0;
+  const maxAttempts = 20; // 2s
+  while (attempts < maxAttempts) {
+    const stillRunning = targets.some((p) => isProcessRunning(p.pid));
+    if (!stillRunning) break;
+    await sleep(100);
+    attempts++;
+  }
+
+  // Force kill any survivors
+  for (const proc of targets) {
+    if (isProcessRunning(proc.pid)) {
+      try {
+        process.kill(proc.pid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+function listProcesses(): Array<{ pid: number; command: string }> {
+  try {
+    const output = execSync('ps -eo pid=,command=', { encoding: 'utf-8' });
+    return output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const spaceIdx = line.indexOf(' ');
+        if (spaceIdx === -1) return null;
+        const pidStr = line.slice(0, spaceIdx).trim();
+        const command = line.slice(spaceIdx + 1);
+        const pid = parseInt(pidStr, 10);
+        if (!Number.isFinite(pid)) return null;
+        return { pid, command };
+      })
+      .filter((p): p is { pid: number; command: string } => p !== null);
+  } catch {
+    return [];
+  }
 }
