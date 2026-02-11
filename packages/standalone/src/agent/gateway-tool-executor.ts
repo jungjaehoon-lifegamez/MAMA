@@ -1505,7 +1505,15 @@ export class GatewayToolExecutor {
         { timeout: 30000 }
       );
 
-      const data: GHGraphQLResponse = JSON.parse(stdout) as GHGraphQLResponse;
+      let data: GHGraphQLResponse;
+      try {
+        data = JSON.parse(stdout) as GHGraphQLResponse;
+      } catch {
+        return {
+          success: false,
+          error: `Failed to parse GitHub API response: ${stdout.substring(0, 200)}`,
+        };
+      }
       const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
 
       const unresolved = threads
