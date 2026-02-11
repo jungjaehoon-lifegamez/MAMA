@@ -9,6 +9,21 @@ import { ApiError } from './types.js';
 import { asyncHandler, validateRequired } from './error-handler.js';
 import type { SkillRegistry, SkillSource } from '../skills/skill-registry.js';
 
+const VALID_SOURCES: readonly string[] = ['mama', 'cowork', 'external'] as const;
+
+/**
+ * Validate skill source against allowed values
+ */
+function validateSource(source: string): asserts source is SkillSource {
+  if (!VALID_SOURCES.includes(source)) {
+    throw new ApiError(
+      `Invalid source: ${source}. Must be one of: ${VALID_SOURCES.join(', ')}`,
+      400,
+      'BAD_REQUEST'
+    );
+  }
+}
+
 /**
  * Validate skill name to prevent path traversal
  */
@@ -115,7 +130,8 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
     asyncHandler(async (req, res) => {
       const name = decodeURIComponent(req.params.name as string);
       validateSkillName(name);
-      const source = (req.query.source as SkillSource) || 'mama';
+      const source = (req.query.source as string) || 'mama';
+      validateSource(source);
       await registry.uninstall(source, name);
       res.json({ deleted: true });
     })
@@ -127,13 +143,15 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
     asyncHandler(async (req, res) => {
       const name = decodeURIComponent(req.params.name as string);
       validateSkillName(name);
-      const { enabled, source } = req.body as { enabled?: boolean; source?: SkillSource };
+      const { enabled, source: rawSource } = req.body as { enabled?: boolean; source?: string };
 
       if (enabled === undefined) {
         throw new ApiError('Field "enabled" is required', 400, 'BAD_REQUEST');
       }
 
-      await registry.toggle(source || 'mama', name, enabled);
+      const source = rawSource || 'mama';
+      validateSource(source);
+      await registry.toggle(source, name, enabled);
       res.json({ updated: true });
     })
   );

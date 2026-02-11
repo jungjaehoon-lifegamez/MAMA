@@ -139,7 +139,7 @@ export class CodexCLIWrapper {
     const args: string[] = [];
     const model = options?.model ?? this.options.model;
     const skipGitRepoCheck = this.options.skipGitRepoCheck ?? true;
-    const sandbox = this.options.sandbox ?? 'danger-full-access';
+    const sandbox = this.options.sandbox ?? 'read-only';
 
     if (options?.resumeSession) {
       args.push('exec', 'resume');
@@ -224,9 +224,13 @@ export class CodexCLIWrapper {
 
   private readLastMessage(outputFile: string): string | null {
     try {
-      if (!existsSync(outputFile)) return null;
+      if (!existsSync(outputFile)) {
+        return null;
+      }
       const text = readFileSync(outputFile, 'utf-8').trim();
-      if (!text) return null;
+      if (!text) {
+        return null;
+      }
       return text;
     } catch {
       return null;

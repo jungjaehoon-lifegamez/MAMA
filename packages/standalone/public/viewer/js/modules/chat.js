@@ -15,6 +15,9 @@
 import { escapeHtml, showToast, scrollToBottom, autoResizeTextarea } from '../utils/dom.js';
 import { formatMessageTime, formatAssistantMessage } from '../utils/format.js';
 import { API } from '../utils/api.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('Chat');
 
 /**
  * Chat Module Class
@@ -91,7 +94,7 @@ export class ChatModule {
     // DISABLED: Auto-checkpoint was saving raw conversation history to MAMA memory.
     // Checkpoints should only be saved manually via /checkpoint command with proper summaries.
     // The viewer chat uses localStorage for session persistence instead.
-    console.log('[ChatModule] Auto-checkpoint disabled (use /checkpoint for manual saves)');
+    logger.info('Auto-checkpoint disabled (use /checkpoint for manual saves)');
     return;
   }
 
@@ -109,7 +112,7 @@ export class ChatModule {
     // Try to get last active server session first
     const lastActiveSession = await API.getLastActiveSession();
     if (lastActiveSession && lastActiveSession.id && lastActiveSession.isAlive) {
-      console.log('[Chat] Resuming last active session:', lastActiveSession.id);
+      logger.info('Resuming last active session:', lastActiveSession.id);
       this.addSystemMessage('Resuming previous session...');
       localStorage.setItem('mama_chat_session_id', lastActiveSession.id);
       this.initWebSocket(lastActiveSession.id);
@@ -119,7 +122,7 @@ export class ChatModule {
     const savedSessionId = localStorage.getItem('mama_chat_session_id');
 
     if (savedSessionId) {
-      console.log('[Chat] Trying saved session:', savedSessionId);
+      logger.info('Trying saved session:', savedSessionId);
       this.addSystemMessage('Connecting to session...');
       this.initWebSocket(savedSessionId);
     } else {
@@ -128,7 +131,7 @@ export class ChatModule {
         const data = await API.createSession('.');
         const sessionId = data.sessionId;
 
-        console.log('[Chat] Created new session:', sessionId);
+        logger.info('Created new session:', sessionId);
         localStorage.setItem('mama_chat_session_id', sessionId);
 
         this.initWebSocket(sessionId);
@@ -168,7 +171,7 @@ export class ChatModule {
    */
   initWebSocket(sessionId) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log('[Chat] Already connected');
+      logger.info('Already connected');
       return;
     }
 
@@ -179,11 +182,11 @@ export class ChatModule {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws?sessionId=${sessionId}`;
 
-    console.log('[Chat] Connecting to:', wsUrl);
+    logger.info('Connecting to:', wsUrl);
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
-      console.log('[Chat] Connected');
+      logger.info('Connected');
       this.reconnectAttempts = 0;
       this.updateStatus('connected');
       this.enableInput(true);
@@ -208,7 +211,7 @@ export class ChatModule {
     };
 
     this.ws.onclose = (event) => {
-      console.log('[Chat] Disconnected:', event.code, event.reason);
+      logger.info('Disconnected:', event.code, event.reason);
       this.updateStatus('disconnected');
       this.enableInput(false);
 
@@ -229,14 +232,14 @@ export class ChatModule {
   handleMessage(data) {
     switch (data.type) {
       case 'attached':
-        console.log('[Chat] Attached to session:', data.sessionId);
+        logger.info('Attached to session:', data.sessionId);
         this.addSystemMessage('Connected to session');
         break;
 
       case 'history':
         // Display conversation history from server
         if (data.messages && data.messages.length > 0) {
-          console.log('[Chat] Received history:', data.messages.length, 'messages');
+          logger.info('Received history:', data.messages.length, 'messages');
           this.displayHistory(data.messages);
         }
         break;
@@ -257,7 +260,7 @@ export class ChatModule {
 
       case 'error':
         if (data.error === 'session_not_found') {
-          console.log('[Chat] Session not found, creating new one...');
+          logger.info('Session not found, creating new one...');
           localStorage.removeItem('mama_chat_session_id');
           this.addSystemMessage('Session expired. Creating new session...');
 
@@ -289,11 +292,11 @@ export class ChatModule {
         break;
 
       case 'connected':
-        console.log('[Chat] WebSocket connected:', data.clientId);
+        logger.info('WebSocket connected:', data.clientId);
         break;
 
       default:
-        console.log('[Chat] Unknown message type:', data.type);
+        logger.warn('Unknown message type:', data.type);
     }
   }
 
@@ -304,7 +307,7 @@ export class ChatModule {
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
     this.reconnectAttempts++;
 
-    console.log(`[Chat] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    logger.info(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
     this.addSystemMessage(
       `Connection lost. Reconnecting in ${Math.round(delay / 1000)}s...`,
       'warning'
@@ -364,7 +367,7 @@ export class ChatModule {
     input.value = '';
     autoResizeTextarea(input);
 
-    console.log('[Chat] Sent:', message);
+    logger.info('Sent:', message);
     this.resetIdleTimer();
   }
 
@@ -391,7 +394,7 @@ export class ChatModule {
       })
     );
 
-    console.log('[Chat] Quiz choice sent:', choice);
+    logger.info('Quiz choice sent:', choice);
     this.resetIdleTimer();
   }
 
@@ -403,7 +406,7 @@ export class ChatModule {
     const command = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
 
-    console.log('[Chat] Command:', command, 'Args:', args);
+    logger.info('Command:', command, 'Args:', args);
 
     switch (command) {
       case 'save':
@@ -471,7 +474,7 @@ export class ChatModule {
       this.memoryModule.showRelatedForMessage(message);
     }
 
-    console.log('[Chat] Forwarded to agent:', agentMessage);
+    logger.info('Forwarded to agent:', agentMessage);
     this.resetIdleTimer();
   }
 
@@ -619,7 +622,7 @@ export class ChatModule {
 
     // Auto-play TTS if enabled
     if (this.ttsEnabled && text) {
-      console.log('[TTS] Auto-play enabled, speaking assistant message');
+      logger.info('Auto-play enabled, speaking assistant message');
       this.speak(text);
     }
   }
@@ -1063,8 +1066,8 @@ export class ChatModule {
       let finalTranscript = '';
 
       // Build transcript from NEW results only (use resultIndex)
-      console.log(
-        '[Voice] onresult fired, resultIndex:',
+      logger.debug(
+        'onresult fired, resultIndex:',
         event.resultIndex,
         'total results:',
         event.results.length
@@ -1076,15 +1079,15 @@ export class ChatModule {
 
         if (result.isFinal) {
           finalTranscript += transcript;
-          console.log(
-            '[Voice] Final result [' + i + ']:',
+          logger.debug(
+            'Final result [' + i + ']:',
             transcript,
             'Confidence:',
             result[0].confidence
           );
         } else {
           interimTranscript += transcript;
-          console.log('[Voice] Interim result [' + i + ']:', transcript);
+          logger.debug('Interim result [' + i + ']:', transcript);
         }
       }
 
@@ -1098,7 +1101,7 @@ export class ChatModule {
         }
         input.value = this.accumulatedTranscript;
         input.classList.remove('voice-active');
-        console.log('[Voice] Accumulated transcript:', this.accumulatedTranscript);
+        logger.debug('Accumulated transcript:', this.accumulatedTranscript);
       }
 
       // Handle interim transcripts - show temporarily with accumulated text
@@ -1108,7 +1111,7 @@ export class ChatModule {
           : interimTranscript;
         input.value = displayText;
         input.classList.add('voice-active');
-        console.log('[Voice] Showing interim (temp):', displayText);
+        logger.debug('Showing interim (temp):', displayText);
       }
 
       autoResizeTextarea(input);
@@ -1117,14 +1120,14 @@ export class ChatModule {
       clearTimeout(this.silenceTimeout);
       this.silenceTimeout = setTimeout(() => {
         if (this.isRecording) {
-          console.log('[Voice] Silence detected, stopping...');
+          logger.info('Silence detected, stopping...');
           this.stopVoice();
         }
       }, this.silenceDelay);
     };
 
     this.speechRecognition.onend = () => {
-      console.log('[Voice] Recognition ended');
+      logger.info('Recognition ended');
       this.stopVoice();
     };
 
@@ -1150,7 +1153,7 @@ export class ChatModule {
       this.addSystemMessage(errorMessage, 'error');
     };
 
-    console.log('[Voice] SpeechRecognition initialized (lang:', this.speechRecognition.lang + ')');
+    logger.info('SpeechRecognition initialized (lang:', this.speechRecognition.lang + ')');
   }
 
   /**
@@ -1188,8 +1191,8 @@ export class ChatModule {
       input.classList.add('voice-active');
       input.placeholder = '말씀해주세요... (계속 말하면 이어서 인식됩니다)';
 
-      console.log('[Voice] Recording started (continuous mode)');
-      console.log('[Voice] Settings:', {
+      logger.info('Recording started (continuous mode)');
+      logger.debug('Settings:', {
         lang: this.speechRecognition.lang,
         continuous: this.speechRecognition.continuous,
         interimResults: this.speechRecognition.interimResults,
@@ -1232,7 +1235,7 @@ export class ChatModule {
     input.classList.remove('voice-active');
     input.placeholder = 'Type your message...';
 
-    console.log('[Voice] Recording stopped');
+    logger.info('Recording stopped');
     this.resetIdleTimer();
   }
 
@@ -1259,7 +1262,7 @@ export class ChatModule {
         voices[0];
 
       if (this.ttsVoice) {
-        console.log('[TTS] Korean voice selected:', this.ttsVoice.name, this.ttsVoice.lang);
+        logger.info('Korean voice selected:', this.ttsVoice.name, this.ttsVoice.lang);
       } else {
         console.warn('[TTS] No Korean voice found, using default');
       }
@@ -1272,7 +1275,7 @@ export class ChatModule {
       this.speechSynthesis.onvoiceschanged = loadVoices;
     }
 
-    console.log('[TTS] SpeechSynthesis initialized');
+    logger.info('SpeechSynthesis initialized');
   }
 
   /**
@@ -1289,7 +1292,7 @@ export class ChatModule {
         : 'TTS 비활성화됨 (클릭하여 켜기)';
     }
 
-    console.log('[TTS] Auto-play:', this.ttsEnabled ? 'ON' : 'OFF');
+    logger.info('Auto-play:', this.ttsEnabled ? 'ON' : 'OFF');
     showToast(this.ttsEnabled ? '🔊 TTS 활성화' : '🔇 TTS 비활성화');
   }
 
@@ -1305,7 +1308,7 @@ export class ChatModule {
       btn.title = this.handsFreeMode ? '핸즈프리 활성화됨' : '핸즈프리 비활성화됨';
     }
 
-    console.log('[TTS] Hands-free mode:', this.handsFreeMode ? 'ON' : 'OFF');
+    logger.info('Hands-free mode:', this.handsFreeMode ? 'ON' : 'OFF');
     showToast(this.handsFreeMode ? '🎙️ 핸즈프리 모드 활성화' : '🎙️ 핸즈프리 모드 비활성화');
 
     // Enable TTS automatically when hands-free is enabled
@@ -1333,16 +1336,16 @@ export class ChatModule {
 
     utterance.onstart = () => {
       this.isSpeaking = true;
-      console.log('[TTS] Speaking started');
+      logger.debug('Speaking started');
     };
 
     utterance.onend = () => {
       this.isSpeaking = false;
-      console.log('[TTS] Speaking ended');
+      logger.debug('Speaking ended');
 
       // If hands-free mode, start listening after TTS finishes
       if (this.handsFreeMode && !this.isRecording) {
-        console.log('[TTS] Hands-free mode: auto-starting voice input');
+        logger.info('Hands-free mode: auto-starting voice input');
         setTimeout(() => {
           this.startVoice();
         }, 500); // Small delay for smooth transition
@@ -1355,7 +1358,7 @@ export class ChatModule {
     };
 
     this.speechSynthesis.speak(utterance);
-    console.log('[TTS] Speaking:', text.substring(0, 50) + '...');
+    logger.debug('Speaking:', text.substring(0, 50) + '...');
   }
 
   /**
@@ -1365,7 +1368,7 @@ export class ChatModule {
     if (this.speechSynthesis && this.isSpeaking) {
       this.speechSynthesis.cancel();
       this.isSpeaking = false;
-      console.log('[TTS] Speaking stopped');
+      logger.debug('Speaking stopped');
     }
   }
 
@@ -1374,7 +1377,7 @@ export class ChatModule {
    */
   setTTSRate(rate) {
     this.ttsRate = Math.max(0.5, Math.min(2.0, rate));
-    console.log('[TTS] Rate set to:', this.ttsRate);
+    logger.info('Rate set to:', this.ttsRate);
   }
 
   // =============================================
@@ -1520,7 +1523,7 @@ export class ChatModule {
     });
 
     scrollToBottom(container);
-    console.log('[Chat] Displayed', messages.length, 'history messages');
+    logger.info('Displayed', messages.length, 'history messages');
   }
 
   /**
@@ -1550,7 +1553,7 @@ export class ChatModule {
             const data = JSON.parse(localStorage.getItem(key));
             if (data && data.savedAt && now - data.savedAt > this.historyExpiryMs) {
               localStorage.removeItem(key);
-              console.log('[Chat] Cleaned up expired history:', key);
+              logger.info('Cleaned up expired history:', key);
             }
           } catch (e) {
             // Invalid data, remove it
@@ -1629,12 +1632,12 @@ export class ChatModule {
         const banner = document.getElementById('session-resume-banner');
         if (banner) {
           banner.style.display = 'flex';
-          console.log('[Chat] Resume banner shown');
+          logger.info('Resume banner shown');
         }
       }
     } catch (error) {
       // Silent fail - no checkpoint is okay
-      console.log('[Chat] No resumable session');
+      logger.info('No resumable session');
     }
   }
 
@@ -1829,7 +1832,7 @@ export class ChatModule {
     };
     document.addEventListener('keydown', this._onEscapeKey);
 
-    console.log('[Chat] Floating mode initialized');
+    logger.info('Floating mode initialized');
   }
 
   /**

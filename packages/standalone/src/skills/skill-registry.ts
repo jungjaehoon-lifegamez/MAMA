@@ -189,6 +189,8 @@ export class SkillRegistry {
       }
 
       try {
+        // Only fetch remote catalog for 'cowork' source; others have no remote catalog
+        if (src !== 'cowork') continue;
         const skills = await this.fetchCoworkCatalog();
 
         this.catalogCache.set(src, { skills, fetchedAt: Date.now() });
@@ -423,6 +425,12 @@ export class SkillRegistry {
    * Uninstall a skill
    */
   async uninstall(source: SkillSource, name: string): Promise<void> {
+    // Validate source to prevent path traversal
+    const validSources: SkillSource[] = ['mama', 'cowork', 'external'];
+    if (!validSources.includes(source)) {
+      throw new Error(`Invalid skill source: ${source}`);
+    }
+
     // Remove MCP config entries before deleting files
     await this.removeMcpConfig(`${source}/${name}`);
 
@@ -438,6 +446,12 @@ export class SkillRegistry {
    * Toggle skill enabled/disabled
    */
   async toggle(source: SkillSource, name: string, enabled: boolean): Promise<void> {
+    // Validate source to prevent unauthorized modifications
+    const validSources: SkillSource[] = ['mama', 'cowork', 'external'];
+    if (!validSources.includes(source)) {
+      throw new Error(`Invalid skill source: ${source}`);
+    }
+
     const state = await loadState();
     state[`${source}/${name}`] = { enabled };
     await saveState(state);

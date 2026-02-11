@@ -74,10 +74,10 @@ export class GraphModule {
   async fetchData() {
     try {
       this.graphData = await API.getGraph();
-      console.log('[MAMA] Graph data loaded:', this.graphData.meta);
+      logger.info('Graph data loaded:', this.graphData.meta);
       return this.graphData;
     } catch (error) {
-      console.error('[MAMA] Failed to fetch graph:', error);
+      logger.error('Failed to fetch graph:', error);
       throw error;
     }
   }
@@ -92,7 +92,7 @@ export class GraphModule {
   init(data) {
     const container = document.getElementById('graph-canvas');
     if (!container) {
-      console.error('[MAMA] graph-canvas element not found');
+      logger.error('graph-canvas element not found');
       return;
     }
 
@@ -101,12 +101,7 @@ export class GraphModule {
       container.style.minHeight = '400px';
     }
 
-    console.log(
-      '[MAMA] Graph canvas dimensions:',
-      container.offsetWidth,
-      'x',
-      container.offsetHeight
-    );
+    logger.debug('Graph canvas dimensions:', container.offsetWidth, 'x', container.offsetHeight);
 
     this.graphData = data;
 
@@ -193,7 +188,7 @@ export class GraphModule {
           const nodeId = params.nodes[0];
           const node = data.nodes.find((n) => n.id === nodeId);
           if (node) {
-            console.log('[MAMA] Node clicked:', nodeId, node);
+            logger.debug('Node clicked:', nodeId, node);
             this.showDetail(node);
             this.highlightConnectedNodes(nodeId);
           }
@@ -202,8 +197,8 @@ export class GraphModule {
           this.resetNodeHighlight();
         }
       } catch (error) {
-        console.error('[MAMA] Error handling click:', error);
-        console.error('[MAMA] Error stack:', error.stack);
+        logger.error('Error handling click:', error);
+        logger.error('Error stack:', error.stack);
       }
     });
 
@@ -212,7 +207,7 @@ export class GraphModule {
       if (loadingEl) {
         loadingEl.style.display = 'none';
       }
-      console.log('[MAMA] Graph stabilized');
+      logger.info('Graph stabilized');
     });
 
     // Backup: hide loading after 3 seconds even if stabilization doesn't complete
@@ -220,7 +215,7 @@ export class GraphModule {
       const loadingEl = document.getElementById('graph-loading');
       if (loadingEl && loadingEl.style.display !== 'none') {
         loadingEl.style.display = 'none';
-        console.log('[MAMA] Graph loading hidden by timeout');
+        logger.warn('Graph loading hidden by timeout');
       }
     }, 3000);
 
@@ -228,7 +223,7 @@ export class GraphModule {
     const topics = [...new Set(data.nodes.map((n) => n.topic))].sort();
     this.populateTopicFilter(topics);
 
-    console.log('[MAMA] Graph initialized with', nodes.length, 'nodes and', edges.length, 'edges');
+    logger.info('Graph initialized with', nodes.length, 'nodes and', edges.length, 'edges');
   }
 
   // =============================================
@@ -318,7 +313,7 @@ export class GraphModule {
       this.adjacencyList.get(edge.to).push(edge.from);
     });
 
-    console.log('[MAMA] Adjacency list built with', this.adjacencyList.size, 'nodes');
+    logger.debug('Adjacency list built with', this.adjacencyList.size, 'nodes');
   }
 
   /**
@@ -438,12 +433,12 @@ export class GraphModule {
    */
   async showDetail(node) {
     try {
-      console.log('[MAMA] showDetail called with node:', node);
+      logger.debug('showDetail called with node:', node);
       this.currentNodeId = node.id;
       const panel = document.getElementById('decision-detail-modal');
 
       if (!panel) {
-        console.error('[MAMA] decision-detail-modal element not found');
+        logger.error('decision-detail-modal element not found');
         return;
       }
 
@@ -515,13 +510,13 @@ export class GraphModule {
       panel.classList.add('visible');
 
       // Fetch similar decisions
-      console.log('[MAMA] Fetching similar decisions...');
+      logger.info('Fetching similar decisions...');
       this.fetchSimilarDecisions(node.id);
-      console.log('[MAMA] showDetail completed successfully');
+      logger.debug('showDetail completed successfully');
     } catch (error) {
-      console.error('[MAMA] Error in showDetail:', error);
-      console.error('[MAMA] Error stack:', error.stack);
-      console.error('[MAMA] Node data:', node);
+      logger.error('Error in showDetail:', error);
+      logger.error('Error stack:', error.stack);
+      logger.error('Node data:', node);
     }
   }
 
@@ -567,11 +562,11 @@ export class GraphModule {
    * Fetch similar decisions
    */
   async fetchSimilarDecisions(nodeId) {
-    console.log('[MAMA] fetchSimilarDecisions called for node:', nodeId);
+    logger.debug('fetchSimilarDecisions called for node:', nodeId);
     const container = document.getElementById('detail-similar');
 
     if (!container) {
-      console.warn('[MAMA] detail-similar element not found');
+      logger.warn('detail-similar element not found');
       return;
     }
 
@@ -611,7 +606,7 @@ export class GraphModule {
       console.log('[MAMA] fetchSimilarDecisions completed');
     } catch (error) {
       console.error('[MAMA] Failed to fetch similar decisions:', error);
-      console.error('[MAMA] Error stack:', error.stack);
+      logger.error('Error stack:', error.stack);
       container.innerHTML = '<span style="color:#f66">Failed to load</span>';
     }
   }

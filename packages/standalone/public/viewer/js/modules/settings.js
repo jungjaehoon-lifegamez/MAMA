@@ -414,6 +414,11 @@ export class SettingsModule {
         timeout: parseInt(this.getValue('settings-agent-timeout') || '300', 10) * 1000,
         tools: this.collectToolModeData(),
       },
+      token_budget: {
+        daily_limit: parseInt(this.getValue('settings-token-daily-limit') || '0', 10) || undefined,
+        alert_threshold:
+          parseInt(this.getValue('settings-token-alert-threshold') || '0', 10) || undefined,
+      },
     };
   }
 
@@ -802,11 +807,12 @@ export class SettingsModule {
             <div class="flex items-center justify-between py-1">
               <div class="flex items-center gap-2">
                 <span class="text-xs font-medium text-gray-900">${escapeHtml(s.name)}</span>
-                <span class="text-[10px] px-1.5 py-0.5 rounded ${sourceColors[s.source] || 'bg-gray-100 text-gray-600'}">${s.source}</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded ${sourceColors[s.source] || 'bg-gray-100 text-gray-600'}">${escapeHtml(s.source)}</span>
               </div>
               <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" ${s.enabled !== false ? 'checked' : ''}
-                  onchange="settingsModule.toggleSkill('${s.source}', '${s.id}', this.checked)"
+                  data-skill-source="${escapeHtml(s.source)}"
+                  data-skill-id="${escapeHtml(s.id)}"
                   class="sr-only peer">
                 <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
               </label>
@@ -816,6 +822,20 @@ export class SettingsModule {
             .join('')}
         </div>
       `;
+      container.querySelectorAll('input[data-skill-id]').forEach((input) => {
+        input.addEventListener('change', (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLInputElement)) {
+            return;
+          }
+          const source = target.dataset.skillSource || '';
+          const id = target.dataset.skillId || '';
+          if (!source || !id) {
+            return;
+          }
+          this.toggleSkill(source, id, target.checked);
+        });
+      });
     } catch (error) {
       console.warn('[Settings] Skills load error:', error);
       container.innerHTML = '<p class="text-xs text-gray-400">Failed to load skills</p>';
@@ -827,13 +847,17 @@ export class SettingsModule {
    */
   async toggleSkill(source, name, enabled) {
     try {
-      await fetch(`/api/skills/${encodeURIComponent(name)}`, {
+      const response = await fetch(`/api/skills/${encodeURIComponent(name)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled, source }),
       });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
     } catch (error) {
       console.error('[Settings] Skill toggle failed:', error);
+      this.populateSkillsSection();
     }
   }
 

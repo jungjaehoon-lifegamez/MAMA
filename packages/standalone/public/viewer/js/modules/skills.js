@@ -8,6 +8,7 @@
  */
 
 /* eslint-env browser */
+/* global marked */
 
 import { API } from '../utils/api.js';
 
@@ -231,11 +232,11 @@ export const SkillsModule = {
     return `
       <div class="bg-gray-800 rounded-lg border ${enabledClass} p-3 cursor-pointer
         hover:border-yellow-500/50 transition-colors"
-        data-skill-card data-id="${skill.id}" data-source="${skill.source}">
+        data-skill-card data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}">
         <div class="flex items-start justify-between mb-2">
           <h4 class="font-medium text-sm text-white truncate flex-1">${this._escapeHtml(skill.name)}</h4>
           <span class="text-xs px-1.5 py-0.5 rounded ${badgeClass} ml-2 whitespace-nowrap">
-            ${skill.source}
+            ${this._escapeHtml(skill.source)}
           </span>
         </div>
         <p class="text-xs text-gray-400 line-clamp-2 mb-3">${this._escapeHtml(skill.description)}</p>
@@ -243,19 +244,19 @@ export const SkillsModule = {
           ${
             isInstalled
               ? `
-            <button data-action="toggle" data-id="${skill.id}" data-source="${skill.source}"
+            <button data-action="toggle" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
               data-enabled="${skill.enabled !== false}"
               class="text-xs px-2 py-1 rounded ${skill.enabled !== false ? 'bg-green-900/30 text-green-400' : 'bg-gray-700 text-gray-400'}">
               ${skill.enabled !== false ? 'Enabled' : 'Disabled'}
             </button>
-            <button data-action="uninstall" data-id="${skill.id}" data-source="${skill.source}"
+            <button data-action="uninstall" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
               class="text-xs px-2 py-1 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50">
               Remove
             </button>
           `
               : `
             <span></span>
-            <button data-action="install" data-id="${skill.id}" data-source="${skill.source}"
+            <button data-action="install" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
               class="text-xs px-2 py-1 rounded bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50">
               Install
             </button>
@@ -368,14 +369,15 @@ export const SkillsModule = {
       modalContent.innerHTML = `
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-bold text-white">${this._escapeHtml(name)}</h2>
-          <span class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">${source}</span>
+          <span class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">${this._escapeHtml(source)}</span>
         </div>
         <div class="prose prose-invert prose-sm max-w-none">
           ${this._renderMarkdown(content)}
         </div>
       `;
     } catch (error) {
-      modalContent.innerHTML = `<p class="text-red-400">Failed to load: ${error.message}</p>`;
+      const message = error instanceof Error ? error.message : String(error);
+      modalContent.innerHTML = `<p class="text-red-400">Failed to load: ${this._escapeHtml(message)}</p>`;
     }
   },
 
@@ -390,7 +392,7 @@ export const SkillsModule = {
   },
 
   /**
-   * Simple markdown to HTML renderer
+   * Render markdown to HTML using marked.js, with sanitization
    */
   _renderMarkdown(md) {
     if (!md) {
@@ -399,48 +401,18 @@ export const SkillsModule = {
     // Remove frontmatter
     md = md.replace(/^---\n[\s\S]*?\n---\n/, '');
 
-    let html = this._escapeHtml(md);
+    if (typeof marked !== 'undefined' && marked.parse) {
+      return marked.parse(md, {
+        mangle: false,
+        headerIds: false,
+        // Sanitize any HTML in the markdown content
+        sanitize: true,
+      });
+    }
 
-    // Code blocks
-    html = html.replace(
-      /```(\w*)\n([\s\S]*?)```/g,
-      '<pre class="bg-gray-900 rounded p-3 my-2 overflow-x-auto"><code>$2</code></pre>'
-    );
-    // Inline code
-    html = html.replace(
-      /`([^`]+)`/g,
-      '<code class="bg-gray-900 px-1 rounded text-yellow-400">$1</code>'
-    );
-    // Headers
-    html = html.replace(
-      /^### (.+)$/gm,
-      '<h3 class="text-base font-semibold text-white mt-4 mb-2">$1</h3>'
-    );
-    html = html.replace(
-      /^## (.+)$/gm,
-      '<h2 class="text-lg font-bold text-white mt-4 mb-2">$1</h2>'
-    );
-    html = html.replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold text-white mt-4 mb-2">$1</h1>');
-    // Bold
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // Italic
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // Lists
-    html = html.replace(/^- (.+)$/gm, '<li class="ml-4 list-disc">$1</li>');
-    html = html.replace(/(<li.*<\/li>\n?)+/g, '<ul class="my-2">$&</ul>');
-    // Paragraphs
-    html = html.replace(/\n\n/g, '</p><p class="my-2">');
-    html = '<p class="my-2">' + html + '</p>';
-
-    return html;
-  },
-
-  /**
-   * Escape HTML
-   */
-  _escapeHtml(str) {
+    // Fallback if marked.js is not available (should not happen in viewer)
     const div = document.createElement('div');
-    div.textContent = str;
+    div.textContent = md;
     return div.innerHTML;
   },
 };

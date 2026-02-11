@@ -1538,9 +1538,9 @@ export class GatewayToolExecutor {
       for (const [file, items] of byFile) {
         summaryLines.push(`**${file}** (${items.length})`);
         for (const item of items) {
-          const lineRef = item.line ? `:${item.line}` : '';
+          const lineRef = item.line ? `L${item.line} ` : '';
           const body = item.body.length > 300 ? item.body.substring(0, 300) + '…' : item.body;
-          summaryLines.push(`  • L${lineRef} @${item.author}: ${body}`);
+          summaryLines.push(`  • ${lineRef}@${item.author}: ${body}`);
         }
         summaryLines.push('');
       }
