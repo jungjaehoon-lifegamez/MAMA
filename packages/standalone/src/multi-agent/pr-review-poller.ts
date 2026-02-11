@@ -286,10 +286,6 @@ export class PRReviewPoller {
     let hasNewData = false;
 
     try {
-      this.logger.log(
-        `[PRPoller] Polling ${sessionKey} (seen: ${session.seenCommentIds.size} comments, ${session.seenReviewIds.size} reviews)`
-      );
-
       // Auto-stop after max duration
       if (Date.now() - session.startedAt > MAX_POLL_DURATION_MS) {
         this.logger.log(`[PRPoller] Max duration reached for ${sessionKey}, stopping`);
@@ -418,9 +414,7 @@ export class PRReviewPoller {
         );
 
         if (newComments.length === 0) {
-          this.logger.log(
-            `[PRPoller] No new comments for ${sessionKey} (total: ${allComments.length})`
-          );
+          // Silent when no new comments
         } else {
           // Format and send new comments
           const formatted = this.formatComments(sessionKey, newComments);
@@ -458,10 +452,6 @@ export class PRReviewPoller {
           if (!lastReported) return true; // never reported
           return now - lastReported >= REMIND_INTERVAL_MS; // stale reminder
         });
-
-        this.logger.log(
-          `[PRPoller] Unresolved threads: ${allUnresolved.length} total, ${toReport.length} to report (of ${threads.length} fetched)`
-        );
 
         if (toReport.length > 0) {
           hasNewData = true;
@@ -769,17 +759,6 @@ export class PRReviewPoller {
 
     const result = JSON.parse(stdout || '{"totalCount":0,"nodes":[]}');
     const nodes = result.nodes || [];
-
-    // Debug: log isResolved distribution
-    const unresolvedInRaw = nodes.filter(
-      (n: Record<string, unknown>) => n.isResolved === false
-    ).length;
-    const resolvedInRaw = nodes.filter(
-      (n: Record<string, unknown>) => n.isResolved === true
-    ).length;
-    this.logger.log(
-      `[PRPoller] GraphQL raw: ${nodes.length} nodes, ${unresolvedInRaw} unresolved, ${resolvedInRaw} resolved, ${nodes.length - unresolvedInRaw - resolvedInRaw} other`
-    );
 
     // Warn if GraphQL pagination caps are hit
     if (result.totalCount > 100) {
