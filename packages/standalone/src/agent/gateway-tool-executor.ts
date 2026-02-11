@@ -99,6 +99,8 @@ const VALID_TOOLS: GatewayToolName[] = [
   'os_list_bots',
   'os_restart_bot',
   'os_stop_bot',
+  // PR Review tools
+  'pr_review_threads',
 ];
 
 /**
@@ -315,6 +317,11 @@ export class GatewayToolExecutor {
           return await this.executeRestartBot(input as RestartBotInput);
         case 'os_stop_bot':
           return await this.executeStopBot(input as StopBotInput);
+        // PR Review tools
+        case 'pr_review_threads':
+          return await this.executePrReviewThreads(
+            input as { pr_url?: string; owner?: string; repo?: string; pr_number?: number }
+          );
       }
 
       // MAMA tools require API
@@ -1399,6 +1406,142 @@ export class GatewayToolExecutor {
       return { success: true, message: `${platform} bot stopped successfully` };
     } catch (err) {
       return { success: false, error: `Failed to stop bot: ${err}` };
+    }
+  }
+
+  // ============================================================================
+  // PR Review Tools
+  // ============================================================================
+
+  private parsePRUrl(url: string): { owner: string; repo: string; prNumber: number } | null {
+    const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+    if (!match) return null;
+    return { owner: match[1], repo: match[2], prNumber: parseInt(match[3], 10) };
+  }
+
+  private async executePrReviewThreads(input: {
+    pr_url?: string;
+    owner?: string;
+    repo?: string;
+    pr_number?: number;
+  }): Promise<{ success: boolean; threads?: unknown[]; summary?: string; error?: string }> {
+    let owner: string;
+    let repo: string;
+    let prNumber: number;
+
+    if (input.pr_url) {
+      const parsed = this.parsePRUrl(input.pr_url);
+      if (!parsed) return { success: false, error: `Invalid PR URL: ${input.pr_url}` };
+      ({ owner, repo, prNumber } = parsed);
+    } else if (input.owner && input.repo && input.pr_number) {
+      owner = input.owner;
+      repo = input.repo;
+      prNumber = input.pr_number;
+    } else {
+      return { success: false, error: 'Provide pr_url or (owner, repo, pr_number)' };
+    }
+
+    try {
+      const { execFile: execFileCb } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileP = promisify(execFileCb);
+
+      const query = `
+        query($owner: String!, $repo: String!, $prNumber: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $prNumber) {
+              reviewThreads(last: 100) {
+                nodes {
+                  id
+                  isResolved
+                  comments(first: 10) {
+                    nodes { path line body author { login } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const { stdout } = await execFileP(
+        'gh',
+        [
+          'api',
+          'graphql',
+          '-f',
+          `query=${query}`,
+          '-F',
+          `owner=${owner}`,
+          '-F',
+          `repo=${repo}`,
+          '-F',
+          `prNumber=${prNumber}`,
+        ],
+        { timeout: 30000 }
+      );
+
+      const data = JSON.parse(stdout);
+      const threads = data?.data?.repository?.pullRequest?.reviewThreads?.nodes || [];
+
+      const unresolved = threads
+        .filter((t: { isResolved: boolean }) => !t.isResolved)
+        .map(
+          (t: {
+            id: string;
+            comments: {
+              nodes: {
+                path: string;
+                line: number | null;
+                body: string;
+                author: { login: string };
+              }[];
+            };
+          }) => ({
+            id: t.id,
+            comments: t.comments.nodes.map((c) => ({
+              path: c.path,
+              line: c.line,
+              body: c.body,
+              author: c.author?.login,
+            })),
+          })
+        );
+
+      // Build summary grouped by file
+      const byFile = new Map<string, { line: number | null; body: string; author: string }[]>();
+      for (const t of unresolved) {
+        const first = t.comments[0];
+        if (!first) continue;
+        const file = first.path || '(general)';
+        const list = byFile.get(file) || [];
+        list.push({ line: first.line, body: first.body, author: first.author });
+        byFile.set(file, list);
+      }
+
+      const summaryLines = [
+        `${unresolved.length} unresolved thread(s) across ${byFile.size} file(s)`,
+        '',
+      ];
+      for (const [file, items] of byFile) {
+        summaryLines.push(`**${file}** (${items.length})`);
+        for (const item of items) {
+          const lineRef = item.line ? `:${item.line}` : '';
+          const body = item.body.length > 300 ? item.body.substring(0, 300) + '…' : item.body;
+          summaryLines.push(`  • L${lineRef} @${item.author}: ${body}`);
+        }
+        summaryLines.push('');
+      }
+
+      if (byFile.size > 1) {
+        summaryLines.push(
+          `💡 ${byFile.size} independent files — delegate fixes in parallel (DELEGATE_BG)`
+        );
+      }
+
+      return { success: true, threads: unresolved, summary: summaryLines.join('\n') };
+    } catch (err) {
+      return { success: false, error: `Failed to fetch PR threads: ${err}` };
     }
   }
 

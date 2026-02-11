@@ -20,6 +20,10 @@ Call tools via JSON block:
 - **Bash**(command, workdir?) — Execute command (60s timeout)
 - **discord_send**(channel_id, message?, file_path?) — Send to Discord
 
+## PR Review
+
+- **pr_review_threads**(pr_url) — Fetch unresolved review threads from GitHub PR. Returns threads grouped by file with comment body, line, author. Also accepts (owner, repo, pr_number).
+
 ## IMPORTANT: System Info
 
 - Status: `mama status` (shows PID, uptime, config)

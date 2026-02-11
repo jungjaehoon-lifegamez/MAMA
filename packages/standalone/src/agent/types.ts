@@ -613,7 +613,9 @@ export type GatewayToolName =
   // OS Monitoring tools (viewer-only)
   | 'os_list_bots'
   | 'os_restart_bot'
-  | 'os_stop_bot';
+  | 'os_stop_bot'
+  // PR Review tools
+  | 'pr_review_threads';
 
 // ============================================================================
 // MCP Tool Output Types

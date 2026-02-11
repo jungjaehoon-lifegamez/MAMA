@@ -394,6 +394,7 @@ Available tools:
 - **discord_send**(channel_id, message?, file_path?) — Send message or file to a Discord channel
 - **mama_search**(query?, type?, limit?) — Search decisions in MAMA memory
 - **mama_save**(type, topic?, decision?, reasoning?, summary?, next_steps?) — Save decision or checkpoint
+- **pr_review_threads**(pr_url) — Fetch unresolved PR review threads (grouped by file, with line/body/author). Use this to autonomously analyze PR feedback.
 
 The channel_id for the current conversation is provided in the message context.
 Tool calls are executed automatically. You do NOT need curl or Bash for these.
