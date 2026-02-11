@@ -63,6 +63,7 @@ export type DelegationExecuteCallback = (
 
 const DELEGATE_PATTERN = /DELEGATE::([\w-]+)::(.+)/s;
 const DELEGATE_BG_PATTERN = /DELEGATE_BG::([\w-]+)::(.+)/s;
+const DELEGATE_BG_PATTERN_GLOBAL = /DELEGATE_BG::([\w-]+)::(.+)/gm;
 
 /**
  * Delegation Manager
@@ -103,6 +104,39 @@ export class DelegationManager {
       originalContent,
       background: false,
     };
+  }
+
+  parseAllDelegations(agentId: string, response: string): DelegationRequest[] {
+    const results: DelegationRequest[] = [];
+    let remaining = response;
+
+    // Extract all DELEGATE_BG patterns (line-based via gm flags)
+    const bgRegex = new RegExp(DELEGATE_BG_PATTERN_GLOBAL.source, 'gm');
+    let bgMatch;
+    while ((bgMatch = bgRegex.exec(response)) !== null) {
+      results.push({
+        fromAgentId: agentId,
+        toAgentId: bgMatch[1],
+        task: bgMatch[2].trim(),
+        originalContent: '',
+        background: true,
+      });
+      remaining = remaining.replace(bgMatch[0], '');
+    }
+
+    // If no BG delegations found, try single sync delegation
+    if (results.length === 0) {
+      const single = this.parseDelegation(agentId, response);
+      if (single) return [single];
+      return [];
+    }
+
+    // Set originalContent on first result (text without any DELEGATE_BG lines)
+    if (results.length > 0) {
+      results[0].originalContent = remaining.trim();
+    }
+
+    return results;
   }
 
   /**

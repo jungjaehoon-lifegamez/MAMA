@@ -856,31 +856,39 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         ? cleanedResponse
         : this.resolveResponseMentions(cleanedResponse);
 
-      const bgDelegation = isErrorResponse
-        ? null
-        : this.delegationManager.parseDelegation(agentId, resolvedResponse);
-      if (bgDelegation && bgDelegation.background) {
-        const check = this.delegationManager.isDelegationAllowed(
-          bgDelegation.fromAgentId,
-          bgDelegation.toAgentId
-        );
-        if (check.allowed) {
-          const toAgent = this.orchestrator.getAgent(bgDelegation.toAgentId);
-          this.backgroundTaskManager.submit({
-            description: bgDelegation.task.substring(0, 200),
-            prompt: bgDelegation.task,
-            agentId: bgDelegation.toAgentId,
-            requestedBy: agentId,
-            channelId: context.channelId,
-            source: 'discord',
-          });
-          console.log(
-            `[MultiAgent] Background delegation: ${agentId} -> ${bgDelegation.toAgentId} (async)`
+      const bgDelegations = isErrorResponse
+        ? []
+        : this.delegationManager.parseAllDelegations(agentId, resolvedResponse);
+      if (bgDelegations.length > 0 && bgDelegations[0].background) {
+        let submittedCount = 0;
+        const submittedAgents: string[] = [];
+        for (const delegation of bgDelegations) {
+          if (!delegation.background) continue;
+          const check = this.delegationManager.isDelegationAllowed(
+            delegation.fromAgentId,
+            delegation.toAgentId
           );
+          if (check.allowed) {
+            this.backgroundTaskManager.submit({
+              description: delegation.task.substring(0, 200),
+              prompt: delegation.task,
+              agentId: delegation.toAgentId,
+              requestedBy: agentId,
+              channelId: context.channelId,
+              source: 'discord',
+            });
+            submittedCount++;
+            submittedAgents.push(delegation.toAgentId);
+            console.log(
+              `[MultiAgent] Background delegation: ${agentId} -> ${delegation.toAgentId} (async)`
+            );
+          }
+        }
 
+        if (submittedCount > 0) {
           const displayResponse =
-            bgDelegation.originalContent ||
-            `🔄 Background task submitted to **${toAgent?.display_name ?? bgDelegation.toAgentId}**`;
+            bgDelegations[0].originalContent ||
+            `🔄 ${submittedCount} background task(s) submitted to **${[...new Set(submittedAgents)].join(', ')}**`;
           const formattedResponse = this.formatAgentResponse(agent, displayResponse);
           return {
             agentId,
