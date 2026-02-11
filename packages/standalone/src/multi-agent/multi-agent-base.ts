@@ -106,6 +106,9 @@ export abstract class MultiAgentHandlerBase {
   /** Platform-specific cleanup called during stopAll() */
   protected abstract platformCleanup(): Promise<void>;
 
+  /** Send a notification message to a channel (for background task status, queue expiry, etc.) */
+  protected abstract sendChannelNotification(channelId: string, message: string): Promise<void>;
+
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
     this.config = config;
     this.orchestrator = new MultiAgentOrchestrator(config);
@@ -161,6 +164,17 @@ export abstract class MultiAgentHandlerBase {
         duration: task.duration,
         timestamp: Date.now(),
       });
+
+      // Notify channel so Reviewer/LEAD know the task is done
+      if (task.channelId) {
+        const agentName = this.config.agents[task.agentId]?.display_name || task.agentId;
+        const durationSec = task.duration ? Math.round(task.duration / 1000) : 0;
+        const desc = task.description?.substring(0, 100) || 'task';
+        this.sendChannelNotification(
+          task.channelId,
+          `✅ Delegation Completed\nAgent: ${agentName}\nDuration: ${durationSec}s\nTask: ${desc}`
+        ).catch(() => {});
+      }
     });
 
     this.backgroundTaskManager.on('task-failed', ({ task }: { task: BackgroundTask }) => {
@@ -174,6 +188,17 @@ export abstract class MultiAgentHandlerBase {
         error: task.error,
         timestamp: Date.now(),
       });
+
+      // Notify channel so workflow doesn't silently stall
+      if (task.channelId) {
+        const agentName = this.config.agents[task.agentId]?.display_name || task.agentId;
+        const desc = task.description?.substring(0, 100) || 'task';
+        const errMsg = task.error?.substring(0, 150) || 'unknown error';
+        this.sendChannelNotification(
+          task.channelId,
+          `❌ Delegation Failed\nAgent: ${agentName}\nTask: ${desc}\nError: ${errMsg}`
+        ).catch(() => {});
+      }
     });
   }
 

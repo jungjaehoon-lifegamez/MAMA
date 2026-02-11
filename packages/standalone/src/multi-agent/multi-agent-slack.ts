@@ -82,6 +82,16 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     return `*${text}*`;
   }
 
+  protected async sendChannelNotification(channelId: string, message: string): Promise<void> {
+    try {
+      if (this.mainWebClient) {
+        await this.mainWebClient.chat.postMessage({ channel: channelId, text: message });
+      }
+    } catch (err) {
+      console.error(`[MultiAgentSlack] Failed to send channel notification:`, err);
+    }
+  }
+
   /**
    * Extract agent IDs from <@U...> mentions in message content
    */

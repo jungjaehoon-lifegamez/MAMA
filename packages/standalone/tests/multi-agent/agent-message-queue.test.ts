@@ -120,9 +120,9 @@ describe('AgentMessageQueue', () => {
   });
 
   describe('TTL expiration', () => {
-    it('should skip expired messages (older than 10 minutes)', async () => {
+    it('should skip expired messages (older than 20 minutes)', async () => {
       const now = Date.now();
-      const threeMinutesAgo = now - 10 * 60 * 1000 - 1000; // 10min + 1s ago
+      const threeMinutesAgo = now - 20 * 60 * 1000 - 1000; // 10min + 1s ago
 
       queue.enqueue('agent-1', {
         prompt: 'Expired message',
@@ -156,7 +156,7 @@ describe('AgentMessageQueue', () => {
 
     it('should clear expired messages with clearExpired()', () => {
       const now = Date.now();
-      const tenMinutesAgo = now - 10 * 60 * 1000 - 1000;
+      const tenMinutesAgo = now - 20 * 60 * 1000 - 1000;
 
       queue.enqueue('agent-1', {
         prompt: 'Expired',

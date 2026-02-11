@@ -115,6 +115,21 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     return `**${text}**`;
   }
 
+  protected async sendChannelNotification(channelId: string, message: string): Promise<void> {
+    try {
+      if (this.discordClient) {
+        const channel = await this.discordClient.channels.fetch(channelId);
+        if (channel && 'send' in (channel as Record<string, unknown>)) {
+          await (channel as { send: (opts: { content: string }) => Promise<unknown> }).send({
+            content: message,
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`[MultiAgent] Failed to send channel notification:`, err);
+    }
+  }
+
   /**
    * Extract agent IDs from <@USER_ID> mentions AND DELEGATE::{agent_id}:: patterns
    * in message content. Both syntaxes route to the same delegation flow.
@@ -1290,15 +1305,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
    * bots don't receive their own messages as events.
    */
   async routeResponseMentions(originalMessage: Message, responses: AgentResponse[]): Promise<void> {
-    // Block all agent-to-agent routing during post-APPROVE cooldown
-    const channelApproveTs = this.approveProcessedChannels.get(originalMessage.channel.id);
-    if (
-      channelApproveTs &&
-      Date.now() - channelApproveTs < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
-    ) {
-      return;
-    }
-
     for (const response of responses) {
       const senderAgent = this.orchestrator.getAgent(response.agentId);
 
@@ -1344,12 +1350,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       );
 
       const defaultAgentId = this.config.default_agent;
+      const hasApproveSignal =
+        /\b(APPROVE[DS]?|LGTM)\b/i.test(response.rawContent) &&
+        !/\b(not?\s+approve|don'?t\s+approve|cannot\s+approve|rejected)\b/i.test(
+          response.rawContent
+        );
       const isReviewerApproveToLead =
         this.isReviewerAgent(response.agentId) &&
         mentionedAgentIds.includes(defaultAgentId || '') &&
-        /\b(APPROVE|approved|approves)\b(?!\w)/i.test(response.rawContent);
+        hasApproveSignal;
 
-      let autoCommitResult: string | null = null;
       if (isReviewerApproveToLead) {
         // Dedup: skip if APPROVE already processed for this channel
         const lastApprove = this.approveProcessedChannels.get(originalMessage.channel.id);
@@ -1362,30 +1372,17 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           );
           continue;
         }
-
-        autoCommitResult = await this.autoCommitAndPush(originalMessage.channel.id);
-        if (autoCommitResult) {
-          try {
-            const chunks = splitForDiscord(autoCommitResult);
-            for (const chunk of chunks) {
-              if ('send' in originalMessage.channel) {
-                await (
-                  originalMessage.channel as {
-                    send: (opts: { content: string }) => Promise<Message>;
-                  }
-                ).send({ content: chunk });
-              }
-            }
-          } catch {
-            /* ignore send errors */
-          }
-        }
       }
 
       // Route to all mentioned agents in parallel
       await Promise.all(
         mentionedAgentIds.map((targetAgentId) =>
-          this.handleDelegatedMention(targetAgentId, originalMessage, response, autoCommitResult)
+          this.handleDelegatedMention(
+            targetAgentId,
+            originalMessage,
+            response,
+            isReviewerApproveToLead ? 'REVIEWER_APPROVED' : null
+          )
         )
       );
 
@@ -1403,7 +1400,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     targetAgentId: string,
     originalMessage: Message,
     sourceResponse: AgentResponse,
-    autoCommitResult?: string | null
+    reviewerSignal?: string | null
   ): Promise<void> {
     // Dedup: prevent double processing
     const dedupKey = `${targetAgentId}:${sourceResponse.messageId || originalMessage.id}`;
@@ -1469,30 +1466,11 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
         .trim();
 
-      const defaultAgentId = this.config.default_agent;
-      if (
-        targetAgentId === defaultAgentId &&
-        /\b(APPROVE|approved|approves)\b(?!\w)/i.test(delegationContent)
-      ) {
-        if (autoCommitResult && autoCommitResult.startsWith('✅')) {
-          delegationContent +=
-            '\n\n✅ [SYSTEM] Auto Commit completed.\n' +
-            `Result: ${autoCommitResult}\n` +
-            '**Execute `git push` now. Then summarize review results briefly. Do NOT congratulate agents.**';
-        } else if (autoCommitResult) {
-          delegationContent +=
-            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Auto commit failed. Execute Phase 3:\n' +
-            '1. `git status`\n' +
-            '2. `git add {changed files}` (git add . prohibited)\n' +
-            '3. `git commit -m "fix: {change summary}"`\n' +
-            '4. `git push`\n' +
-            '**Execute commit+push first. No praise. No congratulations. Just results.**';
-        } else {
-          delegationContent +=
-            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Execute Phase 3:\n' +
-            '1. `git status` -> `git add` -> `git commit` -> `git push`\n' +
-            '**Execute immediately. No praise. Just results.**';
-        }
+      if (reviewerSignal === 'REVIEWER_APPROVED' && targetAgentId === this.config.default_agent) {
+        delegationContent +=
+          '\n\n🔔 [SYSTEM] Reviewer has APPROVED the changes.\n' +
+          'Review the changes yourself, then commit and push when you are satisfied.\n' +
+          'Use your judgement on the commit message and which files to include.';
       }
 
       const response = await this.processAgentResponse(
@@ -1720,161 +1698,5 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       ([aid, cfg]) =>
         aid.toLowerCase().includes('review') || cfg.name?.toLowerCase().includes('review')
     );
-  }
-
-  /**
-   * Auto commit+push when Reviewer APPROVE is detected.
-   * Finds the repo from active PR polling sessions, runs git operations.
-   * Returns a status message or null if no repo found.
-   */
-  private async autoCommitAndPush(channelId: string): Promise<string | null> {
-    // Check if auto-commit is explicitly enabled (disabled by default for safety)
-    if (process.env.MAMA_ENABLE_AUTO_COMMIT !== 'true') {
-      console.log(
-        '[AutoCommit] Auto-commit is disabled by default. Set MAMA_ENABLE_AUTO_COMMIT=true to enable'
-      );
-      return null;
-    }
-
-    // Find active PR session for this channel to get the repo info
-    const sessions = this.prReviewPoller.getActiveSessions();
-    if (sessions.length === 0) return null;
-
-    // Find session matching this channel
-    const pollerSessions = this.prReviewPoller.getSessionDetails();
-    const session = pollerSessions.find((s) => s.channelId === channelId);
-    if (!session) return null;
-
-    // Find local repo path (check common locations)
-    const homedir = process.env.HOME || '/home/deck';
-    const possiblePaths = [
-      `${homedir}/${session.repo}`,
-      `${homedir}/project/${session.repo}`,
-      `${homedir}/projects/${session.repo}`,
-    ];
-
-    let repoPath: string | null = null;
-    for (const p of possiblePaths) {
-      try {
-        await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: p, timeout: 5000 });
-        repoPath = p;
-        break;
-      } catch {
-        // not a git repo at this path
-      }
-    }
-
-    if (!repoPath) {
-      console.log(`[AutoCommit] No local repo found for ${session.repo}`);
-      return null;
-    }
-
-    console.log(`[AutoCommit] Found repo at ${repoPath}, running commit+push`);
-
-    try {
-      // 1. Check current branch - prevent commits to main/master
-      const { stdout: branchOut } = await execFileAsync('git', ['branch', '--show-current'], {
-        cwd: repoPath,
-        timeout: 5000,
-      });
-
-      const currentBranch = branchOut.trim();
-      const protectedBranches = ['main', 'master', 'develop', 'production', 'staging'];
-      if (protectedBranches.includes(currentBranch)) {
-        console.log(`[AutoCommit] Refusing to commit to protected branch: ${currentBranch}`);
-        return `🚫 Auto-commit blocked: Cannot commit to protected branch '${currentBranch}'. (${session.repo})`;
-      }
-
-      // 2. git status
-      const { stdout: statusOut } = await execFileAsync('git', ['status', '--porcelain'], {
-        cwd: repoPath,
-        timeout: 10000,
-      });
-
-      if (!statusOut.trim()) {
-        console.log(`[AutoCommit] No changes to commit in ${repoPath}`);
-        return `📭 No changes to commit. (${session.repo})`;
-      }
-
-      // 2. Get changed files from porcelain format (XY PATH or XY ORIG -> PATH)
-      const changedFiles = statusOut
-        .trim()
-        .split('\n')
-        .map((line) => {
-          // Porcelain v1: first 2 chars = status, then space, then path
-          // For renames: "R  old -> new" -- use the new path
-          let path = line.substring(2).trimStart();
-          if (path.includes(' -> ')) {
-            path = path.split(' -> ').pop()?.trim() || '';
-          } else {
-            path = path.trim();
-          }
-
-          // Remove quotes if git added them for paths with spaces
-          if (path.startsWith('"') && path.endsWith('"')) {
-            path = path.slice(1, -1);
-          }
-
-          return path;
-        })
-        .filter(Boolean);
-
-      // Check for sensitive files
-      const sensitivePatterns = [
-        /\.env/i,
-        /\.pem$/i,
-        /\.key$/i,
-        /credentials/i,
-        /secrets/i,
-        /private.*key/i,
-        /id_rsa/i,
-        /\.p12$/i,
-        /\.pfx$/i,
-        /password/i,
-        /\.aws\//i,
-        /\.ssh\//i,
-      ];
-
-      const sensitiveFiles = changedFiles.filter((file) =>
-        sensitivePatterns.some((pattern) => pattern.test(file))
-      );
-
-      if (sensitiveFiles.length > 0) {
-        console.log(`[AutoCommit] Blocked: sensitive files detected: ${sensitiveFiles.join(', ')}`);
-        return `🔒 Auto-commit blocked: Sensitive files detected:\n${sensitiveFiles.map((f) => `• ${f}`).join('\n')}`;
-      }
-
-      // 3. git add (specific files, batched to prevent ARG_MAX issues)
-      const BATCH_SIZE = 50;
-      for (let i = 0; i < changedFiles.length; i += BATCH_SIZE) {
-        const batch = changedFiles.slice(i, i + BATCH_SIZE);
-        await execFileAsync('git', ['add', ...batch], {
-          cwd: repoPath,
-          timeout: 15000,
-        });
-      }
-
-      // 4. git commit
-      const commitMsg = `fix: address PR review comments (${session.owner}/${session.repo}#${session.prNumber})`;
-      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: repoPath, timeout: 15000 });
-
-      const shortStatus =
-        changedFiles.length <= 5
-          ? changedFiles.join(', ')
-          : `${changedFiles.slice(0, 5).join(', ')} +${changedFiles.length - 5} more`;
-
-      // Safety: Only commit, never push. Push is always manual.
-      console.log(`[AutoCommit] Committed ${changedFiles.length} files safely (no push)`);
-      return (
-        `✅ **Auto Commit Completed** (Manual push required)\n` +
-        `📁 ${changedFiles.length} files: ${shortStatus}\n` +
-        `💬 \`${commitMsg}\`\n` +
-        `⚠️ Review changes with \`git diff HEAD~1\` before pushing`
-      );
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[AutoCommit] Failed:`, err);
-      return `❌ **Auto Commit Failed**: ${errMsg.substring(0, 200)}`;
-    }
   }
 }
