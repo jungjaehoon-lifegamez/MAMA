@@ -96,7 +96,7 @@ export class DiscordGateway implements Gateway {
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
       this.multiAgentHandler = new MultiAgentDiscordHandler(options.multiAgentConfig, {
-        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? false,
+        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
       });
       console.log('[Discord] Multi-agent mode enabled');
     }
@@ -558,9 +558,11 @@ export class DiscordGateway implements Gateway {
         console.log(
           `[Discord] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
         );
-        return; // Multi-agent handled it
       }
-      // If multi-agent returns null, fall through to regular processing
+      // Multi-agent mode owns routing — never fall through to message-router.
+      // If null, the message was either queued (busy), blocked, or had no match.
+      // Falling through would create duplicate responses from a second CLI process.
+      return;
     }
 
     // Regular single-agent processing
@@ -1152,7 +1154,7 @@ export class DiscordGateway implements Gateway {
         this.multiAgentHandler.updateConfig(config);
       } else {
         this.multiAgentHandler = new MultiAgentDiscordHandler(config, {
-          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? false,
+          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
         });
         if (this.client.user) {
           this.multiAgentHandler.setBotUserId(this.client.user.id);

@@ -373,6 +373,20 @@ export class PersistentClaudeProcess extends EventEmitter {
     isError: boolean = false,
     callbacks?: PromptCallbacks
   ): Promise<PromptResult> {
+    return this.sendToolResults(
+      [{ tool_use_id: toolUseId, content: result, is_error: isError }],
+      callbacks
+    );
+  }
+
+  /**
+   * Send multiple tool results back to Claude in a single message.
+   * Required when Claude requests multiple tools in one turn.
+   */
+  async sendToolResults(
+    results: Array<{ tool_use_id: string; content: string; is_error: boolean }>,
+    callbacks?: PromptCallbacks
+  ): Promise<PromptResult> {
     if (this.state === 'dead') {
       throw new Error('Cannot send tool result: process is dead');
     }
@@ -396,24 +410,24 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.handleTimeout();
       }, timeoutMs);
 
-      // Build tool_result message
+      // Build tool_result message with all results in content array
       const message = {
         type: 'user',
         message: {
           role: 'user',
-          content: [
-            {
-              type: 'tool_result',
-              tool_use_id: toolUseId,
-              content: result,
-              is_error: isError,
-            },
-          ],
+          content: results.map((r) => ({
+            type: 'tool_result',
+            tool_use_id: r.tool_use_id,
+            content: r.content,
+            is_error: r.is_error,
+          })),
         },
       };
 
       const jsonLine = JSON.stringify(message) + '\n';
-      console.log(`[PersistentCLI] Sending tool_result for ${toolUseId} (${result.length} chars)`);
+      console.log(
+        `[PersistentCLI] Sending ${results.length} tool_result(s): ${results.map((r) => r.tool_use_id).join(', ')}`
+      );
 
       if (!this.process?.stdin?.writable) {
         this.handleError(new Error('Process stdin not writable'));

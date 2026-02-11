@@ -450,7 +450,6 @@ export async function runAgentLoop(
     mamaDbPath: mamaDbPath,
     sessionStore: sessionStore,
   });
-  void toolExecutor;
 
   // Reasoning collector for Discord display
   let reasoningLog: string[] = [];
@@ -739,6 +738,14 @@ export async function runAgentLoop(
       };
 
       agentLoop.setDiscordGateway(gatewayInterface);
+
+      // Wire gateway tool executor to multi-agent handler
+      const multiAgentDiscord = discordGateway.getMultiAgentHandler();
+      if (multiAgentDiscord) {
+        toolExecutor.setDiscordGateway(gatewayInterface);
+        multiAgentDiscord.setGatewayToolExecutor(toolExecutor);
+        console.log('[start] ✓ Gateway tool executor wired to multi-agent handler');
+      }
 
       await discordGateway.start();
       gateways.push(discordGateway);

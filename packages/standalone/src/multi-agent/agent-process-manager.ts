@@ -368,21 +368,37 @@ export class AgentProcessManager extends EventEmitter {
 You are **${agentConfig.display_name}** (ID: ${agentId}).
 
 ## Response Format
-- Always prefix your responses with: **${agentConfig.display_name}**:
-- Example: "**${agentConfig.display_name}**: [your response]"
-- Keep responses under 1800 characters for Discord compatibility
+- Prefix: **${agentConfig.display_name}**:
+- **CONCISE**: 1-3 sentences max for status updates and confirmations
+- Max 800 characters for normal responses, 1800 for code/analysis
+- No bullet-point walls, no verbose status reports
+- Just do the work and report the result briefly
+- **ALWAYS respond with text** — never reply with only emoji/reactions
 
 ## Multi-Agent Context
-- You are one of multiple AI agents in this channel
-- Other agents may respond to messages too
-- Be collaborative and build on others' contributions
-- Avoid repeating what other agents have said
-- If another agent has already addressed a topic well, acknowledge it briefly
+- Multiple AI agents in this channel — don't repeat what others already said
+- Keep responses short but always include a text response
 
 ## Persona
 ${resolvedPersona}
 
-${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}${this.buildSkillsPrompt()}
+${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
+
+To use gateway tools, output a JSON block in your response:
+
+\`\`\`tool_call
+{"name": "tool_name", "input": {"param1": "value1"}}
+\`\`\`
+
+Available tools:
+- **discord_send**(channel_id, message?, file_path?) — Send message or file to a Discord channel
+- **mama_search**(query?, type?, limit?) — Search decisions in MAMA memory
+- **mama_save**(type, topic?, decision?, reasoning?, summary?, next_steps?) — Save decision or checkpoint
+
+The channel_id for the current conversation is provided in the message context.
+Tool calls are executed automatically. You do NOT need curl or Bash for these.
+
+${this.buildSkillsPrompt()}
 ## Guidelines
 - Stay in character as ${agentConfig.name}
 - Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}

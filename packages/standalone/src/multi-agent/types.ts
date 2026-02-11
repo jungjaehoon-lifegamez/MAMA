@@ -247,6 +247,22 @@ export interface MultiAgentConfig {
    * @default 3
    */
   max_mention_depth?: number;
+
+  /**
+   * Explicit delegation rules controlling which agents can delegate to which
+   * If not set, all delegation is allowed (backward compatible)
+   */
+  delegation_rules?: DelegationRule[];
+}
+
+/**
+ * Delegation rule: controls which agent can delegate to which targets
+ */
+export interface DelegationRule {
+  /** Source agent ID */
+  from: string;
+  /** Allowed target agent IDs */
+  to: string[];
 }
 
 /**
