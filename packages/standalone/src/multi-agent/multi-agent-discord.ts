@@ -1031,6 +1031,32 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
     }
 
+    // Handle synchronous DELEGATE:: delegations via message queue
+    const syncDelegations = delegations.filter((d) => !d.background);
+    for (const delegation of syncDelegations) {
+      const check = this.delegationManager.isDelegationAllowed(
+        delegation.fromAgentId,
+        delegation.toAgentId
+      );
+      if (check.allowed) {
+        this.messageQueue.enqueue(delegation.toAgentId, {
+          prompt: delegation.task,
+          channelId: message.channelId,
+          source: 'discord',
+          enqueuedAt: Date.now(),
+          context: { channelId: message.channelId, userId: 'delegation' },
+        });
+        logger.info(
+          `[MultiAgent] Sync delegation (queued path): ${agentId} -> ${delegation.toAgentId}`
+        );
+        this.tryDrainNow(delegation.toAgentId, 'discord', message.channelId).catch(() => {});
+      } else {
+        console.warn(
+          `[MultiAgent] Sync delegation denied (queued): ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
+        );
+      }
+    }
+
     // Format response with agent prefix
     const formattedResponse = this.formatAgentResponse(agent, displayResponse);
 
