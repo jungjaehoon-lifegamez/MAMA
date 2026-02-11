@@ -264,6 +264,12 @@ async function handleGraphRequest(
 }
 
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  // When mounted as Express middleware, body is already parsed by express.json()
+  const expressBody = (req as unknown as { body?: Record<string, unknown> }).body;
+  if (expressBody && typeof expressBody === 'object') {
+    return Promise.resolve(expressBody);
+  }
+
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => {
@@ -741,10 +747,14 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     console.log('[GraphHandler] Request:', req.method, pathname);
 
-    // Set CORS headers for all requests
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    // Set CORS headers — restrict to localhost origins only
+    const origin = req.headers.origin || '';
+    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+    if (isLocalhost) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     // Handle preflight OPTIONS requests
     if (req.method === 'OPTIONS') {
@@ -987,6 +997,63 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: PUT /api/config - update config
     if (pathname === '/api/config' && req.method === 'PUT') {
       await handleUpdateConfigRequest(req, res);
+      return true;
+    }
+
+    // Route: POST /api/restart - graceful restart via mama CLI
+    if (pathname === '/api/restart' && req.method === 'POST') {
+      if (!isAuthenticated(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({ error: true, code: 'UNAUTHORIZED', message: 'Authentication required' })
+        );
+        return true;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Restarting...' }));
+      // Prefer systemd restart when running as a service; otherwise spawn detached daemon.
+      setTimeout(() => {
+        console.log('[API] Restart requested via API — spawning new daemon');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { spawn: spawnChild } = require('node:child_process');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { openSync, writeFileSync } = require('node:fs');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { homedir: getHome } = require('node:os');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { join: joinPath } = require('node:path');
+
+        const isSystemd =
+          Boolean(process.env.INVOCATION_ID) || Boolean(process.env.SYSTEMD_EXEC_PID);
+
+        if (isSystemd) {
+          spawnChild('systemctl', ['--user', 'restart', 'mama-os'], {
+            detached: true,
+            stdio: 'ignore',
+          }).unref();
+          process.exit(0);
+          return;
+        }
+
+        // Spawn detached daemon directly, then exit current process
+        // Cannot use `mama start` because it checks PID (current process still alive)
+        const script = process.argv[1];
+        const logDir = joinPath(getHome(), '.mama', 'logs');
+        const logFile = joinPath(logDir, 'daemon.log');
+        const out = openSync(logFile, 'a');
+        const child = spawnChild(process.execPath, [script, 'daemon'], {
+          detached: true,
+          stdio: ['ignore', out, out],
+          cwd: getHome(),
+          env: { ...process.env, MAMA_DAEMON: '1' },
+        });
+        child.unref();
+        if (child.pid) {
+          const pidFile = joinPath(getHome(), '.mama', 'mama.pid');
+          writeFileSync(pidFile, String(child.pid));
+        }
+        process.exit(0);
+      }, 500);
       return true;
     }
 
@@ -1379,17 +1446,19 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
 
 async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    // Security: This endpoint is only accessible on localhost (127.0.0.1/::1)
-    // The API server binds to localhost only and is not exposed externally
-
-    // Check authentication first
+    // Verify authentication for config modifications
     if (!isAuthenticated(req)) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.writeHead(401, {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': 'Bearer realm="MAMA API"',
+      });
       res.end(
         JSON.stringify({
           error: true,
           code: 'UNAUTHORIZED',
-          message: 'Authentication required. Set Authorization header with valid token.',
+          message:
+            'Authentication required. Set MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN environment variable ' +
+            'and provide it in the Authorization header.',
         })
       );
       return;
@@ -1399,7 +1468,20 @@ async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerRespon
 
     const currentConfig = loadMAMAConfig();
 
-    const updatedConfig = mergeConfigUpdates(currentConfig, body);
+    let updatedConfig: Record<string, unknown>;
+    try {
+      updatedConfig = mergeConfigUpdates(currentConfig, body);
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'VALIDATION_ERROR',
+          message: err instanceof Error ? err.message : String(err),
+        })
+      );
+      return;
+    }
 
     const errors = validateConfigUpdate(updatedConfig);
     if (errors.length > 0) {
@@ -1494,6 +1576,13 @@ function mergeConfigUpdates(
 ): Record<string, any> {
   /* eslint-enable @typescript-eslint/no-explicit-any */
   const merged = { ...current };
+
+  if (updates.use_claude_cli !== undefined) {
+    if (typeof updates.use_claude_cli !== 'boolean') {
+      throw new Error('use_claude_cli must be a boolean');
+    }
+    merged.use_claude_cli = updates.use_claude_cli;
+  }
 
   if (updates.agent) {
     merged.agent = {
@@ -1650,6 +1739,10 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
     if (config.heartbeat.interval && config.heartbeat.interval < 60000) {
       errors.push('heartbeat interval must be at least 60000ms (1 minute)');
     }
+  }
+
+  if (config.use_claude_cli !== undefined && typeof config.use_claude_cli !== 'boolean') {
+    errors.push('use_claude_cli must be a boolean');
   }
 
   return errors;

@@ -19,6 +19,7 @@ export type {
   CategoryConfig,
   UltraWorkConfig,
   TaskContinuationConfig,
+  DelegationRule,
 } from './types.js';
 
 export { DEFAULT_LOOP_PREVENTION, DEFAULT_MULTI_AGENT_CONFIG } from './types.js';
@@ -75,3 +76,7 @@ export { UltraWorkManager } from './ultrawork.js';
 // Delegation Format Validator
 export type { DelegationValidation } from './delegation-format-validator.js';
 export { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
+
+// Work Tracker
+export type { ActiveWork } from './work-tracker.js';
+export { WorkTracker } from './work-tracker.js';

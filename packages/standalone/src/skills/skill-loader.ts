@@ -57,8 +57,14 @@ function parseFrontmatter(content: string): { frontmatter: Record<string, unknow
       } else {
         // Simple value
         currentArray = null;
-        // Parse booleans and numbers
-        if (value === 'true') {
+        // Try JSON parsing for object/array values (e.g., metadata)
+        if (value.startsWith('{') || value.startsWith('[')) {
+          try {
+            frontmatter[key] = JSON.parse(value);
+          } catch {
+            frontmatter[key] = value;
+          }
+        } else if (value === 'true') {
           frontmatter[key] = true;
         } else if (value === 'false') {
           frontmatter[key] = false;

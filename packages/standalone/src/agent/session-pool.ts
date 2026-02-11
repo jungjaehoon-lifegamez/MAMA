@@ -203,6 +203,33 @@ export class SessionPool {
   }
 
   /**
+   * Override session ID for a channel (e.g., when backend returns its own thread ID)
+   */
+  setSessionId(channelKey: string, sessionId: string): void {
+    const existing = this.sessions.get(channelKey);
+    const now = Date.now();
+
+    if (existing) {
+      existing.sessionId = sessionId;
+      existing.lastActive = now;
+      existing.inUse = true;
+      console.log(`[SessionPool] Updated session for ${channelKey}: ${sessionId}`);
+      return;
+    }
+
+    const entry: SessionEntry = {
+      sessionId,
+      lastActive: now,
+      messageCount: 1,
+      createdAt: now,
+      inUse: true,
+      totalInputTokens: 0,
+    };
+    this.sessions.set(channelKey, entry);
+    console.log(`[SessionPool] Created session for ${channelKey}: ${sessionId}`);
+  }
+
+  /**
    * Create a new session for a channel
    */
   private createSession(channelKey: string): string {

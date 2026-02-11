@@ -10,10 +10,11 @@
  * - Loops until stop_reason is "end_turn" or max turns reached
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
+import { CodexCLIWrapper } from './codex-cli-wrapper.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
@@ -79,8 +80,10 @@ void _matchToolPattern;
  * Load CLAUDE.md system prompt
  * Tries multiple paths: project root, ~/.mama, /etc/mama
  */
-function loadSystemPrompt(verbose = false): string {
+function loadSystemPrompt(verbose = false, backend?: 'claude' | 'codex'): string {
   const searchPaths = [
+    // Codex-specific prompt (if configured)
+    ...(backend === 'codex' ? [join(homedir(), '.mama/CODEX.md')] : []),
     // User home - MAMA standalone config (priority)
     join(homedir(), '.mama/CLAUDE.md'),
     // System config
@@ -94,6 +97,11 @@ function loadSystemPrompt(verbose = false): string {
       if (verbose) console.log(`[AgentLoop] Loaded system prompt from: ${path}`);
       return readFileSync(path, 'utf-8');
     }
+  }
+
+  if (backend === 'codex') {
+    console.warn('[AgentLoop] CODEX.md not found, using minimal Codex identity');
+    return 'You are MAMA OS running on Codex CLI. Follow user and MAMA rules.';
   }
 
   console.warn('[AgentLoop] CLAUDE.md not found, using default identity');
@@ -114,12 +122,148 @@ function loadSystemPrompt(verbose = false): string {
  * @param verbose - Enable verbose logging
  * @param context - Optional AgentContext for role-aware prompt injection
  */
+/**
+ * Files to exclude from skill prompt injection (reduce token bloat)
+ */
+const EXCLUDED_SKILL_FILES = new Set([
+  'CONNECTORS.md',
+  'connectors.md',
+  'LICENSE.md',
+  'license.md',
+  'CHANGELOG.md',
+  'changelog.md',
+  'CONTRIBUTING.md',
+  'contributing.md',
+  'README.md',
+  'readme.md',
+]);
+
+/** Max chars per skill file to prevent prompt bloat */
+const MAX_SKILL_FILE_CHARS = 4000;
+
+/**
+ * Recursively collect all .md files from a directory (sync)
+ * Filters out non-essential files (LICENSE, CONNECTORS, etc.)
+ */
+function collectMarkdownFiles(dir: string, prefix = ''): Array<{ path: string; content: string }> {
+  const results: Array<{ path: string; content: string }> = [];
+  if (!existsSync(dir)) return results;
+
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const fullPath = join(dir, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        results.push(...collectMarkdownFiles(fullPath, relativePath));
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
+        let content = readFileSync(fullPath, 'utf-8');
+        // Only truncate supplementary files, never command files
+        const isCommand = relativePath.startsWith('commands/');
+        if (!isCommand && content.length > MAX_SKILL_FILE_CHARS) {
+          content = content.slice(0, MAX_SKILL_FILE_CHARS) + '\n\n[... truncated]';
+        }
+        results.push({ path: relativePath, content });
+      }
+    }
+  } catch {
+    // Read failed
+  }
+  return results;
+}
+
+/**
+ * Load installed & enabled skills from ~/.mama/skills/
+ * Returns skill content blocks for system prompt injection.
+ * Reads all .md files recursively (commands/, skills/, etc.)
+ */
+export function loadInstalledSkills(
+  verbose = false,
+  options: { onlyCommands?: boolean } = {}
+): string[] {
+  const skillsBase = join(homedir(), '.mama', 'skills');
+  const stateFile = join(skillsBase, 'state.json');
+  const blocks: string[] = [];
+
+  // Load state (enabled/disabled tracking)
+  let state: Record<string, { enabled: boolean }> = {};
+  try {
+    if (existsSync(stateFile)) {
+      state = JSON.parse(readFileSync(stateFile, 'utf-8'));
+    }
+  } catch {
+    // No state file
+  }
+
+  const sources = ['mama', 'cowork', 'external'];
+  for (const source of sources) {
+    const sourceDir = join(skillsBase, source);
+    if (!existsSync(sourceDir)) continue;
+
+    try {
+      const entries = readdirSync(sourceDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const stateKey = `${source}/${entry.name}`;
+
+        // Skip disabled skills
+        if (state[stateKey]?.enabled === false) continue;
+
+        const skillDir = join(sourceDir, entry.name);
+        let mdFiles = collectMarkdownFiles(skillDir);
+        if (options.onlyCommands) {
+          mdFiles = mdFiles.filter((f) => f.path.startsWith('commands/'));
+        }
+
+        if (mdFiles.length > 0) {
+          const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
+          blocks.push(`# [Skill: ${source}/${entry.name}]\n\n${parts.join('\n\n---\n\n')}`);
+          if (verbose)
+            console.log(
+              `[AgentLoop] Loaded skill: ${source}/${entry.name} (${mdFiles.length} files)`
+            );
+        }
+      }
+    } catch {
+      // Directory read failed
+    }
+  }
+
+  // Also load flat .md skill files from ~/.mama/skills/ root
+  try {
+    const rootEntries = readdirSync(skillsBase, { withFileTypes: true });
+    for (const entry of rootEntries) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
+      const id = entry.name.replace(/\.md$/, '');
+      // Skip if already loaded from subdirectory
+      if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) continue;
+
+      const fullPath = join(skillsBase, entry.name);
+      let content = readFileSync(fullPath, 'utf-8');
+      if (content.length > MAX_SKILL_FILE_CHARS) {
+        content = content.slice(0, MAX_SKILL_FILE_CHARS) + '\n\n[... truncated]';
+      }
+      blocks.push(`# [Skill: mama/${id}]\n\n${content}`);
+      if (verbose) console.log(`[AgentLoop] Loaded root skill: ${id}`);
+    }
+  } catch {
+    // Root directory read failed
+  }
+
+  return blocks;
+}
+
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
+  const backend = (process.env.MAMA_BACKEND as 'claude' | 'codex' | undefined) ?? 'claude';
 
   // Load persona files: SOUL.md, IDENTITY.md, USER.md
-  const personaFiles = ['SOUL.md', 'IDENTITY.md', 'USER.md'];
+  const personaFiles = backend === 'codex' ? ['USER.md'] : ['SOUL.md', 'IDENTITY.md', 'USER.md'];
   for (const file of personaFiles) {
     const path = join(mamaHome, file);
     if (existsSync(path)) {
@@ -129,6 +273,27 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
     } else {
       if (verbose) console.log(`[AgentLoop] Persona file not found (skipping): ${file}`);
     }
+  }
+
+  // Load installed & enabled skills (HIGH PRIORITY — before CLAUDE.md)
+  const skillBlocks = loadInstalledSkills(verbose, { onlyCommands: backend === 'codex' });
+  if (skillBlocks.length > 0) {
+    const skillDirective = [
+      '# Installed Skills (PRIORITY)',
+      '',
+      '**IMPORTANT:** The following skills/plugins are installed by the user.',
+      'When a user request matches a skill by keywords or description, you MUST:',
+      '1. Find the matching skill section below (check "keywords" in frontmatter or skill name)',
+      '2. Follow its "지시사항" / instructions EXACTLY as written — do NOT improvise alternatives',
+      '3. Use the tools available to you (fetch, Bash, etc.) as the skill directs',
+      '4. DO NOT create separate scripts or files unless the skill explicitly instructs it',
+      '5. For [INSTALLED PLUGIN COMMAND] messages, find matching "commands/{name}.md"',
+      '6. DO NOT use the Skill tool — these are NOT system skills',
+      '',
+      skillBlocks.join('\n\n---\n\n'),
+    ].join('\n');
+    layers.push(skillDirective);
+    if (verbose) console.log(`[AgentLoop] Injected ${skillBlocks.length} installed skills`);
   }
 
   // Add context prompt if AgentContext is provided (role awareness)
@@ -142,7 +307,7 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   }
 
   // Load CLAUDE.md (base instructions)
-  const claudeMd = loadSystemPrompt(verbose);
+  const claudeMd = loadSystemPrompt(verbose, backend);
   layers.push(claudeMd);
 
   return layers.join('\n\n---\n\n');
@@ -178,7 +343,7 @@ To call a Gateway Tool, output a JSON block:
 }
 
 export class AgentLoop {
-  private readonly agent: ClaudeCLIWrapper | PersistentCLIAdapter;
+  private readonly agent: ClaudeCLIWrapper | PersistentCLIAdapter | CodexCLIWrapper;
   private readonly claudeCLI: ClaudeCLIWrapper | null = null;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
@@ -187,6 +352,14 @@ export class AgentLoop {
   private readonly model: string;
   private readonly onTurn?: (turn: TurnInfo) => void;
   private readonly onToolUse?: (toolName: string, input: unknown, result: unknown) => void;
+  private readonly onTokenUsage?: (record: {
+    channel_key: string;
+    agent_id?: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens?: number;
+    cost_usd?: number;
+  }) => void;
   private readonly laneManager: LaneManager;
   private readonly useLanes: boolean;
   private sessionKey: string;
@@ -194,6 +367,7 @@ export class AgentLoop {
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
   private readonly usePersistentCLI: boolean;
+  private readonly backend: 'claude' | 'codex';
   private readonly postToolHandler: PostToolHandler | null;
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
@@ -255,8 +429,14 @@ export class AgentLoop {
       console.warn(`[AgentLoop] ${checkResult.warning}`);
     }
 
+    // Choose backend (default: claude)
+    this.backend = options.backend ?? 'claude';
+
     // Choose CLI mode: Persistent (fast, experimental) or Standard (stable)
-    this.usePersistentCLI = options.usePersistentCLI ?? false;
+    this.usePersistentCLI = this.backend === 'codex' ? false : (options.usePersistentCLI ?? false);
+    if (this.backend === 'codex' && options.usePersistentCLI) {
+      console.warn('[AgentLoop] Codex backend does not support persistent CLI mode; disabling');
+    }
 
     if (this.usePersistentCLI) {
       // Persistent CLI mode: keeps Claude process alive for multi-turn conversations
@@ -267,23 +447,35 @@ export class AgentLoop {
         systemPrompt: defaultSystemPrompt,
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
         // Headless daemon — no interactive permission prompts possible
-        dangerouslySkipPermissions: true,
+        dangerouslySkipPermissions: false, // Changed to false for safety
         useGatewayTools: useGatewayMode,
       });
       this.agent = this.persistentCLI;
       console.log('[AgentLoop] 🚀 Persistent CLI mode enabled - faster responses');
     } else {
-      // Standard CLI mode: spawns new process per message
-      this.claudeCLI = new ClaudeCLIWrapper({
-        model: options.model ?? 'claude-sonnet-4-20250514',
-        sessionId,
-        systemPrompt: defaultSystemPrompt,
-        mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-        // Headless daemon — no interactive permission prompts possible
-        dangerouslySkipPermissions: true,
-        useGatewayTools: useGatewayMode,
-      });
-      this.agent = this.claudeCLI;
+      if (this.backend === 'codex') {
+        // Codex CLI mode: spawns new Codex process per message
+        this.agent = new CodexCLIWrapper({
+          model: options.model,
+          sessionId,
+          systemPrompt: defaultSystemPrompt,
+          sandbox: 'read-only',
+          skipGitRepoCheck: true,
+        });
+        console.log('[AgentLoop] Codex CLI backend enabled');
+      } else {
+        // Standard Claude CLI mode: spawns new process per message
+        this.claudeCLI = new ClaudeCLIWrapper({
+          model: options.model ?? 'claude-sonnet-4-20250514',
+          sessionId,
+          systemPrompt: defaultSystemPrompt,
+          mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
+          // Headless daemon — no interactive permission prompts possible
+          dangerouslySkipPermissions: false, // Changed to false for safety
+          useGatewayTools: useGatewayMode,
+        });
+        this.agent = this.claudeCLI;
+      }
     }
 
     // Log tool mode for transparency
@@ -306,6 +498,7 @@ export class AgentLoop {
     this.model = options.model ?? 'claude-sonnet-4-20250514';
     this.onTurn = options.onTurn;
     this.onToolUse = options.onToolUse;
+    this.onTokenUsage = options.onTokenUsage;
 
     this.laneManager = getGlobalLaneManager();
     this.useLanes = options.useLanes ?? false;
@@ -561,27 +754,33 @@ export class AgentLoop {
           },
         };
 
-        // Persistent CLI preserves context automatically - only send new messages
-        // Non-persistent CLI needs full history formatted as prompt
-        const promptText = this.usePersistentCLI
-          ? this.formatLastMessageOnly(history)
-          : this.formatHistoryAsPrompt(history);
-
         let piResult;
+        // Pass role-specific model and resume flag based on session state
+        // First turn of new session: --session-id (inject system prompt)
+        // Subsequent turns (tool loop) or resumed sessions: --resume (skip system prompt)
+        const shouldResume = !sessionIsNew || turn > 1;
+        // Persistent CLI preserves context automatically - only send new messages
+        // Codex resume also preserves context - send only last message
+        // Non-persistent CLI needs full history formatted as prompt
+        const promptText =
+          this.usePersistentCLI || (this.backend === 'codex' && shouldResume)
+            ? this.formatLastMessageOnly(history)
+            : this.formatHistoryAsPrompt(history);
         try {
-          // Pass role-specific model and resume flag based on session state
-          // First turn of new session: --session-id (inject system prompt)
-          // Subsequent turns (tool loop) or resumed sessions: --resume (skip system prompt)
-          const shouldResume = !sessionIsNew || turn > 1;
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
           });
+          // Codex returns its own thread_id; map it into the session pool for continuity
+          if (this.backend === 'codex' && piResult.session_id && ownedSession) {
+            this.sessionPool.setSessionId(channelKey, piResult.session_id);
+            this.agent.setSessionId(piResult.session_id);
+          }
           // After first successful call, mark session as not new for subsequent turns
           if (turn === 1) sessionIsNew = false;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error('[AgentLoop] Claude CLI error:', errorMessage);
+          console.error(`[AgentLoop] ${this.backend} CLI error:`, errorMessage);
 
           // Check if this is a recoverable session error
           // 1. "No conversation found" - CLI session was lost (daemon restart, timeout)
@@ -606,7 +805,7 @@ export class AgentLoop {
             console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
           } else {
             throw new AgentError(
-              `Claude CLI error: ${errorMessage}`,
+              `CLI error: ${errorMessage}`,
               'CLI_ERROR',
               error instanceof Error ? error : undefined,
               true // retryable
@@ -649,8 +848,9 @@ export class AgentLoop {
         }
 
         // Add tool_use blocks from Claude CLI if present (MCP mode)
-        if (piResult.toolUseBlocks && piResult.toolUseBlocks.length > 0) {
-          for (const toolUse of piResult.toolUseBlocks) {
+        if ('toolUseBlocks' in piResult && Array.isArray(piResult.toolUseBlocks)) {
+          const toolUseBlocks = piResult.toolUseBlocks;
+          for (const toolUse of toolUseBlocks) {
             contentBlocks.push({
               type: 'tool_use',
               id: toolUse.id,
@@ -658,14 +858,14 @@ export class AgentLoop {
               input: toolUse.input,
             } as ToolUseBlock);
           }
-          console.log(`[AgentLoop] Detected ${piResult.toolUseBlocks.length} tool calls from MCP`);
+          console.log(`[AgentLoop] Detected ${toolUseBlocks.length} tool calls from MCP`);
         }
 
         // Set stop_reason based on whether tools were requested
         // In Gateway mode: check parsed tool calls; in MCP mode: check CLI tool blocks
         const hasToolUse = this.isGatewayMode
           ? parsedToolCalls.length > 0
-          : piResult.hasToolUse || false;
+          : ('hasToolUse' in piResult ? piResult.hasToolUse : false) || false;
 
         // eslint-disable-next-line prefer-const
         response = {
@@ -682,6 +882,22 @@ export class AgentLoop {
         // Update usage
         totalUsage.input_tokens += response.usage.input_tokens;
         totalUsage.output_tokens += response.usage.output_tokens;
+
+        // Record token usage
+        if (this.onTokenUsage) {
+          try {
+            this.onTokenUsage({
+              channel_key: channelKey,
+              agent_id: options?.agentContext?.roleName || this.model, // Use roleName if available, else model
+              input_tokens: response.usage.input_tokens,
+              output_tokens: response.usage.output_tokens,
+              cache_read_tokens: response.usage.cache_read_input_tokens || 0, // No longer needs 'as any' cast
+              cost_usd: piResult.cost_usd || 0,
+            });
+          } catch {
+            // Ignore recording errors - never break the agent loop
+          }
+        }
 
         // Track tokens in session pool for auto-reset at 80% context
         const tokenStatus = this.sessionPool.updateTokens(channelKey, response.usage.input_tokens);

@@ -146,6 +146,8 @@ export interface ToolsConfig {
  * Agent configuration
  */
 export interface AgentConfig {
+  /** Backend for agent execution (default: claude) */
+  backend?: 'claude' | 'codex';
   /** Claude model to use */
   model: string;
   /** Maximum conversation turns */
@@ -406,6 +408,8 @@ export interface MultiAgentConfig {
   mention_delegation?: boolean;
   /** Maximum depth of @mention delegation chains @default 3 */
   max_mention_depth?: number;
+  /** Explicit delegation rules controlling which agents can delegate to which */
+  delegation_rules?: Array<{ from: string; to: string[] }>;
 }
 
 /**
@@ -457,6 +461,7 @@ export interface MAMAConfig {
 export const DEFAULT_CONFIG: MAMAConfig = {
   version: 1,
   agent: {
+    backend: 'claude',
     model: 'claude-sonnet-4-20250514',
     max_turns: 10,
     timeout: 300000, // 5 minutes

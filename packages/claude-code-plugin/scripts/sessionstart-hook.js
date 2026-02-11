@@ -32,7 +32,21 @@ const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 // Add core to require path
 require('module').globalPaths.push(CORE_PATH);
 
-const { info, warn, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
+// Fallback logger (before dependencies are installed)
+let info = (...args) => console.error('[INFO]', ...args);
+let warn = (...args) => console.error('[WARN]', ...args);
+let logError = (...args) => console.error('[ERROR]', ...args);
+
+function upgradeLogger() {
+  try {
+    const logger = require('@jungjaehoon/mama-core/debug-logger');
+    info = logger.info;
+    warn = logger.warn;
+    logError = logger.error;
+  } catch {
+    // Keep fallback logger
+  }
+}
 
 // Configuration
 const MAX_WARMUP_MS = 8000; // Allow up to 8s for initial model load
@@ -358,8 +372,10 @@ Then restart Claude Code.
     process.exit(1);
   }
 
+  // Upgrade to real logger now that dependencies are available
+  upgradeLogger();
+
   if (depResult.installed) {
-    // Dependencies were just installed - notify user
     const installLatency = Date.now() - startTime;
     info(`[SessionStart] Dependencies installed in ${installLatency}ms`);
   }

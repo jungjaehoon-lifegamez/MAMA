@@ -73,9 +73,14 @@ export function showToast(message, duration = 3000) {
  */
 export function scrollToBottom(container) {
   // Use setTimeout to ensure DOM has updated before scrolling
-  setTimeout(() => {
+  const doScroll = () => {
     container.scrollTop = container.scrollHeight;
-  }, 50);
+    if (container.scrollTo) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+    }
+  };
+  setTimeout(doScroll, 50);
+  requestAnimationFrame(doScroll);
 }
 
 /**

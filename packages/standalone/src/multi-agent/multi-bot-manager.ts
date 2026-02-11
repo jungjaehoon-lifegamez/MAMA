@@ -267,6 +267,40 @@ export class MultiBotManager {
   }
 
   /**
+   * Send a file (with optional message) as a specific agent's bot
+   */
+  async sendFileAsAgent(
+    agentId: string,
+    channelId: string,
+    filePath: string,
+    message?: string
+  ): Promise<Message | null> {
+    const bot = this.bots.get(agentId);
+    if (!bot?.connected) {
+      console.warn(`[MultiBotManager] No connected bot for agent ${agentId} for file send`);
+      return null;
+    }
+
+    try {
+      const channel = await bot.client.channels.fetch(channelId);
+      if (!channel || !('send' in channel)) {
+        console.error(`[MultiBotManager] Channel ${channelId} not found or not text channel`);
+        return null;
+      }
+
+      const msg = await (channel as TextChannel).send({
+        content: message || undefined,
+        files: [filePath],
+      });
+      console.log(`[MultiBotManager] Agent ${agentId} sent file to ${channelId}: ${filePath}`);
+      return msg;
+    } catch (error) {
+      console.error(`[MultiBotManager] Failed to send file as ${agentId}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Reply to a message as a specific agent's bot
    */
   async replyAsAgent(
