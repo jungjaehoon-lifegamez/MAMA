@@ -27,8 +27,28 @@
 import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import os from 'os';
-import path from 'path';
 import { EventEmitter } from 'events';
+import type { TokenUsageRecord } from './types.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const persistentLogger = new DebugLogger('PersistentCLI');
+const poolLogger = new DebugLogger('ProcessPool');
+
+/**
+ * Regex to strip lone Unicode surrogates that cause API 400 errors.
+ * Matches high surrogates not followed by a low surrogate, and
+ * low surrogates not preceded by a high surrogate.
+ */
+// eslint-disable-next-line no-control-regex
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 export interface PersistentProcessOptions {
   sessionId: string;
@@ -51,6 +71,12 @@ export interface PersistentProcessOptions {
   allowedTools?: string[];
   /** Structurally disallowed tools (--disallowedTools CLI flag) */
   disallowedTools?: string[];
+  /** Optional callback for recording token usage */
+  onTokenUsage?: (record: TokenUsageRecord) => void;
+  /** Channel key for token usage tracking */
+  channelKey?: string;
+  /** Agent ID for token usage tracking */
+  agentId?: string;
 }
 
 export interface ToolUseBlock {
@@ -145,10 +171,12 @@ export class PersistentClaudeProcess extends EventEmitter {
   private toolUseBlocks: ToolUseBlock[] = [];
   private accumulatedText: string = '';
   private startPromise: Promise<void> | null = null;
+  private onTokenUsage?: (record: TokenUsageRecord) => void;
 
   constructor(options: PersistentProcessOptions) {
     super();
     this.options = options;
+    this.onTokenUsage = options.onTokenUsage;
 
     // Register default error handler to prevent Node crash if no listeners attached
     this.on('error', (err) => {
@@ -170,7 +198,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
 
     if (this.state !== 'dead') {
-      console.log(`[PersistentCLI] Process already in state: ${this.state}`);
+      persistentLogger.info(`[PersistentCLI] Process already in state: ${this.state}`);
       return;
     }
 
@@ -184,10 +212,12 @@ export class PersistentClaudeProcess extends EventEmitter {
 
   private async doStart(): Promise<void> {
     this.state = 'starting';
-    console.log(`[PersistentCLI] Starting process for session: ${this.options.sessionId}`);
+    persistentLogger.info(
+      `[PersistentCLI] Starting process for session: ${this.options.sessionId}`
+    );
 
     const args = this.buildArgs();
-    console.log(`[PersistentCLI] Spawning: claude ${args.join(' ')}`);
+    persistentLogger.info(`[PersistentCLI] Spawning: claude ${args.join(' ')}`);
 
     // Clean environment: Remove conflicting MAMA_* variables before merging
     const cleanEnv = { ...process.env };
@@ -202,8 +232,10 @@ export class PersistentClaudeProcess extends EventEmitter {
       }
     }
 
+    // Use home directory as cwd so agents have broad file access
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: os.homedir(),
       env: { ...cleanEnv, ...(this.options.env || {}) },
     });
 
@@ -224,7 +256,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     const pid = this.process?.pid;
     if (currentState === 'starting' && pid && !this.process?.killed) {
       this.state = 'idle';
-      console.log(`[PersistentCLI] Process started and waiting for first message`);
+      persistentLogger.info(`[PersistentCLI] Process started and waiting for first message`);
     } else {
       this.state = 'dead';
       throw new Error('Process failed to start');
@@ -272,11 +304,6 @@ export class PersistentClaudeProcess extends EventEmitter {
       args.push('--disallowedTools', ...this.options.disallowedTools);
     }
 
-    // Add MAMA workspace for file access (NOT full ~/.mama which leaks logs/config)
-    // Personas are already injected via --system-prompt, no need for ~/.mama/personas
-    const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
-    args.push('--add-dir', mamaWorkspace);
-
     return args;
   }
 
@@ -317,17 +344,19 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.handleTimeout();
       }, timeoutMs);
 
-      // Build and send the message
+      // Strip lone surrogates to prevent API 400 errors
+      const safeContent = content.replace(LONE_SURROGATE_RE, '');
+
       const message = {
         type: 'user',
         message: {
           role: 'user',
-          content: content,
+          content: safeContent,
         },
       };
 
       const jsonLine = JSON.stringify(message) + '\n';
-      console.log(`[PersistentCLI] Sending message (${content.length} chars)`);
+      persistentLogger.info(`[PersistentCLI] Sending message (${content.length} chars)`);
 
       if (!this.process?.stdin?.writable) {
         this.handleError(new Error('Process stdin not writable'));
@@ -349,6 +378,20 @@ export class PersistentClaudeProcess extends EventEmitter {
     toolUseId: string,
     result: string,
     isError: boolean = false,
+    callbacks?: PromptCallbacks
+  ): Promise<PromptResult> {
+    return this.sendToolResults(
+      [{ tool_use_id: toolUseId, content: result, is_error: isError }],
+      callbacks
+    );
+  }
+
+  /**
+   * Send multiple tool results back to Claude in a single message.
+   * Required when Claude requests multiple tools in one turn.
+   */
+  async sendToolResults(
+    results: Array<{ tool_use_id: string; content: string; is_error: boolean }>,
     callbacks?: PromptCallbacks
   ): Promise<PromptResult> {
     if (this.state === 'dead') {
@@ -374,24 +417,24 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.handleTimeout();
       }, timeoutMs);
 
-      // Build tool_result message
+      // Strip lone surrogates from tool results to prevent API 400 errors
       const message = {
         type: 'user',
         message: {
           role: 'user',
-          content: [
-            {
-              type: 'tool_result',
-              tool_use_id: toolUseId,
-              content: result,
-              is_error: isError,
-            },
-          ],
+          content: results.map((r) => ({
+            type: 'tool_result',
+            tool_use_id: r.tool_use_id,
+            content: r.content.replace(LONE_SURROGATE_RE, ''),
+            is_error: r.is_error,
+          })),
         },
       };
 
       const jsonLine = JSON.stringify(message) + '\n';
-      console.log(`[PersistentCLI] Sending tool_result for ${toolUseId} (${result.length} chars)`);
+      persistentLogger.info(
+        `[PersistentCLI] Sending ${results.length} tool_result(s): ${results.map((r) => r.tool_use_id).join(', ')}`
+      );
 
       if (!this.process?.stdin?.writable) {
         this.handleError(new Error('Process stdin not writable'));
@@ -447,12 +490,12 @@ export class PersistentClaudeProcess extends EventEmitter {
     switch (event.type) {
       case 'system':
         if (event.subtype === 'init') {
-          console.log(`[PersistentCLI] Received init event`);
+          persistentLogger.info(`[PersistentCLI] Received init event`);
           // Init event received (logged for debugging)
           this.emit('init', event);
         } else if (event.subtype === 'hook_response') {
           // Hook responses - could extract context if needed
-          console.log(`[PersistentCLI] Hook response received`);
+          persistentLogger.info(`[PersistentCLI] Hook response received`);
         }
         break;
 
@@ -473,7 +516,7 @@ export class PersistentClaudeProcess extends EventEmitter {
               };
               this.toolUseBlocks.push(toolUse);
               this.currentCallbacks?.onToolUse?.(toolName, block.input ?? {});
-              console.log(`[PersistentCLI] Tool use: ${toolName}`);
+              persistentLogger.info(`[PersistentCLI] Tool use: ${toolName}`);
             }
           }
         }
@@ -499,7 +542,23 @@ export class PersistentClaudeProcess extends EventEmitter {
             hasToolUse: this.toolUseBlocks.length > 0,
           };
 
-          console.log(
+          // Record token usage
+          if (this.onTokenUsage) {
+            try {
+              this.onTokenUsage({
+                channel_key: this.options.channelKey || 'cli',
+                agent_id: this.options.agentId || undefined,
+                input_tokens: event.usage?.input_tokens || 0,
+                output_tokens: event.usage?.output_tokens || 0,
+                cache_read_tokens: event.usage?.cache_read_input_tokens || 0,
+                cost_usd: event.total_cost_usd || undefined,
+              });
+            } catch {
+              /* ignore recording errors */
+            }
+          }
+
+          persistentLogger.info(
             `[PersistentCLI] Request complete (${event.duration_ms}ms, ${this.toolUseBlocks.length} tools)`
           );
           this.currentCallbacks?.onFinal?.({
@@ -547,7 +606,7 @@ export class PersistentClaudeProcess extends EventEmitter {
    * Handle process close
    */
   private handleClose(code: number | null): void {
-    console.log(`[PersistentCLI] Process closed with code ${code}`);
+    persistentLogger.info(`[PersistentCLI] Process closed with code ${code}`);
     this.state = 'dead';
     this.process = null;
 
@@ -621,7 +680,7 @@ export class PersistentClaudeProcess extends EventEmitter {
    * Stop the process
    */
   stop(): void {
-    console.log(`[PersistentCLI] Stopping process`);
+    persistentLogger.info(`[PersistentCLI] Stopping process`);
 
     // Reject any pending request BEFORE resetting state
     // This ensures promises are resolved even if process is already dead
@@ -702,18 +761,18 @@ export class PersistentProcessPool {
         ...options,
       };
 
-      console.log(`[ProcessPool] Creating new process for channel: ${channelKey}`);
+      poolLogger.info(`Creating new process for channel: ${channelKey}`);
       process = new PersistentClaudeProcess(mergedOptions);
 
       // Handle process errors - prevent unhandled 'error' event crash
       process.on('error', (err) => {
-        console.error(`[ProcessPool] Process error for ${channelKey}:`, err);
+        poolLogger.error(`Process error for ${channelKey}:`, err);
         this.processes.delete(channelKey);
       });
 
       // Handle process death - remove from pool
       process.on('close', () => {
-        console.log(`[ProcessPool] Process for ${channelKey} closed, removing from pool`);
+        poolLogger.info(`Process for ${channelKey} closed, removing from pool`);
         this.processes.delete(channelKey);
       });
 
@@ -740,7 +799,7 @@ export class PersistentProcessPool {
    */
   stopAll(): void {
     for (const [key, process] of this.processes) {
-      console.log(`[ProcessPool] Stopping process for: ${key}`);
+      poolLogger.info(`Stopping process for: ${key}`);
       process.stop();
     }
     this.processes.clear();

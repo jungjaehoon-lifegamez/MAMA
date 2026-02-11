@@ -94,3 +94,7 @@ temp/
 dev-docs/
 docs/test/
 .sisyphus/
+
+.gemini/
+gha-creds-*.json
+GEMINI.md

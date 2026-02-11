@@ -15,6 +15,9 @@
 import { escapeHtml, showToast, scrollToBottom, autoResizeTextarea } from '../utils/dom.js';
 import { formatMessageTime, formatAssistantMessage } from '../utils/format.js';
 import { API } from '../utils/api.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('Chat');
 
 /**
  * Chat Module Class
@@ -91,7 +94,7 @@ export class ChatModule {
     // DISABLED: Auto-checkpoint was saving raw conversation history to MAMA memory.
     // Checkpoints should only be saved manually via /checkpoint command with proper summaries.
     // The viewer chat uses localStorage for session persistence instead.
-    console.log('[ChatModule] Auto-checkpoint disabled (use /checkpoint for manual saves)');
+    logger.info('Auto-checkpoint disabled (use /checkpoint for manual saves)');
     return;
   }
 
@@ -109,7 +112,7 @@ export class ChatModule {
     // Try to get last active server session first
     const lastActiveSession = await API.getLastActiveSession();
     if (lastActiveSession && lastActiveSession.id && lastActiveSession.isAlive) {
-      console.log('[Chat] Resuming last active session:', lastActiveSession.id);
+      logger.info('Resuming last active session:', lastActiveSession.id);
       this.addSystemMessage('Resuming previous session...');
       localStorage.setItem('mama_chat_session_id', lastActiveSession.id);
       this.initWebSocket(lastActiveSession.id);
@@ -119,7 +122,7 @@ export class ChatModule {
     const savedSessionId = localStorage.getItem('mama_chat_session_id');
 
     if (savedSessionId) {
-      console.log('[Chat] Trying saved session:', savedSessionId);
+      logger.info('Trying saved session:', savedSessionId);
       this.addSystemMessage('Connecting to session...');
       this.initWebSocket(savedSessionId);
     } else {
@@ -128,12 +131,12 @@ export class ChatModule {
         const data = await API.createSession('.');
         const sessionId = data.sessionId;
 
-        console.log('[Chat] Created new session:', sessionId);
+        logger.info('Created new session:', sessionId);
         localStorage.setItem('mama_chat_session_id', sessionId);
 
         this.initWebSocket(sessionId);
       } catch (error) {
-        console.error('[Chat] Failed to create session:', error);
+        logger.error('Failed to create session:', error);
         this.addSystemMessage(`Failed to create session: ${error.message}`, 'error');
       }
     }
@@ -168,7 +171,7 @@ export class ChatModule {
    */
   initWebSocket(sessionId) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log('[Chat] Already connected');
+      logger.info('Already connected');
       return;
     }
 
@@ -179,11 +182,11 @@ export class ChatModule {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws?sessionId=${sessionId}`;
 
-    console.log('[Chat] Connecting to:', wsUrl);
+    logger.info('Connecting to:', wsUrl);
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
-      console.log('[Chat] Connected');
+      logger.info('Connected');
       this.reconnectAttempts = 0;
       this.updateStatus('connected');
       this.enableInput(true);
@@ -203,12 +206,12 @@ export class ChatModule {
         const data = JSON.parse(event.data);
         this.handleMessage(data);
       } catch (e) {
-        console.error('[Chat] Parse error:', e);
+        logger.error('Parse error:', e);
       }
     };
 
     this.ws.onclose = (event) => {
-      console.log('[Chat] Disconnected:', event.code, event.reason);
+      logger.info('Disconnected:', event.code, event.reason);
       this.updateStatus('disconnected');
       this.enableInput(false);
 
@@ -218,7 +221,7 @@ export class ChatModule {
     };
 
     this.ws.onerror = (error) => {
-      console.error('[Chat] WebSocket error:', error);
+      logger.error('WebSocket error:', error);
       this.updateStatus('disconnected');
     };
   }
@@ -229,14 +232,14 @@ export class ChatModule {
   handleMessage(data) {
     switch (data.type) {
       case 'attached':
-        console.log('[Chat] Attached to session:', data.sessionId);
+        logger.info('Attached to session:', data.sessionId);
         this.addSystemMessage('Connected to session');
         break;
 
       case 'history':
         // Display conversation history from server
         if (data.messages && data.messages.length > 0) {
-          console.log('[Chat] Received history:', data.messages.length, 'messages');
+          logger.info('Received history:', data.messages.length, 'messages');
           this.displayHistory(data.messages);
         }
         break;
@@ -257,7 +260,7 @@ export class ChatModule {
 
       case 'error':
         if (data.error === 'session_not_found') {
-          console.log('[Chat] Session not found, creating new one...');
+          logger.info('Session not found, creating new one...');
           localStorage.removeItem('mama_chat_session_id');
           this.addSystemMessage('Session expired. Creating new session...');
 
@@ -289,11 +292,11 @@ export class ChatModule {
         break;
 
       case 'connected':
-        console.log('[Chat] WebSocket connected:', data.clientId);
+        logger.info('WebSocket connected:', data.clientId);
         break;
 
       default:
-        console.log('[Chat] Unknown message type:', data.type);
+        logger.warn('Unknown message type:', data.type);
     }
   }
 
@@ -304,7 +307,7 @@ export class ChatModule {
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
     this.reconnectAttempts++;
 
-    console.log(`[Chat] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    logger.info(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
     this.addSystemMessage(
       `Connection lost. Reconnecting in ${Math.round(delay / 1000)}s...`,
       'warning'
@@ -364,7 +367,7 @@ export class ChatModule {
     input.value = '';
     autoResizeTextarea(input);
 
-    console.log('[Chat] Sent:', message);
+    logger.info('Sent:', message);
     this.resetIdleTimer();
   }
 
@@ -391,7 +394,7 @@ export class ChatModule {
       })
     );
 
-    console.log('[Chat] Quiz choice sent:', choice);
+    logger.info('Quiz choice sent:', choice);
     this.resetIdleTimer();
   }
 
@@ -403,7 +406,7 @@ export class ChatModule {
     const command = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
 
-    console.log('[Chat] Command:', command, 'Args:', args);
+    logger.info('Command:', command, 'Args:', args);
 
     switch (command) {
       case 'save':
@@ -422,11 +425,57 @@ export class ChatModule {
         this.commandHelp();
         break;
       default:
-        this.addSystemMessage(
-          `Unknown command: /${command}. Type /help for available commands.`,
-          'error'
-        );
+        // Forward unrecognized commands to agent as regular messages
+        this.sendRaw(message);
     }
+  }
+
+  /**
+   * Send a message directly to the agent (bypass command parsing)
+   * Rewrites /command to avoid Claude CLI slash command interception
+   */
+  sendRaw(message) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.addSystemMessage('Not connected. Please connect to a session first.', 'error');
+      return;
+    }
+
+    this.addUserMessage(message);
+    this.enableSend(false);
+
+    // Rewrite /command → natural language to avoid Claude CLI interception
+    // Must be explicit enough to override built-in skills (BMAD, etc.)
+    let agentMessage = message;
+    if (message.startsWith('/')) {
+      const parts = message.slice(1).split(' ');
+      const cmd = parts[0];
+      const args = parts.slice(1).join(' ');
+      agentMessage = [
+        `[INSTALLED PLUGIN COMMAND — DO NOT USE SKILL TOOL]`,
+        `Look in your system prompt under "Installed Skills (PRIORITY)" for the "commands/${cmd}.md" section.`,
+        `Execute ONLY the instructions from that installed plugin command file.`,
+        `DO NOT invoke the Skill tool. DO NOT match to bmad or any other built-in skill.`,
+        `This command comes from a user-installed Cowork/OpenClaw plugin, not a system skill.`,
+        args ? `User arguments: <user_args>${args}</user_args>` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
+    }
+
+    this.ws.send(
+      JSON.stringify({
+        type: 'send',
+        sessionId: this.sessionId,
+        content: agentMessage,
+      })
+    );
+
+    if (this.memoryModule) {
+      this.memoryModule.showRelatedForMessage(message);
+    }
+
+    logger.info('Forwarded to agent:', agentMessage);
+    this.resetIdleTimer();
   }
 
   /**
@@ -478,7 +527,7 @@ export class ChatModule {
       await this.saveCheckpoint(summary);
       this.addSystemMessage('✅ Checkpoint saved successfully');
     } catch (error) {
-      console.error('[Chat] Checkpoint save failed:', error);
+      logger.error('Checkpoint save failed:', error);
       this.addSystemMessage(`Failed to save checkpoint: ${error.message}`, 'error');
     }
   }
@@ -498,7 +547,7 @@ export class ChatModule {
         this.addSystemMessage('No checkpoint found', 'error');
       }
     } catch (error) {
-      console.error('[Chat] Checkpoint load failed:', error);
+      logger.error('Checkpoint load failed:', error);
       this.addSystemMessage(`Failed to load checkpoint: ${error.message}`, 'error');
     }
   }
@@ -568,9 +617,12 @@ export class ChatModule {
 
     this.saveToHistory('assistant', text, timestamp);
 
+    // Show unread badge if floating panel is closed
+    this.showUnreadBadge();
+
     // Auto-play TTS if enabled
     if (this.ttsEnabled && text) {
-      console.log('[TTS] Auto-play enabled, speaking assistant message');
+      logger.info('Auto-play enabled, speaking assistant message');
       this.speak(text);
     }
   }
@@ -718,7 +770,7 @@ export class ChatModule {
 
           container.scrollTo({
             top: container.scrollHeight,
-            behavior: 'smooth',
+            behavior: 'auto',
           });
         }
         this.rafPending = false;
@@ -794,7 +846,7 @@ export class ChatModule {
   updateStatus(status) {
     const statusEl = document.getElementById('chat-status');
     if (!statusEl) {
-      console.warn('[Chat] Status element not found');
+      logger.warn('Status element not found');
       return;
     }
 
@@ -802,7 +854,7 @@ export class ChatModule {
     const text = statusEl.querySelector('span:not(.status-indicator)');
 
     if (!indicator || !text) {
-      console.warn('[Chat] Status indicator or text not found');
+      logger.warn('Status indicator or text not found');
       return;
     }
 
@@ -977,7 +1029,7 @@ export class ChatModule {
           messageEl.style.opacity = '1';
         }, 300);
       } catch (err) {
-        console.error('[Chat] Copy failed:', err);
+        logger.error('Copy failed:', err);
         showToast('Failed to copy', 'error');
       }
     }
@@ -994,7 +1046,7 @@ export class ChatModule {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      console.warn('[Voice] SpeechRecognition not supported');
+      logger.warn('SpeechRecognition not supported');
       const micBtn = document.getElementById('chat-mic');
       if (micBtn) {
         micBtn.style.display = 'none';
@@ -1014,8 +1066,8 @@ export class ChatModule {
       let finalTranscript = '';
 
       // Build transcript from NEW results only (use resultIndex)
-      console.log(
-        '[Voice] onresult fired, resultIndex:',
+      logger.debug(
+        'onresult fired, resultIndex:',
         event.resultIndex,
         'total results:',
         event.results.length
@@ -1027,15 +1079,15 @@ export class ChatModule {
 
         if (result.isFinal) {
           finalTranscript += transcript;
-          console.log(
-            '[Voice] Final result [' + i + ']:',
+          logger.debug(
+            'Final result [' + i + ']:',
             transcript,
             'Confidence:',
             result[0].confidence
           );
         } else {
           interimTranscript += transcript;
-          console.log('[Voice] Interim result [' + i + ']:', transcript);
+          logger.debug('Interim result [' + i + ']:', transcript);
         }
       }
 
@@ -1049,7 +1101,7 @@ export class ChatModule {
         }
         input.value = this.accumulatedTranscript;
         input.classList.remove('voice-active');
-        console.log('[Voice] Accumulated transcript:', this.accumulatedTranscript);
+        logger.debug('Accumulated transcript:', this.accumulatedTranscript);
       }
 
       // Handle interim transcripts - show temporarily with accumulated text
@@ -1059,7 +1111,7 @@ export class ChatModule {
           : interimTranscript;
         input.value = displayText;
         input.classList.add('voice-active');
-        console.log('[Voice] Showing interim (temp):', displayText);
+        logger.debug('Showing interim (temp):', displayText);
       }
 
       autoResizeTextarea(input);
@@ -1068,19 +1120,19 @@ export class ChatModule {
       clearTimeout(this.silenceTimeout);
       this.silenceTimeout = setTimeout(() => {
         if (this.isRecording) {
-          console.log('[Voice] Silence detected, stopping...');
+          logger.info('Silence detected, stopping...');
           this.stopVoice();
         }
       }, this.silenceDelay);
     };
 
     this.speechRecognition.onend = () => {
-      console.log('[Voice] Recognition ended');
+      logger.info('Recognition ended');
       this.stopVoice();
     };
 
     this.speechRecognition.onerror = (event) => {
-      console.error('[Voice] Error:', event.error);
+      logger.error('Error:', event.error);
       this.stopVoice();
 
       let errorMessage = '';
@@ -1101,7 +1153,7 @@ export class ChatModule {
       this.addSystemMessage(errorMessage, 'error');
     };
 
-    console.log('[Voice] SpeechRecognition initialized (lang:', this.speechRecognition.lang + ')');
+    logger.info('SpeechRecognition initialized (lang:', this.speechRecognition.lang + ')');
   }
 
   /**
@@ -1139,8 +1191,8 @@ export class ChatModule {
       input.classList.add('voice-active');
       input.placeholder = '말씀해주세요... (계속 말하면 이어서 인식됩니다)';
 
-      console.log('[Voice] Recording started (continuous mode)');
-      console.log('[Voice] Settings:', {
+      logger.info('Recording started (continuous mode)');
+      logger.debug('Settings:', {
         lang: this.speechRecognition.lang,
         continuous: this.speechRecognition.continuous,
         interimResults: this.speechRecognition.interimResults,
@@ -1153,7 +1205,7 @@ export class ChatModule {
         }
       }, this.silenceDelay);
     } catch (err) {
-      console.error('[Voice] Failed to start:', err);
+      logger.error('Failed to start:', err);
       this.addSystemMessage('음성 인식을 시작할 수 없습니다.', 'error');
     }
   }
@@ -1183,7 +1235,7 @@ export class ChatModule {
     input.classList.remove('voice-active');
     input.placeholder = 'Type your message...';
 
-    console.log('[Voice] Recording stopped');
+    logger.info('Recording stopped');
     this.resetIdleTimer();
   }
 
@@ -1196,7 +1248,7 @@ export class ChatModule {
    */
   initSpeechSynthesis() {
     if (!this.speechSynthesis) {
-      console.warn('[TTS] SpeechSynthesis not supported');
+      logger.warn('SpeechSynthesis not supported');
       return;
     }
 
@@ -1210,9 +1262,9 @@ export class ChatModule {
         voices[0];
 
       if (this.ttsVoice) {
-        console.log('[TTS] Korean voice selected:', this.ttsVoice.name, this.ttsVoice.lang);
+        logger.info('Korean voice selected:', this.ttsVoice.name, this.ttsVoice.lang);
       } else {
-        console.warn('[TTS] No Korean voice found, using default');
+        logger.warn('No Korean voice found, using default');
       }
     };
 
@@ -1223,7 +1275,7 @@ export class ChatModule {
       this.speechSynthesis.onvoiceschanged = loadVoices;
     }
 
-    console.log('[TTS] SpeechSynthesis initialized');
+    logger.info('SpeechSynthesis initialized');
   }
 
   /**
@@ -1240,7 +1292,7 @@ export class ChatModule {
         : 'TTS 비활성화됨 (클릭하여 켜기)';
     }
 
-    console.log('[TTS] Auto-play:', this.ttsEnabled ? 'ON' : 'OFF');
+    logger.info('Auto-play:', this.ttsEnabled ? 'ON' : 'OFF');
     showToast(this.ttsEnabled ? '🔊 TTS 활성화' : '🔇 TTS 비활성화');
   }
 
@@ -1256,7 +1308,7 @@ export class ChatModule {
       btn.title = this.handsFreeMode ? '핸즈프리 활성화됨' : '핸즈프리 비활성화됨';
     }
 
-    console.log('[TTS] Hands-free mode:', this.handsFreeMode ? 'ON' : 'OFF');
+    logger.info('Hands-free mode:', this.handsFreeMode ? 'ON' : 'OFF');
     showToast(this.handsFreeMode ? '🎙️ 핸즈프리 모드 활성화' : '🎙️ 핸즈프리 모드 비활성화');
 
     // Enable TTS automatically when hands-free is enabled
@@ -1284,16 +1336,16 @@ export class ChatModule {
 
     utterance.onstart = () => {
       this.isSpeaking = true;
-      console.log('[TTS] Speaking started');
+      logger.debug('Speaking started');
     };
 
     utterance.onend = () => {
       this.isSpeaking = false;
-      console.log('[TTS] Speaking ended');
+      logger.debug('Speaking ended');
 
       // If hands-free mode, start listening after TTS finishes
       if (this.handsFreeMode && !this.isRecording) {
-        console.log('[TTS] Hands-free mode: auto-starting voice input');
+        logger.info('Hands-free mode: auto-starting voice input');
         setTimeout(() => {
           this.startVoice();
         }, 500); // Small delay for smooth transition
@@ -1302,11 +1354,11 @@ export class ChatModule {
 
     utterance.onerror = (event) => {
       this.isSpeaking = false;
-      console.error('[TTS] Error:', event.error);
+      logger.error('Error:', event.error);
     };
 
     this.speechSynthesis.speak(utterance);
-    console.log('[TTS] Speaking:', text.substring(0, 50) + '...');
+    logger.debug('Speaking:', text.substring(0, 50) + '...');
   }
 
   /**
@@ -1316,7 +1368,7 @@ export class ChatModule {
     if (this.speechSynthesis && this.isSpeaking) {
       this.speechSynthesis.cancel();
       this.isSpeaking = false;
-      console.log('[TTS] Speaking stopped');
+      logger.debug('Speaking stopped');
     }
   }
 
@@ -1325,7 +1377,7 @@ export class ChatModule {
    */
   setTTSRate(rate) {
     this.ttsRate = Math.max(0.5, Math.min(2.0, rate));
-    console.log('[TTS] Rate set to:', this.ttsRate);
+    logger.info('Rate set to:', this.ttsRate);
   }
 
   // =============================================
@@ -1358,7 +1410,7 @@ export class ChatModule {
       };
       localStorage.setItem(storageKey, JSON.stringify(storageData));
     } catch (e) {
-      console.warn('[Chat] Failed to save history:', e);
+      logger.warn('Failed to save history:', e);
     }
   }
 
@@ -1383,7 +1435,7 @@ export class ChatModule {
 
       return data.history || [];
     } catch (e) {
-      console.warn('[Chat] Failed to load history:', e);
+      logger.warn('Failed to load history:', e);
       return null;
     }
   }
@@ -1471,7 +1523,7 @@ export class ChatModule {
     });
 
     scrollToBottom(container);
-    console.log('[Chat] Displayed', messages.length, 'history messages');
+    logger.info('Displayed', messages.length, 'history messages');
   }
 
   /**
@@ -1483,7 +1535,7 @@ export class ChatModule {
       localStorage.removeItem(storageKey);
       this.history = [];
     } catch (e) {
-      console.warn('[Chat] Failed to clear history:', e);
+      logger.warn('Failed to clear history:', e);
     }
   }
 
@@ -1501,7 +1553,7 @@ export class ChatModule {
             const data = JSON.parse(localStorage.getItem(key));
             if (data && data.savedAt && now - data.savedAt > this.historyExpiryMs) {
               localStorage.removeItem(key);
-              console.log('[Chat] Cleaned up expired history:', key);
+              logger.info('Cleaned up expired history:', key);
             }
           } catch (e) {
             // Invalid data, remove it
@@ -1510,7 +1562,7 @@ export class ChatModule {
         }
       });
     } catch (e) {
-      console.warn('[Chat] Failed to cleanup histories:', e);
+      logger.warn('Failed to cleanup histories:', e);
     }
   }
 
@@ -1580,12 +1632,312 @@ export class ChatModule {
         const banner = document.getElementById('session-resume-banner');
         if (banner) {
           banner.style.display = 'flex';
-          console.log('[Chat] Resume banner shown');
+          logger.info('Resume banner shown');
         }
       }
     } catch (error) {
       // Silent fail - no checkpoint is okay
-      console.log('[Chat] No resumable session');
+      logger.info('No resumable session');
+    }
+  }
+
+  // =============================================
+  // Floating Chat
+  // =============================================
+
+  /**
+   * Initialize floating chat panel bindings
+   */
+  initFloating() {
+    const bubble = document.getElementById('chat-bubble');
+    const closeBtn = document.getElementById('chat-close');
+    const resizeHandle = document.getElementById('chat-resize-handle');
+    const panel = document.getElementById('chat-panel');
+    const header = document.getElementById('chat-header');
+
+    if (bubble) {
+      bubble.addEventListener('click', () => this.togglePanel());
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => this.togglePanel(false));
+    }
+
+    if (panel && header) {
+      let dragging = false;
+      let startX = 0;
+      let startY = 0;
+      let startLeft = 0;
+      let startTop = 0;
+
+      const startDrag = (clientX, clientY) => {
+        dragging = true;
+        const rect = panel.getBoundingClientRect();
+        startX = clientX;
+        startY = clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        panel.classList.add('chat-panel-draggable');
+        document.body.style.userSelect = 'none';
+      };
+
+      const doDrag = (clientX, clientY) => {
+        if (!dragging) {
+          return;
+        }
+        const dx = clientX - startX;
+        const dy = clientY - startY;
+        const nextLeft = Math.max(8, Math.min(window.innerWidth - 80, startLeft + dx));
+        const nextTop = Math.max(8, Math.min(window.innerHeight - 80, startTop + dy));
+        panel.style.left = `${nextLeft}px`;
+        panel.style.top = `${nextTop}px`;
+      };
+
+      const endDrag = () => {
+        if (!dragging) {
+          return;
+        }
+        dragging = false;
+        document.body.style.userSelect = '';
+        document.body.classList.remove('no-scroll');
+        this.savePanelState(panel);
+      };
+
+      header.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startDrag(e.clientX, e.clientY);
+      });
+
+      this._onDragMouseMove = (e) => doDrag(e.clientX, e.clientY);
+      this._onDragMouseUp = endDrag;
+      window.addEventListener('mousemove', this._onDragMouseMove);
+      window.addEventListener('mouseup', this._onDragMouseUp);
+
+      this._onDragTouchMove = (e) => {
+        const touch = e.touches[0];
+        if (!touch) {
+          return;
+        }
+        if (!dragging) {
+          return;
+        }
+        e.preventDefault();
+        doDrag(touch.clientX, touch.clientY);
+      };
+      this._onDragTouchEnd = endDrag;
+
+      header.addEventListener(
+        'touchstart',
+        (e) => {
+          const touch = e.touches[0];
+          if (!touch) {
+            return;
+          }
+          e.preventDefault();
+          startDrag(touch.clientX, touch.clientY);
+          document.body.classList.add('no-scroll');
+        },
+        { passive: false }
+      );
+      window.addEventListener('touchmove', this._onDragTouchMove, { passive: false });
+      window.addEventListener('touchend', this._onDragTouchEnd);
+    }
+
+    if (resizeHandle && panel) {
+      let resizing = false;
+      let startX = 0;
+      let startY = 0;
+      let startW = 0;
+      let startH = 0;
+
+      const startResize = (clientX, clientY) => {
+        resizing = true;
+        const rect = panel.getBoundingClientRect();
+        startX = clientX;
+        startY = clientY;
+        startW = rect.width;
+        startH = rect.height;
+        document.body.style.userSelect = 'none';
+      };
+
+      const doResize = (clientX, clientY) => {
+        if (!resizing) {
+          return;
+        }
+        const dx = clientX - startX;
+        const dy = clientY - startY;
+        const minW = 280;
+        const minH = 320;
+        const maxW = Math.min(window.innerWidth * 0.96, 800);
+        const maxH = Math.min(window.innerHeight * 0.85, 900);
+        const nextW = Math.max(minW, Math.min(maxW, startW + dx));
+        const nextH = Math.max(minH, Math.min(maxH, startH + dy));
+        panel.style.width = `${nextW}px`;
+        panel.style.height = `${nextH}px`;
+      };
+
+      const endResize = () => {
+        if (!resizing) {
+          return;
+        }
+        resizing = false;
+        document.body.style.userSelect = '';
+        document.body.classList.remove('no-scroll');
+        this.savePanelState(panel);
+      };
+
+      resizeHandle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startResize(e.clientX, e.clientY);
+      });
+
+      this._onResizeMouseMove = (e) => doResize(e.clientX, e.clientY);
+      this._onResizeMouseUp = endResize;
+      window.addEventListener('mousemove', this._onResizeMouseMove);
+      window.addEventListener('mouseup', this._onResizeMouseUp);
+
+      this._onResizeTouchMove = (e) => {
+        const touch = e.touches[0];
+        if (!touch) {
+          return;
+        }
+        if (!resizing) {
+          return;
+        }
+        e.preventDefault();
+        doResize(touch.clientX, touch.clientY);
+      };
+      this._onResizeTouchEnd = endResize;
+
+      resizeHandle.addEventListener(
+        'touchstart',
+        (e) => {
+          const touch = e.touches[0];
+          if (!touch) {
+            return;
+          }
+          e.preventDefault();
+          startResize(touch.clientX, touch.clientY);
+          document.body.classList.add('no-scroll');
+        },
+        { passive: false }
+      );
+      window.addEventListener('touchmove', this._onResizeTouchMove, { passive: false });
+      window.addEventListener('touchend', this._onResizeTouchEnd);
+    }
+
+    this._onEscapeKey = (e) => {
+      if (e.key === 'Escape' && this.isFloatingOpen()) {
+        this.togglePanel(false);
+      }
+    };
+    document.addEventListener('keydown', this._onEscapeKey);
+
+    logger.info('Floating mode initialized');
+  }
+
+  /**
+   * Toggle floating chat panel open/close
+   * @param {boolean} [forceState] - Force open (true) or close (false)
+   */
+  togglePanel(forceState) {
+    const panel = document.getElementById('chat-panel');
+    const bubble = document.getElementById('chat-bubble');
+    const badge = document.getElementById('chat-badge');
+    if (!panel) {
+      return;
+    }
+
+    const shouldOpen = forceState !== undefined ? forceState : panel.classList.contains('hidden');
+
+    if (shouldOpen) {
+      panel.classList.remove('hidden');
+      panel.classList.add('animate-slide-up');
+      this.restorePanelState(panel);
+      if (bubble) {
+        bubble.classList.add('scale-0');
+      }
+      if (badge) {
+        badge.classList.add('hidden');
+      }
+      const input = document.getElementById('chat-input');
+      if (input) {
+        setTimeout(() => input.focus(), 100);
+      }
+      const messages = document.getElementById('chat-messages');
+      if (messages) {
+        messages.scrollTop = messages.scrollHeight;
+      }
+    } else {
+      panel.classList.add('hidden');
+      panel.classList.remove('animate-slide-up');
+      if (bubble) {
+        bubble.classList.remove('scale-0');
+      }
+    }
+  }
+
+  /**
+   * Persist panel size + position
+   */
+  savePanelState(panel) {
+    try {
+      const rect = panel.getBoundingClientRect();
+      const state = {
+        width: rect.width,
+        height: rect.height,
+        left: rect.left,
+        top: rect.top,
+      };
+      localStorage.setItem('mama_chat_panel_state', JSON.stringify(state));
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  /**
+   * Restore panel size + position
+   */
+  restorePanelState(panel) {
+    try {
+      const raw = localStorage.getItem('mama_chat_panel_state');
+      if (!raw) {
+        return;
+      }
+      const state = JSON.parse(raw);
+      if (state.width) {
+        panel.style.width = `${state.width}px`;
+      }
+      if (state.height) {
+        panel.style.height = `${state.height}px`;
+      }
+      if (state.left !== undefined && state.top !== undefined) {
+        panel.classList.add('chat-panel-draggable');
+        panel.style.left = `${state.left}px`;
+        panel.style.top = `${state.top}px`;
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  /**
+   * Check if floating panel is open
+   */
+  isFloatingOpen() {
+    const panel = document.getElementById('chat-panel');
+    return panel && !panel.classList.contains('hidden');
+  }
+
+  /**
+   * Show unread badge on bubble when panel is closed
+   */
+  showUnreadBadge() {
+    if (this.isFloatingOpen()) {
+      return;
+    }
+    const badge = document.getElementById('chat-badge');
+    if (badge) {
+      badge.classList.remove('hidden');
     }
   }
 
@@ -1622,6 +1974,44 @@ export class ChatModule {
       this.isSpeaking = false;
     }
 
-    console.log('[Chat] Cleanup completed');
+    // Clean up window/document event listeners
+    if (this._onDragMouseMove) {
+      window.removeEventListener('mousemove', this._onDragMouseMove);
+      this._onDragMouseMove = null;
+    }
+    if (this._onDragMouseUp) {
+      window.removeEventListener('mouseup', this._onDragMouseUp);
+      this._onDragMouseUp = null;
+    }
+    if (this._onDragTouchMove) {
+      window.removeEventListener('touchmove', this._onDragTouchMove);
+      this._onDragTouchMove = null;
+    }
+    if (this._onDragTouchEnd) {
+      window.removeEventListener('touchend', this._onDragTouchEnd);
+      this._onDragTouchEnd = null;
+    }
+    if (this._onResizeMouseMove) {
+      window.removeEventListener('mousemove', this._onResizeMouseMove);
+      this._onResizeMouseMove = null;
+    }
+    if (this._onResizeMouseUp) {
+      window.removeEventListener('mouseup', this._onResizeMouseUp);
+      this._onResizeMouseUp = null;
+    }
+    if (this._onResizeTouchMove) {
+      window.removeEventListener('touchmove', this._onResizeTouchMove);
+      this._onResizeTouchMove = null;
+    }
+    if (this._onResizeTouchEnd) {
+      window.removeEventListener('touchend', this._onResizeTouchEnd);
+      this._onResizeTouchEnd = null;
+    }
+    if (this._onEscapeKey) {
+      document.removeEventListener('keydown', this._onEscapeKey);
+      this._onEscapeKey = null;
+    }
+
+    logger.info('Cleanup completed');
   }
 }

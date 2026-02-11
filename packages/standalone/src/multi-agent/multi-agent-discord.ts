@@ -18,6 +18,7 @@ import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import { PRReviewPoller } from './pr-review-poller.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   MultiAgentHandlerBase,
   AGENT_TIMEOUT_MS,
@@ -28,6 +29,15 @@ import {
 export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
 
 const execFileAsync = promisify(execFile);
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('MultiAgentDiscord');
 
 /** Delay before showing progress message (ms) -- fast requests never show it */
 const PROGRESS_DELAY_MS = 5_000;
@@ -37,6 +47,9 @@ const PROGRESS_EDIT_INTERVAL_MS = 3_000;
 
 /** Phase emoji progression */
 const _PHASE_EMOJIS = ['👀', '🔍', '💻', '🔧', '📝', '✅'] as const;
+
+/** Max characters allowed for dynamic context blocks to avoid prompt bloat */
+const MAX_DYNAMIC_CONTEXT_CHARS = 4000;
 
 /** Map tool names to phase emojis */
 function toolToPhaseEmoji(toolName: string): (typeof _PHASE_EMOJIS)[number] | null {
@@ -79,17 +92,19 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   /** Cleanup interval handle for periodic tasks */
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-  /** Channel-safe batch data accumulation (prevents cross-channel data contamination) */
-  private batchData = new Map<string, string[]>();
+  /** Channel-safe batch counter (just counts new items, no content storage) */
+  private batchCount = new Map<string, number>();
 
   /** Tracks channels where APPROVE+commit was processed (prevents congratulation loops) */
   private approveProcessedChannels = new Map<string, number>();
 
-  /** APPROVE cooldown period -- blocks agent-to-agent routing after commit (5 minutes) */
-  private static readonly APPROVE_COOLDOWN_MS = 5 * 60 * 1000;
+  /** APPROVE cooldown period -- blocks agent-to-agent routing after commit (30 seconds) */
+  private static readonly APPROVE_COOLDOWN_MS = 30 * 1000;
 
   /** Cleanup interval period (1 minute) */
   private static readonly CLEANUP_INTERVAL_MS = 60_000;
+  /** PR review chain override (allows LEAD → DEV → REVIEWER → LEAD) */
+  private static readonly PR_REVIEW_MAX_CHAIN = 6;
 
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
     super(config, processOptions);
@@ -113,6 +128,21 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
   formatBold(text: string): string {
     return `**${text}**`;
+  }
+
+  protected async sendChannelNotification(channelId: string, message: string): Promise<void> {
+    try {
+      if (this.discordClient) {
+        const channel = await this.discordClient.channels.fetch(channelId);
+        if (channel && 'send' in (channel as Record<string, unknown>)) {
+          await (channel as { send: (opts: { content: string }) => Promise<unknown> }).send({
+            content: message,
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`[MultiAgent] Failed to send channel notification:`, err);
+    }
   }
 
   /**
@@ -196,23 +226,23 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       // Chain depth check for mention_delegation
       if (isFromAgent && senderAgentId && senderAgentId !== 'main') {
         const chainState = this.orchestrator.getChainState(message.channel.id);
-        const maxDepth = this.config.max_mention_depth ?? 3;
+        const maxDepth = this.getEffectiveMaxMentionDepth(message.channel.id);
 
         if (chainState.blocked) {
-          console.log(
+          logger.info(
             `[MultiAgent] Mention chain blocked in channel ${message.channel.id}, ignoring`
           );
           return;
         }
         if (chainState.length >= maxDepth) {
-          console.log(
+          logger.info(
             `[MultiAgent] Mention chain depth ${chainState.length} >= max ${maxDepth}, ignoring`
           );
           return;
         }
       }
 
-      console.log(
+      logger.info(
         `[MultiAgent] Mention-triggered: agent=${agentId}, from=${senderAgentId ?? message.author.tag}, content="${cleanContent.substring(0, 50)}"`
       );
 
@@ -299,7 +329,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     const connectedAgents = this.multiBotManager.getConnectedAgents();
     if (connectedAgents.length > 0) {
-      console.log(`[MultiAgent] Multi-bot mode active for: ${connectedAgents.join(', ')}`);
+      logger.info(`[MultiAgent] Multi-bot mode active for: ${connectedAgents.join(', ')}`);
     }
 
     // Pass bot ID map to process manager for mention-based delegation prompts
@@ -318,23 +348,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
       this.processManager.setBotUserIdMap(botUserIdMap);
       this.processManager.setMentionDelegation(true);
-      console.log(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
+      logger.info(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
 
-      // PR Review Poller: target Reviewer for @mention in Discord messages.
-      // Reviewer analyzes PR data -> summarizes -> mentions LEAD with prioritized tasks.
-      const reviewerEntry = this.findReviewerAgent();
-      const reviewerTargetId = reviewerEntry?.[0];
-      const reviewerUserId = reviewerTargetId ? botUserIdMap.get(reviewerTargetId) : undefined;
-      if (reviewerUserId) {
-        this.prReviewPoller.setTargetAgentUserId(reviewerUserId);
-        console.log(`[MultiAgent] PR Poller target: ${reviewerTargetId} (reviewer -> LEAD)`);
-      } else {
-        // Fallback: mention LEAD directly
+      // PR Review Poller: target LEAD directly.
+      // LEAD analyzes → delegates to DevBot → DevBot fixes → Reviewer reviews after.
+      {
         const orchestratorId = defaultAgentId || 'sisyphus';
         const orchestratorUserId = botUserIdMap.get(orchestratorId);
         if (orchestratorUserId) {
           this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
-          console.log(`[MultiAgent] PR Poller target: ${orchestratorId} (fallback LEAD)`);
+          logger.info(`[MultiAgent] PR Poller target: ${orchestratorId} (LEAD)`);
         }
       }
     }
@@ -377,56 +400,46 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     if (this.prReviewPoller.hasMessageSender()) return;
 
-    this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
-      const channel = await client.channels.fetch(channelId);
-      if (!channel || !('send' in (channel as Record<string, unknown>))) return;
-
-      await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
-        content: text,
-      });
-
-      // Store texts per channel to prevent cross-channel contamination
-      // Use immutable approach to avoid race conditions
-      const currentTexts = this.batchData.get(channelId) || [];
-      const cleanText = text.replace(/<@!?\d+>/g, '').trim();
-      this.batchData.set(channelId, [...currentTexts, cleanText]);
+    // Silent counter — just count new items, don't store content
+    this.prReviewPoller.setMessageSender(async (channelId: string, _text: string) => {
+      this.batchCount.set(channelId, (this.batchCount.get(channelId) || 0) + 1);
     });
 
-    // After all chunks sent, send LEAD mention FROM Reviewer bot
-    // with PR data included so LEAD doesn't pick up stale channel history.
+    // After poll cycle: post count to channel, wake up LEAD
     this.prReviewPoller.setOnBatchComplete(async (channelId: string) => {
-      // Atomically retrieve and clear batch data to prevent race conditions
-      const texts = this.batchData.get(channelId) || [];
-      if (texts.length === 0) return;
+      const count = this.batchCount.get(channelId) || 0;
+      if (count === 0) return;
+      this.batchCount.delete(channelId);
 
-      // Clear immediately to prevent duplicate processing
-      this.batchData.delete(channelId);
+      const sessions = this.prReviewPoller.getSessionDetails();
+      const session = sessions.find((s) => s.channelId === channelId);
+      if (!session) return;
 
-      // Reset chain so LEAD can delegate freely
-      this.orchestrator.resetChain(channelId);
+      const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
 
-      const leadUserId = this.multiBotManager.getMainBotUserId();
-      if (!leadUserId) return;
-
-      const reviewerEntry = this.findReviewerAgent();
-      const reviewerAgentId = reviewerEntry?.[0];
-      if (!reviewerAgentId) return;
-
-      // Include PR data summary in LEAD mention (Discord 2000 char limit per message)
-      const mentionPrefix = `<@${leadUserId}> Please analyze PR review comments and prioritize them for delegation.\n\n`;
-      const prSummary = texts.join('\n').slice(0, 2000 - mentionPrefix.length);
-      const fullMsg = `${mentionPrefix}${prSummary}`;
-
-      // Split using Discord-aware splitter (2000 char limit)
-      const chunks = splitForDiscord(fullMsg);
-      for (const chunk of chunks) {
-        await this.multiBotManager.sendAsAgent(reviewerAgentId, channelId, chunk);
+      // Post count to channel (visible to humans)
+      const channel = await client.channels.fetch(channelId);
+      if (channel && 'send' in (channel as Record<string, unknown>)) {
+        await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
+          content: `📊 PR ${prLabel} — ${count} new review item(s)`,
+        });
       }
-      console.log(
-        `[MultiAgent] PR Poller -> LEAD mention sent via ${reviewerAgentId} (${chunks.length} chunks, ${prSummary.length} chars)`
-      );
+
+      // Wake up LEAD: count + workspace, nothing else
+      this.orchestrator.resetChain(channelId);
+      const defaultAgentId = this.config.default_agent || 'sisyphus';
+
+      this.messageQueue.enqueue(defaultAgentId, {
+        prompt: `📊 ${count} new review item(s) on PR ${prLabel}. Branch checked out at: \`${session.workspaceDir}\``,
+        channelId,
+        source: 'discord',
+        enqueuedAt: Date.now(),
+        context: { channelId, userId: 'pr-poller' },
+      });
+      logger.info(`[MultiAgent] PR Poller -> LEAD wake-up (${count} items)`);
+      this.tryDrainNow(defaultAgentId, 'discord', channelId).catch(() => {});
     });
-    console.log('[MultiAgent] PR Review Poller message sender configured for Discord');
+    logger.info('[MultiAgent] PR Review Poller message sender configured for Discord');
   }
 
   /**
@@ -460,6 +473,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     // Build message context
     const context = this.buildMessageContext(message, cleanContent);
+    this.updateChainOverrideForChannel(context.channelId);
 
     // Record human message to shared context
     if (!context.isBot) {
@@ -477,12 +491,12 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     // Select responding agents
     const selection = this.orchestrator.selectRespondingAgents(context);
 
-    console.log(
+    logger.info(
       `[MultiAgent] Selection result: agents=${selection.selectedAgents.join(',')}, reason=${selection.reason}, blocked=${selection.blocked}`
     );
 
     if (selection.blocked) {
-      console.log(`[MultiAgent] Blocked: ${selection.blockReason}`);
+      logger.info(`[MultiAgent] Blocked: ${selection.blockReason}`);
       return null;
     }
 
@@ -572,7 +586,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
     }
 
-    console.log(`[MultiAgent] !stop command: channel=${channelId}, target=${args || 'all'}`);
+    logger.info(`[MultiAgent] !stop command: channel=${channelId}, target=${args || 'all'}`);
   }
 
   /**
@@ -624,19 +638,17 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     //   Only LEAD needs channel context to understand the conversation flow.
     let fullPrompt = cleanMessage;
 
-    // Inject channel history for the default (LEAD) agent on new sessions only.
-    // - Keeps human messages + LEAD's own messages, excludes other bots.
+    // Inject channel history for all agents on new sessions only.
+    // - Keeps human messages + this agent's own messages, excludes other bots.
     // - Only on first message per session (subsequent messages are in session memory).
-    // - DevBot/Reviewer get tasks via delegation -- they don't need channel history.
-    const defaultAgentId = this.config.default_agent;
     const sessionKey = `${agentId}:${context.channelId}`;
-    if (agentId === defaultAgentId && !this.historyInjected.has(sessionKey)) {
+    if (!this.historyInjected.has(sessionKey)) {
       const channelHistory = getChannelHistory();
-      const leadDisplayName = agent.display_name || agentId;
+      const displayName = agent.display_name || agentId;
       const historyContext = channelHistory.formatForContext(
         context.channelId,
         context.messageId,
-        leadDisplayName // keep human + LEAD's own messages, exclude other bots
+        displayName // keep human + this agent's own messages, exclude other bots
       );
       if (historyContext) {
         fullPrompt = `${historyContext}\n\n${fullPrompt}`;
@@ -646,6 +658,19 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     if (agentContext) {
       fullPrompt = `${agentContext}\n\n${fullPrompt}`;
+    }
+
+    // Inject agent availability status, active work, and channel context (Phase 2 + 3)
+    const agentStatus = this.buildAgentStatusSection(agentId);
+    const workSection = this.workTracker.buildWorkSection(agentId);
+    const channelInfo = `## Current Channel\nDiscord channel_id: ${context.channelId}`;
+    const dynamicContextRaw = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
+    const dynamicContext =
+      dynamicContextRaw.length > MAX_DYNAMIC_CONTEXT_CHARS
+        ? `${dynamicContextRaw.slice(0, MAX_DYNAMIC_CONTEXT_CHARS)}\n...`
+        : dynamicContextRaw;
+    if (dynamicContext) {
+      fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
     }
 
     // Enhance prompt with keyword detection (ultrawork/search/analyze modes)
@@ -658,18 +683,21 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     const enhanced = this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
     if (enhanced.keywordInstructions) {
       fullPrompt = `${enhanced.keywordInstructions}\n\n${fullPrompt}`;
-      console.log(
+      logger.info(
         `[PromptEnhancer] Keyword detected for agent ${agentId}: ${enhanced.keywordInstructions.length} chars injected`
       );
     }
     if (enhanced.rulesContent) {
       fullPrompt = `## Project Rules\n${enhanced.rulesContent}\n\n${fullPrompt}`;
-      console.log(
+      logger.info(
         `[PromptEnhancer] Rules injected for agent ${agentId}: ${enhanced.rulesContent.length} chars`
       );
     }
 
-    console.log(`[MultiAgent] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`);
+    logger.info(`[MultiAgent] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`);
+
+    // Track work start (completed in finally block)
+    this.workTracker.startWork(agentId, context.channelId, cleanMessage);
 
     try {
       // Get or create process for this agent in this channel
@@ -796,7 +824,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         : undefined;
 
       // Send message and get response (with timeout, properly cleaned up)
-      let timeoutHandle: ReturnType<typeof setTimeout>;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       let result;
       try {
         result = await Promise.race([
@@ -812,33 +840,57 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       } finally {
         await cleanupProgress();
       }
-      clearTimeout(timeoutHandle!);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
 
-      const resolvedResponse = this.resolveResponseMentions(result.response);
+      // Execute text-based gateway tool calls (```tool_call blocks in response)
+      // Claude CLI handles built-in tools (Read, Bash, Glob) internally via native tool_use.
+      // Gateway tools (discord_send, mama_*) are requested via text-based tool_call blocks.
+      // discord_send is routed through the agent's own bot (not the main LEAD bot).
+      const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
 
-      const bgDelegation = this.delegationManager.parseDelegation(agentId, resolvedResponse);
-      if (bgDelegation && bgDelegation.background) {
-        const check = this.delegationManager.isDelegationAllowed(
-          bgDelegation.fromAgentId,
-          bgDelegation.toAgentId
-        );
-        if (check.allowed) {
-          const toAgent = this.orchestrator.getAgent(bgDelegation.toAgentId);
-          this.backgroundTaskManager.submit({
-            description: bgDelegation.task.substring(0, 200),
-            prompt: bgDelegation.task,
-            agentId: bgDelegation.toAgentId,
-            requestedBy: agentId,
-            channelId: context.channelId,
-            source: 'discord',
-          });
-          console.log(
-            `[MultiAgent] Background delegation: ${agentId} -> ${bgDelegation.toAgentId} (async)`
+      // Detect API error responses — skip mention resolution and delegation to prevent error loops
+      const isErrorResponse = /API Error:\s*\d{3}\b/.test(cleanedResponse);
+      const resolvedResponse = isErrorResponse
+        ? cleanedResponse
+        : this.resolveResponseMentions(cleanedResponse);
+
+      const bgDelegations = isErrorResponse
+        ? []
+        : this.delegationManager.parseAllDelegations(agentId, resolvedResponse);
+      if (bgDelegations.length > 0 && bgDelegations[0].background) {
+        let submittedCount = 0;
+        const submittedAgents: string[] = [];
+        for (const delegation of bgDelegations) {
+          if (!delegation.background) continue;
+          const check = this.delegationManager.isDelegationAllowed(
+            delegation.fromAgentId,
+            delegation.toAgentId
           );
+          if (check.allowed) {
+            this.backgroundTaskManager.submit({
+              description: delegation.task.substring(0, 200),
+              prompt: delegation.task,
+              agentId: delegation.toAgentId,
+              requestedBy: agentId,
+              channelId: context.channelId,
+              source: 'discord',
+            });
+            submittedCount++;
+            submittedAgents.push(delegation.toAgentId);
+            logger.info(
+              `[MultiAgent] Background delegation: ${agentId} -> ${delegation.toAgentId} (async)`
+            );
+          } else {
+            console.warn(
+              `[MultiAgent] Delegation denied: ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
+            );
+          }
+        }
 
+        if (submittedCount > 0) {
           const displayResponse =
-            bgDelegation.originalContent ||
-            `🔄 Background task submitted to **${toAgent?.display_name ?? bgDelegation.toAgentId}**`;
+            bgDelegations[0].originalContent ||
+            `🔄 ${submittedCount} background task(s) submitted to **${[...new Set(submittedAgents)].join(', ')}**`;
           const formattedResponse = this.formatAgentResponse(agent, displayResponse);
           return {
             agentId,
@@ -863,7 +915,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       console.error(`[MultiAgent] Failed to get response from ${agentId}:`, error);
 
       if (errMsg.includes('busy')) {
-        console.log(`[MultiAgent] Agent ${agentId} busy, enqueuing message`);
+        logger.info(`[MultiAgent] Agent ${agentId} busy, enqueuing message`);
 
         const queuedMessage: QueuedMessage = {
           prompt: fullPrompt,
@@ -877,6 +929,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
         this.messageQueue.enqueue(agentId, queuedMessage);
 
+        // Trigger immediate drain if process is idle or reaped
+        this.tryDrainNow(agentId, 'discord', context.channelId).catch(() => {});
+
         if (discordMessage) {
           try {
             await discordMessage.react('⏳');
@@ -887,6 +942,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
 
       return null;
+    } finally {
+      this.workTracker.completeWork(agentId, context.channelId);
     }
   }
 
@@ -934,8 +991,74 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       return;
     }
 
+    // Execute gateway tool calls from response
+    const cleanedResponse = await this.executeAgentToolCalls(agentId, response);
+
+    // Parse and submit DELEGATE_BG commands
+    const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
+    let displayResponse = cleanedResponse;
+    const hasBackground = delegations.some((delegation) => delegation.background);
+    if (delegations.length > 0 && hasBackground) {
+      let submittedCount = 0;
+      for (const delegation of delegations) {
+        if (!delegation.background) continue;
+        const check = this.delegationManager.isDelegationAllowed(
+          delegation.fromAgentId,
+          delegation.toAgentId
+        );
+        if (check.allowed) {
+          this.backgroundTaskManager.submit({
+            description: delegation.task.substring(0, 200),
+            prompt: delegation.task,
+            agentId: delegation.toAgentId,
+            requestedBy: agentId,
+            channelId: message.channelId,
+            source: 'discord',
+          });
+          submittedCount++;
+          logger.info(
+            `[MultiAgent] Background delegation (queued): ${agentId} -> ${delegation.toAgentId} (async)`
+          );
+        } else {
+          console.warn(
+            `[MultiAgent] Delegation denied (queued): ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
+          );
+        }
+      }
+      if (submittedCount > 0) {
+        displayResponse =
+          delegations[0].originalContent || `🔄 ${submittedCount} background task(s) delegated`;
+      }
+    }
+
+    // Handle synchronous DELEGATE:: delegations via message queue
+    const syncDelegations = delegations.filter((d) => !d.background);
+    for (const delegation of syncDelegations) {
+      const check = this.delegationManager.isDelegationAllowed(
+        delegation.fromAgentId,
+        delegation.toAgentId
+      );
+      if (check.allowed) {
+        this.messageQueue.enqueue(delegation.toAgentId, {
+          prompt: delegation.task,
+          channelId: message.channelId,
+          source: 'discord',
+          enqueuedAt: Date.now(),
+          context: { channelId: message.channelId, userId: 'delegation' },
+        });
+        logger.info(
+          `[MultiAgent] Sync delegation (queued path): ${agentId} -> ${delegation.toAgentId}`
+        );
+        this.tryDrainNow(delegation.toAgentId, 'discord', message.channelId).catch(() => {});
+      } else {
+        console.warn(
+          `[MultiAgent] Sync delegation denied (queued): ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
+        );
+      }
+    }
+
     // Format response with agent prefix
-    const formattedResponse = this.formatAgentResponse(agent, response);
+    const formattedResponse = this.formatAgentResponse(agent, displayResponse);
 
     const chunks = splitForDiscord(formattedResponse);
     const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
@@ -981,7 +1104,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
     }
 
-    console.log(`[MultiAgent] Queued message delivered for ${agentId} in ${message.channelId}`);
+    logger.info(`[MultiAgent] Queued message delivered for ${agentId} in ${message.channelId}`);
   }
 
   /**
@@ -1146,7 +1269,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
 
       if (filesChanged > MAX_FILES || totalLines > MAX_LINES) {
-        console.log(
+        logger.info(
           `[AutoReview] Sisyphus self-implementation exceeded thresholds: ${filesChanged} files, ${totalLines} lines -> auto-triggering Reviewer`
         );
 
@@ -1159,7 +1282,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           await this.multiBotManager.sendAsAgent(reviewerAgentId, channelId, reviewMsg);
         }
       } else {
-        console.log(
+        logger.info(
           `[AutoReview] Sisyphus self-implementation within thresholds: ${filesChanged} files, ${totalLines} lines -- no auto-review needed`
         );
       }
@@ -1188,15 +1311,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
    * bots don't receive their own messages as events.
    */
   async routeResponseMentions(originalMessage: Message, responses: AgentResponse[]): Promise<void> {
-    // Block all agent-to-agent routing during post-APPROVE cooldown
-    const channelApproveTs = this.approveProcessedChannels.get(originalMessage.channel.id);
-    if (
-      channelApproveTs &&
-      Date.now() - channelApproveTs < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
-    ) {
-      return;
-    }
-
     for (const response of responses) {
       const senderAgent = this.orchestrator.getAgent(response.agentId);
 
@@ -1237,17 +1351,21 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         }
       }
 
-      console.log(
+      logger.info(
         `[MultiAgent] Auto-routing mentions from ${response.agentId}: -> ${mentionedAgentIds.join(', ')}`
       );
 
       const defaultAgentId = this.config.default_agent;
+      const hasApproveSignal =
+        /\b(APPROVE[DS]?|LGTM)\b/i.test(response.rawContent) &&
+        !/\b(not?\s+approve|don'?t\s+approve|cannot\s+approve|rejected)\b/i.test(
+          response.rawContent
+        );
       const isReviewerApproveToLead =
         this.isReviewerAgent(response.agentId) &&
         mentionedAgentIds.includes(defaultAgentId || '') &&
-        /\b(APPROVE|approved|approves)\b(?!\w)/i.test(response.rawContent);
+        hasApproveSignal;
 
-      let autoCommitResult: string | null = null;
       if (isReviewerApproveToLead) {
         // Dedup: skip if APPROVE already processed for this channel
         const lastApprove = this.approveProcessedChannels.get(originalMessage.channel.id);
@@ -1255,35 +1373,22 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           lastApprove &&
           Date.now() - lastApprove < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
         ) {
-          console.log(
+          logger.info(
             `[MultiAgent] APPROVE already processed for ${originalMessage.channel.id}, skipping`
           );
           continue;
-        }
-
-        autoCommitResult = await this.autoCommitAndPush(originalMessage.channel.id);
-        if (autoCommitResult) {
-          try {
-            const chunks = splitForDiscord(autoCommitResult);
-            for (const chunk of chunks) {
-              if ('send' in originalMessage.channel) {
-                await (
-                  originalMessage.channel as {
-                    send: (opts: { content: string }) => Promise<Message>;
-                  }
-                ).send({ content: chunk });
-              }
-            }
-          } catch {
-            /* ignore send errors */
-          }
         }
       }
 
       // Route to all mentioned agents in parallel
       await Promise.all(
         mentionedAgentIds.map((targetAgentId) =>
-          this.handleDelegatedMention(targetAgentId, originalMessage, response, autoCommitResult)
+          this.handleDelegatedMention(
+            targetAgentId,
+            originalMessage,
+            response,
+            isReviewerApproveToLead ? 'REVIEWER_APPROVED' : null
+          )
         )
       );
 
@@ -1301,7 +1406,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     targetAgentId: string,
     originalMessage: Message,
     sourceResponse: AgentResponse,
-    autoCommitResult?: string | null
+    reviewerSignal?: string | null
   ): Promise<void> {
     // Dedup: prevent double processing
     const dedupKey = `${targetAgentId}:${sourceResponse.messageId || originalMessage.id}`;
@@ -1312,11 +1417,24 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     const chainState = this.orchestrator.getChainState(originalMessage.channel.id);
     const maxDepth = this.config.max_mention_depth ?? 3;
     if (chainState.blocked || chainState.length >= maxDepth) {
-      console.log(`[MultiAgent] Delegation chain blocked/maxed in ${originalMessage.channel.id}`);
+      logger.info(`[MultiAgent] Delegation chain blocked/maxed in ${originalMessage.channel.id}`);
       return;
     }
 
-    console.log(`[MultiAgent] Delegated mention: ${sourceResponse.agentId} -> ${targetAgentId}`);
+    // Delegation rule validation (Phase 4)
+    if (this.config.delegation_rules) {
+      const rule = this.config.delegation_rules.find(
+        (r) => r.from === sourceResponse.agentId && r.to.includes(targetAgentId)
+      );
+      if (!rule) {
+        logger.info(
+          `[MultiAgent] Delegation blocked by rule: ${sourceResponse.agentId} → ${targetAgentId}`
+        );
+        return;
+      }
+    }
+
+    logger.info(`[MultiAgent] Delegated mention: ${sourceResponse.agentId} -> ${targetAgentId}`);
 
     // React on the delegation message (source agent's response), not the user's original message
     const hasOwnBot = this.multiBotManager.hasAgentBot(targetAgentId);
@@ -1348,38 +1466,19 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       timestamp: Date.now(),
     });
 
+    let delegationContent = sourceResponse.rawContent
+      .replace(/<@!?\d+>/g, '')
+      .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
+      .trim();
+
+    if (reviewerSignal === 'REVIEWER_APPROVED' && targetAgentId === this.config.default_agent) {
+      delegationContent +=
+        '\n\n🔔 [SYSTEM] Reviewer has APPROVED the changes.\n' +
+        'Review the changes yourself, then commit and push when you are satisfied.\n' +
+        'Use your judgement on the commit message and which files to include.';
+    }
+
     try {
-      let delegationContent = sourceResponse.rawContent
-        .replace(/<@!?\d+>/g, '')
-        .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
-        .trim();
-
-      const defaultAgentId = this.config.default_agent;
-      if (
-        targetAgentId === defaultAgentId &&
-        /\b(APPROVE|approved|approves)\b(?!\w)/i.test(delegationContent)
-      ) {
-        if (autoCommitResult && autoCommitResult.startsWith('✅')) {
-          delegationContent +=
-            '\n\n✅ [SYSTEM] Auto Commit completed.\n' +
-            `Result: ${autoCommitResult}\n` +
-            '**Execute `git push` now. Then summarize review results briefly. Do NOT congratulate agents.**';
-        } else if (autoCommitResult) {
-          delegationContent +=
-            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Auto commit failed. Execute Phase 3:\n' +
-            '1. `git status`\n' +
-            '2. `git add {changed files}` (git add . prohibited)\n' +
-            '3. `git commit -m "fix: {change summary}"`\n' +
-            '4. `git push`\n' +
-            '**Execute commit+push first. No praise. No congratulations. Just results.**';
-        } else {
-          delegationContent +=
-            '\n\n⚠️ [SYSTEM] Reviewer APPROVED. Execute Phase 3:\n' +
-            '1. `git status` -> `git add` -> `git commit` -> `git push`\n' +
-            '**Execute immediately. No praise. Just results.**';
-        }
-      }
-
       const response = await this.processAgentResponse(
         targetAgentId,
         {
@@ -1419,7 +1518,22 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         await this.routeResponseMentions(originalMessage, [response]);
       }
     } catch (err) {
-      console.error(`[MultiAgent] Delegated mention error (${targetAgentId}):`, err);
+      const isBusy = err instanceof Error && err.message.includes('Process is busy');
+      if (isBusy) {
+        logger.info(
+          `[MultiAgent] ${targetAgentId} busy, enqueuing delegation from ${sourceResponse.agentId}`
+        );
+        this.messageQueue.enqueue(targetAgentId, {
+          prompt: delegationContent,
+          channelId,
+          source: 'discord',
+          enqueuedAt: Date.now(),
+          context: { channelId, userId: originalMessage.author.id },
+        });
+        this.tryDrainNow(targetAgentId, 'discord', channelId).catch(() => {});
+      } else {
+        console.error(`[MultiAgent] Delegated mention error (${targetAgentId}):`, err);
+      }
     } finally {
       // Add checkmark on the delegation message (source agent's response)
       try {
@@ -1437,6 +1551,65 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   }
 
   /**
+   * Execute text-based tool calls, routing discord_send through the agent's own bot.
+   * Non-discord tools fall through to the base executeTextToolCalls.
+   */
+  private async executeAgentToolCalls(agentId: string, responseText: string): Promise<string> {
+    const toolCalls = this.parseToolCallsFromText(responseText);
+    if (toolCalls.length === 0) return responseText;
+
+    const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
+
+    for (const toolCall of toolCalls) {
+      try {
+        if (toolCall.name === 'discord_send' && hasOwnBot) {
+          if (typeof toolCall.input !== 'object' || toolCall.input === null) {
+            console.warn(`[MultiAgent] Tool ${toolCall.name}: invalid input (not an object)`);
+            continue;
+          }
+          const input = toolCall.input as Record<string, unknown>;
+          const channelId = typeof input.channel_id === 'string' ? input.channel_id : undefined;
+          const filePath =
+            typeof input.file_path === 'string'
+              ? input.file_path
+              : typeof input.image_path === 'string'
+                ? input.image_path
+                : undefined;
+          const message = typeof input.message === 'string' ? input.message : undefined;
+
+          if (!channelId || (!filePath && !message)) {
+            console.warn(`[MultiAgent] Tool ${toolCall.name}: missing channel_id or payload`);
+            continue;
+          }
+
+          if (channelId && filePath) {
+            await this.multiBotManager.sendFileAsAgent(agentId, channelId, filePath, message);
+          } else if (channelId && message) {
+            await this.multiBotManager.sendAsAgent(agentId, channelId, message);
+          }
+          logger.info(`[MultiAgent] discord_send routed through agent bot: ${agentId}`);
+        } else if (this.gatewayToolExecutor) {
+          const result = await this.gatewayToolExecutor.execute(
+            toolCall.name,
+            toolCall.input as Record<string, unknown>
+          );
+          logger.info(
+            `[MultiAgent] Tool ${toolCall.name} succeeded:`,
+            JSON.stringify(result).substring(0, 200)
+          );
+        }
+      } catch (error) {
+        console.error(
+          `[MultiAgent] Tool ${toolCall.name} failed:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
+    return this.removeToolCallBlocks(responseText);
+  }
+
+  /**
    * Resolve @Name mentions in LLM response text to <@userId> Discord format.
    * LLMs generate plain text like "@LEAD", "@Sisyphus", "@DevBot" which won't
    * trigger Discord mentions or routeResponseMentions detection.
@@ -1444,12 +1617,21 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   private resolveResponseMentions(text: string): string {
     if (!this.config.mention_delegation) return text;
 
+    // Collect agent IDs already handled by DELEGATE:: / DELEGATE_BG:: patterns
+    // to avoid duplicate delegation via mention resolution
+    const delegatedAgentIds = new Set<string>();
+    const delegateRegex = /DELEGATE(?:_BG)?::(\w+)::/g;
+    let dm;
+    while ((dm = delegateRegex.exec(text)) !== null) {
+      delegatedAgentIds.add(dm[1].toLowerCase());
+    }
+
     const botUserIdMap = this.multiBotManager.getBotUserIdMap();
     const mainBotUserId = this.multiBotManager.getMainBotUserId();
     const defaultAgentId = this.config.default_agent;
 
     // Build pattern -> <@userId> lookup
-    const patterns = new Map<string, string>();
+    const patterns = new Map<string, { mention: string; agentId: string }>();
     for (const [agentId, agentConfig] of Object.entries(this.config.agents)) {
       let userId = botUserIdMap.get(agentId);
       if (!userId && agentId === defaultAgentId && mainBotUserId) {
@@ -1458,17 +1640,21 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       if (!userId) continue;
 
       const mention = `<@${userId}>`;
-      if (agentConfig.name) patterns.set(agentConfig.name.toLowerCase(), mention);
-      if (agentConfig.display_name) patterns.set(agentConfig.display_name.toLowerCase(), mention);
-      patterns.set(agentId.toLowerCase(), mention);
+      if (agentConfig.name) patterns.set(agentConfig.name.toLowerCase(), { mention, agentId });
+      if (agentConfig.display_name)
+        patterns.set(agentConfig.display_name.toLowerCase(), { mention, agentId });
+      patterns.set(agentId.toLowerCase(), { mention, agentId });
     }
     // Also match "LEAD" for the default agent
     if (defaultAgentId && mainBotUserId) {
-      patterns.set('lead', `<@${mainBotUserId}>`);
+      patterns.set('lead', { mention: `<@${mainBotUserId}>`, agentId: defaultAgentId });
     }
 
     let resolved = text;
-    for (const [pattern, mention] of patterns) {
+    for (const [pattern, { mention, agentId }] of patterns) {
+      // Skip mention resolution for agents already in DELEGATE:: patterns
+      if (delegatedAgentIds.has(agentId.toLowerCase())) continue;
+
       // Match @pattern but NOT already-resolved <@pattern
       const regex = new RegExp(`(?<!<)@${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
       resolved = resolved.replace(regex, mention);
@@ -1499,6 +1685,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         .startPolling(prUrl, channelId)
         .then((started) => {
           if (started) {
+            this.updateChainOverrideForChannel(channelId);
             const parsed = this.prReviewPoller.parsePRUrl(prUrl);
             const key = parsed ? `${parsed.owner}/${parsed.repo}#${parsed.prNumber}` : prUrl;
             if ('send' in message.channel) {
@@ -1513,7 +1700,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
                   );
                 });
             }
-            console.log(
+            logger.info(
               `[MultiAgent] PR Poller started for ${key} in Discord channel ${channelId}`
             );
           }
@@ -1522,6 +1709,33 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           console.error(`[MultiAgent] Failed to start PR polling:`, err);
         });
     }
+  }
+
+  /**
+   * Update chain/mention depth overrides when PR review polling is active.
+   */
+  private updateChainOverrideForChannel(channelId: string): void {
+    if (this.isPrReviewActive(channelId)) {
+      this.orchestrator.setChannelChainLimit(
+        channelId,
+        MultiAgentDiscordHandler.PR_REVIEW_MAX_CHAIN
+      );
+    } else {
+      this.orchestrator.clearChannelChainLimit(channelId);
+    }
+  }
+
+  private getEffectiveMaxMentionDepth(channelId: string): number {
+    if (this.isPrReviewActive(channelId)) {
+      return MultiAgentDiscordHandler.PR_REVIEW_MAX_CHAIN;
+    }
+    return this.config.max_mention_depth ?? 3;
+  }
+
+  private isPrReviewActive(channelId: string): boolean {
+    return this.prReviewPoller
+      .getSessionDetails()
+      .some((session) => session.channelId === channelId);
   }
 
   /**
@@ -1542,161 +1756,5 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       ([aid, cfg]) =>
         aid.toLowerCase().includes('review') || cfg.name?.toLowerCase().includes('review')
     );
-  }
-
-  /**
-   * Auto commit+push when Reviewer APPROVE is detected.
-   * Finds the repo from active PR polling sessions, runs git operations.
-   * Returns a status message or null if no repo found.
-   */
-  private async autoCommitAndPush(channelId: string): Promise<string | null> {
-    // Check if auto-commit is explicitly enabled (disabled by default for safety)
-    if (process.env.MAMA_ENABLE_AUTO_COMMIT !== 'true') {
-      console.log(
-        '[AutoCommit] Auto-commit is disabled by default. Set MAMA_ENABLE_AUTO_COMMIT=true to enable'
-      );
-      return null;
-    }
-
-    // Find active PR session for this channel to get the repo info
-    const sessions = this.prReviewPoller.getActiveSessions();
-    if (sessions.length === 0) return null;
-
-    // Find session matching this channel
-    const pollerSessions = this.prReviewPoller.getSessionDetails();
-    const session = pollerSessions.find((s) => s.channelId === channelId);
-    if (!session) return null;
-
-    // Find local repo path (check common locations)
-    const homedir = process.env.HOME || '/home/deck';
-    const possiblePaths = [
-      `${homedir}/${session.repo}`,
-      `${homedir}/project/${session.repo}`,
-      `${homedir}/projects/${session.repo}`,
-    ];
-
-    let repoPath: string | null = null;
-    for (const p of possiblePaths) {
-      try {
-        await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: p, timeout: 5000 });
-        repoPath = p;
-        break;
-      } catch {
-        // not a git repo at this path
-      }
-    }
-
-    if (!repoPath) {
-      console.log(`[AutoCommit] No local repo found for ${session.repo}`);
-      return null;
-    }
-
-    console.log(`[AutoCommit] Found repo at ${repoPath}, running commit+push`);
-
-    try {
-      // 1. Check current branch - prevent commits to main/master
-      const { stdout: branchOut } = await execFileAsync('git', ['branch', '--show-current'], {
-        cwd: repoPath,
-        timeout: 5000,
-      });
-
-      const currentBranch = branchOut.trim();
-      const protectedBranches = ['main', 'master', 'develop', 'production', 'staging'];
-      if (protectedBranches.includes(currentBranch)) {
-        console.log(`[AutoCommit] Refusing to commit to protected branch: ${currentBranch}`);
-        return `🚫 Auto-commit blocked: Cannot commit to protected branch '${currentBranch}'. (${session.repo})`;
-      }
-
-      // 2. git status
-      const { stdout: statusOut } = await execFileAsync('git', ['status', '--porcelain'], {
-        cwd: repoPath,
-        timeout: 10000,
-      });
-
-      if (!statusOut.trim()) {
-        console.log(`[AutoCommit] No changes to commit in ${repoPath}`);
-        return `📭 No changes to commit. (${session.repo})`;
-      }
-
-      // 2. Get changed files from porcelain format (XY PATH or XY ORIG -> PATH)
-      const changedFiles = statusOut
-        .trim()
-        .split('\n')
-        .map((line) => {
-          // Porcelain v1: first 2 chars = status, then space, then path
-          // For renames: "R  old -> new" -- use the new path
-          let path = line.substring(2).trimStart();
-          if (path.includes(' -> ')) {
-            path = path.split(' -> ').pop()?.trim() || '';
-          } else {
-            path = path.trim();
-          }
-
-          // Remove quotes if git added them for paths with spaces
-          if (path.startsWith('"') && path.endsWith('"')) {
-            path = path.slice(1, -1);
-          }
-
-          return path;
-        })
-        .filter(Boolean);
-
-      // Check for sensitive files
-      const sensitivePatterns = [
-        /\.env/i,
-        /\.pem$/i,
-        /\.key$/i,
-        /credentials/i,
-        /secrets/i,
-        /private.*key/i,
-        /id_rsa/i,
-        /\.p12$/i,
-        /\.pfx$/i,
-        /password/i,
-        /\.aws\//i,
-        /\.ssh\//i,
-      ];
-
-      const sensitiveFiles = changedFiles.filter((file) =>
-        sensitivePatterns.some((pattern) => pattern.test(file))
-      );
-
-      if (sensitiveFiles.length > 0) {
-        console.log(`[AutoCommit] Blocked: sensitive files detected: ${sensitiveFiles.join(', ')}`);
-        return `🔒 Auto-commit blocked: Sensitive files detected:\n${sensitiveFiles.map((f) => `• ${f}`).join('\n')}`;
-      }
-
-      // 3. git add (specific files, batched to prevent ARG_MAX issues)
-      const BATCH_SIZE = 50;
-      for (let i = 0; i < changedFiles.length; i += BATCH_SIZE) {
-        const batch = changedFiles.slice(i, i + BATCH_SIZE);
-        await execFileAsync('git', ['add', ...batch], {
-          cwd: repoPath,
-          timeout: 15000,
-        });
-      }
-
-      // 4. git commit
-      const commitMsg = `fix: address PR review comments (${session.owner}/${session.repo}#${session.prNumber})`;
-      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: repoPath, timeout: 15000 });
-
-      const shortStatus =
-        changedFiles.length <= 5
-          ? changedFiles.join(', ')
-          : `${changedFiles.slice(0, 5).join(', ')} +${changedFiles.length - 5} more`;
-
-      // Safety: Only commit, never push. Push is always manual.
-      console.log(`[AutoCommit] Committed ${changedFiles.length} files safely (no push)`);
-      return (
-        `✅ **Auto Commit Completed** (Manual push required)\n` +
-        `📁 ${changedFiles.length} files: ${shortStatus}\n` +
-        `💬 \`${commitMsg}\`\n` +
-        `⚠️ Review changes with \`git diff HEAD~1\` before pushing`
-      );
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[AutoCommit] Failed:`, err);
-      return `❌ **Auto Commit Failed**: ${errMsg.substring(0, 200)}`;
-    }
   }
 }

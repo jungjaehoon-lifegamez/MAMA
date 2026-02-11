@@ -20,6 +20,26 @@ Call tools via JSON block:
 - **Bash**(command, workdir?) — Execute command (60s timeout)
 - **discord_send**(channel_id, message?, file_path?) — Send to Discord
 
+## Cron (Scheduled Jobs)
+
+Register and manage recurring tasks via the internal API (port 3847).
+
+- **List jobs**: `curl -s http://localhost:3847/api/cron | jq`
+- **Create job**: `curl -s -X POST http://localhost:3847/api/cron -H 'Content-Type: application/json' -d '{"name":"job name","cron_expr":"0 * * * *","prompt":"task prompt here"}'`
+- **Run now**: `curl -s -X POST http://localhost:3847/api/cron/{id}/run`
+- **Update job**: `curl -s -X PUT http://localhost:3847/api/cron/{id} -H 'Content-Type: application/json' -d '{"enabled":false}'`
+- **Delete job**: `curl -s -X DELETE http://localhost:3847/api/cron/{id}`
+- **View logs**: `curl -s http://localhost:3847/api/cron/{id}/logs | jq`
+
+The `prompt` field is what the agent will execute on each cron tick.
+Use cron expressions: `0 * * * *` (hourly), `*/30 * * * *` (every 30min), `0 9 * * *` (daily 9am).
+
+When a user asks to schedule/monitor something periodically, ALWAYS use this API — do NOT create external scripts or system crontab entries.
+
+## PR Review
+
+- **pr_review_threads**(pr_url) — Fetch unresolved review threads from GitHub PR. Returns threads grouped by file with comment body, line, author. Also accepts (owner, repo, pr_number).
+
 ## IMPORTANT: System Info
 
 - Status: `mama status` (shows PID, uptime, config)

@@ -15,8 +15,21 @@
 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { join } from 'path';
+import { homedir } from 'os';
+import { existsSync } from 'fs';
+import { mkdir, readFile, writeFile, unlink } from 'fs/promises';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const execFileAsync = promisify(execFile);
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
 
 /** Default polling interval (60 seconds) */
 const POLL_INTERVAL_MS = 60 * 1000;
@@ -79,6 +92,7 @@ interface PollSession {
   lastHeadSha: string | null;
   isPolling: boolean; // Prevent concurrent polling
   startedAt: number;
+  workspaceDir: string;
 }
 
 /**
@@ -95,7 +109,7 @@ export class PRReviewPoller {
   private sessions: Map<string, PollSession> = new Map();
   private messageSender: MessageSender | null = null;
   private onBatchComplete: ((channelId: string) => Promise<void>) | null = null;
-  private logger = console;
+  private logger = new DebugLogger('PRReviewPoller');
 
   /**
    * Check if a message sender is already configured
@@ -145,7 +159,7 @@ export class PRReviewPoller {
 
     // Already polling this PR
     if (this.sessions.has(sessionKey)) {
-      this.logger.log(`[PRPoller] Already polling ${sessionKey}`);
+      this.logger.info(`[PRPoller] Already polling ${sessionKey}`);
       return true;
     }
 
@@ -176,6 +190,24 @@ export class PRReviewPoller {
       // Non-critical, will be fetched on first poll
     }
 
+    // Checkout PR branch before starting work (isolated workspace)
+    const workspaceRoot = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
+    const workspaceDir = await this.prepareWorkspace(workspaceRoot, parsed);
+    try {
+      await this.ensureGhAuth();
+      await this.ensureRepo(workspaceDir, parsed.owner, parsed.repo);
+      await this.withWorkspaceLock(workspaceDir, async () => {
+        await execFileAsync('gh', ['pr', 'checkout', String(parsed.prNumber)], {
+          timeout: 30000,
+          cwd: workspaceDir,
+        });
+      });
+      this.logger.info(`[PRPoller] Checked out PR #${parsed.prNumber} branch in ${workspaceDir}`);
+    } catch (err) {
+      this.logger.error(`[PRPoller] Failed to checkout PR branch — aborting start:`, err);
+      return false;
+    }
+
     const session: PollSession = {
       ...parsed,
       channelId,
@@ -185,12 +217,13 @@ export class PRReviewPoller {
       seenUnresolvedThreadIds: new Map<string, number>(),
       lastHeadSha,
       startedAt: Date.now(),
-      isPolling: false, // Initialize polling state
-      timeoutId: null, // Will be set by scheduleNextPoll
+      isPolling: false,
+      timeoutId: null,
+      workspaceDir,
     };
 
     this.sessions.set(sessionKey, session);
-    this.logger.log(
+    this.logger.info(
       `[PRPoller] Started polling ${sessionKey} (${seenCommentIds.size} existing comments, interval: ${POLL_INTERVAL_MS / 1000}s)`
     );
 
@@ -216,7 +249,7 @@ export class PRReviewPoller {
         clearTimeout(session.timeoutId);
       }
       this.sessions.delete(sessionKey);
-      this.logger.log(`[PRPoller] Stopped polling ${sessionKey}`);
+      this.logger.info(`[PRPoller] Stopped polling ${sessionKey}`);
     }
   }
 
@@ -228,7 +261,7 @@ export class PRReviewPoller {
       if (session.timeoutId) {
         clearTimeout(session.timeoutId);
       }
-      this.logger.log(`[PRPoller] Stopped polling ${key}`);
+      this.logger.info(`[PRPoller] Stopped polling ${key}`);
     }
     this.sessions.clear();
   }
@@ -243,12 +276,19 @@ export class PRReviewPoller {
   /**
    * Get session details for active polling sessions (for auto-commit)
    */
-  getSessionDetails(): { owner: string; repo: string; prNumber: number; channelId: string }[] {
+  getSessionDetails(): {
+    owner: string;
+    repo: string;
+    prNumber: number;
+    channelId: string;
+    workspaceDir: string;
+  }[] {
     return Array.from(this.sessions.values()).map((s) => ({
       owner: s.owner,
       repo: s.repo,
       prNumber: s.prNumber,
       channelId: s.channelId,
+      workspaceDir: s.workspaceDir,
     }));
   }
 
@@ -275,7 +315,7 @@ export class PRReviewPoller {
 
     // Prevent concurrent polling
     if (session.isPolling) {
-      this.logger.log(
+      this.logger.info(
         `[PRPoller] Skipping concurrent poll for ${sessionKey} (already in progress)`
       );
       return;
@@ -286,13 +326,9 @@ export class PRReviewPoller {
     let hasNewData = false;
 
     try {
-      this.logger.log(
-        `[PRPoller] Polling ${sessionKey} (seen: ${session.seenCommentIds.size} comments, ${session.seenReviewIds.size} reviews)`
-      );
-
       // Auto-stop after max duration
       if (Date.now() - session.startedAt > MAX_POLL_DURATION_MS) {
-        this.logger.log(`[PRPoller] Max duration reached for ${sessionKey}, stopping`);
+        this.logger.info(`[PRPoller] Max duration reached for ${sessionKey}, stopping`);
         if (session.timeoutId) {
           clearTimeout(session.timeoutId);
         }
@@ -308,7 +344,7 @@ export class PRReviewPoller {
       try {
         const prState = await this.fetchPRState(session.owner, session.repo, session.prNumber);
         if (prState === 'MERGED' || prState === 'CLOSED') {
-          this.logger.log(`[PRPoller] PR ${sessionKey} is ${prState}, stopping`);
+          this.logger.info(`[PRPoller] PR ${sessionKey} is ${prState}, stopping`);
           if (session.timeoutId) {
             clearTimeout(session.timeoutId);
           }
@@ -382,7 +418,7 @@ export class PRReviewPoller {
             session.lastHeadSha,
             currentSha
           );
-          this.logger.log(
+          this.logger.info(
             `[PRPoller] New push detected for ${sessionKey}: ${session.lastHeadSha.substring(0, 7)} → ${currentSha.substring(0, 7)} (${changedFiles.length} files changed)`
           );
           session.lastHeadSha = currentSha;
@@ -417,11 +453,7 @@ export class PRReviewPoller {
           (c) => !session.seenCommentIds.has(c.id) && !session.addressedCommentIds.has(c.id)
         );
 
-        if (newComments.length === 0) {
-          this.logger.log(
-            `[PRPoller] No new comments for ${sessionKey} (total: ${allComments.length})`
-          );
-        } else {
+        if (newComments.length > 0) {
           // Format and send new comments
           const formatted = this.formatComments(sessionKey, newComments);
           const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
@@ -435,7 +467,7 @@ export class PRReviewPoller {
           // Set flag to trigger onBatchComplete
           hasNewData = true;
 
-          this.logger.log(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
+          this.logger.info(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
         }
       } catch (err) {
         this.logger.error(`[PRPoller] Failed to process comments:`, err);
@@ -450,7 +482,7 @@ export class PRReviewPoller {
         );
         const allUnresolved = threads.filter((t) => !t.isResolved);
         const now = Date.now();
-        const REMIND_INTERVAL_MS = 5 * 60 * 1000; // Re-remind after 5 minutes
+        const REMIND_INTERVAL_MS = 60 * 1000; // Re-remind after 1 minute
 
         // New = never seen, or seen but still unresolved after remind interval
         const toReport = allUnresolved.filter((t) => {
@@ -458,10 +490,6 @@ export class PRReviewPoller {
           if (!lastReported) return true; // never reported
           return now - lastReported >= REMIND_INTERVAL_MS; // stale reminder
         });
-
-        this.logger.log(
-          `[PRPoller] Unresolved threads: ${allUnresolved.length} total, ${toReport.length} to report (of ${threads.length} fetched)`
-        );
 
         if (toReport.length > 0) {
           hasNewData = true;
@@ -478,7 +506,7 @@ export class PRReviewPoller {
           for (const t of toReport) {
             session.seenUnresolvedThreadIds.set(t.id, now);
           }
-          this.logger.log(
+          this.logger.info(
             `[PRPoller] Sent ${toReport.length} unresolved threads for ${sessionKey}${isReminder ? ' (reminder)' : ''}`
           );
         }
@@ -514,50 +542,41 @@ export class PRReviewPoller {
   }
 
   /**
-   * Format PR comments for Slack message (simplified count format)
+   * Format PR comments with full details grouped by file.
+   * Enables parallel delegation — independent files can be fixed simultaneously.
    */
   private formatComments(sessionKey: string, comments: PRComment[]): string {
-    // Count by severity (detect from body)
-    let critical = 0;
-    let major = 0;
-    let minor = 0;
-    let _other = 0;
-
+    // Group by file
+    const byFile = new Map<string, PRComment[]>();
     for (const c of comments) {
-      // Use full body for severity detection
-      const bodyLower = c.body.toLowerCase();
-
-      // Detect severity from full body content
-      if (
-        bodyLower.includes('critical') ||
-        bodyLower.includes('bug') ||
-        bodyLower.includes('security') ||
-        bodyLower.includes('high')
-      ) {
-        critical++;
-      } else if (
-        bodyLower.includes('medium') ||
-        bodyLower.includes('should') ||
-        bodyLower.includes('major')
-      ) {
-        major++;
-      } else if (
-        bodyLower.includes('nit') ||
-        bodyLower.includes('minor') ||
-        bodyLower.includes('low') ||
-        bodyLower.includes('suggestion')
-      ) {
-        minor++;
-      } else {
-        _other++;
-      }
+      const key = c.path || '(general)';
+      const list = byFile.get(key) || [];
+      list.push(c);
+      byFile.set(key, list);
     }
 
-    return (
-      `📝 PR ${sessionKey} review update\n` +
-      `• New comments: ${comments.length} (🔴 ${critical} / 🟡 ${major} / 🔵 ${minor})\n` +
-      `👉 Check the PR for details`
-    );
+    const lines: string[] = [
+      `📝 PR ${sessionKey} — ${comments.length} new review comments across ${byFile.size} file(s)`,
+      '',
+    ];
+
+    for (const [file, fileComments] of byFile) {
+      lines.push(`**${file}**`);
+      for (const c of fileComments) {
+        const lineRef = c.line ? `:${c.line}` : '';
+        const body = c.body.length > 200 ? c.body.substring(0, 200) + '…' : c.body;
+        lines.push(`  • L${lineRef} ${body}`);
+      }
+      lines.push('');
+    }
+
+    if (byFile.size > 1) {
+      lines.push(
+        `💡 ${byFile.size} files — delegate in parallel when independent; keep coupled changes together (DELEGATE_BG)`
+      );
+    }
+
+    return lines.join('\n');
   }
 
   /**
@@ -670,7 +689,7 @@ export class PRReviewPoller {
           this.logger.error(`[PRPoller] Failed to reply to thread:`, err);
         }
       }
-      this.logger.log(
+      this.logger.info(
         `[PRPoller] Auto-replied to ${addressed.length} addressed threads for ${sessionKey}`
       );
     }
@@ -680,25 +699,52 @@ export class PRReviewPoller {
       const formatted = this.formatUnresolvedThreads(sessionKey, stillUnresolved, threads.length);
       const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
       await this.sendMessage(session.channelId, `${mention}${formatted}`);
-      this.logger.log(
+      this.logger.info(
         `[PRPoller] Sent ${stillUnresolved.length} unresolved threads for ${sessionKey}`
       );
     }
   }
 
   /**
-   * Format unresolved threads for Slack message (simplified count format)
+   * Format unresolved threads with details grouped by file.
    */
   private formatUnresolvedThreads(
     sessionKey: string,
     threads: ReviewThread[],
     totalThreads?: number
   ): string {
-    if (totalThreads !== undefined) {
-      const resolved = totalThreads - threads.length;
-      return `⚠️ PR ${sessionKey} thread status: ${resolved} resolved / ${threads.length} unresolved`;
+    const resolvedCount = totalThreads !== undefined ? totalThreads - threads.length : 0;
+    const header = `⚠️ PR ${sessionKey} — ${threads.length} unresolved thread(s)${totalThreads !== undefined ? ` (${resolvedCount} resolved)` : ''}`;
+
+    // Group by file
+    const byFile = new Map<string, ReviewThread[]>();
+    for (const t of threads) {
+      const file = t.comments[0]?.path || '(general)';
+      const list = byFile.get(file) || [];
+      list.push(t);
+      byFile.set(file, list);
     }
-    return `⚠️ PR ${sessionKey} unresolved threads: ${threads.length}`;
+
+    const lines: string[] = [header, ''];
+    for (const [file, fileThreads] of byFile) {
+      lines.push(`**${file}**`);
+      for (const t of fileThreads) {
+        const first = t.comments[0];
+        if (!first) continue;
+        const lineRef = first.line ? `:${first.line}` : '';
+        const body = first.body.length > 200 ? first.body.substring(0, 200) + '…' : first.body;
+        lines.push(`  • L${lineRef} ${body}`);
+      }
+      lines.push('');
+    }
+
+    if (byFile.size > 1) {
+      lines.push(
+        `💡 ${byFile.size} files — delegate in parallel when independent; keep coupled changes together (DELEGATE_BG)`
+      );
+    }
+
+    return lines.join('\n');
   }
 
   /**
@@ -755,17 +801,6 @@ export class PRReviewPoller {
 
     const result = JSON.parse(stdout || '{"totalCount":0,"nodes":[]}');
     const nodes = result.nodes || [];
-
-    // Debug: log isResolved distribution
-    const unresolvedInRaw = nodes.filter(
-      (n: Record<string, unknown>) => n.isResolved === false
-    ).length;
-    const resolvedInRaw = nodes.filter(
-      (n: Record<string, unknown>) => n.isResolved === true
-    ).length;
-    this.logger.log(
-      `[PRPoller] GraphQL raw: ${nodes.length} nodes, ${unresolvedInRaw} unresolved, ${resolvedInRaw} resolved, ${nodes.length - unresolvedInRaw - resolvedInRaw} other`
-    );
 
     // Warn if GraphQL pagination caps are hit
     if (result.totalCount > 100) {
@@ -884,6 +919,121 @@ export class PRReviewPoller {
     return state.toUpperCase(); // "open" → "OPEN", "closed" → "CLOSED"
   }
 
+  private async prepareWorkspace(
+    workspaceRoot: string,
+    parsed: { owner: string; repo: string; prNumber: number }
+  ): Promise<string> {
+    const sanitize = (value: string): string => value.replace(/[^a-zA-Z0-9_.-]/g, '-');
+    const slug = `${sanitize(parsed.owner)}-${sanitize(parsed.repo)}-pr-${parsed.prNumber}`;
+    const workspaceDir = join(workspaceRoot, 'pr-reviews', slug);
+    await mkdir(workspaceDir, { recursive: true });
+    return workspaceDir;
+  }
+
+  private async ensureGhAuth(): Promise<void> {
+    try {
+      await execFileAsync('gh', ['auth', 'status', '-h', 'github.com'], { timeout: 10000 });
+    } catch (err) {
+      throw new Error(`GitHub CLI not authenticated. Run "gh auth login". ${String(err)}`);
+    }
+  }
+
+  private async ensureRepo(workspaceDir: string, owner: string, repo: string): Promise<void> {
+    const gitDir = join(workspaceDir, '.git');
+    if (!existsSync(gitDir)) {
+      await execFileAsync('gh', ['repo', 'clone', `${owner}/${repo}`, '.'], {
+        timeout: 60000,
+        cwd: workspaceDir,
+      });
+      return;
+    }
+
+    const remoteUrl = await this.getRemoteUrl(workspaceDir);
+    if (!remoteUrl || !this.matchesRepo(remoteUrl, owner, repo)) {
+      throw new Error(
+        `Workspace repo mismatch. Expected ${owner}/${repo} but found ${remoteUrl || 'unknown'}`
+      );
+    }
+  }
+
+  private async getRemoteUrl(workspaceDir: string): Promise<string | null> {
+    try {
+      const { stdout } = await execFileAsync('git', ['config', '--get', 'remote.origin.url'], {
+        timeout: 10000,
+        cwd: workspaceDir,
+      });
+      const url = stdout.trim();
+      return url || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private matchesRepo(remoteUrl: string, owner: string, repo: string): boolean {
+    const match = remoteUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
+    if (!match) return false;
+    return match[1] === `${owner}/${repo}`;
+  }
+
+  private async withWorkspaceLock<T>(workspaceDir: string, task: () => Promise<T>): Promise<T> {
+    const lockPath = join(workspaceDir, '.mama-pr-review.lock');
+    const startedAt = Date.now();
+    const timeoutMs = 30_000;
+    const maxLockAgeMs = 2 * 60 * 1000;
+
+    let acquired = false;
+    while (!acquired) {
+      try {
+        await writeFile(
+          lockPath,
+          JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+          { flag: 'wx' }
+        );
+        acquired = true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw err;
+        }
+        let isStale = true;
+        try {
+          const existing = await readFile(lockPath, 'utf8');
+          const parsed = JSON.parse(existing) as { pid?: number; startedAt?: string };
+          const lockPid = typeof parsed.pid === 'number' ? parsed.pid : null;
+          const lockStarted = parsed.startedAt ? Date.parse(parsed.startedAt) : NaN;
+          const lockAge = Number.isFinite(lockStarted) ? Date.now() - lockStarted : Infinity;
+
+          if (lockPid) {
+            try {
+              process.kill(lockPid, 0);
+              isStale = lockAge > maxLockAgeMs;
+            } catch (pidErr) {
+              isStale = (pidErr as NodeJS.ErrnoException).code === 'ESRCH';
+            }
+          }
+        } catch {
+          isStale = true;
+        }
+
+        if (isStale) {
+          await unlink(lockPath).catch(() => undefined);
+          continue;
+        }
+
+        if (Date.now() - startedAt > timeoutMs) {
+          const existing = await readFile(lockPath, 'utf8').catch(() => '');
+          throw new Error(`Workspace lock timed out. Lock info: ${existing || 'unknown'}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+
+    try {
+      return await task();
+    } finally {
+      await unlink(lockPath).catch(() => undefined);
+    }
+  }
+
   /**
    * Parse GitHub PR URL into owner/repo/number
    */
@@ -917,7 +1067,7 @@ export class PRReviewPoller {
     }
 
     // Discord has a 2000 char limit; split long messages
-    this.logger.log(`[PRPoller] sendMessage: ${text.length} chars`);
+    this.logger.info(`[PRPoller] sendMessage: ${text.length} chars`);
     if (text.length <= 1900) {
       await this.messageSender(channelId, text);
       return;

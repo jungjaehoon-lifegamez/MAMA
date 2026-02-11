@@ -15,6 +15,7 @@ import type {
 } from './types.js';
 import { DEFAULT_LOOP_PREVENTION } from './types.js';
 import { CategoryRouter } from './category-router.js';
+import { createSafeLogger } from '../utils/log-sanitizer.js';
 
 /**
  * Multi-Agent Orchestrator
@@ -26,11 +27,14 @@ import { CategoryRouter } from './category-router.js';
  * 4. Reset chain state on human messages
  */
 export class MultiAgentOrchestrator {
+  private logger = createSafeLogger('Orchestrator');
   private config: MultiAgentConfig;
   private categoryRouter: CategoryRouter;
 
   /** Chain state per channel: Map<channelId, ChainState> */
   private chainStates: Map<string, ChainState> = new Map();
+  /** Per-channel chain length overrides */
+  private chainLimitOverrides: Map<string, number> = new Map();
 
   /** Last response time per agent: Map<agentId, timestamp> */
   private agentCooldowns: Map<string, number> = new Map();
@@ -97,12 +101,13 @@ export class MultiAgentOrchestrator {
 
     // Check if chain is blocked
     const chainState = this.getChainState(context.channelId);
+    const maxChainLength = this.getMaxChainLength(context.channelId);
     if (chainState.blocked) {
       return {
         selectedAgents: [],
         reason: 'none',
         blocked: true,
-        blockReason: `Chain limit reached (${chainState.length}/${this.config.loop_prevention.max_chain_length}). Waiting for human input.`,
+        blockReason: `Chain limit reached (${chainState.length}/${maxChainLength}). Waiting for human input.`,
       };
     }
 
@@ -270,10 +275,11 @@ export class MultiAgentOrchestrator {
     chainState.lastAgentId = agentId;
 
     // Check if chain limit reached
-    if (chainState.length >= loopPrevention.max_chain_length) {
+    const maxChainLength = this.getMaxChainLength(channelId);
+    if (chainState.length >= maxChainLength) {
       chainState.blocked = true;
-      console.log(
-        `[Orchestrator] Chain limit reached for channel ${channelId} (${chainState.length}/${loopPrevention.max_chain_length})`
+      this.logger.debug(
+        `[Orchestrator] Chain limit reached for channel ${channelId} (${chainState.length}/${maxChainLength})`
       );
     }
 
@@ -292,7 +298,7 @@ export class MultiAgentOrchestrator {
       this.responseHistory = this.responseHistory.slice(-this.MAX_HISTORY);
     }
 
-    console.log(
+    this.logger.info(
       `[Orchestrator] Recorded response: agent=${agentId}, channel=${channelId}, chain=${chainState.length}`
     );
   }
@@ -303,7 +309,7 @@ export class MultiAgentOrchestrator {
   resetChain(channelId: string): void {
     const chainState = this.chainStates.get(channelId);
     if (chainState) {
-      console.log(
+      this.logger.info(
         `[Orchestrator] Resetting chain for channel ${channelId} (was: ${chainState.length}, blocked: ${chainState.blocked})`
       );
     }
@@ -314,6 +320,30 @@ export class MultiAgentOrchestrator {
       lastAgentId: null,
       blocked: false,
     });
+  }
+
+  /**
+   * Override max chain length for a channel (runtime).
+   */
+  setChannelChainLimit(channelId: string, maxChainLength: number): void {
+    if (maxChainLength <= 0) {
+      throw new Error('maxChainLength must be greater than 0');
+    }
+    this.chainLimitOverrides.set(channelId, maxChainLength);
+  }
+
+  /**
+   * Clear max chain length override for a channel.
+   */
+  clearChannelChainLimit(channelId: string): void {
+    this.chainLimitOverrides.delete(channelId);
+  }
+
+  /**
+   * Get effective max chain length for a channel.
+   */
+  private getMaxChainLength(channelId: string): number {
+    return this.chainLimitOverrides.get(channelId) ?? this.config.loop_prevention.max_chain_length;
   }
 
   /**
@@ -341,7 +371,7 @@ export class MultiAgentOrchestrator {
     if (!lastResponse) return true;
 
     const agent = this.getAgent(agentId);
-    const cooldownMs = agent?.cooldown_ms || 5000;
+    const cooldownMs = agent?.cooldown_ms || 1000;
 
     return Date.now() - lastResponse >= cooldownMs;
   }

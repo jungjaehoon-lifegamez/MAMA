@@ -174,6 +174,11 @@ export class ToolPermissionManager {
     lines.push("- Only delegate when the task matches another agent's expertise");
     lines.push('- Delegation depth is limited to 1 (no re-delegation)');
     lines.push('- Use DELEGATE_BG for independent tasks that do not block your current work');
+    lines.push(
+      '- **CRITICAL: Never invent file paths.** Always verify paths exist (via Read/Glob/Bash) ' +
+        'before including them in delegation tasks. Use exact paths from tool output ' +
+        '(pr_review_threads, gh api, etc.).'
+    );
     lines.push('');
 
     return lines.join('\n');

@@ -69,10 +69,8 @@ describe('PersistentClaudeProcess buildArgs() tool flags', () => {
     expect(args).not.toContain('--disallowedTools');
   });
 
-  it('should place tool flags before --add-dir', () => {
+  it('should not include --add-dir (agents run from $HOME)', () => {
     const args = getBuildArgs({ disallowedTools: ['Write'] });
-    const disallowedIdx = args.indexOf('--disallowedTools');
-    const addDirIdx = args.indexOf('--add-dir');
-    expect(disallowedIdx).toBeLessThan(addDirIdx);
+    expect(args).not.toContain('--add-dir');
   });
 });

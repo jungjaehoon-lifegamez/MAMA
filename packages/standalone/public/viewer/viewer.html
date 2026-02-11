@@ -185,7 +185,7 @@
               </svg>
               <span class="hidden sm:inline">Dashboard</span>
             </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-bold transition-all bg-mama-yellow text-mama-black shadow-sm flex items-center gap-2" data-tab="chat" onclick="window.switchTab && window.switchTab('chat')">
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="skills" onclick="window.switchTab && window.switchTab('skills')">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
@@ -197,9 +197,11 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
               </svg>
-              <span class="hidden sm:inline">Chat</span>
+              <span class="hidden sm:inline">Skills</span>
             </button>
             <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
               <svg
@@ -433,6 +435,28 @@
               </div>
             </section>
 
+            <!-- Cron Monitor -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Cron Monitor</h2>
+              <div id="dashboard-cron" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div class="animate-pulse space-y-1.5">
+                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Token Usage -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Token Usage</h2>
+              <div id="dashboard-tokens" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div class="animate-pulse space-y-1.5">
+                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
+                </div>
+              </div>
+            </section>
+
             <!-- Status Bar -->
             <div id="dashboard-status" class="text-sm text-gray-500 text-gray-600 text-center py-2">
               Loading...
@@ -582,14 +606,18 @@
             <section class="mb-4">
               <h2 class="text-sm font-semibold text-gray-900 mb-2">Agent Configuration</h2>
               <div class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Backend</label>
+                    <select id="settings-agent-backend" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
+                      <option value="claude">Claude CLI</option>
+                      <option value="codex">Codex CLI</option>
+                    </select>
+                  </div>
                   <div>
                     <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Model</label>
-                    <select id="settings-agent-model" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
-                      <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (Recommended)</option>
-                      <option value="claude-opus-4-5-20251101">Claude Opus 4.5</option>
-                      <option value="claude-haiku-3-5-20241022">Claude Haiku 3.5</option>
-                    </select>
+                    <input id="settings-agent-model" list="settings-agent-model-list" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent" placeholder="Select or type a model">
+                    <datalist id="settings-agent-model-list"></datalist>
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Max Turns</label>
@@ -598,6 +626,16 @@
                   <div>
                     <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Timeout (seconds)</label>
                     <input type="number" id="settings-agent-timeout" value="300" min="30" max="600" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
+                  </div>
+                </div>
+                <div class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-100">
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="settings-agent-persistent-cli" class="sr-only peer">
+                    <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-mama-yellow rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                  </label>
+                  <div>
+                    <span class="text-xs font-medium text-gray-700">Persistent CLI</span>
+                    <span class="text-[10px] text-gray-400 ml-1">~2-3s response (Claude only)</span>
                   </div>
                 </div>
               </div>
@@ -750,6 +788,58 @@
               </div>
             </section>
 
+            <!-- Installed Skills -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Installed Skills</h2>
+              <div id="settings-skills-container" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <p class="text-xs text-gray-500">Loading skills...</p>
+              </div>
+              <p class="text-[10px] text-gray-400 mt-1">Skills directory: ~/.mama/skills/</p>
+            </section>
+
+            <!-- Token Budget -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Token Budget</h2>
+              <div class="bg-white border border-gray-200 rounded-lg p-2.5 space-y-2">
+                <div>
+                  <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Daily Token Limit</label>
+                  <input type="number" id="settings-token-daily-limit" placeholder="e.g. 1000000" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Cost Alert Threshold (USD)</label>
+                  <input type="number" id="settings-token-alert-threshold" step="0.01" placeholder="e.g. 5.00" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
+                </div>
+              </div>
+            </section>
+
+            <!-- Scheduled Jobs (Cron) -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">Scheduled Jobs</h2>
+              <div id="settings-cron-container" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <p class="text-xs text-gray-500">Loading scheduled jobs...</p>
+              </div>
+              <div class="mt-2 bg-white border border-gray-200 rounded-lg p-2.5 space-y-2" id="settings-cron-form">
+                <h3 class="text-xs font-medium text-gray-700">Add New Job</h3>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Name</label>
+                    <input type="text" id="settings-cron-name" placeholder="e.g. Danggeun Monitor" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
+                  </div>
+                  <div>
+                    <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Schedule (cron)</label>
+                    <input type="text" id="settings-cron-expr" placeholder="0 * * * *" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Prompt</label>
+                  <textarea id="settings-cron-prompt" rows="2" placeholder="Task prompt for agent to execute each tick..." class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400 resize-none"></textarea>
+                </div>
+                <button onclick="settingsModule.addCronJob()" class="px-3 py-1 text-xs font-medium text-mama-black bg-mama-yellow hover:bg-mama-yellow-hover rounded transition-colors">
+                  Add Job
+                </button>
+              </div>
+            </section>
+
             <!-- Action Buttons -->
             <div class="flex items-center justify-between pt-4 border-t border-gray-200 border-mama-lavender-dark">
               <button onclick="settingsModule.resetForm()" class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-mama-lavender-light hover:bg-gray-200 hover:bg-mama-lavender-light rounded-lg transition-colors">
@@ -757,13 +847,13 @@
               </button>
               <div class="flex items-center gap-3">
                 <span id="settings-status" class="text-sm text-gray-500 text-gray-600"></span>
-                <button onclick="settingsModule.saveSettings()" class="px-6 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors flex items-center gap-2">
+                <button onclick="settingsModule.saveAndRestart()" class="px-6 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors flex items-center gap-2">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
                     <polyline points="17 21 17 13 7 13 7 21"/>
                     <polyline points="7 3 7 8 15 8"/>
                   </svg>
-                  Save Settings
+                  Save &amp; Restart
                 </button>
               </div>
             </div>
@@ -984,132 +1074,151 @@
               </div>
             </div>
           </div>
+          <div id="decision-resize-handle" class="decision-resize-handle" aria-label="Resize decision modal"></div>
         </div>
 
-        <div class="tab-content active" id="tab-chat">
-          <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full">
-            <div class="flex-1 flex flex-col bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded-xl overflow-hidden shadow-sm min-h-0" id="general-chat">
-              <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-h-0" id="chat-messages">
-                <div class="flex-1 flex flex-col items-center justify-center text-center p-12 text-gray-500">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="48"
-                    height="48"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    class="mb-4 opacity-50"
-                  >
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                  <h3 class="text-lg font-semibold text-gray-900 text-mama-black mb-2">Start a conversation</h3>
-                  <p class="text-sm text-gray-500 text-gray-600 max-w-sm leading-relaxed">
-                    Connect to a Claude session to start chatting. Your conversation will be saved
-                    and can be resumed later.
-                  </p>
-                </div>
-              </div>
+        <!-- Skills Marketplace Tab -->
+        <div class="tab-content" id="tab-skills">
+          <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full overflow-y-auto">
+            <!-- Search Bar -->
+            <div class="mb-4">
+              <input id="skills-search" type="text"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                placeholder="Search skills...">
+            </div>
 
-              <div class="border-t border-gray-200 border-mama-lavender-dark p-4 space-y-3">
-                <div class="flex gap-2">
-                  <textarea
-                    class="flex-1 px-3 py-2 border border-gray-200 border-mama-lavender-dark rounded-lg bg-white bg-mama-lavender-light text-gray-900 text-mama-black placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-mama-yellow disabled:opacity-50 disabled:cursor-not-allowed"
-                    id="chat-input"
-                    placeholder="Type your message..."
-                    rows="2"
-                    disabled
-                  ></textarea>
-                  <button 
-                    class="px-4 py-2 bg-mama-yellow hover:bg-mama-yellow-hover disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors disabled:cursor-not-allowed flex items-center gap-2" 
-                    id="chat-send" 
-                    onclick="sendChatMessage()" 
-                    disabled
-                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <line x1="22" y1="2" x2="11" y2="13" stroke-width="2" stroke-linecap="round"/>
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                    <span>Send</span>
-                  </button>
-                </div>
+            <!-- URL Install -->
+            <div class="flex gap-2 mb-4">
+              <input id="skills-url-input" type="text"
+                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                placeholder="https://github.com/owner/repo">
+              <button id="skills-url-install-btn"
+                class="px-4 py-1.5 text-xs rounded-lg bg-purple-600 text-white font-medium hover:bg-purple-700 whitespace-nowrap">
+                Install URL
+              </button>
+            </div>
 
-                  <div class="flex items-center gap-2">
-                    <button
-                      class="p-2 rounded-lg hover:bg-mama-lavender-light transition-colors"
-                      id="chat-tts-toggle"
-                      onclick="toggleTTS()"
-                      title="TTS Off"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                    </button>
-                    <div class="relative">
-                      <span class="text-xs text-gray-600 text-gray-600 cursor-pointer px-2 py-1 hover:bg-mama-lavender-light rounded" id="tts-speed-label" onclick="toggleTTSPopup()">
-                        1.8x
-                      </span>
-                      <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white bg-white border border-gray-200 border-mama-lavender-dark rounded-lg p-3 shadow-lg hidden" id="tts-speed-popup">
-                        <div class="text-center text-sm font-semibold mb-2" id="tts-speed-value">1.8x</div>
-                        <input
-                          type="range"
-                          class="w-full accent-indigo-600"
-                          id="tts-speed-slider"
-                          min="0.5"
-                          max="2.0"
-                          step="0.1"
-                          value="1.8"
-                          oninput="updateTTSSpeed(this.value)"
-                        />
-                      </div>
-                    </div>
-                    <button
-                      class="p-2 rounded-lg hover:bg-mama-lavender-light transition-colors"
-                      id="chat-handsfree-toggle"
-                      onclick="toggleHandsFree()"
-                      title="Hands-free Off"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="2" stroke-width="2"/>
-                        <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                    </button>
-                    <button
-                      class="p-2 rounded-lg hover:bg-mama-lavender-light transition-colors relative"
-                      id="chat-mic"
-                      onclick="toggleVoiceInput()"
-                      title="Voice input"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        <line x1="12" y1="19" x2="12" y2="22" stroke-width="2" stroke-linecap="round"/>
-                      </svg>
-                      <span class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"></span>
-                    </button>
-                  </div>
-                  
-                  <div class="flex items-center gap-2 text-sm text-gray-600 text-gray-600" id="chat-status">
-                    <span class="status-indicator w-2 h-2 rounded-full bg-red-500"></span>
-                    <span>Not connected</span>
-                    <button
-                      class="ml-2 p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors"
-                      onclick="showTunnelSetup()"
-                      title="External Access"
-                    >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="10" stroke-width="2"/>
-                        <line x1="2" y1="12" x2="22" y2="12" stroke-width="2"/>
-                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke-width="2"/>
-                      </svg>
-                    </button>
-                  </div>
-                </div>
+            <!-- Filter Bar -->
+            <div id="skills-filter-bar" class="flex gap-2 mb-4 flex-wrap">
+              <button data-filter="all" class="px-3 py-1 text-xs rounded-full bg-yellow-400 text-gray-900 font-medium">All</button>
+              <button data-filter="installed" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">Installed</button>
+              <button data-filter="mama" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">MAMA</button>
+              <button data-filter="cowork" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">Cowork</button>
+              <button data-filter="external" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">External</button>
+            </div>
+
+            <!-- Skills Content (rendered by skills.js) -->
+            <div id="skills-content">
+              <div class="flex items-center justify-center p-12 text-gray-500">
+                <p class="text-sm">Loading skills...</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Skill Detail Modal -->
+        <div id="skill-detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl mx-4">
+            <div class="flex items-center justify-between p-4 border-b border-gray-700">
+              <h2 class="text-lg font-bold text-white">Skill Details</h2>
+              <button onclick="window.skillsModule && window.skillsModule.closeDetail()"
+                class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <div id="skill-detail-content" class="p-4 overflow-y-auto flex-1 text-sm text-gray-300">
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Chat (global, visible on all tabs) -->
+        <div id="floating-chat" class="fixed bottom-6 right-6 z-50">
+          <button id="chat-bubble"
+            class="w-14 h-14 rounded-full bg-mama-yellow shadow-yellow flex items-center justify-center hover:scale-110 transition-transform cursor-pointer relative"
+            title="Open Chat">
+            <svg class="w-6 h-6 text-mama-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span id="chat-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
+          </button>
+
+          <div id="chat-panel" class="hidden absolute bottom-[4.5rem] right-0 w-[400px] h-[560px] bg-white rounded-2xl shadow-float border border-mama-lavender-dark flex flex-col overflow-hidden">
+            <!-- Header -->
+            <div id="chat-header" class="h-12 bg-mama-yellow/20 flex items-center px-4 border-b border-mama-lavender-dark shrink-0">
+              <svg class="w-5 h-5 text-mama-black mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="font-bold text-mama-black text-sm">MAMA Chat</span>
+              <div class="ml-2 flex items-center gap-1 text-xs text-gray-500" id="chat-status">
+                <span class="status-indicator w-2 h-2 rounded-full bg-red-500"></span>
+                <span>Not connected</span>
+              </div>
+              <div class="ml-auto flex items-center gap-1">
+                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-tts-toggle" onclick="toggleTTS()" title="TTS Off">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <div class="relative">
+                  <span class="text-[10px] text-gray-500 cursor-pointer px-1 py-0.5 hover:bg-mama-lavender-light rounded" id="tts-speed-label" onclick="toggleTTSPopup()">1.8x</span>
+                  <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white border border-mama-lavender-dark rounded-lg p-3 shadow-lg hidden" id="tts-speed-popup">
+                    <div class="text-center text-sm font-semibold mb-2" id="tts-speed-value">1.8x</div>
+                    <input type="range" class="w-full accent-mama-yellow" id="tts-speed-slider" min="0.5" max="2.0" step="0.1" value="1.8" oninput="updateTTSSpeed(this.value)" />
+                  </div>
+                </div>
+                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-handsfree-toggle" onclick="toggleHandsFree()" title="Hands-free Off">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="2" stroke-width="2"/>
+                    <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <button id="chat-close" class="p-1.5 rounded-lg hover:bg-red-100 transition-colors text-gray-500 hover:text-red-600" title="Close">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/>
+                    <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Messages -->
+            <div class="flex-1 overflow-y-auto p-3 flex flex-col gap-3 min-h-0" id="chat-messages">
+              <div class="flex-1 flex flex-col items-center justify-center text-center p-6 text-gray-400">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-3 opacity-50">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <p class="text-sm">Start a conversation</p>
+              </div>
+            </div>
+
+            <!-- Input -->
+            <div class="border-t border-mama-lavender-dark p-3 space-y-2 shrink-0">
+              <div class="flex gap-2">
+                <textarea
+                  class="flex-1 px-3 py-2 border border-mama-lavender-dark rounded-lg bg-mama-lavender-light text-mama-black placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-mama-yellow disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  id="chat-input" placeholder="Type your message..." rows="1" disabled
+                ></textarea>
+                <button
+                  class="px-3 py-2 bg-mama-yellow hover:bg-mama-yellow-hover disabled:bg-gray-400 text-mama-black rounded-lg font-medium transition-colors disabled:cursor-not-allowed flex items-center"
+                  id="chat-send" onclick="sendChatMessage()" disabled>
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <line x1="22" y1="2" x2="11" y2="13" stroke-width="2" stroke-linecap="round"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="flex items-center gap-1">
+                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors relative" id="chat-mic" onclick="toggleVoiceInput()" title="Voice input">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <line x1="12" y1="19" x2="12" y2="22" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                  <span class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"></span>
+                </button>
+                <span class="text-[10px] text-gray-400 ml-1">Enter to send, Shift+Enter for new line</span>
+              </div>
+            </div>
+            <div id="chat-resize-handle" class="chat-resize-handle" aria-label="Resize chat panel"></div>
           </div>
         </div>
       </main>
@@ -1291,12 +1400,14 @@
       import { MemoryModule } from '/viewer/js/modules/memory.js';
       import { DashboardModule } from '/viewer/js/modules/dashboard.js';
       import { SettingsModule } from '/viewer/js/modules/settings.js';
+      import { SkillsModule } from '/viewer/js/modules/skills.js';
 
       const memory = new MemoryModule();
       const chat = new ChatModule(memory);
       const graph = new GraphModule();
       const dashboard = new DashboardModule();
       const settings = new SettingsModule();
+      const skills = SkillsModule;
 
       // Expose modules globally for debugging and onclick handlers
       window.chatModule = chat;
@@ -1304,6 +1415,7 @@
       window.memoryModule = memory;
       window.dashboardModule = dashboard;
       window.settingsModule = settings;
+      window.skillsModule = skills;
 
       // Quiz choice button handler
       window.sendQuizChoice = (choice) => {
@@ -1311,7 +1423,7 @@
       };
 
       const STATE = {
-        currentTab: 'chat',
+        currentTab: 'dashboard',
         theme: 'dark',
         graphLoaded: false
       };
@@ -1331,12 +1443,12 @@
           content.classList.toggle('active', content.id === `tab-${tabName}`);
         });
 
-        if (tabName === 'chat') {
-          chat.initSession();
-        } else if (tabName === 'dashboard') {
+        if (tabName === 'dashboard') {
           dashboard.init();
         } else if (tabName === 'settings') {
           settings.init();
+        } else if (tabName === 'skills') {
+          skills.init();
         } else if (tabName === 'memory') {
           // Initialize sidebar state for current screen size
           updateCheckpointSidebarForScreenSize();
@@ -1387,6 +1499,7 @@
       (function initDraggableModal() {
         const modal = document.getElementById('decision-detail-modal');
         const header = document.getElementById('detail-modal-header');
+        const resizeHandle = document.getElementById('decision-resize-handle');
         if (!modal || !header) return;
 
         let isDragging = false;
@@ -1420,6 +1533,105 @@
             document.body.style.userSelect = '';
           }
         });
+
+        // Touch drag for mobile
+        header.addEventListener('touchstart', (e) => {
+          if (e.target.tagName === 'BUTTON') return;
+          const touch = e.touches[0];
+          if (!touch) return;
+          e.preventDefault();
+          e.stopPropagation();
+          document.body.classList.add('no-scroll');
+          isDragging = true;
+          startX = touch.clientX;
+          startY = touch.clientY;
+          const rect = modal.getBoundingClientRect();
+          startLeft = rect.left;
+          startTop = rect.top;
+          modal.style.transition = 'none';
+        }, { passive: false });
+
+        document.addEventListener('touchmove', (e) => {
+          if (!isDragging) return;
+          const touch = e.touches[0];
+          if (!touch) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const dx = touch.clientX - startX;
+          const dy = touch.clientY - startY;
+          modal.style.left = Math.max(0, Math.min(window.innerWidth - 100, startLeft + dx)) + 'px';
+          modal.style.top = Math.max(0, Math.min(window.innerHeight - 50, startTop + dy)) + 'px';
+          modal.style.right = 'auto';
+          modal.style.transform = 'none';
+        }, { passive: false });
+
+        document.addEventListener('touchend', () => {
+          if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('no-scroll');
+          }
+        });
+
+        // Resize (mouse + touch)
+        if (resizeHandle) {
+          let resizing = false;
+          let rStartX, rStartY, rStartW, rStartH;
+
+          const startResize = (clientX, clientY) => {
+            resizing = true;
+            rStartX = clientX;
+            rStartY = clientY;
+            rStartW = modal.offsetWidth;
+            rStartH = modal.offsetHeight;
+            document.body.style.userSelect = 'none';
+          };
+
+          const doResize = (clientX, clientY) => {
+            if (!resizing) return;
+            const dx = clientX - rStartX;
+            const dy = clientY - rStartY;
+            const minW = 280;
+            const minH = 200;
+            const maxW = Math.min(window.innerWidth * 0.95, 900);
+            const maxH = Math.min(window.innerHeight * 0.9, 900);
+            modal.style.width = Math.max(minW, Math.min(maxW, rStartW + dx)) + 'px';
+            modal.style.height = Math.max(minH, Math.min(maxH, rStartH + dy)) + 'px';
+          };
+
+          const endResize = () => {
+            if (!resizing) return;
+            resizing = false;
+            document.body.style.userSelect = '';
+          };
+
+          resizeHandle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            startResize(e.clientX, e.clientY);
+          });
+          document.addEventListener('mousemove', (e) => doResize(e.clientX, e.clientY));
+          document.addEventListener('mouseup', endResize);
+
+          resizeHandle.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            if (!touch) return;
+            e.preventDefault();
+            e.stopPropagation();
+            startResize(touch.clientX, touch.clientY);
+            document.body.classList.add('no-scroll');
+          }, { passive: false });
+          document.addEventListener('touchmove', (e) => {
+            const touch = e.touches[0];
+            if (!touch) return;
+            if (!resizing) return;
+            e.preventDefault();
+            e.stopPropagation();
+            doResize(touch.clientX, touch.clientY);
+          }, { passive: false });
+          document.addEventListener('touchend', () => {
+            endResize();
+            document.body.classList.remove('no-scroll');
+          });
+        }
       })();
 
       function toggleReasoning() {
@@ -1470,19 +1682,27 @@
         if (!sidebar) return;
 
         if (window.innerWidth < 768) {
-          // Mobile: collapse
-          sidebar.classList.add('collapsed');
-          sidebar.style.width = '0';
-          if (handle) handle.style.display = 'none';
-          if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+          // Mobile: stack layout with resizable height
+          sidebar.classList.remove('collapsed');
+          sidebar.style.width = '100%';
+          sidebar.style.height = '30vh';
+          if (handle) {
+            handle.style.display = '';
+            handle.classList.add('sidebar-resize-handle--row');
+          }
+          if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
         } else {
           // Desktop: expand if was collapsed due to mobile
           if (sidebar.classList.contains('collapsed')) {
             sidebar.classList.remove('collapsed');
             sidebar.style.width = '224px';
-            if (handle) handle.style.display = '';
-            if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
           }
+          sidebar.style.height = '';
+          if (handle) {
+            handle.style.display = '';
+            handle.classList.remove('sidebar-resize-handle--row');
+          }
+          if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
         }
       }
 
@@ -1503,23 +1723,32 @@
         if (!handle || !sidebar) return;
 
         let isResizing = false;
-        let startX, startWidth;
+        let startX, startY, startWidth, startHeight;
+        const isMobile = () => window.innerWidth < 768;
 
         handle.addEventListener('mousedown', (e) => {
           if (sidebar.classList.contains('collapsed')) return;
           isResizing = true;
           startX = e.clientX;
+          startY = e.clientY;
           startWidth = sidebar.offsetWidth;
-          document.body.style.cursor = 'col-resize';
+          startHeight = sidebar.offsetHeight;
+          document.body.style.cursor = isMobile() ? 'row-resize' : 'col-resize';
           document.body.style.userSelect = 'none';
           handle.style.background = '#FFCE00';
         });
 
         document.addEventListener('mousemove', (e) => {
           if (!isResizing) return;
-          const diff = e.clientX - startX;
-          const newWidth = Math.max(120, Math.min(400, startWidth + diff));
-          sidebar.style.width = newWidth + 'px';
+          if (isMobile()) {
+            const diff = e.clientY - startY;
+            const newHeight = Math.max(140, Math.min(500, startHeight + diff));
+            sidebar.style.height = newHeight + 'px';
+          } else {
+            const diff = e.clientX - startX;
+            const newWidth = Math.max(120, Math.min(400, startWidth + diff));
+            sidebar.style.width = newWidth + 'px';
+          }
         });
 
         document.addEventListener('mouseup', () => {
@@ -1536,15 +1765,23 @@
           if (sidebar.classList.contains('collapsed')) return;
           isResizing = true;
           startX = e.touches[0].clientX;
+          startY = e.touches[0].clientY;
           startWidth = sidebar.offsetWidth;
+          startHeight = sidebar.offsetHeight;
           handle.style.background = '#FFCE00';
         });
 
         document.addEventListener('touchmove', (e) => {
           if (!isResizing) return;
-          const diff = e.touches[0].clientX - startX;
-          const newWidth = Math.max(120, Math.min(400, startWidth + diff));
-          sidebar.style.width = newWidth + 'px';
+          if (isMobile()) {
+            const diff = e.touches[0].clientY - startY;
+            const newHeight = Math.max(140, Math.min(500, startHeight + diff));
+            sidebar.style.height = newHeight + 'px';
+          } else {
+            const diff = e.touches[0].clientX - startX;
+            const newWidth = Math.max(120, Math.min(400, startWidth + diff));
+            sidebar.style.width = newWidth + 'px';
+          }
         });
 
         document.addEventListener('touchend', () => {
@@ -1804,7 +2041,11 @@
         document.documentElement.lang = userLang.split('-')[0];
 
         initTheme();
-        switchTab('chat');
+        // Initialize floating chat (WebSocket + panel bindings)
+        chat.initFloating();
+        chat.initSession();
+        // Default to dashboard tab
+        switchTab('dashboard');
       });
 
       // Cleanup resources on page unload

@@ -14,6 +14,9 @@
 
 import { showToast, escapeHtml } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('Settings');
 
 /**
  * Settings Module Class
@@ -22,6 +25,7 @@ export class SettingsModule {
   constructor() {
     this.config = null;
     this.initialized = false;
+    this.backendListenersInitialized = false;
   }
 
   /**
@@ -34,6 +38,7 @@ export class SettingsModule {
     this.initialized = true;
 
     await this.loadSettings();
+    this.initBackendModelBinding();
   }
 
   /**
@@ -59,14 +64,14 @@ export class SettingsModule {
           this.multiAgentData = { agents: [] };
         }
       } catch (e) {
-        console.warn('[Settings] Multi-agent data unavailable:', e);
+        logger.warn('Multi-agent data unavailable:', e);
         this.multiAgentData = { agents: [] };
       }
 
       this.populateForm();
       this.setStatus('');
     } catch (error) {
-      console.error('[Settings] Load error:', error);
+      logger.error('Load error:', error);
       this.setStatus(`Error: ${error.message}`, 'error');
     }
   }
@@ -81,21 +86,21 @@ export class SettingsModule {
 
     // Discord
     this.setCheckbox('settings-discord-enabled', this.config.discord?.enabled);
-    this.setValue('settings-discord-token', this.config.discord?.token || '');
+    this.setValue('settings-discord-token', this.config.discord?.token || '', true);
     this.setValue('settings-discord-channel', this.config.discord?.default_channel_id || '');
 
     // Slack
     this.setCheckbox('settings-slack-enabled', this.config.slack?.enabled);
-    this.setValue('settings-slack-bot-token', this.config.slack?.bot_token || '');
-    this.setValue('settings-slack-app-token', this.config.slack?.app_token || '');
+    this.setValue('settings-slack-bot-token', this.config.slack?.bot_token || '', true);
+    this.setValue('settings-slack-app-token', this.config.slack?.app_token || '', true);
 
     // Telegram
     this.setCheckbox('settings-telegram-enabled', this.config.telegram?.enabled);
-    this.setValue('settings-telegram-token', this.config.telegram?.token || '');
+    this.setValue('settings-telegram-token', this.config.telegram?.token || '', true);
 
     // Chatwork
     this.setCheckbox('settings-chatwork-enabled', this.config.chatwork?.enabled);
-    this.setValue('settings-chatwork-token', this.config.chatwork?.api_token || '');
+    this.setValue('settings-chatwork-token', this.config.chatwork?.api_token || '', true);
 
     // Heartbeat
     this.setCheckbox('settings-heartbeat-enabled', this.config.heartbeat?.enabled);
@@ -107,10 +112,12 @@ export class SettingsModule {
     this.setValue('settings-heartbeat-quiet-end', this.config.heartbeat?.quiet_end ?? 8);
 
     // Agent
-    this.setSelectValue(
-      'settings-agent-model',
-      this.config.agent?.model || 'claude-sonnet-4-20250514'
-    );
+    const backend = this.config.agent?.backend || 'claude';
+    const model = this.config.agent?.model || 'claude-sonnet-4-20250514';
+    this.setSelectValue('settings-agent-backend', backend);
+    this.updateModelOptions(backend, model);
+    this.setValue('settings-agent-model', this.getNormalizedModelForBackend(backend, model));
+    this.updatePersistentCliToggle(backend, this.config.agent?.use_persistent_cli || false);
     this.setValue('settings-agent-max-turns', this.config.agent?.max_turns || 10);
     this.setValue(
       'settings-agent-timeout',
@@ -125,6 +132,11 @@ export class SettingsModule {
 
     // Multi-Agent Team (F3)
     this.populateMultiAgentSection();
+
+    // Skills + Token Budget + Cron
+    this.populateSkillsSection();
+    this.populateTokenSection();
+    this.populateCronSection();
   }
 
   /**
@@ -305,9 +317,9 @@ export class SettingsModule {
   }
 
   /**
-   * Save settings to API
+   * Save settings and restart daemon to apply changes
    */
-  async saveSettings() {
+  async saveAndRestart() {
     this.setStatus('Saving...');
 
     try {
@@ -325,13 +337,19 @@ export class SettingsModule {
         throw new Error(result.message || `HTTP ${response.status}`);
       }
 
-      this.setStatus('Saved!', 'success');
-      showToast('Settings saved successfully');
+      this.setStatus('Saved! Restarting...', 'success');
+      showToast('Settings saved. Restarting daemon...');
 
-      // Reload to get updated masked values
-      setTimeout(() => this.loadSettings(), 1500);
+      // Trigger restart after save
+      try {
+        await fetch('/api/restart', { method: 'POST' });
+      } catch {
+        // Expected: connection drops when server exits
+      }
+
+      this.setStatus('Restarting... page will reconnect automatically', '');
     } catch (error) {
-      console.error('[Settings] Save error:', error);
+      logger.error('Save error:', error);
       this.setStatus(`Error: ${error.message}`, 'error');
       showToast(`Failed to save: ${error.message}`);
     }
@@ -341,24 +359,47 @@ export class SettingsModule {
    * Collect form data into config update object
    */
   collectFormData() {
+    const backend = this.getSelectValue('settings-agent-backend') || 'claude';
+    const model = this.getValue('settings-agent-model');
+    const useClaudeCli = backend === 'claude';
+
+    // Get token values - if empty and original was masked, keep original
+    const discordToken = this.getTokenValue('settings-discord-token', this.config.discord?.token);
+    const slackBotToken = this.getTokenValue(
+      'settings-slack-bot-token',
+      this.config.slack?.bot_token
+    );
+    const slackAppToken = this.getTokenValue(
+      'settings-slack-app-token',
+      this.config.slack?.app_token
+    );
+    const telegramToken = this.getTokenValue(
+      'settings-telegram-token',
+      this.config.telegram?.token
+    );
+    const chatworkToken = this.getTokenValue(
+      'settings-chatwork-token',
+      this.config.chatwork?.api_token
+    );
+
     return {
       discord: {
         enabled: this.getCheckbox('settings-discord-enabled'),
-        token: this.getValue('settings-discord-token'),
+        token: discordToken,
         default_channel_id: this.getValue('settings-discord-channel'),
       },
       slack: {
         enabled: this.getCheckbox('settings-slack-enabled'),
-        bot_token: this.getValue('settings-slack-bot-token'),
-        app_token: this.getValue('settings-slack-app-token'),
+        bot_token: slackBotToken,
+        app_token: slackAppToken,
       },
       telegram: {
         enabled: this.getCheckbox('settings-telegram-enabled'),
-        token: this.getValue('settings-telegram-token'),
+        token: telegramToken,
       },
       chatwork: {
         enabled: this.getCheckbox('settings-chatwork-enabled'),
-        api_token: this.getValue('settings-chatwork-token'),
+        api_token: chatworkToken,
       },
       heartbeat: {
         enabled: this.getCheckbox('settings-heartbeat-enabled'),
@@ -366,13 +407,100 @@ export class SettingsModule {
         quiet_start: parseInt(this.getValue('settings-heartbeat-quiet-start') || '23', 10),
         quiet_end: parseInt(this.getValue('settings-heartbeat-quiet-end') || '8', 10),
       },
+      use_claude_cli: useClaudeCli,
       agent: {
-        model: this.getSelectValue('settings-agent-model'),
+        backend,
+        use_persistent_cli: useClaudeCli
+          ? this.getCheckbox('settings-agent-persistent-cli')
+          : false,
+        model: model || (backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514'),
         max_turns: parseInt(this.getValue('settings-agent-max-turns') || '10', 10),
         timeout: parseInt(this.getValue('settings-agent-timeout') || '300', 10) * 1000,
         tools: this.collectToolModeData(),
       },
+      token_budget: {
+        daily_limit: parseInt(this.getValue('settings-token-daily-limit') || '0', 10) || undefined,
+        alert_threshold:
+          parseInt(this.getValue('settings-token-alert-threshold') || '0', 10) || undefined,
+      },
     };
+  }
+
+  initBackendModelBinding() {
+    if (this.backendListenersInitialized) {
+      return;
+    }
+    this.backendListenersInitialized = true;
+    const backendSelect = document.getElementById('settings-agent-backend');
+    if (!backendSelect) {
+      return;
+    }
+    backendSelect.addEventListener('change', () => {
+      const backend = this.getSelectValue('settings-agent-backend') || 'claude';
+      const currentModel = this.getValue('settings-agent-model');
+      this.updateModelOptions(backend, currentModel);
+      this.setValue(
+        'settings-agent-model',
+        this.getNormalizedModelForBackend(backend, currentModel)
+      );
+      this.updatePersistentCliToggle(backend, this.getCheckbox('settings-agent-persistent-cli'));
+    });
+  }
+
+  updatePersistentCliToggle(backend, isChecked) {
+    const checkbox = document.getElementById('settings-agent-persistent-cli');
+    if (!checkbox) {
+      return;
+    }
+    if (backend === 'codex') {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+      checkbox.title = 'Persistent CLI is supported for Claude backend only';
+    } else {
+      checkbox.disabled = false;
+      checkbox.title = '';
+      checkbox.checked = Boolean(isChecked);
+    }
+  }
+
+  updateModelOptions(backend, currentModel) {
+    const datalist = document.getElementById('settings-agent-model-list');
+    if (!datalist) {
+      return;
+    }
+    const claudeModels = [
+      { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 (Recommended)' },
+      { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
+      { value: 'claude-haiku-3-5-20241022', label: 'Claude Haiku 3.5' },
+    ];
+    const codexModels = [
+      { value: 'gpt-5.2', label: 'GPT-5.2 (Recommended)' },
+      { value: 'gpt-5.1', label: 'GPT-5.1' },
+      { value: 'gpt-4.1', label: 'GPT-4.1' },
+    ];
+    const list = backend === 'codex' ? codexModels : claudeModels;
+    datalist.innerHTML = list
+      .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
+      .join('');
+    const normalized = this.getNormalizedModelForBackend(backend, currentModel);
+    const input = document.getElementById('settings-agent-model');
+    if (input && normalized) {
+      input.placeholder = backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
+    }
+  }
+
+  getNormalizedModelForBackend(backend, model) {
+    if (!model) {
+      return backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
+    }
+    const isClaudeModel = /^claude-/i.test(model);
+    if (backend === 'codex' && isClaudeModel) {
+      return 'gpt-5.2';
+    }
+    if (backend === 'claude' && !isClaudeModel) {
+      return 'claude-sonnet-4-20250514';
+    }
+    return model;
   }
 
   /**
@@ -438,12 +566,54 @@ export class SettingsModule {
 
   /**
    * Helper: Set input value
+   * @param {string} id - Element ID
+   * @param {string} value - Value to set
+   * @param {boolean} isSensitive - If true, treat as sensitive token (keep if masked)
    */
-  setValue(id, value) {
+  setValue(id, value, isSensitive = false) {
     const el = document.getElementById(id);
     if (el) {
-      el.value = value;
+      // For sensitive fields (tokens), preserve placeholder if value is masked
+      if (isSensitive && this.isMaskedToken(value)) {
+        el.placeholder = value;
+        el.value = '';
+      } else {
+        el.value = value;
+      }
     }
+  }
+
+  /**
+   * Check if a token is masked (e.g., "***[redacted]***")
+   */
+  isMaskedToken(token) {
+    if (!token || typeof token !== 'string') {
+      return false;
+    }
+    return token === '***[redacted]***' || (token.startsWith('***[') && token.endsWith(']***'));
+  }
+
+  /**
+   * Get token value from input, preserving original if input is empty and original was masked
+   * @param {string} id - Input element ID
+   * @param {string} originalToken - Original token value from config
+   * @returns {string} Token to send (either new value or original masked token)
+   */
+  getTokenValue(id, originalToken) {
+    const inputValue = this.getValue(id);
+
+    // If user entered a new value, use it
+    if (inputValue && inputValue.trim() !== '') {
+      return inputValue;
+    }
+
+    // If input is empty and original was masked, keep the masked token (backend will preserve it)
+    if (this.isMaskedToken(originalToken)) {
+      return originalToken;
+    }
+
+    // Otherwise return the input value (may be empty)
+    return inputValue;
   }
 
   /**
@@ -593,9 +763,9 @@ export class SettingsModule {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      console.log(`[Settings] Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`);
+      logger.info(`Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`);
     } catch (error) {
-      console.error('[Settings] Failed to toggle agent:', error);
+      logger.error('Failed to toggle agent:', error);
       // Revert checkbox on error
       const checkbox = document.querySelector(`input[data-agent-id="${agentId}"]`);
       if (checkbox) {
@@ -603,5 +773,239 @@ export class SettingsModule {
       }
       alert(`Failed to update agent: ${error.message}`);
     }
+  }
+
+  /**
+   * Populate installed skills section
+   */
+  async populateSkillsSection() {
+    const container = document.getElementById('settings-skills-container');
+    if (!container) {
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/skills');
+      if (!response.ok) {
+        container.innerHTML = '<p class="text-xs text-gray-400">Skills API not available</p>';
+        return;
+      }
+
+      const { skills } = await response.json();
+      if (!skills || skills.length === 0) {
+        container.innerHTML = '<p class="text-xs text-gray-400">No skills installed</p>';
+        return;
+      }
+
+      const sourceColors = {
+        mama: 'bg-yellow-100 text-yellow-700',
+        cowork: 'bg-blue-100 text-blue-700',
+        external: 'bg-purple-100 text-purple-700',
+      };
+
+      container.innerHTML = `
+        <div class="space-y-1.5">
+          ${skills
+            .map(
+              (s) => `
+            <div class="flex items-center justify-between py-1">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-gray-900">${escapeHtml(s.name)}</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded ${sourceColors[s.source] || 'bg-gray-100 text-gray-600'}">${escapeHtml(s.source)}</span>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" ${s.enabled !== false ? 'checked' : ''}
+                  data-skill-source="${escapeHtml(s.source)}"
+                  data-skill-id="${escapeHtml(s.id)}"
+                  class="sr-only peer">
+                <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
+              </label>
+            </div>
+          `
+            )
+            .join('')}
+        </div>
+      `;
+      container.querySelectorAll('input[data-skill-id]').forEach((input) => {
+        input.addEventListener('change', (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLInputElement)) {
+            return;
+          }
+          const source = target.dataset.skillSource || '';
+          const id = target.dataset.skillId || '';
+          if (!source || !id) {
+            return;
+          }
+          this.toggleSkill(source, id, target.checked);
+        });
+      });
+    } catch (error) {
+      logger.warn('Skills load error:', error);
+      container.innerHTML = '<p class="text-xs text-gray-400">Failed to load skills</p>';
+    }
+  }
+
+  /**
+   * Toggle skill enabled/disabled from settings
+   */
+  async toggleSkill(source, name, enabled) {
+    try {
+      const response = await fetch(`/api/skills/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, source }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      logger.error('Skill toggle failed:', error);
+      this.populateSkillsSection();
+    }
+  }
+
+  /**
+   * Populate scheduled jobs section
+   */
+  async populateCronSection() {
+    const container = document.getElementById('settings-cron-container');
+    if (!container) {
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/cron');
+      if (!response.ok) {
+        container.innerHTML = '<p class="text-xs text-gray-400">Cron API not available</p>';
+        return;
+      }
+
+      const { jobs } = await response.json();
+      if (!jobs || jobs.length === 0) {
+        container.innerHTML = '<p class="text-xs text-gray-400">No scheduled jobs</p>';
+        return;
+      }
+
+      container.innerHTML = `<div class="space-y-1.5">${jobs
+        .map((job) => {
+          const nextRun = job.nextRun
+            ? new Date(job.nextRun).toLocaleString([], {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            : '-';
+          return `
+          <div class="flex items-center justify-between py-1">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-gray-900">${escapeHtml(job.name || job.id)}</span>
+                <code class="text-[10px] bg-gray-100 px-1 rounded">${escapeHtml(job.schedule || job.cronExpr || '')}</code>
+              </div>
+              <p class="text-[10px] text-gray-500 truncate">${escapeHtml((job.prompt || '').slice(0, 80))}</p>
+            </div>
+            <div class="flex items-center gap-1 ml-2 shrink-0">
+              <span class="text-[10px] text-gray-400">${nextRun}</span>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" ${job.enabled !== false ? 'checked' : ''}
+                  data-cron-id="${escapeHtml(job.id)}"
+                  class="sr-only peer cron-toggle">
+                <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
+              </label>
+              <button onclick="settingsModule.deleteCronJob('${escapeHtml(job.id)}')" class="text-red-400 hover:text-red-600 text-xs px-1" title="Delete">✕</button>
+            </div>
+          </div>`;
+        })
+        .join('')}</div>`;
+
+      container.querySelectorAll('.cron-toggle').forEach((input) => {
+        input.addEventListener('change', (e) => {
+          const id = e.target.dataset.cronId;
+          this.toggleCronJob(id, e.target.checked);
+        });
+      });
+    } catch (error) {
+      logger.warn('Cron load error:', error);
+      container.innerHTML = '<p class="text-xs text-gray-400">Failed to load jobs</p>';
+    }
+  }
+
+  async addCronJob() {
+    const name = document.getElementById('settings-cron-name')?.value?.trim();
+    const cronExpr = document.getElementById('settings-cron-expr')?.value?.trim();
+    const prompt = document.getElementById('settings-cron-prompt')?.value?.trim();
+
+    if (!name || !cronExpr || !prompt) {
+      showToast('Please fill in all fields');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/cron', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, cron_expr: cronExpr, prompt }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${response.status}`);
+      }
+
+      document.getElementById('settings-cron-name').value = '';
+      document.getElementById('settings-cron-expr').value = '';
+      document.getElementById('settings-cron-prompt').value = '';
+      showToast('Job created');
+      this.populateCronSection();
+    } catch (error) {
+      showToast(`Failed: ${error.message}`);
+    }
+  }
+
+  async toggleCronJob(id, enabled) {
+    try {
+      const response = await fetch(`/api/cron/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      logger.error('Cron toggle failed:', error);
+      this.populateCronSection();
+    }
+  }
+
+  async deleteCronJob(id) {
+    if (!confirm('Delete this scheduled job?')) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/cron/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      showToast('Job deleted');
+      this.populateCronSection();
+    } catch (error) {
+      showToast(`Failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Populate token budget section from config
+   */
+  populateTokenSection() {
+    const budget = this.config?.token_budget;
+    if (!budget) {
+      return;
+    }
+
+    this.setValue('settings-token-daily-limit', budget.daily_limit || '');
+    this.setValue('settings-token-alert-threshold', budget.alert_threshold || '');
   }
 }

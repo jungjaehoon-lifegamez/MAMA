@@ -61,6 +61,34 @@ export class API {
     return response.json();
   }
 
+  /**
+   * Perform PUT request
+   */
+  static async put(endpoint, body) {
+    const response = await fetch(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Perform DELETE request
+   */
+  static async del(endpoint) {
+    const response = await fetch(endpoint, { method: 'DELETE' });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
   // =============================================
   // Graph API
   // =============================================
@@ -165,5 +193,77 @@ export class API {
    */
   static async getSessions() {
     return this.get('/api/sessions');
+  }
+
+  // =============================================
+  // Cron API
+  // =============================================
+
+  static async getCronJobs() {
+    return this.get('/api/cron');
+  }
+
+  static async updateCronJob(id, data) {
+    return this.put(`/api/cron/${id}`, data);
+  }
+
+  static async runCronJob(id) {
+    return this.post(`/api/cron/${id}/run`, {});
+  }
+
+  static async getCronLogs(id, limit = 5) {
+    return this.get(`/api/cron/${id}/logs`, { limit });
+  }
+
+  // =============================================
+  // Token API
+  // =============================================
+
+  static async getTokenSummary() {
+    return this.get('/api/tokens/summary');
+  }
+
+  static async getTokensByAgent() {
+    return this.get('/api/tokens/by-agent');
+  }
+
+  static async getTokensDaily(days = 30) {
+    return this.get('/api/tokens/daily', { days });
+  }
+
+  // =============================================
+  // Skills API
+  // =============================================
+
+  static async getSkills() {
+    return this.get('/api/skills');
+  }
+
+  static async getSkillCatalog(source = 'all') {
+    return this.get('/api/skills/catalog', { source });
+  }
+
+  static async searchSkills(query, source = 'all') {
+    return this.get('/api/skills/search', { q: query, source });
+  }
+
+  static async installSkill(source, name) {
+    return this.post('/api/skills/install', { source, name });
+  }
+
+  static async uninstallSkill(name, source = 'mama') {
+    return this.del(`/api/skills/${encodeURIComponent(name)}?source=${source}`);
+  }
+
+  static async toggleSkill(name, enabled, source = 'mama') {
+    return this.put(`/api/skills/${encodeURIComponent(name)}`, { enabled, source });
+  }
+
+  static async getSkillContent(name, source = 'mama') {
+    return this.get(`/api/skills/${encodeURIComponent(name)}/readme`, { source });
+  }
+
+  static async installSkillFromUrl(url) {
+    return this.post('/api/skills/install-url', { url });
   }
 }

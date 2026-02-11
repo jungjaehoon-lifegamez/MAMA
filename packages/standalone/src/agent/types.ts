@@ -176,6 +176,9 @@ export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence
 export interface Usage {
   input_tokens: number;
   output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cost_usd?: number;
 }
 
 /**
@@ -613,7 +616,9 @@ export type GatewayToolName =
   // OS Monitoring tools (viewer-only)
   | 'os_list_bots'
   | 'os_restart_bot'
-  | 'os_stop_bot';
+  | 'os_stop_bot'
+  // PR Review tools
+  | 'pr_review_threads';
 
 // ============================================================================
 // MCP Tool Output Types
@@ -711,6 +716,8 @@ export interface StreamingContext {
  * Agent loop configuration options
  */
 export interface AgentLoopOptions {
+  /** Backend to use for CLI execution */
+  backend?: 'claude' | 'codex';
   /** System prompt for Claude */
   systemPrompt?: string;
   /** Maximum number of conversation turns (default: 10) */
@@ -796,6 +803,24 @@ export interface AgentLoopOptions {
     maxRetries?: number;
     completionMarkers?: string[];
   };
+
+  /**
+   * Token usage recording callback
+   * Called after each API response to track token consumption
+   */
+  onTokenUsage?: (record: TokenUsageRecord) => void;
+}
+
+/**
+ * Token usage record for tracking API consumption
+ */
+export interface TokenUsageRecord {
+  channel_key: string;
+  agent_id?: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens?: number;
+  cost_usd?: number;
 }
 
 /**
