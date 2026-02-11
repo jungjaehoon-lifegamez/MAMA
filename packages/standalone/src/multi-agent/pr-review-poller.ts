@@ -92,6 +92,7 @@ interface PollSession {
   lastHeadSha: string | null;
   isPolling: boolean; // Prevent concurrent polling
   startedAt: number;
+  workspaceDir: string;
 }
 
 /**
@@ -218,6 +219,7 @@ export class PRReviewPoller {
       startedAt: Date.now(),
       isPolling: false,
       timeoutId: null,
+      workspaceDir,
     };
 
     this.sessions.set(sessionKey, session);
@@ -274,12 +276,19 @@ export class PRReviewPoller {
   /**
    * Get session details for active polling sessions (for auto-commit)
    */
-  getSessionDetails(): { owner: string; repo: string; prNumber: number; channelId: string }[] {
+  getSessionDetails(): {
+    owner: string;
+    repo: string;
+    prNumber: number;
+    channelId: string;
+    workspaceDir: string;
+  }[] {
     return Array.from(this.sessions.values()).map((s) => ({
       owner: s.owner,
       repo: s.repo,
       prNumber: s.prNumber,
       channelId: s.channelId,
+      workspaceDir: s.workspaceDir,
     }));
   }
 

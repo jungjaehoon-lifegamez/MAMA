@@ -571,9 +571,9 @@ export class GraphModule {
     }
 
     try {
-      console.log('[MAMA] Calling API.getSimilarDecisions...');
+      logger.info('Calling API.getSimilarDecisions...');
       const data = await API.getSimilarDecisions(nodeId);
-      console.log('[MAMA] Similar decisions received:', data);
+      logger.debug('Similar decisions received:', data);
 
       if (data.error) {
         container.innerHTML = `<span style="color:#666">${data.message || 'Search failed'}</span>`;
