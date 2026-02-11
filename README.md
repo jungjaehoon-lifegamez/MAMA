@@ -29,6 +29,7 @@ MAMA: ✅ Cron registered (0 * * * *) — skill matched: 당근마켓 모니터�
 | **Skills**       | Fixed capabilities        | User-installable `.md` skills — write instructions, agent follows them |
 | **Platforms**    | Single interface          | Discord, Slack, Telegram, Web Dashboard                                |
 | **Agents**       | Single agent              | Multi-Agent Swarm with tiered permissions and delegation               |
+| **Ecosystem**    | Closed                    | Anthropic Cowork plugins, MCP servers, custom skills — all installable |
 
 ## How It Actually Works
 
@@ -46,9 +47,18 @@ keywords: [당근, 중고, 매물]
 3. 가격/지역 필터링 후 보고
 ```
 
-**2. You talk naturally** — the agent matches skills by keywords and follows instructions exactly.
+**2. Or install from the ecosystem** — Anthropic [Cowork plugins](https://github.com/anthropics/knowledge-work-plugins), MCP servers, and external GitHub repos all work out of the box:
 
-**3. You schedule it** — cron jobs run your prompts on a timer, visible in the dashboard and settings.
+```bash
+# From the Viewer UI or via API:
+# - Browse & install Cowork plugins (task management, productivity, etc.)
+# - Connect MCP servers for external tools (auto-merged from plugin .mcp.json)
+# - Install any GitHub repo as a skill: owner/repo or full URL
+```
+
+**3. You talk naturally** — the agent matches skills by keywords and follows instructions exactly.
+
+**4. You schedule it** — cron jobs run your prompts on a timer, visible in the dashboard and settings.
 
 **4. Decisions persist** — every choice is saved with reasoning. Next session, the agent remembers _why_, not just _what_.
 
