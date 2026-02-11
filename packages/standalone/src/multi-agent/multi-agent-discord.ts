@@ -90,6 +90,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
   /** Cleanup interval period (1 minute) */
   private static readonly CLEANUP_INTERVAL_MS = 60_000;
+  /** PR review chain override (allows LEAD → DEV → REVIEWER → LEAD) */
+  private static readonly PR_REVIEW_MAX_CHAIN = 6;
 
   constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
     super(config, processOptions);
@@ -211,7 +213,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       // Chain depth check for mention_delegation
       if (isFromAgent && senderAgentId && senderAgentId !== 'main') {
         const chainState = this.orchestrator.getChainState(message.channel.id);
-        const maxDepth = this.config.max_mention_depth ?? 3;
+        const maxDepth = this.getEffectiveMaxMentionDepth(message.channel.id);
 
         if (chainState.blocked) {
           console.log(
@@ -422,18 +424,22 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       const prLabel = session ? `${session.owner}/${session.repo}#${session.prNumber}` : 'unknown';
       const prNumber = session?.prNumber || 0;
       const unresolvedCount = texts.length;
+      const workspacePath =
+        process.env.MAMA_WORKSPACE || `${process.env.HOME || '/home/deck'}/.mama/workspace`;
 
       const leadNotification = [
         `📊 PR ${prLabel} has ${unresolvedCount} unresolved review thread(s).`,
         ``,
-        `Use these commands to analyze and fix:`,
-        `- \`gh pr checkout ${prNumber}\` — switch to PR branch`,
-        `- \`gh pr view ${prNumber} --comments\` — see all comments`,
+        `**Workspace: \`${workspacePath}\`** — PR branch is already checked out here.`,
+        `All agents (DevBot, Reviewer) MUST work in this directory.`,
+        ``,
+        `Analyze with:`,
+        `- \`cd ${workspacePath} && git log --oneline -5\` — confirm branch`,
         `- \`gh api repos/${session?.owner}/${session?.repo}/pulls/${prNumber}/comments --jq '.[] | {path, line, body}'\` — get review comments`,
         ``,
-        `Then delegate fixes to DevBot with DELEGATE_BG::developer::<task>.`,
-        `**CRITICAL: Use ONLY file paths returned by the tools above. NEVER guess or invent file paths.**`,
-        `Do NOT fix code yourself. Do NOT involve Reviewer until all fixes are pushed.`,
+        `Delegate fixes: DELEGATE_BG::developer::<task>`,
+        `**Include "Working directory: ${workspacePath}" in every delegation.**`,
+        `**Use ONLY file paths from tools. NEVER guess paths.**`,
       ].join('\n');
 
       // Send compact notification to channel
@@ -497,6 +503,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     // Build message context
     const context = this.buildMessageContext(message, cleanContent);
+    this.updateChainOverrideForChannel(context.channelId);
 
     // Record human message to shared context
     if (!context.isBot) {
@@ -1655,6 +1662,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         .startPolling(prUrl, channelId)
         .then((started) => {
           if (started) {
+            this.updateChainOverrideForChannel(channelId);
             const parsed = this.prReviewPoller.parsePRUrl(prUrl);
             const key = parsed ? `${parsed.owner}/${parsed.repo}#${parsed.prNumber}` : prUrl;
             if ('send' in message.channel) {
@@ -1678,6 +1686,33 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           console.error(`[MultiAgent] Failed to start PR polling:`, err);
         });
     }
+  }
+
+  /**
+   * Update chain/mention depth overrides when PR review polling is active.
+   */
+  private updateChainOverrideForChannel(channelId: string): void {
+    if (this.isPrReviewActive(channelId)) {
+      this.orchestrator.setChannelChainLimit(
+        channelId,
+        MultiAgentDiscordHandler.PR_REVIEW_MAX_CHAIN
+      );
+    } else {
+      this.orchestrator.clearChannelChainLimit(channelId);
+    }
+  }
+
+  private getEffectiveMaxMentionDepth(channelId: string): number {
+    if (this.isPrReviewActive(channelId)) {
+      return MultiAgentDiscordHandler.PR_REVIEW_MAX_CHAIN;
+    }
+    return this.config.max_mention_depth ?? 3;
+  }
+
+  private isPrReviewActive(channelId: string): boolean {
+    return this.prReviewPoller
+      .getSessionDetails()
+      .some((session) => session.channelId === channelId);
   }
 
   /**
