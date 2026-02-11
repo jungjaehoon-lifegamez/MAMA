@@ -857,9 +857,24 @@ export class DashboardModule {
 
     // Summary cards
     const periods = [
-      { label: 'Today', tokens: s.today?.tokens, cost: s.today?.cost, icon: '📊' },
-      { label: 'This Week', tokens: s.week?.tokens, cost: s.week?.cost, icon: '📅' },
-      { label: 'This Month', tokens: s.month?.tokens, cost: s.month?.cost, icon: '📆' },
+      {
+        label: 'Today',
+        tokens: (s.today?.input_tokens || 0) + (s.today?.output_tokens || 0),
+        cost: s.today?.cost_usd,
+        icon: '📊',
+      },
+      {
+        label: 'This Week',
+        tokens: (s.week?.input_tokens || 0) + (s.week?.output_tokens || 0),
+        cost: s.week?.cost_usd,
+        icon: '📅',
+      },
+      {
+        label: 'This Month',
+        tokens: (s.month?.input_tokens || 0) + (s.month?.output_tokens || 0),
+        cost: s.month?.cost_usd,
+        icon: '📆',
+      },
     ];
 
     const cards = periods
@@ -876,18 +891,23 @@ export class DashboardModule {
       .join('');
 
     // Agent breakdown (mini bar chart)
-    const maxTokens = Math.max(...agents.map((a) => a.tokens || 0), 1);
+    const maxTokens = Math.max(
+      ...agents.map((a) => (a.input_tokens || 0) + (a.output_tokens || 0)),
+      1
+    );
     const agentBars = agents
       .slice(0, 5)
       .map((a) => {
-        const pct = Math.round(((a.tokens || 0) / maxTokens) * 100);
+        const totalTokens = (a.input_tokens || 0) + (a.output_tokens || 0);
+        const pct = Math.round((totalTokens / maxTokens) * 100);
+        const agentLabel = a.agent_name || a.agent_id || 'unknown';
         return `
         <div class="flex items-center gap-2 mb-1.5">
-          <span class="text-xs text-gray-700 w-20 truncate" title="${escapeHtml(a.name || a.id)}">${escapeHtml(a.name || a.id)}</span>
+          <span class="text-xs text-gray-700 w-20 truncate" title="${escapeHtml(agentLabel)}">${escapeHtml(agentLabel)}</span>
           <div class="flex-1 bg-gray-200 rounded-full h-2">
             <div class="bg-mama-yellow h-2 rounded-full transition-all" style="width: ${pct}%"></div>
           </div>
-          <span class="text-[10px] text-gray-500 w-12 text-right">${formatTokens(a.tokens)}</span>
+          <span class="text-[10px] text-gray-500 w-12 text-right">${formatTokens(totalTokens)}</span>
         </div>
       `;
       })

@@ -747,9 +747,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     console.log('[GraphHandler] Request:', req.method, pathname);
 
-    // Set CORS headers for all requests
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+    // Set CORS headers — restrict to localhost origins only
+    const origin = req.headers.origin || '';
+    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+    if (isLocalhost) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     // Handle preflight OPTIONS requests
@@ -1004,9 +1008,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       // Prefer systemd restart when running as a service; otherwise spawn detached daemon.
       setTimeout(() => {
         console.log('[API] Restart requested via API — spawning new daemon');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { spawn: spawnChild } = require('node:child_process');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { openSync, writeFileSync } = require('node:fs');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { homedir: getHome } = require('node:os');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { join: joinPath } = require('node:path');
 
         const isSystemd =
@@ -1454,7 +1462,7 @@ async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerRespon
 
     const currentConfig = loadMAMAConfig();
 
-    let updatedConfig: Record<string, any>;
+    let updatedConfig: Record<string, unknown>;
     try {
       updatedConfig = mergeConfigUpdates(currentConfig, body);
     } catch (err) {

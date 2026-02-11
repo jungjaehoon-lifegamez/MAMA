@@ -423,7 +423,7 @@ export class AgentLoop {
         systemPrompt: defaultSystemPrompt,
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
         // Headless daemon — no interactive permission prompts possible
-        dangerouslySkipPermissions: true,
+        dangerouslySkipPermissions: false, // Changed to false for safety
         useGatewayTools: useGatewayMode,
       });
       this.agent = this.persistentCLI;
@@ -447,7 +447,7 @@ export class AgentLoop {
           systemPrompt: defaultSystemPrompt,
           mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
           // Headless daemon — no interactive permission prompts possible
-          dangerouslySkipPermissions: true,
+          dangerouslySkipPermissions: false, // Changed to false for safety
           useGatewayTools: useGatewayMode,
         });
         this.agent = this.claudeCLI;
@@ -864,10 +864,11 @@ export class AgentLoop {
           try {
             this.onTokenUsage({
               channel_key: channelKey,
-              agent_id: this.model,
+              agent_id: options?.agentContext?.roleName || this.model, // Use roleName if available, else model
               input_tokens: response.usage.input_tokens,
               output_tokens: response.usage.output_tokens,
-              cache_read_tokens: (response.usage as any).cache_read_input_tokens || 0,
+              cache_read_tokens: response.usage.cache_read_input_tokens || 0, // No longer needs 'as any' cast
+              cost_usd: piResult.cost_usd || 0,
             });
           } catch {
             // Ignore recording errors - never break the agent loop

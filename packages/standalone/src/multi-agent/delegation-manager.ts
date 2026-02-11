@@ -17,6 +17,7 @@
 
 import type { AgentPersonaConfig } from './types.js';
 import { ToolPermissionManager } from './tool-permission-manager.js';
+import type { AgentLoopResult } from '../agent/types.js'; // Import AgentLoopResult
 
 /**
  * Parsed delegation request
@@ -40,8 +41,10 @@ export interface DelegationRequest {
 export interface DelegationResult {
   /** Whether delegation was successful */
   success: boolean;
-  /** Delegated agent's response (if successful) */
-  response?: string;
+  /** Delegated agent's full response (if successful) */
+  agentLoopResult?: AgentLoopResult; // Store the full result
+  /** Delegated agent's text response (if successful) */
+  response?: string; // Keep for backward compatibility or simple display
   /** Error message (if failed) */
   error?: string;
   /** Duration of delegation in ms */
@@ -59,11 +62,11 @@ export type DelegationNotifyCallback = (message: string) => Promise<void>;
 export type DelegationExecuteCallback = (
   agentId: string,
   prompt: string
-) => Promise<{ response: string; duration_ms: number }>;
+) => Promise<AgentLoopResult & { duration_ms: number }>;
 
 const DELEGATE_PATTERN = /DELEGATE::([\w-]+)::(.+)/s;
 const DELEGATE_BG_PATTERN = /DELEGATE_BG::([\w-]+)::(.+)/s;
-const DELEGATE_BG_PATTERN_GLOBAL = /DELEGATE_BG::([\w-]+)::(.+)/gm;
+const DELEGATE_BG_PATTERN_GLOBAL = /DELEGATE_BG::([\w-]+)::(.+)/gms;
 
 /**
  * Delegation Manager
@@ -111,7 +114,7 @@ export class DelegationManager {
     let remaining = response;
 
     // Extract all DELEGATE_BG patterns (line-based via gm flags)
-    const bgRegex = new RegExp(DELEGATE_BG_PATTERN_GLOBAL.source, 'gm');
+    const bgRegex = new RegExp(DELEGATE_BG_PATTERN_GLOBAL.source, 'gms');
     let bgMatch;
     while ((bgMatch = bgRegex.exec(response)) !== null) {
       results.push({
@@ -121,7 +124,7 @@ export class DelegationManager {
         originalContent: '',
         background: true,
       });
-      remaining = remaining.replace(bgMatch[0], '');
+      remaining = remaining.replaceAll(bgMatch[0], '');
     }
 
     // If no BG delegations found, try single sync delegation
@@ -225,6 +228,7 @@ export class DelegationManager {
 
       return {
         success: true,
+        agentLoopResult: result, // Store the full result
         response: result.response,
         duration: result.duration_ms,
       };
