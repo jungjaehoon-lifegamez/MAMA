@@ -1432,8 +1432,22 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
 
 async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    // Security: localhost-only binding is the access control boundary
-    // No token auth needed for local admin actions via Viewer UI
+    // Verify authentication for config modifications
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': 'Bearer realm="MAMA API"',
+      });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'UNAUTHORIZED',
+          message:
+            'Authentication required. Set MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN environment variable and provide it in the Authorization header.',
+        })
+      );
+      return;
+    }
 
     const body = await readBody(req);
 

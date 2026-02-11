@@ -134,6 +134,7 @@ export class CodexCLIWrapper {
     const args: string[] = [];
     const model = options?.model ?? this.options.model;
     const skipGitRepoCheck = this.options.skipGitRepoCheck ?? true;
+    const sandbox = this.options.sandbox ?? 'danger-full-access';
 
     if (options?.resumeSession) {
       args.push('exec', 'resume');
@@ -148,11 +149,22 @@ export class CodexCLIWrapper {
 
     if (options?.resumeSession) {
       // Codex resume supports a limited flag set
-      args.push('--json', '--dangerously-bypass-approvals-and-sandbox');
+      args.push('--json');
+      if (sandbox === 'danger-full-access') {
+        args.push('--dangerously-bypass-approvals-and-sandbox');
+      }
     } else {
       args.push('--json', '--output-last-message', outputFile, '--color', 'never');
-      // Allow full execution without approvals/sandbox
-      args.push('--dangerously-bypass-approvals-and-sandbox');
+
+      // Apply sandbox mode based on configuration
+      if (sandbox === 'danger-full-access') {
+        args.push('--dangerously-bypass-approvals-and-sandbox');
+      } else if (sandbox === 'workspace-write') {
+        args.push('--sandbox', 'workspace-write');
+      } else if (sandbox === 'read-only') {
+        args.push('--sandbox', 'read-only');
+      }
+
       if (skipGitRepoCheck) {
         args.push('--skip-git-repo-check');
       }
