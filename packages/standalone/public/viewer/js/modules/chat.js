@@ -136,7 +136,7 @@ export class ChatModule {
 
         this.initWebSocket(sessionId);
       } catch (error) {
-        console.error('[Chat] Failed to create session:', error);
+        logger.error('Failed to create session:', error);
         this.addSystemMessage(`Failed to create session: ${error.message}`, 'error');
       }
     }
@@ -206,7 +206,7 @@ export class ChatModule {
         const data = JSON.parse(event.data);
         this.handleMessage(data);
       } catch (e) {
-        console.error('[Chat] Parse error:', e);
+        logger.error('Parse error:', e);
       }
     };
 
@@ -221,7 +221,7 @@ export class ChatModule {
     };
 
     this.ws.onerror = (error) => {
-      console.error('[Chat] WebSocket error:', error);
+      logger.error('WebSocket error:', error);
       this.updateStatus('disconnected');
     };
   }
@@ -527,7 +527,7 @@ export class ChatModule {
       await this.saveCheckpoint(summary);
       this.addSystemMessage('✅ Checkpoint saved successfully');
     } catch (error) {
-      console.error('[Chat] Checkpoint save failed:', error);
+      logger.error('Checkpoint save failed:', error);
       this.addSystemMessage(`Failed to save checkpoint: ${error.message}`, 'error');
     }
   }
@@ -547,7 +547,7 @@ export class ChatModule {
         this.addSystemMessage('No checkpoint found', 'error');
       }
     } catch (error) {
-      console.error('[Chat] Checkpoint load failed:', error);
+      logger.error('Checkpoint load failed:', error);
       this.addSystemMessage(`Failed to load checkpoint: ${error.message}`, 'error');
     }
   }
@@ -846,7 +846,7 @@ export class ChatModule {
   updateStatus(status) {
     const statusEl = document.getElementById('chat-status');
     if (!statusEl) {
-      console.warn('[Chat] Status element not found');
+      logger.warn('Status element not found');
       return;
     }
 
@@ -854,7 +854,7 @@ export class ChatModule {
     const text = statusEl.querySelector('span:not(.status-indicator)');
 
     if (!indicator || !text) {
-      console.warn('[Chat] Status indicator or text not found');
+      logger.warn('Status indicator or text not found');
       return;
     }
 
@@ -1029,7 +1029,7 @@ export class ChatModule {
           messageEl.style.opacity = '1';
         }, 300);
       } catch (err) {
-        console.error('[Chat] Copy failed:', err);
+        logger.error('Copy failed:', err);
         showToast('Failed to copy', 'error');
       }
     }
@@ -1046,7 +1046,7 @@ export class ChatModule {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      console.warn('[Voice] SpeechRecognition not supported');
+      logger.warn('SpeechRecognition not supported');
       const micBtn = document.getElementById('chat-mic');
       if (micBtn) {
         micBtn.style.display = 'none';
@@ -1132,7 +1132,7 @@ export class ChatModule {
     };
 
     this.speechRecognition.onerror = (event) => {
-      console.error('[Voice] Error:', event.error);
+      logger.error('Error:', event.error);
       this.stopVoice();
 
       let errorMessage = '';
@@ -1205,7 +1205,7 @@ export class ChatModule {
         }
       }, this.silenceDelay);
     } catch (err) {
-      console.error('[Voice] Failed to start:', err);
+      logger.error('Failed to start:', err);
       this.addSystemMessage('음성 인식을 시작할 수 없습니다.', 'error');
     }
   }
@@ -1248,7 +1248,7 @@ export class ChatModule {
    */
   initSpeechSynthesis() {
     if (!this.speechSynthesis) {
-      console.warn('[TTS] SpeechSynthesis not supported');
+      logger.warn('SpeechSynthesis not supported');
       return;
     }
 
@@ -1264,7 +1264,7 @@ export class ChatModule {
       if (this.ttsVoice) {
         logger.info('Korean voice selected:', this.ttsVoice.name, this.ttsVoice.lang);
       } else {
-        console.warn('[TTS] No Korean voice found, using default');
+        logger.warn('No Korean voice found, using default');
       }
     };
 
@@ -1354,7 +1354,7 @@ export class ChatModule {
 
     utterance.onerror = (event) => {
       this.isSpeaking = false;
-      console.error('[TTS] Error:', event.error);
+      logger.error('Error:', event.error);
     };
 
     this.speechSynthesis.speak(utterance);
@@ -1410,7 +1410,7 @@ export class ChatModule {
       };
       localStorage.setItem(storageKey, JSON.stringify(storageData));
     } catch (e) {
-      console.warn('[Chat] Failed to save history:', e);
+      logger.warn('Failed to save history:', e);
     }
   }
 
@@ -1435,7 +1435,7 @@ export class ChatModule {
 
       return data.history || [];
     } catch (e) {
-      console.warn('[Chat] Failed to load history:', e);
+      logger.warn('Failed to load history:', e);
       return null;
     }
   }
@@ -1535,7 +1535,7 @@ export class ChatModule {
       localStorage.removeItem(storageKey);
       this.history = [];
     } catch (e) {
-      console.warn('[Chat] Failed to clear history:', e);
+      logger.warn('Failed to clear history:', e);
     }
   }
 
@@ -1562,7 +1562,7 @@ export class ChatModule {
         }
       });
     } catch (e) {
-      console.warn('[Chat] Failed to cleanup histories:', e);
+      logger.warn('Failed to cleanup histories:', e);
     }
   }
 
@@ -2012,6 +2012,6 @@ export class ChatModule {
       this._onEscapeKey = null;
     }
 
-    console.log('[Chat] Cleanup completed');
+    logger.info('Cleanup completed');
   }
 }

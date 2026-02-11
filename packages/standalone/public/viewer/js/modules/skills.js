@@ -11,6 +11,9 @@
 /* global marked */
 
 import { API } from '../utils/api.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('Skills');
 
 /**
  * Skills marketplace module
@@ -55,7 +58,7 @@ export const SkillsModule = {
         (s) => !this.installed.some((i) => i.id === s.id && i.source === s.source)
       );
     } catch (error) {
-      console.error('[Skills] Failed to load:', error);
+      logger.error('Failed to load:', error);
     }
   },
 
@@ -283,7 +286,7 @@ export const SkillsModule = {
       await this.loadSkills();
       this.render();
     } catch (error) {
-      console.error('[Skills] Install failed:', error);
+      logger.error('Install failed:', error);
       alert(`Failed to install ${name}: ${error.message}`);
       this.render();
     }
@@ -307,7 +310,7 @@ export const SkillsModule = {
       await this.loadSkills();
       this.render();
     } catch (error) {
-      console.error('[Skills] URL install failed:', error);
+      logger.error('URL install failed:', error);
       alert(`Failed to install from URL: ${error.message}`);
     } finally {
       if (btn) {
@@ -330,7 +333,7 @@ export const SkillsModule = {
       await this.loadSkills();
       this.render();
     } catch (error) {
-      console.error('[Skills] Uninstall failed:', error);
+      logger.error('Uninstall failed:', error);
     }
   },
 
@@ -347,7 +350,7 @@ export const SkillsModule = {
       }
       this.render();
     } catch (error) {
-      console.error('[Skills] Toggle failed:', error);
+      logger.error('Toggle failed:', error);
     }
   },
 
@@ -389,6 +392,22 @@ export const SkillsModule = {
     if (modal) {
       modal.classList.add('hidden');
     }
+  },
+
+  /**
+   * Escape HTML special characters
+   */
+  _escapeHtml(unsafe) {
+    if (!unsafe) {
+      return '';
+    }
+    return unsafe
+      .toString()
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   },
 
   /**
