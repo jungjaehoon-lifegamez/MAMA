@@ -1,30 +1,45 @@
 import { randomUUID } from 'crypto';
 import { execSync } from 'child_process';
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 import { ClaudeCLIWrapper } from '../src/agent/claude-cli-wrapper.js';
 
 // Skip in CI - these tests require claude CLI to be installed
 const isCI = process.env.CI === 'true';
+process.env.MAMA_FORCE_TIER_3 = 'true';
+const testLogger = new DebugLogger('ClaudeCLIWrapperTest');
 const hasClaudeCli = (() => {
+  const cmd = process.platform === 'win32' ? 'where claude' : 'command -v claude';
   try {
-    execSync('command -v claude', { stdio: 'ignore' });
+    execSync(cmd, { stdio: 'ignore' });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT' || err.status === 127) {
+      return false;
+    }
+    throw new Error(`Failed to check claude CLI availability: ${err.message || String(error)}`);
   }
 })();
 const shouldSkip = isCI || !hasClaudeCli;
 
 describe('ClaudeCLIWrapper', () => {
+  /**
+   * Story ID: CLI-001
+   * Acceptance Criteria:
+   * - CLI prompt returns response with usage stats.
+   * - Costs can be aggregated across calls.
+   * - Session continuity test remains skipped with documented rationale.
+   */
   it.skipIf(shouldSkip)(
     'should execute a simple prompt and return usage stats',
     async () => {
       const wrapper = new ClaudeCLIWrapper({ dangerouslySkipPermissions: true });
 
       const result = await wrapper.prompt('What is 2+2? Answer with just the number.', {
-        onDelta: (text) => console.log('[Test] Delta:', text),
+        onDelta: (text) => testLogger.info('[Test] Delta:', text),
       });
 
-      console.log('[Test] Result:', result);
+      testLogger.info('[Test] Result:', result);
 
       expect(result.response).toBeTruthy();
       expect(result.usage.input_tokens).toBeGreaterThan(0);
@@ -62,10 +77,10 @@ describe('ClaudeCLIWrapper', () => {
         const wrapper = new ClaudeCLIWrapper({ dangerouslySkipPermissions: true });
         const result = await wrapper.prompt(`Count to ${i + 1}`);
         totalCost += result.cost_usd || 0;
-        console.log(`[Test] Call ${i + 1}: $${result.cost_usd?.toFixed(6)}`);
+        testLogger.info(`[Test] Call ${i + 1}: $${result.cost_usd?.toFixed(6)}`);
       }
 
-      console.log(`[Test] Total cost: $${totalCost.toFixed(6)}`);
+      testLogger.info(`[Test] Total cost: $${totalCost.toFixed(6)}`);
       expect(totalCost).toBeGreaterThan(0);
     },
     90000

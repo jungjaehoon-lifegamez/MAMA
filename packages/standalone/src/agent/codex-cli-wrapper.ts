@@ -32,8 +32,7 @@ export interface CodexCLIWrapperOptions {
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
   onToolUse?: (name: string, input: Record<string, unknown>) => void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onFinal?: (response: any) => void;
+  onFinal?: (response: { response: string }) => void;
   onError?: (error: Error) => void;
 }
 
@@ -42,15 +41,19 @@ export interface PromptResult {
   usage: {
     input_tokens: number;
     output_tokens: number;
-    cached_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
   };
   session_id?: string;
+  cost_usd?: number;
 }
 
 interface CodexUsage {
   input_tokens?: number;
   output_tokens?: number;
   cached_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
 }
 
 export class CodexCLIWrapper {
@@ -93,7 +96,9 @@ export class CodexCLIWrapper {
       usage: {
         input_tokens: parsed.usage?.input_tokens ?? 0,
         output_tokens: parsed.usage?.output_tokens ?? 0,
-        cached_input_tokens: parsed.usage?.cached_input_tokens,
+        cache_creation_input_tokens: parsed.usage?.cache_creation_input_tokens,
+        cache_read_input_tokens:
+          parsed.usage?.cache_read_input_tokens ?? parsed.usage?.cached_input_tokens,
       },
       session_id: parsed.threadId,
     };

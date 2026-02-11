@@ -970,6 +970,7 @@ export class PRReviewPoller {
     const lockPath = join(workspaceDir, '.mama-pr-review.lock');
     const startedAt = Date.now();
     const timeoutMs = 30_000;
+    const maxLockAgeMs = 2 * 60 * 1000;
 
     let acquired = false;
     while (!acquired) {
@@ -984,6 +985,31 @@ export class PRReviewPoller {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
           throw err;
         }
+        let isStale = true;
+        try {
+          const existing = await readFile(lockPath, 'utf8');
+          const parsed = JSON.parse(existing) as { pid?: number; startedAt?: string };
+          const lockPid = typeof parsed.pid === 'number' ? parsed.pid : null;
+          const lockStarted = parsed.startedAt ? Date.parse(parsed.startedAt) : NaN;
+          const lockAge = Number.isFinite(lockStarted) ? Date.now() - lockStarted : Infinity;
+
+          if (lockPid) {
+            try {
+              process.kill(lockPid, 0);
+              isStale = lockAge > maxLockAgeMs;
+            } catch (pidErr) {
+              isStale = (pidErr as NodeJS.ErrnoException).code === 'ESRCH';
+            }
+          }
+        } catch {
+          isStale = true;
+        }
+
+        if (isStale) {
+          await unlink(lockPath).catch(() => undefined);
+          continue;
+        }
+
         if (Date.now() - startedAt > timeoutMs) {
           const existing = await readFile(lockPath, 'utf8').catch(() => '');
           throw new Error(`Workspace lock timed out. Lock info: ${existing || 'unknown'}`);

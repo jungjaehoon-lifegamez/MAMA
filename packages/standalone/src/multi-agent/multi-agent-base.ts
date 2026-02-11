@@ -18,6 +18,7 @@ import { SystemReminderService } from './system-reminder.js';
 import { DelegationManager } from './delegation-manager.js';
 import { PRReviewPoller } from './pr-review-poller.js';
 import { WorkTracker } from './work-tracker.js';
+import { createSafeLogger } from '../utils/log-sanitizer.js';
 import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
 import type { GatewayToolInput } from '../agent/types.js';
 
@@ -73,6 +74,7 @@ export interface MultiAgentResponse {
  * - platformCleanup() - platform-specific cleanup on stopAll()
  */
 export abstract class MultiAgentHandlerBase {
+  protected logger = createSafeLogger('MultiAgentBase');
   protected config: MultiAgentConfig;
   protected orchestrator: MultiAgentOrchestrator;
   protected processManager: AgentProcessManager;
@@ -264,7 +266,7 @@ export abstract class MultiAgentHandlerBase {
     try {
       const process = await this.processManager.getProcess(source, channelId, agentId);
       if (process.isReady()) {
-        console.log(`[MultiAgent] Immediate drain for ${agentId} (queue: ${queueSize})`);
+        this.logger.info(`[MultiAgent] Immediate drain for ${agentId} (queue: ${queueSize})`);
         await this.messageQueue.drain(agentId, process, async (aid, msg, resp) => {
           await this.sendQueuedResponse(aid, msg, resp);
         });

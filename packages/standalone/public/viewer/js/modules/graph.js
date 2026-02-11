@@ -16,7 +16,10 @@
 /* global vis */
 
 import { escapeHtml, debounce, showToast } from '../utils/dom.js';
+import { DebugLogger } from '../utils/debug-logger.js';
 import { API } from '../utils/api.js';
+
+const logger = new DebugLogger('Graph');
 
 /**
  * Graph Module Class
@@ -449,22 +452,23 @@ export class GraphModule {
       const decisionEl = document.getElementById('detail-decision');
       const reasoningEl = document.getElementById('detail-reasoning');
 
-      // Use marked for markdown if available (textContent as fallback to prevent XSS)
+      // Use marked for markdown if available (textContent to avoid XSS)
       if (typeof marked !== 'undefined' && marked.parse) {
         try {
-          // marked v11+ uses 'gfm' sanitizer by default, but we enforce it explicitly
-          const sanitizedDecision = marked.parse(node.decision || '-', {
+          const renderedDecision = marked.parse(node.decision || '-', {
             mangle: false,
             headerIds: false,
           });
-          const sanitizedReasoning = marked.parse(node.reasoning || '-', {
+          const renderedReasoning = marked.parse(node.reasoning || '-', {
             mangle: false,
             headerIds: false,
           });
-          decisionEl.innerHTML = sanitizedDecision;
-          reasoningEl.innerHTML = sanitizedReasoning;
+          decisionEl.textContent = renderedDecision;
+          reasoningEl.textContent = renderedReasoning;
         } catch (e) {
-          console.warn('[Graph] Markdown parse failed:', e);
+          const message = e instanceof Error ? e.message : String(e);
+          showToast(`Markdown render failed: ${message}`);
+          logger.warn('[Graph] Markdown parse failed:', e);
           decisionEl.textContent = node.decision || '-';
           reasoningEl.textContent = node.reasoning || '-';
         }

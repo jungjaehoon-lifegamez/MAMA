@@ -8,7 +8,7 @@
  * - Single-agent mode (PersistentCLIAdapter) gets MAMA_HOOK_FEATURES
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { ChildProcess } from 'child_process';
 import type { MultiAgentConfig } from '../../src/multi-agent/types.js';
 
@@ -53,12 +53,12 @@ vi.mock('child_process', () => {
         _command: string,
         _args: string[],
         _options: Record<string, unknown>,
-        callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void
+        callback?: (error: Error | null, stdout: string, stderr: string) => void
       ): ChildProcess => {
         if (typeof _options === 'function') {
-          (_options as unknown as typeof callback)?.(null, { stdout: '', stderr: '' });
+          (_options as unknown as typeof callback)?.(null, '', '');
         } else if (callback) {
-          callback(null, { stdout: '', stderr: '' });
+          callback(null, '', '');
         }
 
         return {
@@ -138,7 +138,19 @@ function getLastSpawnEnv(): Record<string, string> | undefined {
 }
 
 describe('AgentProcessManager env vars by tier', () => {
+  /**
+   * Story ID: MA-ENV-001
+   * Acceptance Criteria:
+   * - Tier 1 agents set MAMA_HOOK_FEATURES='rules,agents'.
+   * - Tier 2+ agents set MAMA_DISABLE_HOOKS='true'.
+   * - Pool size 1 and >1 paths are covered.
+   * - Single-agent mode sets MAMA_HOOK_FEATURES.
+   */
   let manager: AgentProcessManager;
+
+  beforeAll(() => {
+    process.env.MAMA_FORCE_TIER_3 = 'true';
+  });
 
   beforeEach(() => {
     spawnCalls = [];

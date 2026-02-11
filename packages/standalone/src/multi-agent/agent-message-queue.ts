@@ -7,7 +7,7 @@
  * Features:
  * - Per-agent FIFO queue
  * - Max 5 messages per agent (oldest dropped when full)
- * - 10-minute TTL (expired messages skipped)
+ * - 20-minute TTL (expired messages skipped)
  * - Auto-drain on agent 'idle' event
  *
  * Sprint 3 F7
