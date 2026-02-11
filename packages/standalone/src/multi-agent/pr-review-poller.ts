@@ -177,9 +177,13 @@ export class PRReviewPoller {
     }
 
     // Checkout PR branch before starting work
+    const workspaceDir = process.env.MAMA_WORKSPACE || process.cwd();
     try {
-      await execFileAsync('gh', ['pr', 'checkout', String(parsed.prNumber)], { timeout: 30000 });
-      this.logger.log(`[PRPoller] Checked out PR #${parsed.prNumber} branch`);
+      await execFileAsync('gh', ['pr', 'checkout', String(parsed.prNumber)], {
+        timeout: 30000,
+        cwd: workspaceDir,
+      });
+      this.logger.log(`[PRPoller] Checked out PR #${parsed.prNumber} branch in ${workspaceDir}`);
     } catch (err) {
       this.logger.error(`[PRPoller] Failed to checkout PR branch (continuing anyway):`, err);
     }
