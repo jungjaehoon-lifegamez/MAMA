@@ -58,6 +58,30 @@ async function saveState(state: SkillState): Promise<void> {
 }
 
 /**
+ * Validate skill name to prevent path traversal attacks
+ */
+function validateSkillName(name: string): void {
+  if (!name || typeof name !== 'string') {
+    throw new Error('Skill name must be a non-empty string');
+  }
+
+  // Reject path traversal attempts
+  if (name.includes('..') || name.includes('/') || name.includes('\\')) {
+    throw new Error('Skill name cannot contain path separators or traversal sequences');
+  }
+
+  // Reject absolute paths
+  if (name.startsWith('/') || /^[a-zA-Z]:/.test(name)) {
+    throw new Error('Skill name cannot be an absolute path');
+  }
+
+  // Only allow alphanumeric, dash, underscore, and dot
+  if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
+    throw new Error('Skill name can only contain alphanumeric characters, dots, dashes, and underscores');
+  }
+}
+
+/**
  * Fetch JSON from GitHub API (unauthenticated)
  */
 async function fetchGitHub(url: string): Promise<unknown> {
@@ -249,6 +273,7 @@ export class SkillRegistry {
     source: SkillSource,
     name: string
   ): Promise<{ success: boolean; path: string; files: number }> {
+    validateSkillName(name);
     const installDir = join(SKILLS_BASE, source, name);
     await mkdir(installDir, { recursive: true });
 
@@ -431,6 +456,9 @@ export class SkillRegistry {
       throw new Error(`Invalid skill source: ${source}`);
     }
 
+    // Validate name to prevent path traversal
+    validateSkillName(name);
+
     // Remove MCP config entries before deleting files
     await this.removeMcpConfig(`${source}/${name}`);
 
@@ -452,6 +480,9 @@ export class SkillRegistry {
       throw new Error(`Invalid skill source: ${source}`);
     }
 
+    // Validate name to prevent path traversal
+    validateSkillName(name);
+
     const state = await loadState();
     state[`${source}/${name}`] = { enabled };
     await saveState(state);
@@ -461,6 +492,9 @@ export class SkillRegistry {
    * Get SKILL.md content for a skill (local or remote)
    */
   async getContent(source: SkillSource, name: string): Promise<string | null> {
+    // Validate name to prevent path traversal
+    validateSkillName(name);
+
     // Check installed first
     const installDir = join(SKILLS_BASE, source, name);
     const skillFile = await this.findSkillFile(installDir);
