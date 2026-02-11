@@ -27,7 +27,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import os from 'os';
-import path from 'path';
 import { EventEmitter } from 'events';
 import type { TokenUsageRecord } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -233,11 +232,10 @@ export class PersistentClaudeProcess extends EventEmitter {
       }
     }
 
-    // Use MAMA workspace as cwd so agents work in the PR checkout directory
-    const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
+    // Use home directory as cwd so agents have broad file access
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: mamaWorkspace,
+      cwd: os.homedir(),
       env: { ...cleanEnv, ...(this.options.env || {}) },
     });
 
@@ -304,17 +302,6 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
     if (this.options.disallowedTools?.length) {
       args.push('--disallowedTools', ...this.options.disallowedTools);
-    }
-
-    // Add MAMA workspace for file access (NOT full ~/.mama which leaks logs/config)
-    // Personas are already injected via --system-prompt, no need for ~/.mama/personas
-    const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
-    args.push('--add-dir', mamaWorkspace);
-
-    // Add project directory so agents can read/edit project source code
-    const projectDir = process.env.MAMA_PROJECT_DIR;
-    if (projectDir) {
-      args.push('--add-dir', projectDir);
     }
 
     return args;

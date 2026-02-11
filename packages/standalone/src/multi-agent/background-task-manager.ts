@@ -58,6 +58,8 @@ export interface BackgroundTask {
   error?: string;
   /** Execution duration in milliseconds */
   duration?: number;
+  /** Number of retry attempts due to busy process */
+  retryCount?: number;
 }
 
 /**
@@ -460,6 +462,9 @@ export class BackgroundTaskManager extends EventEmitter {
     );
     this.emit('task-started', { task } satisfies BackgroundTaskEvent);
 
+    const MAX_BUSY_RETRIES = 5;
+    const BUSY_RETRY_DELAY_MS = 5000;
+
     Promise.resolve()
       .then(() => this.executeTask(task.agentId, task.prompt))
       .then((result) => {
@@ -467,7 +472,23 @@ export class BackgroundTaskManager extends EventEmitter {
       })
       .catch((err: unknown) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        this._failTask(task, errorMessage);
+        const isBusy = errorMessage.includes('Process is busy');
+        const retries = task.retryCount ?? 0;
+
+        if (isBusy && retries < MAX_BUSY_RETRIES) {
+          // Re-queue: revert to pending and retry after delay
+          task.status = 'pending';
+          task.startedAt = undefined;
+          task.retryCount = retries + 1;
+          this.runningSet.delete(task.id);
+          this.pendingQueue.unshift(task.id);
+          console.log(
+            `${LOG_PREFIX} Task ${task.id} agent busy, re-queued (retry ${task.retryCount}/${MAX_BUSY_RETRIES})`
+          );
+          setTimeout(() => this._processQueue(), BUSY_RETRY_DELAY_MS);
+        } else {
+          this._failTask(task, errorMessage);
+        }
       });
   }
 

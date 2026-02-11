@@ -17,7 +17,6 @@ import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import { PRReviewPoller } from './pr-review-poller.js';
 import { execFile } from 'child_process';
-import { homedir as osHomedir } from 'os';
 import { promisify } from 'util';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
@@ -93,8 +92,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   /** Cleanup interval handle for periodic tasks */
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-  /** Channel-safe batch data accumulation (prevents cross-channel data contamination) */
-  private batchData = new Map<string, string[]>();
+  /** Channel-safe batch counter (just counts new items, no content storage) */
+  private batchCount = new Map<string, number>();
 
   /** Tracks channels where APPROVE+commit was processed (prevents congratulation loops) */
   private approveProcessedChannels = new Map<string, number>();
@@ -401,77 +400,43 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     if (this.prReviewPoller.hasMessageSender()) return;
 
-    // Silent message sender — accumulates data for LEAD without posting to channel
-    this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
-      const currentTexts = this.batchData.get(channelId) || [];
-      const cleanText = text.replace(/<@!?\d+>/g, '').trim();
-      this.batchData.set(channelId, [...currentTexts, cleanText]);
+    // Silent counter — just count new items, don't store content
+    this.prReviewPoller.setMessageSender(async (channelId: string, _text: string) => {
+      this.batchCount.set(channelId, (this.batchCount.get(channelId) || 0) + 1);
     });
 
-    // After poll cycle: send details directly to LEAD (not to channel).
-    // Channel only gets a progress counter. Reviewer is NOT involved in analysis.
-    // Flow: LEAD analyzes → delegates to DevBot → DevBot fixes → Reviewer reviews
+    // After poll cycle: post count to channel, wake up LEAD
     this.prReviewPoller.setOnBatchComplete(async (channelId: string) => {
-      const texts = this.batchData.get(channelId) || [];
-      if (texts.length === 0) return;
-      this.batchData.delete(channelId);
+      const count = this.batchCount.get(channelId) || 0;
+      if (count === 0) return;
+      this.batchCount.delete(channelId);
 
-      // Post compact progress counter to channel (single message)
       const sessions = this.prReviewPoller.getSessionDetails();
       const session = sessions.find((s) => s.channelId === channelId);
-      if (session) {
-        const channel = await client.channels.fetch(channelId);
-        if (channel && 'send' in (channel as Record<string, unknown>)) {
-          const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
-          const summary = texts.join(' ').substring(0, 100);
-          const summarySuffix = summary ? ` — ${summary}` : '';
-          await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
-            content: `📊 PR ${prLabel} — ${texts.length} unresolved thread(s)${summarySuffix}`,
-          });
-        }
+      if (!session) return;
+
+      const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
+
+      // Post count to channel (visible to humans)
+      const channel = await client.channels.fetch(channelId);
+      if (channel && 'send' in (channel as Record<string, unknown>)) {
+        await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
+          content: `📊 PR ${prLabel} — ${count} new review item(s)`,
+        });
       }
 
-      // Enqueue lightweight notification for LEAD
+      // Wake up LEAD: count + workspace, nothing else
       this.orchestrator.resetChain(channelId);
       const defaultAgentId = this.config.default_agent || 'sisyphus';
 
-      // Just notify count + PR ref — LEAD uses Bash(gh) to analyze autonomously
-      const prLabel = session ? `${session.owner}/${session.repo}#${session.prNumber}` : 'unknown';
-      const prNumber = session?.prNumber || 0;
-      const unresolvedCount = texts.length;
-      const workspacePath = process.env.MAMA_WORKSPACE || `${osHomedir()}/.mama/workspace`;
-
-      const leadNotification = [
-        `📊 PR ${prLabel} has ${unresolvedCount} unresolved review thread(s).`,
-        ``,
-        `**Workspace: \`${workspacePath}\`**`,
-        ``,
-        `## CRITICAL RULES`,
-        `1. **VERIFY paths first**: Run \`Glob\` or \`ls\` in workspace BEFORE any Read/Edit. PR comment paths may not match workspace structure.`,
-        `2. **NEVER post "fixed" comments unless git diff confirms the change.**`,
-        `3. **Delegate code fixes**: \`DELEGATE_BG::developer::<task with workspace path>\` — you are an orchestrator.`,
-        `4. **Include workspace path** in every delegation: "Working directory: ${workspacePath}"`,
-        ``,
-        `Analyze: \`gh api repos/${session?.owner}/${session?.repo}/pulls/${prNumber}/comments --jq '.[] | {path, line, body}'\``,
-      ].join('\n');
-
-      // Enqueue notification for LEAD (will be picked up when not busy)
-      const queuedMessage: QueuedMessage = {
-        prompt: leadNotification,
+      this.messageQueue.enqueue(defaultAgentId, {
+        prompt: `📊 ${count} new review item(s) on PR ${prLabel}. Branch checked out at: \`${session.workspaceDir}\``,
         channelId,
         source: 'discord',
         enqueuedAt: Date.now(),
-        context: {
-          channelId,
-          userId: 'pr-poller',
-        },
-      };
-      this.messageQueue.enqueue(defaultAgentId, queuedMessage);
-      logger.info(
-        `[MultiAgent] PR Poller -> LEAD notification enqueued (${unresolvedCount} threads)`
-      );
-
-      // Trigger immediate drain if process is idle or reaped (prevents queue stall)
+        context: { channelId, userId: 'pr-poller' },
+      });
+      logger.info(`[MultiAgent] PR Poller -> LEAD wake-up (${count} items)`);
       this.tryDrainNow(defaultAgentId, 'discord', channelId).catch(() => {});
     });
     logger.info('[MultiAgent] PR Review Poller message sender configured for Discord');

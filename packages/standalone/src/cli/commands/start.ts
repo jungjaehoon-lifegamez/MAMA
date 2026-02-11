@@ -379,7 +379,6 @@ async function startDaemon(): Promise<number> {
     env: {
       ...process.env,
       MAMA_DAEMON: '1',
-      MAMA_PROJECT_DIR: process.cwd(),
     },
   });
 
