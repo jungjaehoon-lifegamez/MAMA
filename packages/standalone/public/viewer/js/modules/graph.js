@@ -576,7 +576,7 @@ export class GraphModule {
       logger.debug('Similar decisions received:', data);
 
       if (data.error) {
-        container.innerHTML = `<span style="color:#666">${data.message || 'Search failed'}</span>`;
+        container.innerHTML = `<span style="color:#666">${escapeHtml(data.message || 'Search failed')}</span>`;
         return;
       }
 
