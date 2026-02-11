@@ -42,6 +42,9 @@ const PROGRESS_EDIT_INTERVAL_MS = 3_000;
 /** Phase emoji progression */
 const _PHASE_EMOJIS = ['👀', '🔍', '💻', '🔧', '📝', '✅'] as const;
 
+/** Max characters allowed for dynamic context blocks to avoid prompt bloat */
+const MAX_DYNAMIC_CONTEXT_CHARS = 1200;
+
 /** Map tool names to phase emojis */
 function toolToPhaseEmoji(toolName: string): (typeof _PHASE_EMOJIS)[number] | null {
   switch (toolName) {
@@ -406,7 +409,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       if (texts.length === 0) return;
       this.batchData.delete(channelId);
 
-      // Post compact progress counter to channel (resolved/total only)
+      // Post compact progress counter to channel (single message)
       const sessions = this.prReviewPoller.getSessionDetails();
       const session = sessions.find((s) => s.channelId === channelId);
       if (session) {
@@ -414,8 +417,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         if (channel && 'send' in (channel as Record<string, unknown>)) {
           const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
           const summary = texts.join(' ').substring(0, 100);
+          const summarySuffix = summary ? ` — ${summary}` : '';
           await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
-            content: `📊 PR ${prLabel} — ${summary}`,
+            content: `📊 PR ${prLabel} — ${texts.length} unresolved thread(s)${summarySuffix}`,
           });
         }
       }
@@ -690,7 +694,11 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     const agentStatus = this.buildAgentStatusSection(agentId);
     const workSection = this.workTracker.buildWorkSection(agentId);
     const channelInfo = `## Current Channel\nDiscord channel_id: ${context.channelId}`;
-    const dynamicContext = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
+    const dynamicContextRaw = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
+    const dynamicContext =
+      dynamicContextRaw.length > MAX_DYNAMIC_CONTEXT_CHARS
+        ? `${dynamicContextRaw.slice(0, MAX_DYNAMIC_CONTEXT_CHARS)}\n...`
+        : dynamicContextRaw;
     if (dynamicContext) {
       fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
     }
@@ -846,7 +854,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         : undefined;
 
       // Send message and get response (with timeout, properly cleaned up)
-      let timeoutHandle: ReturnType<typeof setTimeout>;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       let result;
       try {
         result = await Promise.race([
@@ -862,7 +870,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       } finally {
         await cleanupProgress();
       }
-      clearTimeout(timeoutHandle!);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
 
       // Execute text-based gateway tool calls (```tool_call blocks in response)
       // Claude CLI handles built-in tools (Read, Bash, Glob) internally via native tool_use.
@@ -1559,15 +1567,24 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     for (const toolCall of toolCalls) {
       try {
         if (toolCall.name === 'discord_send' && hasOwnBot) {
-          const input = toolCall.input as {
-            channel_id?: string;
-            message?: string;
-            file_path?: string;
-            image_path?: string;
-          };
-          const channelId = input.channel_id;
-          const filePath = input.file_path || input.image_path;
-          const message = input.message;
+          if (typeof toolCall.input !== 'object' || toolCall.input === null) {
+            console.warn(`[MultiAgent] Tool ${toolCall.name}: invalid input (not an object)`);
+            continue;
+          }
+          const input = toolCall.input as Record<string, unknown>;
+          const channelId = typeof input.channel_id === 'string' ? input.channel_id : undefined;
+          const filePath =
+            typeof input.file_path === 'string'
+              ? input.file_path
+              : typeof input.image_path === 'string'
+                ? input.image_path
+                : undefined;
+          const message = typeof input.message === 'string' ? input.message : undefined;
+
+          if (!channelId || (!filePath && !message)) {
+            console.warn(`[MultiAgent] Tool ${toolCall.name}: missing channel_id or payload`);
+            continue;
+          }
 
           if (channelId && filePath) {
             await this.multiBotManager.sendFileAsAgent(agentId, channelId, filePath, message);
