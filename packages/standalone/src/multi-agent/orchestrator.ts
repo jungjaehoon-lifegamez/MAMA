@@ -98,11 +98,14 @@ export class MultiAgentOrchestrator {
     // Check if chain is blocked
     const chainState = this.getChainState(context.channelId);
     if (chainState.blocked) {
+      const maxChainLength =
+        this.channelChainLimits.get(context.channelId) ??
+        this.config.loop_prevention.max_chain_length;
       return {
         selectedAgents: [],
         reason: 'none',
         blocked: true,
-        blockReason: `Chain limit reached (${chainState.length}/${this.config.loop_prevention.max_chain_length}). Waiting for human input.`,
+        blockReason: `Chain limit reached (${chainState.length}/${maxChainLength}). Waiting for human input.`,
       };
     }
 
@@ -269,11 +272,13 @@ export class MultiAgentOrchestrator {
     chainState.lastResponseTime = now;
     chainState.lastAgentId = agentId;
 
-    // Check if chain limit reached
-    if (chainState.length >= loopPrevention.max_chain_length) {
+    // Check if chain limit reached (use channel override if present)
+    const maxChainLength =
+      this.channelChainLimits.get(channelId) ?? loopPrevention.max_chain_length;
+    if (chainState.length >= maxChainLength) {
       chainState.blocked = true;
       console.log(
-        `[Orchestrator] Chain limit reached for channel ${channelId} (${chainState.length}/${loopPrevention.max_chain_length})`
+        `[Orchestrator] Chain limit reached for channel ${channelId} (${chainState.length}/${maxChainLength})`
       );
     }
 
@@ -437,5 +442,22 @@ export class MultiAgentOrchestrator {
     this.chainStates.clear();
     this.agentCooldowns.clear();
     this.responseHistory = [];
+  }
+
+  /** Channel-specific chain limit overrides (for PR review contexts) */
+  private channelChainLimits = new Map<string, number>();
+
+  /**
+   * Set channel-specific chain limit override (e.g. for PR review mode)
+   */
+  setChannelChainLimit(channelId: string, limit: number): void {
+    this.channelChainLimits.set(channelId, limit);
+  }
+
+  /**
+   * Clear channel-specific chain limit override
+   */
+  clearChannelChainLimit(channelId: string): void {
+    this.channelChainLimits.delete(channelId);
   }
 }
