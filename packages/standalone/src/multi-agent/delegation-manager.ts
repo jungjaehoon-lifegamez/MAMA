@@ -132,9 +132,7 @@ export class DelegationManager {
     }
 
     // Set originalContent on first result (text without any DELEGATE_BG lines)
-    if (results.length > 0) {
-      results[0].originalContent = remaining.trim();
-    }
+    results[0].originalContent = remaining.trim();
 
     return results;
   }

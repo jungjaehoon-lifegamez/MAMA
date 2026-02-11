@@ -111,6 +111,31 @@ const VALID_TOOLS: GatewayToolName[] = [
 const SENSITIVE_KEYS = ['token', 'bot_token', 'app_token', 'api_token', 'api_key', 'secret'];
 const execFileAsync = promisify(execFile);
 
+interface GHReviewThread {
+  id: string;
+  isResolved: boolean;
+  comments: {
+    nodes: Array<{
+      path: string;
+      line: number | null;
+      body: string;
+      author: { login: string } | null;
+    }>;
+  };
+}
+
+interface GHGraphQLResponse {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        reviewThreads?: {
+          nodes?: GHReviewThread[];
+        };
+      };
+    };
+  };
+}
+
 export class GatewayToolExecutor {
   private mamaApi: MAMAApiInterface | null = null;
   private readonly mamaDbPath?: string;
@@ -1480,32 +1505,20 @@ export class GatewayToolExecutor {
         { timeout: 30000 }
       );
 
-      const data = JSON.parse(stdout);
-      const threads = data?.data?.repository?.pullRequest?.reviewThreads?.nodes || [];
+      const data: GHGraphQLResponse = JSON.parse(stdout) as GHGraphQLResponse;
+      const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
 
       const unresolved = threads
-        .filter((t: { isResolved: boolean }) => !t.isResolved)
-        .map(
-          (t: {
-            id: string;
-            comments: {
-              nodes: {
-                path: string;
-                line: number | null;
-                body: string;
-                author: { login: string };
-              }[];
-            };
-          }) => ({
-            id: t.id,
-            comments: t.comments.nodes.map((c) => ({
-              path: c.path,
-              line: c.line,
-              body: c.body,
-              author: c.author?.login,
-            })),
-          })
-        );
+        .filter((thread) => !thread.isResolved)
+        .map((thread) => ({
+          id: thread.id,
+          comments: thread.comments.nodes.map((comment) => ({
+            path: comment.path,
+            line: comment.line,
+            body: comment.body,
+            author: comment.author?.login ?? 'unknown',
+          })),
+        }));
 
       // Build summary grouped by file
       const byFile = new Map<string, { line: number | null; body: string; author: string }[]>();

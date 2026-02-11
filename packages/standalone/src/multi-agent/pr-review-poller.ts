@@ -21,6 +21,8 @@ import { existsSync } from 'fs';
 import { mkdir, readFile, writeFile, unlink } from 'fs/promises';
 
 const execFileAsync = promisify(execFile);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
 
 /** Default polling interval (60 seconds) */
 const POLL_INTERVAL_MS = 60 * 1000;
@@ -99,7 +101,7 @@ export class PRReviewPoller {
   private sessions: Map<string, PollSession> = new Map();
   private messageSender: MessageSender | null = null;
   private onBatchComplete: ((channelId: string) => Promise<void>) | null = null;
-  private logger = console;
+  private logger = new DebugLogger('PRReviewPoller');
 
   /**
    * Check if a message sender is already configured
@@ -149,7 +151,7 @@ export class PRReviewPoller {
 
     // Already polling this PR
     if (this.sessions.has(sessionKey)) {
-      this.logger.log(`[PRPoller] Already polling ${sessionKey}`);
+      this.logger.info(`[PRPoller] Already polling ${sessionKey}`);
       return true;
     }
 
@@ -192,7 +194,7 @@ export class PRReviewPoller {
           cwd: workspaceDir,
         });
       });
-      this.logger.log(`[PRPoller] Checked out PR #${parsed.prNumber} branch in ${workspaceDir}`);
+      this.logger.info(`[PRPoller] Checked out PR #${parsed.prNumber} branch in ${workspaceDir}`);
     } catch (err) {
       this.logger.error(`[PRPoller] Failed to checkout PR branch — aborting start:`, err);
       return false;
@@ -212,7 +214,7 @@ export class PRReviewPoller {
     };
 
     this.sessions.set(sessionKey, session);
-    this.logger.log(
+    this.logger.info(
       `[PRPoller] Started polling ${sessionKey} (${seenCommentIds.size} existing comments, interval: ${POLL_INTERVAL_MS / 1000}s)`
     );
 
@@ -238,7 +240,7 @@ export class PRReviewPoller {
         clearTimeout(session.timeoutId);
       }
       this.sessions.delete(sessionKey);
-      this.logger.log(`[PRPoller] Stopped polling ${sessionKey}`);
+      this.logger.info(`[PRPoller] Stopped polling ${sessionKey}`);
     }
   }
 
@@ -250,7 +252,7 @@ export class PRReviewPoller {
       if (session.timeoutId) {
         clearTimeout(session.timeoutId);
       }
-      this.logger.log(`[PRPoller] Stopped polling ${key}`);
+      this.logger.info(`[PRPoller] Stopped polling ${key}`);
     }
     this.sessions.clear();
   }
@@ -297,7 +299,7 @@ export class PRReviewPoller {
 
     // Prevent concurrent polling
     if (session.isPolling) {
-      this.logger.log(
+      this.logger.info(
         `[PRPoller] Skipping concurrent poll for ${sessionKey} (already in progress)`
       );
       return;
@@ -310,7 +312,7 @@ export class PRReviewPoller {
     try {
       // Auto-stop after max duration
       if (Date.now() - session.startedAt > MAX_POLL_DURATION_MS) {
-        this.logger.log(`[PRPoller] Max duration reached for ${sessionKey}, stopping`);
+        this.logger.info(`[PRPoller] Max duration reached for ${sessionKey}, stopping`);
         if (session.timeoutId) {
           clearTimeout(session.timeoutId);
         }
@@ -326,7 +328,7 @@ export class PRReviewPoller {
       try {
         const prState = await this.fetchPRState(session.owner, session.repo, session.prNumber);
         if (prState === 'MERGED' || prState === 'CLOSED') {
-          this.logger.log(`[PRPoller] PR ${sessionKey} is ${prState}, stopping`);
+          this.logger.info(`[PRPoller] PR ${sessionKey} is ${prState}, stopping`);
           if (session.timeoutId) {
             clearTimeout(session.timeoutId);
           }
@@ -400,7 +402,7 @@ export class PRReviewPoller {
             session.lastHeadSha,
             currentSha
           );
-          this.logger.log(
+          this.logger.info(
             `[PRPoller] New push detected for ${sessionKey}: ${session.lastHeadSha.substring(0, 7)} → ${currentSha.substring(0, 7)} (${changedFiles.length} files changed)`
           );
           session.lastHeadSha = currentSha;
@@ -435,9 +437,7 @@ export class PRReviewPoller {
           (c) => !session.seenCommentIds.has(c.id) && !session.addressedCommentIds.has(c.id)
         );
 
-        if (newComments.length === 0) {
-          // Silent when no new comments
-        } else {
+        if (newComments.length > 0) {
           // Format and send new comments
           const formatted = this.formatComments(sessionKey, newComments);
           const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
@@ -451,7 +451,7 @@ export class PRReviewPoller {
           // Set flag to trigger onBatchComplete
           hasNewData = true;
 
-          this.logger.log(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
+          this.logger.info(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
         }
       } catch (err) {
         this.logger.error(`[PRPoller] Failed to process comments:`, err);
@@ -490,7 +490,7 @@ export class PRReviewPoller {
           for (const t of toReport) {
             session.seenUnresolvedThreadIds.set(t.id, now);
           }
-          this.logger.log(
+          this.logger.info(
             `[PRPoller] Sent ${toReport.length} unresolved threads for ${sessionKey}${isReminder ? ' (reminder)' : ''}`
           );
         }
@@ -673,7 +673,7 @@ export class PRReviewPoller {
           this.logger.error(`[PRPoller] Failed to reply to thread:`, err);
         }
       }
-      this.logger.log(
+      this.logger.info(
         `[PRPoller] Auto-replied to ${addressed.length} addressed threads for ${sessionKey}`
       );
     }
@@ -683,7 +683,7 @@ export class PRReviewPoller {
       const formatted = this.formatUnresolvedThreads(sessionKey, stillUnresolved, threads.length);
       const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
       await this.sendMessage(session.channelId, `${mention}${formatted}`);
-      this.logger.log(
+      this.logger.info(
         `[PRPoller] Sent ${stillUnresolved.length} unresolved threads for ${sessionKey}`
       );
     }
@@ -1025,7 +1025,7 @@ export class PRReviewPoller {
     }
 
     // Discord has a 2000 char limit; split long messages
-    this.logger.log(`[PRPoller] sendMessage: ${text.length} chars`);
+    this.logger.info(`[PRPoller] sendMessage: ${text.length} chars`);
     if (text.length <= 1900) {
       await this.messageSender(channelId, text);
       return;
