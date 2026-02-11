@@ -32,10 +32,11 @@ import {
 } from '../../gateways/index.js';
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
-import { createApiServer } from '../../api/index.js';
+import { createApiServer, insertTokenUsage } from '../../api/index.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
+import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
 
 // Port configuration — single source of truth
@@ -274,7 +275,12 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  if (!config.use_claude_cli) {
+  const backend = config.agent.backend ?? 'claude';
+  process.env.MAMA_BACKEND = backend;
+
+  if (backend === 'codex') {
+    console.log('✓ Codex CLI backend (OAuth handled by Codex login)');
+  } else if (!config.use_claude_cli) {
     process.stdout.write('Checking OAuth token... ');
     try {
       const oauthManager = new OAuthManager();
@@ -444,7 +450,6 @@ export async function runAgentLoop(
     mamaDbPath: mamaDbPath,
     sessionStore: sessionStore,
   });
-  void toolExecutor;
 
   // Reasoning collector for Discord display
   let reasoningLog: string[] = [];
@@ -489,12 +494,15 @@ export async function runAgentLoop(
     }
   }
 
+  const backend = config.agent.backend ?? 'claude';
+
   // Initialize agent loop with lane-based concurrency and reasoning collection
   const agentLoop = new AgentLoop(oauthManager, {
+    backend,
     model: config.agent.model,
     maxTurns: config.agent.max_turns,
     useLanes: true, // Enable lane-based concurrency for Discord
-    usePersistentCLI: config.agent.use_persistent_cli ?? false, // 🚀 Fast mode when enabled
+    usePersistentCLI: config.agent.use_persistent_cli ?? true, // 🚀 Fast mode (default: on)
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
     // Collect reasoning for Discord display
@@ -520,6 +528,13 @@ export async function runAgentLoop(
       }
       console.log(`[Tool] ${toolName} → ${JSON.stringify(result).slice(0, 80)}`);
     },
+    onTokenUsage: (record) => {
+      try {
+        insertTokenUsage(db, record);
+      } catch {
+        /* ignore */
+      }
+    },
   });
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');
 
@@ -537,7 +552,13 @@ export async function runAgentLoop(
   const agentLoopClient = {
     run: async (
       prompt: string,
-      options?: { userId?: string; source?: string; channelId?: string; systemPrompt?: string }
+      options?: {
+        userId?: string;
+        source?: string;
+        channelId?: string;
+        systemPrompt?: string;
+        model?: string;
+      }
     ) => {
       // Reset reasoning log for new request
       reasoningLog = [];
@@ -550,6 +571,10 @@ export async function runAgentLoop(
         agentLoop.setSessionKey(sessionKey);
       }
 
+      if (backend === 'codex' && options) {
+        // Override role-based model selection for Codex backend
+        options.model = config.agent.model;
+      }
       const result = await agentLoop.run(prompt, options);
 
       // Check if auto-recall was used (by checking if relevant-memories was in the history)
@@ -579,7 +604,13 @@ export async function runAgentLoop(
     runWithContent: async (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       content: any[],
-      options?: { userId?: string; source?: string; channelId?: string; systemPrompt?: string }
+      options?: {
+        userId?: string;
+        source?: string;
+        channelId?: string;
+        systemPrompt?: string;
+        model?: string;
+      }
     ) => {
       // Reset reasoning log for new request
       reasoningLog = [];
@@ -593,6 +624,10 @@ export async function runAgentLoop(
       }
 
       console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);
+      if (backend === 'codex' && options) {
+        // Override role-based model selection for Codex backend
+        options.model = config.agent.model;
+      }
       const result = await agentLoop.runWithContent(content, options);
 
       // Check if auto-recall was used
@@ -703,6 +738,14 @@ export async function runAgentLoop(
       };
 
       agentLoop.setDiscordGateway(gatewayInterface);
+
+      // Wire gateway tool executor to multi-agent handler
+      const multiAgentDiscord = discordGateway.getMultiAgentHandler();
+      if (multiAgentDiscord) {
+        toolExecutor.setDiscordGateway(gatewayInterface);
+        multiAgentDiscord.setGatewayToolExecutor(toolExecutor);
+        console.log('[start] ✓ Gateway tool executor wired to multi-agent handler');
+      }
 
       await discordGateway.start();
       gateways.push(discordGateway);
@@ -865,9 +908,16 @@ export async function runAgentLoop(
   tokenKeepAlive.start();
 
   // Start API server
+  const skillRegistry = new SkillRegistry();
+  // Migrate existing plugin .mcp.json into global config (one-time)
+  skillRegistry
+    .migrateExistingMcpConfigs()
+    .catch((err: unknown) => console.warn('[start] MCP config migration warning:', err));
   const apiServer = createApiServer({
     scheduler,
     port: API_PORT,
+    db,
+    skillRegistry,
     onHeartbeat: async (prompt) => {
       try {
         await agentLoop.run(prompt);

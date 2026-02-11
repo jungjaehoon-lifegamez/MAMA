@@ -172,7 +172,12 @@ export class ClaudeClient {
         model: response.model,
         stop_reason: response.stop_reason as ClaudeResponse['stop_reason'],
         stop_sequence: response.stop_sequence ?? null,
-        usage: response.usage,
+        usage: {
+          input_tokens: response.usage.input_tokens,
+          output_tokens: response.usage.output_tokens,
+          cache_creation_input_tokens: response.usage.cache_creation_input_tokens ?? undefined,
+          cache_read_input_tokens: response.usage.cache_read_input_tokens ?? undefined,
+        },
       };
     } catch (error) {
       if (error instanceof AgentError) {
