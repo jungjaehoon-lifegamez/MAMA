@@ -15,6 +15,8 @@
 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { join } from 'path';
+import { homedir } from 'os';
 
 const execFileAsync = promisify(execFile);
 
@@ -177,7 +179,7 @@ export class PRReviewPoller {
     }
 
     // Checkout PR branch before starting work
-    const workspaceDir = process.env.MAMA_WORKSPACE || process.cwd();
+    const workspaceDir = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
     try {
       await execFileAsync('gh', ['pr', 'checkout', String(parsed.prNumber)], {
         timeout: 30000,
