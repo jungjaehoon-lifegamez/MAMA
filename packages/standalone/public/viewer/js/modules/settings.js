@@ -133,9 +133,10 @@ export class SettingsModule {
     // Multi-Agent Team (F3)
     this.populateMultiAgentSection();
 
-    // Skills + Token Budget
+    // Skills + Token Budget + Cron
     this.populateSkillsSection();
     this.populateTokenSection();
+    this.populateCronSection();
   }
 
   /**
@@ -861,6 +862,137 @@ export class SettingsModule {
     } catch (error) {
       logger.error('Skill toggle failed:', error);
       this.populateSkillsSection();
+    }
+  }
+
+  /**
+   * Populate scheduled jobs section
+   */
+  async populateCronSection() {
+    const container = document.getElementById('settings-cron-container');
+    if (!container) {
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/cron');
+      if (!response.ok) {
+        container.innerHTML = '<p class="text-xs text-gray-400">Cron API not available</p>';
+        return;
+      }
+
+      const { jobs } = await response.json();
+      if (!jobs || jobs.length === 0) {
+        container.innerHTML = '<p class="text-xs text-gray-400">No scheduled jobs</p>';
+        return;
+      }
+
+      container.innerHTML = `<div class="space-y-1.5">${jobs
+        .map((job) => {
+          const nextRun = job.nextRun
+            ? new Date(job.nextRun).toLocaleString([], {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            : '-';
+          return `
+          <div class="flex items-center justify-between py-1">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-gray-900">${escapeHtml(job.name || job.id)}</span>
+                <code class="text-[10px] bg-gray-100 px-1 rounded">${escapeHtml(job.schedule || job.cronExpr || '')}</code>
+              </div>
+              <p class="text-[10px] text-gray-500 truncate">${escapeHtml((job.prompt || '').slice(0, 80))}</p>
+            </div>
+            <div class="flex items-center gap-1 ml-2 shrink-0">
+              <span class="text-[10px] text-gray-400">${nextRun}</span>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" ${job.enabled !== false ? 'checked' : ''}
+                  data-cron-id="${escapeHtml(job.id)}"
+                  class="sr-only peer cron-toggle">
+                <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
+              </label>
+              <button onclick="settingsModule.deleteCronJob('${escapeHtml(job.id)}')" class="text-red-400 hover:text-red-600 text-xs px-1" title="Delete">✕</button>
+            </div>
+          </div>`;
+        })
+        .join('')}</div>`;
+
+      container.querySelectorAll('.cron-toggle').forEach((input) => {
+        input.addEventListener('change', (e) => {
+          const id = e.target.dataset.cronId;
+          this.toggleCronJob(id, e.target.checked);
+        });
+      });
+    } catch (error) {
+      logger.warn('Cron load error:', error);
+      container.innerHTML = '<p class="text-xs text-gray-400">Failed to load jobs</p>';
+    }
+  }
+
+  async addCronJob() {
+    const name = document.getElementById('settings-cron-name')?.value?.trim();
+    const cronExpr = document.getElementById('settings-cron-expr')?.value?.trim();
+    const prompt = document.getElementById('settings-cron-prompt')?.value?.trim();
+
+    if (!name || !cronExpr || !prompt) {
+      showToast('Please fill in all fields');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/cron', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, cron_expr: cronExpr, prompt }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${response.status}`);
+      }
+
+      document.getElementById('settings-cron-name').value = '';
+      document.getElementById('settings-cron-expr').value = '';
+      document.getElementById('settings-cron-prompt').value = '';
+      showToast('Job created');
+      this.populateCronSection();
+    } catch (error) {
+      showToast(`Failed: ${error.message}`);
+    }
+  }
+
+  async toggleCronJob(id, enabled) {
+    try {
+      const response = await fetch(`/api/cron/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      logger.error('Cron toggle failed:', error);
+      this.populateCronSection();
+    }
+  }
+
+  async deleteCronJob(id) {
+    if (!confirm('Delete this scheduled job?')) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/cron/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      showToast('Job deleted');
+      this.populateCronSection();
+    } catch (error) {
+      showToast(`Failed: ${error.message}`);
     }
   }
 

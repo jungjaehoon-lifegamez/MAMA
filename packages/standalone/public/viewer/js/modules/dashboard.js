@@ -746,7 +746,7 @@ export class DashboardModule {
     if (!Array.isArray(jobs) || jobs.length === 0) {
       container.innerHTML = `
         <p class="text-gray-500 text-sm text-center py-4">
-          No cron jobs configured. Add scheduled tasks in config.yaml.
+          No cron jobs configured. Ask the agent to schedule a task or use the Settings tab.
         </p>
       `;
       return;

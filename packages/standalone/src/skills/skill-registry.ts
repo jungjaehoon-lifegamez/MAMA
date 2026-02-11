@@ -77,7 +77,9 @@ function validateSkillName(name: string): void {
 
   // Only allow alphanumeric, dash, underscore, and dot
   if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
-    throw new Error('Skill name can only contain alphanumeric characters, dots, dashes, and underscores');
+    throw new Error(
+      'Skill name can only contain alphanumeric characters, dots, dashes, and underscores'
+    );
   }
 }
 
@@ -120,11 +122,7 @@ export class SkillRegistry {
     string,
     { tree: Array<{ path: string; type: string }>; fetchedAt: number }
   > = new Map();
-  private builtinSkillsDir: string;
-
-  constructor(builtinSkillsDir?: string) {
-    this.builtinSkillsDir = builtinSkillsDir || join(process.cwd(), 'templates', 'skills');
-  }
+  constructor() {}
 
   /**
    * Get all installed skills (local files)
@@ -161,16 +159,15 @@ export class SkillRegistry {
       }
     }
 
-    // Also include built-in MAMA skills
+    // Also include flat .md files from ~/.mama/skills/ root
     try {
-      const entries = await readdir(this.builtinSkillsDir, { withFileTypes: true });
-      for (const entry of entries) {
+      const rootEntries = await readdir(SKILLS_BASE, { withFileTypes: true });
+      for (const entry of rootEntries) {
         if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
         const id = basename(entry.name, '.md');
-        // Skip if already installed as user skill
         if (skills.some((s) => s.id === id && s.source === 'mama')) continue;
 
-        const content = await readFile(join(this.builtinSkillsDir, entry.name), 'utf-8');
+        const content = await readFile(join(SKILLS_BASE, entry.name), 'utf-8');
         const { name, description } = this.parseSkillHeader(content, id);
 
         skills.push({
@@ -183,7 +180,7 @@ export class SkillRegistry {
         });
       }
     } catch {
-      // No built-in skills directory
+      // Directory doesn't exist
     }
 
     return skills;
@@ -505,7 +502,7 @@ export class SkillRegistry {
     // Check built-in
     if (source === 'mama') {
       try {
-        return await readFile(join(this.builtinSkillsDir, `${name}.md`), 'utf-8');
+        return await readFile(join(SKILLS_BASE, `${name}.md`), 'utf-8');
       } catch {
         return null;
       }
