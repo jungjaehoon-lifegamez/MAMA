@@ -430,25 +430,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       const leadNotification = [
         `📊 PR ${prLabel} has ${unresolvedCount} unresolved review thread(s).`,
         ``,
-        `**Workspace: \`${workspacePath}\`** — PR branch is already checked out here.`,
-        `All agents (DevBot, Reviewer) MUST work in this directory.`,
+        `**Workspace: \`${workspacePath}\`**`,
         ``,
-        `Analyze with:`,
-        `- \`cd ${workspacePath} && git log --oneline -5\` — confirm branch`,
-        `- \`gh api repos/${session?.owner}/${session?.repo}/pulls/${prNumber}/comments --jq '.[] | {path, line, body}'\` — get review comments`,
+        `## CRITICAL RULES`,
+        `1. **VERIFY paths first**: Run \`Glob\` or \`ls\` in workspace BEFORE any Read/Edit. PR comment paths may not match workspace structure.`,
+        `2. **NEVER post "fixed" comments unless git diff confirms the change.**`,
+        `3. **Delegate code fixes**: \`DELEGATE_BG::developer::<task with workspace path>\` — you are an orchestrator.`,
+        `4. **Include workspace path** in every delegation: "Working directory: ${workspacePath}"`,
         ``,
-        `Delegate fixes: DELEGATE_BG::developer::<task>`,
-        `**Include "Working directory: ${workspacePath}" in every delegation.**`,
-        `**Use ONLY file paths from tools. NEVER guess paths.**`,
+        `Analyze: \`gh api repos/${session?.owner}/${session?.repo}/pulls/${prNumber}/comments --jq '.[] | {path, line, body}'\``,
       ].join('\n');
-
-      // Send compact notification to channel
-      const channel = await client.channels.fetch(channelId);
-      if (channel && 'send' in (channel as Record<string, unknown>)) {
-        await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
-          content: `📊 PR ${prLabel} — ${unresolvedCount} unresolved thread(s). <@${this.multiBotManager.getMainBotUserId()}> please review and delegate fixes.`,
-        });
-      }
 
       // Enqueue notification for LEAD (will be picked up when not busy)
       const queuedMessage: QueuedMessage = {
@@ -1467,19 +1458,19 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       timestamp: Date.now(),
     });
 
+    let delegationContent = sourceResponse.rawContent
+      .replace(/<@!?\d+>/g, '')
+      .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
+      .trim();
+
+    if (reviewerSignal === 'REVIEWER_APPROVED' && targetAgentId === this.config.default_agent) {
+      delegationContent +=
+        '\n\n🔔 [SYSTEM] Reviewer has APPROVED the changes.\n' +
+        'Review the changes yourself, then commit and push when you are satisfied.\n' +
+        'Use your judgement on the commit message and which files to include.';
+    }
+
     try {
-      let delegationContent = sourceResponse.rawContent
-        .replace(/<@!?\d+>/g, '')
-        .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
-        .trim();
-
-      if (reviewerSignal === 'REVIEWER_APPROVED' && targetAgentId === this.config.default_agent) {
-        delegationContent +=
-          '\n\n🔔 [SYSTEM] Reviewer has APPROVED the changes.\n' +
-          'Review the changes yourself, then commit and push when you are satisfied.\n' +
-          'Use your judgement on the commit message and which files to include.';
-      }
-
       const response = await this.processAgentResponse(
         targetAgentId,
         {
@@ -1519,7 +1510,22 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         await this.routeResponseMentions(originalMessage, [response]);
       }
     } catch (err) {
-      console.error(`[MultiAgent] Delegated mention error (${targetAgentId}):`, err);
+      const isBusy = err instanceof Error && err.message.includes('Process is busy');
+      if (isBusy) {
+        console.log(
+          `[MultiAgent] ${targetAgentId} busy, enqueuing delegation from ${sourceResponse.agentId}`
+        );
+        this.messageQueue.enqueue(targetAgentId, {
+          prompt: delegationContent,
+          channelId,
+          source: 'discord',
+          enqueuedAt: Date.now(),
+          context: { channelId, userId: originalMessage.author.id },
+        });
+        this.tryDrainNow(targetAgentId, 'discord', channelId).catch(() => {});
+      } else {
+        console.error(`[MultiAgent] Delegated mention error (${targetAgentId}):`, err);
+      }
     } finally {
       // Add checkmark on the delegation message (source agent's response)
       try {

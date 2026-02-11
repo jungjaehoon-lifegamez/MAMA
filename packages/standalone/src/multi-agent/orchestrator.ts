@@ -31,6 +31,8 @@ export class MultiAgentOrchestrator {
 
   /** Chain state per channel: Map<channelId, ChainState> */
   private chainStates: Map<string, ChainState> = new Map();
+  /** Per-channel chain length overrides */
+  private chainLimitOverrides: Map<string, number> = new Map();
 
   /** Last response time per agent: Map<agentId, timestamp> */
   private agentCooldowns: Map<string, number> = new Map();
@@ -97,10 +99,8 @@ export class MultiAgentOrchestrator {
 
     // Check if chain is blocked
     const chainState = this.getChainState(context.channelId);
+    const maxChainLength = this.getMaxChainLength(context.channelId);
     if (chainState.blocked) {
-      const maxChainLength =
-        this.channelChainLimits.get(context.channelId) ??
-        this.config.loop_prevention.max_chain_length;
       return {
         selectedAgents: [],
         reason: 'none',
@@ -272,9 +272,8 @@ export class MultiAgentOrchestrator {
     chainState.lastResponseTime = now;
     chainState.lastAgentId = agentId;
 
-    // Check if chain limit reached (use channel override if present)
-    const maxChainLength =
-      this.channelChainLimits.get(channelId) ?? loopPrevention.max_chain_length;
+    // Check if chain limit reached
+    const maxChainLength = this.getMaxChainLength(channelId);
     if (chainState.length >= maxChainLength) {
       chainState.blocked = true;
       console.log(
@@ -319,6 +318,28 @@ export class MultiAgentOrchestrator {
       lastAgentId: null,
       blocked: false,
     });
+  }
+
+  /**
+   * Override max chain length for a channel (runtime).
+   */
+  setChannelChainLimit(channelId: string, maxChainLength: number): void {
+    if (maxChainLength <= 0) return;
+    this.chainLimitOverrides.set(channelId, maxChainLength);
+  }
+
+  /**
+   * Clear max chain length override for a channel.
+   */
+  clearChannelChainLimit(channelId: string): void {
+    this.chainLimitOverrides.delete(channelId);
+  }
+
+  /**
+   * Get effective max chain length for a channel.
+   */
+  private getMaxChainLength(channelId: string): number {
+    return this.chainLimitOverrides.get(channelId) ?? this.config.loop_prevention.max_chain_length;
   }
 
   /**
@@ -444,20 +465,4 @@ export class MultiAgentOrchestrator {
     this.responseHistory = [];
   }
 
-  /** Channel-specific chain limit overrides (for PR review contexts) */
-  private channelChainLimits = new Map<string, number>();
-
-  /**
-   * Set channel-specific chain limit override (e.g. for PR review mode)
-   */
-  setChannelChainLimit(channelId: string, limit: number): void {
-    this.channelChainLimits.set(channelId, limit);
-  }
-
-  /**
-   * Clear channel-specific chain limit override
-   */
-  clearChannelChainLimit(channelId: string): void {
-    this.channelChainLimits.delete(channelId);
-  }
 }
