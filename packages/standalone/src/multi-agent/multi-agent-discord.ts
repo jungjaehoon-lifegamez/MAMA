@@ -404,13 +404,19 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       const defaultAgentId = this.config.default_agent || 'sisyphus';
       const prDetails = texts.join('\n').slice(0, 6000);
 
+      const prLabel = session ? `${session.owner}/${session.repo}#${session.prNumber}` : 'unknown';
       const leadPrompt = [
         `[PR REVIEW DATA — internal, not from channel]`,
-        `Analyze these review comments and delegate fixes to DevBot.`,
-        `For different files, use DELEGATE_BG to run fixes in parallel.`,
-        `Do NOT ask Reviewer to analyze — Reviewer only reviews AFTER DevBot pushes fixes.`,
-        `After all fixes are pushed, tell DevBot to request re-review.`,
+        `PR: ${prLabel}`,
         ``,
+        `## Workflow`,
+        `1. First run: gh pr checkout <PR_NUMBER> to switch to the PR branch`,
+        `2. Analyze review comments below and delegate fixes to DevBot`,
+        `3. For different files, use DELEGATE_BG to run fixes in parallel`,
+        `4. Do NOT ask Reviewer to analyze — Reviewer only reviews AFTER DevBot pushes fixes`,
+        `5. After all fixes are pushed, tell DevBot to request re-review`,
+        ``,
+        `## Review Comments`,
         prDetails,
       ].join('\n');
 

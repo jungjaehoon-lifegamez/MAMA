@@ -176,6 +176,14 @@ export class PRReviewPoller {
       // Non-critical, will be fetched on first poll
     }
 
+    // Checkout PR branch before starting work
+    try {
+      await execFileAsync('gh', ['pr', 'checkout', String(parsed.prNumber)], { timeout: 30000 });
+      this.logger.log(`[PRPoller] Checked out PR #${parsed.prNumber} branch`);
+    } catch (err) {
+      this.logger.error(`[PRPoller] Failed to checkout PR branch (continuing anyway):`, err);
+    }
+
     const session: PollSession = {
       ...parsed,
       channelId,
@@ -185,8 +193,8 @@ export class PRReviewPoller {
       seenUnresolvedThreadIds: new Map<string, number>(),
       lastHeadSha,
       startedAt: Date.now(),
-      isPolling: false, // Initialize polling state
-      timeoutId: null, // Will be set by scheduleNextPoll
+      isPolling: false,
+      timeoutId: null,
     };
 
     this.sessions.set(sessionKey, session);
