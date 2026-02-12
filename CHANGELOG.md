@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-02-12
+
+### Fixed
+
+- **Config preservation**: Custom config sections (scheduling, etc.) no longer lost on restart
+- **Cron job persistence**: Jobs created via Settings UI now saved to config.yaml and survive restarts
+- **Cron job loading**: Config-defined scheduling.jobs now loaded into scheduler on startup
+- **Setup auth error**: Local requests no longer require MAMA_AUTH_TOKEN for config updates
+- **Zombie process cleanup**: `mama stop` now kills processes holding ports 3847/3849
+
 ## [0.7.0] - 2026-02-12
 
 ### Added
