@@ -138,7 +138,7 @@ async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
 /**
  * Kill processes occupying specified ports (cleanup for zombie MAMA processes)
  */
-async function killProcessesOnPorts(ports: number[]): Promise<void> {
+export async function killProcessesOnPorts(ports: number[]): Promise<void> {
   for (const port of ports) {
     try {
       const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();

@@ -40,7 +40,7 @@ const sessionManager = new SessionManager();
 const sessionHandler = createSessionHandler(sessionManager);
 
 // Configuration
-const DEFAULT_PORT = parseInt(process.env.MAMA_HTTP_PORT, 10) || 3847;
+const DEFAULT_PORT = parseInt(process.env.MAMA_HTTP_PORT, 10) || 3849;
 const HOST = '127.0.0.1'; // localhost only for security
 
 // Port file for clients to discover the server

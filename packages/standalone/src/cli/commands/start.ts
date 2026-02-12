@@ -19,6 +19,7 @@ import {
   provisionDefaults,
 } from '../config/config-manager.js';
 import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
+import { killProcessesOnPorts } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
@@ -260,6 +261,9 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     console.log('   To stop it: mama stop\n');
     process.exit(1);
   }
+
+  // Clean up stale processes on MAMA ports (zombie prevention)
+  await killProcessesOnPorts([3847, 3849]);
 
   // Check config exists
   if (!configExists()) {
