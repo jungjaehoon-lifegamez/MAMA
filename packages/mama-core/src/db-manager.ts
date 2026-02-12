@@ -24,10 +24,11 @@ import { logComplete, logSearching } from './progress-indicator.js';
 import { createAdapter } from './db-adapter/index.js';
 
 // Type definitions
+// Note: Interface uses sync signatures to match SQLiteAdapter implementation
 export interface DatabaseAdapter {
-  connect: () => Promise<unknown>;
-  disconnect: () => Promise<void>;
-  runMigrations: (dir: string) => Promise<void>;
+  connect: () => unknown;
+  disconnect: () => void;
+  runMigrations: (dir: string) => void;
   prepare: (sql: string) => PreparedStatement;
   transaction: <T>(fn: () => T) => T;
   insertEmbedding: (rowid: number, embedding: Float32Array | number[]) => void;
@@ -230,9 +231,7 @@ export async function insertEmbedding(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Graceful degradation: Log warning but don't fail
-    logError(
-      `[db-manager] Failed to insert embedding (vector search unavailable): ${message}`
-    );
+    logError(`[db-manager] Failed to insert embedding (vector search unavailable): ${message}`);
   }
 }
 
@@ -359,9 +358,7 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
     } catch (embGenErr) {
       // Non-fatal: save decision without embedding (e.g. ONNX model unavailable on CI)
       const message = embGenErr instanceof Error ? embGenErr.message : String(embGenErr);
-      logError(
-        `[db-manager] ⚠️ Embedding generation failed, saving without vector: ${message}`
-      );
+      logError(`[db-manager] ⚠️ Embedding generation failed, saving without vector: ${message}`);
     }
 
     // SQLite: Synchronous transaction including embedding
@@ -578,10 +575,9 @@ export async function querySemanticEdges(decisionIds: string[]): Promise<Semanti
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const outgoingEdges = outgoingStmt.all(
-      ...decisionIds,
-      ...edgeTypes
-    ) as Array<{ relationship: string }>;
+    const outgoingEdges = outgoingStmt.all(...decisionIds, ...edgeTypes) as Array<{
+      relationship: string;
+    }>;
 
     // Query incoming edges (to_id = decision)
     const incomingStmt = adapter.prepare(`
@@ -593,10 +589,9 @@ export async function querySemanticEdges(decisionIds: string[]): Promise<Semanti
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const incomingEdges = incomingStmt.all(
-      ...decisionIds,
-      ...edgeTypes
-    ) as Array<{ relationship: string }>;
+    const incomingEdges = incomingStmt.all(...decisionIds, ...edgeTypes) as Array<{
+      relationship: string;
+    }>;
 
     // Categorize edges (original + v1.3 extended)
     const refines = outgoingEdges.filter((e) => e.relationship === 'refines');
@@ -638,12 +633,7 @@ export async function querySemanticEdges(decisionIds: string[]): Promise<Semanti
  * @returns Results with similarity scores and decision data
  */
 export async function queryVectorSearch(params: VectorSearchParams): Promise<DecisionRecord[]> {
-  const {
-    query,
-    limit = 10,
-    threshold = 0.75,
-    timeWindow = 90 * 24 * 60 * 60 * 1000,
-  } = params;
+  const { query, limit = 10, threshold = 0.75, timeWindow = 90 * 24 * 60 * 60 * 1000 } = params;
 
   const adapter = getAdapter();
   const { generateEmbedding } = await import('./embeddings.js');
