@@ -298,7 +298,15 @@ export async function markOutcome(
 
     // Task 6.5: Calculate new confidence
     const evidenceImpact = getEvidenceImpact(outcome, durationDays);
-    const evidence: EvidenceItem[] = [{ type: outcome.toLowerCase() as 'success' | 'failure' | 'partial', impact: evidenceImpact }];
+    // Map OutcomeType to EvidenceItem.type (FAILED → failure, not 'failed')
+    const outcomeToEvidenceType: Record<OutcomeType, 'success' | 'failure' | 'partial'> = {
+      SUCCESS: 'success',
+      FAILED: 'failure',
+      PARTIAL: 'partial',
+    };
+    const evidence: EvidenceItem[] = [
+      { type: outcomeToEvidenceType[outcome], impact: evidenceImpact },
+    ];
     const prevConfidence = Number(decision.confidence ?? 0);
     const newConfidence = updateConfidence(prevConfidence, evidence);
 

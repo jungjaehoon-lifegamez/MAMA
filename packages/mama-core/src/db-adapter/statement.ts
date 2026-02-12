@@ -113,6 +113,10 @@ export class PostgreSQLStatement extends Statement {
    * Convert SQLite ? placeholders to PostgreSQL $1, $2, ...
    * @param sql - SQL with ? placeholders
    * @returns SQL with $N placeholders
+   *
+   * Note: This naive implementation replaces all '?' characters.
+   * It does not handle '?' inside SQL string literals or comments.
+   * For production use with complex SQL, consider a proper SQL parser.
    */
   static convertPlaceholders(sql: string): string {
     let index = 0;
@@ -144,6 +148,12 @@ export class PostgreSQLStatement extends Statement {
     return result.rows[0];
   }
 
+  /**
+   * Execute statement asynchronously without returning rows
+   *
+   * Note: lastInsertRowid requires the SQL to include 'RETURNING id'.
+   * PostgreSQL does not have SQLite's last_insert_rowid() equivalent.
+   */
   async runAsync(...params: unknown[]): Promise<RunResult> {
     const result = await this.client.query(this.sql, params);
     return {

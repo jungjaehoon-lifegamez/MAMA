@@ -295,15 +295,9 @@ export function detectRefinement(
   _detection: DecisionDetection,
   _sessionContext: SessionContext
 ): string[] | null {
-  // TODO: Implement refinement detection heuristics
-  // For now, return null (single-parent only)
-  // Future: Analyze session context for references to multiple decisions
-
-  // Example heuristics:
-  // 1. User message mentions "combine", "merge", "refine"
-  // 2. Recent exchange references multiple topics
-  // 3. Decision reasoning mentions multiple approaches
-
+  // Refinement detection not implemented; currently returns null for single-parent only.
+  // Multi-parent refinement detection would analyze session context for references
+  // to multiple decisions (e.g., "combine", "merge", user mentioning multiple topics).
   return null;
 }
 

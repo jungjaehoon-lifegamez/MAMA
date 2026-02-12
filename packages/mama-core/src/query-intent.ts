@@ -22,6 +22,8 @@ export interface AnalyzeOptions {
   threshold?: number;
 }
 
+// GenerateOptions imported from ollama-client would be ideal, but keeping local
+// to avoid circular dependency (ollama-client imports from query-intent in some flows)
 interface GenerateOptions {
   format?: string;
   temperature?: number;

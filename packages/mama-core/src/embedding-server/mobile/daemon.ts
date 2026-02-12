@@ -136,6 +136,8 @@ export class ClaudeDaemon extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+
       try {
         // Use stream-json mode for bidirectional JSON communication
         const args = [
@@ -283,7 +285,10 @@ export class ClaudeDaemon extends EventEmitter {
             error: err,
             sessionId: this.sessionId,
           } as ErrorEvent);
-          reject(err);
+          if (!settled) {
+            settled = true;
+            reject(err);
+          }
         });
 
         // Handle process exit
@@ -298,11 +303,17 @@ export class ClaudeDaemon extends EventEmitter {
             signal,
             sessionId: this.sessionId,
           } as ExitEvent);
+          // Reject if process exits before we resolve
+          if (!settled) {
+            settled = true;
+            reject(new Error(`Process exited with code ${code} before ready`));
+          }
         });
 
         // Process should be ready immediately in stream-json mode
         setTimeout(() => {
-          if (this._isRunning) {
+          if (this._isRunning && !settled) {
+            settled = true;
             resolve();
           }
         }, 100);
@@ -362,6 +373,8 @@ export class ClaudeDaemon extends EventEmitter {
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       console.error(`[MobileDaemon] Error killing session ${this.sessionId}:`, error.message);
+      // Ensure state is consistent even if kill fails
+      this._isRunning = false;
       this.emit('error', {
         error,
         sessionId: this.sessionId,

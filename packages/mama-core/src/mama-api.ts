@@ -38,6 +38,7 @@ import { formatRecall, formatList, formatContext, SemanticEdges } from './decisi
 import { logProgress, logComplete, logSearching } from './progress-indicator.js';
 import { generateEmbedding } from './embeddings.js';
 import { generate } from './ollama-client.js';
+import { warn as logWarn, error as logError } from './debug-logger.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -550,7 +551,7 @@ async function save({
     } catch (error: unknown) {
       // Story 1.1 AC3: Best-effort - save succeeds even if auto-search fails
       const errMsg = error instanceof Error ? error.message : String(error);
-      console.error('Auto-search failed:', errMsg);
+      logError('Auto-search failed:', errMsg);
     }
 
     // Story 1.2: Reasoning graph info
@@ -558,7 +559,7 @@ async function save({
       reasoning_graph = await _getReasoningGraphInfo(topic, decisionId);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      console.error('Reasoning graph query failed:', errMsg);
+      logError('Reasoning graph query failed:', errMsg);
     }
 
     // Story 2.2: Parse reasoning for relationship edges (builds_on, debates, synthesizes)
@@ -568,7 +569,7 @@ async function save({
       } catch (error: unknown) {
         // Best-effort - save succeeds even if edge creation fails
         const errMsg = error instanceof Error ? error.message : String(error);
-        console.error('Edge creation from reasoning failed:', errMsg);
+        logError('Edge creation from reasoning failed:', errMsg);
       }
     }
   }
@@ -919,8 +920,7 @@ interface SearchCandidate {
   failure_reason?: string | null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
+async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCandidate[]> {
   const graphEnhanced = new Map<string, SearchCandidate>(); // Use Map for deduplication by ID
   const primaryIds = new Set(candidates.map((c: SearchCandidate) => c.id)); // Track primary candidates
 
@@ -950,7 +950,7 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
         }
       }
     } catch (error: unknown) {
-      console.warn(
+      logWarn(
         `Failed to get supersedes chain for ${candidate.topic}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
@@ -1042,7 +1042,7 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
         addEdge(edge, 'from_id', 'synthesized_by', 0.7, 0.88);
       }
     } catch (error: unknown) {
-      console.warn(
+      logWarn(
         `Failed to get semantic edges for ${candidate.id}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
@@ -1244,7 +1244,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       }
     } catch (vectorError: unknown) {
       // Fallback to keyword search if vector search unavailable
-      console.warn(
+      logWarn(
         `Vector search failed: ${vectorError instanceof Error ? vectorError.message : String(vectorError)}, falling back to keyword search`
       );
       searchMethod = 'keyword';
@@ -1376,9 +1376,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     };
   } catch (error: unknown) {
     // Graceful degradation
-    console.warn(
-      `mama.suggest() failed: ${error instanceof Error ? error.message : String(error)}`
-    );
+    logWarn(`mama.suggest() failed: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -1415,7 +1413,7 @@ Example: { "ranking": [2, 0, 4, 1, 3] } means 3rd is most relevant, then 1st, th
     // Reorder results based on LLM ranking
     return parsed.ranking.map((idx: number) => results[idx]).filter(Boolean);
   } catch (error: unknown) {
-    console.warn(
+    logWarn(
       `Re-ranking failed: ${error instanceof Error ? error.message : String(error)}, using vector ranking`
     );
     return results; // Fallback to vector ranking
@@ -2207,7 +2205,7 @@ function restoreLinkBackup(backupFile: string): any {
       );
       restored++;
     } catch (error: unknown) {
-      console.error(`Failed to restore link ${link.from_id} -> ${link.to_id}:`, error);
+      logError(`Failed to restore link ${link.from_id} -> ${link.to_id}:`, error);
       failed++;
     }
   }
@@ -2316,7 +2314,7 @@ function deleteAutoLinks(batchSize: number = 100, dryRun: boolean = true): any {
   // Large deletion warning
   const largeDelection = deletionTargets.length > 1000;
   if (largeDelection) {
-    console.warn(
+    logWarn(
       `⚠️ LARGE DELETION: ${deletionTargets.length} links will be deleted. Consider running in dry-run mode first.`
     );
   }
@@ -2390,7 +2388,7 @@ function deleteAutoLinks(batchSize: number = 100, dryRun: boolean = true): any {
       }
       batchesProcessed++;
     } catch (error: unknown) {
-      console.error(`Batch deletion failed at index ${i}:`, error);
+      logError(`Batch deletion failed at index ${i}:`, error);
       failed += batch.length;
       errors.push({
         batch_index: i,
@@ -2667,7 +2665,7 @@ function logRestartAttempt(
   // Performance warning if exceeds threshold
   const threshold = mode === 'summary' ? 1000 : 2500;
   if (latencyMs > threshold) {
-    console.warn(
+    logWarn(
       JSON.stringify({
         performance_warning: true,
         message: `Restart latency exceeded threshold: ${latencyMs}ms > ${threshold}ms`,
@@ -3187,7 +3185,7 @@ export {
 export default mama;
 
 // CommonJS compatibility - allows require('@jungjaehoon/mama-core/mama-api').save()
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(module as any).exports = mama;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(module as any).exports.default = mama;
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = mama;
+  module.exports.default = mama;
+}

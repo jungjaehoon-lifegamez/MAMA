@@ -8,6 +8,7 @@
 
 import http from 'http';
 import { error as logError } from './debug-logger.js';
+import type { ToolExecution, SessionContext } from './decision-tracker.js';
 
 // Ollama configuration
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'localhost';
@@ -97,10 +98,7 @@ function callOllamaAPI(
 /**
  * Generate text with EXAONE 3.5
  */
-export async function generate(
-  prompt: string,
-  options: GenerateOptions = {}
-): Promise<string | unknown> {
+export async function generate(prompt: string, options: GenerateOptions = {}): Promise<unknown> {
   const { model = DEFAULT_MODEL, format = null, temperature = 0.7, max_tokens = 500 } = options;
 
   const payload: Record<string, unknown> = {
@@ -140,7 +138,7 @@ export async function generate(
       /model ['"].*['"] not found/i.test(message) ||
       (message.includes('404') && message.toLowerCase().includes('not found'));
     if (model === DEFAULT_MODEL && isModelNotFound) {
-      console.warn(`[MAMA] EXAONE not found, trying fallback (${FALLBACK_MODEL})...`);
+      logError(`[MAMA] EXAONE not found, trying fallback (${FALLBACK_MODEL})...`);
 
       return generate(prompt, {
         ...options,
@@ -164,7 +162,9 @@ export interface DecisionAnalysisResult {
  * Validate DecisionAnalysisResult shape at runtime
  */
 function isDecisionAnalysisResult(obj: unknown): obj is DecisionAnalysisResult {
-  if (typeof obj !== 'object' || obj === null) return false;
+  if (typeof obj !== 'object' || obj === null) {
+    return false;
+  }
   const o = obj as Record<string, unknown>;
   return (
     typeof o.is_decision === 'boolean' &&
@@ -179,7 +179,9 @@ function isDecisionAnalysisResult(obj: unknown): obj is DecisionAnalysisResult {
  * Validate QueryIntentResult shape at runtime
  */
 function isQueryIntentResult(obj: unknown): obj is QueryIntentResult {
-  if (typeof obj !== 'object' || obj === null) return false;
+  if (typeof obj !== 'object' || obj === null) {
+    return false;
+  }
   const o = obj as Record<string, unknown>;
   return (
     typeof o.involves_decision === 'boolean' &&
@@ -187,17 +189,6 @@ function isQueryIntentResult(obj: unknown): obj is QueryIntentResult {
     (o.query_type === 'recall' || o.query_type === 'evolution' || o.query_type === 'none') &&
     typeof o.reasoning === 'string'
   );
-}
-
-export interface ToolExecution {
-  tool_name: string;
-  tool_input: unknown;
-  exit_code: number;
-}
-
-export interface SessionContext {
-  latest_user_message?: string;
-  recent_exchange?: string;
 }
 
 /**
@@ -324,6 +315,7 @@ export async function isAvailable(): Promise<boolean> {
     };
 
     const req = http.request(options, (res) => {
+      res.resume(); // Drain response body to release socket back to pool
       resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300);
     });
 
