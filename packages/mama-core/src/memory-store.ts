@@ -19,6 +19,9 @@
 import * as dbManager from './db-manager.js';
 
 // Type for database adapter
+// Note: This duplicates db-manager.ts DatabaseAdapter interface intentionally.
+// Each module defines minimal interface it needs for loose coupling during migration.
+// TODO: Consolidate to single shared interface in a future refactor.
 export interface DatabaseAdapter {
   prepare: (sql: string) => PreparedStatement;
   vectorSearchEnabled?: boolean;
