@@ -653,7 +653,7 @@ The ONLY way to display an image is the bare outbound path in your response text
    * Rewrites paths to ~/.mama/workspace/media/outbound/filename so format.js renders them.
    */
   private async resolveMediaPaths(response: string): Promise<string> {
-    const fsp = (await import('node:fs/promises')).default;
+    const { mkdir, access, copyFile } = await import('node:fs/promises');
     const path = await import('node:path');
     const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
     const imgExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
@@ -672,7 +672,7 @@ The ONLY way to display an image is the bare outbound path in your response text
     if (matches.length === 0) return response;
 
     // Create outbound directory once
-    await fsp.mkdir(outboundDir, { recursive: true });
+    await mkdir(outboundDir, { recursive: true });
 
     // Process matches asynchronously
     for (const filePath of matches) {
@@ -687,10 +687,10 @@ The ONLY way to display an image is the bare outbound path in your response text
       }
 
       try {
-        await fsp.access(resolvedPath);
+        await access(resolvedPath);
         const filename = `${Date.now()}_${path.basename(resolvedPath)}`;
         const dest = path.join(outboundDir, filename);
-        await fsp.copyFile(resolvedPath, dest);
+        await copyFile(resolvedPath, dest);
         appended.push(`~/.mama/workspace/media/outbound/${filename}`);
         console.log(`[MessageRouter] Media resolved: ${resolvedPath} → outbound/${filename}`);
       } catch {

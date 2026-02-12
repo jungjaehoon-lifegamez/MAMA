@@ -518,11 +518,10 @@ export async function runAgentLoop(
     // 1. MAMA runs as a background daemon with no TTY - interactive prompts are impossible
     // 2. Permission control is handled by MAMA's RoleManager (allowedTools, allowedPaths, blockedTools)
     // 3. OS agent access is restricted to authenticated viewer sessions only
-    // 4. Requires MAMA_TRUSTED_ENV=true env var or explicit config to enable
+    // 4. MAMA_TRUSTED_ENV=true is a hard gate - config alone cannot enable this
     dangerouslySkipPermissions:
-      process.env.MAMA_TRUSTED_ENV === 'true'
-        ? (config.multi_agent?.dangerouslySkipPermissions ?? true)
-        : (config.multi_agent?.dangerouslySkipPermissions ?? false),
+      process.env.MAMA_TRUSTED_ENV === 'true' &&
+      (config.multi_agent?.dangerouslySkipPermissions ?? true),
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
     // Collect reasoning for Discord display

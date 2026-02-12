@@ -269,24 +269,23 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
               const safeName = path.basename(att.filename || '');
               const inboundDir = path.join(os.homedir(), '.mama', 'workspace', 'media', 'inbound');
               const resolvedPath = path.join(inboundDir, safeName);
-              const data = await fs.readFile(resolvedPath);
               const rawMediaType = att.contentType || 'image/jpeg';
 
-              // Validate MIME type with allowlist
-              const mediaType = ALLOWED_IMAGE_TYPES.has(rawMediaType) ? rawMediaType : 'image/jpeg';
-              const base64 = data.toString('base64');
-
               if (ALLOWED_IMAGE_TYPES.has(rawMediaType)) {
+                // Only read file for images (to convert to base64)
+                const data = await fs.readFile(resolvedPath);
+                const base64 = data.toString('base64');
                 contentBlocks.push({
                   type: 'image',
                   source: {
                     type: 'base64',
-                    media_type: mediaType,
+                    media_type: rawMediaType,
                     data: base64,
                   },
                 });
+                logger.info(`Attached image: ${safeName} (${data.length} bytes, ${rawMediaType})`);
               } else {
-                // PDF/documents: instruct agent to read the file
+                // PDF/documents: instruct agent to read the file (no need to load into memory)
                 // Use safe display path to avoid exposing full server path
                 const safeDisplayPath = `~/.mama/workspace/media/inbound/${safeName}`;
                 // Sanitize filename to prevent prompt injection
@@ -295,9 +294,8 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                   type: 'text',
                   text: `[Document uploaded: ${sanitizedName}]\nFile path: ${safeDisplayPath}\nPlease use the Read tool to analyze this document.`,
                 });
+                logger.info(`Attached document: ${safeName} (${rawMediaType})`);
               }
-
-              logger.info(`Attached: ${safeName} (${data.length} bytes, ${mediaType})`);
             } catch (err) {
               logger.error(
                 `Failed to read attachment ${path.basename(att.filename || '')}:`,

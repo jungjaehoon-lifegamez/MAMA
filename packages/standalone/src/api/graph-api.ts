@@ -2262,14 +2262,19 @@ async function handleMCPServersRequest(_req: IncomingMessage, res: ServerRespons
       mcpServers = mcpConfig.mcpServers || {};
     }
 
-    // Transform to array with server names
-    const servers = Object.entries(mcpServers).map(([name, config]) => ({
-      name,
-      type: (config as Record<string, unknown>).type || 'stdio',
-      command: (config as Record<string, unknown>).command,
-      args: (config as Record<string, unknown>).args,
-      url: (config as Record<string, unknown>).url,
-    }));
+    // Transform to array with server names (mask sensitive args)
+    const servers = Object.entries(mcpServers).map(([name, serverConfig]) => {
+      const cfg = serverConfig as Record<string, unknown>;
+      return {
+        name,
+        type: cfg.type || 'stdio',
+        command: cfg.command,
+        // Mask args to prevent credential leakage (show count only)
+        hasArgs: Array.isArray(cfg.args) && cfg.args.length > 0,
+        argCount: Array.isArray(cfg.args) ? cfg.args.length : 0,
+        url: cfg.url,
+      };
+    });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ servers, configPath: mcpConfigPath }));
