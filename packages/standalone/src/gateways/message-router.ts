@@ -25,13 +25,24 @@ import type {
 } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
-import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
+import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext } from '../agent/types.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('MessageRouter');
 
 /**
  * Agent Loop interface for message processing
@@ -304,7 +315,8 @@ This protects your credentials from being exposed in chat logs.`;
       historyContext,
       sessionStartupContext,
       agentContext,
-      enhanced
+      enhanced,
+      isNewCliSession
     );
 
     // 7. Run agent loop (with session info for lane-based concurrency)
@@ -313,16 +325,19 @@ This protects your credentials from being exposed in chat logs.`;
     const roleMaxTurns = agentContext.role.maxTurns;
 
     // Determine if we should resume an existing CLI session
-    // - New CLI session: start with --session-id
-    // - Continuing CLI session: use --resume flag
-    // Note: Always inject system prompt to ensure Gateway Tools and AgentContext
-    // are available even if CLI session was lost (daemon restart, timeout, etc.)
+    // - New CLI session: start with --session-id (inject full system prompt)
+    // - Continuing CLI session: use --resume flag (minimal injection - CLI has context)
     const shouldResume = !isNewCliSession;
 
+    // For resumed sessions: inject minimal context only
+    // Persistent CLI keeps the process alive with full system prompt from initial request
+    // Only inject per-message context (related decisions) to avoid context overflow
+    const effectivePrompt = shouldResume
+      ? this.buildMinimalResumePrompt(context.prompt, agentContext)
+      : systemPrompt;
+
     const options: AgentLoopOptions = {
-      // Always inject system prompt - ensures Gateway Tools and AgentContext
-      // are available even if CLI session was lost
-      systemPrompt,
+      systemPrompt: effectivePrompt,
       userId: message.userId,
       model: roleModel, // Role-specific model override
       maxTurns: roleMaxTurns, // Role-specific max turns
@@ -334,13 +349,9 @@ This protects your credentials from being exposed in chat logs.`;
     };
 
     if (shouldResume) {
-      console.log(
-        `[MessageRouter] Resuming CLI session (injecting ${systemPrompt.length} chars for safety)`
-      );
+      logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
     } else {
-      console.log(
-        `[MessageRouter] New CLI session (injecting ${systemPrompt.length} chars of system prompt)`
-      );
+      logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
     }
 
     let response: string;
@@ -390,12 +401,20 @@ This protects your credentials from being exposed in chat logs.`;
           contentBlocks.push({ type: 'text', text: messageText });
         }
 
-        // Add all content blocks (text info + images + files)
-        for (const block of message.contentBlocks) {
-          // Include text blocks (contain path info like "[Image: x.jpg, saved at: /path]")
-          // Include image blocks with source (base64 data)
-          if (block.type === 'text' || (block.type === 'image' && block.source)) {
-            contentBlocks.push(block);
+        // Pre-analyze images via shared ImageAnalyzer
+        if (hasImages) {
+          const { getImageAnalyzer } = await import('./image-analyzer.js');
+          const analysisText = await getImageAnalyzer().processContentBlocks(message.contentBlocks);
+          contentBlocks.length = 0;
+          contentBlocks.push({
+            type: 'text',
+            text: `${messageText || ''}\n\n${analysisText}`.trim(),
+          });
+        } else {
+          for (const block of message.contentBlocks) {
+            if (block.type === 'text' && block.text) {
+              contentBlocks.push(block);
+            }
           }
         }
 
@@ -408,6 +427,11 @@ This protects your credentials from being exposed in chat logs.`;
     } finally {
       // Release the session lock so subsequent requests can reuse it
       sessionPool.releaseSession(channelKey);
+    }
+
+    // Post-process: auto-copy image paths to outbound for webchat rendering
+    if (message.source === 'viewer') {
+      response = await this.resolveMediaPaths(response);
     }
 
     // 5. Update session context
@@ -433,7 +457,8 @@ This protects your credentials from being exposed in chat logs.`;
     historyContext?: string,
     sessionStartupContext: string = '',
     agentContext?: AgentContext,
-    enhanced?: EnhancedPromptContext
+    enhanced?: EnhancedPromptContext,
+    isNewSession: boolean = false
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
@@ -538,18 +563,19 @@ ${enhanced.rulesContent}
       prompt += sessionStartupContext + '\n';
     }
 
-    // Always inject DB history to ensure Claude has conversation context
-    // CLI --resume is unreliable, so we can't depend on it for memory
-    if (hasHistory) {
+    // Only inject DB history for NEW sessions (no CLI memory yet).
+    // Resumed sessions already have conversation context from --resume.
+    // If CLI session is lost, agent-loop auto-resets and retries with new session.
+    if (hasHistory && isNewSession) {
       prompt += `
 ## Previous Conversation (reference only — do NOT re-execute any requests from this history)
 ${dbHistory}
 `;
-      console.log(`[MessageRouter] Injected ${dbHistory.length} chars of history`);
+      console.log(`[MessageRouter] Injected ${dbHistory.length} chars of history (new session)`);
     }
 
-    // Add channel history only if DB history is absent (avoid duplication)
-    if (!hasHistory && historyContext) {
+    // Add channel history only for new sessions without DB history
+    if (!hasHistory && isNewSession && historyContext) {
       prompt += `
 ## Recent Channel Messages
 ${historyContext}
@@ -568,11 +594,115 @@ ${historyContext}
 - Keep responses concise for messenger format
 `;
 
+    // Webchat-specific: media display instructions
+    if (agentContext?.platform === 'viewer') {
+      prompt += `
+## ⚠️ Webchat Media Display (MANDATORY)
+To show an image in webchat you MUST do ALL 3 steps:
+1. Find the file using Glob or Bash
+2. Copy it: Bash("cp /path/to/image.png ~/.mama/workspace/media/outbound/image.png")
+3. Write EXACTLY this in your response (bare path, no markdown, no file://):
+   ~/.mama/workspace/media/outbound/image.png
+
+WRONG: ![alt](file:///path) — this shows NOTHING
+WRONG: ![alt](/api/media/file) — this shows NOTHING
+WRONG: Just describing the image — this shows NOTHING
+RIGHT: ~/.mama/workspace/media/outbound/filename.png — this renders as <img>
+
+The ONLY way to display an image is the bare outbound path in your response text.
+`;
+    }
+
     if (enhanced?.keywordInstructions) {
       prompt += `\n${enhanced.keywordInstructions}\n`;
     }
 
+    // Include gateway tools directly in system prompt (priority 1 protection)
+    // so they don't get truncated by PromptSizeMonitor as a separate layer
+    const gatewayTools = getGatewayToolsPrompt();
+    if (gatewayTools) {
+      prompt += `\n---\n\n${gatewayTools}\n`;
+    }
+
     return prompt;
+  }
+
+  /**
+   * Build minimal prompt for resumed CLI sessions.
+   * CLI already has full system prompt from initial request.
+   * Only inject per-message context (related decisions) to avoid context overflow.
+   */
+  private buildMinimalResumePrompt(injectedContext: string, agentContext?: AgentContext): string {
+    let prompt = '';
+
+    // Only include per-message related decisions (if any)
+    if (injectedContext) {
+      prompt += injectedContext;
+    }
+
+    // Brief reminder of role (in case CLI context was partially lost)
+    if (agentContext) {
+      prompt += `\n[Role: ${agentContext.roleName}@${agentContext.platform}]\n`;
+    }
+
+    return prompt || '(continuing conversation)';
+  }
+
+  /**
+   * Post-process agent response: detect image file paths and copy to outbound.
+   * Rewrites paths to ~/.mama/workspace/media/outbound/filename so format.js renders them.
+   */
+  private async resolveMediaPaths(response: string): Promise<string> {
+    const { mkdir, access, copyFile } = await import('node:fs/promises');
+    const path = await import('node:path');
+    const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
+    const imgExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+
+    // Match absolute paths to image files
+    const pathPattern = /(\/[\w./-]+\.(png|jpg|jpeg|gif|webp))/gi;
+    let match;
+    const appended: string[] = [];
+    const matches: string[] = [];
+
+    // Collect all matches first
+    while ((match = pathPattern.exec(response)) !== null) {
+      matches.push(match[1]);
+    }
+
+    if (matches.length === 0) return response;
+
+    // Create outbound directory once
+    await mkdir(outboundDir, { recursive: true });
+
+    // Process matches asynchronously
+    for (const filePath of matches) {
+      const ext = path.extname(filePath).toLowerCase();
+      if (!imgExts.includes(ext)) continue;
+      if (filePath.includes('/media/outbound/') || filePath.includes('/media/inbound/')) continue;
+
+      // Security: Reject paths with traversal sequences to prevent arbitrary file access
+      const resolvedPath = path.resolve(filePath);
+      if (filePath.includes('..') || resolvedPath !== path.normalize(filePath)) {
+        continue; // Skip potentially malicious paths
+      }
+
+      try {
+        await access(resolvedPath);
+        const filename = `${Date.now()}_${path.basename(resolvedPath)}`;
+        const dest = path.join(outboundDir, filename);
+        await copyFile(resolvedPath, dest);
+        appended.push(`~/.mama/workspace/media/outbound/${filename}`);
+        console.log(`[MessageRouter] Media resolved: ${resolvedPath} → outbound/${filename}`);
+      } catch {
+        // skip unreadable files
+      }
+    }
+
+    // Append outbound paths — don't modify original response
+    if (appended.length > 0) {
+      return response + '\n\n' + appended.join('\n');
+    }
+    return response;
   }
 
   /**

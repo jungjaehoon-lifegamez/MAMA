@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "MAMA OS - Your AI Operating System. Control + Visibility for AI-Powered Automation",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -62,6 +62,7 @@
     "express": "^5.2.1",
     "js-yaml": "^4.1.0",
     "minimatch": "^10.1.1",
+    "multer": "^2.0.2",
     "node-cron": "^3.0.3",
     "node-telegram-bot-api": "^0.67.0",
     "playwright": "^1.58.1",
@@ -73,6 +74,7 @@
     "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/minimatch": "^6.0.0",
+    "@types/multer": "^2.0.0",
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
     "@types/node-telegram-bot-api": "^0.64.13",

@@ -173,19 +173,41 @@ export function formatAssistantMessage(text) {
   // Bold
   formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
-  // Italic (avoiding conflicts with bold)
-  formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  // Italic (avoiding conflicts with bold) - Safari-compatible without lookbehind
+  // Process after bold, match single asterisks not part of ** sequences
+  formatted = formatted.replace(/([^*]|^)\*([^*]+)\*([^*]|$)/g, '$1<em>$2</em>$3');
 
-  // Links: [text](url)
+  // Helper: build safe media HTML from captured filename
+  // Note: filename may contain HTML entities from prior escaping, so decode first
+  const buildMediaHtml = (filename) => {
+    const decodedName = decodeHtmlEntities(filename);
+    const safeName = encodeURIComponent(decodedName);
+    const safeAlt = escapeHtmlForMarkdown(decodedName).replace(/"/g, '&quot;');
+    const ext = decodedName.split('.').pop()?.toLowerCase() || '';
+    const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+    if (imgExts.includes(ext)) {
+      return `<div class="media-inline"><img src="/api/media/${safeName}" class="max-w-[300px] rounded-lg my-1 cursor-pointer" data-lightbox="/api/media/${safeName}" alt="${safeAlt}"/><a href="/api/media/download/${safeName}" class="text-xs text-blue-500 hover:underline block">Download ${safeAlt}</a></div>`;
+    }
+    return `<a href="/api/media/download/${safeName}" class="text-blue-500 hover:underline">Download ${safeAlt}</a>`;
+  };
+
+  // Markdown images: ![alt](media-path) — render as inline images
+  // Note: exclude /api/media/download/ paths (they're already download links)
   formatted = formatted.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+    /!\[([^\]]*)\]\((?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/api\/media\/(?!download\/))([^)]+)\)/gi,
+    (_match, _alt, filename) => buildMediaHtml(filename)
   );
 
-  // Auto-detect URLs (not already in anchor tags)
+  // First: strip any <a> wrappers around media paths (from markdown link handler)
   formatted = formatted.replace(
-    /(?<!href="|>)(https?:\/\/[^\s<]+)/g,
-    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+    /<a\s+href="(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^"]+)"[^>]*>[^<]*<\/a>/gi,
+    (_match, filename) => buildMediaHtml(filename)
+  );
+  // Then: handle bare media paths not already inside HTML tags
+  // Safari-compatible: use capture group instead of lookbehind
+  formatted = formatted.replace(
+    /(^|[^"'])(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^\s<"']+\.(png|jpg|jpeg|gif|webp|svg|pdf))/gi,
+    (_, prefix, filename) => prefix + buildMediaHtml(filename)
   );
 
   // Headers (## and ###)
@@ -237,6 +259,18 @@ function escapeHtmlForMarkdown(text) {
 }
 
 /**
+ * Decode HTML entities back to plain text
+ * Used to fix double-encoding when building URLs from already-escaped content
+ * @param {string} text - Text with HTML entities
+ * @returns {string} Decoded plain text
+ */
+function decodeHtmlEntities(text) {
+  const div = document.createElement('div');
+  div.innerHTML = text;
+  return div.textContent || div.innerText || '';
+}
+
+/**
  * Wrap checkpoint/context sections in collapsible elements
  * Detects patterns like "📍 Summary", "🎯 Goal", "Recent decisions", etc.
  * @param {string} text - Text to process
@@ -265,7 +299,7 @@ function wrapCheckpointSections(text) {
   }
 
   const checkpointContent = checkpointMatch[1];
-  const uniqueId = 'cp-' + Math.random().toString(36).substr(2, 9);
+  const uniqueId = 'cp-' + Math.random().toString(36).substring(2, 11);
 
   // Create collapsible wrapper - summary must be first child (no newlines before it)
   const collapsibleHtml =

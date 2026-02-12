@@ -777,6 +777,13 @@ export interface AgentLoopOptions {
   usePersistentCLI?: boolean;
 
   /**
+   * Skip permission prompts for CLI tool execution
+   * WARNING: Security risk - enables autonomous tool execution without user approval
+   * @default false
+   */
+  dangerouslySkipPermissions?: boolean;
+
+  /**
    * PostToolUse handler configuration
    * Auto-extracts API contracts after Write/Edit tool execution and saves to MAMA
    */
@@ -927,6 +934,8 @@ export interface GatewayToolExecutorOptions {
   sessionStore?: any;
   /** Custom MAMA API instance for testing */
   mamaApi?: MAMAApiInterface;
+  /** Roles configuration from config.yaml */
+  rolesConfig?: import('../cli/config/types.js').RolesConfig;
 }
 
 /**

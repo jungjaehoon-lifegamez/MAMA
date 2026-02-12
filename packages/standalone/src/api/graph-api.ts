@@ -1087,6 +1087,18 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: GET /api/mcp-servers - get available MCP servers from config
+    if (pathname === '/api/mcp-servers' && req.method === 'GET') {
+      await handleMCPServersRequest(req, res);
+      return true;
+    }
+
+    // Route: DELETE /api/mcp-servers/:name - remove MCP server from config
+    if (pathname.startsWith('/api/mcp-servers/') && req.method === 'DELETE') {
+      await handleDeleteMCPServerRequest(req, res, pathname);
+      return true;
+    }
+
     return false;
   };
 }
@@ -2231,6 +2243,116 @@ function exportToCSV(decisions: GraphNode[]): string {
   }
 
   return lines.join('\n');
+}
+
+/**
+ * Handle GET /api/mcp-servers - return available MCP servers from config
+ */
+async function handleMCPServersRequest(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const config = loadMAMAConfig();
+    const mcpConfigPath = config.agent?.tools?.mcp_config || '~/.mama/mama-mcp-config.json';
+    const resolvedPath = mcpConfigPath.replace(/^~/, os.homedir());
+
+    let mcpServers: Record<string, unknown> = {};
+
+    if (fs.existsSync(resolvedPath)) {
+      const content = fs.readFileSync(resolvedPath, 'utf8');
+      const mcpConfig = JSON.parse(content);
+      mcpServers = mcpConfig.mcpServers || {};
+    }
+
+    // Transform to array with server names (mask sensitive args)
+    const servers = Object.entries(mcpServers).map(([name, serverConfig]) => {
+      const cfg = serverConfig as Record<string, unknown>;
+      return {
+        name,
+        type: cfg.type || 'stdio',
+        command: cfg.command,
+        // Mask args to prevent credential leakage (show count only)
+        hasArgs: Array.isArray(cfg.args) && cfg.args.length > 0,
+        argCount: Array.isArray(cfg.args) ? cfg.args.length : 0,
+        url: cfg.url,
+      };
+    });
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ servers, configPath: mcpConfigPath }));
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] MCP servers list error:', message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: true,
+        code: 'MCP_SERVERS_ERROR',
+        message,
+      })
+    );
+  }
+}
+
+/**
+ * Handle DELETE /api/mcp-servers/:name - remove MCP server from config
+ */
+async function handleDeleteMCPServerRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string
+): Promise<void> {
+  try {
+    // Security: require authentication for config-writing endpoint
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        })
+      );
+      return;
+    }
+
+    const match = pathname.match(/\/api\/mcp-servers\/([^/]+)/);
+    if (!match) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, message: 'Invalid server name' }));
+      return;
+    }
+
+    const serverName = decodeURIComponent(match[1]);
+    const config = loadMAMAConfig();
+    const mcpConfigPath = config.agent?.tools?.mcp_config || '~/.mama/mama-mcp-config.json';
+    const resolvedPath = mcpConfigPath.replace(/^~/, os.homedir());
+
+    if (!fs.existsSync(resolvedPath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, message: 'MCP config not found' }));
+      return;
+    }
+
+    const content = fs.readFileSync(resolvedPath, 'utf8');
+    const mcpConfig = JSON.parse(content);
+
+    if (!mcpConfig.mcpServers || !mcpConfig.mcpServers[serverName]) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, message: `Server "${serverName}" not found` }));
+      return;
+    }
+
+    delete mcpConfig.mcpServers[serverName];
+    fs.writeFileSync(resolvedPath, JSON.stringify(mcpConfig, null, 2), 'utf8');
+
+    console.log('[GraphAPI] Removed MCP server:', serverName);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ deleted: true, name: serverName }));
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[GraphAPI] Delete MCP server error:', message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: true, message }));
+  }
 }
 
 export {

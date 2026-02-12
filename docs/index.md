@@ -45,6 +45,7 @@ _Step-by-step instructions for specific tasks_
 - [Standalone Setup](guides/standalone-setup.md) - Set up always-on AI agent
 - [Gateway Configuration](guides/gateway-config.md) - Configure Discord, Slack, Telegram bots
 - [Mobile Access](guides/mobile-access.md) - Access MAMA from any device with mobile chat
+- [Webchat Media](guides/webchat-media.md) - Image upload, TTS/STT voice features
 - [Troubleshooting](guides/troubleshooting.md) - Common issues and solutions
 - [Standalone Troubleshooting](guides/standalone-troubleshooting.md) - Fix standalone agent issues
 - [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
@@ -139,5 +140,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS - Standalone Agent, Multi-Agent Swarm, Gateway Integrations and Web Dashboard
-**Last Updated:** 2026-02-07
+**Status:** MAMA OS v0.8.0 - Webchat Media, TTS/STT, Multi-Agent Swarm, Gateway Integrations
+**Last Updated:** 2026-02-12

@@ -28,6 +28,7 @@ export class DashboardModule {
     this.updateInterval = null;
     this.initialized = false;
     this.onCronClick = null;
+    this.mcpServers = [];
   }
 
   /**
@@ -113,11 +114,30 @@ export class DashboardModule {
         this.tokenData = null;
       }
 
+      // Load MCP servers
+      await this.loadMCPServers();
+
       this.render();
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       logger.error('[Dashboard] Load error:', error);
       this.setStatus(`Error: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Load MCP servers from API
+   */
+  async loadMCPServers() {
+    try {
+      const response = await fetch('/api/mcp-servers');
+      if (response.ok) {
+        const data = await response.json();
+        this.mcpServers = data.servers || [];
+        this.renderMCPServers();
+      }
+    } catch (error) {
+      logger.error('Failed to load MCP servers:', error);
     }
   }
 
@@ -130,14 +150,14 @@ export class DashboardModule {
     }
 
     this.renderGateways();
+    this.renderMCPServers();
     this.renderSessions();
+    this.renderAgentSwarm();
     this.renderMemoryStats();
     this.renderAgentConfig();
-    this.renderToolStatus();
-    this.renderAgentSwarm(); // Sprint 3 F2
-    this.renderTopTopics();
     this.renderCronJobs();
     this.renderTokenSummary();
+    this.renderTopTopics();
   }
 
   /**
@@ -205,6 +225,65 @@ export class DashboardModule {
               </p>
               ${channelInfo}
             </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    container.innerHTML = html;
+  }
+
+  /**
+   * Render MCP servers
+   */
+  renderMCPServers() {
+    const container = document.getElementById('dashboard-mcp');
+    if (!container) {
+      return;
+    }
+
+    if (this.mcpServers.length === 0) {
+      container.innerHTML = `
+        <p class="text-gray-500 text-sm col-span-full py-4 text-center">
+          No MCP servers configured
+        </p>
+      `;
+      return;
+    }
+
+    const icons = {
+      'brave-devtools': '🌐',
+      'brave-search': '🔍',
+      mama: '🧠',
+      slack: '💬',
+      notion: '📝',
+      linear: '📊',
+      asana: '✅',
+      atlassian: '🔷',
+      ms365: '📧',
+      monday: '📅',
+      clickup: '✓',
+    };
+
+    const html = this.mcpServers
+      .map((server) => {
+        const icon = icons[server.name] || '🔌';
+        const isHttp = server.type === 'http';
+        const statusBadge = isHttp
+          ? 'bg-yellow-100 text-yellow-700'
+          : 'bg-green-100 text-green-700';
+        const statusText = isHttp ? 'OAuth' : 'Ready';
+
+        return `
+          <div class="bg-white border border-gray-200 rounded-lg p-2.5 hover:shadow-md transition-shadow">
+            <div class="flex items-center justify-between mb-1">
+              <div class="flex items-center gap-2">
+                <span class="text-lg">${icon}</span>
+                <h4 class="font-semibold text-sm text-gray-900">${escapeHtml(server.name)}</h4>
+              </div>
+              <span class="text-[10px] px-1.5 py-0.5 rounded ${statusBadge}">${statusText}</span>
+            </div>
+            <p class="text-[10px] text-gray-500 truncate">${escapeHtml(server.type === 'http' ? server.url : server.command)}</p>
           </div>
         `;
       })
@@ -431,104 +510,6 @@ export class DashboardModule {
           : ''
       }
     `;
-  }
-
-  /**
-   * Render tool execution status
-   */
-  renderToolStatus() {
-    const container = document.getElementById('dashboard-tools');
-    if (!container) {
-      return;
-    }
-
-    const tools = this.data.agent?.tools || { gateway: ['*'], mcp: [] };
-    const gatewayTools = tools.gateway || ['*'];
-    const mcpTools = tools.mcp || [];
-
-    // Define all available tools by category
-    const categories = {
-      memory: {
-        name: 'MAMA Memory',
-        icon: '🧠',
-        tools: ['mama_search', 'mama_save', 'mama_update', 'mama_load_checkpoint'],
-      },
-      browser: {
-        name: 'Browser',
-        icon: '🌐',
-        tools: [
-          'browser_navigate',
-          'browser_screenshot',
-          'browser_click',
-          'browser_type',
-          'browser_get_text',
-          'browser_scroll',
-          'browser_wait_for',
-          'browser_evaluate',
-          'browser_pdf',
-          'browser_close',
-        ],
-      },
-      utility: {
-        name: 'Utility',
-        icon: '🛠️',
-        tools: ['discord_send', 'Read', 'Write', 'Bash'],
-      },
-    };
-
-    const isWildcard = gatewayTools.includes('*');
-
-    const html = Object.entries(categories)
-      .map(([_key, cat]) => {
-        const enabledCount = isWildcard
-          ? cat.tools.length
-          : cat.tools.filter((t) => gatewayTools.includes(t)).length;
-
-        return `
-          <div class="mb-3">
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1">
-                ${cat.icon} ${cat.name}
-              </span>
-              <span class="text-xs px-2 py-0.5 rounded-full ${
-                enabledCount > 0 ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'
-              }">
-                ${enabledCount}/${cat.tools.length}
-              </span>
-            </div>
-            <div class="flex flex-wrap gap-1">
-              ${cat.tools
-                .map(
-                  (tool) => `
-                <span class="text-xs px-2 py-0.5 rounded ${
-                  isWildcard || gatewayTools.includes(tool)
-                    ? 'bg-green-50 text-green-700 border border-green-200'
-                    : 'bg-gray-50 text-gray-400 border border-gray-200'
-                }">
-                  ${escapeHtml(tool.replace('browser_', '').replace('mama_', ''))}
-                </span>
-              `
-                )
-                .join('')}
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-
-    const mcpSection =
-      mcpTools.length > 0
-        ? `
-        <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-          <p class="text-xs text-gray-500 flex items-center gap-1">
-            <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
-            MCP Tools: ${mcpTools.includes('*') ? 'All via MCP' : mcpTools.join(', ')}
-          </p>
-        </div>
-      `
-        : '';
-
-    container.innerHTML = html + mcpSection;
   }
 
   /**
