@@ -452,6 +452,8 @@ export interface MAMAConfig {
   heartbeat?: HeartbeatConfig;
   /** Multi-agent settings (optional) */
   multi_agent?: MultiAgentConfig;
+  /** Preserve user-defined sections (scheduling, custom integrations, etc.) */
+  [key: string]: unknown;
 }
 
 /**
