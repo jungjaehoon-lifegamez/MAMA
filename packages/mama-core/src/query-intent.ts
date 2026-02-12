@@ -147,6 +147,9 @@ async function generateWithFallback(
       }
     }
   }
+
+  // Unreachable: loop always returns or throws
+  throw new Error('Unexpected: all LLM tiers exhausted without result');
 }
 
 /**

@@ -744,8 +744,7 @@ async function recall(topic: string, options: RecallOptions = {}): Promise<unkno
     // Separate supersedes chain from semantic edges
     return {
       topic,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      supersedes_chain: decisions.map((d: any) => ({
+      supersedes_chain: decisions.map((d: DecisionRecord) => ({
         id: d.id,
         decision: d.decision,
         reasoning: d.reasoning,
@@ -972,7 +971,7 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCan
       };
 
       // Helper to add edge to graph
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic property access with idField
       const addEdge = (
         edge: any,
         idField: string,
@@ -1960,11 +1959,12 @@ function scanAutoLinks(): any {
   const protectedLinks = protectedResult?.count ?? 0;
 
   // Filter deletion targets (exclude protected links)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const deletionTargets = autoLinks.filter((link: any) => {
-    // Exclude protected links
-    return !(link.approved_by_user === 1 || (link.decision_id && link.evidence));
-  });
+  const deletionTargets = autoLinks.filter(
+    (link: EdgeLink & { approved_by_user?: number; decision_id?: string; evidence?: string }) => {
+      // Exclude protected links
+      return !(link.approved_by_user === 1 || (link.decision_id && link.evidence));
+    }
+  );
 
   return {
     total_links: totalLinks,
