@@ -24,7 +24,9 @@ import { logComplete, logSearching } from './progress-indicator.js';
 import { createAdapter } from './db-adapter/index.js';
 
 // Type definitions
-// Note: Interface uses sync signatures to match SQLiteAdapter implementation
+// Note: This local interface differs from base-adapter.ts abstract class.
+// The double cast at initialization is intentional to bridge the type gap.
+// TODO: Align types across db-adapter and db-manager in a future refactor.
 export interface DatabaseAdapter {
   connect: () => unknown;
   disconnect: () => void;
