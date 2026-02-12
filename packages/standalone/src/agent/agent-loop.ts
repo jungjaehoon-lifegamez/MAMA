@@ -254,7 +254,9 @@ export function loadInstalledSkills(
       const stateKey = `mama/${id}`;
 
       // Skip disabled skills (check state like subdirectory skills)
-      if (state[stateKey]?.enabled === false) continue;
+      if (state[stateKey]?.enabled === false) {
+        continue;
+      }
 
       // Skip if already loaded from subdirectory
       if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) continue;
@@ -286,8 +288,11 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
     if (existsSync(stateFile)) {
       state = JSON.parse(readFileSync(stateFile, 'utf-8'));
     }
-  } catch {
-    // No state file
+  } catch (err) {
+    logger.error(`Failed to parse state file ${stateFile}:`, err);
+    throw new Error(
+      `Failed to parse state file ${stateFile}: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 
   // Load persona files: SOUL.md, IDENTITY.md, USER.md

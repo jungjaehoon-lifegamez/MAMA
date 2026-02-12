@@ -664,16 +664,23 @@ export class GatewayToolExecutor {
     }
 
     // Block sandbox escape via cd command using path-based validation
-    // The regex approach is insufficient (e.g., "cd ~/.mama/../" can escape)
-    const cdMatch = command.match(/cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
-    if (cdMatch) {
+    // Check ALL cd occurrences in chained commands (cd foo && cd bar)
+    // Also detect bare cd commands (cd, cd;, cd &&) which go to home directory
+    const sandboxRoot = join(homedir(), '.mama');
+    const cwd = workdir || process.env.MAMA_WORKSPACE || join(sandboxRoot, 'workspace');
+
+    // Pattern to match cd with optional target (handles: cd path, cd "path", cd 'path', bare cd)
+    const cdPattern =
+      /(?:^|&&|\|\||;)\s*cd(?:\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+)))?(?=\s*(?:$|&&|\|\||;))/g;
+    const cdMatches = [...command.matchAll(cdPattern)];
+
+    for (const cdMatch of cdMatches) {
       const cdTarget = cdMatch[1] || cdMatch[2] || cdMatch[3];
-      const sandboxRoot = join(homedir(), '.mama');
-      const cwd = workdir || process.env.MAMA_WORKSPACE || join(sandboxRoot, 'workspace');
 
       // Expand ~ to home directory for path resolution
       let resolvedTarget: string;
-      if (cdTarget === '~' || cdTarget === '~/' || !cdTarget) {
+      if (!cdTarget || cdTarget === '~' || cdTarget === '~/') {
+        // Bare cd or cd ~ goes to home directory (outside sandbox)
         resolvedTarget = homedir();
       } else if (cdTarget.startsWith('~/')) {
         resolvedTarget = join(homedir(), cdTarget.slice(2));
