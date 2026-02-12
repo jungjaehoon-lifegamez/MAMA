@@ -413,20 +413,34 @@ export class AgentLoop {
     const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
     // Only include Gateway Tools prompt if using Gateway mode
     const gatewayToolsPrompt = useGatewayMode ? getGatewayToolsPrompt() : '';
-    const defaultSystemPrompt = gatewayToolsPrompt
+    let defaultSystemPrompt = gatewayToolsPrompt
       ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
       : basePrompt;
 
-    // Monitor prompt size
+    // Monitor and enforce prompt size limits
     const monitor = new PromptSizeMonitor();
-    const checkResult = monitor.check([
+    const promptLayers: PromptLayer[] = [
       { name: 'base', content: basePrompt, priority: 1 },
       ...(gatewayToolsPrompt
         ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
         : []),
-    ]);
+    ];
+    const checkResult = monitor.check(promptLayers);
     if (checkResult.warning) {
       console.warn(`[AgentLoop] ${checkResult.warning}`);
+    }
+    // Actually enforce truncation if over budget
+    if (!checkResult.withinBudget) {
+      const { layers: trimmedLayers, result: enforceResult } = monitor.enforce(promptLayers);
+      if (enforceResult.truncatedLayers.length > 0) {
+        console.warn(`[AgentLoop] Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`);
+      }
+      const trimmedBase = trimmedLayers.find((l) => l.name === 'base')?.content || basePrompt;
+      const trimmedTools = trimmedLayers.find((l) => l.name === 'gatewayTools')?.content || '';
+      defaultSystemPrompt = trimmedTools ? `${trimmedBase}\n\n---\n\n${trimmedTools}` : trimmedBase;
+      console.log(
+        `[AgentLoop] System prompt truncated: ${checkResult.totalChars} → ${defaultSystemPrompt.length} chars`
+      );
     }
 
     // Choose backend (default: claude)
@@ -691,22 +705,40 @@ export class AgentLoop {
           ? `${options.systemPrompt}\n\n---\n\n${gatewayToolsPrompt}`
           : options.systemPrompt;
 
-        // Monitor prompt size
+        // Monitor and enforce prompt size
         const monitor = new PromptSizeMonitor();
-        const checkResult = monitor.check([
+        const runLayers: PromptLayer[] = [
           { name: 'systemPrompt', content: options.systemPrompt, priority: 1 },
           ...(gatewayToolsPrompt
             ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
             : []),
-        ]);
+        ];
+        const checkResult = monitor.check(runLayers);
         if (checkResult.warning) {
           console.warn(`[AgentLoop] ${checkResult.warning}`);
         }
 
+        let effectivePrompt = fullPrompt;
+        if (!checkResult.withinBudget) {
+          const { layers: trimmed, result: enforceResult } = monitor.enforce(runLayers);
+          if (enforceResult.truncatedLayers.length > 0) {
+            console.warn(
+              `[AgentLoop] Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`
+            );
+          }
+          const tBase =
+            trimmed.find((l) => l.name === 'systemPrompt')?.content || options.systemPrompt;
+          const tTools = trimmed.find((l) => l.name === 'gatewayTools')?.content || '';
+          effectivePrompt = tTools ? `${tBase}\n\n---\n\n${tTools}` : tBase;
+          console.log(
+            `[AgentLoop] System prompt truncated: ${fullPrompt.length} → ${effectivePrompt.length} chars`
+          );
+        }
+
         console.log(
-          `[AgentLoop] Setting systemPrompt: ${fullPrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
+          `[AgentLoop] Setting systemPrompt: ${effectivePrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
         );
-        this.agent.setSystemPrompt(fullPrompt);
+        this.agent.setSystemPrompt(effectivePrompt);
       } else {
         console.log(`[AgentLoop] No systemPrompt in options, using default`);
       }
