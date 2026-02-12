@@ -54,7 +54,7 @@ Claude 응답에 `~/.mama/workspace/media/outbound/` 경로의 파일이 포함�
 
 ### POST /api/upload
 
-```http
+```text
 Content-Type: multipart/form-data
 Body: file (binary)
 
