@@ -811,6 +811,10 @@ export class AgentLoop {
               model: options?.model,
               resumeSession: false, // Force new session
             });
+            // Prepend reset notice so user knows context was lost
+            if (isPromptTooLong && piResult.response) {
+              piResult.response = `⚠️ 이전 대화가 너무 길어져 새 세션으로 전환되었습니다.\n\n${piResult.response}`;
+            }
             console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
           } else {
             throw new AgentError(

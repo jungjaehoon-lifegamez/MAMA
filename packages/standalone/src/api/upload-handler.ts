@@ -126,8 +126,8 @@ export function createUploadRouter(): Router {
 
       res.json({
         success: true,
-        filePath,
         filename,
+        mediaUrl: `/api/media/${filename}`,
         size: finalSize,
         contentType: mimetype,
       });
@@ -149,11 +149,15 @@ export function createUploadRouter(): Router {
       return;
     }
 
-    const contentType =
-      MIME_MAP[path.extname(safeName).toLowerCase()] || 'application/octet-stream';
+    const ext = path.extname(safeName).toLowerCase();
+    const contentType = MIME_MAP[ext] || 'application/octet-stream';
     const stat = fs.statSync(fullPath);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', stat.size);
+    // SVG can contain scripts — force download to prevent Stored XSS
+    if (ext === '.svg') {
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    }
     fs.createReadStream(fullPath).pipe(res);
   });
 

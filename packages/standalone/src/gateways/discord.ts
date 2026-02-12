@@ -577,6 +577,11 @@ export class DiscordGateway extends BaseGateway {
     }
 
     // Regular single-agent processing
+    // Pass enriched content (images already analyzed above) to avoid double analysis
+    if (enrichedContent !== cleanContent) {
+      normalizedMessage.text = enrichedContent;
+      normalizedMessage.contentBlocks = undefined;
+    }
     const routerResult = await this.messageRouter.process(normalizedMessage);
     const response = routerResult.response;
     const duration = routerResult.duration;

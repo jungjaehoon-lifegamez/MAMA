@@ -604,9 +604,11 @@ export class ChatModule {
 
     let attachHtml = '';
     if (attachment.isImage) {
-      attachHtml = `<img src="${attachment.mediaUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(attachment.originalName)}" onclick="event.stopPropagation();openLightbox('${attachment.mediaUrl}')" />`;
+      const safeUrl = escapeHtml(attachment.mediaUrl);
+      attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(attachment.originalName)}" onclick="event.stopPropagation();openLightbox('${safeUrl}')" />`;
     } else {
-      attachHtml = `<a href="/api/media/download/${attachment.filename}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">${attachment.isImage ? '' : '\u{1F4CE}'}</span><span class="truncate max-w-[180px]">${escapeHtml(attachment.originalName)}</span></a>`;
+      const safeName = encodeURIComponent(attachment.filename);
+      attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">${attachment.isImage ? '' : '\u{1F4CE}'}</span><span class="truncate max-w-[180px]">${escapeHtml(attachment.originalName)}</span></a>`;
     }
 
     msgEl.innerHTML = `
@@ -1502,9 +1504,11 @@ export class ChatModule {
         if (msg.attachment) {
           const att = msg.attachment;
           if (att.isImage) {
-            attachHtml = `<img src="${att.mediaUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(att.originalName || '')}" onclick="event.stopPropagation();openLightbox('${att.mediaUrl}')" />`;
+            const safeUrl = escapeHtml(att.mediaUrl);
+            attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(att.originalName || '')}" onclick="event.stopPropagation();openLightbox('${safeUrl}')" />`;
           } else {
-            attachHtml = `<a href="/api/media/download/${att.filename}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">\u{1F4CE}</span><span class="truncate max-w-[180px]">${escapeHtml(att.originalName || att.filename)}</span></a>`;
+            const safeName = encodeURIComponent(att.filename);
+            attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">\u{1F4CE}</span><span class="truncate max-w-[180px]">${escapeHtml(att.originalName || att.filename)}</span></a>`;
           }
         }
         msgEl.innerHTML = `

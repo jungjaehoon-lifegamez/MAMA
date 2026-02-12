@@ -241,7 +241,18 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           contentBlocks = [];
           for (const att of message.attachments) {
             try {
-              const data = await fs.readFile(att.filePath);
+              // Resolve file path: use filePath if provided, otherwise reconstruct from filename
+              const resolvedPath =
+                att.filePath ||
+                path.join(
+                  os.homedir(),
+                  '.mama',
+                  'workspace',
+                  'media',
+                  'inbound',
+                  path.basename(att.filename || '')
+                );
+              const data = await fs.readFile(resolvedPath);
               const mediaType = att.contentType || 'image/jpeg';
               const base64 = data.toString('base64');
 
@@ -258,7 +269,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 // PDF/documents: instruct agent to read the file
                 contentBlocks.push({
                   type: 'text',
-                  text: `[Document uploaded: ${att.filename}]\nFile path: ${att.filePath}\nPlease use the Read tool to analyze this document.`,
+                  text: `[Document uploaded: ${att.filename}]\nFile path: ${resolvedPath}\nPlease use the Read tool to analyze this document.`,
                 });
               }
 
@@ -266,7 +277,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 `[WebSocket] Attached: ${att.filename} (${data.length} bytes, ${mediaType})`
               );
             } catch (err) {
-              console.error(`[WebSocket] Failed to read attachment ${att.filePath}:`, err.message);
+              console.error(`[WebSocket] Failed to read attachment ${att.filename}:`, err.message);
             }
           }
         }
