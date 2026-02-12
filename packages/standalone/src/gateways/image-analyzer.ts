@@ -5,6 +5,8 @@
 
 import type { ContentBlock } from './types.js';
 
+const VISION_MODEL = 'claude-sonnet-4-5-20250929';
+
 export class ImageAnalyzer {
   /**
    * Analyze a single image via Claude Vision API.
@@ -15,7 +17,7 @@ export class ImageAnalyzer {
     const client = await createClaudeClient();
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+      model: VISION_MODEL,
       max_tokens: 2048,
       system:
         "You are Claude Code, Anthropic's official CLI for Claude. You analyze images and documents for the user.",

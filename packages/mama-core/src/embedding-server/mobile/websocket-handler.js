@@ -241,17 +241,10 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           contentBlocks = [];
           for (const att of message.attachments) {
             try {
-              // Resolve file path: use filePath if provided, otherwise reconstruct from filename
-              const resolvedPath =
-                att.filePath ||
-                path.join(
-                  os.homedir(),
-                  '.mama',
-                  'workspace',
-                  'media',
-                  'inbound',
-                  path.basename(att.filename || '')
-                );
+              // Always reconstruct path from filename — never trust client-provided filePath (LFI risk)
+              const safeName = path.basename(att.filename || '');
+              const inboundDir = path.join(os.homedir(), '.mama', 'workspace', 'media', 'inbound');
+              const resolvedPath = path.join(inboundDir, safeName);
               const data = await fs.readFile(resolvedPath);
               const mediaType = att.contentType || 'image/jpeg';
               const base64 = data.toString('base64');

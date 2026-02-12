@@ -1544,9 +1544,11 @@ export class ChatModule {
       return;
     }
 
-    // If localStorage history already restored (has attachments), skip server history
-    if (this.history.length > 0) {
-      logger.info('localStorage history already loaded, skipping server history');
+    // If localStorage has more messages (e.g. with attachments), keep it
+    if (this.history.length > 0 && this.history.length >= messages.length) {
+      logger.info(
+        `localStorage history (${this.history.length}) >= server (${messages.length}), keeping local`
+      );
       return;
     }
 

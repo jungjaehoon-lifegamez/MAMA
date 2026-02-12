@@ -189,29 +189,27 @@ export function formatAssistantMessage(text) {
   );
 
   // Detect outbound media file paths (e.g. ~/.mama/workspace/media/outbound/file.png)
+  // Helper: build safe media HTML from captured filename
+  const buildMediaHtml = (filename) => {
+    const safeName = encodeURIComponent(filename);
+    const safeAlt = escapeHtmlForMarkdown(filename);
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+    if (imgExts.includes(ext)) {
+      return `<div class="media-inline"><img src="/api/media/${safeName}" class="max-w-[300px] rounded-lg my-1 cursor-pointer" onclick="openLightbox('/api/media/${safeName}')" alt="${safeAlt}"/><a href="/api/media/download/${safeName}" class="text-xs text-blue-500 hover:underline block">Download ${safeAlt}</a></div>`;
+    }
+    return `<a href="/api/media/download/${safeName}" class="text-blue-500 hover:underline">Download ${safeAlt}</a>`;
+  };
+
   // First: strip any <a> wrappers around media paths (from markdown link handler)
   formatted = formatted.replace(
     /<a\s+href="(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^"]+)"[^>]*>[^<]*<\/a>/gi,
-    (match, filename) => {
-      // Replace the entire <a> with just the raw path so the media handler below can process it
-      const ext = filename.split('.').pop()?.toLowerCase() || '';
-      const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
-      if (imgExts.includes(ext)) {
-        return `<div class="media-inline"><img src="/api/media/${filename}" class="max-w-[300px] rounded-lg my-1 cursor-pointer" onclick="openLightbox('/api/media/${filename}')" alt="${filename}"/><a href="/api/media/download/${filename}" class="text-xs text-blue-500 hover:underline block">Download ${filename}</a></div>`;
-      }
-      return `<a href="/api/media/download/${filename}" class="text-blue-500 hover:underline">Download ${filename}</a>`;
-    }
+    (match, filename) => buildMediaHtml(filename)
   );
   // Then: handle bare media paths not already inside HTML tags
   formatted = formatted.replace(
     /(?<!href="|src=")(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^\s<"']+\.(png|jpg|jpeg|gif|webp|svg|pdf))/gi,
-    (match, filename, ext) => {
-      const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
-      if (imgExts.includes(ext.toLowerCase())) {
-        return `<div class="media-inline"><img src="/api/media/${filename}" class="max-w-[300px] rounded-lg my-1 cursor-pointer" onclick="openLightbox('/api/media/${filename}')" alt="${filename}"/><a href="/api/media/download/${filename}" class="text-xs text-blue-500 hover:underline block">Download ${filename}</a></div>`;
-      }
-      return `<a href="/api/media/download/${filename}" class="text-blue-500 hover:underline">Download ${filename}</a>`;
-    }
+    (match, filename) => buildMediaHtml(filename)
   );
 
   // Headers (## and ###)
