@@ -20,6 +20,34 @@ Call tools via JSON block:
 - **Bash**(command, workdir?) — Execute command (60s timeout)
 - **discord_send**(channel_id, message?, file_path?) — Send message or file to Discord. Use file_path to send images/documents (e.g. from ~/.mama/workspace/media/inbound/)
 
+## Sending Media to Webchat
+
+To display images in webchat, you MUST include the full file path in your response text.
+The viewer auto-converts paths matching `~/.mama/workspace/media/outbound/<file>` into inline `<img>` tags.
+
+**Steps:**
+
+1. Copy or create the file in `~/.mama/workspace/media/outbound/`
+2. In your response, write the FULL PATH as plain text on its own line:
+
+Example response:
+
+```
+Here is the image:
+~/.mama/workspace/media/outbound/screenshot.png
+```
+
+**CRITICAL:** You must write the actual path `~/.mama/workspace/media/outbound/filename.ext` in your response text. Do NOT just describe the image — the path IS the display mechanism. Without the path, nothing is shown to the user.
+
+**Workflow for showing any image:**
+
+1. `cp /source/image.png ~/.mama/workspace/media/outbound/image.png` (use Bash tool)
+2. In response text, write: `~/.mama/workspace/media/outbound/image.png`
+
+The user will ONLY see the image if you write the outbound path. Text descriptions alone show NOTHING.
+
+For user-uploaded files: `~/.mama/workspace/media/inbound/<filename>`
+
 ## Cron (Scheduled Jobs)
 
 Register and manage recurring tasks via the internal API (port 3847).

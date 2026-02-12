@@ -420,6 +420,11 @@ This protects your credentials from being exposed in chat logs.`;
       sessionPool.releaseSession(channelKey);
     }
 
+    // Post-process: auto-copy image paths to outbound for webchat rendering
+    if (message.source === 'viewer') {
+      response = await this.resolveMediaPaths(response);
+    }
+
     // 5. Update session context
     this.sessionStore.updateSession(session.id, message.text, response);
 
@@ -580,11 +585,70 @@ ${historyContext}
 - Keep responses concise for messenger format
 `;
 
+    // Webchat-specific: media display instructions
+    if (agentContext?.platform === 'viewer') {
+      prompt += `
+## ⚠️ Webchat Media Display (MANDATORY)
+To show an image in webchat you MUST do ALL 3 steps:
+1. Find the file using Glob or Bash
+2. Copy it: Bash("cp /path/to/image.png ~/.mama/workspace/media/outbound/image.png")
+3. Write EXACTLY this in your response (bare path, no markdown, no file://):
+   ~/.mama/workspace/media/outbound/image.png
+
+WRONG: ![alt](file:///path) — this shows NOTHING
+WRONG: ![alt](/api/media/file) — this shows NOTHING
+WRONG: Just describing the image — this shows NOTHING
+RIGHT: ~/.mama/workspace/media/outbound/filename.png — this renders as <img>
+
+The ONLY way to display an image is the bare outbound path in your response text.
+`;
+    }
+
     if (enhanced?.keywordInstructions) {
       prompt += `\n${enhanced.keywordInstructions}\n`;
     }
 
     return prompt;
+  }
+
+  /**
+   * Post-process agent response: detect image file paths and copy to outbound.
+   * Rewrites paths to ~/.mama/workspace/media/outbound/filename so format.js renders them.
+   */
+  private async resolveMediaPaths(response: string): Promise<string> {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
+    const imgExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+
+    // Match absolute paths to image files
+    const pathPattern = /(\/[\w./-]+\.(png|jpg|jpeg|gif|webp))/gi;
+    let match;
+    const appended: string[] = [];
+
+    while ((match = pathPattern.exec(response)) !== null) {
+      const filePath = match[1];
+      const ext = path.extname(filePath).toLowerCase();
+      if (!imgExts.includes(ext)) continue;
+      if (filePath.includes('/media/outbound/') || filePath.includes('/media/inbound/')) continue;
+      try {
+        if (!fs.existsSync(filePath)) continue;
+        const filename = `${Date.now()}_${path.basename(filePath)}`;
+        const dest = path.join(outboundDir, filename);
+        fs.mkdirSync(outboundDir, { recursive: true });
+        fs.copyFileSync(filePath, dest);
+        appended.push(`~/.mama/workspace/media/outbound/${filename}`);
+        console.log(`[MessageRouter] Media resolved: ${filePath} → outbound/${filename}`);
+      } catch {
+        // skip unreadable files
+      }
+    }
+
+    // Append outbound paths — don't modify original response
+    if (appended.length > 0) {
+      return response + '\n\n' + appended.join('\n');
+    }
+    return response;
   }
 
   /**

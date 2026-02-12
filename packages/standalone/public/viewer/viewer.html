@@ -1849,7 +1849,6 @@
       async function sendChatMessage() {
         if (pendingAttachment) {
           const file = pendingAttachment;
-          const dataUrl = window._pendingAttachmentDataUrl;
           clearAttachment();
 
           const formData = new FormData();
@@ -2127,12 +2126,12 @@
         }
         preview.classList.remove('hidden');
         pendingAttachment = file;
-        window._pendingAttachmentDataUrl = null;
+        // cleared
       }
 
       function clearAttachment() {
         pendingAttachment = null;
-        window._pendingAttachmentDataUrl = null;
+        // cleared
         document.getElementById('chat-attachment-preview').classList.add('hidden');
         document.getElementById('chat-file-input').value = '';
         const thumb = document.getElementById('chat-attachment-thumb');
@@ -2223,6 +2222,11 @@
         lb.classList.remove('flex');
       }
       document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+      // Event delegation for lightbox — avoids inline onclick XSS
+      document.addEventListener('click', e => {
+        const el = e.target.closest('[data-lightbox]');
+        if (el) { e.stopPropagation(); openLightbox(el.dataset.lightbox); }
+      });
     </script>
   </body>
 </html>

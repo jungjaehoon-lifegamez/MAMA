@@ -176,19 +176,6 @@ export function formatAssistantMessage(text) {
   // Italic (avoiding conflicts with bold)
   formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
 
-  // Links: [text](url)
-  formatted = formatted.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
-  );
-
-  // Auto-detect URLs (not already in anchor tags)
-  formatted = formatted.replace(
-    /(?<!href="|>)(https?:\/\/[^\s<]+)/g,
-    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
-  );
-
-  // Detect outbound media file paths (e.g. ~/.mama/workspace/media/outbound/file.png)
   // Helper: build safe media HTML from captured filename
   const buildMediaHtml = (filename) => {
     const safeName = encodeURIComponent(filename);
@@ -196,10 +183,16 @@ export function formatAssistantMessage(text) {
     const ext = filename.split('.').pop()?.toLowerCase() || '';
     const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
     if (imgExts.includes(ext)) {
-      return `<div class="media-inline"><img src="/api/media/${safeName}" class="max-w-[300px] rounded-lg my-1 cursor-pointer" onclick="openLightbox('/api/media/${safeName}')" alt="${safeAlt}"/><a href="/api/media/download/${safeName}" class="text-xs text-blue-500 hover:underline block">Download ${safeAlt}</a></div>`;
+      return `<div class="media-inline"><img src="/api/media/${safeName}" class="max-w-[300px] rounded-lg my-1 cursor-pointer" data-lightbox="/api/media/${safeName}" alt="${safeAlt}"/><a href="/api/media/download/${safeName}" class="text-xs text-blue-500 hover:underline block">Download ${safeAlt}</a></div>`;
     }
     return `<a href="/api/media/download/${safeName}" class="text-blue-500 hover:underline">Download ${safeAlt}</a>`;
   };
+
+  // Markdown images: ![alt](media-path) — render as inline images
+  formatted = formatted.replace(
+    /!\[([^\]]*)\]\((?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/api\/media\/)([^)]+)\)/gi,
+    (_match, _alt, filename) => buildMediaHtml(filename)
+  );
 
   // First: strip any <a> wrappers around media paths (from markdown link handler)
   formatted = formatted.replace(

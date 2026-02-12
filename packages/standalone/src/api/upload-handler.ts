@@ -74,9 +74,20 @@ async function compressIfNeeded(filePath: string, size: number): Promise<string>
 
     await pipeline.toFile(compressedPath);
 
-    // Replace original with compressed
-    fs.unlinkSync(filePath);
-    fs.renameSync(compressedPath, filePath);
+    // Replace original with compressed (atomic-ish swap)
+    try {
+      fs.unlinkSync(filePath);
+      fs.renameSync(compressedPath, filePath);
+    } catch (swapErr) {
+      console.warn(`[Upload] Failed to swap compressed file, keeping original:`, swapErr);
+      // Clean up compressed file if rename failed
+      try {
+        fs.unlinkSync(compressedPath);
+      } catch {
+        /* ignore */
+      }
+      return filePath;
+    }
 
     const newSize = fs.statSync(filePath).size;
     console.log(`[Upload] Compressed ${path.basename(filePath)}: ${size} → ${newSize} bytes`);
@@ -105,38 +116,64 @@ function findMediaFile(safeName: string): string | null {
   return null;
 }
 
+// Simple in-memory rate limiter for uploads
+const uploadRateLimit = new Map<string, number[]>();
+const RATE_LIMIT_WINDOW = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 10; // 10 uploads per minute
+
+function checkUploadRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const timestamps = (uploadRateLimit.get(ip) || []).filter((t) => now - t < RATE_LIMIT_WINDOW);
+  if (timestamps.length >= RATE_LIMIT_MAX) return false;
+  timestamps.push(now);
+  uploadRateLimit.set(ip, timestamps);
+  return true;
+}
+
 export function createUploadRouter(): Router {
   const router = Router();
 
   // POST /api/upload
-  router.post('/upload', upload.single('file'), async (req: Request, res: Response) => {
-    try {
-      if (!req.file) {
-        res.status(400).json({ error: 'No file uploaded' });
+  router.post(
+    '/upload',
+    (req: Request, res: Response, next) => {
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      if (!checkUploadRateLimit(ip)) {
+        res.status(429).json({ error: 'Too many uploads. Try again later.' });
         return;
       }
+      next();
+    },
+    upload.single('file'),
+    async (req: Request, res: Response) => {
+      try {
+        if (!req.file) {
+          res.status(400).json({ error: 'No file uploaded' });
+          return;
+        }
 
-      const { filename, path: filePath, size, mimetype } = req.file;
+        const { filename, path: filePath, size, mimetype } = req.file;
 
-      // Compress large images
-      await compressIfNeeded(filePath, size);
-      const finalSize = fs.statSync(filePath).size;
+        // Compress large images
+        await compressIfNeeded(filePath, size);
+        const finalSize = fs.statSync(filePath).size;
 
-      console.log(`[Upload] ${filename} (${finalSize} bytes, ${mimetype})`);
+        console.log(`[Upload] ${filename} (${finalSize} bytes, ${mimetype})`);
 
-      res.json({
-        success: true,
-        filename,
-        mediaUrl: `/api/media/${filename}`,
-        size: finalSize,
-        contentType: mimetype,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Upload failed';
-      console.error('[Upload] Error:', message);
-      res.status(500).json({ error: message });
+        res.json({
+          success: true,
+          filename,
+          mediaUrl: `/api/media/${filename}`,
+          size: finalSize,
+          contentType: mimetype,
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Upload failed';
+        console.error('[Upload] Error:', message);
+        res.status(500).json({ error: message });
+      }
     }
-  });
+  );
 
   // GET /api/media/:filename — serve inbound or outbound files
   router.get('/media/:filename', (req: Request<{ filename: string }>, res: Response) => {
@@ -155,7 +192,8 @@ export function createUploadRouter(): Router {
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', stat.size);
     // SVG can contain scripts — force download to prevent Stored XSS
-    if (ext === '.svg') {
+    // Check both extension and content type to catch mismatched files
+    if (ext === '.svg' || contentType === 'image/svg+xml') {
       res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
     }
     fs.createReadStream(fullPath).pipe(res);

@@ -98,8 +98,11 @@ export class ImageAnalyzer {
           analyses.push(desc);
           console.log(`[ImageAnalyzer] Analyzed image (${desc.length} chars)`);
         } catch (err) {
-          console.error(`[ImageAnalyzer] Analysis failed:`, err);
-          analyses.push('[Image was attached but could not be analyzed]');
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.error(`[ImageAnalyzer] Analysis failed:`, errMsg);
+          analyses.push(
+            `[Image analysis failed: ${errMsg}. The image was attached but could not be processed.]`
+          );
         }
       }
     }

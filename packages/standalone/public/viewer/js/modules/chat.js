@@ -605,7 +605,7 @@ export class ChatModule {
     let attachHtml = '';
     if (attachment.isImage) {
       const safeUrl = escapeHtml(attachment.mediaUrl);
-      attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(attachment.originalName)}" onclick="event.stopPropagation();openLightbox('${safeUrl}')" />`;
+      attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(attachment.originalName)}" data-lightbox="${safeUrl}" />`;
     } else {
       const safeName = encodeURIComponent(attachment.filename);
       attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">${attachment.isImage ? '' : '\u{1F4CE}'}</span><span class="truncate max-w-[180px]">${escapeHtml(attachment.originalName)}</span></a>`;
@@ -1505,7 +1505,7 @@ export class ChatModule {
           const att = msg.attachment;
           if (att.isImage) {
             const safeUrl = escapeHtml(att.mediaUrl);
-            attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(att.originalName || '')}" onclick="event.stopPropagation();openLightbox('${safeUrl}')" />`;
+            attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(att.originalName || '')}" data-lightbox="${safeUrl}" />`;
           } else {
             const safeName = encodeURIComponent(att.filename);
             attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">\u{1F4CE}</span><span class="truncate max-w-[180px]">${escapeHtml(att.originalName || att.filename)}</span></a>`;
@@ -1544,11 +1544,9 @@ export class ChatModule {
       return;
     }
 
-    // If localStorage has more messages (e.g. with attachments), keep it
-    if (this.history.length > 0 && this.history.length >= messages.length) {
-      logger.info(
-        `localStorage history (${this.history.length}) >= server (${messages.length}), keeping local`
-      );
+    // Server history is authoritative — always use it when available
+    if (messages.length === 0 && this.history.length > 0) {
+      logger.info(`Server sent empty history, keeping local (${this.history.length})`);
       return;
     }
 
