@@ -1346,16 +1346,13 @@ export class AgentLoop {
                 const fs = require('fs');
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 const path = require('path');
-                const mediaDir = path.join(
-                  process.env.HOME || '',
-                  '.mama',
-                  'workspace',
-                  'media',
-                  'inbound'
-                );
+                const mediaDir = path.join(homedir(), '.mama', 'workspace', 'media', 'inbound');
                 fs.mkdirSync(mediaDir, { recursive: true });
                 const ext = block.source.media_type?.includes('png') ? '.png' : '.jpg';
-                const imagePath = path.join(mediaDir, `${Date.now()}${ext}`);
+                const imagePath = path.join(
+                  mediaDir,
+                  `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`
+                );
                 try {
                   fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
                   parts.push(
@@ -1422,16 +1419,13 @@ export class AgentLoop {
               const fs = require('fs');
               // eslint-disable-next-line @typescript-eslint/no-require-imports
               const path = require('path');
-              const mediaDir = path.join(
-                process.env.HOME || '',
-                '.mama',
-                'workspace',
-                'media',
-                'inbound'
-              );
+              const mediaDir = path.join(homedir(), '.mama', 'workspace', 'media', 'inbound');
               fs.mkdirSync(mediaDir, { recursive: true });
               const ext = block.source.media_type?.includes('png') ? '.png' : '.jpg';
-              const imagePath = path.join(mediaDir, `${Date.now()}${ext}`);
+              const imagePath = path.join(
+                mediaDir,
+                `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`
+              );
               try {
                 fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
                 parts.push(

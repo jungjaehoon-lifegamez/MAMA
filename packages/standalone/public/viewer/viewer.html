@@ -1809,7 +1809,7 @@
       async function sendChatMessage() {
         if (pendingAttachment) {
           const file = pendingAttachment;
-          clearAttachment();
+          // Don't clear attachment yet - wait for successful send
 
           const formData = new FormData();
           formData.append('file', file);
@@ -1819,12 +1819,18 @@
             if (!resp.ok) throw new Error('Upload failed');
             const data = await resp.json();
 
+            // Check WS connection before sending
+            if (!chat.ws || chat.ws.readyState !== WebSocket.OPEN) {
+              chat.addSystemMessage('Not connected. Please wait for reconnection.', 'error');
+              return;
+            }
+
             const input = document.getElementById('chat-input');
             const isImage = file.type.startsWith('image/');
             const defaultMsg = isImage ? 'What is in this image?' : 'Analyze this document';
             const message = input.value.trim() || defaultMsg;
 
-            const mediaUrl = '/api/media/' + data.filename;
+            const mediaUrl = '/api/media/' + encodeURIComponent(data.filename);
             const attachMeta = { mediaUrl, filename: data.filename, originalName: file.name, contentType: file.type, isImage };
 
             // Save with attachment metadata for history persistence
@@ -1841,9 +1847,12 @@
               }],
             }));
 
+            // Clear attachment only after successful send
+            clearAttachment();
             input.value = '';
           } catch (err) {
             chat.addSystemMessage('Upload failed: ' + err.message, 'error');
+            // Keep pendingAttachment so user can retry
           }
           return;
         }
@@ -2114,11 +2123,24 @@
         });
         panel.addEventListener('drop', (e) => {
           const file = e.dataTransfer.files[0];
-          if (file && (file.type.startsWith('image/') || file.type === 'application/pdf')) {
+          if (!file) return;
+
+          // Allowed MIME types and extensions (match file input accept attribute)
+          const allowedTypes = ['image/', 'application/pdf', 'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'text/plain', 'text/csv', 'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
+          const allowedExts = ['.pdf', '.doc', '.docx', '.txt', '.csv', '.xls', '.xlsx'];
+          const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
+
+          const isAllowed = allowedTypes.some(t => file.type.startsWith(t)) || allowedExts.includes(ext);
+          if (isAllowed) {
             const dt = new DataTransfer();
             dt.items.add(file);
             document.getElementById('chat-file-input').files = dt.files;
             handleFileSelect({ target: { files: [file] } });
+          } else {
+            chat.addSystemMessage('Unsupported file type. Allowed: images, PDF, DOC, TXT, CSV, XLS', 'error');
           }
         });
       }

@@ -5,8 +5,8 @@
  * - GET  /api/media/:filename — serve uploaded/generated files
  */
 
-import { Router, type Request, type Response } from 'express';
-import multer from 'multer';
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import multer, { MulterError } from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
 import { homedir } from 'node:os';
@@ -40,15 +40,33 @@ const storage = multer.diskStorage({
   },
 });
 
+// Map extension to expected MIME type for validation
+const EXT_TO_MIME: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+};
+
 const upload = multer({
   storage,
   limits: { fileSize: MAX_FILE_SIZE },
   fileFilter: (_req, file, cb) => {
-    if (ALLOWED_MIME.has(file.mimetype)) {
-      cb(null, true);
-    } else {
+    if (!ALLOWED_MIME.has(file.mimetype)) {
       cb(new Error(`Unsupported file type: ${file.mimetype}`));
+      return;
     }
+    // Validate extension matches MIME type to prevent spoofing
+    const ext = path.extname(file.originalname).toLowerCase();
+    const expectedMime = EXT_TO_MIME[ext];
+    if (expectedMime && expectedMime !== file.mimetype) {
+      cb(new Error(`Extension ${ext} does not match MIME type ${file.mimetype}`));
+      return;
+    }
+    cb(null, true);
   },
 });
 
@@ -121,6 +139,19 @@ const uploadRateLimit = new Map<string, number[]>();
 const RATE_LIMIT_WINDOW = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 10; // 10 uploads per minute
 
+// Periodically clean up stale rate-limit entries (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, timestamps] of uploadRateLimit) {
+    const active = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW);
+    if (active.length === 0) {
+      uploadRateLimit.delete(ip);
+    } else {
+      uploadRateLimit.set(ip, active);
+    }
+  }
+}, 5 * 60_000).unref(); // unref() prevents this timer from keeping the process alive
+
 function checkUploadRateLimit(ip: string): boolean {
   const now = Date.now();
   const timestamps = (uploadRateLimit.get(ip) || []).filter((t) => now - t < RATE_LIMIT_WINDOW);
@@ -174,6 +205,26 @@ export function createUploadRouter(): Router {
       }
     }
   );
+
+  // Multer error handler - must be registered after upload middleware
+  router.use('/upload', (err: Error, _req: Request, res: Response, next: NextFunction) => {
+    if (err instanceof MulterError) {
+      // Map Multer error codes to HTTP status codes
+      const statusMap: Record<string, number> = {
+        LIMIT_FILE_SIZE: 413,
+        LIMIT_FILE_COUNT: 400,
+        LIMIT_FIELD_KEY: 400,
+        LIMIT_FIELD_VALUE: 400,
+        LIMIT_FIELD_COUNT: 400,
+        LIMIT_UNEXPECTED_FILE: 400,
+      };
+      const status = statusMap[err.code] || 400;
+      res.status(status).json({ error: `Upload error: ${err.message}` });
+      return;
+    }
+    // Pass non-Multer errors to default handler
+    next(err);
+  });
 
   // GET /api/media/:filename — serve inbound or outbound files
   router.get('/media/:filename', (req: Request<{ filename: string }>, res: Response) => {

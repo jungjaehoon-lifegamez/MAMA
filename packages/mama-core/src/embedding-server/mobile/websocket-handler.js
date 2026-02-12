@@ -21,6 +21,9 @@ const { authenticateWebSocket } = require('./auth.js');
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
+const { DebugLogger } = require('../../debug-logger.js');
+
+const logger = new DebugLogger('WebSocket');
 
 /**
  * Default heartbeat interval (30 seconds)
@@ -95,7 +98,7 @@ function createWebSocketHandler({
       close: (code, reason) => {
         socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
         socket.destroy();
-        console.error(`[WebSocket] Auth failed: ${reason}`);
+        logger.error(`Auth failed: ${reason}`);
       },
     };
 
@@ -121,7 +124,7 @@ function createWebSocketHandler({
     };
     clients.set(clientId, clientInfo);
 
-    console.error(`[WebSocket] Client ${clientId} connected (user: ${userId})`);
+    logger.info(` Client ${clientId} connected (user: ${userId})`);
 
     ws.send(
       JSON.stringify({
@@ -136,7 +139,7 @@ function createWebSocketHandler({
         const message = JSON.parse(data.toString());
         handleClientMessage(clientId, message, clientInfo, messageRouter, sessionStore);
       } catch (err) {
-        console.error(`[WebSocket] Invalid message from ${clientId}:`, err.message);
+        logger.info(` Invalid message from ${clientId}:`, err.message);
         ws.send(
           JSON.stringify({
             type: 'error',
@@ -151,19 +154,19 @@ function createWebSocketHandler({
     });
 
     ws.on('close', (code, _reason) => {
-      console.error(`[WebSocket] Client ${clientId} disconnected (code: ${code})`);
+      logger.info(` Client ${clientId} disconnected (code: ${code})`);
       clients.delete(clientId);
     });
 
     ws.on('error', (err) => {
-      console.error(`[WebSocket] Error for client ${clientId}:`, err.message);
+      logger.info(` Error for client ${clientId}:`, err.message);
     });
   });
 
   const heartbeatInterval = setInterval(() => {
     clients.forEach((clientInfo, clientId) => {
       if (!clientInfo.isAlive) {
-        console.error(`[WebSocket] Client ${clientId} timed out, terminating`);
+        logger.info(` Client ${clientId} timed out, terminating`);
         clientInfo.ws.terminate();
         clients.delete(clientId);
         return;
@@ -260,9 +263,11 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 });
               } else {
                 // PDF/documents: instruct agent to read the file
+                // Use safe display path to avoid exposing full server path
+                const safeDisplayPath = `~/.mama/workspace/media/inbound/${safeName}`;
                 contentBlocks.push({
                   type: 'text',
-                  text: `[Document uploaded: ${att.filename}]\nFile path: ${resolvedPath}\nPlease use the Read tool to analyze this document.`,
+                  text: `[Document uploaded: ${att.filename}]\nFile path: ${safeDisplayPath}\nPlease use the Read tool to analyze this document.`,
                 });
               }
 
@@ -270,7 +275,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 `[WebSocket] Attached: ${att.filename} (${data.length} bytes, ${mediaType})`
               );
             } catch (err) {
-              console.error(`[WebSocket] Failed to read attachment ${att.filename}:`, err.message);
+              logger.info(` Failed to read attachment ${att.filename}:`, err.message);
             }
           }
         }
@@ -315,9 +320,9 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           })
         );
 
-        console.error(`[WebSocket] Message processed for ${clientId} (${result.duration}ms)`);
+        logger.info(` Message processed for ${clientId} (${result.duration}ms)`);
       } catch (error) {
-        console.error(`[WebSocket] Message processing error:`, error);
+        logger.info(` Message processing error:`, error);
         clientInfo.ws.send(
           JSON.stringify({
             type: 'error',
@@ -367,11 +372,11 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           // Use dynamic source based on osAgentMode (viewer vs mobile)
           const channelId = 'mama_os_main';
           const source = clientInfo.osAgentMode ? 'viewer' : 'mobile';
-          console.error(`[WebSocket] Loading history for source=${source}, channelId=${channelId}`);
+          logger.info(` Loading history for source=${source}, channelId=${channelId}`);
           const history = sessionStore.getHistoryByChannel
             ? sessionStore.getHistoryByChannel(source, channelId)
             : sessionStore.getHistory(sessionId);
-          console.error(`[WebSocket] History loaded: ${history ? history.length : 0} turns`);
+          logger.info(` History loaded: ${history ? history.length : 0} turns`);
           if (history && history.length > 0) {
             // Convert {user, bot, timestamp} format to {role, content, timestamp} for display
             const formattedMessages = history.flatMap((turn) => {
@@ -430,18 +435,18 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                   ],
                 })
               );
-              console.error(`[WebSocket] Sent onboarding greeting to ${clientId}`);
+              logger.info(` Sent onboarding greeting to ${clientId}`);
             }
           }
         } catch (error) {
-          console.error(`[WebSocket] Failed to load history:`, error.message);
+          logger.info(` Failed to load history:`, error.message);
         }
       }
       break;
     }
 
     default:
-      console.error(`[WebSocket] Unknown message type from ${clientId}: ${type}`);
+      logger.info(` Unknown message type from ${clientId}: ${type}`);
       clientInfo.ws.send(
         JSON.stringify({
           type: 'error',

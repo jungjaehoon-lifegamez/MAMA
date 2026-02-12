@@ -12,7 +12,13 @@
 
 /* eslint-env browser */
 
-import { escapeHtml, showToast, scrollToBottom, autoResizeTextarea } from '../utils/dom.js';
+import {
+  escapeHtml,
+  escapeAttr,
+  showToast,
+  scrollToBottom,
+  autoResizeTextarea,
+} from '../utils/dom.js';
 import { formatMessageTime, formatAssistantMessage } from '../utils/format.js';
 import { API } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
@@ -604,11 +610,12 @@ export class ChatModule {
 
     let attachHtml = '';
     if (attachment.isImage) {
-      const safeUrl = escapeHtml(attachment.mediaUrl);
-      attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(attachment.originalName)}" data-lightbox="${safeUrl}" />`;
+      const safeUrl = escapeAttr(attachment.mediaUrl);
+      const safeAlt = escapeAttr(attachment.originalName);
+      attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${safeAlt}" data-lightbox="${safeUrl}" />`;
     } else {
       const safeName = encodeURIComponent(attachment.filename);
-      attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">${attachment.isImage ? '' : '\u{1F4CE}'}</span><span class="truncate max-w-[180px]">${escapeHtml(attachment.originalName)}</span></a>`;
+      attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">\u{1F4CE}</span><span class="truncate max-w-[180px]">${escapeHtml(attachment.originalName)}</span></a>`;
     }
 
     msgEl.innerHTML = `
@@ -1532,8 +1539,9 @@ export class ChatModule {
         if (msg.attachment) {
           const att = msg.attachment;
           if (att.isImage) {
-            const safeUrl = escapeHtml(att.mediaUrl);
-            attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${escapeHtml(att.originalName || '')}" data-lightbox="${safeUrl}" />`;
+            const safeUrl = escapeAttr(att.mediaUrl);
+            const safeAlt = escapeAttr(att.originalName || '');
+            attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${safeAlt}" data-lightbox="${safeUrl}" />`;
           } else {
             const safeName = encodeURIComponent(att.filename);
             attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">\u{1F4CE}</span><span class="truncate max-w-[180px]">${escapeHtml(att.originalName || att.filename)}</span></a>`;

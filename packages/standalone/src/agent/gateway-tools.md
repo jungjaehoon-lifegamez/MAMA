@@ -32,7 +32,7 @@ The viewer auto-converts paths matching `~/.mama/workspace/media/outbound/<file>
 
 Example response:
 
-```
+```text
 Here is the image:
 ~/.mama/workspace/media/outbound/screenshot.png
 ```

@@ -644,7 +644,7 @@ The ONLY way to display an image is the bare outbound path in your response text
    * Rewrites paths to ~/.mama/workspace/media/outbound/filename so format.js renders them.
    */
   private async resolveMediaPaths(response: string): Promise<string> {
-    const fs = await import('node:fs');
+    const fsp = (await import('node:fs/promises')).default;
     const path = await import('node:path');
     const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
     const imgExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
@@ -653,18 +653,28 @@ The ONLY way to display an image is the bare outbound path in your response text
     const pathPattern = /(\/[\w./-]+\.(png|jpg|jpeg|gif|webp))/gi;
     let match;
     const appended: string[] = [];
+    const matches: string[] = [];
 
+    // Collect all matches first
     while ((match = pathPattern.exec(response)) !== null) {
-      const filePath = match[1];
+      matches.push(match[1]);
+    }
+
+    if (matches.length === 0) return response;
+
+    // Create outbound directory once
+    await fsp.mkdir(outboundDir, { recursive: true });
+
+    // Process matches asynchronously
+    for (const filePath of matches) {
       const ext = path.extname(filePath).toLowerCase();
       if (!imgExts.includes(ext)) continue;
       if (filePath.includes('/media/outbound/') || filePath.includes('/media/inbound/')) continue;
       try {
-        if (!fs.existsSync(filePath)) continue;
+        await fsp.access(filePath);
         const filename = `${Date.now()}_${path.basename(filePath)}`;
         const dest = path.join(outboundDir, filename);
-        fs.mkdirSync(outboundDir, { recursive: true });
-        fs.copyFileSync(filePath, dest);
+        await fsp.copyFile(filePath, dest);
         appended.push(`~/.mama/workspace/media/outbound/${filename}`);
         console.log(`[MessageRouter] Media resolved: ${filePath} → outbound/${filename}`);
       } catch {

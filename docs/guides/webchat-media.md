@@ -54,11 +54,11 @@ Claude 응답에 `~/.mama/workspace/media/outbound/` 경로의 파일이 포함�
 
 ### POST /api/upload
 
-```
+```http
 Content-Type: multipart/form-data
 Body: file (binary)
 
-Response: { success, filePath, filename, size, contentType }
+Response: { success, filename, mediaUrl, size, contentType }
 ```
 
 ### GET /api/media/:filename
@@ -80,12 +80,13 @@ Response: { success, filePath, filename, size, contentType }
   "content": "이 이미지에 뭐가 있어?",
   "attachments": [
     {
-      "filePath": "/home/user/.mama/workspace/media/inbound/123_photo.jpg",
       "filename": "photo.jpg",
       "contentType": "image/jpeg"
     }
   ]
 }
 ```
+
+> **Security Note**: 서버는 클라이언트가 제공하는 `filePath`를 **무시**하고, `filename`만 사용하여 `~/.mama/workspace/media/inbound/` 내에서 파일을 찾습니다. 이는 Local File Inclusion (LFI) 공격을 방지합니다.
 
 서버에서 `attachments`를 base64 `contentBlocks`로 변환하여 Claude Vision API에 전달합니다.

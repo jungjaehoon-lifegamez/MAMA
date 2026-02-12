@@ -14,6 +14,12 @@ interface ContentBlock {
   image_url?: { url: string };
   localPath?: string;
   userPrompt?: string;
+  // Discord-style image block format
+  source?: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
 }
 
 // Sanitize user input to prevent prompt injection
@@ -23,7 +29,7 @@ function sanitizeUserPrompt(prompt: string): string {
   return (
     prompt
       .replace(/\\n/g, ' ') // Remove literal \n
-      .replace(/[\]{}]/g, '') // Remove brackets that could interfere with prompts
+      .replace(/[[\]{}]/g, '') // Remove brackets that could interfere with prompts
       .trim()
       .substring(0, 500) || // Limit length
     'Analyze this image'
@@ -35,7 +41,11 @@ export class ImageAnalyzer {
 
   private async getClient(): Promise<ClaudeClient> {
     if (!this.clientCache) {
-      this.clientCache = this.createClient();
+      this.clientCache = this.createClient().catch((err) => {
+        // Reset cache on error so subsequent calls can retry
+        this.clientCache = null;
+        throw err;
+      });
     }
     return this.clientCache;
   }
@@ -82,6 +92,14 @@ export class ImageAnalyzer {
     const results: string[] = [];
 
     for (const block of blocks) {
+      // Handle Discord-style image blocks (type: 'image' with source.type: 'base64')
+      if (block.type === 'image' && block.source?.type === 'base64') {
+        const prompt = block.userPrompt || 'Analyze this image';
+        const result = await this.analyze(block.source.data, block.source.media_type, prompt);
+        results.push(result);
+        continue;
+      }
+
       if (block.type === 'image_url') {
         let base64Data: string;
         let mediaType: string;
@@ -98,7 +116,17 @@ export class ImageAnalyzer {
           }
         } else if (block.localPath) {
           const { readFile } = await import('node:fs/promises');
-          const fileData = await readFile(block.localPath);
+          const nodePath = await import('node:path');
+          const { homedir } = await import('node:os');
+
+          // Validate path to prevent traversal attacks
+          const allowedBase = nodePath.join(homedir(), '.mama', 'workspace', 'media');
+          const resolvedPath = nodePath.resolve(block.localPath);
+          if (!resolvedPath.startsWith(allowedBase)) {
+            throw new Error('Image path must be within ~/.mama/workspace/media/');
+          }
+
+          const fileData = await readFile(resolvedPath);
           base64Data = fileData.toString('base64');
 
           // Determine media type from file extension
@@ -127,6 +155,8 @@ export class ImageAnalyzer {
 
 let _instance: ImageAnalyzer | null = null;
 export function getImageAnalyzer(): ImageAnalyzer {
-  if (!_instance) _instance = new ImageAnalyzer();
+  if (!_instance) {
+    _instance = new ImageAnalyzer();
+  }
   return _instance;
 }
