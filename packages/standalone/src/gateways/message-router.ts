@@ -669,7 +669,9 @@ The ONLY way to display an image is the bare outbound path in your response text
       matches.push(match[1]);
     }
 
-    if (matches.length === 0) return response;
+    if (matches.length === 0) {
+      return response;
+    }
 
     // Create outbound directory once
     await mkdir(outboundDir, { recursive: true });
@@ -677,13 +679,18 @@ The ONLY way to display an image is the bare outbound path in your response text
     // Process matches asynchronously
     for (const filePath of matches) {
       const ext = path.extname(filePath).toLowerCase();
-      if (!imgExts.includes(ext)) continue;
-      if (filePath.includes('/media/outbound/') || filePath.includes('/media/inbound/')) continue;
+      if (!imgExts.includes(ext)) {
+        continue;
+      }
+      if (filePath.includes('/media/outbound/') || filePath.includes('/media/inbound/')) {
+        continue;
+      }
 
       // Security: Reject paths with traversal sequences to prevent arbitrary file access
       const resolvedPath = path.resolve(filePath);
       if (filePath.includes('..') || resolvedPath !== path.normalize(filePath)) {
-        continue; // Skip potentially malicious paths
+        logger.debug(`Skipping path with traversal sequence: ${filePath}`);
+        continue;
       }
 
       try {
@@ -692,9 +699,12 @@ The ONLY way to display an image is the bare outbound path in your response text
         const dest = path.join(outboundDir, filename);
         await copyFile(resolvedPath, dest);
         appended.push(`~/.mama/workspace/media/outbound/${filename}`);
-        console.log(`[MessageRouter] Media resolved: ${resolvedPath} → outbound/${filename}`);
-      } catch {
-        // skip unreadable files
+        logger.debug(`Media resolved: ${resolvedPath} → outbound/${filename}`);
+      } catch (err) {
+        // Log the error instead of silently ignoring
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error(`Failed to copy media file ${resolvedPath}: ${message}`);
+        // Continue processing other files - don't rethrow
       }
     }
 
