@@ -2,6 +2,64 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-02-12
+
+### Added
+
+- **Webchat Media Upload**: Image/PDF upload with drag & drop, preview thumbnails, and Claude Vision integration
+  - Supported formats: JPEG, PNG, GIF, WebP, SVG, PDF (20MB max, auto-compress >5MB)
+  - `/api/upload` and `/api/media/:filename` endpoints
+  - WebSocket `attachments` protocol for real-time image processing
+- **TTS (Text-to-Speech)**: Auto-read assistant responses with voice
+  - Toggle via speaker icon, speed control 0.5x-2.0x (default 1.8x for Korean)
+  - Markdown/emoji stripping for clean speech output
+  - Hands-free mode: auto-start STT after TTS completes
+- **STT (Speech-to-Text)**: Voice input with auto-silence detection (2.5s)
+  - Continuous recognition for multiple sentences
+  - Auto language detection (Korean/English)
+- **Image Analysis**: Claude Vision API integration via `ImageAnalyzer`
+  - Singleton client caching for performance
+  - Prompt injection sanitization (`sanitizeUserPrompt`)
+  - Path validation to prevent LFI attacks
+- **Hybrid MCP+Gateway Mode**: Both MCP servers and gateway tools can run simultaneously
+  - `--mcp-config` and `--strict-mcp-config` flags passed to Claude CLI
+  - Gateway tools (browser, media, PR review) available alongside MCP tools
+  - Enables rich ecosystem: external databases, APIs via MCP + MAMA-native tools
+- **Cron Job Lock Timeout**: 10-minute default lock timeout prevents stuck jobs
+- **Dashboard Reorganization**: Agent selection in floating chat, session improvements
+- **BaseGateway Abstract Class**: Deduplicated common gateway logic (Discord, Slack, Telegram)
+- **Graph API**: `/api/graph/decisions`, `/api/graph/checkpoints` endpoints for decision visualization
+- **Browser Tools**: `browser_open`, `browser_screenshot`, `browser_click` in gateway-tools.md
+- **Lightbox Viewer**: Click images in chat to view full-size with zoom/pan
+
+### Changed
+
+- **Session Reset Warning**: Now bilingual (English + Korean)
+- **System Prompt Optimization**: Gateway tools embedded directly to prevent truncation
+- **DebugLogger**: Consistent logging across all modules (no more console.log)
+- **Multi-Agent Free Chat**: Only responds to explicitly mentioned agents
+
+### Fixed
+
+- **Double Image Analysis**: Discord gateway now always clears contentBlocks after analysis
+- **Port Conflict**: Stale process cleanup on startup
+- **Prompt Overflow**: Enforced system prompt truncation and auto-session reset
+- **Safari Compatibility**: Removed lookbehind regex patterns for iOS support
+- **ESM Import**: Fixed `matchAll` with proper import syntax
+
+### Security
+
+- **LFI Prevention**: Server ignores client `filePath`, reconstructs from `filename` only
+- **Filename XSS**: Sanitization with `escapeHtml` and `escapeAttr` for attribute contexts
+- **Prompt Injection**: `sanitizeFilenameForPrompt` and `sanitizeUserPrompt` guards
+- **Path Traversal**: `allowedBase` validation on all file operations
+- **MCP Args Masking**: Sensitive arguments redacted in logs
+- **MAMA_TRUSTED_ENV**: Hard gate for dangerous operations
+
+### Removed
+
+- **Gemini Workflows**: Removed unused `.github/workflows/gemini-*.yml` and `.github/commands/gemini-*.toml`
+
 ## [0.7.1] - 2026-02-12
 
 ### Fixed

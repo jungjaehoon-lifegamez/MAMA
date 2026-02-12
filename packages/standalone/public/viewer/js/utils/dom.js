@@ -21,6 +21,18 @@ export function escapeHtml(text) {
 }
 
 /**
+ * Escape HTML for use in attribute values (also escapes quotes)
+ * @param {string} text - Text to escape
+ * @returns {string} Escaped text safe for HTML attributes
+ */
+export function escapeAttr(text) {
+  if (!text) {
+    return '';
+  }
+  return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
  * Debounce function calls
  * @param {Function} func - Function to debounce
  * @param {number} wait - Wait time in milliseconds

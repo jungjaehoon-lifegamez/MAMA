@@ -86,9 +86,11 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   // Middleware
   app.use(express.json());
 
-  // Set Content-Type header for API responses only
-  app.use('/api', (_req, res, next) => {
-    res.setHeader('Content-Type', 'application/json');
+  // Set Content-Type header for API responses only (exclude media endpoints)
+  app.use('/api', (req, res, next) => {
+    if (!req.path.startsWith('/media')) {
+      res.setHeader('Content-Type', 'application/json');
+    }
     next();
   });
 

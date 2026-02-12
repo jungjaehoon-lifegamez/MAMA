@@ -966,12 +966,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
     }
 
+    // Extract mentioned agent IDs from Discord mentions
+    const mentionedAgentIds = isBot ? undefined : this.extractMentionedAgentIds(message.content);
+
     return {
       channelId: message.channel.id,
       userId: message.author.id,
       content: cleanContent,
       isBot,
       senderAgentId,
+      mentionedAgentIds: mentionedAgentIds?.length ? mentionedAgentIds : undefined,
       messageId: message.id,
       timestamp: message.createdTimestamp,
     };

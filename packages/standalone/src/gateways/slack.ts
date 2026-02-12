@@ -7,16 +7,10 @@
 
 import { SocketModeClient } from '@slack/socket-mode';
 import { WebClient } from '@slack/web-api';
-import { MessageRouter } from './message-router.js';
 import { splitForSlack } from './message-splitter.js';
-import type {
-  Gateway,
-  GatewayEvent,
-  GatewayEventHandler,
-  NormalizedMessage,
-  SlackGatewayConfig,
-  SlackChannelConfig,
-} from './types.js';
+import { BaseGateway } from './base-gateway.js';
+import type { NormalizedMessage, SlackGatewayConfig, SlackChannelConfig } from './types.js';
+import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import { MultiAgentSlackHandler } from '../multi-agent/multi-agent-slack.js';
 import { getChannelHistory } from './channel-history.js';
@@ -58,15 +52,12 @@ export interface SlackGatewayOptions {
  * Connects to Slack via Socket Mode and routes messages
  * to the MessageRouter for processing.
  */
-export class SlackGateway implements Gateway {
+export class SlackGateway extends BaseGateway {
   readonly source = 'slack' as const;
 
   private socketClient: SocketModeClient;
   private webClient: WebClient;
-  private messageRouter: MessageRouter;
   private config: SlackGatewayConfig;
-  private eventHandlers: GatewayEventHandler[] = [];
-  private connected = false;
 
   // Multi-agent support
   private multiAgentHandler: MultiAgentSlackHandler | null = null;
@@ -79,8 +70,12 @@ export class SlackGateway implements Gateway {
   // Safe logger instance
   private logger = createSafeLogger('SlackGateway');
 
+  protected get mentionPattern(): RegExp | null {
+    return null; // Slack uses custom cleanMessageContent with multiple patterns
+  }
+
   constructor(options: SlackGatewayOptions) {
-    this.messageRouter = options.messageRouter;
+    super({ messageRouter: options.messageRouter });
     this.botToken = options.botToken;
     this.config = {
       enabled: true,
@@ -504,14 +499,10 @@ export class SlackGateway implements Gateway {
     return isMention;
   }
 
-  /**
-   * Clean message content (remove mentions)
-   */
-  private cleanMessageContent(content: string): string {
-    // Remove user/bot mentions (<@U12345> or <@W12345>)
+  protected override cleanMessageContent(content: string): string {
     return content
       .replace(/<@[UW]\w+>/g, '')
-      .replace(/<@[UW]\w+\|[^>]+>/g, '') // Mentions with display name
+      .replace(/<@[UW]\w+\|[^>]+>/g, '')
       .trim();
   }
 
@@ -529,19 +520,6 @@ export class SlackGateway implements Gateway {
         thread_ts: threadTs,
         reply_broadcast: true, // Also show in channel
       });
-    }
-  }
-
-  /**
-   * Emit event to registered handlers
-   */
-  private emitEvent(event: GatewayEvent): void {
-    for (const handler of this.eventHandlers) {
-      try {
-        handler(event);
-      } catch (error) {
-        this.logger.error('Error in gateway event handler:', error);
-      }
     }
   }
 
@@ -588,20 +566,6 @@ export class SlackGateway implements Gateway {
       source: 'slack',
       timestamp: new Date(),
     });
-  }
-
-  /**
-   * Check if gateway is connected
-   */
-  isConnected(): boolean {
-    return this.connected;
-  }
-
-  /**
-   * Register event handler
-   */
-  onEvent(handler: GatewayEventHandler): void {
-    this.eventHandlers.push(handler);
   }
 
   // ============================================================================
