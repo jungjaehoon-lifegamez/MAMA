@@ -785,11 +785,20 @@ export class AgentLoop {
           // Check if this is a recoverable session error
           // 1. "No conversation found" - CLI session was lost (daemon restart, timeout)
           // 2. "Session ID already in use" - concurrent request conflict
+          // 3. "Prompt is too long" - session context exceeded API limits
           const isSessionNotFound = errorMessage.includes('No conversation found with session ID');
           const isSessionInUse = errorMessage.includes('is already in use');
+          const isPromptTooLong =
+            errorMessage.includes('Prompt is too long') ||
+            errorMessage.includes('prompt is too long') ||
+            errorMessage.includes('request_too_large');
 
-          if (isSessionNotFound || isSessionInUse) {
-            const reason = isSessionNotFound ? 'not found in CLI' : 'already in use';
+          if (isSessionNotFound || isSessionInUse || isPromptTooLong) {
+            const reason = isSessionNotFound
+              ? 'not found in CLI'
+              : isSessionInUse
+                ? 'already in use'
+                : 'prompt too long (context overflow)';
             console.log(`[AgentLoop] Session ${reason}, retrying with new session`);
 
             // Reset session in pool so it creates a new one
