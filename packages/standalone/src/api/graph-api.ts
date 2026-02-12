@@ -27,6 +27,10 @@ import type {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getAdapter, initDB, vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
+
+const logger = new DebugLogger('GraphAPI');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mama = require('@jungjaehoon/mama-core/mama-api');
@@ -2247,9 +2251,23 @@ function exportToCSV(decisions: GraphNode[]): string {
 
 /**
  * Handle GET /api/mcp-servers - return available MCP servers from config
+ * Security: Requires authentication, redacts sensitive fields (command, url, configPath)
  */
-async function handleMCPServersRequest(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleMCPServersRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    // Security: require authentication for config endpoint
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        })
+      );
+      return;
+    }
+
     const config = loadMAMAConfig();
     const mcpConfigPath = config.agent?.tools?.mcp_config || '~/.mama/mama-mcp-config.json';
     const resolvedPath = mcpConfigPath.replace(/^~/, os.homedir());
@@ -2262,25 +2280,27 @@ async function handleMCPServersRequest(_req: IncomingMessage, res: ServerRespons
       mcpServers = mcpConfig.mcpServers || {};
     }
 
-    // Transform to array with server names (mask sensitive args)
+    // Transform to array with server names - redact sensitive fields
     const servers = Object.entries(mcpServers).map(([name, serverConfig]) => {
       const cfg = serverConfig as Record<string, unknown>;
       return {
         name,
         type: cfg.type || 'stdio',
-        command: cfg.command,
+        // Redact command and url to prevent credential leakage
+        hasCommand: !!cfg.command,
+        hasUrl: !!cfg.url,
         // Mask args to prevent credential leakage (show count only)
         hasArgs: Array.isArray(cfg.args) && cfg.args.length > 0,
         argCount: Array.isArray(cfg.args) ? cfg.args.length : 0,
-        url: cfg.url,
       };
     });
 
+    // Remove configPath from response to prevent path disclosure
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ servers, configPath: mcpConfigPath }));
+    res.end(JSON.stringify({ servers }));
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('[GraphAPI] MCP servers list error:', message);
+    logger.error('MCP servers list error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
@@ -2321,7 +2341,27 @@ async function handleDeleteMCPServerRequest(
       return;
     }
 
-    const serverName = decodeURIComponent(match[1]);
+    // Safely decode URI component - malformed percent-encoding throws URIError
+    let serverName: string;
+    try {
+      serverName = decodeURIComponent(match[1]);
+    } catch (e) {
+      if (e instanceof URIError) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message: 'Invalid server name encoding' }));
+        return;
+      }
+      throw e; // Re-throw non-decoding errors
+    }
+
+    // Validate serverName format (same pattern as agentId validation)
+    const SERVER_NAME_PATTERN = /^[a-z0-9_-]+$/i;
+    if (!SERVER_NAME_PATTERN.test(serverName)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, message: 'Invalid server name format' }));
+      return;
+    }
+
     const config = loadMAMAConfig();
     const mcpConfigPath = config.agent?.tools?.mcp_config || '~/.mama/mama-mcp-config.json';
     const resolvedPath = mcpConfigPath.replace(/^~/, os.homedir());
@@ -2344,12 +2384,12 @@ async function handleDeleteMCPServerRequest(
     delete mcpConfig.mcpServers[serverName];
     fs.writeFileSync(resolvedPath, JSON.stringify(mcpConfig, null, 2), 'utf8');
 
-    console.log('[GraphAPI] Removed MCP server:', serverName);
+    logger.info('Removed MCP server:', serverName);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ deleted: true, name: serverName }));
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('[GraphAPI] Delete MCP server error:', message);
+    logger.error('Delete MCP server error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: true, message }));
   }

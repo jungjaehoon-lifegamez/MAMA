@@ -267,7 +267,9 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
               const safeName = path.basename(att.filename || '');
               const inboundDir = path.join(os.homedir(), '.mama', 'workspace', 'media', 'inbound');
               const resolvedPath = path.join(inboundDir, safeName);
-              const rawMediaType = att.contentType || 'image/jpeg';
+              // Default to octet-stream for unknown types — prevents untyped attachments
+              // from being incorrectly treated as images and base64-encoded
+              const rawMediaType = att.contentType || 'application/octet-stream';
 
               if (ALLOWED_IMAGE_TYPES.has(rawMediaType)) {
                 // Only read file for images (to convert to base64)
