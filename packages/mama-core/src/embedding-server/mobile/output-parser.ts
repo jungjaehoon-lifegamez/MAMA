@@ -7,7 +7,7 @@
  * such as stream content, tool usage, completion, and errors.
  *
  * @example
- * const { OutputParser } = require('./output-parser');
+ * import { OutputParser } from './output-parser';
  * const parser = new OutputParser();
  * const events = parser.parse(chunk);
  * // events: [{ type: 'stream', text: '...' }, { type: 'tool_use', tool: 'Read' }]
@@ -15,24 +15,33 @@
 
 /**
  * Message types returned by the parser
- * @typedef {'stream'|'tool_use'|'tool_complete'|'complete'|'error'} MessageType
  */
+export type MessageType = 'stream' | 'tool_use' | 'tool_complete' | 'complete' | 'error';
 
 /**
  * Parsed output event
- * @typedef {Object} ParsedEvent
- * @property {MessageType} type - Event type
- * @property {string} [text] - Text content (for stream type)
- * @property {string} [tool] - Tool name (for tool_use type)
- * @property {string} [status] - Tool status (started/completed)
- * @property {string} [message] - Error message (for error type)
  */
+export interface ParsedEvent {
+  type: MessageType;
+  text?: string;
+  tool?: string;
+  status?: string;
+  message?: string;
+  args?: string | null;
+}
+
+/**
+ * Tool detection result
+ */
+interface ToolDetectResult {
+  tool: string;
+  args: string | null;
+}
 
 /**
  * Tool detection patterns
- * @type {RegExp[]}
  */
-const TOOL_PATTERNS = [
+export const TOOL_PATTERNS: RegExp[] = [
   /Tool:\s*(\w+)/i,
   /Using\s+(\w+)\s+tool/i,
   /Calling\s+(\w+)/i,
@@ -44,15 +53,17 @@ const TOOL_PATTERNS = [
 
 /**
  * Tool completion patterns
- * @type {RegExp[]}
  */
-const TOOL_COMPLETE_PATTERNS = [/Tool\s+(\w+)\s+completed/i, /(\w+)\s+finished/i, /✓\s*(\w+)/];
+const TOOL_COMPLETE_PATTERNS: RegExp[] = [
+  /Tool\s+(\w+)\s+completed/i,
+  /(\w+)\s+finished/i,
+  /✓\s*(\w+)/,
+];
 
 /**
  * Error patterns
- * @type {RegExp[]}
  */
-const ERROR_PATTERNS = [
+export const ERROR_PATTERNS: RegExp[] = [
   /Error:\s*(.+)/i,
   /ERROR:\s*(.+)/i,
   /Failed:\s*(.+)/i,
@@ -61,9 +72,8 @@ const ERROR_PATTERNS = [
 
 /**
  * Completion/prompt patterns
- * @type {RegExp[]}
  */
-const COMPLETE_PATTERNS = [
+export const COMPLETE_PATTERNS: RegExp[] = [
   /^>\s*$/m, // Simple prompt
   /^\$\s*$/m, // Shell prompt
   /^claude>\s*$/im, // Claude prompt
@@ -72,15 +82,17 @@ const COMPLETE_PATTERNS = [
 
 /**
  * ANSI escape code regex pattern
- * @type {RegExp}
  */
 // eslint-disable-next-line no-control-regex
-const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
+export const ANSI_REGEX: RegExp = /\x1b\[[0-9;]*m/g;
 
 /**
  * OutputParser class - parses Claude Code stdout
  */
-class OutputParser {
+export class OutputParser {
+  private buffer: string;
+  private lastToolDetected: string | null;
+
   /**
    * Create a new OutputParser instance
    */
@@ -91,17 +103,17 @@ class OutputParser {
 
   /**
    * Parse a stdout chunk into events
-   * @param {string|Buffer} chunk - Raw stdout data
-   * @returns {ParsedEvent[]} Array of parsed events
+   * @param chunk - Raw stdout data
+   * @returns Array of parsed events
    */
-  parse(chunk) {
+  parse(chunk: string | Buffer): ParsedEvent[] {
     const text = typeof chunk === 'string' ? chunk : chunk.toString();
     const cleanText = this.stripAnsi(text);
 
     // Add to buffer for incomplete line handling
     this.buffer += cleanText;
 
-    const events = [];
+    const events: ParsedEvent[] = [];
 
     // Check for errors first (highest priority)
     const errorResult = this.detectError(this.buffer);
@@ -166,19 +178,19 @@ class OutputParser {
 
   /**
    * Remove ANSI escape codes from text
-   * @param {string} text - Text with potential ANSI codes
-   * @returns {string} Clean text
+   * @param text - Text with potential ANSI codes
+   * @returns Clean text
    */
-  stripAnsi(text) {
+  stripAnsi(text: string): string {
     return text.replace(ANSI_REGEX, '');
   }
 
   /**
    * Detect tool usage pattern in text
-   * @param {string} text - Text to analyze
-   * @returns {Object|null} Tool info or null
+   * @param text - Text to analyze
+   * @returns Tool info or null
    */
-  detectToolUse(text) {
+  detectToolUse(text: string): ToolDetectResult | null {
     for (const pattern of TOOL_PATTERNS) {
       const match = text.match(pattern);
       if (match) {
@@ -196,10 +208,10 @@ class OutputParser {
 
   /**
    * Detect tool completion pattern in text
-   * @param {string} text - Text to analyze
-   * @returns {string|null} Tool name or null
+   * @param text - Text to analyze
+   * @returns Tool name or null
    */
-  detectToolComplete(text) {
+  detectToolComplete(text: string): string | null {
     for (const pattern of TOOL_COMPLETE_PATTERNS) {
       const match = text.match(pattern);
       if (match) {
@@ -211,10 +223,10 @@ class OutputParser {
 
   /**
    * Detect completion pattern in text
-   * @param {string} text - Text to analyze
-   * @returns {boolean} True if completion detected
+   * @param text - Text to analyze
+   * @returns True if completion detected
    */
-  detectComplete(text) {
+  detectComplete(text: string): boolean {
     for (const pattern of COMPLETE_PATTERNS) {
       if (pattern.test(text)) {
         return true;
@@ -225,10 +237,10 @@ class OutputParser {
 
   /**
    * Detect error pattern in text
-   * @param {string} text - Text to analyze
-   * @returns {string|null} Error message or null
+   * @param text - Text to analyze
+   * @returns Error message or null
    */
-  detectError(text) {
+  detectError(text: string): string | null {
     for (const pattern of ERROR_PATTERNS) {
       const match = text.match(pattern);
       if (match) {
@@ -240,10 +252,10 @@ class OutputParser {
 
   /**
    * Flush any remaining buffer content
-   * @returns {ParsedEvent[]} Remaining events
+   * @returns Remaining events
    */
-  flush() {
-    const events = [];
+  flush(): ParsedEvent[] {
+    const events: ParsedEvent[] = [];
     if (this.buffer.trim()) {
       events.push({
         type: 'stream',
@@ -258,24 +270,16 @@ class OutputParser {
   /**
    * Reset the parser state
    */
-  reset() {
+  reset(): void {
     this.buffer = '';
     this.lastToolDetected = null;
   }
 
   /**
    * Get current buffer content
-   * @returns {string}
+   * @returns Buffer content
    */
-  getBuffer() {
+  getBuffer(): string {
     return this.buffer;
   }
 }
-
-module.exports = {
-  OutputParser,
-  TOOL_PATTERNS,
-  ERROR_PATTERNS,
-  COMPLETE_PATTERNS,
-  ANSI_REGEX,
-};

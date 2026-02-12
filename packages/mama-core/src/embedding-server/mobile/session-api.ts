@@ -7,37 +7,45 @@
  * Claude Code sessions.
  *
  * @example
- * const { createSessionHandler } = require('./session-api');
+ * import { createSessionHandler } from './session-api';
  * const sessionHandler = createSessionHandler(sessionManager);
  * // Use in HTTP server: if (sessionHandler(req, res)) return;
  */
 
-const { SessionManager } = require('./session-manager.js');
-const { authenticate } = require('./auth.js');
+import type { IncomingMessage, ServerResponse } from 'http';
+import { SessionManager } from './session-manager.js';
+import { authenticate } from './auth.js';
 
 /**
  * Default WebSocket port (same as HTTP port)
- * @type {number}
  */
-const DEFAULT_WS_PORT = parseInt(process.env.MAMA_HTTP_PORT, 10) || 3847;
+export const DEFAULT_WS_PORT: number = parseInt(process.env.MAMA_HTTP_PORT || '', 10) || 3847;
+
+/**
+ * Request body type
+ */
+interface RequestBody {
+  projectDir?: string;
+  workDir?: string;
+}
 
 /**
  * Parse request body as JSON
- * @param {http.IncomingMessage} req - HTTP request
- * @returns {Promise<Object>} Parsed JSON body
+ * @param req - HTTP request
+ * @returns Parsed JSON body
  */
-function readBody(req) {
+export function readBody(req: IncomingMessage): Promise<RequestBody> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk) => (data += chunk));
+    req.on('data', (chunk: Buffer | string) => (data += chunk));
     req.on('end', () => {
       try {
         if (!data) {
           resolve({});
         } else {
-          resolve(JSON.parse(data));
+          resolve(JSON.parse(data) as RequestBody);
         }
-      } catch (e) {
+      } catch {
         reject(new Error('Invalid JSON'));
       }
     });
@@ -47,44 +55,52 @@ function readBody(req) {
 
 /**
  * Extract session ID from URL path
- * @param {string} url - Request URL
- * @returns {string|null} Session ID or null
+ * @param url - Request URL
+ * @returns Session ID or null
  */
-function extractSessionId(url) {
+export function extractSessionId(url: string): string | null {
   const match = url.match(/\/api\/sessions\/([^/?]+)/);
   return match ? match[1] : null;
 }
 
 /**
  * Get WebSocket URL for a session
- * @param {http.IncomingMessage} req - HTTP request
- * @param {string} sessionId - Session ID
- * @returns {string} WebSocket URL
+ * @param req - HTTP request
+ * @param sessionId - Session ID
+ * @returns WebSocket URL
  */
-function getWsUrl(req, sessionId) {
+export function getWsUrl(req: IncomingMessage, sessionId: string): string {
   const host = req.headers.host || `localhost:${DEFAULT_WS_PORT}`;
   const protocol = req.headers['x-forwarded-proto'] === 'https' ? 'wss' : 'ws';
   return `${protocol}://${host}/ws?session=${sessionId}`;
 }
 
 /**
- * Create session API request handler
- * @param {SessionManager} [sessionManager] - Session manager instance (will create if not provided)
- * @returns {Function} Request handler function
+ * Session handler function type
  */
-function createSessionHandler(sessionManager = null) {
+type SessionHandler = (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
+
+/**
+ * Create session API request handler
+ * @param sessionManager - Session manager instance (will create if not provided)
+ * @returns Request handler function
+ */
+export function createSessionHandler(sessionManager: SessionManager | null = null): SessionHandler {
   // Create session manager if not provided
   const manager = sessionManager || new SessionManager();
   let initialized = false;
 
   /**
    * Handle session API requests
-   * @param {http.IncomingMessage} req - HTTP request
-   * @param {http.ServerResponse} res - HTTP response
-   * @returns {Promise<boolean>} True if request was handled
+   * @param req - HTTP request
+   * @param res - HTTP response
+   * @returns True if request was handled
    */
-  return async function handleSessionRequest(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+  return async function handleSessionRequest(
+    req: IncomingMessage,
+    res: ServerResponse
+  ): Promise<boolean> {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const pathname = url.pathname;
 
     // Only handle /api/session routes (includes /api/sessions and /api/session/create)
@@ -98,7 +114,8 @@ function createSessionHandler(sessionManager = null) {
         await manager.initDB();
         initialized = true;
       } catch (err) {
-        console.error('[SessionAPI] Failed to initialize:', err.message);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[SessionAPI] Failed to initialize:', message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Session manager initialization failed' }));
         return true;
@@ -169,9 +186,10 @@ function createSessionHandler(sessionManager = null) {
             })
           );
         } catch (err) {
-          console.error('[SessionAPI] Failed to create session:', err.message);
+          const message = err instanceof Error ? err.message : String(err);
+          console.error('[SessionAPI] Failed to create session:', message);
           res.writeHead(500);
-          res.end(JSON.stringify({ error: 'Failed to create session', details: err.message }));
+          res.end(JSON.stringify({ error: 'Failed to create session', details: message }));
         }
         return true;
       }
@@ -205,7 +223,11 @@ function createSessionHandler(sessionManager = null) {
 
         if (sessions.length > 0) {
           // Sort by lastActive descending and get the first one
-          const sorted = sessions.sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
+          const sorted = sessions.sort((a, b) => {
+            const aTime = a.lastActive ? new Date(a.lastActive).getTime() : 0;
+            const bTime = b.lastActive ? new Date(b.lastActive).getTime() : 0;
+            return bTime - aTime;
+          });
           const lastSession = sorted[0];
 
           res.writeHead(200);
@@ -262,18 +284,11 @@ function createSessionHandler(sessionManager = null) {
       res.end(JSON.stringify({ error: 'Not found' }));
       return true;
     } catch (err) {
-      console.error('[SessionAPI] Error:', err.message);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[SessionAPI] Error:', message);
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Internal server error', details: err.message }));
+      res.end(JSON.stringify({ error: 'Internal server error', details: message }));
       return true;
     }
   };
 }
-
-module.exports = {
-  createSessionHandler,
-  readBody,
-  extractSessionId,
-  getWsUrl,
-  DEFAULT_WS_PORT,
-};

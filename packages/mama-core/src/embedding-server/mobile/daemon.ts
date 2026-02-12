@@ -7,22 +7,78 @@
  * bidirectional JSON communication.
  *
  * @example
- * const { ClaudeDaemon } = require('./daemon');
+ * import { ClaudeDaemon } from './daemon';
  * const daemon = new ClaudeDaemon('/path/to/project', 'session_123');
  * await daemon.spawn();
  * daemon.send('Hello Claude!');
  * daemon.on('output', (data) => console.log(data));
  */
 
-const { EventEmitter } = require('events');
-const { spawn } = require('child_process');
+import { EventEmitter } from 'events';
+import { spawn, ChildProcess } from 'child_process';
+import type { Readable, Writable } from 'stream';
 
 /**
  * ANSI escape code regex pattern
- * @type {RegExp}
  */
 // eslint-disable-next-line no-control-regex
-const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
+export const ANSI_REGEX: RegExp = /\x1b\[[0-9;]*m/g;
+
+/**
+ * Output event data
+ */
+export interface OutputEvent {
+  type: 'stdout' | 'stderr';
+  text: string;
+  raw: string;
+  parsed?: unknown;
+  sessionId: string;
+}
+
+/**
+ * Error event data
+ */
+export interface ErrorEvent {
+  error: Error;
+  sessionId: string;
+}
+
+/**
+ * Exit event data
+ */
+export interface ExitEvent {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  sessionId: string;
+  manual?: boolean;
+}
+
+/**
+ * Tool use event data
+ */
+export interface ToolUseEvent {
+  tool: string;
+  toolId: string;
+  input: unknown;
+  sessionId: string;
+}
+
+/**
+ * Tool complete event data
+ */
+export interface ToolCompleteEvent {
+  index: number;
+  sessionId: string;
+}
+
+/**
+ * Response complete event data
+ */
+export interface ResponseCompleteEvent {
+  sessionId: string;
+  result: unknown;
+  duration_ms?: number;
+}
 
 /**
  * ClaudeDaemon class - manages Claude Code subprocess via stream-json
@@ -32,29 +88,50 @@ const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
  * @fires ClaudeDaemon#error - When an error occurs
  * @fires ClaudeDaemon#exit - When the process exits
  */
-class ClaudeDaemon extends EventEmitter {
+export class ClaudeDaemon extends EventEmitter {
+  private projectDir: string;
+  private sessionId: string;
+  private process: ChildProcess | null;
+  private _pid: number | null;
+  private _isRunning: boolean;
+  private buffer: string;
+
   /**
    * Create a new ClaudeDaemon instance
-   * @param {string} projectDir - Working directory for Claude Code
-   * @param {string} sessionId - Unique session identifier
+   * @param projectDir - Working directory for Claude Code
+   * @param sessionId - Unique session identifier
    */
-  constructor(projectDir, sessionId) {
+  constructor(projectDir: string, sessionId: string) {
     super();
     this.projectDir = projectDir;
     this.sessionId = sessionId;
     this.process = null;
-    this.pid = null;
-    this.isRunning = false;
+    this._pid = null;
+    this._isRunning = false;
     this.buffer = '';
   }
 
   /**
-   * Spawn the Claude Code subprocess with stream-json mode
-   * @returns {Promise<void>}
-   * @throws {Error} If spawn fails or process is already running
+   * Check if the daemon is currently running
    */
-  async spawn() {
-    if (this.isRunning) {
+  get isRunning(): boolean {
+    return this._isRunning;
+  }
+
+  /**
+   * Get the process ID
+   */
+  get pid(): number | null {
+    return this._pid;
+  }
+
+  /**
+   * Spawn the Claude Code subprocess with stream-json mode
+   * @returns Promise that resolves when process is ready
+   * @throws Error if spawn fails or process is already running
+   */
+  async spawn(): Promise<void> {
+    if (this._isRunning) {
       throw new Error('Daemon is already running');
     }
 
@@ -80,26 +157,34 @@ class ClaudeDaemon extends EventEmitter {
         });
 
         // Store PID
-        this.pid = this.process.pid;
-        this.isRunning = true;
+        this._pid = this.process.pid || null;
+        this._isRunning = true;
 
         console.error(
-          `[MobileDaemon] Session ${this.sessionId} spawned with PID ${this.pid} (stream-json mode)`
+          `[MobileDaemon] Session ${this.sessionId} spawned with PID ${this._pid} (stream-json mode)`
         );
 
         // Handle stdout data (JSON stream)
-        this.process.stdout.on('data', (chunk) => {
+        (this.process.stdout as Readable).on('data', (chunk: Buffer) => {
           this.buffer += chunk.toString();
 
           // Try to parse complete JSON objects from buffer
-          let newlineIndex;
+          let newlineIndex: number;
           while ((newlineIndex = this.buffer.indexOf('\n')) !== -1) {
             const line = this.buffer.slice(0, newlineIndex).trim();
             this.buffer = this.buffer.slice(newlineIndex + 1);
 
             if (line) {
               try {
-                const parsed = JSON.parse(line);
+                const parsed = JSON.parse(line) as {
+                  type?: string;
+                  content_block?: { type?: string; name?: string; id?: string; input?: unknown };
+                  index?: number;
+                  message?: { content?: Array<{ type: string; text?: string }> };
+                  delta?: { text?: string };
+                  result?: { content?: string };
+                  duration_ms?: number;
+                };
                 console.error(
                   `[MobileDaemon] Parsed JSON: ${JSON.stringify(parsed).substring(0, 100)}...`
                 );
@@ -116,7 +201,7 @@ class ClaudeDaemon extends EventEmitter {
                     toolId: toolBlock.id,
                     input: toolBlock.input,
                     sessionId: this.sessionId,
-                  });
+                  } as ToolUseEvent);
                 }
 
                 // Detect tool completion (content_block_stop after tool_use)
@@ -125,7 +210,7 @@ class ClaudeDaemon extends EventEmitter {
                   this.emit('tool_complete', {
                     index: parsed.index,
                     sessionId: this.sessionId,
-                  });
+                  } as ToolCompleteEvent);
                 }
 
                 // Extract text content from various message types
@@ -134,7 +219,7 @@ class ClaudeDaemon extends EventEmitter {
                   // Assistant message with content blocks
                   for (const block of parsed.message.content) {
                     if (block.type === 'text') {
-                      textContent += block.text;
+                      textContent += block.text || '';
                     }
                   }
                 } else if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
@@ -152,7 +237,7 @@ class ClaudeDaemon extends EventEmitter {
                     raw: line,
                     parsed,
                     sessionId: this.sessionId,
-                  });
+                  } as OutputEvent);
                 }
 
                 // Detect response completion (result message)
@@ -162,9 +247,9 @@ class ClaudeDaemon extends EventEmitter {
                     sessionId: this.sessionId,
                     result: parsed.result,
                     duration_ms: parsed.duration_ms,
-                  });
+                  } as ResponseCompleteEvent);
                 }
-              } catch (e) {
+              } catch {
                 // Not valid JSON, emit as raw text
                 console.error(`[MobileDaemon] Raw output: ${line.substring(0, 100)}...`);
                 this.emit('output', {
@@ -172,14 +257,14 @@ class ClaudeDaemon extends EventEmitter {
                   text: line,
                   raw: line,
                   sessionId: this.sessionId,
-                });
+                } as OutputEvent);
               }
             }
           }
         });
 
         // Handle stderr data
-        this.process.stderr.on('data', (chunk) => {
+        (this.process.stderr as Readable).on('data', (chunk: Buffer) => {
           const text = chunk.toString();
           console.error(`[MobileDaemon] stderr: ${text.substring(0, 200)}`);
           this.emit('output', {
@@ -187,59 +272,60 @@ class ClaudeDaemon extends EventEmitter {
             text: text.replace(ANSI_REGEX, ''),
             raw: text,
             sessionId: this.sessionId,
-          });
+          } as OutputEvent);
         });
 
         // Handle process errors
-        this.process.on('error', (err) => {
+        this.process.on('error', (err: Error) => {
           console.error(`[MobileDaemon] Error in session ${this.sessionId}:`, err.message);
-          this.isRunning = false;
+          this._isRunning = false;
           this.emit('error', {
             error: err,
             sessionId: this.sessionId,
-          });
+          } as ErrorEvent);
           reject(err);
         });
 
         // Handle process exit
-        this.process.on('exit', (code, signal) => {
+        this.process.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
           console.error(
             `[MobileDaemon] Session ${this.sessionId} exited with code ${code}, signal ${signal}`
           );
-          this.isRunning = false;
-          this.pid = null;
+          this._isRunning = false;
+          this._pid = null;
           this.emit('exit', {
             code,
             signal,
             sessionId: this.sessionId,
-          });
+          } as ExitEvent);
         });
 
         // Process should be ready immediately in stream-json mode
         setTimeout(() => {
-          if (this.isRunning) {
+          if (this._isRunning) {
             resolve();
           }
         }, 100);
       } catch (err) {
-        console.error(`[MobileDaemon] Failed to spawn session ${this.sessionId}:`, err.message);
-        this.isRunning = false;
+        const error = err instanceof Error ? err : new Error(String(err));
+        console.error(`[MobileDaemon] Failed to spawn session ${this.sessionId}:`, error.message);
+        this._isRunning = false;
         this.emit('error', {
-          error: err,
+          error,
           sessionId: this.sessionId,
-        });
-        reject(err);
+        } as ErrorEvent);
+        reject(error);
       }
     });
   }
 
   /**
    * Send a message to Claude via stdin (stream-json format)
-   * @param {string} message - Message to send
-   * @throws {Error} If process is not running
+   * @param message - Message to send
+   * @throws Error if process is not running
    */
-  send(message) {
-    if (!this.isRunning || !this.process || !this.process.stdin) {
+  send(message: string): void {
+    if (!this._isRunning || !this.process || !this.process.stdin) {
       throw new Error('Daemon is not running');
     }
 
@@ -252,7 +338,7 @@ class ClaudeDaemon extends EventEmitter {
       },
     });
 
-    this.process.stdin.write(jsonMessage + '\n');
+    (this.process.stdin as Writable).write(jsonMessage + '\n');
 
     console.error(
       `[MobileDaemon] Sent JSON to session ${this.sessionId}: ${jsonMessage.substring(0, 100)}...`
@@ -261,9 +347,9 @@ class ClaudeDaemon extends EventEmitter {
 
   /**
    * Kill the Claude Code subprocess
-   * @param {string} [signal='SIGTERM'] - Signal to send to process
+   * @param signal - Signal to send to process
    */
-  kill(signal = 'SIGTERM') {
+  kill(signal: NodeJS.Signals = 'SIGTERM'): void {
     if (!this.process) {
       console.error(`[MobileDaemon] No process to kill for session ${this.sessionId}`);
       return;
@@ -272,7 +358,7 @@ class ClaudeDaemon extends EventEmitter {
     try {
       console.error(`[MobileDaemon] Killing session ${this.sessionId} with signal ${signal}`);
       this.process.kill(signal);
-      this.isRunning = false;
+      this._isRunning = false;
 
       // Emit exit event
       this.emit('exit', {
@@ -280,34 +366,30 @@ class ClaudeDaemon extends EventEmitter {
         signal,
         sessionId: this.sessionId,
         manual: true,
-      });
+      } as ExitEvent);
     } catch (err) {
-      console.error(`[MobileDaemon] Error killing session ${this.sessionId}:`, err.message);
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error(`[MobileDaemon] Error killing session ${this.sessionId}:`, error.message);
       this.emit('error', {
-        error: err,
+        error,
         sessionId: this.sessionId,
-      });
+      } as ErrorEvent);
     }
   }
 
   /**
    * Check if the daemon is currently running
-   * @returns {boolean}
+   * @returns True if running
    */
-  isActive() {
-    return this.isRunning && this.process !== null;
+  isActive(): boolean {
+    return this._isRunning && this.process !== null;
   }
 
   /**
    * Get the process ID
-   * @returns {number|null}
+   * @returns Process ID or null
    */
-  getPid() {
-    return this.pid;
+  getPid(): number | null {
+    return this._pid;
   }
 }
-
-module.exports = {
-  ClaudeDaemon,
-  ANSI_REGEX,
-};

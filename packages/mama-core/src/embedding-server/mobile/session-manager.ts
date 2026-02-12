@@ -7,28 +7,27 @@
  * Sessions are persisted to SQLite for durability across server restarts.
  *
  * @example
- * const { SessionManager } = require('./session-manager');
+ * import { SessionManager } from './session-manager';
  * const manager = new SessionManager();
  * await manager.initDB();
  * const { sessionId, daemon } = await manager.createSession('/path/to/project');
  */
 
-const path = require('path');
-const os = require('os');
-const { ClaudeDaemon } = require('./daemon.js');
+import path from 'path';
+import os from 'os';
+import type Database from 'better-sqlite3';
+import { ClaudeDaemon } from './daemon.js';
 
 /**
  * Default database path
- * @type {string}
  */
-const DEFAULT_DB_PATH =
+export const DEFAULT_DB_PATH: string =
   process.env.MAMA_DB_PATH || path.join(os.homedir(), '.claude', 'mama-memory.db');
 
 /**
  * Sessions table creation SQL
- * @type {string}
  */
-const CREATE_SESSIONS_TABLE = `
+export const CREATE_SESSIONS_TABLE: string = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     project_dir TEXT NOT NULL,
@@ -42,21 +41,72 @@ const CREATE_SESSIONS_TABLE = `
 
 /**
  * Create index for status queries
- * @type {string}
  */
-const CREATE_STATUS_INDEX = `
+const CREATE_STATUS_INDEX: string = `
   CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)
 `;
 
 /**
+ * Session database row
+ */
+interface SessionRow {
+  id: string;
+  project_dir: string;
+  started_at?: string;
+  created_at?: string;
+  last_active_at?: string;
+  last_active?: string;
+  status: string;
+  pid: number | null;
+  client_id: string | null;
+}
+
+/**
+ * In-memory session data
+ */
+interface MemorySession {
+  daemon: ClaudeDaemon;
+  clientId: string | null;
+  projectDir: string;
+  createdAt: string;
+}
+
+/**
+ * Session info returned from getActiveSessions
+ */
+export interface SessionInfo {
+  id: string;
+  projectDir: string;
+  createdAt: string | undefined;
+  lastActive: string | undefined;
+  status: string;
+  pid: number | null;
+  clientId: string | null;
+  isAlive: boolean;
+}
+
+/**
+ * Create session result
+ */
+export interface CreateSessionResult {
+  sessionId: string;
+  daemon: ClaudeDaemon;
+}
+
+/**
  * SessionManager class - manages Claude Code sessions
  */
-class SessionManager {
+export class SessionManager {
+  private dbPath: string;
+  private sessions: Map<string, MemorySession>;
+  private db: Database.Database | null;
+  private initialized: boolean;
+
   /**
    * Create a new SessionManager instance
-   * @param {string} [dbPath] - Path to SQLite database
+   * @param dbPath - Path to SQLite database
    */
-  constructor(dbPath = DEFAULT_DB_PATH) {
+  constructor(dbPath: string = DEFAULT_DB_PATH) {
     this.dbPath = dbPath;
     this.sessions = new Map();
     this.db = null;
@@ -65,16 +115,16 @@ class SessionManager {
 
   /**
    * Initialize the SQLite database and create sessions table
-   * @returns {Promise<void>}
    */
-  async initDB() {
+  async initDB(): Promise<void> {
     if (this.initialized) {
       return;
     }
 
     try {
       // Dynamically import better-sqlite3 to handle cases where it's not installed
-      const Database = require('better-sqlite3');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const Database = require('better-sqlite3') as typeof import('better-sqlite3');
       this.db = new Database(this.dbPath);
 
       // Create sessions table if not exists
@@ -99,17 +149,18 @@ class SessionManager {
       // Setup cleanup on process exit
       this._setupProcessCleanup();
     } catch (err) {
-      console.error('[SessionManager] Failed to initialize database:', err.message);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[SessionManager] Failed to initialize database:', message);
       throw err;
     }
   }
 
   /**
    * Create a new Claude Code session
-   * @param {string} projectDir - Working directory for the session
-   * @returns {Promise<{sessionId: string, daemon: ClaudeDaemon}>}
+   * @param projectDir - Working directory for the session
+   * @returns Session ID and daemon
    */
-  async createSession(projectDir) {
+  async createSession(projectDir: string): Promise<CreateSessionResult> {
     if (!this.initialized) {
       await this.initDB();
     }
@@ -125,7 +176,7 @@ class SessionManager {
       await daemon.spawn();
 
       // Insert into database
-      const stmt = this.db.prepare(`
+      const stmt = this.db!.prepare(`
         INSERT INTO sessions (id, project_dir, status, pid)
         VALUES (?, ?, 'active', ?)
       `);
@@ -146,7 +197,8 @@ class SessionManager {
 
       return { sessionId, daemon };
     } catch (err) {
-      console.error(`[SessionManager] Failed to create session:`, err.message);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[SessionManager] Failed to create session:`, message);
       // Cleanup on failure
       daemon.kill();
       throw err;
@@ -155,21 +207,21 @@ class SessionManager {
 
   /**
    * Get all active sessions
-   * @returns {Promise<Array<Object>>}
+   * @returns Array of active session info
    */
-  async getActiveSessions() {
+  async getActiveSessions(): Promise<SessionInfo[]> {
     if (!this.initialized) {
       await this.initDB();
     }
 
-    const stmt = this.db.prepare(`
+    const stmt = this.db!.prepare(`
       SELECT id, project_dir, started_at, last_active_at, status, pid, client_id
       FROM sessions
       WHERE status = 'active'
       ORDER BY started_at DESC
     `);
 
-    const rows = stmt.all();
+    const rows = stmt.all() as SessionRow[];
 
     // Enrich with in-memory data
     return rows.map((row) => {
@@ -189,10 +241,10 @@ class SessionManager {
 
   /**
    * Terminate a session by ID
-   * @param {string} sessionId - Session to terminate
-   * @returns {Promise<boolean>} True if session was terminated
+   * @param sessionId - Session to terminate
+   * @returns True if session was terminated
    */
-  async terminateSession(sessionId) {
+  async terminateSession(sessionId: string): Promise<boolean> {
     if (!this.initialized) {
       await this.initDB();
     }
@@ -210,7 +262,7 @@ class SessionManager {
     }
 
     // Update database
-    const stmt = this.db.prepare(`
+    const stmt = this.db!.prepare(`
       UPDATE sessions
       SET status = 'terminated', last_active = datetime('now')
       WHERE id = ?
@@ -219,23 +271,23 @@ class SessionManager {
 
     console.error(`[SessionManager] Session ${sessionId} terminated`);
 
-    return result.changes > 0;
+    return (result.changes as number) > 0;
   }
 
   /**
    * Get a session by ID
-   * @param {string} sessionId - Session ID to look up
-   * @returns {Object|undefined}
+   * @param sessionId - Session ID to look up
+   * @returns Session data or undefined
    */
-  getSession(sessionId) {
+  getSession(sessionId: string): MemorySession | undefined {
     return this.sessions.get(sessionId);
   }
 
   /**
    * Update session's last active timestamp
-   * @param {string} sessionId - Session ID
+   * @param sessionId - Session ID
    */
-  touchSession(sessionId) {
+  touchSession(sessionId: string): void {
     if (!this.db || !this.initialized) {
       return;
     }
@@ -250,10 +302,10 @@ class SessionManager {
 
   /**
    * Assign a client to a session
-   * @param {string} sessionId - Session ID
-   * @param {string} clientId - Client ID
+   * @param sessionId - Session ID
+   * @param clientId - Client ID
    */
-  assignClient(sessionId, clientId) {
+  assignClient(sessionId: string, clientId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.clientId = clientId;
@@ -271,9 +323,9 @@ class SessionManager {
 
   /**
    * Remove client assignment from a session
-   * @param {string} sessionId - Session ID
+   * @param sessionId - Session ID
    */
-  unassignClient(sessionId) {
+  unassignClient(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.clientId = null;
@@ -291,17 +343,17 @@ class SessionManager {
 
   /**
    * Get session count
-   * @returns {number}
+   * @returns Number of active sessions
    */
-  getSessionCount() {
+  getSessionCount(): number {
     return this.sessions.size;
   }
 
   /**
    * Terminate all active sessions
-   * @returns {Promise<number>} Number of sessions terminated
+   * @returns Number of sessions terminated
    */
-  async terminateAll() {
+  async terminateAll(): Promise<number> {
     const sessionIds = Array.from(this.sessions.keys());
     let count = 0;
 
@@ -318,7 +370,7 @@ class SessionManager {
    * Setup daemon event handlers
    * @private
    */
-  _setupDaemonHandlers(sessionId, daemon) {
+  private _setupDaemonHandlers(sessionId: string, daemon: ClaudeDaemon): void {
     daemon.on('exit', () => {
       // Update database on daemon exit
       if (this.db && this.initialized) {
@@ -335,8 +387,8 @@ class SessionManager {
       console.error(`[SessionManager] Session ${sessionId} daemon exited, cleaned up`);
     });
 
-    daemon.on('error', (err) => {
-      console.error(`[SessionManager] Session ${sessionId} daemon error:`, err);
+    daemon.on('error', (err: { error: Error }) => {
+      console.error(`[SessionManager] Session ${sessionId} daemon error:`, err.error);
     });
   }
 
@@ -344,7 +396,7 @@ class SessionManager {
    * Setup process cleanup handlers
    * @private
    */
-  _setupProcessCleanup() {
+  private _setupProcessCleanup(): void {
     const cleanup = async () => {
       console.error('[SessionManager] Process exiting, cleaning up sessions...');
       await this.terminateAll();
@@ -353,15 +405,15 @@ class SessionManager {
       }
     };
 
-    process.on('exit', cleanup);
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
+    process.on('exit', () => void cleanup());
+    process.on('SIGINT', () => void cleanup());
+    process.on('SIGTERM', () => void cleanup());
   }
 
   /**
    * Close the database connection
    */
-  close() {
+  close(): void {
     if (this.db) {
       this.db.close();
       this.db = null;
@@ -369,9 +421,3 @@ class SessionManager {
     }
   }
 }
-
-module.exports = {
-  SessionManager,
-  DEFAULT_DB_PATH,
-  CREATE_SESSIONS_TABLE,
-};

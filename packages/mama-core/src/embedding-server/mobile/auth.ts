@@ -7,32 +7,39 @@
  * Uses MAMA_AUTH_TOKEN environment variable for simple token auth.
  *
  * @example
- * const { authenticate, isLocalhost } = require('./auth');
+ * import { authenticate, isLocalhost } from './auth';
  * if (!authenticate(req)) {
  *   res.writeHead(401);
  *   res.end('Unauthorized');
  * }
  */
 
+import type { IncomingMessage, ServerResponse } from 'http';
+
+// WebSocket type for authentication
+interface WebSocketLike {
+  close(code?: number, reason?: string): void;
+}
+
 /**
  * Environment variable for auth token
- * @type {string|undefined}
  */
-const AUTH_TOKEN = process.env.MAMA_AUTH_TOKEN;
+export const AUTH_TOKEN: string | undefined = process.env.MAMA_AUTH_TOKEN;
 
 /**
  * Track if we've warned about missing auth token
- * @type {boolean}
  */
 let hasWarnedAboutToken = false;
 
 /**
  * Check if request is from localhost
- * @param {http.IncomingMessage} req - HTTP request
- * @returns {boolean} True if from localhost
+ * @param req - HTTP request
+ * @returns True if from localhost
  */
-function isLocalhost(req) {
-  const remoteAddress = req.socket?.remoteAddress || req.connection?.remoteAddress;
+export function isLocalhost(req: IncomingMessage): boolean {
+  const socket = req.socket as { remoteAddress?: string } | undefined;
+  const connection = (req as unknown as { connection?: { remoteAddress?: string } }).connection;
+  const remoteAddress = socket?.remoteAddress || connection?.remoteAddress;
   return (
     remoteAddress === '127.0.0.1' || remoteAddress === '::1' || remoteAddress === '::ffff:127.0.0.1'
   );
@@ -40,14 +47,16 @@ function isLocalhost(req) {
 
 /**
  * Authenticate an HTTP request
- * @param {http.IncomingMessage} req - HTTP request
- * @returns {boolean} True if authenticated
+ * @param req - HTTP request
+ * @returns True if authenticated
  */
-function authenticate(req) {
+export function authenticate(req: IncomingMessage): boolean {
   // Localhost always allowed
   if (isLocalhost(req)) {
     return true;
   }
+
+  const remoteAddress = req.socket?.remoteAddress;
 
   // External access detected - show security warning
   if (!hasWarnedAboutToken) {
@@ -90,9 +99,7 @@ function authenticate(req) {
 
   // External access requires token
   if (!AUTH_TOKEN) {
-    console.error(
-      `[Auth] External access denied from ${req.socket?.remoteAddress} (no MAMA_AUTH_TOKEN)`
-    );
+    console.error(`[Auth] External access denied from ${remoteAddress} (no MAMA_AUTH_TOKEN)`);
     return false;
   }
 
@@ -101,34 +108,30 @@ function authenticate(req) {
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
     if (token === AUTH_TOKEN) {
-      console.error(
-        `[Auth] External access granted via Bearer token from ${req.socket?.remoteAddress}`
-      );
+      console.error(`[Auth] External access granted via Bearer token from ${remoteAddress}`);
       return true;
     }
   }
 
   // Check URL query parameter
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const queryToken = url.searchParams.get('token');
   if (queryToken === AUTH_TOKEN) {
-    console.error(
-      `[Auth] External access granted via query token from ${req.socket?.remoteAddress}`
-    );
+    console.error(`[Auth] External access granted via query token from ${remoteAddress}`);
     return true;
   }
 
-  console.error(`[Auth] External access denied from ${req.socket?.remoteAddress} (invalid token)`);
+  console.error(`[Auth] External access denied from ${remoteAddress} (invalid token)`);
   return false;
 }
 
 /**
  * Authenticate a WebSocket upgrade request
- * @param {http.IncomingMessage} req - HTTP upgrade request
- * @param {WebSocket} ws - WebSocket connection
- * @returns {boolean} True if authenticated, closes ws if not
+ * @param req - HTTP upgrade request
+ * @param ws - WebSocket connection
+ * @returns True if authenticated, closes ws if not
  */
-function authenticateWebSocket(req, ws) {
+export function authenticateWebSocket(req: IncomingMessage, ws: WebSocketLike): boolean {
   if (!authenticate(req)) {
     ws.close(4001, 'Authentication required');
     return false;
@@ -137,11 +140,20 @@ function authenticateWebSocket(req, ws) {
 }
 
 /**
- * Create authentication middleware for HTTP routes
- * @returns {Function} Middleware function
+ * Middleware function type
  */
-function createAuthMiddleware() {
-  return (req, res, next) => {
+type MiddlewareNext = () => void;
+
+/**
+ * Create authentication middleware for HTTP routes
+ * @returns Middleware function
+ */
+export function createAuthMiddleware(): (
+  req: IncomingMessage,
+  res: ServerResponse,
+  next: MiddlewareNext
+) => void {
+  return (req: IncomingMessage, res: ServerResponse, next: MiddlewareNext) => {
     if (!authenticate(req)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized' }));
@@ -150,11 +162,3 @@ function createAuthMiddleware() {
     next();
   };
 }
-
-module.exports = {
-  authenticate,
-  authenticateWebSocket,
-  createAuthMiddleware,
-  isLocalhost,
-  AUTH_TOKEN,
-};

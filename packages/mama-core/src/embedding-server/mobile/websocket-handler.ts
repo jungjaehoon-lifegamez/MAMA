@@ -7,7 +7,7 @@
  * for unified message processing (same as Discord/Slack gateways).
  *
  * @example
- * const { createWebSocketHandler } = require('./websocket-handler');
+ * import { createWebSocketHandler } from './websocket-handler';
  * const wsHandler = createWebSocketHandler({
  *   httpServer,
  *   messageRouter,
@@ -16,27 +16,26 @@
  * });
  */
 
-const { WebSocketServer } = require('ws');
-const { authenticateWebSocket } = require('./auth.js');
-const fs = require('fs').promises;
-const path = require('path');
-const os = require('os');
-const { DebugLogger } = require('../../debug-logger.js');
+import { WebSocketServer, WebSocket } from 'ws';
+import type { Server as HTTPServer, IncomingMessage } from 'http';
+import type { Socket } from 'net';
+import { authenticateWebSocket } from './auth.js';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
+import { DebugLogger } from '../../debug-logger.js';
 
 const logger = new DebugLogger('WebSocket');
 
 /**
  * Allowed image MIME types for Claude Vision API
- * @type {Set<string>}
  */
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 /**
  * Sanitize filename for safe inclusion in prompts (prevent prompt injection)
- * @param {string} filename
- * @returns {string}
  */
-function sanitizeFilenameForPrompt(filename) {
+function sanitizeFilenameForPrompt(filename: string): string {
   if (!filename) {
     return 'unknown';
   }
@@ -48,32 +47,28 @@ function sanitizeFilenameForPrompt(filename) {
 
 /**
  * Default heartbeat interval (30 seconds)
- * @type {number}
  */
 const HEARTBEAT_INTERVAL = 30000;
 
 /**
  * Connection timeout (35 seconds - slightly longer than heartbeat)
- * @type {number}
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _CONNECTION_TIMEOUT = 35000;
 
 /**
  * Generate unique client ID
- * @returns {string}
  */
-function generateClientId() {
+function generateClientId(): string {
   return `client_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 }
 
 /**
  * Extract user ID from WebSocket URL or headers
- * @param {http.IncomingMessage} req - HTTP upgrade request
- * @returns {string}
  */
-function extractUserId(req) {
+function extractUserId(req: IncomingMessage): string {
   try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const userId = url.searchParams.get('userId');
     if (userId) {
       return userId;
@@ -83,32 +78,143 @@ function extractUserId(req) {
     if (!ip) {
       return `user_${Date.now()}`;
     }
-    return `user_${ip.replace(/[:.]/g, '_')}`;
+    const ipStr = Array.isArray(ip) ? ip[0] : ip;
+    return `user_${ipStr.replace(/[:.]/g, '_')}`;
   } catch {
     return `user_${Date.now()}`;
   }
 }
 
 /**
- * Create WebSocket handler with MessageRouter integration
- * @param {Object} options - Configuration options
- * @param {http.Server} options.httpServer - HTTP server to attach WebSocket to
- * @param {MessageRouter} options.messageRouter - Message router instance
- * @param {SessionStore} options.sessionStore - Session store instance
- * @param {string} [options.authToken] - Optional authentication token
- * @returns {WebSocketServer}
+ * Message router interface
  */
-function createWebSocketHandler({
+interface MessageRouter {
+  process(message: NormalizedMessage): Promise<RouterResult>;
+}
+
+/**
+ * Session store interface
+ */
+interface SessionStore {
+  getHistoryByChannel?(
+    source: string,
+    channelId: string
+  ): Array<{ user?: string; bot?: string; timestamp?: number }>;
+  getHistory?(sessionId: string): Array<{ user?: string; bot?: string; timestamp?: number }>;
+}
+
+/**
+ * Normalized message for router
+ */
+interface NormalizedMessage {
+  source: string;
+  channelId: string;
+  channelName: string;
+  userId: string;
+  text: string;
+  contentBlocks?: ContentBlock[];
+  metadata: {
+    clientId: string;
+    sessionId?: string;
+    osAgentMode?: boolean;
+    timestamp: number;
+  };
+}
+
+/**
+ * Content block types
+ */
+interface ImageContentBlock {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
+}
+
+interface TextContentBlock {
+  type: 'text';
+  text: string;
+}
+
+type ContentBlock = ImageContentBlock | TextContentBlock;
+
+/**
+ * Router result
+ */
+interface RouterResult {
+  response: string;
+  sessionId: string;
+  duration: number;
+}
+
+/**
+ * Client info stored in clients Map
+ */
+interface ClientInfo {
+  clientId: string;
+  userId: string;
+  ws: WebSocket;
+  isAlive: boolean;
+  connectedAt: string;
+  sessionId?: string;
+  osAgentMode?: boolean;
+  language?: string;
+}
+
+/**
+ * Attachment from client message
+ */
+interface Attachment {
+  filename?: string;
+  contentType?: string;
+}
+
+/**
+ * Client message structure
+ */
+interface ClientMessage {
+  type: string;
+  content?: string;
+  attachments?: Attachment[];
+  sessionId?: string;
+  osAgentMode?: boolean;
+  language?: string;
+}
+
+/**
+ * WebSocket handler options
+ */
+export interface WebSocketHandlerOptions {
+  httpServer: HTTPServer;
+  messageRouter: MessageRouter;
+  sessionStore: SessionStore;
+  authToken?: string;
+}
+
+/**
+ * Extended WebSocketServer with helper methods
+ */
+type ExtendedWebSocketServer = WebSocketServer & {
+  getClients: () => Map<string, ClientInfo>;
+  getClientCount: () => number;
+};
+
+/**
+ * Create WebSocket handler with MessageRouter integration
+ */
+export function createWebSocketHandler({
   httpServer,
   messageRouter,
   sessionStore,
   authToken: _authToken,
-}) {
-  const wss = new WebSocketServer({ noServer: true });
-  const clients = new Map();
+}: WebSocketHandlerOptions): ExtendedWebSocketServer {
+  const wss = new WebSocketServer({ noServer: true }) as ExtendedWebSocketServer;
+  const clients = new Map<string, ClientInfo>();
 
-  httpServer.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+  httpServer.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
     if (url.pathname !== '/ws') {
       socket.destroy();
@@ -116,7 +222,7 @@ function createWebSocketHandler({
     }
 
     const mockWs = {
-      close: (code, reason) => {
+      close: (_code: number, reason: string) => {
         socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
         socket.destroy();
         logger.error(`Auth failed: ${reason}`);
@@ -132,11 +238,11 @@ function createWebSocketHandler({
     });
   });
 
-  wss.on('connection', (ws, req) => {
+  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     const clientId = generateClientId();
     const userId = extractUserId(req);
 
-    const clientInfo = {
+    const clientInfo: ClientInfo = {
       clientId,
       userId,
       ws,
@@ -155,12 +261,13 @@ function createWebSocketHandler({
       })
     );
 
-    ws.on('message', (data) => {
+    ws.on('message', (data: Buffer) => {
       try {
-        const message = JSON.parse(data.toString());
-        handleClientMessage(clientId, message, clientInfo, messageRouter, sessionStore);
+        const message = JSON.parse(data.toString()) as ClientMessage;
+        void handleClientMessage(clientId, message, clientInfo, messageRouter, sessionStore);
       } catch (err) {
-        logger.info(` Invalid message from ${clientId}:`, err.message);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.info(` Invalid message from ${clientId}:`, errMsg);
         ws.send(
           JSON.stringify({
             type: 'error',
@@ -174,12 +281,12 @@ function createWebSocketHandler({
       clientInfo.isAlive = true;
     });
 
-    ws.on('close', (code, _reason) => {
+    ws.on('close', (code: number) => {
       logger.info(` Client ${clientId} disconnected (code: ${code})`);
       clients.delete(clientId);
     });
 
-    ws.on('error', (err) => {
+    ws.on('error', (err: Error) => {
       logger.info(` Error for client ${clientId}:`, err.message);
     });
   });
@@ -210,13 +317,14 @@ function createWebSocketHandler({
 
 /**
  * Handle incoming client message
- * @param {string} clientId - Client identifier
- * @param {Object} message - Parsed message object
- * @param {Object} clientInfo - Client info object
- * @param {MessageRouter} messageRouter - Message router instance
- * @param {SessionStore} sessionStore - Session store instance
  */
-async function handleClientMessage(clientId, message, clientInfo, messageRouter, sessionStore) {
+async function handleClientMessage(
+  clientId: string,
+  message: ClientMessage,
+  clientInfo: ClientInfo,
+  messageRouter: MessageRouter,
+  sessionStore: SessionStore
+): Promise<void> {
   const { type, content } = message;
 
   switch (type) {
@@ -244,8 +352,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
         let processingSeconds = 0;
         const keepAliveInterval = setInterval(() => {
           processingSeconds += 10;
-          if (clientInfo.ws.readyState === 1) {
-            // WebSocket.OPEN
+          if (clientInfo.ws.readyState === WebSocket.OPEN) {
             clientInfo.ws.send(
               JSON.stringify({
                 type: 'typing',
@@ -258,7 +365,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
         }, 10000); // Every 10 seconds
 
         // Build contentBlocks from attachments (files are pre-compressed by upload-handler)
-        let contentBlocks = undefined;
+        let contentBlocks: ContentBlock[] | undefined = undefined;
         if (message.attachments && message.attachments.length > 0) {
           contentBlocks = [];
           for (const att of message.attachments) {
@@ -297,9 +404,10 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 logger.info(`Attached document: ${safeName} (${rawMediaType})`);
               }
             } catch (err) {
+              const errMsg = err instanceof Error ? err.message : String(err);
               logger.error(
                 `Failed to read attachment ${path.basename(att.filename || '')}:`,
-                err.message
+                errMsg
               );
               // Notify client about attachment failure
               clientInfo.ws.send(
@@ -313,7 +421,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           }
         }
 
-        const normalizedMessage = {
+        const normalizedMessage: NormalizedMessage = {
           source: clientInfo.osAgentMode ? 'viewer' : 'mobile',
           channelId: 'mama_os_main', // Fixed channel for all MAMA OS viewers
           channelName: clientInfo.osAgentMode ? 'MAMA OS' : 'Mobile App', // Human-readable channel name
@@ -328,7 +436,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           },
         };
 
-        let result;
+        let result: RouterResult;
         try {
           result = await messageRouter.process(normalizedMessage);
         } finally {
@@ -355,12 +463,13 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
 
         logger.info(` Message processed for ${clientId} (${result.duration}ms)`);
       } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
         logger.info(` Message processing error:`, error);
         clientInfo.ws.send(
           JSON.stringify({
             type: 'error',
             error: 'Failed to process message',
-            details: error.message,
+            details: errMsg,
           })
         );
       }
@@ -408,12 +517,12 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           logger.info(` Loading history for source=${source}, channelId=${channelId}`);
           const history = sessionStore.getHistoryByChannel
             ? sessionStore.getHistoryByChannel(source, channelId)
-            : sessionStore.getHistory(sessionId);
+            : sessionStore.getHistory?.(sessionId || '');
           logger.info(` History loaded: ${history ? history.length : 0} turns`);
           if (history && history.length > 0) {
             // Convert {user, bot, timestamp} format to {role, content, timestamp} for display
             const formattedMessages = history.flatMap((turn) => {
-              const messages = [];
+              const messages: Array<{ role: string; content: string; timestamp?: number }> = [];
               if (turn.user) {
                 messages.push({
                   role: 'user',
@@ -470,7 +579,8 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
             }
           }
         } catch (error) {
-          logger.info(` Failed to load history:`, error.message);
+          const errMsg = error instanceof Error ? error.message : String(error);
+          logger.info(` Failed to load history:`, errMsg);
         }
       }
       break;
@@ -491,30 +601,27 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
  * WebSocketHandler class (backwards compatibility)
  * @deprecated Use createWebSocketHandler() instead
  */
-class WebSocketHandler {
-  constructor(httpServer, options) {
-    this.httpServer = httpServer;
-    this.options = options;
+export class WebSocketHandler {
+  private wss: ExtendedWebSocketServer;
+
+  constructor(httpServer: HTTPServer, options: Partial<WebSocketHandlerOptions>) {
     this.wss = createWebSocketHandler({
       httpServer,
-      ...options,
+      messageRouter: options.messageRouter as MessageRouter,
+      sessionStore: options.sessionStore as SessionStore,
+      authToken: options.authToken,
     });
   }
 
-  getClients() {
+  getClients(): Map<string, ClientInfo> {
     return this.wss.getClients();
   }
 
-  getClientCount() {
+  getClientCount(): number {
     return this.wss.getClientCount();
   }
 
-  close() {
+  close(): void {
     this.wss.close();
   }
 }
-
-module.exports = {
-  createWebSocketHandler,
-  WebSocketHandler,
-};
