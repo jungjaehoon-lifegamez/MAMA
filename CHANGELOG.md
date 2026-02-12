@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [mama-core-1.1.0] - 2026-02-13
+
+### Changed
+
+- **TypeScript Migration**: Complete rewrite of all 30+ JS files to TypeScript
+  - All source files now `.ts` with strict type checking
+  - Exported type definitions for downstream consumers
+  - Proper interface definitions for all public APIs
+  - `tsconfig.json` added with strict mode configuration
+  - CommonJS compatibility maintained via named exports
+
+### Added
+
+- **Type Interfaces**: 50+ new type definitions
+  - `DecisionRecord`, `CheckpointRow`, `PreparedStatement`
+  - `DeprecateAutoLinksResult`, `ScanAutoLinksResult`, `DeleteAutoLinksResult`
+  - `CreateLinkBackupResult`, `RestoreLinkBackupResult`, `VerifyBackupResult`
+  - `SaveParams`, `SaveResult`, `SearchResult`, `RecallResult`, `UpdateResult`
+  - `SuggestOptions`, `SuggestResult`, `QualityReport`, `QualityRecommendation`
+- **Runtime Validation**: Type guards for LLM response parsing
+  - `isDecisionAnalysisResult()`, `isQueryIntentResult()` validators
+- **Safety Guards**:
+  - Cycle detection in supersedes chain walks (prevents infinite loops)
+  - Nullish coalescing (`??`) for values where `0` is valid
+  - Depth limits (MAX_CHAIN_DEPTH=1000) for graph traversals
+
+### Fixed
+
+- **WebSocket Security**: Internal error details no longer exposed to clients
+- **Interval Leak**: try/finally now properly wraps interval lifetime
+- **Cron Race Condition**: Graceful handling when job removed during execution
+
+### Technical Debt
+
+- Removed duplicate `PreparedStatement` interfaces (consolidated to `db-adapter/statement.ts`)
+- Removed duplicate `DecisionRecord` interfaces (consolidated to `db-manager.ts`)
+- Async/await annotations retained for future-proofing (sync SQLite adapter today)
+
 ## [0.8.0] - 2026-02-12
 
 ### Added
