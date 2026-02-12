@@ -11,7 +11,21 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
+    extensions: ['.ts', '.js', '.mjs', '.json'],
   },
+  plugins: [
+    {
+      name: 'resolve-js-to-ts',
+      resolveId(id, importer) {
+        // Resolve .js imports to .ts files in src/
+        if (id.endsWith('.js') && importer && id.includes('/src/')) {
+          const tsPath = id.replace(/\.js$/, '.ts');
+          return tsPath;
+        }
+        return null;
+      },
+    },
+  ],
   test: {
     globals: true,
     environment: 'node',
