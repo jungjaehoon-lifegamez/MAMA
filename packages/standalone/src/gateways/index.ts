@@ -21,6 +21,10 @@ export { SessionStore } from './session-store.js';
 export { ContextInjector, createMockMamaApi } from './context-injector.js';
 export type { MamaApiClient, SearchResult, InjectedContext } from './context-injector.js';
 
+// Base gateway
+export { BaseGateway } from './base-gateway.js';
+export type { BaseGatewayOptions } from './base-gateway.js';
+
 // Platform gateways
 export { DiscordGateway } from './discord.js';
 export type { DiscordGatewayOptions } from './discord.js';

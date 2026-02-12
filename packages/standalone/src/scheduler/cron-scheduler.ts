@@ -44,7 +44,7 @@ export class CronScheduler {
 
   constructor(options: SchedulerOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
-    this.lock = new JobLock();
+    this.lock = new JobLock(10 * 60 * 1000); // 10 min default lock timeout
   }
 
   /**
