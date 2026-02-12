@@ -4,8 +4,9 @@
  * Provides Telegram bot integration for receiving and responding to messages.
  */
 
-import type { Gateway, GatewayEvent, GatewayEventHandler, NormalizedMessage } from './types.js';
-import { MessageRouter } from './message-router.js';
+import type { NormalizedMessage } from './types.js';
+import { BaseGateway } from './base-gateway.js';
+import type { MessageRouter } from './message-router.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
 
 /**
@@ -35,19 +36,20 @@ export interface TelegramGatewayOptions {
 /**
  * Telegram Gateway class
  */
-export class TelegramGateway implements Gateway {
+export class TelegramGateway extends BaseGateway {
   readonly source = 'telegram' as const;
 
   private token: string;
-  private messageRouter: MessageRouter;
   private config: TelegramGatewayConfig;
-  private eventHandlers: GatewayEventHandler[] = [];
-  private connected = false;
   private bot: TelegramBot | null = null;
 
+  protected get mentionPattern(): RegExp | null {
+    return null; // Telegram doesn't use mention stripping
+  }
+
   constructor(options: TelegramGatewayOptions) {
+    super({ messageRouter: options.messageRouter });
     this.token = options.token;
-    this.messageRouter = options.messageRouter;
     this.config = {
       enabled: true,
       token: options.token,
@@ -241,33 +243,6 @@ export class TelegramGateway implements Gateway {
     }
 
     return chunks;
-  }
-
-  /**
-   * Emit event to registered handlers
-   */
-  private emitEvent(event: GatewayEvent): void {
-    for (const handler of this.eventHandlers) {
-      try {
-        handler(event);
-      } catch (error) {
-        console.error('Error in gateway event handler:', error);
-      }
-    }
-  }
-
-  /**
-   * Check if gateway is connected
-   */
-  isConnected(): boolean {
-    return this.connected;
-  }
-
-  /**
-   * Register event handler
-   */
-  onEvent(handler: GatewayEventHandler): void {
-    this.eventHandlers.push(handler);
   }
 }
 
