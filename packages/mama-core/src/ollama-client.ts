@@ -99,7 +99,13 @@ function callOllamaAPI(
  * Generate text with EXAONE 3.5
  */
 export async function generate(prompt: string, options: GenerateOptions = {}): Promise<unknown> {
-  const { model = DEFAULT_MODEL, format = null, temperature = 0.7, max_tokens = 500 } = options;
+  const {
+    model = DEFAULT_MODEL,
+    format = null,
+    temperature = 0.7,
+    max_tokens = 500,
+    timeout = 30000,
+  } = options;
 
   const payload: Record<string, unknown> = {
     model,
@@ -116,7 +122,7 @@ export async function generate(prompt: string, options: GenerateOptions = {}): P
   }
 
   try {
-    const response = await callOllamaAPI('/api/generate', payload);
+    const response = await callOllamaAPI('/api/generate', payload, timeout);
 
     // Extract response text
     const responseText = response.response;

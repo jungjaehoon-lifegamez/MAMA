@@ -2205,7 +2205,8 @@ function restoreLinkBackup(backupFile: string): any {
       );
       restored++;
     } catch (error: unknown) {
-      logError(`Failed to restore link ${link.from_id} -> ${link.to_id}:`, error);
+      const msg = error instanceof Error ? error.message : String(error);
+      logError(`Failed to restore link ${link.from_id} -> ${link.to_id}:`, msg);
       failed++;
     }
   }

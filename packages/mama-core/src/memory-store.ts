@@ -17,11 +17,12 @@
  */
 
 import * as dbManager from './db-manager.js';
+import type { PreparedStatement, VectorSearchResult } from './db-manager.js';
 
-// Type for database adapter
-// Note: This duplicates db-manager.ts DatabaseAdapter interface intentionally.
-// Each module defines minimal interface it needs for loose coupling during migration.
-// TODO: Consolidate to single shared interface in a future refactor.
+// Re-export for consumers
+export type { PreparedStatement };
+
+// Type for database adapter (minimal interface for this module's needs)
 export interface DatabaseAdapter {
   prepare: (sql: string) => PreparedStatement;
   vectorSearchEnabled?: boolean;
@@ -29,15 +30,8 @@ export interface DatabaseAdapter {
   vectorSearch?: (
     embedding: Float32Array | number[],
     limit: number
-  ) => Promise<Array<{ rowid: number; similarity?: number; distance?: number }>>;
+  ) => Promise<VectorSearchResult[] | null>;
   transaction?: <T>(fn: () => T) => T;
-}
-
-// Type for prepared statement
-export interface PreparedStatement {
-  run: (...args: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
-  get: (...args: unknown[]) => unknown;
-  all: (...args: unknown[]) => unknown[];
 }
 
 // Type for decision with embedding

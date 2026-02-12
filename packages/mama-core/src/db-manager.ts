@@ -22,11 +22,15 @@ import path from 'path';
 import { info, warn, error as logError } from './debug-logger.js';
 import { logComplete, logSearching } from './progress-indicator.js';
 import { createAdapter } from './db-adapter/index.js';
+import type { PreparedStatement } from './db-adapter/statement.js';
+
+// Re-export PreparedStatement for consumers
+export type { PreparedStatement };
 
 // Type definitions
 // Note: This local interface differs from base-adapter.ts abstract class.
-// The double cast at initialization is intentional to bridge the type gap.
-// TODO: Align types across db-adapter and db-manager in a future refactor.
+// The double cast at initialization bridges the type gap between the abstract
+// class (which uses Statement) and this interface (which uses PreparedStatement).
 export interface DatabaseAdapter {
   connect: () => unknown;
   disconnect: () => void;
@@ -42,12 +46,6 @@ export interface DatabaseAdapter {
   getDbPath?: () => string;
   dbPath?: string;
   constructor: { name: string };
-}
-
-export interface PreparedStatement {
-  run: (...args: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
-  get: (...args: unknown[]) => unknown;
-  all: (...args: unknown[]) => unknown[];
 }
 
 export interface VectorSearchResult {

@@ -16,6 +16,16 @@ export interface RunResult {
 }
 
 /**
+ * Prepared statement interface
+ * Common interface used across all database modules
+ */
+export interface PreparedStatement {
+  run: (...args: unknown[]) => RunResult;
+  get: (...args: unknown[]) => unknown;
+  all: (...args: unknown[]) => unknown[];
+}
+
+/**
  * better-sqlite3 native statement type
  */
 interface BetterSQLiteStatement {

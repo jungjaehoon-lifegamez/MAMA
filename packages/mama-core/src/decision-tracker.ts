@@ -16,7 +16,10 @@
 
 import { info } from './debug-logger.js';
 import { initDB, insertDecisionWithEmbedding, getAdapter } from './memory-store.js';
-import type { DatabaseAdapter } from './db-manager.js';
+import type { DatabaseAdapter, DecisionRecord } from './db-manager.js';
+
+// Re-export DecisionRecord for consumers
+export type { DecisionRecord };
 
 // ════════════════════════════════════════════════════════════════════════════
 // Story 2.1: Extended Edge Types
@@ -69,22 +72,7 @@ export interface SessionContext {
   recent_exchange?: string;
 }
 
-/**
- * Decision record from database
- */
-export interface DecisionRecord {
-  id: string;
-  topic: string;
-  decision: string;
-  reasoning?: string;
-  outcome?: string | null;
-  failure_reason?: string | null;
-  confidence: number;
-  supersedes?: string | null;
-  superseded_by?: string | null;
-  created_at: number;
-  updated_at?: number;
-}
+// DecisionRecord is imported from db-manager.ts (canonical source)
 
 /**
  * Learn decision result
