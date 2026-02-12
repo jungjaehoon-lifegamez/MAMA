@@ -6,7 +6,7 @@
  *
  * Features:
  * - Model stays loaded in memory (singleton)
- * - HTTP API at localhost:3847
+ * - HTTP API at localhost:${MAMA_HTTP_PORT || 3849}
  * - Health check endpoint
  * - Shared model with MCP server
  *
@@ -304,7 +304,7 @@ let _wssInstance = null;
 /**
  * Start the HTTP embedding server
  *
- * @param {number} port - Port to listen on (default: 3847)
+ * @param {number} port - Port to listen on (default: DEFAULT_PORT)
  * @returns {Promise<http.Server>} HTTP server instance
  */
 async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
@@ -316,7 +316,7 @@ async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
   // Store graph handler if provided
   if (graphHandlerOption) {
     graphHandler = graphHandlerOption;
-    console.error('[EmbeddingHTTP] Graph handler registered (Viewer routes on port 3847)');
+    console.error(`[EmbeddingHTTP] Graph handler registered (Viewer routes on port ${port})`);
   }
   // Check if HTTP server is disabled
   if (process.env.MAMA_DISABLE_HTTP_SERVER === 'true') {

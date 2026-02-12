@@ -12,7 +12,7 @@
  */
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -663,16 +663,37 @@ export class GatewayToolExecutor {
       };
     }
 
-    // Block sandbox escape via cd command
-    // Allow: cd ~/.mama/, cd ./, cd ../  (within sandbox)
-    // Block: cd ~/, cd ~/project, cd /home/, cd /etc/, etc.
-    const sandboxEscape = /cd\s+(~\/(?!\.mama)|~(?!\/\.mama)|\/home\/|\/[a-z])/i;
-    if (sandboxEscape.test(command)) {
-      return {
-        success: false,
-        error:
-          'Cannot change directory outside ~/.mama/ sandbox. Use Read/Write tools for files outside sandbox.',
-      };
+    // Block sandbox escape via cd command using path-based validation
+    // The regex approach is insufficient (e.g., "cd ~/.mama/../" can escape)
+    const cdMatch = command.match(/cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+    if (cdMatch) {
+      const cdTarget = cdMatch[1] || cdMatch[2] || cdMatch[3];
+      const sandboxRoot = join(homedir(), '.mama');
+      const cwd = workdir || process.env.MAMA_WORKSPACE || join(sandboxRoot, 'workspace');
+
+      // Expand ~ to home directory for path resolution
+      let resolvedTarget: string;
+      if (cdTarget === '~' || cdTarget === '~/' || !cdTarget) {
+        resolvedTarget = homedir();
+      } else if (cdTarget.startsWith('~/')) {
+        resolvedTarget = join(homedir(), cdTarget.slice(2));
+      } else if (cdTarget.startsWith('/')) {
+        resolvedTarget = cdTarget;
+      } else {
+        resolvedTarget = join(cwd, cdTarget);
+      }
+
+      // Resolve any .. or . in the path
+      const normalizedTarget = resolve(resolvedTarget);
+
+      // Check if target is within sandbox
+      if (!normalizedTarget.startsWith(sandboxRoot)) {
+        return {
+          success: false,
+          error:
+            'Cannot change directory outside ~/.mama/ sandbox. Use Read/Write tools for files outside sandbox.',
+        };
+      }
     }
 
     // Handle restart: deferred restart (agent survives to respond, service restarts after 3s)

@@ -2291,11 +2291,24 @@ async function handleMCPServersRequest(_req: IncomingMessage, res: ServerRespons
  * Handle DELETE /api/mcp-servers/:name - remove MCP server from config
  */
 async function handleDeleteMCPServerRequest(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   pathname: string
 ): Promise<void> {
   try {
+    // Security: require authentication for config-writing endpoint
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        })
+      );
+      return;
+    }
+
     const match = pathname.match(/\/api\/mcp-servers\/([^/]+)/);
     if (!match) {
       res.writeHead(400, { 'Content-Type': 'application/json' });

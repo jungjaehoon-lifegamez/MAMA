@@ -12,7 +12,7 @@
 
 /* eslint-env browser */
 
-import { showToast, escapeHtml } from '../utils/dom.js';
+import { showToast, escapeHtml, escapeAttr } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 
@@ -306,11 +306,14 @@ export class SettingsModule {
         const colors = serverColors[server.name] || serverColors['default'];
         const toolValue = `mcp__${server.name}__*`;
         const isChecked = isMCPAll || selectedTools.includes(toolValue);
+        // Escape server.name for safe HTML rendering (XSS prevention)
+        const safeName = escapeHtml(server.name);
+        const safeToolValue = escapeAttr(toolValue);
 
         return `
         <label class="flex items-center gap-2 p-2 border ${colors.border} rounded-lg text-xs cursor-pointer hover:${colors.bg}">
-          <input type="checkbox" class="mcp-tool" value="${toolValue}" ${isChecked ? 'checked' : ''}>
-          ${colors.icon} ${server.name}
+          <input type="checkbox" class="mcp-tool" value="${safeToolValue}" ${isChecked ? 'checked' : ''}>
+          ${colors.icon} ${safeName}
         </label>
       `;
       })

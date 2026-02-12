@@ -290,10 +290,10 @@ export class PersistentClaudeProcess extends EventEmitter {
     if (this.options.mcpConfigPath) {
       args.push('--mcp-config', this.options.mcpConfigPath);
       args.push('--strict-mcp-config');
-      console.log('[PersistentCLI] MCP enabled:', this.options.mcpConfigPath);
+      persistentLogger.info('MCP enabled:', this.options.mcpConfigPath);
     }
     if (this.options.useGatewayTools) {
-      console.log('[PersistentCLI] Gateway Tools mode enabled');
+      persistentLogger.info('Gateway Tools mode enabled');
     }
 
     if (this.options.dangerouslySkipPermissions) {

@@ -1348,7 +1348,15 @@ export class AgentLoop {
                 const path = require('path');
                 const mediaDir = path.join(homedir(), '.mama', 'workspace', 'media', 'inbound');
                 fs.mkdirSync(mediaDir, { recursive: true });
-                const ext = block.source.media_type?.includes('png') ? '.png' : '.jpg';
+                // Map MIME type to file extension (support PNG, JPEG, GIF, WebP)
+                const mimeToExt: Record<string, string> = {
+                  'image/png': '.png',
+                  'image/jpeg': '.jpg',
+                  'image/jpg': '.jpg',
+                  'image/gif': '.gif',
+                  'image/webp': '.webp',
+                };
+                const ext = mimeToExt[block.source.media_type?.toLowerCase() || ''] || '.jpg';
                 const imagePath = path.join(
                   mediaDir,
                   `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`
@@ -1421,7 +1429,15 @@ export class AgentLoop {
               const path = require('path');
               const mediaDir = path.join(homedir(), '.mama', 'workspace', 'media', 'inbound');
               fs.mkdirSync(mediaDir, { recursive: true });
-              const ext = block.source.media_type?.includes('png') ? '.png' : '.jpg';
+              // Map MIME type to file extension (support PNG, JPEG, GIF, WebP)
+              const mimeToExt: Record<string, string> = {
+                'image/png': '.png',
+                'image/jpeg': '.jpg',
+                'image/jpg': '.jpg',
+                'image/gif': '.gif',
+                'image/webp': '.webp',
+              };
+              const ext = mimeToExt[block.source.media_type?.toLowerCase() || ''] || '.jpg';
               const imagePath = path.join(
                 mediaDir,
                 `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`

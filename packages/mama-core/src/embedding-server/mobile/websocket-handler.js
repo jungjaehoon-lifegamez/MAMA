@@ -26,6 +26,27 @@ const { DebugLogger } = require('../../debug-logger.js');
 const logger = new DebugLogger('WebSocket');
 
 /**
+ * Allowed image MIME types for Claude Vision API
+ * @type {Set<string>}
+ */
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/**
+ * Sanitize filename for safe inclusion in prompts (prevent prompt injection)
+ * @param {string} filename
+ * @returns {string}
+ */
+function sanitizeFilenameForPrompt(filename) {
+  if (!filename) {
+    return 'unknown';
+  }
+  return filename
+    .replace(/[\n\r\t]/g, ' ') // Remove control characters
+    .replace(/[`[\](){}]/g, '') // Remove brackets that could interfere with prompts
+    .substring(0, 100); // Limit length
+}
+
+/**
  * Default heartbeat interval (30 seconds)
  * @type {number}
  */
@@ -249,10 +270,13 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
               const inboundDir = path.join(os.homedir(), '.mama', 'workspace', 'media', 'inbound');
               const resolvedPath = path.join(inboundDir, safeName);
               const data = await fs.readFile(resolvedPath);
-              const mediaType = att.contentType || 'image/jpeg';
+              const rawMediaType = att.contentType || 'image/jpeg';
+
+              // Validate MIME type with allowlist
+              const mediaType = ALLOWED_IMAGE_TYPES.has(rawMediaType) ? rawMediaType : 'image/jpeg';
               const base64 = data.toString('base64');
 
-              if (mediaType.startsWith('image/') && mediaType !== 'image/svg+xml') {
+              if (ALLOWED_IMAGE_TYPES.has(rawMediaType)) {
                 contentBlocks.push({
                   type: 'image',
                   source: {
@@ -265,17 +289,28 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 // PDF/documents: instruct agent to read the file
                 // Use safe display path to avoid exposing full server path
                 const safeDisplayPath = `~/.mama/workspace/media/inbound/${safeName}`;
+                // Sanitize filename to prevent prompt injection
+                const sanitizedName = sanitizeFilenameForPrompt(att.filename);
                 contentBlocks.push({
                   type: 'text',
-                  text: `[Document uploaded: ${att.filename}]\nFile path: ${safeDisplayPath}\nPlease use the Read tool to analyze this document.`,
+                  text: `[Document uploaded: ${sanitizedName}]\nFile path: ${safeDisplayPath}\nPlease use the Read tool to analyze this document.`,
                 });
               }
 
-              console.error(
-                `[WebSocket] Attached: ${att.filename} (${data.length} bytes, ${mediaType})`
-              );
+              logger.info(`Attached: ${safeName} (${data.length} bytes, ${mediaType})`);
             } catch (err) {
-              logger.info(` Failed to read attachment ${att.filename}:`, err.message);
+              logger.error(
+                `Failed to read attachment ${path.basename(att.filename || '')}:`,
+                err.message
+              );
+              // Notify client about attachment failure
+              clientInfo.ws.send(
+                JSON.stringify({
+                  type: 'attachment_failed',
+                  filename: path.basename(att.filename || ''),
+                  error: 'Failed to process attachment',
+                })
+              );
             }
           }
         }
