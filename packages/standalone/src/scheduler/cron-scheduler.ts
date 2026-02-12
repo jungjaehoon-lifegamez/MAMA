@@ -261,7 +261,16 @@ export class CronScheduler {
     const job = this.jobs.get(jobId);
 
     if (!job) {
-      throw new SchedulerError(`Job not found: ${jobId}`, 'JOB_NOT_FOUND');
+      // Job was removed after cron fired but before execution (race condition during shutdown)
+      // This is not an error - silently return failure result
+      const now = new Date();
+      return {
+        success: false,
+        error: 'Job was removed during execution',
+        startedAt: now,
+        completedAt: now,
+        duration: 0,
+      };
     }
 
     // Try to acquire lock

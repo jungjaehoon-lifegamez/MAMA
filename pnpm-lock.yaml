@@ -83,9 +83,18 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.0
         version: 7.6.13
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.7
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
       vitest:
         specifier: ^1.0.0
-        version: 1.6.1(@types/node@25.0.10)
+        version: 1.6.1(@types/node@22.19.7)
 
   packages/mcp-server:
     dependencies:
@@ -7371,7 +7380,7 @@ snapshots:
 
   '@types/better-sqlite3@7.6.13':
     dependencies:
-      '@types/node': 24.10.1
+      '@types/node': 22.19.7
 
   '@types/body-parser@1.19.6':
     dependencies:
