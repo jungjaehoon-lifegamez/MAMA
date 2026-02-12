@@ -173,8 +173,9 @@ export function formatAssistantMessage(text) {
   // Bold
   formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
-  // Italic (avoiding conflicts with bold)
-  formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  // Italic (avoiding conflicts with bold) - Safari-compatible without lookbehind
+  // Process after bold, match single asterisks not part of ** sequences
+  formatted = formatted.replace(/([^*]|^)\*([^*]+)\*([^*]|$)/g, '$1<em>$2</em>$3');
 
   // Helper: build safe media HTML from captured filename
   // Note: filename may contain HTML entities from prior escaping, so decode first
@@ -203,9 +204,10 @@ export function formatAssistantMessage(text) {
     (_match, filename) => buildMediaHtml(filename)
   );
   // Then: handle bare media paths not already inside HTML tags
+  // Safari-compatible: use capture group instead of lookbehind
   formatted = formatted.replace(
-    /(?<!href="|src=")(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^\s<"']+\.(png|jpg|jpeg|gif|webp|svg|pdf))/gi,
-    (_match, filename) => buildMediaHtml(filename)
+    /(^|[^"'])(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^\s<"']+\.(png|jpg|jpeg|gif|webp|svg|pdf))/gi,
+    (_, prefix, filename) => prefix + buildMediaHtml(filename)
   );
 
   // Headers (## and ###)

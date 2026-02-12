@@ -253,9 +253,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 elapsed: processingSeconds,
               })
             );
-            console.error(
-              `[WebSocket] Keep-alive sent to ${clientId} (${processingSeconds}s elapsed)`
-            );
+            logger.debug(`Keep-alive sent to ${clientId} (${processingSeconds}s elapsed)`);
           }
         }, 10000); // Every 10 seconds
 
@@ -382,8 +380,8 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
       clientInfo.osAgentMode = osAgentMode || false;
       clientInfo.language = language || 'en';
 
-      console.error(
-        `[WebSocket] Client ${clientId} attached to session ${sessionId}${osAgentMode ? ' (OS Agent mode)' : ''}`
+      logger.info(
+        `Client ${clientId} attached to session ${sessionId}${osAgentMode ? ' (OS Agent mode)' : ''}`
       );
 
       // Send attached confirmation
@@ -396,8 +394,8 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
       );
 
       // Send session history if available, or send onboarding greeting
-      console.error(
-        `[WebSocket] Checking sessionStore for history: ${!!sessionStore}, hasMethod: ${!!(sessionStore && sessionStore.getHistoryByChannel)}`
+      logger.debug(
+        `Checking sessionStore for history: ${!!sessionStore}, hasMethod: ${!!(sessionStore && sessionStore.getHistoryByChannel)}`
       );
       if (sessionStore) {
         try {
@@ -436,9 +434,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 messages: formattedMessages,
               })
             );
-            console.error(
-              `[WebSocket] Sent ${formattedMessages.length} history messages to ${clientId}`
-            );
+            logger.info(`Sent ${formattedMessages.length} history messages to ${clientId}`);
           } else {
             // No history - check if onboarding mode (SOUL.md not found)
             const soulPath = path.join(os.homedir(), '.mama', 'SOUL.md');

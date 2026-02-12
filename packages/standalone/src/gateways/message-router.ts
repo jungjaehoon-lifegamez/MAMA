@@ -458,7 +458,7 @@ This protects your credentials from being exposed in chat logs.`;
     sessionStartupContext: string = '',
     agentContext?: AgentContext,
     enhanced?: EnhancedPromptContext,
-    isNewSession: boolean = true
+    isNewSession: boolean = false
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
