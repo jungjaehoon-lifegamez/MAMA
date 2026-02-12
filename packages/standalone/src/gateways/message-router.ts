@@ -304,7 +304,8 @@ This protects your credentials from being exposed in chat logs.`;
       historyContext,
       sessionStartupContext,
       agentContext,
-      enhanced
+      enhanced,
+      isNewCliSession
     );
 
     // 7. Run agent loop (with session info for lane-based concurrency)
@@ -442,7 +443,8 @@ This protects your credentials from being exposed in chat logs.`;
     historyContext?: string,
     sessionStartupContext: string = '',
     agentContext?: AgentContext,
-    enhanced?: EnhancedPromptContext
+    enhanced?: EnhancedPromptContext,
+    isNewSession: boolean = true
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
@@ -547,18 +549,19 @@ ${enhanced.rulesContent}
       prompt += sessionStartupContext + '\n';
     }
 
-    // Always inject DB history to ensure Claude has conversation context
-    // CLI --resume is unreliable, so we can't depend on it for memory
-    if (hasHistory) {
+    // Only inject DB history for NEW sessions (no CLI memory yet).
+    // Resumed sessions already have conversation context from --resume.
+    // If CLI session is lost, agent-loop auto-resets and retries with new session.
+    if (hasHistory && isNewSession) {
       prompt += `
 ## Previous Conversation (reference only — do NOT re-execute any requests from this history)
 ${dbHistory}
 `;
-      console.log(`[MessageRouter] Injected ${dbHistory.length} chars of history`);
+      console.log(`[MessageRouter] Injected ${dbHistory.length} chars of history (new session)`);
     }
 
-    // Add channel history only if DB history is absent (avoid duplication)
-    if (!hasHistory && historyContext) {
+    // Add channel history only for new sessions without DB history
+    if (!hasHistory && isNewSession && historyContext) {
       prompt += `
 ## Recent Channel Messages
 ${historyContext}
