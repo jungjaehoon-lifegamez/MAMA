@@ -6,7 +6,7 @@
  *
  * Features:
  * - Model stays loaded in memory (singleton)
- * - HTTP API at localhost:3847
+ * - HTTP API at localhost:${MAMA_HTTP_PORT || 3849}
  * - Health check endpoint
  * - Shared model with MCP server
  *
@@ -40,7 +40,7 @@ const sessionManager = new SessionManager();
 const sessionHandler = createSessionHandler(sessionManager);
 
 // Configuration
-const DEFAULT_PORT = parseInt(process.env.MAMA_HTTP_PORT, 10) || 3847;
+const DEFAULT_PORT = parseInt(process.env.MAMA_HTTP_PORT, 10) || 3849;
 const HOST = '127.0.0.1'; // localhost only for security
 
 // Port file for clients to discover the server
@@ -52,6 +52,9 @@ let modelLoaded = false;
 // Track server instance for shutdown
 let _serverInstance = null;
 let _hasChatCapability = false;
+
+// Track active connections for graceful shutdown
+const connections = new Set();
 
 // Graph handler (optional, passed from standalone)
 let graphHandler = null;
@@ -134,6 +137,12 @@ async function handleRequest(req, res) {
           console.error('[EmbeddingHTTP] Server closed for Standalone takeover');
           cleanupPortFile();
         });
+        // Force close any remaining connections after a short delay
+        setTimeout(() => {
+          for (const socket of connections) {
+            socket.destroy();
+          }
+        }, 50);
       }
     }, 100);
     return;
@@ -295,7 +304,7 @@ let _wssInstance = null;
 /**
  * Start the HTTP embedding server
  *
- * @param {number} port - Port to listen on (default: 3847)
+ * @param {number} port - Port to listen on (default: DEFAULT_PORT)
  * @returns {Promise<http.Server>} HTTP server instance
  */
 async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
@@ -307,7 +316,7 @@ async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
   // Store graph handler if provided
   if (graphHandlerOption) {
     graphHandler = graphHandlerOption;
-    console.error('[EmbeddingHTTP] Graph handler registered (Viewer routes on port 3847)');
+    console.error(`[EmbeddingHTTP] Graph handler registered (Viewer routes on port ${port})`);
   }
   // Check if HTTP server is disabled
   if (process.env.MAMA_DISABLE_HTTP_SERVER === 'true') {
@@ -327,13 +336,13 @@ async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
 
     server.on('error', (error) => {
       if (error.code === 'EADDRINUSE') {
-        console.error(
+        console.warn(
           `[EmbeddingHTTP] Port ${port} already in use, assuming another instance is running`
         );
         // Not a fatal error - another server instance may be running
         resolve(null);
       } else if (error.code === 'EPERM' || error.code === 'EACCES') {
-        console.error(
+        console.warn(
           `[EmbeddingHTTP] Permission denied opening port ${port}, skipping HTTP embedding server (sandboxed environment)`
         );
         // Some environments block listening on localhost; keep MCP server running without HTTP embeddings
@@ -344,12 +353,18 @@ async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
     });
 
     server.listen(port, HOST, () => {
-      console.error(`[EmbeddingHTTP] Running at http://${HOST}:${port}`);
+      console.warn(`[EmbeddingHTTP] Running at http://${HOST}:${port}`);
       // Note: Shutdown token not logged for security (use MAMA_DEBUG=true to enable)
       if (process.env.MAMA_DEBUG === 'true') {
-        console.error(`[EmbeddingHTTP] Shutdown token: ${SHUTDOWN_TOKEN}`);
+        console.warn(`[EmbeddingHTTP] Shutdown token: ${SHUTDOWN_TOKEN}`);
       }
       writePortFile(port);
+
+      // Track connections for graceful shutdown
+      server.on('connection', (socket) => {
+        connections.add(socket);
+        socket.on('close', () => connections.delete(socket));
+      });
 
       // Initialize WebSocket server (unless disabled)
       const skipWebSocket =
