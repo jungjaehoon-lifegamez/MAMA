@@ -509,12 +509,12 @@ export class DiscordGateway extends BaseGateway {
     let enrichedContent = cleanContent;
     if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
       const { getImageAnalyzer } = await import('./image-analyzer.js');
-      const result = await getImageAnalyzer().processContentBlocks(
-        normalizedMessage.contentBlocks,
-        cleanContent,
-        /^\[Image:/
+      const analysisText = await getImageAnalyzer().processContentBlocks(
+        normalizedMessage.contentBlocks
       );
-      enrichedContent = result.text;
+      if (analysisText) {
+        enrichedContent = `${cleanContent}\n\n${analysisText}`;
+      }
     }
 
     // Check if multi-agent mode should handle this message

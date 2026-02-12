@@ -1,30 +1,67 @@
-/**
- * Shared image analyzer using Claude Vision API.
- * Converts images to text descriptions for CLI-based agents.
- */
+// Define proper types
+interface ClaudeResponse {
+  content: Array<{ text: string }>;
+}
 
-import type { ContentBlock } from './types.js';
+interface ClaudeClient {
+  messages: {
+    create: (params: unknown) => Promise<ClaudeResponse>;
+  };
+}
 
-const VISION_MODEL = 'claude-sonnet-4-5-20250929';
+interface ContentBlock {
+  type: string;
+  image_url?: { url: string };
+  localPath?: string;
+  userPrompt?: string;
+}
+
+// Sanitize user input to prevent prompt injection
+function sanitizeUserPrompt(prompt: string): string {
+  if (!prompt) return 'Analyze this image';
+  // Remove potential prompt injection attempts while preserving the user's intent
+  return (
+    prompt
+      .replace(/\\n/g, ' ') // Remove literal \n
+      .replace(/[\]{}]/g, '') // Remove brackets that could interfere with prompts
+      .trim()
+      .substring(0, 500) || // Limit length
+    'Analyze this image'
+  );
+}
 
 export class ImageAnalyzer {
-  /**
-   * Analyze a single image via Claude Vision API.
-   * Returns text description.
-   */
-  async analyze(base64Data: string, mediaType: string, userPrompt: string): Promise<string> {
+  private clientCache: Promise<ClaudeClient> | null = null;
+
+  private async getClient(): Promise<ClaudeClient> {
+    if (!this.clientCache) {
+      this.clientCache = this.createClient();
+    }
+    return this.clientCache;
+  }
+
+  private async createClient(): Promise<ClaudeClient> {
     const { createClaudeClient } = await import('../auth/claude-client.js');
-    const client = await createClaudeClient();
+    return (await createClaudeClient()) as ClaudeClient;
+  }
+
+  async analyze(base64Data: string, mediaType: string, userPrompt: string): Promise<string> {
+    const client = await this.getClient();
+
+    // Sanitize user prompt to prevent injection
+    const safePrompt = sanitizeUserPrompt(userPrompt);
 
     const response = await client.messages.create({
-      model: VISION_MODEL,
-      max_tokens: 2048,
-      system:
-        "You are Claude Code, Anthropic's official CLI for Claude. You analyze images and documents for the user.",
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 4000,
       messages: [
         {
           role: 'user',
           content: [
+            {
+              type: 'text',
+              text: `User prompt: "${safePrompt}"\n\nProvide a detailed description of the image contents. If there is text in the image, transcribe it accurately. Respond in the same language as the user's prompt.`,
+            },
             {
               type: 'image',
               source: {
@@ -33,109 +70,63 @@ export class ImageAnalyzer {
                 data: base64Data,
               },
             },
-            {
-              type: 'text',
-              text: `${userPrompt}\n\nProvide a detailed description of the image contents. If there is text in the image, transcribe it accurately. Respond in the same language as the user's prompt.`,
-            },
           ],
         },
       ],
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const textBlocks = response.content.filter((b: any) => b.type === 'text');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return textBlocks.map((b: any) => b.text).join('\n') || '[No description generated]';
+    return response.content[0]?.text || 'No response from Claude Vision API';
   }
 
-  /**
-   * Process content blocks: analyze all images and return a single enriched text.
-   * Replaces image blocks with analysis results.
-   *
-   * @param contentBlocks - mixed text/image content blocks
-   * @param userText - original user message text
-   * @param skipPattern - regex to filter out auto-generated text blocks (e.g. /^\[Image:/)
-   * @returns { text: enriched text, imagePaths: local file paths of images }
-   */
-  async processContentBlocks(
-    contentBlocks: ContentBlock[],
-    userText: string,
-    skipPattern?: RegExp
-  ): Promise<{ text: string; imagePaths: string[] }> {
-    const analyses: string[] = [];
-    const imagePaths: string[] = [];
-    const textParts: string[] = [];
+  async processContentBlocks(blocks: ContentBlock[]): Promise<string> {
+    const results: string[] = [];
 
-    for (const block of contentBlocks) {
-      if (block.type === 'text') {
-        if (skipPattern && skipPattern.test(block.text ?? '')) continue;
-        if (block.text) textParts.push(block.text);
-      } else if (block.type === 'image') {
-        try {
-          let base64Data: string;
-          let mediaType: string;
+    for (const block of blocks) {
+      if (block.type === 'image_url') {
+        let base64Data: string;
+        let mediaType: string;
 
-          if (block.source?.data) {
-            base64Data = block.source.data;
-            mediaType = block.source.media_type || 'image/jpeg';
-          } else if (block.localPath) {
-            const fs = await import('node:fs');
-            const fileData = fs.readFileSync(block.localPath);
-            base64Data = fileData.toString('base64');
-            mediaType = 'image/jpeg';
+        if (block.image_url?.url) {
+          // Handle data URL format
+          const dataUrl = block.image_url.url;
+          if (dataUrl.startsWith('data:')) {
+            const [header, data] = dataUrl.split(',');
+            mediaType = header.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
+            base64Data = data;
           } else {
-            analyses.push('[Image block without data]');
-            continue;
+            throw new Error('Only data URLs are supported for image analysis');
           }
+        } else if (block.localPath) {
+          const { readFile } = await import('node:fs/promises');
+          const fileData = await readFile(block.localPath);
+          base64Data = fileData.toString('base64');
 
-          if (block.localPath) imagePaths.push(block.localPath);
-
-          const desc = await this.analyze(
-            base64Data,
-            mediaType,
-            userText || 'Describe this image in detail'
-          );
-          analyses.push(desc);
-          console.log(`[ImageAnalyzer] Analyzed image (${desc.length} chars)`);
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          console.error(`[ImageAnalyzer] Analysis failed:`, errMsg);
-          analyses.push(
-            `[Image analysis failed: ${errMsg}. The image was attached but could not be processed.]`
-          );
+          // Determine media type from file extension
+          const ext = block.localPath.split('.').pop()?.toLowerCase();
+          mediaType =
+            {
+              jpg: 'image/jpeg',
+              jpeg: 'image/jpeg',
+              png: 'image/png',
+              gif: 'image/gif',
+              webp: 'image/webp',
+            }[ext || ''] || 'image/jpeg';
+        } else {
+          throw new Error('Image block must have either image_url or localPath');
         }
+
+        const prompt = block.userPrompt || 'Analyze this image';
+        const result = await this.analyze(base64Data, mediaType, prompt);
+        results.push(result);
       }
     }
 
-    if (analyses.length === 0) {
-      return { text: textParts.join('\n'), imagePaths };
-    }
-
-    const analysisText = analyses
-      .map((r, i) => (analyses.length > 1 ? `[Image ${i + 1} Analysis]\n${r}` : r))
-      .join('\n\n');
-
-    const combinedUserText = textParts.join('\n');
-    const pathInfo =
-      imagePaths.length > 0
-        ? `\nOriginal image file path: ${imagePaths.join(', ')}\n(You can send this file using the sendFile tool)\n`
-        : '';
-
-    const text =
-      `${combinedUserText ? combinedUserText + '\n\n' : ''}` +
-      `Below is the image analysis result from Claude Vision API. ` +
-      `Respond based on this analysis. NEVER say "please attach an image".\n` +
-      `${pathInfo}\n--- IMAGE ANALYSIS ---\n${analysisText}\n--- END ---`;
-
-    return { text, imagePaths };
+    return results.join('\n\n---\n\n');
   }
 }
 
-let sharedInstance: ImageAnalyzer | null = null;
-
+let _instance: ImageAnalyzer | null = null;
 export function getImageAnalyzer(): ImageAnalyzer {
-  if (!sharedInstance) {
-    sharedInstance = new ImageAnalyzer();
-  }
-  return sharedInstance;
+  if (!_instance) _instance = new ImageAnalyzer();
+  return _instance;
 }

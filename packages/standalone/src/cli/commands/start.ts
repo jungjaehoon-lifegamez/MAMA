@@ -136,7 +136,10 @@ async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
                   if (portAvailable) {
                     console.log('[EmbeddingServer] Port available, proceeding');
                   } else {
-                    console.warn('[EmbeddingServer] Port still in use after 5s, proceeding anyway');
+                    console.error(
+                      `[EmbeddingServer] Error: Port ${port} still in use after 5s. Exiting to prevent EADDRINUSE.`
+                    );
+                    process.exit(1);
                   }
                   resolve(false);
                 }
@@ -964,6 +967,7 @@ export async function runAgentLoop(
         return { success: false, error: String(error) };
       }
     },
+    enableAutoKillPort: config.enable_auto_kill_port,
   });
 
   // Session API endpoints

@@ -53,6 +53,9 @@ let modelLoaded = false;
 let _serverInstance = null;
 let _hasChatCapability = false;
 
+// Track active connections for graceful shutdown
+const connections = new Set();
+
 // Graph handler (optional, passed from standalone)
 let graphHandler = null;
 
@@ -134,6 +137,12 @@ async function handleRequest(req, res) {
           console.error('[EmbeddingHTTP] Server closed for Standalone takeover');
           cleanupPortFile();
         });
+        // Force close any remaining connections after a short delay
+        setTimeout(() => {
+          for (const socket of connections) {
+            socket.destroy();
+          }
+        }, 50);
       }
     }, 100);
     return;
@@ -327,13 +336,13 @@ async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
 
     server.on('error', (error) => {
       if (error.code === 'EADDRINUSE') {
-        console.error(
+        console.warn(
           `[EmbeddingHTTP] Port ${port} already in use, assuming another instance is running`
         );
         // Not a fatal error - another server instance may be running
         resolve(null);
       } else if (error.code === 'EPERM' || error.code === 'EACCES') {
-        console.error(
+        console.warn(
           `[EmbeddingHTTP] Permission denied opening port ${port}, skipping HTTP embedding server (sandboxed environment)`
         );
         // Some environments block listening on localhost; keep MCP server running without HTTP embeddings
@@ -344,12 +353,18 @@ async function startEmbeddingServer(port = DEFAULT_PORT, options = {}) {
     });
 
     server.listen(port, HOST, () => {
-      console.error(`[EmbeddingHTTP] Running at http://${HOST}:${port}`);
+      console.warn(`[EmbeddingHTTP] Running at http://${HOST}:${port}`);
       // Note: Shutdown token not logged for security (use MAMA_DEBUG=true to enable)
       if (process.env.MAMA_DEBUG === 'true') {
-        console.error(`[EmbeddingHTTP] Shutdown token: ${SHUTDOWN_TOKEN}`);
+        console.warn(`[EmbeddingHTTP] Shutdown token: ${SHUTDOWN_TOKEN}`);
       }
       writePortFile(port);
+
+      // Track connections for graceful shutdown
+      server.on('connection', (socket) => {
+        connections.add(socket);
+        socket.on('close', () => connections.delete(socket));
+      });
 
       // Initialize WebSocket server (unless disabled)
       const skipWebSocket =

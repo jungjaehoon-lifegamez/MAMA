@@ -394,13 +394,12 @@ This protects your credentials from being exposed in chat logs.`;
         // Pre-analyze images via shared ImageAnalyzer
         if (hasImages) {
           const { getImageAnalyzer } = await import('./image-analyzer.js');
-          const result = await getImageAnalyzer().processContentBlocks(
-            message.contentBlocks,
-            messageText || '',
-            /^\[Image:/
-          );
+          const analysisText = await getImageAnalyzer().processContentBlocks(message.contentBlocks);
           contentBlocks.length = 0;
-          contentBlocks.push({ type: 'text', text: result.text });
+          contentBlocks.push({
+            type: 'text',
+            text: `${messageText || ''}\n\n${analysisText}`.trim(),
+          });
         } else {
           for (const block of message.contentBlocks) {
             if (block.type === 'text' && block.text) {
