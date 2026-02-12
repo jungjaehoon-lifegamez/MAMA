@@ -1,6 +1,3 @@
-// @ts-nocheck
-// TODO: Remove @ts-nocheck and fix remaining type errors
-// Current migration state: JS -> TS conversion complete, types need refinement
 /**
  * MAMA (Memory-Augmented MCP Architecture) - Simple Public API
  *
@@ -28,8 +25,15 @@ import os from 'os';
 import crypto from 'crypto';
 
 // Internal modules
-import { learnDecision, createEdgesFromReasoning, DecisionDetection, DecisionRecord } from './decision-tracker.js';
-import { queryDecisionGraph, querySemanticEdges, getAdapter, getPreparedStmt, vectorSearch } from './memory-store.js';
+import { learnDecision, createEdgesFromReasoning, DecisionDetection } from './decision-tracker.js';
+import { DecisionRecord } from './db-manager.js';
+import {
+  queryDecisionGraph,
+  querySemanticEdges,
+  getAdapter,
+  getPreparedStmt,
+  vectorSearch,
+} from './memory-store.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
 import { logProgress, logComplete, logSearching } from './progress-indicator.js';
 import { generateEmbedding } from './embeddings.js';
@@ -93,15 +97,17 @@ interface SearchResult {
 /**
  * Suggest options for mama.suggest()
  */
-interface SuggestOptions {
+export interface SuggestOptions {
   limit?: number;
   threshold?: number;
   format?: 'full' | 'teaser' | 'brief' | 'markdown';
-  recency_boost?: boolean | {
-    weight?: number;
-    scale?: number;
-    decay?: number;
-  };
+  recency_boost?:
+    | boolean
+    | {
+        weight?: number;
+        scale?: number;
+        decay?: number;
+      };
   graph_expansion?: boolean;
 }
 
@@ -130,7 +136,7 @@ interface SaveResult {
 /**
  * Suggest result from mama.suggest()
  */
-interface SuggestResult {
+export interface SuggestResult {
   query: string;
   formatted_context: string;
   raw_decisions?: SimilarDecision[];
@@ -141,7 +147,7 @@ interface SuggestResult {
 /**
  * Recall result from mama.recall()
  */
-interface RecallResult {
+export interface RecallResult {
   id: string;
   topic: string;
   decision: string;
@@ -162,7 +168,7 @@ interface RecallResult {
 /**
  * Update result from mama.update()
  */
-interface UpdateResult {
+export interface UpdateResult {
   success: boolean;
   id: string;
   updated_fields: string[];
@@ -172,7 +178,7 @@ interface UpdateResult {
 /**
  * Checkpoint params
  */
-interface CheckpointParams {
+export interface CheckpointParams {
   summary: string;
   next_steps?: string;
   open_files?: string[];
@@ -181,7 +187,7 @@ interface CheckpointParams {
 /**
  * Checkpoint result
  */
-interface CheckpointResult {
+export interface CheckpointResult {
   success: boolean;
   id: string;
   timestamp: string;
@@ -191,7 +197,7 @@ interface CheckpointResult {
 /**
  * Load checkpoint result
  */
-interface LoadCheckpointResult {
+export interface LoadCheckpointResult {
   found: boolean;
   summary?: string;
   next_steps?: string;
@@ -203,7 +209,7 @@ interface LoadCheckpointResult {
 /**
  * Outcome badge map type
  */
-type OutcomeBadgeMap = Record<string, string | null>;
+export type OutcomeBadgeMap = Record<string, string | null>;
 
 /**
  * Raw semantic edge from database
@@ -224,6 +230,105 @@ interface RawSemanticEdge {
 interface RecallOptions {
   format?: 'json' | 'markdown';
 }
+
+/**
+ * DB count result from aggregate queries
+ */
+interface DBCountResult {
+  count: number;
+}
+
+/**
+ * DB stats result for decision_edges
+ */
+export interface DBStatsResult {
+  total_links: number;
+  llm_created: number;
+  approved: number;
+}
+
+/**
+ * DB link stats result
+ */
+export interface DBLinkStatsResult {
+  total_links: number;
+  llm_created: number;
+  approved: number;
+  unique_decisions: number;
+  relationship_breakdown: string;
+}
+
+/**
+ * Deletion target for auto-generated links
+ */
+interface DeletionTarget {
+  from_id: string;
+  to_id: string;
+  relationship: string;
+}
+
+/**
+ * Post cleanup report structure
+ */
+export interface PostCleanupReport {
+  orphaned_decisions: number;
+  duplicate_links: number;
+  invalid_references: number;
+}
+
+/**
+ * Quality report options
+ */
+interface QualityReportOptions {
+  format?: 'json' | 'markdown' | null;
+  period?: '24h' | '7d' | '30d' | null;
+  thresholds?: QualityThresholds | null;
+}
+
+/**
+ * Quality thresholds
+ */
+interface QualityThresholds {
+  minSuccessRate?: number;
+  maxLatencyMs?: number;
+}
+
+/**
+ * Quality recommendation
+ */
+export interface QualityRecommendation {
+  category: string;
+  severity: string;
+  message: string;
+}
+
+/**
+ * Quality report structure
+ */
+export interface QualityReport {
+  successRate: {
+    period: string;
+    total: number;
+    success: number;
+    failure: number;
+    successRate: string;
+    meetsTarget: boolean;
+  };
+  latency?: {
+    avgMs: number;
+    p50Ms: number;
+    p95Ms: number;
+    maxMs: number;
+    meetsTarget: boolean;
+  };
+}
+
+/**
+ * Period map for time-based queries
+ */
+type PeriodMap = {
+  [key in '24h' | '7d' | '30d']: number;
+};
 
 // Session-level warning cooldown cache (Story 1.1, 1.2)
 // Prevents spam by tracking warned topics per session
@@ -300,8 +405,7 @@ async function save({
   // Map type to user_involvement field
   // Note: Current schema uses user_involvement ('requested', 'approved', 'rejected')
   // Future: Will use decision_type column for proper distinction
-  // eslint-disable-next-line no-unused-vars
-  const userInvolvement = type === 'user_decision' ? 'approved' : null;
+  const _userInvolvement = type === 'user_decision' ? 'approved' : null;
 
   // Create detection object for learnDecision()
   // Convert null to undefined for type compatibility
@@ -430,7 +534,9 @@ async function save({
         }
 
         // Story 1.2: Warning logic (similarity >= 0.85)
-        const highSimilarity = similar_decisions.find((d: SimilarDecision) => (d.similarity ?? 0) >= 0.85);
+        const highSimilarity = similar_decisions.find(
+          (d: SimilarDecision) => (d.similarity ?? 0) >= 0.85
+        );
         if (highSimilarity && !_isTopicInCooldown(topic)) {
           warning = `High similarity (${((highSimilarity.similarity ?? 0) * 100).toFixed(0)}%) with existing decision "${highSimilarity.decision.substring(0, 50)}..."`;
           _markTopicWarned(topic);
@@ -443,7 +549,12 @@ async function save({
       }
     } catch (error: unknown) {
       // Story 1.1 AC3: Best-effort - save succeeds even if auto-search fails
-      const errMsg = error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error);
+      const errMsg =
+        error instanceof Error
+          ? error instanceof Error
+            ? error.message
+            : String(error)
+          : String(error);
       console.error('Auto-search failed:', errMsg);
     }
 
@@ -451,7 +562,12 @@ async function save({
     try {
       reasoning_graph = await _getReasoningGraphInfo(topic, decisionId);
     } catch (error: unknown) {
-      const errMsg = error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error);
+      const errMsg =
+        error instanceof Error
+          ? error instanceof Error
+            ? error.message
+            : String(error)
+          : String(error);
       console.error('Reasoning graph query failed:', errMsg);
     }
 
@@ -461,7 +577,12 @@ async function save({
         await createEdgesFromReasoning(decisionId, reasoning);
       } catch (error: unknown) {
         // Best-effort - save succeeds even if edge creation fails
-        const errMsg = error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error);
+        const errMsg =
+          error instanceof Error
+            ? error instanceof Error
+              ? error.message
+              : String(error)
+            : String(error);
         console.error('Edge creation from reasoning failed:', errMsg);
       }
     }
@@ -527,7 +648,10 @@ function _generateCollaborationHint(similarDecisions: SimilarDecision[]): string
  * @param {string} currentId - Current decision ID
  * @returns {Object} Reasoning graph info
  */
-async function _getReasoningGraphInfo(topic: string, currentId: string): Promise<ReasoningGraphInfo> {
+async function _getReasoningGraphInfo(
+  topic: string,
+  currentId: string
+): Promise<ReasoningGraphInfo> {
   try {
     const chain = await queryDecisionGraph(topic);
 
@@ -544,7 +668,7 @@ async function _getReasoningGraphInfo(topic: string, currentId: string): Promise
       depth: chain.length,
       latest: chain[0]?.id || currentId,
     };
-  } catch (error: unknown) {
+  } catch {
     return {
       topic,
       depth: 1,
@@ -610,10 +734,22 @@ async function recall(topic: string, options: RecallOptions = {}): Promise<unkno
     if (format === 'markdown') {
       // Pass semantic edges to formatter - transform to expected format
       const formatterEdges: SemanticEdges = {
-        refines: semanticEdges.refines.map((e: RawSemanticEdge) => ({ topic: e.topic || '', decision: e.decision || '' })),
-        refined_by: semanticEdges.refined_by.map((e: RawSemanticEdge) => ({ topic: e.topic || '', decision: e.decision || '' })),
-        contradicts: semanticEdges.contradicts.map((e: RawSemanticEdge) => ({ topic: e.topic || '', decision: e.decision || '' })),
-        contradicted_by: semanticEdges.contradicted_by.map((e: RawSemanticEdge) => ({ topic: e.topic || '', decision: e.decision || '' })),
+        refines: semanticEdges.refines.map((e: RawSemanticEdge) => ({
+          topic: e.topic || '',
+          decision: e.decision || '',
+        })),
+        refined_by: semanticEdges.refined_by.map((e: RawSemanticEdge) => ({
+          topic: e.topic || '',
+          decision: e.decision || '',
+        })),
+        contradicts: semanticEdges.contradicts.map((e: RawSemanticEdge) => ({
+          topic: e.topic || '',
+          decision: e.decision || '',
+        })),
+        contradicted_by: semanticEdges.contradicted_by.map((e: RawSemanticEdge) => ({
+          topic: e.topic || '',
+          decision: e.decision || '',
+        })),
       };
       return formatRecall(decisions, formatterEdges);
     }
@@ -685,7 +821,9 @@ async function recall(topic: string, options: RecallOptions = {}): Promise<unkno
       },
     };
   } catch (error: unknown) {
-    throw new Error(`mama.recall() failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `mama.recall() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -714,7 +852,10 @@ interface UpdateOutcomeParams {
   limitation?: string | null;
 }
 
-async function updateOutcome(decisionId: string, { outcome, failure_reason, limitation }: UpdateOutcomeParams): Promise<void> {
+async function updateOutcome(
+  decisionId: string,
+  { outcome, failure_reason, limitation }: UpdateOutcomeParams
+): Promise<void> {
   if (!decisionId || typeof decisionId !== 'string') {
     throw new Error('mama.updateOutcome() requires decisionId (string)');
   }
@@ -756,7 +897,9 @@ async function updateOutcome(decisionId: string, { outcome, failure_reason, limi
 
     return;
   } catch (error: unknown) {
-    throw new Error(`mama.updateOutcome() failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `mama.updateOutcome() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -816,13 +959,15 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
             ...decision,
             graph_source: 'supersedes_chain',
             graph_rank: 0.8, // Lower rank than primary
-            similarity: candidate.similarity * 0.9, // Inherit similarity, slightly reduced
+            similarity: (candidate.similarity ?? 0) * 0.9, // Inherit similarity, slightly reduced
             related_to: candidate.id, // Track relationship
           });
         }
       }
     } catch (error: unknown) {
-      console.warn(`Failed to get supersedes chain for ${candidate.topic}: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `Failed to get supersedes chain for ${candidate.topic}: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
 
     // 2. Add semantic edges (refines, contradicts, builds_on, debates, synthesizes)
@@ -834,7 +979,7 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
         contradicts: rawEdges.contradicts || [],
         contradicted_by: rawEdges.contradicted_by || [],
         builds_on: rawEdges.builds_on || [],
-        built_upon_by: rawEdges.built_upon_by || [],
+        built_on_by: rawEdges.built_on_by || [],
         debates: rawEdges.debates || [],
         debated_by: rawEdges.debated_by || [],
         synthesizes: rawEdges.synthesizes || [],
@@ -843,7 +988,13 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
 
       // Helper to add edge to graph
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const addEdge = (edge: any, idField: string, source: string, rank: number, simFactor: number): void => {
+      const addEdge = (
+        edge: any,
+        idField: string,
+        source: string,
+        rank: number,
+        simFactor: number
+      ): void => {
         const id = edge[idField];
         if (!graphEnhanced.has(id)) {
           graphEnhanced.set(id, {
@@ -854,7 +1005,7 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
             created_at: edge.created_at,
             graph_source: source,
             graph_rank: rank,
-            similarity: candidate.similarity * simFactor,
+            similarity: (candidate.similarity ?? 0) * simFactor,
             related_to: candidate.id,
             edge_reason: edge.reason,
           });
@@ -881,9 +1032,9 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
         addEdge(edge, 'to_id', 'builds_on', 0.75, 0.9);
       }
 
-      // Add built_upon_by edges (someone built on this decision)
-      for (const edge of edges.built_upon_by) {
-        addEdge(edge, 'from_id', 'built_upon_by', 0.75, 0.9);
+      // Add built_on_by edges (someone built on this decision)
+      for (const edge of edges.built_on_by) {
+        addEdge(edge, 'from_id', 'built_on_by', 0.75, 0.9);
       }
 
       // Add debates edges (alternative view)
@@ -906,7 +1057,9 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<any[]> {
         addEdge(edge, 'from_id', 'synthesized_by', 0.7, 0.88);
       }
     } catch (error: unknown) {
-      console.warn(`Failed to get semantic edges for ${candidate.id}: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `Failed to get semantic edges for ${candidate.id}: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
@@ -963,7 +1116,10 @@ interface RecencyBoostOptions {
   disableRecency?: boolean;
 }
 
-function applyRecencyBoost(results: SearchCandidate[], options: RecencyBoostOptions = {}): SearchCandidate[] {
+function applyRecencyBoost(
+  results: SearchCandidate[],
+  options: RecencyBoostOptions = {}
+): SearchCandidate[] {
   const {
     recencyWeight = 0.3,
     recencyScale = 7,
@@ -980,7 +1136,8 @@ function applyRecencyBoost(results: SearchCandidate[], options: RecencyBoostOpti
   return results
     .map((r: SearchCandidate) => {
       // created_at is stored in milliseconds in the database
-      const createdAt = typeof r.created_at === 'number' ? r.created_at : Date.parse(r.created_at || '0');
+      const createdAt =
+        typeof r.created_at === 'number' ? r.created_at : Date.parse(r.created_at || '0');
       const ageInDays = (now - createdAt) / (86400 * 1000);
 
       // Gaussian Decay: exp(-((age / scale)^2) / (2 * ln(1 / decay)))
@@ -1102,7 +1259,9 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       }
     } catch (vectorError: unknown) {
       // Fallback to keyword search if vector search unavailable
-      console.warn(`Vector search failed: ${vectorError instanceof Error ? vectorError.message : String(vectorError)}, falling back to keyword search`);
+      console.warn(
+        `Vector search failed: ${vectorError instanceof Error ? vectorError.message : String(vectorError)}, falling back to keyword search`
+      );
       searchMethod = 'keyword';
 
       // Keyword search fallback
@@ -1131,8 +1290,8 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         LIMIT ?
       `);
 
-      const rows = await stmt.all(...likeParams, limit);
-      results = rows.map((row) => ({
+      const rows = (await stmt.all(...likeParams, limit)) as DecisionRecord[];
+      results = rows.map((row: DecisionRecord) => ({
         ...row,
         similarity: 0.75, // Assign moderate similarity for keyword matches
       }));
@@ -1232,7 +1391,9 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     };
   } catch (error: unknown) {
     // Graceful degradation
-    console.warn(`mama.suggest() failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `mama.suggest() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
     return null;
   }
 }
@@ -1247,7 +1408,6 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function rerankWithLLM(userQuestion: string, results: any[]): Promise<any[]> {
   try {
-
     const prompt = `User asked: "${userQuestion}"
 
 Found decisions (ranked by vector similarity):
@@ -1270,7 +1430,9 @@ Example: { "ranking": [2, 0, 4, 1, 3] } means 3rd is most relevant, then 1st, th
     // Reorder results based on LLM ranking
     return parsed.ranking.map((idx: number) => results[idx]).filter(Boolean);
   } catch (error: unknown) {
-    console.warn(`Re-ranking failed: ${error instanceof Error ? error.message : String(error)}, using vector ranking`);
+    console.warn(
+      `Re-ranking failed: ${error instanceof Error ? error.message : String(error)}, using vector ranking`
+    );
     return results; // Fallback to vector ranking
   }
 }
@@ -1312,7 +1474,9 @@ async function listDecisions(options: ListDecisionsOptions = {}): Promise<any> {
 
     return decisions;
   } catch (error: unknown) {
-    throw new Error(`mama.listDecisions() failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `mama.listDecisions() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1352,7 +1516,9 @@ async function saveCheckpoint(
 
     return result.lastInsertRowid;
   } catch (error: unknown) {
-    throw new Error(`Failed to save checkpoint: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Failed to save checkpoint: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1386,17 +1552,19 @@ async function loadCheckpoint(): Promise<any> {
 
     if (checkpoint) {
       try {
-        checkpoint.open_files = typeof checkpoint.open_files === 'string'
-          ? JSON.parse(checkpoint.open_files)
-          : checkpoint.open_files || [];
+        checkpoint.open_files =
+          typeof checkpoint.open_files === 'string'
+            ? JSON.parse(checkpoint.open_files)
+            : checkpoint.open_files || [];
       } catch {
         checkpoint.open_files = [];
       }
 
       try {
-        checkpoint.recent_conversation = typeof checkpoint.recent_conversation === 'string'
-          ? JSON.parse(checkpoint.recent_conversation || '[]')
-          : checkpoint.recent_conversation || [];
+        checkpoint.recent_conversation =
+          typeof checkpoint.recent_conversation === 'string'
+            ? JSON.parse(checkpoint.recent_conversation || '[]')
+            : checkpoint.recent_conversation || [];
       } catch {
         checkpoint.recent_conversation = [];
       }
@@ -1404,7 +1572,9 @@ async function loadCheckpoint(): Promise<any> {
 
     return checkpoint || null;
   } catch (error: unknown) {
-    throw new Error(`Failed to load checkpoint: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Failed to load checkpoint: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1428,19 +1598,25 @@ async function listCheckpoints(limit: number = 10): Promise<any[]> {
 
     return checkpoints.map((c: CheckpointRow) => {
       try {
-        c.open_files = typeof c.open_files === 'string' ? JSON.parse(c.open_files) : c.open_files || [];
+        c.open_files =
+          typeof c.open_files === 'string' ? JSON.parse(c.open_files) : c.open_files || [];
       } catch {
         c.open_files = [];
       }
       try {
-        c.recent_conversation = typeof c.recent_conversation === 'string' ? JSON.parse(c.recent_conversation) : c.recent_conversation || [];
+        c.recent_conversation =
+          typeof c.recent_conversation === 'string'
+            ? JSON.parse(c.recent_conversation)
+            : c.recent_conversation || [];
       } catch {
         c.recent_conversation = [];
       }
       return c;
     });
   } catch (error: unknown) {
-    throw new Error(`Failed to list checkpoints: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Failed to list checkpoints: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1467,7 +1643,14 @@ interface ProposeLinkParams {
   evidence?: string;
 }
 
-async function proposeLink({ from_id, to_id, relationship, reason, decision_id, evidence }: ProposeLinkParams): Promise<void> {
+async function proposeLink({
+  from_id,
+  to_id,
+  relationship,
+  reason,
+  decision_id,
+  evidence,
+}: ProposeLinkParams): Promise<void> {
   if (!from_id || !to_id || !relationship || !reason) {
     throw new Error('proposeLink() requires from_id, to_id, relationship, and reason');
   }
@@ -1507,7 +1690,9 @@ async function proposeLink({ from_id, to_id, relationship, reason, decision_id, 
 
     return;
   } catch (error: unknown) {
-    throw new Error(`proposeLink() failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `proposeLink() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1546,7 +1731,9 @@ async function approveLink(from_id: string, to_id: string, relationship: string)
 
     return;
   } catch (error: unknown) {
-    throw new Error(`approveLink() failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `approveLink() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1561,7 +1748,12 @@ async function approveLink(from_id: string, to_id: string, relationship: string)
  * @param {string} [reason] - Optional reason for rejection
  * @returns {Promise<void>}
  */
-async function rejectLink(from_id: string, to_id: string, relationship: string, reason?: string): Promise<void> {
+async function rejectLink(
+  from_id: string,
+  to_id: string,
+  relationship: string,
+  reason?: string
+): Promise<void> {
   if (!from_id || !to_id || !relationship) {
     throw new Error('rejectLink() requires from_id, to_id, and relationship');
   }
@@ -1585,7 +1777,9 @@ async function rejectLink(from_id: string, to_id: string, relationship: string, 
 
     return;
   } catch (error: unknown) {
-    throw new Error(`rejectLink() failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `rejectLink() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1640,7 +1834,9 @@ async function getPendingLinks(options: GetPendingLinksOptions = {}): Promise<an
 
     return links;
   } catch (error: unknown) {
-    throw new Error(`getPendingLinks() failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `getPendingLinks() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1734,7 +1930,9 @@ async function deprecateAutoLinks(options: DeprecateAutoLinksOptions = {}): Prom
       })),
     };
   } catch (error: unknown) {
-    throw new Error(`deprecateAutoLinks() failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `deprecateAutoLinks() failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1806,7 +2004,6 @@ function scanAutoLinks(): any {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function createLinkBackup(targetLinks: EdgeLink[]): any {
-
   const backupDir = path.join(os.homedir(), '.claude', 'mama-backups');
 
   // Create backup directory if not exists
@@ -1984,7 +2181,6 @@ ${samples
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function restoreLinkBackup(backupFile: string): any {
-
   // Read backup file
   const backupJson = fs.readFileSync(backupFile, 'utf8');
   const backupData = JSON.parse(backupJson);
@@ -2150,7 +2346,7 @@ function deleteAutoLinks(batchSize: number = 100, dryRun: boolean = true): any {
       warning_message: largeDelection
         ? `Warning: More than 1000 links (${deletionTargets.length}) will be deleted.`
         : null,
-      sample_links: deletionTargets.slice(0, 5).map((l) => ({
+      sample_links: deletionTargets.slice(0, 5).map((l: DeletionTarget) => ({
         from_id: l.from_id,
         to_id: l.to_id,
         relationship: l.relationship,
@@ -2323,7 +2519,19 @@ function validateCleanupResult() {
  * @param {Object} report - Validation report data
  * @returns {string} Markdown formatted report
  */
-function generatePostCleanupReportMarkdown(report) {
+function generatePostCleanupReportMarkdown(report: {
+  validated_at: string;
+  status: string;
+  message: string;
+  statistics: {
+    total_links: number;
+    remaining_auto_links: number;
+    remaining_ratio: string;
+    protected_links: number;
+    deletion_targets: number;
+  };
+  recommendation: string;
+}): string {
   let markdown = `# Post-Cleanup Validation Report
 
 **Generated:** ${report.validated_at}
@@ -2378,10 +2586,11 @@ If you need to restore the deleted links:
  */
 function calculateCoverage() {
   const adapter = getAdapter();
-  
 
   // Total decisions
-  const totalDecisions = adapter.prepare(`SELECT COUNT(*) as count FROM decisions`).get().count;
+  const totalDecisions = (
+    adapter.prepare(`SELECT COUNT(*) as count FROM decisions`).get() as DBCountResult
+  ).count;
 
   if (totalDecisions === 0) {
     return {
@@ -2396,31 +2605,35 @@ function calculateCoverage() {
   // Narrative coverage: Decisions with evidence, alternatives, and risks filled
   // Note: Using existing schema fields (evidence, alternatives, risks) instead of
   // 5-layer fields (specificity, evidence, reasoning, tension, continuity) mentioned in story
-  const completeNarratives = adapter
-    .prepare(
-      `
+  const completeNarratives = (
+    adapter
+      .prepare(
+        `
     SELECT COUNT(*) as count FROM decisions
     WHERE evidence IS NOT NULL AND evidence != ''
       AND alternatives IS NOT NULL AND alternatives != ''
       AND risks IS NOT NULL AND risks != ''
   `
-    )
-    .get().count;
+      )
+      .get() as DBCountResult
+  ).count;
 
   const narrativeCoverage = (completeNarratives / totalDecisions) * 100;
 
   // Link coverage: Decisions with at least one link
-  const decisionsWithLinks = adapter
-    .prepare(
-      `
+  const decisionsWithLinks = (
+    adapter
+      .prepare(
+        `
     SELECT COUNT(DISTINCT d.id) as count FROM decisions d
     WHERE EXISTS (
       SELECT 1 FROM decision_edges e
       WHERE e.from_id = d.id OR e.to_id = d.id
     )
   `
-    )
-    .get().count;
+      )
+      .get() as DBCountResult
+  ).count;
 
   const linkCoverage = (decisionsWithLinks / totalDecisions) * 100;
 
@@ -2446,18 +2659,25 @@ function calculateCoverage() {
  * @param {string} mode - 'full' (narrative+links) or 'summary' (summary only)
  * @returns {void}
  */
-function logRestartAttempt(sessionId, status, failureReason, latencyMs, mode = 'full') {
+function logRestartAttempt(
+  sessionId: string,
+  status: string,
+  failureReason: string | null,
+  latencyMs: number,
+  mode: string = 'full'
+): void {
   const adapter = getAdapter();
-  
 
   const timestamp = new Date().toISOString();
 
-  adapter.prepare(
-    `
+  adapter
+    .prepare(
+      `
     INSERT INTO restart_metrics (timestamp, session_id, status, failure_reason, latency_ms, mode)
     VALUES (?, ?, ?, ?, ?, ?)
   `
-  ).run(timestamp, sessionId, status, failureReason, latencyMs, mode);
+    )
+    .run(timestamp, sessionId, status, failureReason, latencyMs, mode);
 
   // Performance warning if exceeds threshold
   const threshold = mode === 'summary' ? 1000 : 2500;
@@ -2483,11 +2703,10 @@ function logRestartAttempt(sessionId, status, failureReason, latencyMs, mode = '
  * @param {string} period - '24h', '7d', or '30d'
  * @returns {Object} Success rate metrics
  */
-function calculateRestartSuccessRate(period = '7d') {
+function calculateRestartSuccessRate(period: '24h' | '7d' | '30d' = '7d') {
   const adapter = getAdapter();
-  
 
-  const periodMap = {
+  const periodMap: PeriodMap = {
     '24h': 1,
     '7d': 7,
     '30d': 30,
@@ -2507,7 +2726,7 @@ function calculateRestartSuccessRate(period = '7d') {
     WHERE timestamp >= ?
   `
     )
-    .get(since);
+    .get(since) as { total: number; success: number; failure: number };
 
   const successRate = stats.total > 0 ? stats.success / stats.total : 0;
 
@@ -2531,11 +2750,10 @@ function calculateRestartSuccessRate(period = '7d') {
  * @param {string|null} mode - 'full', 'summary', or null (all modes)
  * @returns {Object} Latency percentile metrics
  */
-function calculateRestartLatency(period = '7d', mode = null) {
+function calculateRestartLatency(period: '24h' | '7d' | '30d' = '7d', mode: string | null = null) {
   const adapter = getAdapter();
-  
 
-  const periodMap = { '24h': 1, '7d': 7, '30d': 30 };
+  const periodMap: PeriodMap = { '24h': 1, '7d': 7, '30d': 30 };
   const days = periodMap[period] || 7;
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
@@ -2545,7 +2763,7 @@ function calculateRestartLatency(period = '7d', mode = null) {
     WHERE timestamp >= ? AND status = 'success'
   `;
 
-  const params = [since];
+  const params: string[] = [since];
 
   if (mode) {
     query += ` AND mode = ?`;
@@ -2554,14 +2772,14 @@ function calculateRestartLatency(period = '7d', mode = null) {
 
   query += ` ORDER BY latency_ms ASC`;
 
-  const rows = adapter.prepare(query).all(...params);
-  const latencies = rows.map((r) => r.latency_ms);
+  const rows = adapter.prepare(query).all(...params) as { latency_ms: number }[];
+  const latencies = rows.map((r: { latency_ms: number }) => r.latency_ms);
 
   if (latencies.length === 0) {
     return { p50: 0, p95: 0, p99: 0, count: 0, mode: mode || 'all' };
   }
 
-  const percentile = (arr, p) => {
+  const percentile = (arr: number[], p: number): number => {
     const index = Math.ceil((p / 100) * arr.length) - 1;
     return arr[Math.max(0, index)];
   };
@@ -2584,9 +2802,15 @@ function calculateRestartLatency(period = '7d', mode = null) {
  * @param {boolean} includeLatency - Whether to include latency percentiles
  * @returns {Object} Combined restart metrics
  */
-function getRestartMetrics(period = '7d', includeLatency = true) {
+function getRestartMetrics(period: '24h' | '7d' | '30d' = '7d', includeLatency = true) {
   const successRate = calculateRestartSuccessRate(period);
-  const result = { successRate };
+  const result: {
+    successRate: ReturnType<typeof calculateRestartSuccessRate>;
+    latency?: {
+      full: ReturnType<typeof calculateRestartLatency>;
+      summary: ReturnType<typeof calculateRestartLatency>;
+    };
+  } = { successRate };
 
   if (includeLatency) {
     result.latency = {
@@ -2608,7 +2832,6 @@ function getRestartMetrics(period = '7d', includeLatency = true) {
  */
 function calculateQuality() {
   const adapter = getAdapter();
-  
 
   // Narrative quality: Average completeness for each narrative field
   const narrativeQuality = adapter
@@ -2621,7 +2844,7 @@ function calculateQuality() {
     FROM decisions
   `
     )
-    .get();
+    .get() as { evidence: number; alternatives: number; risks: number };
 
   // Link quality: "Rich" reason ratio (reason > 50 chars) and approved link ratio
   const linkStats = adapter
@@ -2634,7 +2857,7 @@ function calculateQuality() {
     FROM decision_edges
   `
     )
-    .get();
+    .get() as { total: number; rich: number; approved: number };
 
   const linkQuality =
     linkStats.total > 0 ? ((linkStats.rich / linkStats.total) * 100).toFixed(1) : '0.0';
@@ -2675,7 +2898,7 @@ function calculateQuality() {
  * @param {number} [options.thresholds.restartLatencyP95Summary=1000] - Summary mode p95 latency threshold (ms)
  * @returns {Object|string} Quality report as JSON or Markdown
  */
-function generateQualityReport(options = {}) {
+function generateQualityReport(options: QualityReportOptions = {}) {
   const { format = 'json', period = '7d', thresholds = {} } = options;
 
   const defaultThresholds = {
@@ -2692,7 +2915,11 @@ function generateQualityReport(options = {}) {
   const quality = calculateQuality();
 
   // Story 4.2: Add restart metrics
-  const restartMetrics = getRestartMetrics(period, true);
+  const validPeriod = (['24h', '7d', '30d'].includes(period || '7d') ? period : '7d') as
+    | '24h'
+    | '7d'
+    | '30d';
+  const restartMetrics = getRestartMetrics(validPeriod, true);
 
   const recommendations = [];
 
@@ -2731,8 +2958,7 @@ function generateQualityReport(options = {}) {
 
   // Story 4.2: Check restart success rate threshold (only if there's data)
   if (restartMetrics.successRate.total > 0 && !restartMetrics.successRate.meetsTarget) {
-    // eslint-disable-next-line no-unused-vars
-    const successRatePct = parseFloat(restartMetrics.successRate.successRate);
+    const _successRatePct = parseFloat(restartMetrics.successRate.successRate);
     recommendations.push({
       type: 'restart_success_rate',
       message: `Restart success rate below target (95%). Analyze failure reasons and improve checkpoint quality.`,
@@ -2794,7 +3020,35 @@ function generateQualityReport(options = {}) {
  * @param {Object} report - Quality report data
  * @returns {string} Markdown-formatted report
  */
-function formatQualityReportMarkdown(report) {
+function formatQualityReportMarkdown(report: {
+  generated_at: string;
+  period: string | null;
+  coverage: {
+    narrativeCoverage: string;
+    linkCoverage: string;
+    totalDecisions: number;
+    completeNarratives: number;
+    decisionsWithLinks: number;
+  };
+  quality: {
+    narrativeQuality: { evidence: string; alternatives: string; risks: string };
+    linkQuality: {
+      richReasonRatio: string;
+      approvedRatio: string;
+      totalLinks: number;
+      richLinks: number;
+      approvedLinks: number;
+    };
+  };
+  restart: ReturnType<typeof getRestartMetrics>;
+  thresholds: Record<string, number>;
+  recommendations: Array<{
+    type: string;
+    message: string;
+    target?: string | number;
+    current?: string | number;
+  }>;
+}): string {
   const { generated_at, period, coverage, quality, restart, thresholds, recommendations } = report;
 
   let markdown = `# 📊 MAMA Quality Report\n\n`;
