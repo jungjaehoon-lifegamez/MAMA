@@ -54,6 +54,9 @@ export async function stopCommand(): Promise<void> {
     // Best-effort cleanup: stop any lingering daemon wrapper processes
     await stopLingeringDaemonProcesses(pid);
 
+    // Best-effort cleanup: kill any processes still holding MAMA ports
+    await killProcessesOnPorts([3847, 3849]);
+
     console.log('MAMA has been stopped.\n');
   } catch (error) {
     console.log('❌');
@@ -128,6 +131,46 @@ async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
       } catch {
         // ignore
       }
+    }
+  }
+}
+
+/**
+ * Kill processes occupying specified ports (cleanup for zombie MAMA processes)
+ */
+async function killProcessesOnPorts(ports: number[]): Promise<void> {
+  for (const port of ports) {
+    try {
+      const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+      if (!output) continue;
+
+      const pids = output
+        .split('\n')
+        .map((p) => parseInt(p.trim(), 10))
+        .filter((p) => Number.isFinite(p) && p !== process.pid);
+      for (const pid of pids) {
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          /* already dead */
+        }
+      }
+
+      if (pids.length > 0) {
+        await sleep(1000);
+        for (const pid of pids) {
+          if (isProcessRunning(pid)) {
+            try {
+              process.kill(pid, 'SIGKILL');
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        console.log(`✓ Cleaned up ${pids.length} process(es) on port ${port}`);
+      }
+    } catch {
+      /* lsof not available or no processes */
     }
   }
 }

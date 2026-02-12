@@ -1526,9 +1526,18 @@ function maskToken(token: string): string {
   return '***[redacted]***';
 }
 
+function isLocalRequest(req: IncomingMessage): boolean {
+  const remoteAddr = req.socket?.remoteAddress;
+  return remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1';
+}
+
 function isAuthenticated(req: IncomingMessage): boolean {
   const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
   if (!adminToken) {
+    // Allow local requests without token (setup wizard, local dashboard)
+    if (isLocalRequest(req)) {
+      return true;
+    }
     console.warn(
       '[GraphAPI] No admin token configured. Set MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN environment variable.'
     );
