@@ -18,7 +18,7 @@ Call tools via JSON block:
 - **Read**(path) — Read file
 - **Write**(path, content) — Write file
 - **Bash**(command, workdir?) — Execute command (60s timeout)
-- **discord_send**(channel_id, message?, file_path?) — Send to Discord
+- **discord_send**(channel_id, message?, file_path?) — Send message or file to Discord. Use file_path to send images/documents (e.g. from ~/.mama/workspace/media/inbound/)
 
 ## Cron (Scheduled Jobs)
 

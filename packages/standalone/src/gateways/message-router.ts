@@ -390,12 +390,21 @@ This protects your credentials from being exposed in chat logs.`;
           contentBlocks.push({ type: 'text', text: messageText });
         }
 
-        // Add all content blocks (text info + images + files)
-        for (const block of message.contentBlocks) {
-          // Include text blocks (contain path info like "[Image: x.jpg, saved at: /path]")
-          // Include image blocks with source (base64 data)
-          if (block.type === 'text' || (block.type === 'image' && block.source)) {
-            contentBlocks.push(block);
+        // Pre-analyze images via shared ImageAnalyzer
+        if (hasImages) {
+          const { getImageAnalyzer } = await import('./image-analyzer.js');
+          const result = await getImageAnalyzer().processContentBlocks(
+            message.contentBlocks,
+            messageText || '',
+            /^\[Image:/
+          );
+          contentBlocks.length = 0;
+          contentBlocks.push({ type: 'text', text: result.text });
+        } else {
+          for (const block of message.contentBlocks) {
+            if (block.type === 'text' && block.text) {
+              contentBlocks.push(block);
+            }
           }
         }
 

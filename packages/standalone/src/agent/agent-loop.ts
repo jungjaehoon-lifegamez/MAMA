@@ -1256,16 +1256,15 @@ export class AgentLoop {
               const status = block.is_error ? 'ERROR' : 'SUCCESS';
               parts.push(`[Tool Result: ${status}]\n${block.content}`);
             } else if (block.type === 'image') {
-              // Convert image to file path instruction for Claude Code
-              // MANDATORY: Claude MUST use Read tool to view the image before responding
               if (block.localPath) {
                 parts.push(
-                  `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
-                    `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.\n` +
-                    `Do NOT respond without first reading the image. The user expects you to see and analyze the image content.`
+                  `⚠️ CRITICAL: The user has uploaded an image file.\n` +
+                    `Image path: ${block.localPath}\n` +
+                    `You MUST call the Read tool on "${block.localPath}" to view this image FIRST.\n` +
+                    `DO NOT describe or guess the image contents without reading it.\n` +
+                    `DO NOT say you cannot read images - the Read tool supports image files.`
                 );
               } else if (block.source?.data) {
-                // Base64 image - save to workspace and reference it
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 const fs = require('fs');
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1278,13 +1277,16 @@ export class AgentLoop {
                   'inbound'
                 );
                 fs.mkdirSync(mediaDir, { recursive: true });
-                const imagePath = path.join(mediaDir, `${Date.now()}.jpg`);
+                const ext = block.source.media_type?.includes('png') ? '.png' : '.jpg';
+                const imagePath = path.join(mediaDir, `${Date.now()}${ext}`);
                 try {
                   fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
                   parts.push(
-                    `**[MANDATORY IMAGE]** The user has attached an image at: ${imagePath}\n` +
-                      `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.\n` +
-                      `Do NOT respond without first reading the image. The user expects you to see and analyze the image content.`
+                    `⚠️ CRITICAL: The user has uploaded an image file.\n` +
+                      `Image path: ${imagePath}\n` +
+                      `You MUST call the Read tool on "${imagePath}" to view this image FIRST.\n` +
+                      `DO NOT describe or guess the image contents without reading it.\n` +
+                      `DO NOT say you cannot read images - the Read tool supports image files.`
                   );
                 } catch {
                   parts.push('[Image attached but could not be processed]');
@@ -1330,10 +1332,12 @@ export class AgentLoop {
             if (block.type === 'text') {
               parts.push(block.text);
             } else if (block.type === 'image' && block.localPath) {
-              // Include image instructions for persistent CLI as well
               parts.push(
-                `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
-                  `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
+                `⚠️ CRITICAL: The user has uploaded an image file.\n` +
+                  `Image path: ${block.localPath}\n` +
+                  `You MUST call the Read tool on "${block.localPath}" to view this image FIRST.\n` +
+                  `DO NOT describe or guess the image contents without reading it.\n` +
+                  `DO NOT say you cannot read images - the Read tool supports image files.`
               );
             } else if (block.type === 'image' && block.source?.data) {
               // Base64-encoded image — save to disk so persistent CLI can read it
@@ -1349,12 +1353,16 @@ export class AgentLoop {
                 'inbound'
               );
               fs.mkdirSync(mediaDir, { recursive: true });
-              const imagePath = path.join(mediaDir, `${Date.now()}.jpg`);
+              const ext = block.source.media_type?.includes('png') ? '.png' : '.jpg';
+              const imagePath = path.join(mediaDir, `${Date.now()}${ext}`);
               try {
                 fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
                 parts.push(
-                  `**[MANDATORY IMAGE]** The user has attached an image at: ${imagePath}\n` +
-                    `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
+                  `⚠️ CRITICAL: The user has uploaded an image file.\n` +
+                    `Image path: ${imagePath}\n` +
+                    `You MUST call the Read tool on "${imagePath}" to view this image FIRST.\n` +
+                    `DO NOT describe or guess the image contents without reading it.\n` +
+                    `DO NOT say you cannot read images - the Read tool supports image files.`
                 );
               } catch {
                 parts.push('[Image attached but could not be processed]');

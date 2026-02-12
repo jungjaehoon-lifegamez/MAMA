@@ -197,7 +197,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
 
   switch (type) {
     case 'send':
-      if (!content) {
+      if (!content && !message.attachments?.length) {
         clientInfo.ws.send(
           JSON.stringify({
             type: 'error',
@@ -235,12 +235,49 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           }
         }, 10000); // Every 10 seconds
 
+        // Build contentBlocks from attachments (files are pre-compressed by upload-handler)
+        let contentBlocks = undefined;
+        if (message.attachments && message.attachments.length > 0) {
+          contentBlocks = [];
+          for (const att of message.attachments) {
+            try {
+              const data = await fs.readFile(att.filePath);
+              const mediaType = att.contentType || 'image/jpeg';
+              const base64 = data.toString('base64');
+
+              if (mediaType.startsWith('image/') && mediaType !== 'image/svg+xml') {
+                contentBlocks.push({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: mediaType,
+                    data: base64,
+                  },
+                });
+              } else {
+                // PDF/documents: instruct agent to read the file
+                contentBlocks.push({
+                  type: 'text',
+                  text: `[Document uploaded: ${att.filename}]\nFile path: ${att.filePath}\nPlease use the Read tool to analyze this document.`,
+                });
+              }
+
+              console.error(
+                `[WebSocket] Attached: ${att.filename} (${data.length} bytes, ${mediaType})`
+              );
+            } catch (err) {
+              console.error(`[WebSocket] Failed to read attachment ${att.filePath}:`, err.message);
+            }
+          }
+        }
+
         const normalizedMessage = {
           source: clientInfo.osAgentMode ? 'viewer' : 'mobile',
           channelId: 'mama_os_main', // Fixed channel for all MAMA OS viewers
           channelName: clientInfo.osAgentMode ? 'MAMA OS' : 'Mobile App', // Human-readable channel name
           userId: clientInfo.userId,
-          text: content,
+          text: content || '',
+          contentBlocks,
           metadata: {
             clientId,
             sessionId: clientInfo.sessionId,

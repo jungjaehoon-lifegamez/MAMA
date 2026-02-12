@@ -1206,7 +1206,21 @@
                   </svg>
                 </button>
               </div>
+              <!-- Attachment preview -->
+              <div id="chat-attachment-preview" class="hidden flex items-center gap-2 px-2 py-1 bg-mama-lavender-light rounded-lg border border-mama-lavender-dark">
+                <img id="chat-attachment-thumb" class="w-10 h-10 object-cover rounded" src="" alt="preview" />
+                <span id="chat-attachment-name" class="text-xs text-gray-600 truncate max-w-[120px]"></span>
+                <button class="text-gray-400 hover:text-red-500 ml-auto" onclick="clearAttachment()" title="Remove">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/></svg>
+                </button>
+              </div>
               <div class="flex items-center gap-1">
+                <input type="file" id="chat-file-input" class="hidden" accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx" onchange="handleFileSelect(event)" />
+                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach file">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
                 <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors relative" id="chat-mic" onclick="toggleVoiceInput()" title="Voice input">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1832,7 +1846,49 @@
           .catch(() => result.innerHTML = '<span class="text-red-500">Connection failed</span>');
       }
 
-      function sendChatMessage() {
+      async function sendChatMessage() {
+        if (pendingAttachment) {
+          const file = pendingAttachment;
+          const dataUrl = window._pendingAttachmentDataUrl;
+          clearAttachment();
+
+          const formData = new FormData();
+          formData.append('file', file);
+
+          try {
+            const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+            if (!resp.ok) throw new Error('Upload failed');
+            const data = await resp.json();
+
+            const input = document.getElementById('chat-input');
+            const isImage = file.type.startsWith('image/');
+            const defaultMsg = isImage ? 'What is in this image?' : 'Analyze this document';
+            const message = input.value.trim() || defaultMsg;
+
+            const mediaUrl = '/api/media/' + data.filename;
+            const attachMeta = { mediaUrl, filename: data.filename, originalName: file.name, contentType: file.type, isImage };
+
+            // Save with attachment metadata for history persistence
+            chat.addUserMessageWithAttachment(message, attachMeta);
+
+            chat.enableSend(false);
+            chat.ws.send(JSON.stringify({
+              type: 'send',
+              sessionId: chat.sessionId,
+              content: message,
+              attachments: [{
+                filePath: data.filePath,
+                filename: data.filename,
+                contentType: data.contentType,
+              }],
+            }));
+
+            input.value = '';
+          } catch (err) {
+            chat.addSystemMessage('Upload failed: ' + err.message, 'error');
+          }
+          return;
+        }
         chat.send();
       }
 
@@ -2030,6 +2086,85 @@
       window.updateTTSSpeed = updateTTSSpeed;
       window.toggleHandsFree = toggleHandsFree;
       window.toggleVoiceInput = toggleVoiceInput;
+
+      // File attachment state
+      let pendingAttachment = null;
+
+      const FILE_ICONS = {
+        'application/pdf': '📄',
+        'text/plain': '📝',
+        'text/csv': '📊',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📃',
+        'application/msword': '📃',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊',
+        'application/vnd.ms-excel': '📊',
+      };
+
+      function getFileIcon(mimeType) {
+        return FILE_ICONS[mimeType] || '📎';
+      }
+
+      function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const preview = document.getElementById('chat-attachment-preview');
+        const thumb = document.getElementById('chat-attachment-thumb');
+        const name = document.getElementById('chat-attachment-name');
+
+        if (file.type.startsWith('image/')) {
+          const reader = new FileReader();
+          reader.onload = (e) => { thumb.src = e.target.result; };
+          reader.readAsDataURL(file);
+          thumb.style.display = '';
+        } else {
+          // Show emoji icon for documents
+          thumb.style.display = 'none';
+          name.textContent = getFileIcon(file.type) + ' ' + file.name;
+        }
+
+        if (file.type.startsWith('image/')) {
+          name.textContent = file.name;
+        }
+        preview.classList.remove('hidden');
+        pendingAttachment = file;
+        window._pendingAttachmentDataUrl = null;
+      }
+
+      function clearAttachment() {
+        pendingAttachment = null;
+        window._pendingAttachmentDataUrl = null;
+        document.getElementById('chat-attachment-preview').classList.add('hidden');
+        document.getElementById('chat-file-input').value = '';
+        const thumb = document.getElementById('chat-attachment-thumb');
+        thumb.src = '';
+        thumb.style.display = '';
+      }
+
+      window.handleFileSelect = handleFileSelect;
+      window.clearAttachment = clearAttachment;
+
+      // Drag & drop support
+      const chatMessages = document.getElementById('chat-messages');
+      if (chatMessages) {
+        const panel = chatMessages.closest('#chat-panel') || chatMessages.parentElement;
+        ['dragenter', 'dragover'].forEach(evt => {
+          panel.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); panel.classList.add('ring-2', 'ring-mama-yellow'); });
+        });
+        ['dragleave', 'drop'].forEach(evt => {
+          panel.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); panel.classList.remove('ring-2', 'ring-mama-yellow'); });
+        });
+        panel.addEventListener('drop', (e) => {
+          const file = e.dataTransfer.files[0];
+          if (file && (file.type.startsWith('image/') || file.type === 'application/pdf')) {
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            document.getElementById('chat-file-input').files = dt.files;
+            handleFileSelect({ target: { files: [file] } });
+          }
+        });
+      }
+
       window.filterByTopic = filterByTopic;
       window.handleGraphSearch = handleGraphSearch;
       window.saveOutcome = saveOutcome;
@@ -2069,6 +2204,26 @@
             .catch(err => console.warn('[PWA] Service Worker registration failed:', err));
         });
       }
+    </script>
+
+    <!-- Image Lightbox -->
+    <div id="image-lightbox" class="fixed inset-0 z-[9999] hidden items-center justify-center bg-black/80 backdrop-blur-sm cursor-pointer" onclick="closeLightbox()">
+      <img id="lightbox-img" class="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl" onclick="event.stopPropagation()" />
+      <button class="absolute top-4 right-4 text-white text-3xl font-bold hover:text-gray-300" onclick="closeLightbox()">&times;</button>
+    </div>
+    <script>
+      function openLightbox(src) {
+        const lb = document.getElementById('image-lightbox');
+        document.getElementById('lightbox-img').src = src;
+        lb.classList.remove('hidden');
+        lb.classList.add('flex');
+      }
+      function closeLightbox() {
+        const lb = document.getElementById('image-lightbox');
+        lb.classList.add('hidden');
+        lb.classList.remove('flex');
+      }
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
     </script>
   </body>
 </html>

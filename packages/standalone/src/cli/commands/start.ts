@@ -33,6 +33,7 @@ import {
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer, insertTokenUsage } from '../../api/index.js';
+import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -1294,6 +1295,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
+
+  // Upload/download media endpoints
+  apiServer.app.use('/api', createUploadRouter());
 
   apiServer.app.use(async (req, res, next) => {
     const handled = await graphHandler(req, res);

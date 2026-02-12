@@ -188,6 +188,32 @@ export function formatAssistantMessage(text) {
     '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
   );
 
+  // Detect outbound media file paths (e.g. ~/.mama/workspace/media/outbound/file.png)
+  // First: strip any <a> wrappers around media paths (from markdown link handler)
+  formatted = formatted.replace(
+    /<a\s+href="(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^"]+)"[^>]*>[^<]*<\/a>/gi,
+    (match, filename) => {
+      // Replace the entire <a> with just the raw path so the media handler below can process it
+      const ext = filename.split('.').pop()?.toLowerCase() || '';
+      const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+      if (imgExts.includes(ext)) {
+        return `<div class="media-inline"><img src="/api/media/${filename}" class="max-w-[300px] rounded-lg my-1 cursor-pointer" onclick="openLightbox('/api/media/${filename}')" alt="${filename}"/><a href="/api/media/download/${filename}" class="text-xs text-blue-500 hover:underline block">Download ${filename}</a></div>`;
+      }
+      return `<a href="/api/media/download/${filename}" class="text-blue-500 hover:underline">Download ${filename}</a>`;
+    }
+  );
+  // Then: handle bare media paths not already inside HTML tags
+  formatted = formatted.replace(
+    /(?<!href="|src=")(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^\s<"']+\.(png|jpg|jpeg|gif|webp|svg|pdf))/gi,
+    (match, filename, ext) => {
+      const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+      if (imgExts.includes(ext.toLowerCase())) {
+        return `<div class="media-inline"><img src="/api/media/${filename}" class="max-w-[300px] rounded-lg my-1 cursor-pointer" onclick="openLightbox('/api/media/${filename}')" alt="${filename}"/><a href="/api/media/download/${filename}" class="text-xs text-blue-500 hover:underline block">Download ${filename}</a></div>`;
+      }
+      return `<a href="/api/media/download/${filename}" class="text-blue-500 hover:underline">Download ${filename}</a>`;
+    }
+  );
+
   // Headers (## and ###)
   formatted = formatted.replace(
     /^### (.+)$/gm,
