@@ -457,6 +457,7 @@ export async function runAgentLoop(
   const toolExecutor = new GatewayToolExecutor({
     mamaDbPath: mamaDbPath,
     sessionStore: sessionStore,
+    rolesConfig: config.roles, // Pass roles from config.yaml
   });
 
   // Reasoning collector for Discord display
@@ -509,8 +510,16 @@ export async function runAgentLoop(
     backend,
     model: config.agent.model,
     maxTurns: config.agent.max_turns,
+    toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord
     usePersistentCLI: config.agent.use_persistent_cli ?? true, // 🚀 Fast mode (default: on)
+    // SECURITY NOTE: dangerouslySkipPermissions=true is REQUIRED for headless daemon operation.
+    // This is NOT a security violation because:
+    // 1. MAMA runs as a background daemon with no TTY - interactive prompts are impossible
+    // 2. Permission control is handled by MAMA's RoleManager (allowedTools, allowedPaths, blockedTools)
+    // 3. OS agent access is restricted to authenticated viewer sessions only
+    // 4. Users can override via config.multi_agent.dangerouslySkipPermissions if needed
+    dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
     // Collect reasoning for Discord display
@@ -709,7 +718,11 @@ export async function runAgentLoop(
   scheduler.setExecuteCallback(async (prompt: string) => {
     console.log(`[Cron] Executing: ${prompt.substring(0, 50)}...`);
     try {
-      const result = await agentLoop.run(prompt);
+      // Use dedicated cron session to avoid context pollution from other sources
+      const result = await agentLoop.run(prompt, {
+        source: 'cron',
+        channelId: 'cron_main',
+      });
       console.log(`[Cron] Completed: ${result.response.substring(0, 100)}...`);
       return result.response;
     } catch (error) {

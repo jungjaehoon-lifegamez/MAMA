@@ -239,6 +239,11 @@ export function loadInstalledSkills(
       if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
       if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
       const id = entry.name.replace(/\.md$/, '');
+      const stateKey = `mama/${id}`;
+
+      // Skip disabled skills (check state like subdirectory skills)
+      if (state[stateKey]?.enabled === false) continue;
+
       // Skip if already loaded from subdirectory
       if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) continue;
 
@@ -261,6 +266,17 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
   const backend = (process.env.MAMA_BACKEND as 'claude' | 'codex' | undefined) ?? 'claude';
+
+  // Load state for conditional loading (skills + system docs)
+  const stateFile = join(mamaHome, 'skills', 'state.json');
+  let state: Record<string, { enabled?: boolean }> = {};
+  try {
+    if (existsSync(stateFile)) {
+      state = JSON.parse(readFileSync(stateFile, 'utf-8'));
+    }
+  } catch {
+    // No state file
+  }
 
   // Load persona files: SOUL.md, IDENTITY.md, USER.md
   const personaFiles = backend === 'codex' ? ['USER.md'] : ['SOUL.md', 'IDENTITY.md', 'USER.md'];
@@ -309,6 +325,19 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   // Load CLAUDE.md (base instructions)
   const claudeMd = loadSystemPrompt(verbose, backend);
   layers.push(claudeMd);
+
+  // Load ONBOARDING.md only if not disabled in state
+  // This contains config schema + bot setup guides - only needed during initial setup
+  if (state['system/onboarding']?.enabled !== false) {
+    const onboardingPath = join(mamaHome, 'ONBOARDING.md');
+    if (existsSync(onboardingPath)) {
+      const onboardingContent = readFileSync(onboardingPath, 'utf-8');
+      layers.push(onboardingContent);
+      if (verbose) console.log(`[AgentLoop] Loaded ONBOARDING.md (setup reference)`);
+    }
+  } else {
+    if (verbose) console.log(`[AgentLoop] Skipped ONBOARDING.md (disabled in state)`);
+  }
 
   return layers.join('\n\n---\n\n');
 }
@@ -390,24 +419,25 @@ export class AgentLoop {
       join(homedir(), '.mama/mama-mcp-config.json');
     const sessionId = randomUUID();
 
-    // Determine tool mode: Gateway (default) or MCP
-    // Currently only '*' (all tools) is supported for mode selection
-    // Partial patterns like 'mama_*' or 'browser_*' are reserved for future hybrid routing
+    // Determine tool mode: Gateway, MCP, or Hybrid
+    // - gateway: ['*'] → Use internal GatewayToolExecutor for mama_*, discord_send, etc.
+    // - mcp: ['*'] or [...] → Use MCP servers for external tools (brave-devtools, etc.)
+    // - Both can be enabled for hybrid mode
     const mcpTools = this.toolsConfig.mcp || [];
     const gatewayTools = this.toolsConfig.gateway || [];
 
-    // Warn if partial patterns are used (not yet supported)
-    const hasPartialPattern = (arr: string[]) => arr.some((t) => t.includes('*') && t !== '*');
-    if (hasPartialPattern(mcpTools) || hasPartialPattern(gatewayTools)) {
-      console.warn(
-        '[AgentLoop] Warning: Partial patterns (e.g., "mama_*") are not yet supported. ' +
-          'Use "*" for all tools or specific tool names. Falling back to Gateway mode.'
-      );
-    }
-
-    const useMCPMode = mcpTools.includes('*');
-    const useGatewayMode = !useMCPMode;
+    // Hybrid mode: Gateway + MCP both enabled
+    const useGatewayMode = gatewayTools.includes('*') || gatewayTools.length > 0;
+    const useMCPMode = mcpTools.includes('*') || mcpTools.length > 0;
     this.isGatewayMode = useGatewayMode;
+
+    if (useGatewayMode && useMCPMode) {
+      console.log('[AgentLoop] 🔀 Hybrid mode: Gateway + MCP tools enabled');
+    } else if (useMCPMode) {
+      console.log('[AgentLoop] 🔌 MCP-only mode');
+    } else {
+      console.log('[AgentLoop] ⚙️ Gateway-only mode');
+    }
 
     // Build system prompt
     const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
@@ -459,9 +489,12 @@ export class AgentLoop {
         model: options.model ?? 'claude-sonnet-4-20250514',
         sessionId,
         systemPrompt: defaultSystemPrompt,
+        // Hybrid mode: pass MCP config even with Gateway tools enabled
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-        // Headless daemon — no interactive permission prompts possible
-        dangerouslySkipPermissions: false, // Changed to false for safety
+        // Headless daemon requires skipping permission prompts (no TTY available).
+        // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
+        dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
+        // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
       });
       this.agent = this.persistentCLI;
@@ -483,20 +516,16 @@ export class AgentLoop {
           model: options.model ?? 'claude-sonnet-4-20250514',
           sessionId,
           systemPrompt: defaultSystemPrompt,
+          // Hybrid mode: pass MCP config even with Gateway tools enabled
           mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-          // Headless daemon — no interactive permission prompts possible
-          dangerouslySkipPermissions: false, // Changed to false for safety
+          // Headless daemon requires skipping permission prompts (no TTY available).
+          // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
+          dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
+          // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
           useGatewayTools: useGatewayMode,
         });
         this.agent = this.claudeCLI;
       }
-    }
-
-    // Log tool mode for transparency
-    if (useMCPMode) {
-      console.log('[AgentLoop] MCP mode enabled - tools via MCP server (' + mcpConfigPath + ')');
-    } else {
-      console.log('[AgentLoop] Gateway mode enabled - tools via GatewayToolExecutor');
     }
     console.log(
       '[AgentLoop] Config: gateway=' +
@@ -666,7 +695,7 @@ export class AgentLoop {
     // Infinite loop prevention
     let consecutiveToolCalls = 0;
     let lastToolName = '';
-    const MAX_CONSECUTIVE_SAME_TOOL = 5;
+    const MAX_CONSECUTIVE_SAME_TOOL = 15; // Increased from 5 - normal coding tasks often need 10+ consecutive Bash calls
     const EMERGENCY_MAX_TURNS = Math.max(this.maxTurns + 10, 50); // Always above maxTurns
 
     // Track channel key for session release

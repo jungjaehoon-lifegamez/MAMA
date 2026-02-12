@@ -149,12 +149,14 @@ export class ClaudeCLIWrapper {
         args.push('--system-prompt', this.options.systemPrompt);
       }
 
-      // Use MCP only if mcpConfigPath is set AND useGatewayTools is false
-      if (this.options.mcpConfigPath && !this.options.useGatewayTools) {
+      // Hybrid mode: MCP + Gateway can both be enabled
+      if (this.options.mcpConfigPath) {
         args.push('--mcp-config', this.options.mcpConfigPath);
         args.push('--strict-mcp-config');
-      } else if (this.options.useGatewayTools) {
-        console.log('[ClaudeCLI] Gateway Tools mode - MCP disabled');
+        console.log('[ClaudeCLI] MCP enabled:', this.options.mcpConfigPath);
+      }
+      if (this.options.useGatewayTools) {
+        console.log('[ClaudeCLI] Gateway Tools mode enabled');
       }
 
       if (this.options.dangerouslySkipPermissions) {
