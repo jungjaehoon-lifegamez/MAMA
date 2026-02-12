@@ -181,7 +181,7 @@ export function formatAssistantMessage(text) {
   const buildMediaHtml = (filename) => {
     const decodedName = decodeHtmlEntities(filename);
     const safeName = encodeURIComponent(decodedName);
-    const safeAlt = escapeHtmlForMarkdown(decodedName);
+    const safeAlt = escapeHtmlForMarkdown(decodedName).replace(/"/g, '&quot;');
     const ext = decodedName.split('.').pop()?.toLowerCase() || '';
     const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
     if (imgExts.includes(ext)) {

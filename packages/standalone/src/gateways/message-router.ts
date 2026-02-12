@@ -670,13 +670,20 @@ The ONLY way to display an image is the bare outbound path in your response text
       const ext = path.extname(filePath).toLowerCase();
       if (!imgExts.includes(ext)) continue;
       if (filePath.includes('/media/outbound/') || filePath.includes('/media/inbound/')) continue;
+
+      // Security: Reject paths with traversal sequences to prevent arbitrary file access
+      const resolvedPath = path.resolve(filePath);
+      if (filePath.includes('..') || resolvedPath !== path.normalize(filePath)) {
+        continue; // Skip potentially malicious paths
+      }
+
       try {
-        await fsp.access(filePath);
-        const filename = `${Date.now()}_${path.basename(filePath)}`;
+        await fsp.access(resolvedPath);
+        const filename = `${Date.now()}_${path.basename(resolvedPath)}`;
         const dest = path.join(outboundDir, filename);
-        await fsp.copyFile(filePath, dest);
+        await fsp.copyFile(resolvedPath, dest);
         appended.push(`~/.mama/workspace/media/outbound/${filename}`);
-        console.log(`[MessageRouter] Media resolved: ${filePath} → outbound/${filename}`);
+        console.log(`[MessageRouter] Media resolved: ${resolvedPath} → outbound/${filename}`);
       } catch {
         // skip unreadable files
       }

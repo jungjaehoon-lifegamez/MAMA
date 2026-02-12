@@ -290,7 +290,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 // Use safe display path to avoid exposing full server path
                 const safeDisplayPath = `~/.mama/workspace/media/inbound/${safeName}`;
                 // Sanitize filename to prevent prompt injection
-                const sanitizedName = sanitizeFilenameForPrompt(att.filename);
+                const sanitizedName = sanitizeFilenameForPrompt(safeName);
                 contentBlocks.push({
                   type: 'text',
                   text: `[Document uploaded: ${sanitizedName}]\nFile path: ${safeDisplayPath}\nPlease use the Read tool to analyze this document.`,

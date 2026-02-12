@@ -45,6 +45,18 @@ import { buildContextPrompt } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
 import { PreCompactHandler } from './pre-compact-handler.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+
+const logger = new DebugLogger('AgentLoop');
 
 /**
  * Default configuration
@@ -333,10 +345,14 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
     if (existsSync(onboardingPath)) {
       const onboardingContent = readFileSync(onboardingPath, 'utf-8');
       layers.push(onboardingContent);
-      if (verbose) console.log(`[AgentLoop] Loaded ONBOARDING.md (setup reference)`);
+      if (verbose) {
+        logger.debug('Loaded ONBOARDING.md (setup reference)');
+      }
     }
   } else {
-    if (verbose) console.log(`[AgentLoop] Skipped ONBOARDING.md (disabled in state)`);
+    if (verbose) {
+      logger.debug('Skipped ONBOARDING.md (disabled in state)');
+    }
   }
 
   return layers.join('\n\n---\n\n');
@@ -355,7 +371,7 @@ export function getGatewayToolsPrompt(): string {
 
   // TODO: Consider generating both gateway-tools.md and this fallback from a single source
   // to prevent tool list drift (CodeRabbit review suggestion)
-  console.warn('[AgentLoop] gateway-tools.md not found, using minimal prompt');
+  logger.warn('gateway-tools.md not found, using minimal prompt');
   return `
 ## Gateway Tools
 
@@ -432,11 +448,11 @@ export class AgentLoop {
     this.isGatewayMode = useGatewayMode;
 
     if (useGatewayMode && useMCPMode) {
-      console.log('[AgentLoop] 🔀 Hybrid mode: Gateway + MCP tools enabled');
+      logger.debug('🔀 Hybrid mode: Gateway + MCP tools enabled');
     } else if (useMCPMode) {
-      console.log('[AgentLoop] 🔌 MCP-only mode');
+      logger.debug('🔌 MCP-only mode');
     } else {
-      console.log('[AgentLoop] ⚙️ Gateway-only mode');
+      logger.debug('⚙️ Gateway-only mode');
     }
 
     // Build system prompt
@@ -457,19 +473,19 @@ export class AgentLoop {
     ];
     const checkResult = monitor.check(promptLayers);
     if (checkResult.warning) {
-      console.warn(`[AgentLoop] ${checkResult.warning}`);
+      logger.warn(checkResult.warning);
     }
     // Actually enforce truncation if over budget
     if (!checkResult.withinBudget) {
       const { layers: trimmedLayers, result: enforceResult } = monitor.enforce(promptLayers);
       if (enforceResult.truncatedLayers.length > 0) {
-        console.warn(`[AgentLoop] Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`);
+        logger.warn(`Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`);
       }
       const trimmedBase = trimmedLayers.find((l) => l.name === 'base')?.content || basePrompt;
       const trimmedTools = trimmedLayers.find((l) => l.name === 'gatewayTools')?.content || '';
       defaultSystemPrompt = trimmedTools ? `${trimmedBase}\n\n---\n\n${trimmedTools}` : trimmedBase;
-      console.log(
-        `[AgentLoop] System prompt truncated: ${checkResult.totalChars} → ${defaultSystemPrompt.length} chars`
+      logger.debug(
+        `System prompt truncated: ${checkResult.totalChars} → ${defaultSystemPrompt.length} chars`
       );
     }
 
@@ -479,7 +495,7 @@ export class AgentLoop {
     // Choose CLI mode: Persistent (fast, experimental) or Standard (stable)
     this.usePersistentCLI = this.backend === 'codex' ? false : (options.usePersistentCLI ?? false);
     if (this.backend === 'codex' && options.usePersistentCLI) {
-      console.warn('[AgentLoop] Codex backend does not support persistent CLI mode; disabling');
+      logger.warn('Codex backend does not support persistent CLI mode; disabling');
     }
 
     if (this.usePersistentCLI) {
@@ -493,12 +509,14 @@ export class AgentLoop {
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
         // Headless daemon requires skipping permission prompts (no TTY available).
         // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
-        dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
+        // MAMA_TRUSTED_ENV must be set to enable this flag (defense in depth)
+        dangerouslySkipPermissions:
+          process.env.MAMA_TRUSTED_ENV === 'true' && (options.dangerouslySkipPermissions ?? false),
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
       });
       this.agent = this.persistentCLI;
-      console.log('[AgentLoop] 🚀 Persistent CLI mode enabled - faster responses');
+      logger.debug('🚀 Persistent CLI mode enabled - faster responses');
     } else {
       if (this.backend === 'codex') {
         // Codex CLI mode: spawns new Codex process per message
@@ -509,7 +527,7 @@ export class AgentLoop {
           sandbox: 'read-only',
           skipGitRepoCheck: true,
         });
-        console.log('[AgentLoop] Codex CLI backend enabled');
+        logger.debug('Codex CLI backend enabled');
       } else {
         // Standard Claude CLI mode: spawns new process per message
         this.claudeCLI = new ClaudeCLIWrapper({
@@ -520,15 +538,18 @@ export class AgentLoop {
           mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
           // Headless daemon requires skipping permission prompts (no TTY available).
           // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
-          dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
+          // MAMA_TRUSTED_ENV must be set to enable this flag (defense in depth)
+          dangerouslySkipPermissions:
+            process.env.MAMA_TRUSTED_ENV === 'true' &&
+            (options.dangerouslySkipPermissions ?? false),
           // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
           useGatewayTools: useGatewayMode,
         });
         this.agent = this.claudeCLI;
       }
     }
-    console.log(
-      '[AgentLoop] Config: gateway=' +
+    logger.debug(
+      'Config: gateway=' +
         JSON.stringify(this.toolsConfig.gateway) +
         ' mcp=' +
         JSON.stringify(this.toolsConfig.mcp)
