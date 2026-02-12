@@ -258,7 +258,7 @@ export function calculateCombinedConfidence(
   }
 
   // Bayesian update: Average parent confidences + prior
-  const parentConfidences = parents.map((p) => p.confidence || 0.5);
+  const parentConfidences = parents.map((p) => p.confidence ?? 0.5);
   const avgParentConfidence =
     parentConfidences.reduce((a, b) => a + b, 0) / parentConfidences.length;
 
@@ -437,12 +437,21 @@ export async function getSupersededChainDepth(
 
     chain.push(current.id);
 
-    // Walk back through supersedes chain
-    while (current && current.supersedes) {
+    // Walk back through supersedes chain with cycle detection
+    const visited = new Set<string>([current.id]);
+    const MAX_CHAIN_DEPTH = 1000; // Safety limit
+
+    while (current && current.supersedes && chain.length < MAX_CHAIN_DEPTH) {
+      // Cycle detection: stop if we've seen this ID before
+      if (visited.has(current.supersedes)) {
+        break;
+      }
+
       stmt = adapter.prepare('SELECT id, supersedes FROM decisions WHERE id = ?');
       current = stmt.get(current.supersedes) as { id: string; supersedes?: string } | undefined;
 
       if (current) {
+        visited.add(current.id);
         chain.push(current.id);
       }
     }

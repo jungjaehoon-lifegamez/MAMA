@@ -212,9 +212,9 @@ Session Context:
 - Recent Exchange: ${sessionContext.recent_exchange || 'N/A'}
 
 Tool Execution:
-- Tool: ${toolExecution.tool_name}
-- Input: ${JSON.stringify(toolExecution.tool_input)}
-- Result: ${toolExecution.exit_code === 0 ? 'SUCCESS' : 'FAILED'}
+- Tool: ${toolExecution.tool_name ?? 'N/A'}
+- Input: ${JSON.stringify(toolExecution.tool_input ?? null)}
+- Result: ${toolExecution.exit_code !== undefined ? (toolExecution.exit_code === 0 ? 'SUCCESS' : 'FAILED') : 'UNKNOWN'}
 
 Decision Indicators:
 1. User explicitly chose between alternatives?

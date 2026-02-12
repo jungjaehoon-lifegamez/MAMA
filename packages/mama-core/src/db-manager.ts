@@ -714,10 +714,10 @@ export async function updateDecisionOutcome(
     `);
 
     stmt.run(
-      outcomeData.outcome || null,
-      outcomeData.failure_reason || null,
-      outcomeData.limitation || null,
-      outcomeData.duration_days || null,
+      outcomeData.outcome ?? null,
+      outcomeData.failure_reason ?? null,
+      outcomeData.limitation ?? null,
+      outcomeData.duration_days ?? null,
       outcomeData.confidence !== undefined ? outcomeData.confidence : null,
       Date.now(),
       decisionId

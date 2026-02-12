@@ -364,80 +364,88 @@ async function handleClientMessage(
           }
         }, 10000); // Every 10 seconds
 
-        // Build contentBlocks from attachments (files are pre-compressed by upload-handler)
-        let contentBlocks: ContentBlock[] | undefined = undefined;
-        if (message.attachments && message.attachments.length > 0) {
-          contentBlocks = [];
-          for (const att of message.attachments) {
-            try {
-              // Always reconstruct path from filename — never trust client-provided filePath (LFI risk)
-              const safeName = path.basename(att.filename || '');
-              const inboundDir = path.join(os.homedir(), '.mama', 'workspace', 'media', 'inbound');
-              const resolvedPath = path.join(inboundDir, safeName);
-              // Default to octet-stream for unknown types — prevents untyped attachments
-              // from being incorrectly treated as images and base64-encoded
-              const rawMediaType = att.contentType || 'application/octet-stream';
-
-              if (ALLOWED_IMAGE_TYPES.has(rawMediaType)) {
-                // Only read file for images (to convert to base64)
-                const data = await fs.readFile(resolvedPath);
-                const base64 = data.toString('base64');
-                contentBlocks.push({
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: rawMediaType,
-                    data: base64,
-                  },
-                });
-                logger.info(`Attached image: ${safeName} (${data.length} bytes, ${rawMediaType})`);
-              } else {
-                // PDF/documents: instruct agent to read the file (no need to load into memory)
-                // Use safe display path to avoid exposing full server path
-                const safeDisplayPath = `~/.mama/workspace/media/inbound/${safeName}`;
-                // Sanitize filename to prevent prompt injection
-                const sanitizedName = sanitizeFilenameForPrompt(safeName);
-                contentBlocks.push({
-                  type: 'text',
-                  text: `[Document uploaded: ${sanitizedName}]\nFile path: ${safeDisplayPath}\nPlease use the Read tool to analyze this document.`,
-                });
-                logger.info(`Attached document: ${safeName} (${rawMediaType})`);
-              }
-            } catch (err) {
-              const errMsg = err instanceof Error ? err.message : String(err);
-              logger.error(
-                `Failed to read attachment ${path.basename(att.filename || '')}:`,
-                errMsg
-              );
-              // Notify client about attachment failure
-              clientInfo.ws.send(
-                JSON.stringify({
-                  type: 'attachment_failed',
-                  filename: path.basename(att.filename || ''),
-                  error: 'Failed to process attachment',
-                })
-              );
-            }
-          }
-        }
-
-        const normalizedMessage: NormalizedMessage = {
-          source: clientInfo.osAgentMode ? 'viewer' : 'mobile',
-          channelId: 'mama_os_main', // Fixed channel for all MAMA OS viewers
-          channelName: clientInfo.osAgentMode ? 'MAMA OS' : 'Mobile App', // Human-readable channel name
-          userId: clientInfo.userId,
-          text: content || '',
-          contentBlocks,
-          metadata: {
-            clientId,
-            sessionId: clientInfo.sessionId,
-            osAgentMode: clientInfo.osAgentMode,
-            timestamp: Date.now(),
-          },
-        };
-
         let result: RouterResult;
         try {
+          // Build contentBlocks from attachments (files are pre-compressed by upload-handler)
+          let contentBlocks: ContentBlock[] | undefined = undefined;
+          if (message.attachments && message.attachments.length > 0) {
+            contentBlocks = [];
+            for (const att of message.attachments) {
+              try {
+                // Always reconstruct path from filename — never trust client-provided filePath (LFI risk)
+                const safeName = path.basename(att.filename || '');
+                const inboundDir = path.join(
+                  os.homedir(),
+                  '.mama',
+                  'workspace',
+                  'media',
+                  'inbound'
+                );
+                const resolvedPath = path.join(inboundDir, safeName);
+                // Default to octet-stream for unknown types — prevents untyped attachments
+                // from being incorrectly treated as images and base64-encoded
+                const rawMediaType = att.contentType || 'application/octet-stream';
+
+                if (ALLOWED_IMAGE_TYPES.has(rawMediaType)) {
+                  // Only read file for images (to convert to base64)
+                  const data = await fs.readFile(resolvedPath);
+                  const base64 = data.toString('base64');
+                  contentBlocks.push({
+                    type: 'image',
+                    source: {
+                      type: 'base64',
+                      media_type: rawMediaType,
+                      data: base64,
+                    },
+                  });
+                  logger.info(
+                    `Attached image: ${safeName} (${data.length} bytes, ${rawMediaType})`
+                  );
+                } else {
+                  // PDF/documents: instruct agent to read the file (no need to load into memory)
+                  // Use safe display path to avoid exposing full server path
+                  const safeDisplayPath = `~/.mama/workspace/media/inbound/${safeName}`;
+                  // Sanitize filename to prevent prompt injection
+                  const sanitizedName = sanitizeFilenameForPrompt(safeName);
+                  contentBlocks.push({
+                    type: 'text',
+                    text: `[Document uploaded: ${sanitizedName}]\nFile path: ${safeDisplayPath}\nPlease use the Read tool to analyze this document.`,
+                  });
+                  logger.info(`Attached document: ${safeName} (${rawMediaType})`);
+                }
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                logger.error(
+                  `Failed to read attachment ${path.basename(att.filename || '')}:`,
+                  errMsg
+                );
+                // Notify client about attachment failure
+                clientInfo.ws.send(
+                  JSON.stringify({
+                    type: 'attachment_failed',
+                    filename: path.basename(att.filename || ''),
+                    error: 'Failed to process attachment',
+                  })
+                );
+              }
+            }
+          }
+
+          const normalizedMessage: NormalizedMessage = {
+            source: clientInfo.osAgentMode ? 'viewer' : 'mobile',
+            channelId: 'mama_os_main', // Fixed channel for all MAMA OS viewers
+            channelName: clientInfo.osAgentMode ? 'MAMA OS' : 'Mobile App', // Human-readable channel name
+            userId: clientInfo.userId,
+            text: content || '',
+            contentBlocks,
+            metadata: {
+              clientId,
+              sessionId: clientInfo.sessionId,
+              osAgentMode: clientInfo.osAgentMode,
+              timestamp: Date.now(),
+            },
+          };
+
           result = await messageRouter.process(normalizedMessage);
         } finally {
           clearInterval(keepAliveInterval);
