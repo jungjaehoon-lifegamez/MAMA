@@ -3,37 +3,44 @@
  *
  * Analyzes user queries to detect decision-related intent using EXAONE 3.5
  * Tasks: 2.1-2.8 (LLM intent analysis with fallback chain)
- * AC #1: Query intent analysis (default 5s timeout for LLM latency)
- * AC #5: LLM fallback (EXAONE → Gemma → Qwen)
  *
  * @module query-intent
- * @version 1.0
- * @date 2025-11-14
  */
 
-const { info, error: logError } = require('./debug-logger');
-const { generate, DEFAULT_MODEL, FALLBACK_MODEL } = require('./ollama-client');
+import { info, error as logError } from './debug-logger.js';
+import { generate, DEFAULT_MODEL, FALLBACK_MODEL } from './ollama-client.js';
+
+export interface IntentResult {
+  involves_decision: boolean;
+  topic: string | null;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface AnalyzeOptions {
+  timeout?: number;
+  threshold?: number;
+}
+
+interface GenerateOptions {
+  format?: string;
+  temperature?: number;
+  max_tokens?: number;
+  timeout?: number;
+  model?: string;
+}
 
 /**
  * Analyze user message for decision-related intent
- *
- * Task 2.1-2.5: LLM intent analysis
- * AC #1: Detect if query involves decisions
- * AC #5: Fallback chain implemented
- *
- * @param {string} userMessage - User's message to analyze
- * @param {Object} options - Analysis options
- * @param {number} options.timeout - Timeout in ms (default: 100ms)
- * @param {number} options.threshold - Minimum confidence (default: 0.6)
- * @returns {Promise<Object>} Intent analysis result
  */
-async function analyzeIntent(userMessage, options = {}) {
+export async function analyzeIntent(
+  userMessage: string,
+  options: AnalyzeOptions = {}
+): Promise<IntentResult> {
   const {
     timeout = 5000, // Increased: LLM needs time, user accepts longer thinking
     threshold = 0.6,
   } = options;
-
-  const startTime = Date.now();
 
   try {
     // Task 2.2: Build prompt for decision-making analysis
@@ -75,11 +82,8 @@ Examples:
       timeout,
     });
 
-    // eslint-disable-next-line no-unused-vars
-    const latency = Date.now() - startTime;
-
     // Task 2.4: Parse response
-    const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+    const parsed = (typeof result === 'string' ? JSON.parse(result) : result) as IntentResult;
 
     // Task 2.5: Threshold check
     const meetsThreshold = parsed.confidence >= threshold;
@@ -98,22 +102,19 @@ Examples:
   } catch (error) {
     // CLAUDE.md Rule #1: NO FALLBACK
     // Errors must be thrown for debugging
-    logError(`[MAMA] Intent analysis FAILED: ${error.message}`);
-    throw new Error(`Intent analysis failed: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[MAMA] Intent analysis FAILED: ${message}`);
+    throw new Error(`Intent analysis failed: ${message}`);
   }
 }
 
 /**
  * Generate with tiered fallback chain
- *
- * Task 2.6-2.7: Implement fallback to Gemma 2B and Qwen 3B
- * AC #5: LLM fallback works
- *
- * @param {string} prompt - LLM prompt
- * @param {Object} options - Generation options
- * @returns {Promise<Object|string>} LLM response
  */
-async function generateWithFallback(prompt, options = {}) {
+async function generateWithFallback(
+  prompt: string,
+  options: GenerateOptions = {}
+): Promise<unknown> {
   const models = [
     DEFAULT_MODEL, // Tier 1: EXAONE 3.5 (2.4B)
     FALLBACK_MODEL, // Tier 2: Gemma 2B
@@ -134,12 +135,13 @@ async function generateWithFallback(prompt, options = {}) {
       info(`[MAMA] ${model} succeeded`);
       return result;
     } catch (error) {
-      console.warn(`[MAMA] ${model} failed: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[MAMA] ${model} failed: ${message}`);
 
       // Continue to next tier
       if (i === models.length - 1) {
         // All tiers failed
-        throw new Error(`All LLM tiers failed. Last error: ${error.message}`);
+        throw new Error(`All LLM tiers failed. Last error: ${message}`);
       }
     }
   }
@@ -147,15 +149,9 @@ async function generateWithFallback(prompt, options = {}) {
 
 /**
  * Extract topic keywords from user message (fallback method)
- *
- * Task 2.8: Keyword-based fallback when all LLMs fail
- * Simple regex matching for common topics
- *
- * @param {string} userMessage - User's message
- * @returns {Object} Topic detection result
  */
-function extractTopicKeywords(userMessage) {
-  const topicPatterns = {
+export function extractTopicKeywords(userMessage: string): IntentResult {
+  const topicPatterns: Record<string, RegExp> = {
     workflow_storage: /workflow|save|persist/i,
     mesh_structure: /mesh|structure/i,
     authentication: /auth|jwt|oauth|login/i,
@@ -181,57 +177,4 @@ function extractTopicKeywords(userMessage) {
     confidence: 0.0,
     reasoning: 'No topic keywords found',
   };
-}
-
-// Export API
-module.exports = {
-  analyzeIntent,
-  extractTopicKeywords,
-};
-
-// CLI execution for testing
-if (require.main === module) {
-  info('🧠 MAMA Query Intent Analysis - Test\n');
-
-  // Task 2.8: Test intent detection accuracy
-  (async () => {
-    const testQueries = [
-      {
-        message: 'Why did we choose COMPLEX mesh structure?',
-        expected: { involves_decision: true, topic: 'mesh_structure' },
-      },
-      {
-        message: 'Read the file please',
-        expected: { involves_decision: false },
-      },
-      {
-        message: 'We chose JWT for authentication, remember?',
-        expected: { involves_decision: true, topic: 'authentication' },
-      },
-    ];
-
-    for (const test of testQueries) {
-      info(`📋 Testing: "${test.message}"`);
-
-      try {
-        const result = await analyzeIntent(test.message);
-        info('✅ Result:', result);
-
-        // Verify expectations
-        if (result.involves_decision === test.expected.involves_decision) {
-          info('   ✓ Decision detection matches');
-        } else {
-          info('   ✗ Decision detection MISMATCH');
-        }
-
-        info('');
-      } catch (error) {
-        logError(`❌ Error: ${error.message}\n`);
-      }
-    }
-
-    info('═══════════════════════════');
-    info('✅ Intent analysis tests complete');
-    info('═══════════════════════════');
-  })();
 }

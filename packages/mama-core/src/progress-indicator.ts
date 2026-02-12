@@ -10,8 +10,6 @@
  * - Concise messages (<50 chars)
  *
  * @module progress-indicator
- * @version 1.0
- * @date 2026-01-30
  */
 
 /**
@@ -20,11 +18,10 @@
  * Format: [MAMA] emoji message
  * Example: [MAMA] ⏳ Downloading embedding model (120MB)...
  *
- * @param {string} message - Progress message (without emoji or prefix)
- * @param {string} [emoji='⏳'] - Emoji indicator (⏳, ✅, ❌, 🔍, etc.)
- * @returns {void}
+ * @param message - Progress message (without emoji or prefix)
+ * @param emoji - Emoji indicator (⏳, ✅, ❌, 🔍, etc.)
  */
-function logProgress(message, emoji = '⏳') {
+export function logProgress(message: string, emoji = '⏳'): void {
   // Ensure message is a string - warn in development if not
   if (typeof message !== 'string') {
     if (process.env.NODE_ENV === 'development' || process.env.MAMA_DEBUG) {
@@ -40,11 +37,8 @@ function logProgress(message, emoji = '⏳') {
 
 /**
  * Log completion message
- *
- * @param {string} message - Completion message
- * @returns {void}
  */
-function logComplete(message) {
+export function logComplete(message: string): void {
   logProgress(message, '✅');
 }
 
@@ -53,58 +47,35 @@ function logComplete(message) {
  *
  * Note: Named logFailed to avoid confusion with debug-logger's logError
  * which is used for internal debugging. This is for user-facing progress.
- *
- * @param {string} message - Failure message
- * @returns {void}
  */
-function logFailed(message) {
+export function logFailed(message: string): void {
   logProgress(message, '❌');
 }
 
 // Alias for backward compatibility
-const logError = logFailed;
+export const logError = logFailed;
 
 /**
  * Log info message
- *
- * @param {string} message - Info message
- * @returns {void}
  */
-function logInfo(message) {
+export function logInfo(message: string): void {
   logProgress(message, 'ℹ️');
 }
 
 /**
  * Log loading message
- *
- * @param {string} message - Loading message
- * @returns {void}
  */
-function logLoading(message) {
+export function logLoading(message: string): void {
   logProgress(message, '⏳');
 }
 
 /**
  * Log searching message
- *
- * @param {string} message - Searching message
- * @returns {void}
  */
-function logSearching(message) {
+export function logSearching(message: string): void {
   logProgress(message, '🔍');
 }
 
 // Note: Removed auto-registered SIGINT/SIGTERM handlers that called process.exit(0)
 // This was causing issues with host cleanup in parent processes.
 // If graceful shutdown is needed, the host application should handle it.
-
-// Export API
-module.exports = {
-  logProgress,
-  logComplete,
-  logFailed,
-  logError, // Alias for backward compatibility
-  logInfo,
-  logLoading,
-  logSearching,
-};

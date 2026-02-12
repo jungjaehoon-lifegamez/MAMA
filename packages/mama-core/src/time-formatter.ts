@@ -7,25 +7,24 @@
  * Used by list_decisions and recall_decision tools
  *
  * @module time-formatter
- * @date 2025-11-20
  */
 
-const { warn } = require('./debug-logger');
+import { warn } from './debug-logger.js';
 
 /**
  * Format Unix timestamp (milliseconds) to human-readable relative time
  *
  * AC #2: Format created_at as human-readable ("2d ago", "3h ago", etc.)
  *
- * @param {number|string} timestamp - Unix timestamp in milliseconds OR ISO 8601 string
- * @returns {string} Human-readable time string
+ * @param timestamp - Unix timestamp in milliseconds OR ISO 8601 string
+ * @returns Human-readable time string
  *
  * @example
  * formatTimeAgo(Date.now() - 3600000) // "1h ago"
  * formatTimeAgo(Date.now() - 172800000) // "2d ago"
  * formatTimeAgo("2025-11-20T10:30:00Z") // "2d ago" (if today is 2025-11-22)
  */
-function formatTimeAgo(timestamp) {
+export function formatTimeAgo(timestamp: number | string | null | undefined): string {
   try {
     // Handle null/undefined (but allow 0 as valid Unix epoch)
     if (timestamp === null || timestamp === undefined) {
@@ -34,7 +33,7 @@ function formatTimeAgo(timestamp) {
     }
 
     // Parse ISO 8601 string to timestamp (if string provided)
-    let timestampMs;
+    let timestampMs: number;
     if (typeof timestamp === 'string') {
       timestampMs = new Date(timestamp).getTime();
       if (isNaN(timestampMs)) {
@@ -88,11 +87,8 @@ function formatTimeAgo(timestamp) {
     }
     return `${years}y ago`;
   } catch (error) {
-    warn(`[time-formatter] Error formatting timestamp ${timestamp}: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`[time-formatter] Error formatting timestamp ${timestamp}: ${message}`);
     return 'unknown';
   }
 }
-
-module.exports = {
-  formatTimeAgo,
-};

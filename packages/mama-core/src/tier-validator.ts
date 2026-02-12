@@ -8,21 +8,30 @@
  * Tier 2: Degraded mode (missing one or more requirements)
  *
  * @module tier-validator
- * @version 1.0
- * @date 2026-01-30
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { info: _info, warn: _warn, error: _logError } = require('./debug-logger');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
+export interface CheckResult {
+  status: 'pass' | 'fail';
+  details: string;
+}
+
+export interface NamedCheckResult extends CheckResult {
+  name: string;
+}
+
+export interface TierValidation {
+  tier: 1 | 2;
+  checks: NamedCheckResult[];
+}
 
 /**
  * Validates Node.js version requirement
- *
- * @returns {Object} Check result { status: 'pass'|'fail', details: string }
  */
-function checkNodeVersion() {
+export function checkNodeVersion(): CheckResult {
   try {
     const nodeVersion = process.versions.node;
     const majorVersion = parseInt(nodeVersion.split('.')[0], 10);
@@ -39,23 +48,20 @@ function checkNodeVersion() {
       details: `v${nodeVersion} (requires 18+)`,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
       status: 'fail',
-      details: `Error checking version: ${error.message}`,
+      details: `Error checking version: ${message}`,
     };
   }
 }
 
 /**
  * Validates SQLite (better-sqlite3) availability
- *
- * Reuses logic from packages/mcp-server/scripts/postinstall.js
- *
- * @returns {Object} Check result { status: 'pass'|'fail', details: string }
  */
-function checkSQLite() {
+export function checkSQLite(): CheckResult {
   try {
-    // Try to require better-sqlite3
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Database = require('better-sqlite3');
 
     // Test instantiation with in-memory database
@@ -67,25 +73,22 @@ function checkSQLite() {
       details: 'better-sqlite3 native module ready',
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
       status: 'fail',
-      details: `better-sqlite3 not available: ${error.message}`,
+      details: `better-sqlite3 not available: ${message}`,
     };
   }
 }
 
 /**
  * Validates embedding model availability
- *
- * Checks if embedding model has been downloaded to cache directory.
- * Reuses logic from packages/mama-core/src/embeddings.js
- *
- * @returns {Object} Check result { status: 'pass'|'fail', details: string }
  */
-function checkEmbeddings() {
+export function checkEmbeddings(): CheckResult {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getModelName } = require('./embeddings');
-    const modelName = getModelName();
+    const modelName = getModelName() as string;
 
     // Check if model is cached
     const cacheDir =
@@ -108,24 +111,20 @@ function checkEmbeddings() {
       details: `${modelName} not cached (will download on first use)`,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
       status: 'fail',
-      details: `Error checking embeddings: ${error.message}`,
+      details: `Error checking embeddings: ${message}`,
     };
   }
 }
 
 /**
  * Validates database file accessibility
- *
- * Tests write access to database location (~/.claude/mama-memory.db)
- *
- * @returns {Object} Check result { status: 'pass'|'fail', details: string }
  */
-function checkDatabase() {
+export function checkDatabase(): CheckResult {
   try {
     const dbPath = process.env.MAMA_DB_PATH || path.join(os.homedir(), '.claude', 'mama-memory.db');
-
     const dbDir = path.dirname(dbPath);
 
     // Check if directory exists or can be created
@@ -133,9 +132,10 @@ function checkDatabase() {
       try {
         fs.mkdirSync(dbDir, { recursive: true });
       } catch (mkdirErr) {
+        const message = mkdirErr instanceof Error ? mkdirErr.message : String(mkdirErr);
         return {
           status: 'fail',
-          details: `Cannot create database directory: ${mkdirErr.message}`,
+          details: `Cannot create database directory: ${message}`,
         };
       }
     }
@@ -143,7 +143,7 @@ function checkDatabase() {
     // Check write access
     try {
       fs.accessSync(dbDir, fs.constants.W_OK);
-    } catch (accessErr) {
+    } catch {
       return {
         status: 'fail',
         details: `No write access to ${dbDir}`,
@@ -155,9 +155,10 @@ function checkDatabase() {
       details: dbPath,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
       status: 'fail',
-      details: `Error checking database: ${error.message}`,
+      details: `Error checking database: ${message}`,
     };
   }
 }
@@ -168,19 +169,9 @@ function checkDatabase() {
  * Performs all system checks and determines tier:
  * - Tier 1: All checks pass (full features)
  * - Tier 2: One or more checks fail (degraded mode)
- *
- * @returns {Promise<Object>} Validation result
- * @returns {number} result.tier - 1 (full) or 2 (degraded)
- * @returns {Array} result.checks - Array of check results
- * @example
- * const { tier, checks } = await validateTier();
- * console.log(`MAMA Tier: ${tier}`);
- * checks.forEach(check => {
- *   console.log(`${check.name}: ${check.status} (${check.details})`);
- * });
  */
-async function validateTier() {
-  const checks = [
+export async function validateTier(): Promise<TierValidation> {
+  const checks: NamedCheckResult[] = [
     {
       name: 'Node.js',
       ...checkNodeVersion(),
@@ -210,15 +201,9 @@ async function validateTier() {
 
 /**
  * Get user-friendly tier description
- *
- * @param {number} tier - Tier number (1 or 2)
- * @returns {string} Human-readable tier description
- * @example
- * const desc = getTierDescription(1);
- * console.log(desc); // "Full Features"
  */
-function getTierDescription(tier) {
-  const descriptions = {
+export function getTierDescription(tier: number): string {
+  const descriptions: Record<number, string> = {
     1: 'Full Features - All systems operational',
     2: 'Degraded Mode - Some features unavailable',
   };
@@ -228,13 +213,8 @@ function getTierDescription(tier) {
 
 /**
  * Get tier status banner
- *
- * Returns formatted banner showing tier and failed checks
- *
- * @param {Object} validation - Result from validateTier()
- * @returns {string} Formatted banner text
  */
-function getTierBanner(validation) {
+export function getTierBanner(validation: TierValidation): string {
   const { tier, checks } = validation;
   const failedChecks = checks.filter((c) => c.status === 'fail');
 
@@ -255,15 +235,3 @@ function getTierBanner(validation) {
 
   return banner;
 }
-
-// Export API
-module.exports = {
-  validateTier,
-  getTierDescription,
-  getTierBanner,
-  // Internal checks (for testing)
-  checkNodeVersion,
-  checkSQLite,
-  checkEmbeddings,
-  checkDatabase,
-};

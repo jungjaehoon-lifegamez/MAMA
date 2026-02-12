@@ -13,13 +13,20 @@
  * @module config-loader
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { info, warn, error: logError } = require('./debug-logger');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { info, warn, error as logError } from './debug-logger.js';
+
+export interface MAMAConfig {
+  modelName: string;
+  embeddingDim: number;
+  cacheDir: string;
+  [key: string]: unknown;
+}
 
 // Default configuration
-const DEFAULT_CONFIG = {
+export const DEFAULT_CONFIG: MAMAConfig = {
   modelName: 'Xenova/multilingual-e5-small',
   embeddingDim: 384,
   cacheDir: path.join(os.homedir(), '.cache', 'huggingface', 'transformers'),
@@ -30,13 +37,12 @@ const CONFIG_DIR = path.join(os.homedir(), '.mama');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
 // Cached configuration
-let cachedConfig = null;
+let cachedConfig: MAMAConfig | null = null;
 
 /**
  * Ensure config directory exists
- * @returns {void}
  */
-function ensureConfigDir() {
+function ensureConfigDir(): void {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
     info(`[config] Created config directory: ${CONFIG_DIR}`);
@@ -45,9 +51,8 @@ function ensureConfigDir() {
 
 /**
  * Create default config file if it doesn't exist
- * @returns {void}
  */
-function ensureConfigFile() {
+function ensureConfigFile(): void {
   if (!fs.existsSync(CONFIG_PATH)) {
     ensureConfigDir();
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf8');
@@ -61,10 +66,10 @@ function ensureConfigFile() {
  *
  * Story M1.4 AC #1: Config parser loads ~/.mama/config.json
  *
- * @param {boolean} reload - Force reload from disk (default: false)
- * @returns {Object} Configuration object with modelName, embeddingDim, cacheDir
+ * @param reload - Force reload from disk (default: false)
+ * @returns Configuration object with modelName, embeddingDim, cacheDir
  */
-function loadConfig(reload = false) {
+export function loadConfig(reload = false): MAMAConfig {
   // Return cached config if available and not forcing reload
   if (cachedConfig && !reload) {
     return cachedConfig;
@@ -76,10 +81,10 @@ function loadConfig(reload = false) {
 
     // Read and parse config file
     const configData = fs.readFileSync(CONFIG_PATH, 'utf8');
-    const userConfig = JSON.parse(configData);
+    const userConfig = JSON.parse(configData) as Partial<MAMAConfig>;
 
     // Merge with defaults (user config overrides)
-    const config = {
+    const config: MAMAConfig = {
       ...DEFAULT_CONFIG,
       ...userConfig,
     };
@@ -112,7 +117,8 @@ function loadConfig(reload = false) {
 
     return config;
   } catch (error) {
-    logError(`[config] Failed to load config file: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[config] Failed to load config file: ${message}`);
     logError('[config] Using default configuration');
 
     // Cache defaults on error
@@ -123,29 +129,32 @@ function loadConfig(reload = false) {
 
 /**
  * Get current model name
- * @returns {string} Current model name
  */
-function getModelName() {
+export function getModelName(): string {
   const config = loadConfig();
   return config.modelName;
 }
 
 /**
  * Get current embedding dimension
- * @returns {number} Current embedding dimension
  */
-function getEmbeddingDim() {
+export function getEmbeddingDim(): number {
   const config = loadConfig();
   return config.embeddingDim;
 }
 
 /**
  * Get current cache directory
- * @returns {string} Current cache directory
  */
-function getCacheDir() {
+export function getCacheDir(): string {
   const config = loadConfig();
   return config.cacheDir;
+}
+
+export interface ConfigUpdates {
+  modelName?: string;
+  embeddingDim?: number;
+  cacheDir?: string;
 }
 
 /**
@@ -153,13 +162,10 @@ function getCacheDir() {
  *
  * Story M1.4 AC #3: Changing model via config triggers informative log + resets caches
  *
- * @param {Object} updates - Configuration updates
- * @param {string} updates.modelName - New model name
- * @param {number} updates.embeddingDim - New embedding dimension
- * @param {string} updates.cacheDir - New cache directory
- * @returns {boolean} Success status
+ * @param updates - Configuration updates
+ * @returns Success status
  */
-function updateConfig(updates) {
+export function updateConfig(updates: ConfigUpdates): boolean {
   try {
     ensureConfigFile();
 
@@ -171,7 +177,7 @@ function updateConfig(updates) {
     const dimChanged = updates.embeddingDim && updates.embeddingDim !== currentConfig.embeddingDim;
 
     // Merge updates
-    const newConfig = {
+    const newConfig: MAMAConfig = {
       ...currentConfig,
       ...updates,
     };
@@ -194,25 +200,15 @@ function updateConfig(updates) {
     info(`[config] Configuration saved to ${CONFIG_PATH}`);
     return true;
   } catch (error) {
-    logError(`[config] Failed to update config: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[config] Failed to update config: ${message}`);
     return false;
   }
 }
 
 /**
  * Get config file path
- * @returns {string} Config file path
  */
-function getConfigPath() {
+export function getConfigPath(): string {
   return CONFIG_PATH;
 }
-
-module.exports = {
-  loadConfig,
-  getModelName,
-  getEmbeddingDim,
-  getCacheDir,
-  updateConfig,
-  getConfigPath,
-  DEFAULT_CONFIG,
-};

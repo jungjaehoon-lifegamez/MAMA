@@ -8,15 +8,33 @@
  * Target: > 80% cache hit ratio
  *
  * @module embedding-cache
- * @version 1.0
- * @date 2025-11-14
  */
 
-const crypto = require('crypto');
+import crypto from 'crypto';
 
 // Cache configuration
-const MAX_CACHE_SIZE = 1000; // Max 1000 entries (story req 2.2)
+export const MAX_CACHE_SIZE = 1000; // Max 1000 entries (story req 2.2)
 const CLEANUP_THRESHOLD = 1100; // Trigger cleanup at 110%
+
+interface CacheEntry {
+  embedding: Float32Array;
+  timestamp: number;
+  lastAccessed: number;
+  hits: number;
+}
+
+interface CacheStats {
+  hits: number;
+  misses: number;
+  evictions: number;
+  totalSize: number;
+}
+
+export interface CacheStatsReport extends CacheStats {
+  hitRatio: number;
+  size: number;
+  maxSize: number;
+}
 
 /**
  * LRU Cache for embeddings
@@ -26,7 +44,10 @@ const CLEANUP_THRESHOLD = 1100; // Trigger cleanup at 110%
  *
  * Eviction: Least Recently Used when size > MAX_CACHE_SIZE
  */
-class EmbeddingCache {
+export class EmbeddingCache {
+  private cache: Map<string, CacheEntry>;
+  private stats: CacheStats;
+
   constructor() {
     this.cache = new Map();
     this.stats = {
@@ -41,11 +62,8 @@ class EmbeddingCache {
    * Generate cache key from text
    *
    * Task 2.3: Key = decision text hash (SHA-256)
-   *
-   * @param {string} text - Input text
-   * @returns {string} SHA-256 hex hash
    */
-  generateKey(text) {
+  generateKey(text: string): string {
     if (!text || typeof text !== 'string') {
       throw new Error('Text must be a non-empty string');
     }
@@ -57,11 +75,8 @@ class EmbeddingCache {
    * Get embedding from cache
    *
    * Task 2.2: Cache hit updates LRU position
-   *
-   * @param {string} text - Input text
-   * @returns {Float32Array|null} Cached embedding or null
    */
-  get(text) {
+  get(text: string): Float32Array | null {
     const key = this.generateKey(text);
     const entry = this.cache.get(key);
 
@@ -88,16 +103,13 @@ class EmbeddingCache {
    *
    * Task 2.2: Add to cache with LRU tracking
    * Task 2.5: Implement cache eviction (LRU)
-   *
-   * @param {string} text - Input text
-   * @param {Float32Array} embedding - Embedding vector
    */
-  set(text, embedding) {
+  set(text: string, embedding: Float32Array): void {
     const key = this.generateKey(text);
 
     // Check if already exists (update case)
     if (this.cache.has(key)) {
-      const entry = this.cache.get(key);
+      const entry = this.cache.get(key)!;
       entry.embedding = embedding;
       entry.lastAccessed = Date.now();
 
@@ -108,7 +120,7 @@ class EmbeddingCache {
     }
 
     // New entry
-    const entry = {
+    const entry: CacheEntry = {
       embedding,
       timestamp: Date.now(),
       lastAccessed: Date.now(),
@@ -134,7 +146,7 @@ class EmbeddingCache {
    * 1. Oldest lastAccessed (LRU)
    * 2. If tied, lowest hits
    */
-  evictLRU() {
+  evictLRU(): void {
     const targetEvictions = this.cache.size - MAX_CACHE_SIZE;
 
     if (targetEvictions <= 0) {
@@ -171,10 +183,8 @@ class EmbeddingCache {
    * Get cache hit ratio
    *
    * Task 2.4: Cache hit ratio target: > 80%
-   *
-   * @returns {number} Hit ratio (0.0 - 1.0)
    */
-  getHitRatio() {
+  getHitRatio(): number {
     const total = this.stats.hits + this.stats.misses;
 
     if (total === 0) {
@@ -186,10 +196,8 @@ class EmbeddingCache {
 
   /**
    * Get cache statistics
-   *
-   * @returns {Object} Cache stats
    */
-  getStats() {
+  getStats(): CacheStatsReport {
     return {
       ...this.stats,
       hitRatio: this.getHitRatio(),
@@ -201,7 +209,7 @@ class EmbeddingCache {
   /**
    * Clear cache
    */
-  clear() {
+  clear(): void {
     this.cache.clear();
     this.stats = {
       hits: 0,
@@ -213,10 +221,4 @@ class EmbeddingCache {
 }
 
 // Singleton instance
-const embeddingCache = new EmbeddingCache();
-
-module.exports = {
-  embeddingCache,
-  EmbeddingCache,
-  MAX_CACHE_SIZE,
-};
+export const embeddingCache = new EmbeddingCache();

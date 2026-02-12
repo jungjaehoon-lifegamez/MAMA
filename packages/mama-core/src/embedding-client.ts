@@ -12,20 +12,27 @@
  * @module embedding-client
  */
 
-const fs = require('fs');
-const path = require('path');
-const { info, warn } = require('./debug-logger');
+import fs from 'fs';
+import path from 'path';
+import { info, warn } from './debug-logger.js';
 
 // Configuration
-const DEFAULT_PORT = 3847;
-const HOST = '127.0.0.1';
-const TIMEOUT_MS = 500; // 500ms timeout for fast response
-const PORT_FILE = path.join(process.env.HOME || '/tmp', '.mama-embedding-port');
+export const DEFAULT_PORT = 3847;
+export const HOST = '127.0.0.1';
+export const TIMEOUT_MS = 500; // 500ms timeout for fast response
+export const PORT_FILE = path.join(process.env.HOME || '/tmp', '.mama-embedding-port');
+
+export interface ServerStatus {
+  status: string;
+  model?: string;
+  dimension?: number;
+  uptime?: number;
+}
 
 /**
  * Get server port from port file or default
  */
-function getServerPort() {
+export function getServerPort(): number {
   try {
     if (fs.existsSync(PORT_FILE)) {
       const port = parseInt(fs.readFileSync(PORT_FILE, 'utf8').trim(), 10);
@@ -33,7 +40,7 @@ function getServerPort() {
         return port;
       }
     }
-  } catch (e) {
+  } catch {
     // Ignore errors, use default
   }
   return DEFAULT_PORT;
@@ -41,10 +48,8 @@ function getServerPort() {
 
 /**
  * Check if embedding server is running
- *
- * @returns {Promise<boolean>} True if server is healthy
  */
-async function isServerRunning() {
+export async function isServerRunning(): Promise<boolean> {
   const port = getServerPort();
 
   try {
@@ -57,7 +62,7 @@ async function isServerRunning() {
 
     clearTimeout(timeout);
     return response.ok;
-  } catch (e) {
+  } catch {
     return false;
   }
 }
@@ -65,10 +70,10 @@ async function isServerRunning() {
 /**
  * Generate embedding via HTTP server
  *
- * @param {string} text - Text to embed
- * @returns {Promise<Float32Array|null>} Embedding or null if failed
+ * @param text - Text to embed
+ * @returns Embedding or null if failed
  */
-async function getEmbeddingFromServer(text) {
+export async function getEmbeddingFromServer(text: string): Promise<Float32Array | null> {
   const port = getServerPort();
 
   try {
@@ -85,29 +90,28 @@ async function getEmbeddingFromServer(text) {
     clearTimeout(timeout);
 
     if (!response.ok) {
-      const error = await response.json();
+      const error = (await response.json()) as { error?: string };
       throw new Error(error.error || 'Server error');
     }
 
-    const result = await response.json();
+    const result = (await response.json()) as { embedding: number[]; latency: number };
     info(`[EmbeddingClient] Got embedding in ${result.latency}ms from server`);
     return new Float32Array(result.embedding);
   } catch (error) {
-    if (error.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       warn('[EmbeddingClient] Server timeout, will use fallback');
       return null;
     }
-    warn(`[EmbeddingClient] Server error: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`[EmbeddingClient] Server error: ${message}`);
     return null;
   }
 }
 
 /**
  * Get server status
- *
- * @returns {Promise<Object|null>} Server status or null if not running
  */
-async function getServerStatus() {
+export async function getServerStatus(): Promise<ServerStatus | null> {
   const port = getServerPort();
 
   try {
@@ -121,21 +125,10 @@ async function getServerStatus() {
     clearTimeout(timeout);
 
     if (response.ok) {
-      return await response.json();
+      return (await response.json()) as ServerStatus;
     }
     return null;
-  } catch (e) {
+  } catch {
     return null;
   }
 }
-
-module.exports = {
-  isServerRunning,
-  getEmbeddingFromServer,
-  getServerStatus,
-  getServerPort,
-  PORT_FILE,
-  DEFAULT_PORT,
-  HOST,
-  TIMEOUT_MS,
-};

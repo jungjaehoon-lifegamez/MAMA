@@ -9,22 +9,38 @@
  *
  * @module errors
  * @version 1.0
- * @date 2025-11-25
  */
+
+export interface ErrorDetails {
+  [key: string]: unknown;
+}
+
+export interface ErrorResponse {
+  error: {
+    code: string;
+    message: string;
+    details: ErrorDetails;
+  };
+}
+
+export interface ErrorJSON {
+  name: string;
+  code: string;
+  message: string;
+  details: ErrorDetails;
+  timestamp: string;
+  stack?: string;
+}
 
 /**
  * Base error class for all MAMA errors
- *
- * @class MAMAError
- * @extends Error
  */
-class MAMAError extends Error {
-  /**
-   * @param {string} message - Error message
-   * @param {string} code - Error code (e.g., 'DECISION_NOT_FOUND')
-   * @param {Object} details - Additional error details
-   */
-  constructor(message, code = 'MAMA_ERROR', details = {}) {
+export class MAMAError extends Error {
+  code: string;
+  details: ErrorDetails;
+  timestamp: string;
+
+  constructor(message: string, code = 'MAMA_ERROR', details: ErrorDetails = {}) {
     super(message);
     this.name = 'MAMAError';
     this.code = code;
@@ -39,10 +55,8 @@ class MAMAError extends Error {
 
   /**
    * Convert to MCP-compatible error response format
-   *
-   * @returns {Object} {error: {code, message, details}}
    */
-  toResponse() {
+  toResponse(): ErrorResponse {
     return {
       error: {
         code: this.code,
@@ -54,10 +68,8 @@ class MAMAError extends Error {
 
   /**
    * Convert to JSON for logging
-   *
-   * @returns {Object} JSON representation
    */
-  toJSON() {
+  toJSON(): ErrorJSON {
     return {
       name: this.name,
       code: this.code,
@@ -71,17 +83,9 @@ class MAMAError extends Error {
 
 /**
  * Error thrown when a decision is not found
- *
- * @class NotFoundError
- * @extends MAMAError
  */
-class NotFoundError extends MAMAError {
-  /**
-   * @param {string} resourceType - Type of resource (e.g., 'decision', 'checkpoint')
-   * @param {string} identifier - Resource identifier
-   * @param {Object} details - Additional details
-   */
-  constructor(resourceType, identifier, details = {}) {
+export class NotFoundError extends MAMAError {
+  constructor(resourceType: string, identifier: string, details: ErrorDetails = {}) {
     super(`${resourceType} not found: ${identifier}`, `${resourceType.toUpperCase()}_NOT_FOUND`, {
       resourceType,
       identifier,
@@ -93,18 +97,11 @@ class NotFoundError extends MAMAError {
 
 /**
  * Error thrown when input validation fails
- *
- * @class ValidationError
- * @extends MAMAError
  */
-class ValidationError extends MAMAError {
-  /**
-   * @param {string} field - Field that failed validation
-   * @param {string} message - Validation error message
-   * @param {*} received - Received value
-   * @param {Object} details - Additional details
-   */
-  constructor(field, message, received = undefined, details = {}) {
+export class ValidationError extends MAMAError {
+  field: string;
+
+  constructor(field: string, message: string, received?: unknown, details: ErrorDetails = {}) {
     super(`Validation failed for '${field}': ${message}`, 'INVALID_INPUT', {
       field,
       received: received !== undefined ? String(received).substring(0, 100) : undefined,
@@ -117,17 +114,11 @@ class ValidationError extends MAMAError {
 
 /**
  * Error thrown when database operations fail
- *
- * @class DatabaseError
- * @extends MAMAError
  */
-class DatabaseError extends MAMAError {
-  /**
-   * @param {string} operation - Database operation (e.g., 'insert', 'query', 'update')
-   * @param {string} message - Error message
-   * @param {Object} details - Additional details
-   */
-  constructor(operation, message, details = {}) {
+export class DatabaseError extends MAMAError {
+  operation: string;
+
+  constructor(operation: string, message: string, details: ErrorDetails = {}) {
     super(`Database ${operation} failed: ${message}`, 'DATABASE_ERROR', {
       operation,
       ...details,
@@ -139,16 +130,9 @@ class DatabaseError extends MAMAError {
 
 /**
  * Error thrown when embedding generation fails
- *
- * @class EmbeddingError
- * @extends MAMAError
  */
-class EmbeddingError extends MAMAError {
-  /**
-   * @param {string} message - Error message
-   * @param {Object} details - Additional details (model, input length, etc.)
-   */
-  constructor(message, details = {}) {
+export class EmbeddingError extends MAMAError {
+  constructor(message: string, details: ErrorDetails = {}) {
     super(`Embedding generation failed: ${message}`, 'EMBEDDING_ERROR', details);
     this.name = 'EmbeddingError';
   }
@@ -156,17 +140,11 @@ class EmbeddingError extends MAMAError {
 
 /**
  * Error thrown when configuration is invalid
- *
- * @class ConfigurationError
- * @extends MAMAError
  */
-class ConfigurationError extends MAMAError {
-  /**
-   * @param {string} configKey - Configuration key
-   * @param {string} message - Error message
-   * @param {Object} details - Additional details
-   */
-  constructor(configKey, message, details = {}) {
+export class ConfigurationError extends MAMAError {
+  configKey: string;
+
+  constructor(configKey: string, message: string, details: ErrorDetails = {}) {
     super(`Configuration error for '${configKey}': ${message}`, 'CONFIG_ERROR', {
       configKey,
       ...details,
@@ -178,17 +156,11 @@ class ConfigurationError extends MAMAError {
 
 /**
  * Error thrown when a link operation fails
- *
- * @class LinkError
- * @extends MAMAError
  */
-class LinkError extends MAMAError {
-  /**
-   * @param {string} operation - Link operation (e.g., 'propose', 'approve', 'reject')
-   * @param {string} message - Error message
-   * @param {Object} details - Additional details (from_id, to_id, etc.)
-   */
-  constructor(operation, message, details = {}) {
+export class LinkError extends MAMAError {
+  operation: string;
+
+  constructor(operation: string, message: string, details: ErrorDetails = {}) {
     super(`Link ${operation} failed: ${message}`, 'LINK_ERROR', {
       operation,
       ...details,
@@ -200,17 +172,11 @@ class LinkError extends MAMAError {
 
 /**
  * Error thrown when rate limit is exceeded
- *
- * @class RateLimitError
- * @extends MAMAError
  */
-class RateLimitError extends MAMAError {
-  /**
-   * @param {string} operation - Operation that was rate limited
-   * @param {number} retryAfterMs - Time to wait before retry (ms)
-   * @param {Object} details - Additional details
-   */
-  constructor(operation, retryAfterMs, details = {}) {
+export class RateLimitError extends MAMAError {
+  retryAfterMs: number;
+
+  constructor(operation: string, retryAfterMs: number, details: ErrorDetails = {}) {
     super(`Rate limit exceeded for ${operation}. Retry after ${retryAfterMs}ms`, 'RATE_LIMITED', {
       operation,
       retryAfterMs,
@@ -223,17 +189,11 @@ class RateLimitError extends MAMAError {
 
 /**
  * Error thrown when operation times out
- *
- * @class TimeoutError
- * @extends MAMAError
  */
-class TimeoutError extends MAMAError {
-  /**
-   * @param {string} operation - Operation that timed out
-   * @param {number} timeoutMs - Timeout duration (ms)
-   * @param {Object} details - Additional details
-   */
-  constructor(operation, timeoutMs, details = {}) {
+export class TimeoutError extends MAMAError {
+  timeoutMs: number;
+
+  constructor(operation: string, timeoutMs: number, details: ErrorDetails = {}) {
     super(`Operation '${operation}' timed out after ${timeoutMs}ms`, 'TIMEOUT', {
       operation,
       timeoutMs,
@@ -247,7 +207,7 @@ class TimeoutError extends MAMAError {
 /**
  * Error codes enum for reference
  */
-const ErrorCodes = {
+export const ErrorCodes = {
   // Resource errors
   DECISION_NOT_FOUND: 'DECISION_NOT_FOUND',
   CHECKPOINT_NOT_FOUND: 'CHECKPOINT_NOT_FOUND',
@@ -272,16 +232,14 @@ const ErrorCodes = {
   RATE_LIMITED: 'RATE_LIMITED',
   TIMEOUT: 'TIMEOUT',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
-};
+} as const;
+
+export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
 
 /**
  * Helper function to wrap unknown errors
- *
- * @param {Error|unknown} error - Error to wrap
- * @param {string} context - Context for the error
- * @returns {MAMAError} Wrapped MAMA error
  */
-function wrapError(error, context = 'Unknown operation') {
+export function wrapError(error: unknown, context = 'Unknown operation'): MAMAError {
   if (error instanceof MAMAError) {
     return error;
   }
@@ -297,30 +255,7 @@ function wrapError(error, context = 'Unknown operation') {
 
 /**
  * Helper function to check if an error is a MAMA error
- *
- * @param {unknown} error - Error to check
- * @returns {boolean} True if MAMA error
  */
-function isMAMAError(error) {
+export function isMAMAError(error: unknown): error is MAMAError {
   return error instanceof MAMAError;
 }
-
-module.exports = {
-  // Base class
-  MAMAError,
-
-  // Specific error types
-  NotFoundError,
-  ValidationError,
-  DatabaseError,
-  EmbeddingError,
-  ConfigurationError,
-  LinkError,
-  RateLimitError,
-  TimeoutError,
-
-  // Utilities
-  ErrorCodes,
-  wrapError,
-  isMAMAError,
-};
