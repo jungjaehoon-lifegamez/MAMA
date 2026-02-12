@@ -3167,4 +3167,42 @@ const mama = {
   validateCleanupResult,
 };
 
+// Named exports for ESM consumers
+export {
+  save,
+  suggest,
+  listDecisions as list,
+  listCheckpoints,
+  updateOutcome,
+  saveCheckpoint,
+  loadCheckpoint,
+  recall,
+  proposeLink,
+  approveLink,
+  rejectLink,
+  getPendingLinks,
+  deprecateAutoLinks,
+  calculateCoverage,
+  calculateQuality,
+  generateQualityReport,
+  logRestartAttempt,
+  calculateRestartSuccessRate,
+  calculateRestartLatency,
+  getRestartMetrics,
+  scanAutoLinks,
+  createLinkBackup,
+  generatePreCleanupReport,
+  restoreLinkBackup,
+  verifyBackupExists,
+  deleteAutoLinks,
+  validateCleanupResult,
+};
+
+// Default export for backward compatibility
 export default mama;
+
+// CommonJS compatibility - allows require('@jungjaehoon/mama-core/mama-api').save()
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(module as any).exports = mama;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(module as any).exports.default = mama;
