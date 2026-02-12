@@ -580,6 +580,9 @@ export class DiscordGateway extends BaseGateway {
     // Pass enriched content (images already analyzed above) to avoid double analysis
     if (enrichedContent !== cleanContent) {
       normalizedMessage.text = enrichedContent;
+    }
+    // Always clear contentBlocks after image analysis attempt to prevent double analysis in message-router
+    if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
       normalizedMessage.contentBlocks = undefined;
     }
     const routerResult = await this.messageRouter.process(normalizedMessage);
