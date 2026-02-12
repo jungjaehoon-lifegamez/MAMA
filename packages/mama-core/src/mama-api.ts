@@ -295,6 +295,123 @@ interface QualityThresholds {
 }
 
 /**
+ * Deprecate auto-links result
+ */
+interface DeprecateAutoLinksResult {
+  dryRun: boolean;
+  deprecated: number;
+  protected: number;
+  total: number;
+  autoLinkRatio: string;
+  links: Array<{
+    from_id: string;
+    to_id: string;
+    relationship: string;
+    reason?: string;
+    created_at?: number | string;
+  }>;
+}
+
+/**
+ * Scan auto-links result
+ */
+interface ScanAutoLinksResult {
+  total_links: number;
+  auto_links: number;
+  protected_links: number;
+  deletion_targets: number;
+  deletion_target_list: DeletionTarget[];
+}
+
+/**
+ * Create link backup result
+ */
+interface CreateLinkBackupResult {
+  backup_file: string;
+  manifest_file: string;
+  checksum: string;
+  link_count: number;
+}
+
+/**
+ * Restore link backup result
+ */
+interface RestoreLinkBackupResult {
+  total_links: number;
+  restored: number;
+  failed: number;
+  backup_file: string;
+}
+
+/**
+ * Verify backup exists result
+ */
+interface VerifyBackupResult {
+  backup_file: string;
+  age_hours: number;
+  link_count: number;
+}
+
+/**
+ * Delete auto-links result (dry run mode)
+ */
+interface DeleteAutoLinksDryRunResult {
+  dry_run: true;
+  would_delete: number;
+  deleted: 0;
+  backup_file: string;
+  large_deletion_warning: boolean;
+  warning_message: string | null;
+  sample_links: Array<{
+    from_id: string;
+    to_id: string;
+    relationship: string;
+  }>;
+  message: string;
+}
+
+/**
+ * Delete auto-links error entry
+ */
+type DeleteAutoLinksError =
+  | { link: string; error: string }
+  | { batch_index: number; batch_size: number; error: string };
+
+/**
+ * Delete auto-links result (execute mode)
+ */
+interface DeleteAutoLinksExecuteResult {
+  dry_run: false;
+  deleted: number;
+  failed: number;
+  total_targets: number;
+  batches_processed: number;
+  backup_file: string;
+  errors: DeleteAutoLinksError[];
+  success_rate: number;
+}
+
+/**
+ * Delete auto-links result (empty case)
+ */
+interface DeleteAutoLinksEmptyResult {
+  dry_run: boolean;
+  deleted: 0;
+  failed: 0;
+  total_targets: 0;
+  backup_file: string;
+  message: string;
+}
+
+/**
+ * Delete auto-links union type
+ */
+type DeleteAutoLinksResult =
+  | DeleteAutoLinksDryRunResult
+  | DeleteAutoLinksExecuteResult
+  | DeleteAutoLinksEmptyResult;
+
+/**
  * Quality recommendation
  */
 export interface QualityRecommendation {
@@ -1435,8 +1552,9 @@ interface ListDecisionsOptions {
   format?: 'json' | 'markdown';
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function listDecisions(options: ListDecisionsOptions = {}): Promise<any> {
+async function listDecisions(
+  options: ListDecisionsOptions = {}
+): Promise<DecisionRecord[] | string> {
   const { limit = 10, format = 'json' } = options;
 
   try {
@@ -1454,7 +1572,7 @@ async function listDecisions(options: ListDecisionsOptions = {}): Promise<any> {
       return formatList(decisions as any[]);
     }
 
-    return decisions;
+    return decisions as DecisionRecord[];
   } catch (error: unknown) {
     throw new Error(
       `mama.listDecisions() failed: ${error instanceof Error ? error.message : String(error)}`
@@ -1519,8 +1637,7 @@ interface CheckpointRow {
   status?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadCheckpoint(): Promise<any> {
+async function loadCheckpoint(): Promise<CheckpointRow | null> {
   try {
     const adapter = getAdapter();
     const stmt = adapter.prepare(`
@@ -1566,8 +1683,7 @@ async function loadCheckpoint(): Promise<any> {
  * @param {number} limit - Max number of checkpoints to return
  * @returns {Promise<Array>} Recent checkpoints
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function listCheckpoints(limit: number = 10): Promise<any[]> {
+async function listCheckpoints(limit: number = 10): Promise<CheckpointRow[]> {
   try {
     const adapter = getAdapter();
     const stmt = adapter.prepare(`
@@ -1844,8 +1960,9 @@ interface EdgeLink {
   created_at?: number | string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function deprecateAutoLinks(options: DeprecateAutoLinksOptions = {}): Promise<any> {
+async function deprecateAutoLinks(
+  options: DeprecateAutoLinksOptions = {}
+): Promise<DeprecateAutoLinksResult> {
   const { dryRun = true } = options;
 
   try {
@@ -1932,8 +2049,7 @@ async function deprecateAutoLinks(options: DeprecateAutoLinksOptions = {}): Prom
  *
  * @returns {Object} Scan results with counts and link details
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function scanAutoLinks(): any {
+function scanAutoLinks(): ScanAutoLinksResult {
   const adapter = getAdapter();
 
   // Total links
@@ -1985,8 +2101,7 @@ function scanAutoLinks(): any {
  * @param {Array} targetLinks - Links to back up
  * @returns {Object} Backup result with file paths and checksum
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createLinkBackup(targetLinks: EdgeLink[]): any {
+function createLinkBackup(targetLinks: EdgeLink[]): CreateLinkBackupResult {
   const backupDir = path.join(os.homedir(), '.claude', 'mama-backups');
 
   // Create backup directory if not exists
@@ -2162,8 +2277,7 @@ ${samples
  * @param {string} backupFile - Path to backup file
  * @returns {Object} Restoration result with counts
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function restoreLinkBackup(backupFile: string): any {
+function restoreLinkBackup(backupFile: string): RestoreLinkBackupResult {
   // Read backup file
   const backupJson = fs.readFileSync(backupFile, 'utf8');
   const backupData = JSON.parse(backupJson);
@@ -2228,8 +2342,7 @@ function restoreLinkBackup(backupFile: string): any {
  * @param {number} maxAgeHours - Maximum age of backup in hours (default: 24)
  * @returns {Object} Backup verification result with latest backup info
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function verifyBackupExists(maxAgeHours: number = 24): any {
+function verifyBackupExists(maxAgeHours: number = 24): VerifyBackupResult {
   const backupDir = path.join(os.homedir(), '.claude', 'mama-backups');
 
   if (!fs.existsSync(backupDir)) {
@@ -2290,8 +2403,7 @@ function verifyBackupExists(maxAgeHours: number = 24): any {
  * @param {boolean} dryRun - If true, simulate deletion without actual changes (default: true)
  * @returns {Object} Deletion result with counts and backup info
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function deleteAutoLinks(batchSize: number = 100, dryRun: boolean = true): any {
+function deleteAutoLinks(batchSize: number = 100, dryRun: boolean = true): DeleteAutoLinksResult {
   const adapter = getAdapter();
 
   // Safety check: Verify recent backup exists

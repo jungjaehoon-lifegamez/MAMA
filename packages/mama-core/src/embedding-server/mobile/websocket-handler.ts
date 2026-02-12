@@ -472,12 +472,12 @@ async function handleClientMessage(
         logger.info(` Message processed for ${clientId} (${result.duration}ms)`);
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        logger.info(` Message processing error:`, error);
+        logger.error(`Message processing error for ${clientId}:`, errMsg);
         clientInfo.ws.send(
           JSON.stringify({
             type: 'error',
             error: 'Failed to process message',
-            details: errMsg,
+            // Don't expose internal error details to client for security
           })
         );
       }
