@@ -12,19 +12,91 @@
  * @date 2025-11-14
  */
 
-// eslint-disable-next-line no-unused-vars
-const { info, error: logError } = require('./debug-logger');
-const { formatTopNContext } = require('./relevance-scorer');
+import { info } from './debug-logger.js';
+import { formatTopNContext } from './relevance-scorer.js';
+
+/**
+ * Decision object for formatting
+ */
+export interface DecisionForFormat {
+  id?: string;
+  topic?: string;
+  decision: string;
+  reasoning?: string | null;
+  outcome?: string | null;
+  failure_reason?: string | null;
+  limitation?: string | null;
+  user_involvement?: string;
+  confidence?: number;
+  created_at: number | string;
+  updated_at?: number | string;
+  superseded_by?: string | null;
+  relevanceScore?: number;
+  similarity?: number;
+  recency_age_days?: number;
+  recency_score?: number;
+  final_score?: number;
+  trust_context?: TrustContext | string | null;
+  evidence?: string | string[] | unknown;
+  alternatives?: string | string[] | unknown;
+  risks?: string;
+}
+
+/**
+ * Trust context object
+ */
+export interface TrustContext {
+  source?: {
+    file?: string;
+    line?: number;
+    author?: string;
+    timestamp?: number | string;
+  };
+  causality?: {
+    impact?: string;
+  };
+  verification?: {
+    test_file?: string;
+    result?: string;
+  };
+  context_match?: {
+    user_intent?: string;
+  };
+  track_record?: {
+    recent_successes?: unknown[];
+    recent_failures?: unknown[];
+    success_rate?: number;
+    sample_size?: number;
+  };
+}
+
+/**
+ * Semantic edges for related decisions
+ */
+export interface SemanticEdges {
+  refines?: Array<{ topic: string; decision: string }>;
+  refined_by?: Array<{ topic: string; decision: string }>;
+  contradicts?: Array<{ topic: string; decision: string }>;
+  contradicted_by?: Array<{ topic: string; decision: string }>;
+}
+
+/**
+ * Formatting options
+ */
+export interface FormatOptions {
+  maxTokens?: number;
+  useTopN?: boolean;
+  topN?: number;
+  useTeaser?: boolean;
+  limit?: number;
+}
 
 /**
  * Safely parse JSON string, returning fallback on error
- * @param {string} str - JSON string to parse
- * @param {*} fallback - Value to return on parse error
- * @returns {*} Parsed value or fallback
  */
-function safeParseJson(str, fallback = []) {
+function safeParseJson<T>(str: string, fallback: T): T {
   try {
-    return JSON.parse(str);
+    return JSON.parse(str) as T;
   } catch {
     return fallback;
   }
@@ -41,14 +113,14 @@ function safeParseJson(str, fallback = []) {
  * Story 014.7.10 - Task 5: Fallback Formatting
  * Tries Instant Answer format first (if trust_context available), falls back to legacy
  *
- * @param {Array<Object>} decisions - Decision chain (sorted by relevance)
- * @param {Object} options - Formatting options
- * @param {number} options.maxTokens - Token budget (default: 500)
- * @param {boolean} options.useTopN - Use top-N selection (default: true for 4+ decisions)
- * @param {number} options.topN - Number of decisions for full detail (default: 3)
- * @returns {string} Formatted context for injection
+ * @param decisions - Decision chain (sorted by relevance)
+ * @param options - Formatting options
+ * @returns Formatted context for injection
  */
-function formatContext(decisions, options = {}) {
+export function formatContext(
+  decisions: DecisionForFormat[],
+  options: FormatOptions = {}
+): string | null {
   const {
     maxTokens = 500,
     useTopN = decisions.length >= 4, // Auto-enable for 4+ decisions
@@ -81,14 +153,14 @@ function formatContext(decisions, options = {}) {
  * Story 014.7.10 - Task 5.1: Fallback formatting
  * AC #3: Graceful degradation for decisions without trust_context
  *
- * @param {Array<Object>} decisions - Decision chain (sorted by relevance)
- * @param {Object} options - Formatting options
- * @param {number} options.maxTokens - Token budget (default: 500)
- * @param {boolean} options.useTopN - Use top-N selection (default: true for 4+ decisions)
- * @param {number} options.topN - Number of decisions for full detail (default: 3)
- * @returns {string} Formatted context (legacy format)
+ * @param decisions - Decision chain (sorted by relevance)
+ * @param options - Formatting options
+ * @returns Formatted context (legacy format)
  */
-function formatLegacyContext(decisions, options = {}) {
+export function formatLegacyContext(
+  decisions: DecisionForFormat[],
+  options: FormatOptions = {}
+): string | null {
   if (!decisions || decisions.length === 0) {
     return null;
   }
@@ -96,7 +168,7 @@ function formatLegacyContext(decisions, options = {}) {
   const { maxTokens = 500, useTopN = decisions.length >= 4, topN = 3 } = options;
 
   // Task 8.1: Use top-N selection for 4+ decisions (AC #5)
-  let context;
+  let context: string;
 
   if (useTopN && decisions.length > topN) {
     // Task 8.1: Modify to use top-N selection
@@ -126,16 +198,29 @@ function formatLegacyContext(decisions, options = {}) {
  * Task 8.2-8.3: Full detail for top 3, summary for rest
  * AC #5: Top-N selection with summary
  *
- * @param {Array<Object>} decisions - All decisions (sorted by relevance)
- * @param {number} topN - Number of decisions for full detail
- * @returns {string} Formatted context
+ * @param decisions - All decisions (sorted by relevance)
+ * @param topN - Number of decisions for full detail
+ * @returns Formatted context
  */
-function formatWithTopN(decisions, topN) {
+function formatWithTopN(decisions: DecisionForFormat[], topN: number): string {
   // Use formatTopNContext from relevance-scorer.js
-  const { full, summary } = formatTopNContext(decisions, topN);
+  const { full, summary } = formatTopNContext(
+    decisions.map((d) => ({
+      ...d,
+      created_at: typeof d.created_at === 'string' ? Date.parse(d.created_at) : d.created_at,
+      updated_at:
+        typeof d.updated_at === 'string'
+          ? Date.parse(d.updated_at)
+          : typeof d.updated_at === 'number'
+            ? d.updated_at
+            : undefined,
+      reasoning: d.reasoning === null ? undefined : d.reasoning,
+    })),
+    topN
+  );
 
   const current = full[0]; // Highest relevance
-  const topic = current.topic;
+  const topic = current?.topic || 'Unknown';
 
   // Task 8.2: Full detail for top 3 decisions
   let context = `
@@ -147,7 +232,7 @@ Top ${full.length} Most Relevant Decisions:
   for (let i = 0; i < full.length; i++) {
     const d = full[i];
     const duration = calculateDuration(d.created_at);
-    const outcomeEmoji = getOutcomeEmoji(d.outcome);
+    const outcomeEmoji = getOutcomeEmoji(d.outcome ?? null);
     const relevancePercent = Math.round((d.relevanceScore || 0) * 100);
 
     context += `\n\n${i + 1}. ${d.decision} (${duration}, relevance: ${relevancePercent}%) ${outcomeEmoji}`;
@@ -176,12 +261,8 @@ Top ${full.length} Most Relevant Decisions:
 
 /**
  * Format small decision history (3 or fewer)
- *
- * @param {Object} current - Current decision
- * @param {Array<Object>} history - Previous decisions
- * @returns {string} Formatted context
  */
-function formatSmallHistory(current, history) {
+function formatSmallHistory(current: DecisionForFormat, history: DecisionForFormat[]): string {
   const duration = calculateDuration(current.created_at);
 
   let context = `
@@ -200,7 +281,7 @@ Reasoning: ${current.reasoning || 'N/A'}
         decision.created_at,
         decision.updated_at || Date.now()
       );
-      const outcomeEmoji = getOutcomeEmoji(decision.outcome);
+      const outcomeEmoji = getOutcomeEmoji(decision.outcome ?? null);
 
       context += `- ${decision.decision} (${durationDays} days) ${outcomeEmoji}\n`;
 
@@ -218,14 +299,8 @@ Reasoning: ${current.reasoning || 'N/A'}
  *
  * Task 6.2: Rolling summary for large histories
  * AC #4: Highlight top 3 failures
- *
- * @param {Object} current - Current decision
- * @param {Array<Object>} history - Previous decisions
- * @returns {string} Formatted context with rolling summary
  */
-function formatLargeHistory(current, history) {
-  // eslint-disable-next-line no-unused-vars
-  const duration = calculateDuration(current.created_at);
+function formatLargeHistory(current: DecisionForFormat, history: DecisionForFormat[]): string {
   // Include current decision in total duration calculation
   const allDecisions = [current, ...history];
   const totalDuration = calculateTotalDuration(allDecisions);
@@ -273,12 +348,8 @@ History: ${history.length + 1} decisions over ${totalDuration}
  *
  * Task 6.3-6.5: Token budget enforcement
  * AC #1: Context stays under 500 tokens
- *
- * @param {string} text - Context text
- * @param {number} maxTokens - Maximum tokens allowed
- * @returns {string} Truncated text if needed
  */
-function ensureTokenBudget(text, maxTokens) {
+export function ensureTokenBudget(text: string, maxTokens: number): string {
   // Task 6.4: Token estimation (~1 token per 4 characters)
   const estimatedTokens = estimateTokens(text);
 
@@ -298,24 +369,18 @@ function ensureTokenBudget(text, maxTokens) {
  *
  * Task 6.4: Simple token estimation
  * Heuristic: ~1 token per 4 characters
- *
- * @param {string} text - Text to estimate
- * @returns {number} Estimated token count
  */
-function estimateTokens(text) {
+export function estimateTokens(text: string): number {
   // Task 6.4: ~1 token per 4 characters
   return Math.ceil(text.length / 4);
 }
 
 /**
  * Calculate human-readable duration
- *
- * @param {number|string} timestamp - Unix timestamp (ms) or ISO 8601 string
- * @returns {string} Human-readable duration (e.g., "3 days ago")
  */
-function calculateDuration(timestamp) {
+function calculateDuration(timestamp: number | string): string {
   // Handle Unix timestamp (number or numeric string) and ISO 8601 string
-  let ts;
+  let ts: number;
   if (typeof timestamp === 'string') {
     // Try parsing as number first (e.g., "1763971277689")
     const num = Number(timestamp);
@@ -345,15 +410,11 @@ function calculateDuration(timestamp) {
 }
 
 /**
- * Calculate duration between two timestamps
- *
- * @param {number|string} start - Start timestamp (ms) or ISO 8601 string
- * @param {number|string} end - End timestamp (ms) or ISO 8601 string
- * @returns {number} Duration in days
+ * Calculate duration between two timestamps in days
  */
-function calculateDurationDays(start, end) {
-  // Handle Unix timestamp (number or numeric string) and ISO 8601 string
-  let startTs, endTs;
+function calculateDurationDays(start: number | string, end: number | string): number {
+  let startTs: number;
+  let endTs: number;
 
   if (typeof start === 'string') {
     const num = Number(start);
@@ -379,11 +440,8 @@ function calculateDurationDays(start, end) {
 
 /**
  * Calculate total duration across decision history
- *
- * @param {Array<Object>} history - Decision history
- * @returns {string} Human-readable total duration
  */
-function calculateTotalDuration(history) {
+function calculateTotalDuration(history: DecisionForFormat[]): string {
   if (history.length === 0) {
     return 'N/A';
   }
@@ -391,7 +449,8 @@ function calculateTotalDuration(history) {
   // Convert all timestamps to numbers for comparison
   const timestamps = history
     .map((d) => {
-      const created = typeof d.created_at === 'string' ? Date.parse(d.created_at) : d.created_at;
+      const created =
+        typeof d.created_at === 'string' ? Date.parse(d.created_at) : (d.created_at as number);
       const updated = d.updated_at
         ? typeof d.updated_at === 'string'
           ? Date.parse(d.updated_at)
@@ -423,19 +482,16 @@ function calculateTotalDuration(history) {
 
 /**
  * Get emoji for outcome
- *
- * @param {string} outcome - Decision outcome
- * @returns {string} Emoji representation
  */
-function getOutcomeEmoji(outcome) {
-  const emojiMap = {
+function getOutcomeEmoji(outcome: string | null): string {
+  const emojiMap: Record<string, string> = {
     SUCCESS: '✅',
     FAILED: '❌',
     PARTIAL: '⚠️',
     ONGOING: '⏳',
   };
 
-  return emojiMap[outcome] || '';
+  return outcome ? emojiMap[outcome] || '' : '';
 }
 
 /**
@@ -443,19 +499,11 @@ function getOutcomeEmoji(outcome) {
  *
  * Story 014.7.10: Claude-Friendly Context Formatting
  * AC #1: Instant Answer format with trust components
- *
- * Prioritizes:
- * 1. Quick answer (one line)
- * 2. Code example (if available)
- * 3. Trust evidence (5 components)
- * 4. Minimal reasoning (< 150 chars)
- *
- * @param {Object} decision - Decision object
- * @param {Object} options - Formatting options
- * @param {number} options.maxTokens - Token budget (default: 500)
- * @returns {string|null} Formatted instant answer or null
  */
-function formatInstantAnswer(decision, options = {}) {
+export function formatInstantAnswer(
+  decision: DecisionForFormat | null,
+  options: FormatOptions = {}
+): string | null {
   const { maxTokens = 500 } = options;
 
   if (!decision) {
@@ -473,7 +521,11 @@ function formatInstantAnswer(decision, options = {}) {
   const codeExample = extractCodeExample(decision);
 
   // Format trust context
-  const trustSection = formatTrustContext(decision.trust_context);
+  const trustSection = formatTrustContext(
+    typeof decision.trust_context === 'string'
+      ? parseTrustContext(decision.trust_context)
+      : decision.trust_context
+  );
 
   // Build output
   let output = `⚡ INSTANT ANSWER\n\n${quickAnswer}`;
@@ -496,13 +548,8 @@ function formatInstantAnswer(decision, options = {}) {
 
 /**
  * Extract quick answer from decision
- *
- * Returns first line or sentence from decision field
- *
- * @param {Object} decision - Decision object
- * @returns {string|null} Quick answer or null
  */
-function extractQuickAnswer(decision) {
+export function extractQuickAnswer(decision: DecisionForFormat): string | null {
   if (!decision.decision || typeof decision.decision !== 'string') {
     return null;
   }
@@ -518,10 +565,8 @@ function extractQuickAnswer(decision) {
   const firstLine = lines[0].trim();
 
   // Check if first line contains multiple real sentences
-  // Match period/exclamation/question mark followed by space and capital letter
   const sentenceMatch = firstLine.match(/^.+?[.!?](?=\s+[A-Z])/);
   if (sentenceMatch) {
-    // Multiple sentences detected - return first sentence
     return sentenceMatch[0].trim();
   }
 
@@ -536,13 +581,8 @@ function extractQuickAnswer(decision) {
 
 /**
  * Extract code example from reasoning
- *
- * Looks for markdown code blocks (```...```)
- *
- * @param {Object} decision - Decision object
- * @returns {string|null} Code example or null
  */
-function extractCodeExample(decision) {
+export function extractCodeExample(decision: DecisionForFormat): string | null {
   if (!decision.reasoning || typeof decision.reasoning !== 'string') {
     return null;
   }
@@ -563,7 +603,6 @@ function extractCodeExample(decision) {
       decision.decision.includes('=>');
 
     if (hasCode) {
-      // Wrap in code block
       return `\`\`\`javascript\n${decision.decision}\n\`\`\``;
     }
   }
@@ -575,18 +614,8 @@ function extractCodeExample(decision) {
  * Format trust context section
  *
  * Story 014.7.10 AC #2: Trust Context display
- *
- * Shows 5 trust components:
- * 1. Source transparency
- * 2. Causality
- * 3. Verifiability
- * 4. Context relevance
- * 5. Track record
- *
- * @param {Object} trustCtx - Trust context object
- * @returns {string|null} Formatted trust section or null
  */
-function formatTrustContext(trustCtx) {
+export function formatTrustContext(trustCtx: TrustContext | null | undefined): string | null {
   if (!trustCtx) {
     return null;
   }
@@ -598,7 +627,7 @@ function formatTrustContext(trustCtx) {
   // 1. Source transparency
   if (trustCtx.source) {
     const { file, line, author, timestamp } = trustCtx.source;
-    const timeAgo = calculateDuration(timestamp);
+    const timeAgo = timestamp ? calculateDuration(timestamp) : 'unknown';
     lines.push(`📍 Source: ${file}:${line} (${timeAgo}, by ${author})`);
     hasContent = true;
   }
@@ -647,22 +676,11 @@ function formatTrustContext(trustCtx) {
 
 /**
  * Truncate output to fit token budget
- *
- * Prioritizes:
- * 1. Keep quick answer (always)
- * 2. Keep code example (if fits)
- * 3. Trim trust section (if needed)
- *
- * @param {string} output - Full output
- * @param {number} maxTokens - Maximum tokens
- * @returns {string} Truncated output
  */
-function truncateToFit(output, maxTokens) {
-  // Split sections
+function truncateToFit(output: string, maxTokens: number): string {
   const sections = output.split('\n\n');
-  const quickAnswer = sections[0]; // "⚡ INSTANT ANSWER\n\n[answer]"
+  const quickAnswer = sections[0];
 
-  // Always keep quick answer
   let result = quickAnswer;
   let remainingTokens = maxTokens - estimateTokens(result);
 
@@ -687,9 +705,8 @@ function truncateToFit(output, maxTokens) {
     if (trustTokens <= remainingTokens) {
       result += '\n\n' + trustSection;
     } else {
-      // Trim trust section to fit
       const trustLines = trustSection.split('\n');
-      let trimmed = trustLines[0] + '\n' + trustLines[1] + '\n'; // Header
+      let trimmed = trustLines[0] + '\n' + trustLines[1] + '\n';
 
       for (let i = 2; i < trustLines.length - 1; i++) {
         const line = trustLines[i] + '\n';
@@ -700,7 +717,7 @@ function truncateToFit(output, maxTokens) {
         }
       }
 
-      trimmed += trustLines[trustLines.length - 1]; // Footer
+      trimmed += trustLines[trustLines.length - 1];
       result += '\n\n' + trimmed;
     }
   }
@@ -710,15 +727,8 @@ function truncateToFit(output, maxTokens) {
 
 /**
  * Format multiple decisions as Google-style search results
- *
- * Shows top N results with relevance scores, allowing user to choose
- * Story: Google-style teaser list for better UX
- *
- * @param {Array<Object>} decisions - Decision objects (sorted by relevance)
- * @param {number} topN - Number of results to show (default: 3)
- * @returns {string|null} Formatted teaser list or null
  */
-function formatTeaserList(decisions, topN = 3) {
+function formatTeaserList(decisions: DecisionForFormat[], topN = 3): string | null {
   if (!decisions || decisions.length === 0) {
     return null;
   }
@@ -739,9 +749,8 @@ function formatTeaserList(decisions, topN = 3) {
     output += `\n   "${preview}"`;
 
     // Recency metadata (NEW - Gaussian Decay)
-    // Shows age and recency impact to help Claude adjust parameters
     if (d.recency_age_days !== undefined && d.created_at) {
-      const timeAgo = calculateDuration(d.created_at); // Use human-readable time (mins/hours/days)
+      const timeAgo = calculateDuration(d.created_at);
       const recencyScore = d.recency_score ? Math.round(d.recency_score * 100) : null;
       const finalScore = d.final_score ? Math.round(d.final_score * 100) : null;
 
@@ -763,14 +772,8 @@ function formatTeaserList(decisions, topN = 3) {
 
 /**
  * Format decision as curiosity-inducing teaser
- *
- * MAMA = Librarian: Shows book preview, Claude decides to read
- * "Just enough context to spark curiosity" - makes Claude want to learn more
- *
- * @param {Object} decision - Decision object
- * @returns {string|null} Formatted teaser or null
  */
-function formatTeaser(decision) {
+export function formatTeaser(decision: DecisionForFormat | null): string | null {
   if (!decision) {
     return null;
   }
@@ -783,8 +786,12 @@ function formatTeaser(decision) {
 
   // Extract files from trust_context or show generic
   let files = 'Multiple files';
-  if (decision.trust_context?.source?.file) {
-    const fileStr = decision.trust_context.source.file;
+  const trustCtx =
+    typeof decision.trust_context === 'string'
+      ? parseTrustContext(decision.trust_context)
+      : decision.trust_context;
+  if (trustCtx?.source?.file) {
+    const fileStr = trustCtx.source.file;
     const fileList = fileStr.split(',').map((f) => f.trim());
 
     if (fileList.length === 1) {
@@ -796,7 +803,6 @@ function formatTeaser(decision) {
     }
   }
 
-  // Build teaser
   const teaser = `
 💡 MAMA has related info
 
@@ -812,48 +818,19 @@ function formatTeaser(decision) {
 }
 
 /**
- * Extract files from source string
- * Helper for formatTeaser
- *
- * @param {string} source - Source file string (may be comma-separated)
- * @returns {string} Formatted file list
- */
-// eslint-disable-next-line no-unused-vars
-function extractFiles(source) {
-  if (!source) {
-    return 'Multiple files';
-  }
-
-  const files = source.split(',').map((f) => f.trim());
-
-  if (files.length === 1) {
-    return files[0];
-  } else if (files.length === 2) {
-    return files.join(', ');
-  } else {
-    return `${files[0]}, ${files[1]} (+${files.length - 2})`;
-  }
-}
-
-/**
  * Format mama.recall() results in readable format
- *
- * Transforms raw JSON into readable markdown with:
- * - Properly formatted reasoning (markdown preserved)
- * - Parsed trust_context (not JSON string)
- * - Clean metadata display
- *
- * @param {Array<Object>} decisions - Decision history from recall()
- * @returns {string} Formatted output for human reading
  */
-function formatRecall(decisions, semanticEdges = null) {
+export function formatRecall(
+  decisions: DecisionForFormat[],
+  semanticEdges: SemanticEdges | null = null
+): string {
   if (!decisions || decisions.length === 0) {
     return '❌ No decisions found';
   }
 
   // Single decision: full detail
   if (decisions.length === 1) {
-    return formatSingleDecision(decisions[0], semanticEdges);
+    return formatSingleDecision(decisions[0]);
   }
 
   // Multiple decisions: history view
@@ -862,14 +839,11 @@ function formatRecall(decisions, semanticEdges = null) {
 
 /**
  * Format single decision with full detail
- *
- * @param {Object} decision - Single decision object
- * @returns {string} Formatted decision
  */
-function formatSingleDecision(decision) {
+function formatSingleDecision(decision: DecisionForFormat): string {
   const timeAgo = calculateDuration(decision.created_at);
   const confidencePercent = Math.round((decision.confidence || 0) * 100);
-  const outcomeEmoji = getOutcomeEmoji(decision.outcome);
+  const outcomeEmoji = getOutcomeEmoji(decision.outcome ?? null);
   const outcomeText = decision.outcome || 'Not yet tracked';
 
   let output = `
@@ -898,11 +872,11 @@ ${decision.reasoning || decision.decision}
       const evidenceList = Array.isArray(decision.evidence)
         ? decision.evidence
         : typeof decision.evidence === 'string'
-          ? safeParseJson(decision.evidence, [decision.evidence])
+          ? safeParseJson<string[]>(decision.evidence, [decision.evidence])
           : [decision.evidence];
       if (evidenceList.length > 0) {
         output += '\n🔍 Evidence:';
-        evidenceList.forEach((item, idx) => {
+        (evidenceList as string[]).forEach((item, idx) => {
           output += `\n  ${idx + 1}. ${item}`;
         });
       }
@@ -912,11 +886,11 @@ ${decision.reasoning || decision.decision}
       const altList = Array.isArray(decision.alternatives)
         ? decision.alternatives
         : typeof decision.alternatives === 'string'
-          ? safeParseJson(decision.alternatives, [decision.alternatives])
+          ? safeParseJson<string[]>(decision.alternatives, [decision.alternatives])
           : [decision.alternatives];
       if (altList.length > 0) {
         output += '\n\n🔀 Alternatives Considered:';
-        altList.forEach((item, idx) => {
+        (altList as string[]).forEach((item, idx) => {
           output += `\n  ${idx + 1}. ${item}`;
         });
       }
@@ -928,7 +902,10 @@ ${decision.reasoning || decision.decision}
   }
 
   // Trust context section (if available)
-  const trustCtx = parseTrustContext(decision.trust_context);
+  const trustCtx =
+    typeof decision.trust_context === 'string'
+      ? parseTrustContext(decision.trust_context)
+      : decision.trust_context;
   if (trustCtx) {
     output += '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
     output += '\n🔍 Trust Context\n';
@@ -950,8 +927,8 @@ ${decision.reasoning || decision.decision}
 
     if (trustCtx.track_record) {
       const { success_rate, sample_size } = trustCtx.track_record;
-      if (sample_size > 0) {
-        const rate = Math.round(success_rate * 100);
+      if (sample_size && sample_size > 0) {
+        const rate = Math.round((success_rate || 0) * 100);
         output += `\n📊 Track record: ${rate}% success (${sample_size} samples)`;
       }
     }
@@ -962,12 +939,11 @@ ${decision.reasoning || decision.decision}
 
 /**
  * Format decision history (multiple decisions)
- *
- * @param {Array<Object>} decisions - Decision array
- * @param {Object} [semanticEdges] - Semantic edges { refines, refined_by, contradicts, contradicted_by }
- * @returns {string} Formatted history
  */
-function formatDecisionHistory(decisions, semanticEdges = null) {
+function formatDecisionHistory(
+  decisions: DecisionForFormat[],
+  semanticEdges: SemanticEdges | null = null
+): string {
   const topic = decisions[0].topic;
   const latest = decisions[0];
   const older = decisions.slice(1);
@@ -986,7 +962,7 @@ ${latest.decision}
     output += `\n\nReasoning: ${briefReasoning}${latest.reasoning.length > 150 ? '...' : ''}`;
   }
 
-  output += `\n\nConfidence: ${Math.round(latest.confidence * 100)}%`;
+  output += `\n\nConfidence: ${Math.round((latest.confidence || 0) * 100)}%`;
 
   // Show narrative fields for latest decision (Story 2.2)
   if (latest.evidence || latest.alternatives || latest.risks) {
@@ -994,11 +970,11 @@ ${latest.decision}
       const evidenceList = Array.isArray(latest.evidence)
         ? latest.evidence
         : typeof latest.evidence === 'string'
-          ? safeParseJson(latest.evidence, [latest.evidence])
+          ? safeParseJson<string[]>(latest.evidence, [latest.evidence])
           : [latest.evidence];
       if (evidenceList.length > 0) {
         output += '\n\n🔍 Evidence:';
-        evidenceList.slice(0, 3).forEach((item, idx) => {
+        (evidenceList as string[]).slice(0, 3).forEach((item, idx) => {
           output += `\n  ${idx + 1}. ${item}`;
         });
         if (evidenceList.length > 3) {
@@ -1011,11 +987,11 @@ ${latest.decision}
       const altList = Array.isArray(latest.alternatives)
         ? latest.alternatives
         : typeof latest.alternatives === 'string'
-          ? safeParseJson(latest.alternatives, [latest.alternatives])
+          ? safeParseJson<string[]>(latest.alternatives, [latest.alternatives])
           : [latest.alternatives];
       if (altList.length > 0) {
         output += '\n\n🔀 Alternatives: ';
-        output += altList.slice(0, 2).join('; ');
+        output += (altList as string[]).slice(0, 2).join('; ');
         if (altList.length > 2) {
           output += `... (+${altList.length - 2} more)`;
         }
@@ -1037,7 +1013,7 @@ ${latest.decision}
     for (let i = 0; i < Math.min(older.length, 5); i++) {
       const d = older[i];
       const timeAgo = calculateDuration(d.created_at);
-      const emoji = getOutcomeEmoji(d.outcome);
+      const emoji = getOutcomeEmoji(d.outcome ?? null);
       output += `\n${i + 2}. ${d.decision} (${timeAgo}) ${emoji}`;
 
       if (d.outcome === 'FAILED' && d.failure_reason) {
@@ -1113,11 +1089,8 @@ ${latest.decision}
 
 /**
  * Parse trust_context (might be JSON string)
- *
- * @param {Object|string} trustContext - Trust context (object or JSON string)
- * @returns {Object|null} Parsed trust context
  */
-function parseTrustContext(trustContext) {
+function parseTrustContext(trustContext: string | TrustContext | null): TrustContext | null {
   if (!trustContext) {
     return null;
   }
@@ -1130,8 +1103,8 @@ function parseTrustContext(trustContext) {
   // Parse JSON string
   if (typeof trustContext === 'string') {
     try {
-      return JSON.parse(trustContext);
-    } catch (e) {
+      return JSON.parse(trustContext) as TrustContext;
+    } catch {
       return null;
     }
   }
@@ -1141,16 +1114,8 @@ function parseTrustContext(trustContext) {
 
 /**
  * Format recent decisions list (all topics, chronological)
- *
- * Readable format for Claude - no raw JSON
- * Shows: time, type (user/assistant), topic, preview, confidence, status
- *
- * @param {Array<Object>} decisions - Recent decisions (sorted by created_at DESC)
- * @param {Object} options - Formatting options
- * @param {number} options.limit - Max decisions to show (default: 20)
- * @returns {string} Formatted list
  */
-function formatList(decisions, options = {}) {
+export function formatList(decisions: DecisionForFormat[], options: FormatOptions = {}): string {
   const { limit = 20 } = options;
 
   if (!decisions || decisions.length === 0) {
@@ -1185,27 +1150,12 @@ function formatList(decisions, options = {}) {
   return output;
 }
 
-// Export API
-module.exports = {
-  formatContext,
-  formatInstantAnswer,
-  formatLegacyContext,
-  formatTeaser,
-  formatRecall,
-  formatList,
-  ensureTokenBudget,
-  estimateTokens,
-  extractQuickAnswer,
-  extractCodeExample,
-  formatTrustContext,
-};
-
 // CLI execution for testing
 if (require.main === module) {
   info('🧠 MAMA Decision Formatter - Test\n');
 
   // Task 6.6: Test token budget enforcement
-  const mockDecisions = [
+  const mockDecisions: DecisionForFormat[] = [
     {
       id: 'decision_mesh_structure_003',
       topic: 'mesh_structure',
@@ -1241,14 +1191,14 @@ if (require.main === module) {
 
   info('📋 Test 1: Format small history (3 decisions)...');
   const context1 = formatContext(mockDecisions.slice(0, 3), { maxTokens: 500 });
-  info(context1);
-  info(`\nTokens: ${estimateTokens(context1)}/500\n`);
+  info(context1 || '');
+  info(`\nTokens: ${estimateTokens(context1 || '')}/500\n`);
 
   info('═══════════════════════════');
   info('📋 Test 2: Format large history (10+ decisions)...');
 
   // Generate large history
-  const largeHistory = [mockDecisions[0]];
+  const largeHistory: DecisionForFormat[] = [mockDecisions[0]];
   for (let i = 1; i <= 10; i++) {
     largeHistory.push({
       ...mockDecisions[1],
@@ -1258,8 +1208,8 @@ if (require.main === module) {
   }
 
   const context2 = formatContext(largeHistory, { maxTokens: 500 });
-  info(context2);
-  info(`\nTokens: ${estimateTokens(context2)}/500\n`);
+  info(context2 || '');
+  info(`\nTokens: ${estimateTokens(context2 || '')}/500\n`);
 
   info('═══════════════════════════');
   info('📋 Test 3: Token budget enforcement (truncation)...');
@@ -1267,8 +1217,8 @@ if (require.main === module) {
   // Create very long context
   const longDecisions = largeHistory.concat(largeHistory);
   const context3 = formatContext(longDecisions, { maxTokens: 300 });
-  info(context3);
-  info(`\nTokens: ${estimateTokens(context3)}/300 (enforced)\n`);
+  info(context3 || '');
+  info(`\nTokens: ${estimateTokens(context3 || '')}/300 (enforced)\n`);
 
   info('═══════════════════════════');
   info('✅ Decision formatter tests complete');

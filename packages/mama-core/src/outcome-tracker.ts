@@ -10,15 +10,35 @@
  * @date 2025-11-14
  */
 
-const { info, error: logError } = require('./debug-logger');
-const { getDB, updateDecisionOutcome } = require('./memory-store');
-const { updateConfidence } = require('./decision-tracker');
+import { info, error as logError } from './debug-logger.js';
+import { getDB, updateDecisionOutcome } from './memory-store.js';
+import { updateConfidence, type EvidenceItem } from './decision-tracker.js';
+
+/**
+ * Decision record from database
+ */
+interface DecisionRecord {
+  id: string;
+  topic: string;
+  decision: string;
+  outcome?: string | null;
+  confidence?: number;
+  created_at: number;
+}
+
+/**
+ * Hook context from Claude Code
+ */
+export interface HookContext {
+  user_message?: string;
+  session_id?: string;
+}
 
 /**
  * Failure indicators
  * Task 4.2: Define failure indicators
  */
-const FAILURE_INDICATORS = [
+export const FAILURE_INDICATORS: RegExp[] = [
   /doesn't\s*work/i,
   /failed/i,
   /error/i,
@@ -33,7 +53,7 @@ const FAILURE_INDICATORS = [
  * Success indicators
  * Task 4.3: Define success indicators
  */
-const SUCCESS_INDICATORS = [
+export const SUCCESS_INDICATORS: RegExp[] = [
   /works/i,
   /perfect/i,
   /great/i,
@@ -47,23 +67,23 @@ const SUCCESS_INDICATORS = [
  * Partial success indicators
  * Task 4.3: Define partial success indicators
  */
-const PARTIAL_INDICATORS = [/okay/i, /acceptable/i, /improved/i, /better/i];
+export const PARTIAL_INDICATORS: RegExp[] = [/okay/i, /acceptable/i, /improved/i, /better/i];
 
 /**
  * Recent decision time window (1 hour in milliseconds)
  * Task 4.5: Only mark outcome if decision is recent (< 1 hour)
  */
-const RECENT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+export const RECENT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 /**
  * Check if message matches failure indicators
  *
  * Task 4.2: Match failure patterns
  *
- * @param {string} message - User message
- * @returns {boolean} True if failure detected
+ * @param message - User message
+ * @returns True if failure detected
  */
-function matchesFailureIndicators(message) {
+export function matchesFailureIndicators(message: string): boolean {
   return FAILURE_INDICATORS.some((pattern) => pattern.test(message));
 }
 
@@ -72,10 +92,10 @@ function matchesFailureIndicators(message) {
  *
  * Task 4.3: Match success patterns
  *
- * @param {string} message - User message
- * @returns {boolean} True if success detected
+ * @param message - User message
+ * @returns True if success detected
  */
-function matchesSuccessIndicators(message) {
+export function matchesSuccessIndicators(message: string): boolean {
   return SUCCESS_INDICATORS.some((pattern) => pattern.test(message));
 }
 
@@ -84,12 +104,17 @@ function matchesSuccessIndicators(message) {
  *
  * Task 4.3: Match partial success patterns
  *
- * @param {string} message - User message
- * @returns {boolean} True if partial success detected
+ * @param message - User message
+ * @returns True if partial success detected
  */
-function matchesPartialIndicators(message) {
+export function matchesPartialIndicators(message: string): boolean {
   return PARTIAL_INDICATORS.some((pattern) => pattern.test(message));
 }
+
+/**
+ * Outcome type from analysis
+ */
+export type OutcomeType = 'FAILED' | 'SUCCESS' | 'PARTIAL';
 
 /**
  * Determine outcome from user message
@@ -97,10 +122,10 @@ function matchesPartialIndicators(message) {
  * Task 4.4, 4.5: Analyze user message for indicators
  * AC #3: Failure tracking from user feedback
  *
- * @param {string} message - User message
- * @returns {string|null} Outcome type ('FAILED', 'SUCCESS', 'PARTIAL') or null
+ * @param message - User message
+ * @returns Outcome type ('FAILED', 'SUCCESS', 'PARTIAL') or null
  */
-function analyzeOutcome(message) {
+export function analyzeOutcome(message: string): OutcomeType | null {
   if (matchesFailureIndicators(message)) {
     return 'FAILED';
   }
@@ -125,11 +150,11 @@ function analyzeOutcome(message) {
  * Simple extraction: First sentence or first 200 characters
  * Future: Use LLM for better extraction
  *
- * @param {string} message - User message
- * @param {string} outcome - Outcome type
- * @returns {string|null} Failure reason
+ * @param message - User message
+ * @param outcome - Outcome type
+ * @returns Failure reason
  */
-function extractFailureReason(message, outcome) {
+export function extractFailureReason(message: string, outcome: OutcomeType | null): string | null {
   if (outcome !== 'FAILED') {
     return null;
   }
@@ -149,11 +174,15 @@ function extractFailureReason(message, outcome) {
  * Task 4.5: Find recent decision (< 1 hour)
  * AC #3: Recent decision (< 1 hour) marked
  *
- * @param {string} sessionId - Session ID
- * @returns {Object|null} Recent decision or null
+ * @param sessionId - Session ID
+ * @returns Recent decision or null
  */
-function getRecentDecision(sessionId) {
-  const db = getDB();
+export function getRecentDecision(sessionId: string): DecisionRecord | null {
+  const db = getDB() as {
+    prepare: (sql: string) => {
+      get: (sessionId: string, cutoffTime: number) => DecisionRecord | undefined;
+    };
+  };
 
   try {
     const now = Date.now();
@@ -174,7 +203,8 @@ function getRecentDecision(sessionId) {
 
     return recent || null;
   } catch (error) {
-    throw new Error(`Failed to query recent decision: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to query recent decision: ${message}`);
   }
 }
 
@@ -184,10 +214,10 @@ function getRecentDecision(sessionId) {
  * Task 4.7: Calculate duration_days
  * AC #3: duration_days calculated
  *
- * @param {number} createdAt - Decision created timestamp
- * @returns {number} Duration in days
+ * @param createdAt - Decision created timestamp
+ * @returns Duration in days
  */
-function calculateDurationDays(createdAt) {
+export function calculateDurationDays(createdAt: number): number {
   const now = Date.now();
   const durationMs = now - createdAt;
   const durationDays = durationMs / (1000 * 60 * 60 * 24);
@@ -202,11 +232,11 @@ function calculateDurationDays(createdAt) {
  * Task 6: Confidence evolution - Calculate impact based on outcome
  * AC #5: Confidence score calculated based on history
  *
- * @param {string} outcome - Outcome type ('FAILED', 'SUCCESS', 'PARTIAL')
- * @param {number} durationDays - Duration in days
- * @returns {number} Impact on confidence
+ * @param outcome - Outcome type ('FAILED', 'SUCCESS', 'PARTIAL')
+ * @param durationDays - Duration in days
+ * @returns Impact on confidence
  */
-function getEvidenceImpact(outcome, durationDays) {
+export function getEvidenceImpact(outcome: OutcomeType, durationDays: number): number {
   // Task 6.3: Define evidence impacts
   let impact = 0;
 
@@ -238,15 +268,22 @@ function getEvidenceImpact(outcome, durationDays) {
  * AC #3: Outcome marked with failure_reason and duration_days
  * AC #5: Confidence evolution
  *
- * @param {string} decisionId - Decision ID
- * @param {string} outcome - Outcome type ('FAILED', 'SUCCESS', 'PARTIAL')
- * @param {string} failureReason - Failure reason (if outcome=FAILED)
- * @param {number} durationDays - Duration in days
+ * @param decisionId - Decision ID
+ * @param outcome - Outcome type ('FAILED', 'SUCCESS', 'PARTIAL')
+ * @param failureReason - Failure reason (if outcome=FAILED)
+ * @param durationDays - Duration in days
  */
-async function markOutcome(decisionId, outcome, failureReason, durationDays) {
+export async function markOutcome(
+  decisionId: string,
+  outcome: OutcomeType,
+  failureReason: string | null,
+  durationDays: number
+): Promise<void> {
   try {
     // Get current decision to read confidence
-    const db = getDB();
+    const db = getDB() as {
+      prepare: (sql: string) => { get: (id: string) => DecisionRecord | undefined };
+    };
     const decision = db.prepare('SELECT * FROM decisions WHERE id = ?').get(decisionId);
 
     if (!decision) {
@@ -261,7 +298,7 @@ async function markOutcome(decisionId, outcome, failureReason, durationDays) {
 
     // Task 6.5: Calculate new confidence
     const evidenceImpact = getEvidenceImpact(outcome, durationDays);
-    const evidence = [{ type: outcome, impact: evidenceImpact }];
+    const evidence: EvidenceItem[] = [{ type: outcome.toLowerCase() as 'success' | 'failure' | 'partial', impact: evidenceImpact }];
     const prevConfidence = Number(decision.confidence ?? 0);
     const newConfidence = updateConfidence(prevConfidence, evidence);
 
@@ -277,7 +314,8 @@ async function markOutcome(decisionId, outcome, failureReason, durationDays) {
       `[MAMA] Confidence updated: ${prevConfidence.toFixed(2)} → ${newConfidence.toFixed(2)} (${outcome})`
     );
   } catch (error) {
-    throw new Error(`Failed to mark outcome: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to mark outcome: ${message}`);
   }
 }
 
@@ -292,11 +330,9 @@ async function markOutcome(decisionId, outcome, failureReason, durationDays) {
  *
  * AC #3: Failure tracking (user feedback → outcome marked)
  *
- * @param {Object} hookContext - Hook context from Claude Code
- * @param {string} hookContext.user_message - User's message
- * @param {string} hookContext.session_id - Session ID
+ * @param hookContext - Hook context from Claude Code
  */
-async function onUserPromptSubmit(hookContext) {
+export async function onUserPromptSubmit(hookContext: HookContext): Promise<void> {
   try {
     const userMessage = hookContext.user_message || '';
     const sessionId = hookContext.session_id || '';
@@ -329,23 +365,7 @@ async function onUserPromptSubmit(hookContext) {
     info(`[MAMA] Outcome marked: ${recentDecision.id} → ${outcome} (${durationDays} days)`);
   } catch (error) {
     // Log error but don't crash hook
-    logError(`[MAMA] Outcome tracking failed: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[MAMA] Outcome tracking failed: ${message}`);
   }
 }
-
-// Export API
-module.exports = {
-  onUserPromptSubmit,
-  analyzeOutcome,
-  extractFailureReason,
-  getRecentDecision,
-  calculateDurationDays,
-  markOutcome,
-  matchesFailureIndicators,
-  matchesSuccessIndicators,
-  matchesPartialIndicators,
-  FAILURE_INDICATORS,
-  SUCCESS_INDICATORS,
-  PARTIAL_INDICATORS,
-  RECENT_WINDOW_MS,
-};

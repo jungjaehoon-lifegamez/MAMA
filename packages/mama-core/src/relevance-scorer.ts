@@ -10,7 +10,65 @@
  * @date 2025-11-14
  */
 
-const { cosineSimilarity } = require('./embeddings');
+import { cosineSimilarity } from './embeddings.js';
+
+/**
+ * Decision object for relevance scoring
+ */
+export interface DecisionWithEmbedding {
+  id?: string;
+  topic?: string;
+  decision: string;
+  reasoning?: string | null;
+  outcome?: string | null;
+  failure_reason?: string | null;
+  user_involvement?: string;
+  confidence?: number;
+  created_at: number;
+  updated_at?: number;
+  embedding?: Float32Array;
+  relevanceScore?: number;
+}
+
+/**
+ * Query context for relevance calculation
+ */
+export interface QueryContext {
+  embedding?: Float32Array;
+}
+
+/**
+ * Formatted context result
+ */
+export interface FormattedContext {
+  full: Array<{
+    decision_id?: string;
+    topic?: string;
+    decision: string;
+    reasoning?: string | null;
+    outcome?: string | null;
+    failure_reason?: string | null;
+    user_involvement?: string;
+    confidence?: number;
+    relevanceScore?: number;
+    created_at: number;
+  }>;
+  summary: {
+    count: number;
+    duration_days: number;
+    failures: Array<{ decision: string; reason: string | null | undefined }>;
+  } | null;
+}
+
+/**
+ * Outcome weights for importance scoring
+ */
+const OUTCOME_WEIGHTS: Record<string, number> = {
+  FAILED: 1.0, // Highest - failures are most valuable (AC #4)
+  PARTIAL: 0.7,
+  SUCCESS: 0.5,
+  pending: 0.3, // Ongoing/pending, lowest
+};
 
 /**
  * Calculate relevance score for a single decision
@@ -30,15 +88,14 @@ const { cosineSimilarity } = require('./embeddings');
  *     - null: 0.3 (ongoing, lowest)
  *   - Semantic: cosineSimilarity(decision.embedding, query.embedding)
  *
- * @param {Object} decision - Decision object
- * @param {number} decision.created_at - Created timestamp
- * @param {string} decision.outcome - Outcome type
- * @param {Float32Array} decision.embedding - Decision embedding (384-dim)
- * @param {Object} queryContext - Query context
- * @param {Float32Array} queryContext.embedding - Query embedding (384-dim)
- * @returns {number} Relevance score (0.0-1.0)
+ * @param decision - Decision object
+ * @param queryContext - Query context
+ * @returns Relevance score (0.0-1.0)
  */
-function calculateRelevance(decision, queryContext) {
+export function calculateRelevance(
+  decision: DecisionWithEmbedding,
+  queryContext: QueryContext
+): number {
   // ═══════════════════════════════════════════════════════════
   // Recency Score (20%)
   // ═══════════════════════════════════════════════════════════
@@ -55,13 +112,6 @@ function calculateRelevance(decision, queryContext) {
   // ═══════════════════════════════════════════════════════════
   // Importance Score (50%) - AC #4: Failure Priority Boost
   // ═══════════════════════════════════════════════════════════
-  const OUTCOME_WEIGHTS = {
-    FAILED: 1.0, // Highest - failures are most valuable (AC #4)
-    PARTIAL: 0.7,
-    SUCCESS: 0.5,
-    pending: 0.3, // Ongoing/pending, lowest
-  };
-
   // Use explicit null check to avoid confusion with object key access
   const outcomeKey = decision.outcome ?? 'pending';
   const importanceScore = OUTCOME_WEIGHTS[outcomeKey] ?? OUTCOME_WEIGHTS.pending;
@@ -93,12 +143,16 @@ function calculateRelevance(decision, queryContext) {
  * Task 2.1: Add selectTopDecisions(decisions, queryContext, n=3) function
  * AC #1, #5: Top-N selection with threshold filtering
  *
- * @param {Array<Object>} decisions - Array of decision objects
- * @param {Object} queryContext - Query context with embedding
- * @param {number} n - Number of top decisions to return (default: 3)
- * @returns {Array<Object>} Top N decisions with relevance scores
+ * @param decisions - Array of decision objects
+ * @param queryContext - Query context with embedding
+ * @param n - Number of top decisions to return (default: 3)
+ * @returns Top N decisions with relevance scores
  */
-function selectTopDecisions(decisions, queryContext, n = 3) {
+export function selectTopDecisions(
+  decisions: DecisionWithEmbedding[],
+  queryContext: QueryContext,
+  n = 3
+): DecisionWithEmbedding[] {
   if (!Array.isArray(decisions) || decisions.length === 0) {
     return [];
   }
@@ -110,10 +164,10 @@ function selectTopDecisions(decisions, queryContext, n = 3) {
   }));
 
   // Task 2.4: Sort descending (highest relevance first)
-  decisionsWithScores.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  decisionsWithScores.sort((a, b) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0));
 
   // Task 2.6: Filter out < 0.5 relevance (AC #1)
-  const filtered = decisionsWithScores.filter((d) => d.relevanceScore >= 0.5);
+  const filtered = decisionsWithScores.filter((d) => (d.relevanceScore ?? 0) >= 0.5);
 
   // Task 2.5: Return top 3 (or top N)
   const topN = filtered.slice(0, n);
@@ -122,30 +176,16 @@ function selectTopDecisions(decisions, queryContext, n = 3) {
 }
 
 /**
- * Cosine similarity helper (re-exported from embeddings.js)
- *
- * Task 1.3: Implement cosine similarity function
- * AC #1: Semantic similarity calculation
- *
- * Note: This is re-exported from embeddings.js for convenience
- *
- * @param {Float32Array} vec1 - First embedding vector
- * @param {Float32Array} vec2 - Second embedding vector
- * @returns {number} Cosine similarity (0.0-1.0)
- */
-// Already available from embeddings.js - no need to reimplement
-
-/**
  * Format decisions with top-N selection and summary
  *
  * Task 8.2-8.3: Format top 3 in full detail, rest as summary
  * AC #5: Top-N selection with summary
  *
- * @param {Array<Object>} decisions - All decisions (sorted by relevance)
- * @param {number} topN - Number of decisions to show in full detail (default: 3)
- * @returns {Object} Formatted context {full: Array, summary: Object}
+ * @param decisions - All decisions (sorted by relevance)
+ * @param topN - Number of decisions to show in full detail (default: 3)
+ * @returns Formatted context {full: Array, summary: Object}
  */
-function formatTopNContext(decisions, topN = 3) {
+export function formatTopNContext(decisions: DecisionWithEmbedding[], topN = 3): FormattedContext {
   if (!Array.isArray(decisions) || decisions.length === 0) {
     return { full: [], summary: null };
   }
@@ -169,7 +209,7 @@ function formatTopNContext(decisions, topN = 3) {
   }));
 
   // Summary for rest (count, duration, key failures only)
-  let summary = null;
+  let summary: FormattedContext['summary'] = null;
 
   if (summaryDecisions.length > 0) {
     // Calculate duration (oldest to newest)
@@ -193,21 +233,31 @@ function formatTopNContext(decisions, topN = 3) {
 }
 
 /**
+ * Test result for relevance scoring
+ */
+export interface TestResult {
+  name: string;
+  expected: string;
+  calculated: string;
+  pass: boolean;
+}
+
+/**
  * Test relevance scoring with sample decisions
  *
  * Task 1.4: Test relevance scoring with sample decisions
  * AC #1, #4: Verify scoring formula and failure priority
  *
- * @returns {Object} Test results
+ * @returns Test results
  */
-function testRelevanceScoring() {
+export function testRelevanceScoring(): TestResult[] {
   const now = Date.now();
 
   // Mock embeddings (dummy for testing)
   const queryEmbedding = new Float32Array(384).fill(0.5);
   const decisionEmbedding1 = new Float32Array(384).fill(0.5); // Identical (similarity = 1.0)
-  // eslint-disable-next-line no-unused-vars
-  const decisionEmbedding2 = new Float32Array(384).fill(0.3); // Different (similarity < 1.0)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _decisionEmbedding2 = new Float32Array(384).fill(0.3); // Different (similarity < 1.0)
 
   const scenarios = [
     // Scenario 1: Recent FAILED decision (should have highest relevance)
@@ -217,6 +267,7 @@ function testRelevanceScoring() {
         created_at: now - 5 * 24 * 60 * 60 * 1000, // 5 days ago
         outcome: 'FAILED',
         embedding: decisionEmbedding1,
+        decision: 'test decision',
       },
       queryContext: { embedding: queryEmbedding },
       expected: {
@@ -234,6 +285,7 @@ function testRelevanceScoring() {
         created_at: now - 5 * 24 * 60 * 60 * 1000, // 5 days ago
         outcome: 'SUCCESS',
         embedding: decisionEmbedding1,
+        decision: 'test decision',
       },
       queryContext: { embedding: queryEmbedding },
       expected: {
@@ -251,6 +303,7 @@ function testRelevanceScoring() {
         created_at: now - 60 * 24 * 60 * 60 * 1000, // 60 days ago
         outcome: 'FAILED',
         embedding: decisionEmbedding1,
+        decision: 'test decision',
       },
       queryContext: { embedding: queryEmbedding },
       expected: {
@@ -276,11 +329,3 @@ function testRelevanceScoring() {
 
   return results;
 }
-
-// Export API
-module.exports = {
-  calculateRelevance,
-  selectTopDecisions,
-  formatTopNContext,
-  testRelevanceScoring,
-};

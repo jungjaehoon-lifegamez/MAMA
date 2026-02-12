@@ -18,16 +18,91 @@
  * @source-of-truth packages/mama-core/src/db-manager.js (mama-core)
  */
 
-const { info, warn, error: logError } = require('./debug-logger');
-const { logProgress: _logProgress, logComplete, logSearching } = require('./progress-indicator');
-const { createAdapter } = require('./db-adapter');
-const path = require('path');
+import path from 'path';
+import { info, warn, error as logError } from './debug-logger.js';
+import { logComplete, logSearching } from './progress-indicator.js';
+import { createAdapter } from './db-adapter/index.js';
+
+// Type definitions
+export interface DatabaseAdapter {
+  connect: () => Promise<unknown>;
+  disconnect: () => Promise<void>;
+  runMigrations: (dir: string) => Promise<void>;
+  prepare: (sql: string) => PreparedStatement;
+  transaction: <T>(fn: () => T) => T;
+  insertEmbedding: (rowid: number, embedding: Float32Array | number[]) => void;
+  vectorSearch: (
+    embedding: Float32Array | number[],
+    limit: number
+  ) => Promise<VectorSearchResult[] | null>;
+  vectorSearchEnabled: boolean;
+  getDbPath?: () => string;
+  dbPath?: string;
+  constructor: { name: string };
+}
+
+export interface PreparedStatement {
+  run: (...args: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
+  get: (...args: unknown[]) => unknown;
+  all: (...args: unknown[]) => unknown[];
+}
+
+export interface VectorSearchResult {
+  rowid: number;
+  similarity?: number;
+  distance?: number;
+}
+
+export interface DecisionRecord {
+  id: string;
+  topic: string;
+  decision: string;
+  reasoning?: string | null;
+  outcome?: string | null;
+  failure_reason?: string | null;
+  limitation?: string | null;
+  confidence?: number;
+  supersedes?: string | null;
+  superseded_by?: string | null;
+  refined_from?: string | string[] | null;
+  created_at: number;
+  updated_at?: number;
+  edges?: unknown[];
+}
+
+export interface OutcomeData {
+  outcome?: string | null;
+  failure_reason?: string | null;
+  limitation?: string | null;
+  duration_days?: number | null;
+  confidence?: number | null;
+}
+
+export interface VectorSearchParams {
+  query: string;
+  limit?: number;
+  threshold?: number;
+  timeWindow?: number;
+}
+
+export interface SemanticEdges {
+  refines: unknown[];
+  refined_by: unknown[];
+  contradicts: unknown[];
+  contradicted_by: unknown[];
+  builds_on: unknown[];
+  built_on_by: unknown[];
+  debates: unknown[];
+  debated_by: unknown[];
+  synthesizes: unknown[];
+  synthesized_by: unknown[];
+}
 
 // Database adapter instance (singleton)
-let dbAdapter = null;
-let dbConnection = null;
+let dbAdapter: DatabaseAdapter | null = null;
+let dbConnection: unknown = null;
 let isInitialized = false;
-let initializingPromise = null; // Single-flight guard for concurrent callers
+let initializingPromise: Promise<unknown> | null = null; // Single-flight guard for concurrent callers
 
 // Migration directory (moved to src/db/migrations for M1.2)
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
@@ -41,9 +116,9 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
  * Single-flight guard: Concurrent callers await the same promise
  * to prevent multiple adapters/migrations running simultaneously.
  *
- * @returns {Promise<Object>} SQLite database connection
+ * @returns SQLite database connection
  */
-async function initDB() {
+export async function initDB(): Promise<unknown> {
   // Already initialized - return immediately
   if (isInitialized) {
     return dbConnection;
@@ -60,7 +135,7 @@ async function initDB() {
       logSearching('Initializing database...');
 
       // Create SQLite adapter
-      dbAdapter = createAdapter();
+      dbAdapter = createAdapter() as unknown as DatabaseAdapter;
 
       // Connect to database
       dbConnection = await dbAdapter.connect();
@@ -80,7 +155,8 @@ async function initDB() {
       dbAdapter = null;
       dbConnection = null;
       isInitialized = false;
-      throw new Error(`Failed to initialize database: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to initialize database: ${message}`);
     }
   })();
 
@@ -95,9 +171,9 @@ async function initDB() {
  * Note: Synchronous for backward compatibility with memory-store.js
  * Will throw if database not initialized
  *
- * @returns {Object} SQLite database connection
+ * @returns SQLite database connection
  */
-function getDB() {
+export function getDB(): unknown {
   if (!dbConnection) {
     throw new Error('Database not initialized. Call await initDB() first.');
   }
@@ -109,9 +185,9 @@ function getDB() {
  *
  * Used for advanced operations (vectorSearch, insertEmbedding, etc.)
  *
- * @returns {DatabaseAdapter} Adapter instance
+ * @returns Adapter instance
  */
-function getAdapter() {
+export function getAdapter(): DatabaseAdapter {
   if (!dbAdapter) {
     throw new Error('Database adapter not initialized. Call await initDB() first.');
   }
@@ -123,7 +199,7 @@ function getAdapter() {
  *
  * Call this on process exit
  */
-async function closeDB() {
+export async function closeDB(): Promise<void> {
   if (dbAdapter) {
     await dbAdapter.disconnect();
     dbAdapter = null;
@@ -140,19 +216,22 @@ async function closeDB() {
  * Uses sqlite-vec for vector similarity search
  * Gracefully degrades if sqlite-vec is not available
  *
- * @param {number} decisionRowid - SQLite rowid
- * @param {Float32Array|Array<number>} embedding - 384-dim embedding vector
- * @returns {Promise<void>}
+ * @param decisionRowid - SQLite rowid
+ * @param embedding - 384-dim embedding vector
  */
-async function insertEmbedding(decisionRowid, embedding) {
+export async function insertEmbedding(
+  decisionRowid: number,
+  embedding: Float32Array | number[]
+): Promise<void> {
   const adapter = getAdapter();
 
   try {
-    await adapter.insertEmbedding(decisionRowid, embedding);
+    adapter.insertEmbedding(decisionRowid, embedding);
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // Graceful degradation: Log warning but don't fail
     logError(
-      `[db-manager] Failed to insert embedding (vector search unavailable): ${error.message}`
+      `[db-manager] Failed to insert embedding (vector search unavailable): ${message}`
     );
   }
 }
@@ -162,12 +241,16 @@ async function insertEmbedding(decisionRowid, embedding) {
  *
  * Returns empty array if vector search not available (no keyword fallback)
  *
- * @param {Float32Array|Array<number>} queryEmbedding - Query embedding (384-dim)
- * @param {number} limit - Max results to return (default: 5)
- * @param {number} threshold - Minimum similarity threshold (default: 0.7)
- * @returns {Promise<Array<Object>>} Array of decisions with similarity scores, or empty array
+ * @param queryEmbedding - Query embedding (384-dim)
+ * @param limit - Max results to return (default: 5)
+ * @param threshold - Minimum similarity threshold (default: 0.7)
+ * @returns Array of decisions with similarity scores, or empty array
  */
-async function vectorSearch(queryEmbedding, limit = 5, threshold = 0.7) {
+export async function vectorSearch(
+  queryEmbedding: Float32Array | number[],
+  limit = 5,
+  threshold = 0.7
+): Promise<DecisionRecord[]> {
   const adapter = getAdapter();
 
   try {
@@ -179,10 +262,10 @@ async function vectorSearch(queryEmbedding, limit = 5, threshold = 0.7) {
     }
 
     const stmt = adapter.prepare(`SELECT * FROM decisions WHERE rowid = ?`);
-    const decisions = [];
+    const decisions: (DecisionRecord & { similarity: number; distance: number })[] = [];
 
     for (const row of results) {
-      const decision = stmt.get(row.rowid);
+      const decision = stmt.get(row.rowid) as DecisionRecord | undefined;
 
       if (!decision) {
         continue;
@@ -206,9 +289,42 @@ async function vectorSearch(queryEmbedding, limit = 5, threshold = 0.7) {
 
     return decisions;
   } catch (error) {
-    logError(`[db-manager] Vector search failed: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[db-manager] Vector search failed: ${message}`);
     return []; // No keyword fallback - fast fail
   }
+}
+
+/**
+ * Decision input for storage
+ */
+export interface DecisionInput {
+  id: string;
+  topic: string;
+  decision: string;
+  reasoning?: string | null;
+  outcome?: string | null;
+  failure_reason?: string | null;
+  limitation?: string | null;
+  user_involvement?: string | null;
+  session_id?: string | null;
+  supersedes?: string | null;
+  superseded_by?: string | null;
+  refined_from?: string[] | null;
+  confidence?: number;
+  created_at?: number;
+  updated_at?: number;
+  needs_validation?: number;
+  validation_attempts?: number;
+  last_validated_at?: number | null;
+  usage_count?: number;
+  trust_context?: string | null;
+  usage_success?: number;
+  usage_failure?: number;
+  time_saved?: number;
+  evidence?: string | null;
+  alternatives?: string | null;
+  risks?: string | null;
 }
 
 /**
@@ -217,12 +333,12 @@ async function vectorSearch(queryEmbedding, limit = 5, threshold = 0.7) {
  * Combined operation: Insert decision + Generate embedding + Insert embedding
  * SQLite-only implementation
  *
- * @param {Object} decision - Decision object
- * @returns {Promise<string>} Decision ID
+ * @param decision - Decision object
+ * @returns Decision ID
  */
-async function insertDecisionWithEmbedding(decision) {
+export async function insertDecisionWithEmbedding(decision: DecisionInput): Promise<string> {
   const adapter = getAdapter();
-  const { generateEnhancedEmbedding } = require('./embeddings');
+  const { generateEnhancedEmbedding } = await import('./embeddings.js');
 
   try {
     // Generate embedding BEFORE transaction (required for SQLite's sync transaction)
@@ -230,20 +346,26 @@ async function insertDecisionWithEmbedding(decision) {
     info(
       `[db-manager] Generating embedding for decision (topic length: ${decision.topic?.length || 0})`
     );
-    let embedding = null;
+    let embedding: Float32Array | null = null;
     try {
-      embedding = await generateEnhancedEmbedding(decision);
+      embedding = await generateEnhancedEmbedding({
+        topic: decision.topic,
+        decision: decision.decision,
+        reasoning: decision.reasoning || undefined,
+        outcome: decision.outcome || undefined,
+        confidence: decision.confidence,
+      });
       info(`[db-manager] Embedding generated: ${embedding ? embedding.length : 'null'} dimensions`);
     } catch (embGenErr) {
       // Non-fatal: save decision without embedding (e.g. ONNX model unavailable on CI)
+      const message = embGenErr instanceof Error ? embGenErr.message : String(embGenErr);
       logError(
-        `[db-manager] ⚠️ Embedding generation failed, saving without vector: ${embGenErr.message}`
+        `[db-manager] ⚠️ Embedding generation failed, saving without vector: ${message}`
       );
     }
 
     // SQLite: Synchronous transaction including embedding
-    // eslint-disable-next-line no-unused-vars
-    const decisionRowid = adapter.transaction(() => {
+    adapter.transaction(() => {
       // Prepare INSERT statement
       const stmt = adapter.prepare(`
         INSERT INTO decisions (
@@ -300,8 +422,9 @@ async function insertDecisionWithEmbedding(decision) {
           adapter.insertEmbedding(rowid, embedding);
           info(`[db-manager] ✅ Embedding inserted successfully`);
         } catch (embErr) {
+          const message = embErr instanceof Error ? embErr.message : String(embErr);
           // Log but don't fail transaction if embedding fails
-          logError(`[db-manager] ❌ Embedding insert failed: ${embErr.message}`);
+          logError(`[db-manager] ❌ Embedding insert failed: ${message}`);
         }
       } else {
         info(`[db-manager] ⚠️  Vector search disabled, skipping embedding`);
@@ -316,7 +439,8 @@ async function insertDecisionWithEmbedding(decision) {
 
     return decision.id;
   } catch (error) {
-    throw new Error(`Failed to insert decision with embedding: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to insert decision with embedding: ${message}`);
   }
 }
 
@@ -326,10 +450,10 @@ async function insertDecisionWithEmbedding(decision) {
  * Recursive CTE to traverse supersedes chain
  * SQLite implementation using WITH RECURSIVE
  *
- * @param {string} topic - Decision topic to query
- * @returns {Promise<Array<Object>>} Array of decisions (ordered by recency)
+ * @param topic - Decision topic to query
+ * @returns Array of decisions (ordered by recency)
  */
-async function queryDecisionGraph(topic) {
+export async function queryDecisionGraph(topic: string): Promise<DecisionRecord[]> {
   const adapter = getAdapter();
 
   try {
@@ -353,7 +477,7 @@ async function queryDecisionGraph(topic) {
       ORDER BY created_at DESC
     `);
 
-    let decisions = await stmt.all(topic);
+    let decisions = stmt.all(topic) as DecisionRecord[];
 
     // If no exact match, try fuzzy matching as fallback
     if (decisions.length === 0) {
@@ -375,7 +499,7 @@ async function queryDecisionGraph(topic) {
         ORDER BY created_at DESC
       `);
 
-      decisions = await stmt.all(topicKeyword);
+      decisions = stmt.all(topicKeyword) as DecisionRecord[];
     }
 
     // Join with decision_edges to include relationships
@@ -386,13 +510,16 @@ async function queryDecisionGraph(topic) {
         AND (approved_by_user = 1 OR approved_by_user IS NULL)
     `);
     for (const decision of decisions) {
-      decision.edges = await edgesStmt.all(decision.id);
+      decision.edges = edgesStmt.all(decision.id);
 
       // Parse refined_from JSON if exists
       if (decision.refined_from) {
         try {
-          decision.refined_from = JSON.parse(decision.refined_from);
-        } catch (e) {
+          decision.refined_from =
+            typeof decision.refined_from === 'string'
+              ? JSON.parse(decision.refined_from)
+              : decision.refined_from;
+        } catch {
           decision.refined_from = [];
         }
       }
@@ -400,7 +527,8 @@ async function queryDecisionGraph(topic) {
 
     return decisions;
   } catch (error) {
-    throw new Error(`Decision graph query failed: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Decision graph query failed: ${message}`);
   }
 }
 
@@ -410,10 +538,10 @@ async function queryDecisionGraph(topic) {
  * Returns both outgoing (from_id) and incoming (to_id) edges
  * for refines and contradicts relationships
  *
- * @param {Array<string>} decisionIds - Decision IDs to query edges for
- * @returns {Promise<Object>} Categorized edges { refines, refined_by, contradicts, contradicted_by, builds_on, built_on_by, debates, debated_by, synthesizes, synthesized_by }
+ * @param decisionIds - Decision IDs to query edges for
+ * @returns Categorized edges
  */
-async function querySemanticEdges(decisionIds) {
+export async function querySemanticEdges(decisionIds: string[]): Promise<SemanticEdges> {
   const adapter = getAdapter();
 
   if (!decisionIds || decisionIds.length === 0) {
@@ -450,7 +578,10 @@ async function querySemanticEdges(decisionIds) {
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const outgoingEdges = await outgoingStmt.all(...decisionIds, ...edgeTypes);
+    const outgoingEdges = outgoingStmt.all(
+      ...decisionIds,
+      ...edgeTypes
+    ) as Array<{ relationship: string }>;
 
     // Query incoming edges (to_id = decision)
     const incomingStmt = adapter.prepare(`
@@ -462,7 +593,10 @@ async function querySemanticEdges(decisionIds) {
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const incomingEdges = await incomingStmt.all(...decisionIds, ...edgeTypes);
+    const incomingEdges = incomingStmt.all(
+      ...decisionIds,
+      ...edgeTypes
+    ) as Array<{ relationship: string }>;
 
     // Categorize edges (original + v1.3 extended)
     const refines = outgoingEdges.filter((e) => e.relationship === 'refines');
@@ -490,7 +624,8 @@ async function querySemanticEdges(decisionIds) {
       synthesized_by,
     };
   } catch (error) {
-    throw new Error(`Semantic edges query failed: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Semantic edges query failed: ${message}`);
   }
 }
 
@@ -499,21 +634,19 @@ async function querySemanticEdges(decisionIds) {
  *
  * Story 014.14: AC #1 - Vector Search for Related Decisions
  *
- * @param {Object} params - Search parameters
- * @param {string} params.query - Search query text
- * @param {number} params.limit - Max results (default: 10)
- * @param {number} params.threshold - Minimum cosine similarity (0.0-1.0, default: 0.75)
- * @param {number} params.timeWindow - Time window in ms (optional, default: 90 days)
- * @returns {Promise<Array>} Results with similarity scores and decision data
+ * @param params - Search parameters
+ * @returns Results with similarity scores and decision data
  */
-async function queryVectorSearch({
-  query,
-  limit = 10,
-  threshold = 0.75,
-  timeWindow = 90 * 24 * 60 * 60 * 1000,
-}) {
+export async function queryVectorSearch(params: VectorSearchParams): Promise<DecisionRecord[]> {
+  const {
+    query,
+    limit = 10,
+    threshold = 0.75,
+    timeWindow = 90 * 24 * 60 * 60 * 1000,
+  } = params;
+
   const adapter = getAdapter();
-  const { generateEmbedding } = require('./embeddings');
+  const { generateEmbedding } = await import('./embeddings.js');
 
   try {
     // Generate embedding for query
@@ -527,10 +660,10 @@ async function queryVectorSearch({
     }
 
     const stmt = adapter.prepare(`SELECT * FROM decisions WHERE rowid = ?`);
-    const results = [];
+    const results: (DecisionRecord & { similarity: number; distance: number })[] = [];
 
     for (const candidate of candidates) {
-      const decision = stmt.get(candidate.rowid);
+      const decision = stmt.get(candidate.rowid) as DecisionRecord | undefined;
       if (!decision) {
         continue;
       }
@@ -559,7 +692,8 @@ async function queryVectorSearch({
 
     return results;
   } catch (error) {
-    logError(`[db-manager] queryVectorSearch failed: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[db-manager] queryVectorSearch failed: ${message}`);
     return []; // Return empty array on error (graceful degradation)
   }
 }
@@ -567,11 +701,13 @@ async function queryVectorSearch({
 /**
  * Update decision outcome
  *
- * @param {string} decisionId - Decision ID
- * @param {Object} outcomeData - Outcome data
- * @returns {Promise<void>}
+ * @param decisionId - Decision ID
+ * @param outcomeData - Outcome data
  */
-async function updateDecisionOutcome(decisionId, outcomeData) {
+export async function updateDecisionOutcome(
+  decisionId: string,
+  outcomeData: OutcomeData
+): Promise<void> {
   const adapter = getAdapter();
 
   try {
@@ -587,7 +723,7 @@ async function updateDecisionOutcome(decisionId, outcomeData) {
       WHERE id = ?
     `);
 
-    await stmt.run(
+    stmt.run(
       outcomeData.outcome || null,
       outcomeData.failure_reason || null,
       outcomeData.limitation || null,
@@ -599,7 +735,8 @@ async function updateDecisionOutcome(decisionId, outcomeData) {
 
     info(`[db-manager] Decision outcome updated: ${decisionId} → ${outcomeData.outcome}`);
   } catch (error) {
-    throw new Error(`Failed to update decision outcome: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to update decision outcome: ${message}`);
   }
 }
 
@@ -609,10 +746,10 @@ async function updateDecisionOutcome(decisionId, outcomeData) {
  * For backward compatibility with memory-store.js
  * Returns a compatibility shim that proxies to adapter.prepare()
  *
- * @param {string} sql - SQL statement
- * @returns {Object} Statement-like object with run/get/all methods
+ * @param sql - SQL statement
+ * @returns Statement-like object with run/get/all methods
  */
-function getPreparedStmt(sql) {
+export function getPreparedStmt(sql: string): PreparedStatement {
   if (!dbAdapter) {
     warn('[db-manager] getPreparedStmt() called before initialization');
     // Return no-op object for feature detection (won't throw)
@@ -627,7 +764,8 @@ function getPreparedStmt(sql) {
   try {
     return dbAdapter.prepare(sql);
   } catch (error) {
-    warn(`[db-manager] getPreparedStmt() failed: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`[db-manager] getPreparedStmt() failed: ${message}`);
     // Return no-op object on error (graceful degradation)
     return {
       run: () => ({ changes: 0, lastInsertRowid: 0 }),
@@ -640,9 +778,9 @@ function getPreparedStmt(sql) {
 /**
  * Get database file path
  *
- * @returns {string} Actual database path or 'Not initialized'
+ * @returns Actual database path or 'Not initialized'
  */
-function getDbPath() {
+export function getDbPath(): string {
   if (!dbAdapter) {
     return 'Not initialized';
   }
@@ -656,23 +794,6 @@ function getDbPath() {
   }
   return `${dbAdapter.constructor.name} (path unavailable)`;
 }
-
-// Export API (same interface as memory-store.js, but async where needed)
-module.exports = {
-  initDB, // Async
-  getDB, // Sync (throws if not initialized)
-  getAdapter, // Sync (throws if not initialized)
-  closeDB, // Async
-  insertEmbedding, // Async
-  vectorSearch, // Async
-  queryVectorSearch, // Async - Story 014.14
-  querySemanticEdges, // Async - Graph traversal enhancement
-  insertDecisionWithEmbedding, // Async
-  queryDecisionGraph, // Async
-  updateDecisionOutcome, // Async
-  getPreparedStmt, // Compatibility shim
-  getDbPath, // Returns actual path
-};
 
 // Note: Removed auto-registered SIGINT/SIGTERM handlers that called process.exit(0)
 // This was causing issues with host cleanup in parent processes.

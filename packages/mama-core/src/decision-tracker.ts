@@ -14,15 +14,20 @@
  * @date 2025-11-17
  */
 
-// eslint-disable-next-line no-unused-vars
-const { info, error: logError } = require('./debug-logger');
-const {
-  initDB,
-  insertDecisionWithEmbedding,
-  // eslint-disable-next-line no-unused-vars
-  queryDecisionGraph,
-  getAdapter,
-} = require('./memory-store');
+import { info } from './debug-logger.js';
+import { initDB, insertDecisionWithEmbedding, getAdapter } from './memory-store.js';
+
+// Type for database adapter prepared statement (better-sqlite3 is synchronous)
+interface PreparedStatement {
+  get: (...args: unknown[]) => unknown;
+  all: (...args: unknown[]) => unknown[];
+  run: (...args: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
+}
+
+// Type for database adapter
+interface DatabaseAdapter {
+  prepare: (sql: string) => PreparedStatement;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Story 2.1: Extended Edge Types
@@ -30,24 +35,93 @@ const {
 // Valid relationship types for decision_edges
 // Original: supersedes, refines, contradicts
 // v1.3 Extension: builds_on, debates, synthesizes
-const VALID_EDGE_TYPES = [
+export const VALID_EDGE_TYPES = [
   'supersedes', // Original: New decision replaces old one
   'refines', // Original: Decision refines another
   'contradicts', // Original: Decision contradicts another
   'builds_on', // v1.3: Extends existing decision with new insights
   'debates', // v1.3: Presents counter-argument with evidence
   'synthesizes', // v1.3: Merges multiple decisions into unified approach
-];
+] as const;
+
+export type EdgeType = (typeof VALID_EDGE_TYPES)[number];
+
+/**
+ * Decision detection result from analysis
+ */
+export interface DecisionDetection {
+  topic: string;
+  decision: string;
+  reasoning: string;
+  confidence: number;
+  type?: string;
+  trust_context?: Record<string, unknown>;
+  evidence?: string | string[];
+  alternatives?: string | string[];
+  risks?: string;
+}
+
+/**
+ * Tool execution context
+ */
+export interface ToolExecution {
+  timestamp?: number;
+  tool_name?: string;
+  tool_input?: unknown;
+  exit_code?: number;
+}
+
+/**
+ * Session context for decision tracking
+ */
+export interface SessionContext {
+  session_id?: string;
+  latest_user_message?: string;
+  recent_exchange?: string;
+}
+
+/**
+ * Decision record from database
+ */
+export interface DecisionRecord {
+  id: string;
+  topic: string;
+  decision: string;
+  reasoning?: string;
+  outcome?: string | null;
+  failure_reason?: string | null;
+  confidence: number;
+  supersedes?: string | null;
+  superseded_by?: string | null;
+  created_at: number;
+  updated_at?: number;
+}
+
+/**
+ * Learn decision result
+ */
+export interface LearnDecisionResult {
+  decisionId: string;
+  notification: unknown | null;
+}
+
+/**
+ * Parsed relationship from reasoning
+ */
+export interface ParsedRelationship {
+  type: string;
+  targetIds: string[];
+}
 
 /**
  * Generate decision ID
  *
  * Task 3.2: Generate decision ID: `decision_${topic}_${timestamp}`
  *
- * @param {string} topic - Decision topic
- * @returns {string} Decision ID
+ * @param topic - Decision topic
+ * @returns Decision ID
  */
-function generateDecisionId(topic) {
+export function generateDecisionId(topic: string): string {
   // Sanitize topic: remove spaces, lowercase, max 50 chars
   const sanitized = topic
     .toLowerCase()
@@ -56,7 +130,7 @@ function generateDecisionId(topic) {
     .substring(0, 50);
 
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substr(2, 4);
+  const random = Math.random().toString(36).substring(2, 6);
 
   return `decision_${sanitized}_${timestamp}_${random}`;
 }
@@ -67,11 +141,11 @@ function generateDecisionId(topic) {
  * Task 3.3: Query decisions table WHERE topic=? AND superseded_by IS NULL
  * AC #2: Find previous decision to create supersedes relationship
  *
- * @param {string} topic - Decision topic
- * @returns {Promise<Object|null>} Previous decision or null
+ * @param topic - Decision topic
+ * @returns Previous decision or null
  */
-async function getPreviousDecision(topic) {
-  const adapter = getAdapter();
+export async function getPreviousDecision(topic: string): Promise<DecisionRecord | null> {
+  const adapter = getAdapter() as unknown as DatabaseAdapter;
 
   try {
     const stmt = adapter.prepare(`
@@ -81,10 +155,11 @@ async function getPreviousDecision(topic) {
       LIMIT 1
     `);
 
-    const previous = await stmt.get(topic);
+    const previous = stmt.get(topic) as DecisionRecord | undefined;
     return previous || null;
   } catch (error) {
-    throw new Error(`Failed to query previous decision: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to query previous decision: ${message}`);
   }
 }
 
@@ -93,17 +168,22 @@ async function getPreviousDecision(topic) {
  *
  * Story 2.1: Generic edge creation supporting all relationship types
  *
- * @param {string} fromId - Source decision ID
- * @param {string} toId - Target decision ID
- * @param {string} relationship - Edge type (supersedes, builds_on, debates, synthesizes, etc.)
- * @param {string} reason - Reason for the relationship
- * @returns {Promise<boolean>} Success status
+ * @param fromId - Source decision ID
+ * @param toId - Target decision ID
+ * @param relationship - Edge type (supersedes, builds_on, debates, synthesizes, etc.)
+ * @param reason - Reason for the relationship
+ * @returns Success status
  */
-async function createEdge(fromId, toId, relationship, reason) {
-  const adapter = getAdapter();
+export async function createEdge(
+  fromId: string,
+  toId: string,
+  relationship: string,
+  reason: string
+): Promise<boolean> {
+  const adapter = getAdapter() as unknown as DatabaseAdapter;
 
   // Story 2.1: Runtime validation of edge types
-  if (!VALID_EDGE_TYPES.includes(relationship)) {
+  if (!VALID_EDGE_TYPES.includes(relationship as EdgeType)) {
     throw new Error(
       `Invalid edge type: "${relationship}". Valid types: ${VALID_EDGE_TYPES.join(', ')}`
     );
@@ -123,17 +203,18 @@ async function createEdge(fromId, toId, relationship, reason) {
       VALUES (?, ?, ?, ?, ?, 'llm', 1)
     `);
 
-    await stmt.run(fromId, toId, relationship, reason, Date.now());
+    stmt.run(fromId, toId, relationship, reason, Date.now());
     return true;
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // Handle CHECK constraint failure for new edge types
-    if (error.message.includes('CHECK constraint failed')) {
+    if (message.includes('CHECK constraint failed')) {
       info(
         `[decision-tracker] Edge type "${relationship}" not yet supported in schema, skipping edge creation`
       );
       return false;
     }
-    throw new Error(`Failed to create ${relationship} edge: ${error.message}`);
+    throw new Error(`Failed to create ${relationship} edge: ${message}`);
   }
 }
 
@@ -143,11 +224,15 @@ async function createEdge(fromId, toId, relationship, reason) {
  * Task 3.5: Create supersedes edge (INSERT INTO decision_edges)
  * AC #2: Supersedes relationship creation
  *
- * @param {string} fromId - New decision ID
- * @param {string} toId - Previous decision ID
- * @param {string} reason - Reason for superseding
+ * @param fromId - New decision ID
+ * @param toId - Previous decision ID
+ * @param reason - Reason for superseding
  */
-async function createSupersedesEdge(fromId, toId, reason) {
+export async function createSupersedesEdge(
+  fromId: string,
+  toId: string,
+  reason: string
+): Promise<boolean> {
   return createEdge(fromId, toId, 'supersedes', reason);
 }
 
@@ -157,11 +242,11 @@ async function createSupersedesEdge(fromId, toId, reason) {
  * Task 3.5: Update previous decision's superseded_by field
  * AC #2: Previous decision's superseded_by field updated
  *
- * @param {string} previousId - Previous decision ID
- * @param {string} newId - New decision ID
+ * @param previousId - Previous decision ID
+ * @param newId - New decision ID
  */
-async function markSuperseded(previousId, newId) {
-  const adapter = getAdapter();
+export async function markSuperseded(previousId: string, newId: string): Promise<void> {
+  const adapter = getAdapter() as unknown as DatabaseAdapter;
 
   try {
     const stmt = adapter.prepare(`
@@ -170,9 +255,10 @@ async function markSuperseded(previousId, newId) {
       WHERE id = ?
     `);
 
-    await stmt.run(newId, Date.now(), previousId);
+    stmt.run(newId, Date.now(), previousId);
   } catch (error) {
-    throw new Error(`Failed to mark decision as superseded: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to mark decision as superseded: ${message}`);
   }
 }
 
@@ -182,11 +268,14 @@ async function markSuperseded(previousId, newId) {
  * Task 3.6: Calculate combined confidence for multi-parent refinement
  * AC #5: Confidence score calculated based on history
  *
- * @param {number} prior - Prior confidence
- * @param {Array<Object>} parents - Parent decisions
- * @returns {number} Updated confidence (0.0-1.0)
+ * @param prior - Prior confidence
+ * @param parents - Parent decisions
+ * @returns Updated confidence (0.0-1.0)
  */
-function calculateCombinedConfidence(prior, parents) {
+export function calculateCombinedConfidence(
+  prior: number,
+  parents: Array<{ confidence?: number }>
+): number {
   if (!parents || parents.length === 0) {
     return prior;
   }
@@ -209,11 +298,14 @@ function calculateCombinedConfidence(prior, parents) {
  * Task 3.6: Detect if new decision refines multiple previous decisions
  * AC #5: Multi-parent refinement
  *
- * @param {Object} detection - Decision detection result
- * @param {Object} sessionContext - Session context
- * @returns {Array<string>|null} Array of parent decision IDs or null
+ * @param _detection - Decision detection result
+ * @param _sessionContext - Session context
+ * @returns Array of parent decision IDs or null
  */
-function detectRefinement(_detection, _sessionContext) {
+export function detectRefinement(
+  _detection: DecisionDetection,
+  _sessionContext: SessionContext
+): string[] | null {
   // TODO: Implement refinement detection heuristics
   // For now, return null (single-parent only)
   // Future: Analyze session context for references to multiple decisions
@@ -238,15 +330,15 @@ function detectRefinement(_detection, _sessionContext) {
  * - debates: <decision_id>
  * - synthesizes: [id1, id2]
  *
- * @param {string} reasoning - Decision reasoning text
- * @returns {Array<{type: string, targetIds: string[]}>} Detected relationships
+ * @param reasoning - Decision reasoning text
+ * @returns Detected relationships
  */
-function parseReasoningForRelationships(reasoning) {
+export function parseReasoningForRelationships(reasoning: string): ParsedRelationship[] {
   if (!reasoning || typeof reasoning !== 'string') {
     return [];
   }
 
-  const relationships = [];
+  const relationships: ParsedRelationship[] = [];
 
   // Pattern 1: builds_on: <id> (allows optional markdown **bold**)
   const buildsOnMatch = reasoning.match(
@@ -296,11 +388,14 @@ function parseReasoningForRelationships(reasoning) {
  *
  * Story 2.2: Auto-create edges when reasoning references other decisions
  *
- * @param {string} fromId - Source decision ID
- * @param {string} reasoning - Decision reasoning text
- * @returns {Promise<{created: number, failed: number}>} Edge creation stats
+ * @param fromId - Source decision ID
+ * @param reasoning - Decision reasoning text
+ * @returns Edge creation stats
  */
-async function createEdgesFromReasoning(fromId, reasoning) {
+export async function createEdgesFromReasoning(
+  fromId: string,
+  reasoning: string
+): Promise<{ created: number; failed: number }> {
   const relationships = parseReasoningForRelationships(reasoning);
   let created = 0;
   let failed = 0;
@@ -309,9 +404,9 @@ async function createEdgesFromReasoning(fromId, reasoning) {
     for (const targetId of rel.targetIds) {
       try {
         // Verify target decision exists
-        const adapter = getAdapter();
+        const adapter = getAdapter() as unknown as DatabaseAdapter;
         const stmt = adapter.prepare('SELECT id FROM decisions WHERE id = ?');
-        const target = await stmt.get(targetId);
+        const target = stmt.get(targetId);
 
         if (!target) {
           info(`[decision-tracker] Referenced decision not found: ${targetId}, skipping edge`);
@@ -330,7 +425,8 @@ async function createEdgesFromReasoning(fromId, reasoning) {
           failed++;
         }
       } catch (error) {
-        info(`[decision-tracker] Failed to create edge to ${targetId}: ${error.message}`);
+        const message = error instanceof Error ? error.message : String(error);
+        info(`[decision-tracker] Failed to create edge to ${targetId}: ${message}`);
         failed++;
       }
     }
@@ -344,12 +440,14 @@ async function createEdgesFromReasoning(fromId, reasoning) {
  *
  * Story 2.2: Calculate how many times a topic has been superseded
  *
- * @param {string} topic - Decision topic
- * @returns {Promise<{depth: number, chain: string[]}>} Chain depth and decision IDs
+ * @param topic - Decision topic
+ * @returns Chain depth and decision IDs
  */
-async function getSupersededChainDepth(topic) {
-  const adapter = getAdapter();
-  const chain = [];
+export async function getSupersededChainDepth(
+  topic: string
+): Promise<{ depth: number; chain: string[] }> {
+  const adapter = getAdapter() as unknown as DatabaseAdapter;
+  const chain: string[] = [];
 
   try {
     // Start from the latest decision (superseded_by IS NULL)
@@ -360,7 +458,7 @@ async function getSupersededChainDepth(topic) {
       LIMIT 1
     `);
 
-    let current = await stmt.get(topic);
+    let current = (stmt.get(topic)) as { id: string; supersedes?: string } | undefined;
 
     if (!current) {
       return { depth: 0, chain: [] };
@@ -371,7 +469,9 @@ async function getSupersededChainDepth(topic) {
     // Walk back through supersedes chain
     while (current && current.supersedes) {
       stmt = adapter.prepare('SELECT id, supersedes FROM decisions WHERE id = ?');
-      current = await stmt.get(current.supersedes);
+      current = (stmt.get(current.supersedes)) as
+        | { id: string; supersedes?: string }
+        | undefined;
 
       if (current) {
         chain.push(current.id);
@@ -383,7 +483,8 @@ async function getSupersededChainDepth(topic) {
       chain: chain.reverse(), // oldest to newest
     };
   } catch (error) {
-    throw new Error(`Failed to get supersedes chain: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to get supersedes chain: ${message}`);
   }
 }
 
@@ -420,16 +521,16 @@ async function getSupersededChainDepth(topic) {
  * AC #2: Supersedes relationship creation
  * AC #5: Multi-parent refinement with confidence calculation
  *
- * @param {Object} detection - Decision detection result
- * @param {string} detection.topic - Decision topic
- * @param {string} detection.decision - Decision value
- * @param {string} detection.reasoning - Decision reasoning
- * @param {number} detection.confidence - Confidence score (0.0-1.0)
- * @param {Object} toolExecution - Tool execution data
- * @param {Object} sessionContext - Session context
- * @returns {Promise<Object>} { decisionId, notification }
+ * @param detection - Decision detection result
+ * @param toolExecution - Tool execution data
+ * @param sessionContext - Session context
+ * @returns decisionId and notification
  */
-async function learnDecision(detection, toolExecution, sessionContext) {
+export async function learnDecision(
+  detection: DecisionDetection,
+  toolExecution: ToolExecution,
+  sessionContext: SessionContext
+): Promise<LearnDecisionResult> {
   try {
     // Ensure database is initialized
     await initDB();
@@ -453,13 +554,15 @@ async function learnDecision(detection, toolExecution, sessionContext) {
     if (refinedFrom && refinedFrom.length > 0) {
       // AC #5: Multi-parent refinement
       // Get parent decisions
-      const adapter = getAdapter();
+      const adapter = getAdapter() as unknown as DatabaseAdapter;
       const stmt = adapter.prepare('SELECT * FROM decisions WHERE id = ?');
 
-      const parents = await Promise.all(
-        refinedFrom.map(async (parentId) => await stmt.get(parentId))
+      const parents = refinedFrom.map(
+        (parentId) => stmt.get(parentId) as DecisionRecord | undefined
       );
-      const validParents = parents.filter(Boolean);
+      const validParents = parents.filter(
+        (p): p is DecisionRecord => p !== undefined && p !== null
+      );
 
       // Calculate combined confidence
       finalConfidence = calculateCombinedConfidence(detection.confidence, validParents);
@@ -541,18 +644,11 @@ async function learnDecision(detection, toolExecution, sessionContext) {
     // ════════════════════════════════════════════════════════
     // Story 014.7.6: Generate notification if needs validation
     // ════════════════════════════════════════════════════════
-    let notification = null;
+    let notification: unknown = null;
     if (needsValidation) {
-      const { notifyInsight } = require('./notification-manager');
-      notification = notifyInsight({
-        id: decisionId,
-        topic: decision.topic,
-        decision: decision.decision,
-        reasoning: decision.reasoning,
-        confidence: decision.confidence,
-        needs_validation: true,
-        validation_attempts: 0,
-      });
+      const { notifyInsight } = await import('./notification-manager.js');
+      // notifyInsight is a stub that returns null
+      notification = notifyInsight();
     }
 
     // ════════════════════════════════════════════════════════
@@ -564,8 +660,17 @@ async function learnDecision(detection, toolExecution, sessionContext) {
     };
   } catch (error) {
     // CLAUDE.md Rule #1: No silent failures
-    throw new Error(`Failed to learn decision: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to learn decision: ${message}`);
   }
+}
+
+/**
+ * Evidence item for confidence updates
+ */
+export interface EvidenceItem {
+  type: 'success' | 'failure' | 'partial';
+  impact: number;
 }
 
 /**
@@ -574,13 +679,11 @@ async function learnDecision(detection, toolExecution, sessionContext) {
  * Task 6: Confidence evolution (used in outcome tracking)
  * AC #5: Confidence score calculated based on history
  *
- * @param {number} prior - Prior confidence
- * @param {Array<Object>} evidence - Evidence items
- * @param {string} evidence[].type - Evidence type (success, failure, partial)
- * @param {number} evidence[].impact - Impact on confidence
- * @returns {number} Updated confidence (0.0-1.0)
+ * @param prior - Prior confidence
+ * @param evidence - Evidence items
+ * @returns Updated confidence (0.0-1.0)
  */
-function updateConfidence(prior, evidence) {
+export function updateConfidence(prior: number, evidence: EvidenceItem[]): number {
   if (!evidence || evidence.length === 0) {
     return prior;
   }
@@ -594,28 +697,3 @@ function updateConfidence(prior, evidence) {
   // Clamp to [0.0, 1.0]
   return Math.max(0, Math.min(1, updated));
 }
-
-// Export API
-// NOTE: Auto-link functions (createRefinesEdge, createContradictsEdge,
-// findRelatedDecisions, isConflicting, detectConflicts) removed from exports.
-// LLM infers relationships from search results instead.
-//
-// Story 2.1/2.2: Added new edge type support and reasoning parsing
-module.exports = {
-  // Core functions
-  learnDecision,
-  generateDecisionId,
-  getPreviousDecision,
-  createSupersedesEdge,
-  markSuperseded,
-  calculateCombinedConfidence,
-  detectRefinement,
-  updateConfidence,
-  // Story 2.1: Edge type extension
-  VALID_EDGE_TYPES,
-  createEdge,
-  // Story 2.2: Reasoning field parsing
-  parseReasoningForRelationships,
-  createEdgesFromReasoning,
-  getSupersededChainDepth,
-};

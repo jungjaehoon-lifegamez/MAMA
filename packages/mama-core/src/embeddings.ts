@@ -10,23 +10,41 @@
  * @date 2025-11-20
  */
 
-// eslint-disable-next-line no-unused-vars
-const { info, error: logError } = require('./debug-logger');
-const { logProgress: _logProgress, logComplete, logLoading } = require('./progress-indicator');
-const os = require('os');
-const path = require('path');
-// Lazy-load @huggingface/transformers to avoid loading sharp at module load time (Story 014.12.7)
-// const { pipeline } = require('@huggingface/transformers');
-const { embeddingCache } = require('./embedding-cache');
-const { loadConfig, getModelName, getEmbeddingDim } = require('./config-loader');
+import os from 'os';
+import path from 'path';
+import { info } from './debug-logger.js';
+import { logComplete, logLoading } from './progress-indicator.js';
+import { embeddingCache } from './embedding-cache.js';
+import { loadConfig, getModelName, getEmbeddingDim } from './config-loader.js';
 
 // Shared cache directory (not in node_modules)
 const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.cache', 'huggingface', 'transformers');
 
+// Type for pipeline function from @huggingface/transformers
+type PipelineFunction = (
+  text: string | string[],
+  options?: { pooling?: string; normalize?: boolean }
+) => Promise<{ data: Float32Array }>;
+
 // Singleton pattern for model loading
-let embeddingPipeline = null;
-let currentModelName = null;
+let embeddingPipeline: PipelineFunction | null = null;
+let currentModelName: string | null = null;
 let modelLoadFailed = false; // Cache load failures to avoid repeated slow retries
+
+/**
+ * Decision object for enhanced embedding generation
+ */
+export interface DecisionForEmbedding {
+  topic: string;
+  decision: string;
+  reasoning?: string;
+  outcome?: string;
+  confidence?: number;
+  user_involvement?: string;
+  evidence?: string | string[] | unknown;
+  alternatives?: string | string[] | unknown;
+  risks?: string;
+}
 
 /**
  * Load embedding model (configurable)
@@ -34,9 +52,9 @@ let modelLoadFailed = false; // Cache load failures to avoid repeated slow retri
  * Story M1.4 AC #2: Transformers.js singleton initialization
  * Story M1.4 AC #3: Changing model via config triggers informative log + resets caches
  *
- * @returns {Promise<Function>} Embedding pipeline
+ * @returns Embedding pipeline
  */
-async function loadModel() {
+async function loadModel(): Promise<PipelineFunction> {
   const modelName = getModelName();
 
   // Check if model has changed (Story M1.4 AC #3)
@@ -74,7 +92,7 @@ async function loadModel() {
       env.cacheDir = cacheDir;
       info(`[MAMA] Model cache directory: ${cacheDir}`);
 
-      embeddingPipeline = await pipeline('feature-extraction', modelName);
+      embeddingPipeline = (await pipeline('feature-extraction', modelName)) as PipelineFunction;
       currentModelName = modelName;
 
       const loadTime = Date.now() - startTime;
@@ -95,11 +113,11 @@ async function loadModel() {
  * Story M1.4 AC #1: Uses configurable embeddingDim from config
  * Target: < 30ms latency
  *
- * @param {string} text - Input text to embed
- * @returns {Promise<Float32Array>} Embedding vector (dimension from config)
- * @throws {Error} If text is empty or embedding fails
+ * @param text - Input text to embed
+ * @returns Embedding vector (dimension from config)
+ * @throws Error if text is empty or embedding fails
  */
-async function generateEmbedding(text) {
+export async function generateEmbedding(text: string): Promise<Float32Array> {
   if (!text || text.trim().length === 0) {
     throw new Error('Text cannot be empty');
   }
@@ -130,15 +148,16 @@ async function generateEmbedding(text) {
       throw new Error(`Expected ${expectedDim}-dim, got ${embedding.length}-dim`);
     }
 
-    // eslint-disable-next-line no-unused-vars
-    const latency = Date.now() - startTime;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _latency = Date.now() - startTime;
 
     // Task 2: Store in cache (AC #3)
     embeddingCache.set(text, embedding);
 
     return embedding;
   } catch (error) {
-    throw new Error(`Failed to generate embedding: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to generate embedding: ${message}`);
   }
 }
 
@@ -148,16 +167,12 @@ async function generateEmbedding(text) {
  * Task 3.4: Implement enhanced embedding format
  * Inspired by A-mem: Content + Metadata for richer semantic representation
  *
- * @param {Object} decision - Decision object
- * @param {string} decision.topic - Decision topic
- * @param {string} decision.decision - Decision value
- * @param {string} decision.reasoning - Decision reasoning
- * @param {string} decision.outcome - Decision outcome (optional)
- * @param {number} decision.confidence - Confidence score (optional)
- * @param {string} decision.user_involvement - User involvement (optional)
- * @returns {Promise<Float32Array>} 384-dim enhanced embedding
+ * @param decision - Decision object
+ * @returns 384-dim enhanced embedding
  */
-async function generateEnhancedEmbedding(decision) {
+export async function generateEnhancedEmbedding(
+  decision: DecisionForEmbedding
+): Promise<Float32Array> {
   // Construct enriched text representation with narrative fields (Story 2.2)
   const parts = [
     `Topic: ${decision.topic}`,
@@ -204,10 +219,10 @@ async function generateEnhancedEmbedding(decision) {
  *
  * Strategy: Use native transformer batch processing for parallel inference
  *
- * @param {string[]} texts - Array of texts to embed (max 10 per batch)
- * @returns {Promise<Float32Array[]>} Array of embeddings
+ * @param texts - Array of texts to embed (max 10 per batch)
+ * @returns Array of embeddings
  */
-async function generateBatchEmbeddings(texts) {
+export async function generateBatchEmbeddings(texts: string[]): Promise<Float32Array[]> {
   if (!Array.isArray(texts) || texts.length === 0) {
     throw new Error('Texts must be a non-empty array');
   }
@@ -233,7 +248,7 @@ async function generateBatchEmbeddings(texts) {
     });
 
     // Extract embeddings from batch output
-    const embeddings = [];
+    const embeddings: Float32Array[] = [];
     const batchSize = texts.length;
 
     for (let i = 0; i < batchSize; i++) {
@@ -262,7 +277,8 @@ async function generateBatchEmbeddings(texts) {
 
     return embeddings;
   } catch (error) {
-    throw new Error(`Failed to generate batch embeddings: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to generate batch embeddings: ${message}`);
   }
 }
 
@@ -271,11 +287,11 @@ async function generateBatchEmbeddings(texts) {
  *
  * Utility for testing and validation
  *
- * @param {Float32Array} embA - First embedding
- * @param {Float32Array} embB - Second embedding
- * @returns {number} Cosine similarity (0-1)
+ * @param embA - First embedding
+ * @param embB - Second embedding
+ * @returns Cosine similarity (0-1)
  */
-function cosineSimilarity(embA, embB) {
+export function cosineSimilarity(embA: Float32Array, embB: Float32Array): number {
   if (embA.length !== embB.length) {
     throw new Error('Embeddings must have same dimension');
   }
@@ -295,22 +311,12 @@ function cosineSimilarity(embA, embB) {
   return similarity;
 }
 
-// Export API
-module.exports = {
-  generateEmbedding,
-  generateEnhancedEmbedding,
-  generateBatchEmbeddings,
-  cosineSimilarity,
-  embeddingCache,
-  // Dynamic getters for config values (Story M1.4)
-  get EMBEDDING_DIM() {
-    return getEmbeddingDim();
-  },
-  get MODEL_NAME() {
-    return getModelName();
-  },
-  // Expose config functions for external use
-  loadConfig,
-  getModelName,
-  getEmbeddingDim,
-};
+// Re-export embeddingCache for convenience
+export { embeddingCache };
+
+// Dynamic getters for config values (Story M1.4)
+export const EMBEDDING_DIM = getEmbeddingDim();
+export const MODEL_NAME = getModelName();
+
+// Expose config functions for external use
+export { loadConfig, getModelName, getEmbeddingDim };

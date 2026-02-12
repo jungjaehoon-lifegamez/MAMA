@@ -15,9 +15,9 @@
 // Error handling policy:
 // - Timeout errors: thrown (caller handles retry/fallback)
 // - Vector search unavailable: returns empty array (recoverable, not critical)
-const { info, error: logError } = require('./debug-logger');
-const { vectorSearch } = require('./memory-store');
-const { formatContext } = require('./decision-formatter');
+import { info, error as logError } from './debug-logger.js';
+import { vectorSearch } from './memory-store.js';
+import { formatContext, type DecisionForFormat } from './decision-formatter.js';
 
 // Configuration
 const TIMEOUT_MS = 5000; // LLM-based intent detection, user accepts longer thinking
@@ -29,16 +29,16 @@ const TOKEN_BUDGET = 500; // AC #1: Max 500 tokens per injection
  * Task 1.1-1.9: Main entry point for memory injection
  * AC #1, #2, #3: Intent analysis → Query → Format → Inject
  *
- * @param {string} userMessage - User's message from prompt
- * @returns {Promise<string|null>} Injected context or null
+ * @param userMessage - User's message from prompt
+ * @returns Injected context or null
  */
-async function injectDecisionContext(userMessage) {
+export async function injectDecisionContext(userMessage: string): Promise<string | null> {
   const startTime = Date.now();
-  let timeoutId = null;
+  let timeoutId: NodeJS.Timeout | null = null;
 
   try {
     // Task 1.3: Implement timeout wrapper (Promise.race with timeout)
-    const timeoutPromise = new Promise((_, reject) => {
+    const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => {
         reject(new Error(`Memory injection timeout (${TIMEOUT_MS}ms)`));
       }, TIMEOUT_MS);
@@ -62,9 +62,18 @@ async function injectDecisionContext(userMessage) {
     }
     // CLAUDE.md Rule #1: NO FALLBACK
     // Errors must be thrown for debugging (including timeout)
-    logError(`[MAMA] Memory injection FAILED: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[MAMA] Memory injection FAILED: ${message}`);
     throw error;
   }
+}
+
+/**
+ * Decision result from vector search
+ */
+interface VectorSearchResult extends DecisionForFormat {
+  similarity: number;
+  distance?: number;
 }
 
 /**
@@ -73,13 +82,16 @@ async function injectDecisionContext(userMessage) {
  * Simplified: Direct vector search without LLM intent analysis
  * Faster, more reliable, works with all query types
  *
- * @param {string} userMessage - User's message
- * @param {number} startTime - Start timestamp for latency tracking
- * @returns {Promise<string|null>} Formatted context or null
+ * @param userMessage - User's message
+ * @param startTime - Start timestamp for latency tracking
+ * @returns Formatted context or null
  */
-async function performMemoryInjection(userMessage, startTime) {
+async function performMemoryInjection(
+  userMessage: string,
+  startTime: number
+): Promise<string | null> {
   // 1. Generate query embedding
-  const { generateEmbedding } = require('./embeddings');
+  const { generateEmbedding } = await import('./embeddings.js');
   const queryEmbedding = await generateEmbedding(userMessage);
 
   const embeddingLatency = Date.now() - startTime;
@@ -90,12 +102,13 @@ async function performMemoryInjection(userMessage, startTime) {
   const adaptiveThreshold = wordCount < 3 ? 0.7 : 0.6;
 
   // 3. Vector search (returns [] on error for graceful degradation)
-  let results;
+  let results: VectorSearchResult[];
   try {
-    results = await vectorSearch(queryEmbedding, 10, 0.5); // Get more candidates
+    results = (await vectorSearch(queryEmbedding, 10, 0.5)) as VectorSearchResult[]; // Get more candidates
   } catch (error) {
     // Vector search unavailability should not block the main conversation flow
-    logError(`[MAMA] Vector search failed: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[MAMA] Vector search failed: ${message}`);
     return null;
   }
 
@@ -125,11 +138,6 @@ async function performMemoryInjection(userMessage, startTime) {
   // 7. Return formatted context (Claude Code will inject it)
   return formattedContext;
 }
-
-// Export API
-module.exports = {
-  injectDecisionContext,
-};
 
 // CLI execution for testing
 if (require.main === module) {
@@ -161,7 +169,8 @@ if (require.main === module) {
           info(`⏱️  Latency: ${latency}ms`);
         }
       } catch (error) {
-        logError(`\n❌ Error: ${error.message}`);
+        const message = error instanceof Error ? error.message : String(error);
+        logError(`\n❌ Error: ${message}`);
       }
 
       info('');
