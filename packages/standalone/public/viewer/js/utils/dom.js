@@ -1,10 +1,15 @@
-// DOM utility functions
+/**
+ * DOM Utility Functions
+ * @module utils/dom
+ * @version 1.0.0
+ */
+
 /* eslint-env browser */
 
 /**
- * Escape HTML entities for content insertion
+ * Escape HTML to prevent XSS
  * @param {string} text - Text to escape
- * @returns {string} HTML-escaped text
+ * @returns {string} Escaped HTML
  */
 export function escapeHtml(text) {
   if (!text) {
@@ -16,94 +21,77 @@ export function escapeHtml(text) {
 }
 
 /**
- * Escape text for safe use in HTML attributes
- * Escapes quotes in addition to HTML entities
- * @param {string} text - Text to escape
- * @returns {string} Attribute-safe escaped text
- */
-export function escapeAttr(text) {
-  if (!text) {
-    return '';
-  }
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/**
- * Create element with safe attributes
- * @param {string} tagName - HTML tag name
- * @param {Object} attributes - Attributes to set
- * @param {string} textContent - Text content
- * @returns {HTMLElement} Created element
- */
-export function createElement(tagName, attributes = {}, textContent = '') {
-  const element = document.createElement(tagName);
-
-  for (const [key, value] of Object.entries(attributes)) {
-    element.setAttribute(key, value);
-  }
-
-  if (textContent) {
-    element.textContent = textContent;
-  }
-
-  return element;
-}
-
-/**
- * Add event listener with cleanup
- * @param {Element} element - Target element
- * @param {string} event - Event name
- * @param {Function} handler - Event handler
- * @returns {Function} Cleanup function
- */
-export function addListener(element, event, handler) {
-  element.addEventListener(event, handler);
-  return () => element.removeEventListener(event, handler);
-}
-
-/**
- * Debounce a function call
- * @param {Function} fn - Function to debounce
- * @param {number} delay - Delay in ms
+ * Debounce function calls
+ * @param {Function} func - Function to debounce
+ * @param {number} wait - Wait time in milliseconds
  * @returns {Function} Debounced function
  */
-export function debounce(fn, delay = 300) {
-  let timer;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), delay);
+export function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
   };
 }
 
 /**
- * Show a toast notification
+ * Show toast notification
  * @param {string} message - Message to display
- * @param {number} duration - Duration in ms
+ * @param {number} duration - Duration in milliseconds
  */
 export function showToast(message, duration = 3000) {
-  let container = document.getElementById('toast-container');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'toast-container';
-    container.style.cssText =
-      'position:fixed;top:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px;';
-    document.body.appendChild(container);
+  // Remove existing toast
+  const existingToast = document.querySelector('.toast-notification');
+  if (existingToast) {
+    existingToast.remove();
   }
+
   const toast = document.createElement('div');
+  toast.className = 'toast-notification';
   toast.textContent = message;
-  toast.style.cssText =
-    'background:#333;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;opacity:0;transition:opacity 0.3s;';
-  container.appendChild(toast);
+  document.body.appendChild(toast);
+
+  // Trigger animation
   requestAnimationFrame(() => {
-    toast.style.opacity = '1';
+    toast.classList.add('visible');
   });
+
+  // Auto-remove
   setTimeout(() => {
-    toast.style.opacity = '0';
+    toast.classList.remove('visible');
     setTimeout(() => toast.remove(), 300);
   }, duration);
+}
+
+/**
+ * Scroll element to bottom
+ * @param {HTMLElement} container - Container to scroll
+ */
+export function scrollToBottom(container) {
+  // Use setTimeout to ensure DOM has updated before scrolling
+  const doScroll = () => {
+    container.scrollTop = container.scrollHeight;
+    if (container.scrollTo) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+    }
+  };
+  setTimeout(doScroll, 50);
+  requestAnimationFrame(doScroll);
+}
+
+/**
+ * Auto-resize textarea to fit content
+ * @param {HTMLTextAreaElement} textarea - Textarea element
+ * @param {number} maxRows - Maximum number of rows (default: 5)
+ */
+export function autoResizeTextarea(textarea, maxRows = 5) {
+  textarea.style.height = 'auto';
+  const lineHeight = parseInt(getComputedStyle(textarea).lineHeight);
+  const maxHeight = lineHeight * maxRows;
+  const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+  textarea.style.height = newHeight + 'px';
 }
