@@ -36,6 +36,21 @@ Use cron expressions: `0 * * * *` (hourly), `*/30 * * * *` (every 30min), `0 9 *
 
 When a user asks to schedule/monitor something periodically, ALWAYS use this API — do NOT create external scripts or system crontab entries.
 
+## Browser (Playwright)
+
+- **browser_navigate**(url) — Open URL in headless browser. Returns title and final URL.
+- **browser_screenshot**(filename?, fullPage?) — Take screenshot. Saved to /tmp/mama-screenshots/. Use discord_send to share the image.
+- **browser_click**(selector) — Click element by CSS selector.
+- **browser_type**(selector, text) — Type text into input element.
+- **browser_get_text**() — Get all text content from current page.
+- **browser_scroll**(direction, amount?) — Scroll page. direction: up/down/top/bottom.
+- **browser_wait_for**(selector, timeout?) — Wait for element to appear.
+- **browser_evaluate**(script) — Run JavaScript in page context.
+- **browser_pdf**(filename?) — Save page as PDF (Chromium only).
+- **browser_close**() — Close browser. Call when done browsing.
+
+Example workflow: navigate → get_text or screenshot → close.
+
 ## PR Review
 
 - **pr_review_threads**(pr_url) — Fetch unresolved review threads from GitHub PR. Returns threads grouped by file with comment body, line, author. Also accepts (owner, repo, pr_number).
