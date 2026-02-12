@@ -286,10 +286,14 @@ export class PersistentClaudeProcess extends EventEmitter {
       args.push('--system-prompt', this.options.systemPrompt);
     }
 
-    // MCP config only if not using Gateway Tools
-    if (this.options.mcpConfigPath && !this.options.useGatewayTools) {
+    // Hybrid mode: MCP + Gateway can both be enabled
+    if (this.options.mcpConfigPath) {
       args.push('--mcp-config', this.options.mcpConfigPath);
       args.push('--strict-mcp-config');
+      persistentLogger.info('MCP enabled:', this.options.mcpConfigPath);
+    }
+    if (this.options.useGatewayTools) {
+      persistentLogger.info('Gateway Tools mode enabled');
     }
 
     if (this.options.dangerouslySkipPermissions) {

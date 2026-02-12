@@ -452,6 +452,8 @@ export interface MAMAConfig {
   heartbeat?: HeartbeatConfig;
   /** Multi-agent settings (optional) */
   multi_agent?: MultiAgentConfig;
+  /** Enable automatic process killing on port conflicts (default: false) */
+  enable_auto_kill_port?: boolean;
   /** Preserve user-defined sections (scheduling, custom integrations, etc.) */
   [key: string]: unknown;
 }
@@ -490,6 +492,7 @@ export const DEFAULT_CONFIG: MAMAConfig = {
   telegram: undefined,
   chatwork: undefined,
   heartbeat: undefined,
+  enable_auto_kill_port: false,
 };
 
 /**

@@ -229,7 +229,7 @@ describe('AgentMessageQueue', () => {
   });
 
   describe('Busy process handling', () => {
-    it('should not re-queue if process is still busy', async () => {
+    it('should re-queue message when process is busy (up to 3 retries)', async () => {
       queue.enqueue('agent-1', {
         prompt: 'Message 1',
         channelId: 'ch-1',
@@ -243,14 +243,25 @@ describe('AgentMessageQueue', () => {
 
       const mockCallback = vi.fn();
 
+      // First attempt: re-queued (retry 1)
       await queue.drain('agent-1', mockProcess, mockCallback);
+      expect(queue.getQueueSize('agent-1')).toBe(1);
 
-      // Message should be dropped (not re-queued)
+      // Second attempt: re-queued (retry 2)
+      await queue.drain('agent-1', mockProcess, mockCallback);
+      expect(queue.getQueueSize('agent-1')).toBe(1);
+
+      // Third attempt: re-queued (retry 3)
+      await queue.drain('agent-1', mockProcess, mockCallback);
+      expect(queue.getQueueSize('agent-1')).toBe(1);
+
+      // Fourth attempt: dropped after 3 retries
+      await queue.drain('agent-1', mockProcess, mockCallback);
       expect(queue.getQueueSize('agent-1')).toBe(0);
       expect(mockCallback).not.toHaveBeenCalled();
     });
 
-    it('should continue draining next message after busy error', async () => {
+    it('should not drain further messages when busy (waits for next idle)', async () => {
       queue.enqueue('agent-1', {
         prompt: 'Message 1',
         channelId: 'ch-1',
@@ -266,22 +277,16 @@ describe('AgentMessageQueue', () => {
       });
 
       const mockProcess = {
-        sendMessage: vi
-          .fn()
-          .mockRejectedValueOnce(new Error('Process is busy'))
-          .mockResolvedValueOnce({ response: 'OK' }),
+        sendMessage: vi.fn().mockRejectedValue(new Error('Process is busy')),
       } as unknown as PersistentClaudeProcess;
 
-      const receivedPrompts: string[] = [];
-      const mockCallback = vi.fn(async (_aid, msg, _res) => {
-        receivedPrompts.push(msg.prompt);
-      });
+      const mockCallback = vi.fn();
 
       await queue.drain('agent-1', mockProcess, mockCallback);
 
-      // First message dropped, second delivered
-      expect(receivedPrompts).toEqual(['Message 2']);
-      expect(queue.getQueueSize('agent-1')).toBe(0);
+      // Message 1 re-queued at front, Message 2 still behind it — no further drain
+      expect(queue.getQueueSize('agent-1')).toBe(2);
+      expect(mockCallback).not.toHaveBeenCalled();
     });
   });
 

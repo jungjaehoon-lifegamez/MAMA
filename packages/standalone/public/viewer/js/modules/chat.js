@@ -12,7 +12,13 @@
 
 /* eslint-env browser */
 
-import { escapeHtml, showToast, scrollToBottom, autoResizeTextarea } from '../utils/dom.js';
+import {
+  escapeHtml,
+  escapeAttr,
+  showToast,
+  scrollToBottom,
+  autoResizeTextarea,
+} from '../utils/dom.js';
 import { formatMessageTime, formatAssistantMessage } from '../utils/format.js';
 import { API } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
@@ -176,8 +182,7 @@ export class ChatModule {
     }
 
     this.sessionId = sessionId;
-    // Don't restore from localStorage - server will send authoritative history
-    // this.restoreHistory(sessionId);
+    this.restoreHistory(sessionId);
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws?sessionId=${sessionId}`;
@@ -595,6 +600,35 @@ export class ChatModule {
     this.saveToHistory('user', text, timestamp);
   }
 
+  addUserMessageWithAttachment(text, attachment) {
+    const container = document.getElementById('chat-messages');
+    this.removePlaceholder();
+
+    const timestamp = new Date();
+    const msgEl = document.createElement('div');
+    msgEl.className = 'chat-message user';
+
+    let attachHtml = '';
+    if (attachment.isImage) {
+      const safeUrl = escapeAttr(attachment.mediaUrl);
+      const safeAlt = escapeAttr(attachment.originalName);
+      attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${safeAlt}" data-lightbox="${safeUrl}" />`;
+    } else {
+      const safeName = encodeURIComponent(attachment.filename);
+      attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">\u{1F4CE}</span><span class="truncate max-w-[180px]">${escapeHtml(attachment.originalName)}</span></a>`;
+    }
+
+    msgEl.innerHTML = `
+      <div class="message-content">${escapeHtml(text)}${attachHtml}</div>
+      <div class="message-time">${formatMessageTime(timestamp)}</div>
+    `;
+
+    container.appendChild(msgEl);
+    scrollToBottom(container);
+
+    this.saveToHistory('user', text, timestamp, attachment);
+  }
+
   /**
    * Add assistant message to chat
    */
@@ -790,7 +824,15 @@ export class ChatModule {
 
     if (this.currentStreamText) {
       this.saveToHistory('assistant', this.currentStreamText);
+
+      // Auto-play TTS for streamed responses
+      if (this.ttsEnabled) {
+        this.speak(this.currentStreamText);
+      }
     }
+
+    // Show unread badge if floating panel is closed
+    this.showUnreadBadge();
 
     if (this.currentStreamEl) {
       this.currentStreamEl.classList.remove('streaming');
@@ -1283,6 +1325,9 @@ export class ChatModule {
    */
   toggleTTS() {
     this.ttsEnabled = !this.ttsEnabled;
+    if (!this.ttsEnabled) {
+      this.stopSpeaking();
+    }
     const btn = document.getElementById('chat-tts-toggle');
 
     if (btn) {
@@ -1320,8 +1365,33 @@ export class ChatModule {
   /**
    * Speak text using TTS
    */
+  stripMarkdownForTTS(text) {
+    return text
+      .replace(/```[\s\S]*?```/g, '') // code blocks
+      .replace(/`([^`]+)`/g, '$1') // inline code
+      .replace(/\*\*([^*]+)\*\*/g, '$1') // bold
+      .replace(/\*([^*]+)\*/g, '$1') // italic
+      .replace(/~~([^~]+)~~/g, '$1') // strikethrough
+      .replace(/#{1,6}\s(.+)/g, '$1') // headers
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+      .replace(/^[-*]\s/gm, '') // list markers
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1') // images
+      .replace(/~\/.mama\/workspace\/media\/[^\s]+/g, '') // media paths
+      .replace(
+        /[\u{1F600}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1FA00}-\u{1FAFF}]/gu,
+        ''
+      ) // emoji
+      .replace(/\n{2,}/g, '. ')
+      .trim();
+  }
+
   speak(text) {
     if (!this.speechSynthesis || !text) {
+      return;
+    }
+
+    text = this.stripMarkdownForTTS(text);
+    if (!text) {
       return;
     }
 
@@ -1387,16 +1457,21 @@ export class ChatModule {
   /**
    * Save message to history
    */
-  saveToHistory(role, content, timestamp = new Date()) {
+  saveToHistory(role, content, timestamp = new Date(), attachment = null) {
     if (!this.sessionId) {
       return;
     }
 
-    this.history.push({
+    const entry = {
       role,
       content,
       timestamp: timestamp.toISOString(),
-    });
+    };
+    if (attachment) {
+      entry.attachment = attachment;
+    }
+
+    this.history.push(entry);
 
     if (this.history.length > this.maxHistoryMessages) {
       this.history = this.history.slice(-this.maxHistoryMessages);
@@ -1460,8 +1535,20 @@ export class ChatModule {
       msgEl.className = `chat-message ${msg.role}`;
 
       if (msg.role === 'user') {
+        let attachHtml = '';
+        if (msg.attachment) {
+          const att = msg.attachment;
+          if (att.isImage) {
+            const safeUrl = escapeAttr(att.mediaUrl);
+            const safeAlt = escapeAttr(att.originalName || '');
+            attachHtml = `<img src="${safeUrl}" class="max-w-[200px] rounded-lg mt-1 cursor-pointer" alt="${safeAlt}" data-lightbox="${safeUrl}" />`;
+          } else {
+            const safeName = encodeURIComponent(att.filename);
+            attachHtml = `<a href="/api/media/download/${safeName}" target="_blank" class="flex items-center gap-2 mt-1 px-3 py-2 bg-white/50 rounded-lg border border-gray-200 text-sm hover:bg-white/80 transition-colors"><span class="text-lg">\u{1F4CE}</span><span class="truncate max-w-[180px]">${escapeHtml(att.originalName || att.filename)}</span></a>`;
+          }
+        }
         msgEl.innerHTML = `
-          <div class="message-content">${escapeHtml(msg.content)}</div>
+          <div class="message-content">${escapeHtml(msg.content)}${attachHtml}</div>
           <div class="message-time">${formatMessageTime(new Date(msg.timestamp))}</div>
         `;
       } else if (msg.role === 'assistant') {
@@ -1493,7 +1580,12 @@ export class ChatModule {
       return;
     }
 
-    // Clear existing messages first (server history is authoritative)
+    // Server history is authoritative — always use it when available
+    if (messages.length === 0 && this.history.length > 0) {
+      logger.info(`Server sent empty history, keeping local (${this.history.length})`);
+      return;
+    }
+
     container.innerHTML = '';
     this.history = [];
 
@@ -1703,6 +1795,9 @@ export class ChatModule {
       };
 
       header.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button, a, input, select')) {
+          return;
+        }
         e.preventDefault();
         startDrag(e.clientX, e.clientY);
       });
@@ -1728,6 +1823,9 @@ export class ChatModule {
       header.addEventListener(
         'touchstart',
         (e) => {
+          if (e.target.closest('button, a, input, select')) {
+            return;
+          }
           const touch = e.touches[0];
           if (!touch) {
             return;

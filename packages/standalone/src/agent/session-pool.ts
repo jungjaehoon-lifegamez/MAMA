@@ -12,6 +12,17 @@
  */
 
 import { randomUUID } from 'crypto';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('SessionPool');
 
 /**
  * Session entry with metadata
@@ -159,12 +170,13 @@ export class SessionPool {
       return { totalTokens: 0, nearThreshold: false };
     }
 
-    existing.totalInputTokens += inputTokens;
+    // Use latest value, not cumulative - Claude API returns total context tokens per request
+    existing.totalInputTokens = Math.max(existing.totalInputTokens, inputTokens);
     const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS * 0.9; // 90% of threshold
 
     if (nearThreshold) {
-      console.log(
-        `[SessionPool] ⚠️ Context approaching limit: ${existing.totalInputTokens} tokens (${Math.round(existing.totalInputTokens / 2000)}% of 200K)`
+      logger.warn(
+        `Context approaching limit: ${existing.totalInputTokens} tokens (${Math.round((existing.totalInputTokens / 200000) * 100)}% of 200K)`
       );
     }
 

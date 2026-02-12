@@ -45,6 +45,18 @@ import { buildContextPrompt } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
 import { PreCompactHandler } from './pre-compact-handler.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+
+const logger = new DebugLogger('AgentLoop');
 
 /**
  * Default configuration
@@ -236,11 +248,24 @@ export function loadInstalledSkills(
   try {
     const rootEntries = readdirSync(skillsBase, { withFileTypes: true });
     for (const entry of rootEntries) {
-      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-      if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
+      if (!entry.isFile() || !entry.name.endsWith('.md')) {
+        continue;
+      }
+      if (EXCLUDED_SKILL_FILES.has(entry.name)) {
+        continue;
+      }
       const id = entry.name.replace(/\.md$/, '');
+      const stateKey = `mama/${id}`;
+
+      // Skip disabled skills (check state like subdirectory skills)
+      if (state[stateKey]?.enabled === false) {
+        continue;
+      }
+
       // Skip if already loaded from subdirectory
-      if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) continue;
+      if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) {
+        continue;
+      }
 
       const fullPath = join(skillsBase, entry.name);
       let content = readFileSync(fullPath, 'utf-8');
@@ -261,6 +286,20 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
   const backend = (process.env.MAMA_BACKEND as 'claude' | 'codex' | undefined) ?? 'claude';
+
+  // Load state for conditional loading (skills + system docs)
+  const stateFile = join(mamaHome, 'skills', 'state.json');
+  let state: Record<string, { enabled?: boolean }> = {};
+  try {
+    if (existsSync(stateFile)) {
+      state = JSON.parse(readFileSync(stateFile, 'utf-8'));
+    }
+  } catch (err) {
+    logger.error(`Failed to parse state file ${stateFile}:`, err);
+    throw new Error(
+      `Failed to parse state file ${stateFile}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // Load persona files: SOUL.md, IDENTITY.md, USER.md
   const personaFiles = backend === 'codex' ? ['USER.md'] : ['SOUL.md', 'IDENTITY.md', 'USER.md'];
@@ -310,6 +349,23 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   const claudeMd = loadSystemPrompt(verbose, backend);
   layers.push(claudeMd);
 
+  // Load ONBOARDING.md only if not disabled in state
+  // This contains config schema + bot setup guides - only needed during initial setup
+  if (state['system/onboarding']?.enabled !== false) {
+    const onboardingPath = join(mamaHome, 'ONBOARDING.md');
+    if (existsSync(onboardingPath)) {
+      const onboardingContent = readFileSync(onboardingPath, 'utf-8');
+      layers.push(onboardingContent);
+      if (verbose) {
+        logger.debug('Loaded ONBOARDING.md (setup reference)');
+      }
+    }
+  } else {
+    if (verbose) {
+      logger.debug('Skipped ONBOARDING.md (disabled in state)');
+    }
+  }
+
   return layers.join('\n\n---\n\n');
 }
 
@@ -326,7 +382,7 @@ export function getGatewayToolsPrompt(): string {
 
   // TODO: Consider generating both gateway-tools.md and this fallback from a single source
   // to prevent tool list drift (CodeRabbit review suggestion)
-  console.warn('[AgentLoop] gateway-tools.md not found, using minimal prompt');
+  logger.warn('gateway-tools.md not found, using minimal prompt');
   return `
 ## Gateway Tools
 
@@ -390,43 +446,58 @@ export class AgentLoop {
       join(homedir(), '.mama/mama-mcp-config.json');
     const sessionId = randomUUID();
 
-    // Determine tool mode: Gateway (default) or MCP
-    // Currently only '*' (all tools) is supported for mode selection
-    // Partial patterns like 'mama_*' or 'browser_*' are reserved for future hybrid routing
+    // Determine tool mode: Gateway, MCP, or Hybrid
+    // - gateway: ['*'] → Use internal GatewayToolExecutor for mama_*, discord_send, etc.
+    // - mcp: ['*'] or [...] → Use MCP servers for external tools (brave-devtools, etc.)
+    // - Both can be enabled for hybrid mode
     const mcpTools = this.toolsConfig.mcp || [];
     const gatewayTools = this.toolsConfig.gateway || [];
 
-    // Warn if partial patterns are used (not yet supported)
-    const hasPartialPattern = (arr: string[]) => arr.some((t) => t.includes('*') && t !== '*');
-    if (hasPartialPattern(mcpTools) || hasPartialPattern(gatewayTools)) {
-      console.warn(
-        '[AgentLoop] Warning: Partial patterns (e.g., "mama_*") are not yet supported. ' +
-          'Use "*" for all tools or specific tool names. Falling back to Gateway mode.'
-      );
-    }
-
-    const useMCPMode = mcpTools.includes('*');
-    const useGatewayMode = !useMCPMode;
+    // Hybrid mode: Gateway + MCP both enabled
+    const useGatewayMode = gatewayTools.includes('*') || gatewayTools.length > 0;
+    const useMCPMode = mcpTools.includes('*') || mcpTools.length > 0;
     this.isGatewayMode = useGatewayMode;
+
+    if (useGatewayMode && useMCPMode) {
+      logger.debug('🔀 Hybrid mode: Gateway + MCP tools enabled');
+    } else if (useMCPMode) {
+      logger.debug('🔌 MCP-only mode');
+    } else {
+      logger.debug('⚙️ Gateway-only mode');
+    }
 
     // Build system prompt
     const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
     // Only include Gateway Tools prompt if using Gateway mode
     const gatewayToolsPrompt = useGatewayMode ? getGatewayToolsPrompt() : '';
-    const defaultSystemPrompt = gatewayToolsPrompt
+    let defaultSystemPrompt = gatewayToolsPrompt
       ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
       : basePrompt;
 
-    // Monitor prompt size
+    // Monitor and enforce prompt size limits
     const monitor = new PromptSizeMonitor();
-    const checkResult = monitor.check([
+    const promptLayers: PromptLayer[] = [
       { name: 'base', content: basePrompt, priority: 1 },
       ...(gatewayToolsPrompt
         ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
         : []),
-    ]);
+    ];
+    const checkResult = monitor.check(promptLayers);
     if (checkResult.warning) {
-      console.warn(`[AgentLoop] ${checkResult.warning}`);
+      logger.warn(checkResult.warning);
+    }
+    // Actually enforce truncation if over budget
+    if (!checkResult.withinBudget) {
+      const { layers: trimmedLayers, result: enforceResult } = monitor.enforce(promptLayers);
+      if (enforceResult.truncatedLayers.length > 0) {
+        logger.warn(`Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`);
+      }
+      const trimmedBase = trimmedLayers.find((l) => l.name === 'base')?.content || basePrompt;
+      const trimmedTools = trimmedLayers.find((l) => l.name === 'gatewayTools')?.content || '';
+      defaultSystemPrompt = trimmedTools ? `${trimmedBase}\n\n---\n\n${trimmedTools}` : trimmedBase;
+      logger.debug(
+        `System prompt truncated: ${checkResult.totalChars} → ${defaultSystemPrompt.length} chars`
+      );
     }
 
     // Choose backend (default: claude)
@@ -435,7 +506,7 @@ export class AgentLoop {
     // Choose CLI mode: Persistent (fast, experimental) or Standard (stable)
     this.usePersistentCLI = this.backend === 'codex' ? false : (options.usePersistentCLI ?? false);
     if (this.backend === 'codex' && options.usePersistentCLI) {
-      console.warn('[AgentLoop] Codex backend does not support persistent CLI mode; disabling');
+      logger.warn('Codex backend does not support persistent CLI mode; disabling');
     }
 
     if (this.usePersistentCLI) {
@@ -445,13 +516,18 @@ export class AgentLoop {
         model: options.model ?? 'claude-sonnet-4-20250514',
         sessionId,
         systemPrompt: defaultSystemPrompt,
+        // Hybrid mode: pass MCP config even with Gateway tools enabled
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-        // Headless daemon — no interactive permission prompts possible
-        dangerouslySkipPermissions: false, // Changed to false for safety
+        // Headless daemon requires skipping permission prompts (no TTY available).
+        // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
+        // MAMA_TRUSTED_ENV must be set to enable this flag (defense in depth)
+        dangerouslySkipPermissions:
+          process.env.MAMA_TRUSTED_ENV === 'true' && (options.dangerouslySkipPermissions ?? false),
+        // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
       });
       this.agent = this.persistentCLI;
-      console.log('[AgentLoop] 🚀 Persistent CLI mode enabled - faster responses');
+      logger.debug('🚀 Persistent CLI mode enabled - faster responses');
     } else {
       if (this.backend === 'codex') {
         // Codex CLI mode: spawns new Codex process per message
@@ -462,30 +538,29 @@ export class AgentLoop {
           sandbox: 'read-only',
           skipGitRepoCheck: true,
         });
-        console.log('[AgentLoop] Codex CLI backend enabled');
+        logger.debug('Codex CLI backend enabled');
       } else {
         // Standard Claude CLI mode: spawns new process per message
         this.claudeCLI = new ClaudeCLIWrapper({
           model: options.model ?? 'claude-sonnet-4-20250514',
           sessionId,
           systemPrompt: defaultSystemPrompt,
+          // Hybrid mode: pass MCP config even with Gateway tools enabled
           mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-          // Headless daemon — no interactive permission prompts possible
-          dangerouslySkipPermissions: false, // Changed to false for safety
+          // Headless daemon requires skipping permission prompts (no TTY available).
+          // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
+          // MAMA_TRUSTED_ENV must be set to enable this flag (defense in depth)
+          dangerouslySkipPermissions:
+            process.env.MAMA_TRUSTED_ENV === 'true' &&
+            (options.dangerouslySkipPermissions ?? false),
+          // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
           useGatewayTools: useGatewayMode,
         });
         this.agent = this.claudeCLI;
       }
     }
-
-    // Log tool mode for transparency
-    if (useMCPMode) {
-      console.log('[AgentLoop] MCP mode enabled - tools via MCP server (' + mcpConfigPath + ')');
-    } else {
-      console.log('[AgentLoop] Gateway mode enabled - tools via GatewayToolExecutor');
-    }
-    console.log(
-      '[AgentLoop] Config: gateway=' +
+    logger.debug(
+      'Config: gateway=' +
         JSON.stringify(this.toolsConfig.gateway) +
         ' mcp=' +
         JSON.stringify(this.toolsConfig.mcp)
@@ -652,7 +727,7 @@ export class AgentLoop {
     // Infinite loop prevention
     let consecutiveToolCalls = 0;
     let lastToolName = '';
-    const MAX_CONSECUTIVE_SAME_TOOL = 5;
+    const MAX_CONSECUTIVE_SAME_TOOL = 15; // Increased from 5 - normal coding tasks often need 10+ consecutive Bash calls
     const EMERGENCY_MAX_TURNS = Math.max(this.maxTurns + 10, 50); // Always above maxTurns
 
     // Track channel key for session release
@@ -686,27 +761,48 @@ export class AgentLoop {
 
     try {
       if (options?.systemPrompt) {
-        const gatewayToolsPrompt = this.isGatewayMode ? getGatewayToolsPrompt() : '';
+        // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
+        const alreadyHasTools = options.systemPrompt.includes('# Gateway Tools');
+        const gatewayToolsPrompt =
+          this.isGatewayMode && !alreadyHasTools ? getGatewayToolsPrompt() : '';
         const fullPrompt = gatewayToolsPrompt
           ? `${options.systemPrompt}\n\n---\n\n${gatewayToolsPrompt}`
           : options.systemPrompt;
 
-        // Monitor prompt size
+        // Monitor and enforce prompt size
         const monitor = new PromptSizeMonitor();
-        const checkResult = monitor.check([
+        const runLayers: PromptLayer[] = [
           { name: 'systemPrompt', content: options.systemPrompt, priority: 1 },
           ...(gatewayToolsPrompt
             ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
             : []),
-        ]);
+        ];
+        const checkResult = monitor.check(runLayers);
         if (checkResult.warning) {
           console.warn(`[AgentLoop] ${checkResult.warning}`);
         }
 
+        let effectivePrompt = fullPrompt;
+        if (!checkResult.withinBudget) {
+          const { layers: trimmed, result: enforceResult } = monitor.enforce(runLayers);
+          if (enforceResult.truncatedLayers.length > 0) {
+            console.warn(
+              `[AgentLoop] Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`
+            );
+          }
+          const tBase =
+            trimmed.find((l) => l.name === 'systemPrompt')?.content || options.systemPrompt;
+          const tTools = trimmed.find((l) => l.name === 'gatewayTools')?.content || '';
+          effectivePrompt = tTools ? `${tBase}\n\n---\n\n${tTools}` : tBase;
+          console.log(
+            `[AgentLoop] System prompt truncated: ${fullPrompt.length} → ${effectivePrompt.length} chars`
+          );
+        }
+
         console.log(
-          `[AgentLoop] Setting systemPrompt: ${fullPrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
+          `[AgentLoop] Setting systemPrompt: ${effectivePrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
         );
-        this.agent.setSystemPrompt(fullPrompt);
+        this.agent.setSystemPrompt(effectivePrompt);
       } else {
         console.log(`[AgentLoop] No systemPrompt in options, using default`);
       }
@@ -785,11 +881,20 @@ export class AgentLoop {
           // Check if this is a recoverable session error
           // 1. "No conversation found" - CLI session was lost (daemon restart, timeout)
           // 2. "Session ID already in use" - concurrent request conflict
+          // 3. "Prompt is too long" - session context exceeded API limits
           const isSessionNotFound = errorMessage.includes('No conversation found with session ID');
           const isSessionInUse = errorMessage.includes('is already in use');
+          const isPromptTooLong =
+            errorMessage.includes('Prompt is too long') ||
+            errorMessage.includes('prompt is too long') ||
+            errorMessage.includes('request_too_large');
 
-          if (isSessionNotFound || isSessionInUse) {
-            const reason = isSessionNotFound ? 'not found in CLI' : 'already in use';
+          if (isSessionNotFound || isSessionInUse || isPromptTooLong) {
+            const reason = isSessionNotFound
+              ? 'not found in CLI'
+              : isSessionInUse
+                ? 'already in use'
+                : 'prompt too long (context overflow)';
             console.log(`[AgentLoop] Session ${reason}, retrying with new session`);
 
             // Reset session in pool so it creates a new one
@@ -802,6 +907,10 @@ export class AgentLoop {
               model: options?.model,
               resumeSession: false, // Force new session
             });
+            // Prepend reset notice so user knows context was lost
+            if (isPromptTooLong && piResult.response) {
+              piResult.response = `⚠️ Session reset: The previous conversation was too long, starting a new session.\n⚠️ 이전 대화가 너무 길어져 새 세션으로 전환되었습니다.\n\n${piResult.response}`;
+            }
             console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
           } else {
             throw new AgentError(
@@ -1256,35 +1365,42 @@ export class AgentLoop {
               const status = block.is_error ? 'ERROR' : 'SUCCESS';
               parts.push(`[Tool Result: ${status}]\n${block.content}`);
             } else if (block.type === 'image') {
-              // Convert image to file path instruction for Claude Code
-              // MANDATORY: Claude MUST use Read tool to view the image before responding
               if (block.localPath) {
                 parts.push(
-                  `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
-                    `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.\n` +
-                    `Do NOT respond without first reading the image. The user expects you to see and analyze the image content.`
+                  `⚠️ CRITICAL: The user has uploaded an image file.\n` +
+                    `Image path: ${block.localPath}\n` +
+                    `You MUST call the Read tool on "${block.localPath}" to view this image FIRST.\n` +
+                    `DO NOT describe or guess the image contents without reading it.\n` +
+                    `DO NOT say you cannot read images - the Read tool supports image files.`
                 );
               } else if (block.source?.data) {
-                // Base64 image - save to workspace and reference it
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 const fs = require('fs');
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 const path = require('path');
-                const mediaDir = path.join(
-                  process.env.HOME || '',
-                  '.mama',
-                  'workspace',
-                  'media',
-                  'inbound'
-                );
+                const mediaDir = path.join(homedir(), '.mama', 'workspace', 'media', 'inbound');
                 fs.mkdirSync(mediaDir, { recursive: true });
-                const imagePath = path.join(mediaDir, `${Date.now()}.jpg`);
+                // Map MIME type to file extension (support PNG, JPEG, GIF, WebP)
+                const mimeToExt: Record<string, string> = {
+                  'image/png': '.png',
+                  'image/jpeg': '.jpg',
+                  'image/jpg': '.jpg',
+                  'image/gif': '.gif',
+                  'image/webp': '.webp',
+                };
+                const ext = mimeToExt[block.source.media_type?.toLowerCase() || ''] || '.jpg';
+                const imagePath = path.join(
+                  mediaDir,
+                  `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`
+                );
                 try {
                   fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
                   parts.push(
-                    `**[MANDATORY IMAGE]** The user has attached an image at: ${imagePath}\n` +
-                      `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.\n` +
-                      `Do NOT respond without first reading the image. The user expects you to see and analyze the image content.`
+                    `⚠️ CRITICAL: The user has uploaded an image file.\n` +
+                      `Image path: ${imagePath}\n` +
+                      `You MUST call the Read tool on "${imagePath}" to view this image FIRST.\n` +
+                      `DO NOT describe or guess the image contents without reading it.\n` +
+                      `DO NOT say you cannot read images - the Read tool supports image files.`
                   );
                 } catch {
                   parts.push('[Image attached but could not be processed]');
@@ -1330,10 +1446,12 @@ export class AgentLoop {
             if (block.type === 'text') {
               parts.push(block.text);
             } else if (block.type === 'image' && block.localPath) {
-              // Include image instructions for persistent CLI as well
               parts.push(
-                `**[MANDATORY IMAGE]** The user has attached an image at: ${block.localPath}\n` +
-                  `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
+                `⚠️ CRITICAL: The user has uploaded an image file.\n` +
+                  `Image path: ${block.localPath}\n` +
+                  `You MUST call the Read tool on "${block.localPath}" to view this image FIRST.\n` +
+                  `DO NOT describe or guess the image contents without reading it.\n` +
+                  `DO NOT say you cannot read images - the Read tool supports image files.`
               );
             } else if (block.type === 'image' && block.source?.data) {
               // Base64-encoded image — save to disk so persistent CLI can read it
@@ -1341,20 +1459,29 @@ export class AgentLoop {
               const fs = require('fs');
               // eslint-disable-next-line @typescript-eslint/no-require-imports
               const path = require('path');
-              const mediaDir = path.join(
-                process.env.HOME || '',
-                '.mama',
-                'workspace',
-                'media',
-                'inbound'
-              );
+              const mediaDir = path.join(homedir(), '.mama', 'workspace', 'media', 'inbound');
               fs.mkdirSync(mediaDir, { recursive: true });
-              const imagePath = path.join(mediaDir, `${Date.now()}.jpg`);
+              // Map MIME type to file extension (support PNG, JPEG, GIF, WebP)
+              const mimeToExt: Record<string, string> = {
+                'image/png': '.png',
+                'image/jpeg': '.jpg',
+                'image/jpg': '.jpg',
+                'image/gif': '.gif',
+                'image/webp': '.webp',
+              };
+              const ext = mimeToExt[block.source.media_type?.toLowerCase() || ''] || '.jpg';
+              const imagePath = path.join(
+                mediaDir,
+                `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`
+              );
               try {
                 fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
                 parts.push(
-                  `**[MANDATORY IMAGE]** The user has attached an image at: ${imagePath}\n` +
-                    `YOU MUST use the Read tool to view this image BEFORE responding to the user's request.`
+                  `⚠️ CRITICAL: The user has uploaded an image file.\n` +
+                    `Image path: ${imagePath}\n` +
+                    `You MUST call the Read tool on "${imagePath}" to view this image FIRST.\n` +
+                    `DO NOT describe or guess the image contents without reading it.\n` +
+                    `DO NOT say you cannot read images - the Read tool supports image files.`
                 );
               } catch {
                 parts.push('[Image attached but could not be processed]');

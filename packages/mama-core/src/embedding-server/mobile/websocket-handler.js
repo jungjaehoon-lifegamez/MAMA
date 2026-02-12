@@ -21,6 +21,30 @@ const { authenticateWebSocket } = require('./auth.js');
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
+const { DebugLogger } = require('../../debug-logger.js');
+
+const logger = new DebugLogger('WebSocket');
+
+/**
+ * Allowed image MIME types for Claude Vision API
+ * @type {Set<string>}
+ */
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/**
+ * Sanitize filename for safe inclusion in prompts (prevent prompt injection)
+ * @param {string} filename
+ * @returns {string}
+ */
+function sanitizeFilenameForPrompt(filename) {
+  if (!filename) {
+    return 'unknown';
+  }
+  return filename
+    .replace(/[\n\r\t]/g, ' ') // Remove control characters
+    .replace(/[`[\](){}]/g, '') // Remove brackets that could interfere with prompts
+    .substring(0, 100); // Limit length
+}
 
 /**
  * Default heartbeat interval (30 seconds)
@@ -95,7 +119,7 @@ function createWebSocketHandler({
       close: (code, reason) => {
         socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
         socket.destroy();
-        console.error(`[WebSocket] Auth failed: ${reason}`);
+        logger.error(`Auth failed: ${reason}`);
       },
     };
 
@@ -121,7 +145,7 @@ function createWebSocketHandler({
     };
     clients.set(clientId, clientInfo);
 
-    console.error(`[WebSocket] Client ${clientId} connected (user: ${userId})`);
+    logger.info(` Client ${clientId} connected (user: ${userId})`);
 
     ws.send(
       JSON.stringify({
@@ -136,7 +160,7 @@ function createWebSocketHandler({
         const message = JSON.parse(data.toString());
         handleClientMessage(clientId, message, clientInfo, messageRouter, sessionStore);
       } catch (err) {
-        console.error(`[WebSocket] Invalid message from ${clientId}:`, err.message);
+        logger.info(` Invalid message from ${clientId}:`, err.message);
         ws.send(
           JSON.stringify({
             type: 'error',
@@ -151,19 +175,19 @@ function createWebSocketHandler({
     });
 
     ws.on('close', (code, _reason) => {
-      console.error(`[WebSocket] Client ${clientId} disconnected (code: ${code})`);
+      logger.info(` Client ${clientId} disconnected (code: ${code})`);
       clients.delete(clientId);
     });
 
     ws.on('error', (err) => {
-      console.error(`[WebSocket] Error for client ${clientId}:`, err.message);
+      logger.info(` Error for client ${clientId}:`, err.message);
     });
   });
 
   const heartbeatInterval = setInterval(() => {
     clients.forEach((clientInfo, clientId) => {
       if (!clientInfo.isAlive) {
-        console.error(`[WebSocket] Client ${clientId} timed out, terminating`);
+        logger.info(` Client ${clientId} timed out, terminating`);
         clientInfo.ws.terminate();
         clients.delete(clientId);
         return;
@@ -197,7 +221,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
 
   switch (type) {
     case 'send':
-      if (!content) {
+      if (!content && !message.attachments?.length) {
         clientInfo.ws.send(
           JSON.stringify({
             type: 'error',
@@ -229,18 +253,71 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 elapsed: processingSeconds,
               })
             );
-            console.error(
-              `[WebSocket] Keep-alive sent to ${clientId} (${processingSeconds}s elapsed)`
-            );
+            logger.debug(`Keep-alive sent to ${clientId} (${processingSeconds}s elapsed)`);
           }
         }, 10000); // Every 10 seconds
+
+        // Build contentBlocks from attachments (files are pre-compressed by upload-handler)
+        let contentBlocks = undefined;
+        if (message.attachments && message.attachments.length > 0) {
+          contentBlocks = [];
+          for (const att of message.attachments) {
+            try {
+              // Always reconstruct path from filename — never trust client-provided filePath (LFI risk)
+              const safeName = path.basename(att.filename || '');
+              const inboundDir = path.join(os.homedir(), '.mama', 'workspace', 'media', 'inbound');
+              const resolvedPath = path.join(inboundDir, safeName);
+              const rawMediaType = att.contentType || 'image/jpeg';
+
+              if (ALLOWED_IMAGE_TYPES.has(rawMediaType)) {
+                // Only read file for images (to convert to base64)
+                const data = await fs.readFile(resolvedPath);
+                const base64 = data.toString('base64');
+                contentBlocks.push({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: rawMediaType,
+                    data: base64,
+                  },
+                });
+                logger.info(`Attached image: ${safeName} (${data.length} bytes, ${rawMediaType})`);
+              } else {
+                // PDF/documents: instruct agent to read the file (no need to load into memory)
+                // Use safe display path to avoid exposing full server path
+                const safeDisplayPath = `~/.mama/workspace/media/inbound/${safeName}`;
+                // Sanitize filename to prevent prompt injection
+                const sanitizedName = sanitizeFilenameForPrompt(safeName);
+                contentBlocks.push({
+                  type: 'text',
+                  text: `[Document uploaded: ${sanitizedName}]\nFile path: ${safeDisplayPath}\nPlease use the Read tool to analyze this document.`,
+                });
+                logger.info(`Attached document: ${safeName} (${rawMediaType})`);
+              }
+            } catch (err) {
+              logger.error(
+                `Failed to read attachment ${path.basename(att.filename || '')}:`,
+                err.message
+              );
+              // Notify client about attachment failure
+              clientInfo.ws.send(
+                JSON.stringify({
+                  type: 'attachment_failed',
+                  filename: path.basename(att.filename || ''),
+                  error: 'Failed to process attachment',
+                })
+              );
+            }
+          }
+        }
 
         const normalizedMessage = {
           source: clientInfo.osAgentMode ? 'viewer' : 'mobile',
           channelId: 'mama_os_main', // Fixed channel for all MAMA OS viewers
           channelName: clientInfo.osAgentMode ? 'MAMA OS' : 'Mobile App', // Human-readable channel name
           userId: clientInfo.userId,
-          text: content,
+          text: content || '',
+          contentBlocks,
           metadata: {
             clientId,
             sessionId: clientInfo.sessionId,
@@ -274,9 +351,9 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           })
         );
 
-        console.error(`[WebSocket] Message processed for ${clientId} (${result.duration}ms)`);
+        logger.info(` Message processed for ${clientId} (${result.duration}ms)`);
       } catch (error) {
-        console.error(`[WebSocket] Message processing error:`, error);
+        logger.info(` Message processing error:`, error);
         clientInfo.ws.send(
           JSON.stringify({
             type: 'error',
@@ -303,8 +380,8 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
       clientInfo.osAgentMode = osAgentMode || false;
       clientInfo.language = language || 'en';
 
-      console.error(
-        `[WebSocket] Client ${clientId} attached to session ${sessionId}${osAgentMode ? ' (OS Agent mode)' : ''}`
+      logger.info(
+        `Client ${clientId} attached to session ${sessionId}${osAgentMode ? ' (OS Agent mode)' : ''}`
       );
 
       // Send attached confirmation
@@ -317,8 +394,8 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
       );
 
       // Send session history if available, or send onboarding greeting
-      console.error(
-        `[WebSocket] Checking sessionStore for history: ${!!sessionStore}, hasMethod: ${!!(sessionStore && sessionStore.getHistoryByChannel)}`
+      logger.debug(
+        `Checking sessionStore for history: ${!!sessionStore}, hasMethod: ${!!(sessionStore && sessionStore.getHistoryByChannel)}`
       );
       if (sessionStore) {
         try {
@@ -326,11 +403,11 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
           // Use dynamic source based on osAgentMode (viewer vs mobile)
           const channelId = 'mama_os_main';
           const source = clientInfo.osAgentMode ? 'viewer' : 'mobile';
-          console.error(`[WebSocket] Loading history for source=${source}, channelId=${channelId}`);
+          logger.info(` Loading history for source=${source}, channelId=${channelId}`);
           const history = sessionStore.getHistoryByChannel
             ? sessionStore.getHistoryByChannel(source, channelId)
             : sessionStore.getHistory(sessionId);
-          console.error(`[WebSocket] History loaded: ${history ? history.length : 0} turns`);
+          logger.info(` History loaded: ${history ? history.length : 0} turns`);
           if (history && history.length > 0) {
             // Convert {user, bot, timestamp} format to {role, content, timestamp} for display
             const formattedMessages = history.flatMap((turn) => {
@@ -357,9 +434,7 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                 messages: formattedMessages,
               })
             );
-            console.error(
-              `[WebSocket] Sent ${formattedMessages.length} history messages to ${clientId}`
-            );
+            logger.info(`Sent ${formattedMessages.length} history messages to ${clientId}`);
           } else {
             // No history - check if onboarding mode (SOUL.md not found)
             const soulPath = path.join(os.homedir(), '.mama', 'SOUL.md');
@@ -389,18 +464,18 @@ async function handleClientMessage(clientId, message, clientInfo, messageRouter,
                   ],
                 })
               );
-              console.error(`[WebSocket] Sent onboarding greeting to ${clientId}`);
+              logger.info(` Sent onboarding greeting to ${clientId}`);
             }
           }
         } catch (error) {
-          console.error(`[WebSocket] Failed to load history:`, error.message);
+          logger.info(` Failed to load history:`, error.message);
         }
       }
       break;
     }
 
     default:
-      console.error(`[WebSocket] Unknown message type from ${clientId}: ${type}`);
+      logger.info(` Unknown message type from ${clientId}: ${type}`);
       clientInfo.ws.send(
         JSON.stringify({
           type: 'error',

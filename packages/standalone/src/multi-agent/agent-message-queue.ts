@@ -46,6 +46,8 @@ export interface QueuedMessage {
   context?: MessageContext;
   /** Discord message ID for emoji queue tracking (⏳→✅) */
   discordMessageId?: string;
+  /** Retry count for busy-agent re-queue */
+  retryCount?: number;
 }
 
 const MAX_QUEUE_SIZE = 5;
@@ -151,10 +153,21 @@ export class AgentMessageQueue {
       await sendCallback(agentId, message, result.response);
     } catch (err) {
       if (err instanceof Error && err.message.includes('Process is busy')) {
-        // Agent still busy - don't re-queue (prevent infinite loop)
-        console.warn(
-          `[MessageQueue] Agent ${agentId} still busy after idle event, dropping message`
-        );
+        // Agent still busy - re-queue at front for retry on next idle event
+        const retries = (message.retryCount ?? 0) + 1;
+        if (retries <= 3) {
+          message.retryCount = retries;
+          const q = this.queues.get(agentId);
+          if (q) q.unshift(message);
+          console.warn(
+            `[MessageQueue] Agent ${agentId} still busy, re-queued (retry ${retries}/3)`
+          );
+        } else {
+          console.warn(
+            `[MessageQueue] Agent ${agentId} still busy after 3 retries, dropping message`
+          );
+        }
+        return; // Don't try to drain more — wait for next idle event
       } else {
         // Other error - log and continue
         console.error(`[MessageQueue] Failed to deliver message to ${agentId}:`, err);

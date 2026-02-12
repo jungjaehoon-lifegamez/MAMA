@@ -19,6 +19,7 @@ import {
   provisionDefaults,
 } from '../config/config-manager.js';
 import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
+import { killProcessesOnPorts } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
@@ -33,6 +34,7 @@ import {
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer, insertTokenUsage } from '../../api/index.js';
+import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -135,7 +137,10 @@ async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
                   if (portAvailable) {
                     console.log('[EmbeddingServer] Port available, proceeding');
                   } else {
-                    console.warn('[EmbeddingServer] Port still in use after 5s, proceeding anyway');
+                    console.error(
+                      `[EmbeddingServer] Error: Port ${port} still in use after 5s. Exiting to prevent EADDRINUSE.`
+                    );
+                    process.exit(1);
                   }
                   resolve(false);
                 }
@@ -256,6 +261,9 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     console.log('   To stop it: mama stop\n');
     process.exit(1);
   }
+
+  // Clean up stale processes on MAMA ports (zombie prevention)
+  await killProcessesOnPorts([3847, 3849]);
 
   // Check config exists
   if (!configExists()) {
@@ -449,6 +457,7 @@ export async function runAgentLoop(
   const toolExecutor = new GatewayToolExecutor({
     mamaDbPath: mamaDbPath,
     sessionStore: sessionStore,
+    rolesConfig: config.roles, // Pass roles from config.yaml
   });
 
   // Reasoning collector for Discord display
@@ -501,8 +510,18 @@ export async function runAgentLoop(
     backend,
     model: config.agent.model,
     maxTurns: config.agent.max_turns,
+    toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord
     usePersistentCLI: config.agent.use_persistent_cli ?? true, // 🚀 Fast mode (default: on)
+    // SECURITY NOTE: dangerouslySkipPermissions=true is REQUIRED for headless daemon operation.
+    // This is NOT a security violation because:
+    // 1. MAMA runs as a background daemon with no TTY - interactive prompts are impossible
+    // 2. Permission control is handled by MAMA's RoleManager (allowedTools, allowedPaths, blockedTools)
+    // 3. OS agent access is restricted to authenticated viewer sessions only
+    // 4. MAMA_TRUSTED_ENV=true is a hard gate - config alone cannot enable this
+    dangerouslySkipPermissions:
+      process.env.MAMA_TRUSTED_ENV === 'true' &&
+      (config.multi_agent?.dangerouslySkipPermissions ?? true),
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
     // Collect reasoning for Discord display
@@ -701,7 +720,11 @@ export async function runAgentLoop(
   scheduler.setExecuteCallback(async (prompt: string) => {
     console.log(`[Cron] Executing: ${prompt.substring(0, 50)}...`);
     try {
-      const result = await agentLoop.run(prompt);
+      // Use dedicated cron session to avoid context pollution from other sources
+      const result = await agentLoop.run(prompt, {
+        source: 'cron',
+        channelId: 'cron_main',
+      });
       console.log(`[Cron] Completed: ${result.response.substring(0, 100)}...`);
       return result.response;
     } catch (error) {
@@ -963,6 +986,7 @@ export async function runAgentLoop(
         return { success: false, error: String(error) };
       }
     },
+    enableAutoKillPort: config.enable_auto_kill_port,
   });
 
   // Session API endpoints
@@ -1294,6 +1318,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
+
+  // Upload/download media endpoints
+  apiServer.app.use('/api', createUploadRouter());
 
   apiServer.app.use(async (req, res, next) => {
     const handled = await graphHandler(req, res);

@@ -12,7 +12,7 @@
 
 /* eslint-env browser */
 
-import { showToast, escapeHtml } from '../utils/dom.js';
+import { showToast, escapeHtml, escapeAttr } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 
@@ -54,6 +54,19 @@ export class SettingsModule {
       }
 
       this.config = await response.json();
+
+      // Load MCP servers data
+      try {
+        const mcpResponse = await fetch('/api/mcp-servers');
+        if (mcpResponse.ok) {
+          this.mcpServersData = await mcpResponse.json();
+        } else {
+          this.mcpServersData = { servers: [] };
+        }
+      } catch (e) {
+        logger.warn('MCP servers data unavailable:', e);
+        this.mcpServersData = { servers: [] };
+      }
 
       // Load multi-agent data (F3)
       try {
@@ -253,26 +266,66 @@ export class SettingsModule {
       gatewaySelectAll.checked = isGatewayAll || this.allChecked('.gateway-tool');
     }
 
-    // Set MCP tool checkboxes
-    const mcpCheckboxes = document.querySelectorAll('.mcp-tool');
-    const isMCPAll = mcpTools.includes('*');
+    // Dynamically render MCP servers from API
+    this.renderMCPServers(mcpTools);
 
-    mcpCheckboxes.forEach((cb) => {
-      if (isMCPAll) {
-        cb.checked = true;
-      } else {
-        cb.checked = mcpTools.includes(cb.value);
-      }
-    });
+    // Update summary
+    this.updateToolSummary();
+  }
 
-    // Set Select All checkbox
+  /**
+   * Render MCP servers dynamically from loaded data
+   */
+  renderMCPServers(selectedTools = []) {
+    const container = document.getElementById('mcp-tools-list');
+    if (!container) {
+      return;
+    }
+
+    const servers = this.mcpServersData?.servers || [];
+    const isMCPAll = selectedTools.includes('*');
+
+    if (servers.length === 0) {
+      container.innerHTML = `
+        <p class="text-xs text-gray-500 col-span-full">
+          No MCP servers configured. Add servers to ~/.mama/mama-mcp-config.json
+        </p>
+      `;
+      return;
+    }
+
+    const serverColors = {
+      'brave-devtools': { border: 'border-blue-200', bg: 'bg-blue-50', icon: '🌐' },
+      'brave-search': { border: 'border-orange-200', bg: 'bg-orange-50', icon: '🔍' },
+      mama: { border: 'border-purple-200', bg: 'bg-purple-50', icon: '🧠' },
+      default: { border: 'border-gray-200', bg: 'bg-gray-50', icon: '🔌' },
+    };
+
+    const html = servers
+      .map((server) => {
+        const colors = serverColors[server.name] || serverColors['default'];
+        const toolValue = `mcp__${server.name}__*`;
+        const isChecked = isMCPAll || selectedTools.includes(toolValue);
+        // Escape server.name for safe HTML rendering (XSS prevention)
+        const safeName = escapeHtml(server.name);
+        const safeToolValue = escapeAttr(toolValue);
+
+        return `
+        <label class="flex items-center gap-2 p-2 border ${colors.border} rounded-lg text-xs cursor-pointer hover:${colors.bg}">
+          <input type="checkbox" class="mcp-tool" value="${safeToolValue}" ${isChecked ? 'checked' : ''}>
+          ${colors.icon} ${safeName}
+        </label>
+      `;
+      })
+      .join('');
+
+    container.innerHTML = html;
+
+    // Update Select All checkbox
     const mcpSelectAll = document.getElementById('mcp-select-all');
     if (mcpSelectAll) {
       mcpSelectAll.checked = isMCPAll || this.allChecked('.mcp-tool');
     }
-
-    // Update summary
-    this.updateToolSummary();
   }
 
   /**

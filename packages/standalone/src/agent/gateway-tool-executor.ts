@@ -12,7 +12,7 @@
  */
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -152,7 +152,10 @@ export class GatewayToolExecutor {
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
     });
-    this.roleManager = getRoleManager();
+    // Pass rolesConfig from config.yaml to RoleManager
+    this.roleManager = getRoleManager(
+      options.rolesConfig ? { rolesConfig: options.rolesConfig } : undefined
+    );
 
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
@@ -658,6 +661,46 @@ export class GatewayToolExecutor {
         error:
           'Cannot stop mama-os from within the agent. Ask the user to run this command from their terminal.',
       };
+    }
+
+    // Block sandbox escape via cd command using path-based validation
+    // Check ALL cd occurrences in chained commands (cd foo && cd bar)
+    // Also detect bare cd commands (cd, cd;, cd &&) which go to home directory
+    const sandboxRoot = join(homedir(), '.mama');
+    const cwd = workdir || process.env.MAMA_WORKSPACE || join(sandboxRoot, 'workspace');
+
+    // Pattern to match cd with optional target (handles: cd path, cd "path", cd 'path', bare cd)
+    const cdPattern =
+      /(?:^|&&|\|\||;)\s*cd(?:\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+)))?(?=\s*(?:$|&&|\|\||;))/g;
+    const cdMatches = [...command.matchAll(cdPattern)];
+
+    for (const cdMatch of cdMatches) {
+      const cdTarget = cdMatch[1] || cdMatch[2] || cdMatch[3];
+
+      // Expand ~ to home directory for path resolution
+      let resolvedTarget: string;
+      if (!cdTarget || cdTarget === '~' || cdTarget === '~/') {
+        // Bare cd or cd ~ goes to home directory (outside sandbox)
+        resolvedTarget = homedir();
+      } else if (cdTarget.startsWith('~/')) {
+        resolvedTarget = join(homedir(), cdTarget.slice(2));
+      } else if (cdTarget.startsWith('/')) {
+        resolvedTarget = cdTarget;
+      } else {
+        resolvedTarget = join(cwd, cdTarget);
+      }
+
+      // Resolve any .. or . in the path
+      const normalizedTarget = resolve(resolvedTarget);
+
+      // Check if target is within sandbox
+      if (!normalizedTarget.startsWith(sandboxRoot)) {
+        return {
+          success: false,
+          error:
+            'Cannot change directory outside ~/.mama/ sandbox. Use Read/Write tools for files outside sandbox.',
+        };
+      }
     }
 
     // Handle restart: deferred restart (agent survives to respond, service restarts after 3s)

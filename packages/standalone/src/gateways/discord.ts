@@ -15,14 +15,11 @@ import {
   AttachmentBuilder,
 } from 'discord.js';
 import { existsSync } from 'node:fs';
-import { MessageRouter } from './message-router.js';
 import { splitForDiscord } from './message-splitter.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
 import { getChannelHistory, type HistoryEntry } from './channel-history.js';
+import { BaseGateway } from './base-gateway.js';
 import type {
-  Gateway,
-  GatewayEvent,
-  GatewayEventHandler,
   NormalizedMessage,
   DiscordGatewayConfig,
   DiscordGuildConfig,
@@ -30,6 +27,7 @@ import type {
   MessageAttachment,
   ContentBlock,
 } from './types.js';
+import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
 
@@ -53,15 +51,12 @@ export interface DiscordGatewayOptions {
  * Connects to Discord via bot token and routes messages
  * to the MessageRouter for processing.
  */
-export class DiscordGateway implements Gateway {
+export class DiscordGateway extends BaseGateway {
   readonly source = 'discord' as const;
 
   private client: Client;
   private token: string;
-  private messageRouter: MessageRouter;
   private config: DiscordGatewayConfig;
-  private eventHandlers: GatewayEventHandler[] = [];
-  private connected = false;
 
   // Message editing throttle state
   private lastEditTime = 0;
@@ -71,9 +66,13 @@ export class DiscordGateway implements Gateway {
   // Multi-agent support
   private multiAgentHandler: MultiAgentDiscordHandler | null = null;
 
+  protected get mentionPattern(): RegExp | null {
+    return null; // Discord uses custom cleanMessageContent with multiple patterns
+  }
+
   constructor(options: DiscordGatewayOptions) {
+    super({ messageRouter: options.messageRouter });
     this.token = options.token;
-    this.messageRouter = options.messageRouter;
     this.config = {
       enabled: true,
       token: options.token,
@@ -506,9 +505,21 @@ export class DiscordGateway implements Gateway {
   ): Promise<void> {
     const channelHistory = getChannelHistory();
 
+    // Pre-analyze images before routing (multi-agent handler only gets text)
+    let enrichedContent = cleanContent;
+    if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
+      const { getImageAnalyzer } = await import('./image-analyzer.js');
+      const analysisText = await getImageAnalyzer().processContentBlocks(
+        normalizedMessage.contentBlocks
+      );
+      if (analysisText) {
+        enrichedContent = `${cleanContent}\n\n${analysisText}`;
+      }
+    }
+
     // Check if multi-agent mode should handle this message
     if (this.multiAgentHandler?.isEnabled()) {
-      const multiAgentResult = await this.multiAgentHandler.handleMessage(message, cleanContent);
+      const multiAgentResult = await this.multiAgentHandler.handleMessage(message, enrichedContent);
 
       if (multiAgentResult && multiAgentResult.responses.length > 0) {
         // Multi-agent handled the message
@@ -566,6 +577,14 @@ export class DiscordGateway implements Gateway {
     }
 
     // Regular single-agent processing
+    // Pass enriched content (images already analyzed above) to avoid double analysis
+    if (enrichedContent !== cleanContent) {
+      normalizedMessage.text = enrichedContent;
+    }
+    // Always clear contentBlocks after image analysis attempt to prevent double analysis in message-router
+    if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
+      normalizedMessage.contentBlocks = undefined;
+    }
     const routerResult = await this.messageRouter.process(normalizedMessage);
     const response = routerResult.response;
     const duration = routerResult.duration;
@@ -635,8 +654,7 @@ export class DiscordGateway implements Gateway {
   /**
    * Clean message content (remove mentions)
    */
-  private cleanMessageContent(content: string): string {
-    // Remove user mentions
+  protected override cleanMessageContent(content: string): string {
     return content
       .replace(/<@!?\d+>/g, '')
       .replace(/<@&\d+>/g, '') // Role mentions
@@ -753,19 +771,6 @@ export class DiscordGateway implements Gateway {
   }
 
   /**
-   * Emit event to registered handlers
-   */
-  private emitEvent(event: GatewayEvent): void {
-    for (const handler of this.eventHandlers) {
-      try {
-        handler(event);
-      } catch (error) {
-        console.error('Error in gateway event handler:', error);
-      }
-    }
-  }
-
-  /**
    * Get human-readable channel name for session display
    */
   private getChannelDisplayName(message: Message): string {
@@ -875,20 +880,6 @@ export class DiscordGateway implements Gateway {
       source: 'discord',
       timestamp: new Date(),
     });
-  }
-
-  /**
-   * Check if gateway is connected
-   */
-  isConnected(): boolean {
-    return this.connected;
-  }
-
-  /**
-   * Register event handler
-   */
-  onEvent(handler: GatewayEventHandler): void {
-    this.eventHandlers.push(handler);
   }
 
   // ============================================================================
