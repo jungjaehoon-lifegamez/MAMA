@@ -28,10 +28,7 @@ interface BetterSQLiteStatement {
  * pg client type
  */
 interface PgClient {
-  query: (
-    sql: string,
-    params: unknown[]
-  ) => Promise<{ rows: unknown[]; rowCount: number | null }>;
+  query: (sql: string, params: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }>;
 }
 
 /**
@@ -124,16 +121,16 @@ export class PostgreSQLStatement extends Statement {
 
   // Note: PostgreSQL methods are async but the interface expects sync
   // In practice, these would need to be wrapped or the adapter would handle async
-  all(...params: unknown[]): object[] {
+  all(..._params: unknown[]): object[] {
     // This is a simplified sync interface - actual pg usage would be async
     throw new Error('PostgreSQLStatement requires async usage - use allAsync() instead');
   }
 
-  get(...params: unknown[]): object | undefined {
+  get(..._params: unknown[]): object | undefined {
     throw new Error('PostgreSQLStatement requires async usage - use getAsync() instead');
   }
 
-  run(...params: unknown[]): RunResult {
+  run(..._params: unknown[]): RunResult {
     throw new Error('PostgreSQLStatement requires async usage - use runAsync() instead');
   }
 

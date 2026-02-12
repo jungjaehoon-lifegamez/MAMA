@@ -7,7 +7,7 @@
  * @module query-intent
  */
 
-import { info, error as logError } from './debug-logger.js';
+import { info, warn, error as logError } from './debug-logger.js';
 import { generate, DEFAULT_MODEL, FALLBACK_MODEL } from './ollama-client.js';
 
 export interface IntentResult {
@@ -136,7 +136,7 @@ async function generateWithFallback(
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[MAMA] ${model} failed: ${message}`);
+      warn(`[MAMA] ${model} failed: ${message}`);
 
       // Continue to next tier
       if (i === models.length - 1) {

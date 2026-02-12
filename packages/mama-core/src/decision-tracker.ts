@@ -16,18 +16,7 @@
 
 import { info } from './debug-logger.js';
 import { initDB, insertDecisionWithEmbedding, getAdapter } from './memory-store.js';
-
-// Type for database adapter prepared statement (better-sqlite3 is synchronous)
-interface PreparedStatement {
-  get: (...args: unknown[]) => unknown;
-  all: (...args: unknown[]) => unknown[];
-  run: (...args: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
-}
-
-// Type for database adapter
-interface DatabaseAdapter {
-  prepare: (sql: string) => PreparedStatement;
-}
+import type { DatabaseAdapter } from './db-manager.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Story 2.1: Extended Edge Types
@@ -458,7 +447,7 @@ export async function getSupersededChainDepth(
       LIMIT 1
     `);
 
-    let current = (stmt.get(topic)) as { id: string; supersedes?: string } | undefined;
+    let current = stmt.get(topic) as { id: string; supersedes?: string } | undefined;
 
     if (!current) {
       return { depth: 0, chain: [] };
@@ -469,9 +458,7 @@ export async function getSupersededChainDepth(
     // Walk back through supersedes chain
     while (current && current.supersedes) {
       stmt = adapter.prepare('SELECT id, supersedes FROM decisions WHERE id = ?');
-      current = (stmt.get(current.supersedes)) as
-        | { id: string; supersedes?: string }
-        | undefined;
+      current = stmt.get(current.supersedes) as { id: string; supersedes?: string } | undefined;
 
       if (current) {
         chain.push(current.id);

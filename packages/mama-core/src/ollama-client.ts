@@ -37,7 +37,11 @@ interface OllamaTagsResponse {
 /**
  * Call Ollama API
  */
-function callOllamaAPI(endpoint: string, payload: unknown, timeout = 30000): Promise<OllamaResponse> {
+function callOllamaAPI(
+  endpoint: string,
+  payload: unknown,
+  timeout = 30000
+): Promise<OllamaResponse> {
   return new Promise((resolve, reject) => {
     const postData = JSON.stringify(payload);
 
@@ -93,7 +97,10 @@ function callOllamaAPI(endpoint: string, payload: unknown, timeout = 30000): Pro
 /**
  * Generate text with EXAONE 3.5
  */
-export async function generate(prompt: string, options: GenerateOptions = {}): Promise<string | unknown> {
+export async function generate(
+  prompt: string,
+  options: GenerateOptions = {}
+): Promise<string | unknown> {
   const { model = DEFAULT_MODEL, format = null, temperature = 0.7, max_tokens = 500 } = options;
 
   const payload: Record<string, unknown> = {
@@ -151,6 +158,35 @@ export interface DecisionAnalysisResult {
   decision: string | null;
   reasoning: string;
   confidence: number;
+}
+
+/**
+ * Validate DecisionAnalysisResult shape at runtime
+ */
+function isDecisionAnalysisResult(obj: unknown): obj is DecisionAnalysisResult {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return (
+    typeof o.is_decision === 'boolean' &&
+    (typeof o.topic === 'string' || o.topic === null) &&
+    (typeof o.decision === 'string' || o.decision === null) &&
+    typeof o.reasoning === 'string' &&
+    typeof o.confidence === 'number'
+  );
+}
+
+/**
+ * Validate QueryIntentResult shape at runtime
+ */
+function isQueryIntentResult(obj: unknown): obj is QueryIntentResult {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return (
+    typeof o.involves_decision === 'boolean' &&
+    (typeof o.topic === 'string' || o.topic === null) &&
+    (o.query_type === 'recall' || o.query_type === 'evolution' || o.query_type === 'none') &&
+    typeof o.reasoning === 'string'
+  );
 }
 
 export interface ToolExecution {
@@ -215,7 +251,10 @@ IMPORTANT: Generate "topic" freely based on context. Do NOT limit to predefined 
       max_tokens: 300,
     });
 
-    return response as DecisionAnalysisResult;
+    if (!isDecisionAnalysisResult(response)) {
+      throw new Error('Invalid LLM response shape for DecisionAnalysisResult');
+    }
+    return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logError(`[MAMA] Decision analysis FAILED: ${message}`);
@@ -260,7 +299,10 @@ Return JSON:
       max_tokens: 200,
     });
 
-    return response as QueryIntentResult;
+    if (!isQueryIntentResult(response)) {
+      throw new Error('Invalid LLM response shape for QueryIntentResult');
+    }
+    return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logError(`[MAMA] Query intent analysis FAILED: ${message}`);

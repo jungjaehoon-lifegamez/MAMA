@@ -358,15 +358,7 @@ export class ClaudeDaemon extends EventEmitter {
     try {
       console.error(`[MobileDaemon] Killing session ${this.sessionId} with signal ${signal}`);
       this.process.kill(signal);
-      this._isRunning = false;
-
-      // Emit exit event
-      this.emit('exit', {
-        code: null,
-        signal,
-        sessionId: this.sessionId,
-        manual: true,
-      } as ExitEvent);
+      // Note: exit event will be emitted by process.on('exit') handler
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       console.error(`[MobileDaemon] Error killing session ${this.sessionId}:`, error.message);

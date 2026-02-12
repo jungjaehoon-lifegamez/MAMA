@@ -154,7 +154,8 @@ export async function getDecisionById(decisionId: string): Promise<unknown> {
   return stmt.get(decisionId);
 }
 
-// Path exports (for compatibility)
+// Path exports (labels for display/logging, not actual filesystem paths)
+// Note: Actual paths are managed by sqlite-adapter.ts (~/.claude/mama-memory.db)
 export const DB_PATH = process.env.MAMA_DATABASE_URL ? 'PostgreSQL' : 'SQLite';
 export const DB_DIR = process.env.MAMA_DATABASE_URL ? 'PostgreSQL' : '~/.mama';
 export const LEGACY_DB_PATH = '~/.spinelift/memories.db';

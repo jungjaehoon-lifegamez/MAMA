@@ -12,7 +12,6 @@
  * @date 2025-11-14
  */
 
-import { info } from './debug-logger.js';
 import { formatTopNContext } from './relevance-scorer.js';
 
 /**
@@ -1148,79 +1147,4 @@ export function formatList(decisions: DecisionForFormat[], options: FormatOption
   output += `\n💡 Tip: Use mama.recall('topic') for full details\n`;
 
   return output;
-}
-
-// CLI execution for testing
-if (require.main === module) {
-  info('🧠 MAMA Decision Formatter - Test\n');
-
-  // Task 6.6: Test token budget enforcement
-  const mockDecisions: DecisionForFormat[] = [
-    {
-      id: 'decision_mesh_structure_003',
-      topic: 'mesh_structure',
-      decision: 'MODERATE',
-      reasoning: 'Balance between performance and completeness',
-      confidence: 0.8,
-      outcome: null,
-      created_at: Date.now() - 5 * 24 * 60 * 60 * 1000, // 5 days ago
-    },
-    {
-      id: 'decision_mesh_structure_002',
-      topic: 'mesh_structure',
-      decision: 'SIMPLE',
-      reasoning: 'Learned from 001 performance failure',
-      confidence: 0.6,
-      outcome: 'PARTIAL',
-      limitation: 'Missing layer information',
-      created_at: Date.now() - 10 * 24 * 60 * 60 * 1000, // 10 days ago
-      updated_at: Date.now() - 5 * 24 * 60 * 60 * 1000,
-    },
-    {
-      id: 'decision_mesh_structure_001',
-      topic: 'mesh_structure',
-      decision: 'COMPLEX',
-      reasoning: 'Initial choice for flexibility',
-      confidence: 0.5,
-      outcome: 'FAILED',
-      failure_reason: 'Performance bottleneck at 10K+ meshes',
-      created_at: Date.now() - 15 * 24 * 60 * 60 * 1000, // 15 days ago
-      updated_at: Date.now() - 10 * 24 * 60 * 60 * 1000,
-    },
-  ];
-
-  info('📋 Test 1: Format small history (3 decisions)...');
-  const context1 = formatContext(mockDecisions.slice(0, 3), { maxTokens: 500 });
-  info(context1 || '');
-  info(`\nTokens: ${estimateTokens(context1 || '')}/500\n`);
-
-  info('═══════════════════════════');
-  info('📋 Test 2: Format large history (10+ decisions)...');
-
-  // Generate large history
-  const largeHistory: DecisionForFormat[] = [mockDecisions[0]];
-  for (let i = 1; i <= 10; i++) {
-    largeHistory.push({
-      ...mockDecisions[1],
-      id: `decision_mesh_structure_${String(i).padStart(3, '0')}`,
-      created_at: Date.now() - i * 5 * 24 * 60 * 60 * 1000,
-    });
-  }
-
-  const context2 = formatContext(largeHistory, { maxTokens: 500 });
-  info(context2 || '');
-  info(`\nTokens: ${estimateTokens(context2 || '')}/500\n`);
-
-  info('═══════════════════════════');
-  info('📋 Test 3: Token budget enforcement (truncation)...');
-
-  // Create very long context
-  const longDecisions = largeHistory.concat(largeHistory);
-  const context3 = formatContext(longDecisions, { maxTokens: 300 });
-  info(context3 || '');
-  info(`\nTokens: ${estimateTokens(context3 || '')}/300 (enforced)\n`);
-
-  info('═══════════════════════════');
-  info('✅ Decision formatter tests complete');
-  info('═══════════════════════════');
 }

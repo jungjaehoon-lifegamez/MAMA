@@ -605,10 +605,16 @@ export class WebSocketHandler {
   private wss: ExtendedWebSocketServer;
 
   constructor(httpServer: HTTPServer, options: Partial<WebSocketHandlerOptions>) {
+    if (!options.messageRouter) {
+      throw new Error('WebSocketHandler requires messageRouter option');
+    }
+    if (!options.sessionStore) {
+      throw new Error('WebSocketHandler requires sessionStore option');
+    }
     this.wss = createWebSocketHandler({
       httpServer,
-      messageRouter: options.messageRouter as MessageRouter,
-      sessionStore: options.sessionStore as SessionStore,
+      messageRouter: options.messageRouter,
+      sessionStore: options.sessionStore,
       authToken: options.authToken,
     });
   }

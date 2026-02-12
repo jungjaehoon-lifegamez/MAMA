@@ -314,7 +314,8 @@ export function cosineSimilarity(embA: Float32Array, embB: Float32Array): number
 // Re-export embeddingCache for convenience
 export { embeddingCache };
 
-// Dynamic getters for config values (Story M1.4)
+// Static snapshots of config values at module load time (Story M1.4)
+// Note: These are evaluated once at import time. Use getEmbeddingDim()/getModelName() for runtime values.
 export const EMBEDDING_DIM = getEmbeddingDim();
 export const MODEL_NAME = getModelName();
 

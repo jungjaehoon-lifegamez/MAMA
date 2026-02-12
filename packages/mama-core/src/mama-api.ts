@@ -549,12 +549,7 @@ async function save({
       }
     } catch (error: unknown) {
       // Story 1.1 AC3: Best-effort - save succeeds even if auto-search fails
-      const errMsg =
-        error instanceof Error
-          ? error instanceof Error
-            ? error.message
-            : String(error)
-          : String(error);
+      const errMsg = error instanceof Error ? error.message : String(error);
       console.error('Auto-search failed:', errMsg);
     }
 
@@ -562,12 +557,7 @@ async function save({
     try {
       reasoning_graph = await _getReasoningGraphInfo(topic, decisionId);
     } catch (error: unknown) {
-      const errMsg =
-        error instanceof Error
-          ? error instanceof Error
-            ? error.message
-            : String(error)
-          : String(error);
+      const errMsg = error instanceof Error ? error.message : String(error);
       console.error('Reasoning graph query failed:', errMsg);
     }
 
@@ -577,12 +567,7 @@ async function save({
         await createEdgesFromReasoning(decisionId, reasoning);
       } catch (error: unknown) {
         // Best-effort - save succeeds even if edge creation fails
-        const errMsg =
-          error instanceof Error
-            ? error instanceof Error
-              ? error.message
-              : String(error)
-            : String(error);
+        const errMsg = error instanceof Error ? error.message : String(error);
         console.error('Edge creation from reasoning failed:', errMsg);
       }
     }
