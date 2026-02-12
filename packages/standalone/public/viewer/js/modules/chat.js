@@ -1318,6 +1318,9 @@ export class ChatModule {
    */
   toggleTTS() {
     this.ttsEnabled = !this.ttsEnabled;
+    if (!this.ttsEnabled) {
+      this.stopSpeaking();
+    }
     const btn = document.getElementById('chat-tts-toggle');
 
     if (btn) {
@@ -1355,8 +1358,33 @@ export class ChatModule {
   /**
    * Speak text using TTS
    */
+  stripMarkdownForTTS(text) {
+    return text
+      .replace(/```[\s\S]*?```/g, '') // code blocks
+      .replace(/`([^`]+)`/g, '$1') // inline code
+      .replace(/\*\*([^*]+)\*\*/g, '$1') // bold
+      .replace(/\*([^*]+)\*/g, '$1') // italic
+      .replace(/~~([^~]+)~~/g, '$1') // strikethrough
+      .replace(/#{1,6}\s(.+)/g, '$1') // headers
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+      .replace(/^[-*]\s/gm, '') // list markers
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1') // images
+      .replace(/~\/.mama\/workspace\/media\/[^\s]+/g, '') // media paths
+      .replace(
+        /[\u{1F600}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1FA00}-\u{1FAFF}]/gu,
+        ''
+      ) // emoji
+      .replace(/\n{2,}/g, '. ')
+      .trim();
+  }
+
   speak(text) {
     if (!this.speechSynthesis || !text) {
+      return;
+    }
+
+    text = this.stripMarkdownForTTS(text);
+    if (!text) {
       return;
     }
 
