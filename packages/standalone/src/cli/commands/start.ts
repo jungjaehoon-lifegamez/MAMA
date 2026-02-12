@@ -710,6 +710,43 @@ export async function runAgentLoop(
     }
   });
 
+  // Load cron jobs from config.yaml scheduling.jobs
+  const schedulingConfig = (config as Record<string, unknown>).scheduling as
+    | {
+        jobs?: Array<{
+          id: string;
+          name: string;
+          cron: string;
+          prompt: string;
+          enabled?: boolean;
+          channel?: string;
+          description?: string;
+        }>;
+      }
+    | undefined;
+  if (schedulingConfig?.jobs?.length) {
+    let loaded = 0;
+    for (const job of schedulingConfig.jobs) {
+      try {
+        scheduler.addJob({
+          id: job.id,
+          name: job.name,
+          cronExpr: job.cron,
+          prompt: job.prompt,
+          enabled: job.enabled ?? true,
+        });
+        loaded++;
+      } catch (err) {
+        console.warn(
+          `[Cron] Failed to load job "${job.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    if (loaded > 0) {
+      console.log(`✓ Loaded ${loaded} cron job(s) from config`);
+    }
+  }
+
   // Track active gateways for cleanup
   const gateways: { stop: () => Promise<void> }[] = [];
 

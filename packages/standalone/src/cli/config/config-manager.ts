@@ -138,6 +138,9 @@ export async function createDefaultConfig(overwrite = false): Promise<string> {
  */
 function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
   return {
+    // Preserve all user-defined fields (scheduling, custom sections, etc.)
+    ...config,
+    // Deep-merge known structured fields with defaults
     version: config.version ?? DEFAULT_CONFIG.version,
     agent: {
       ...DEFAULT_CONFIG.agent,
@@ -151,17 +154,13 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
       ...DEFAULT_CONFIG.logging,
       ...config.logging,
     },
-    // Role-based permissions - with safe defaults
     roles: config.roles ?? DEFAULT_CONFIG.roles,
-    // Claude CLI mode (ToS compliance) - with safe default
     use_claude_cli: config.use_claude_cli ?? DEFAULT_CONFIG.use_claude_cli,
-    // Optional gateway configs - with safe defaults
     discord: config.discord ?? DEFAULT_CONFIG.discord,
     slack: config.slack ?? DEFAULT_CONFIG.slack,
     telegram: config.telegram ?? DEFAULT_CONFIG.telegram,
     chatwork: config.chatwork ?? DEFAULT_CONFIG.chatwork,
     heartbeat: config.heartbeat ?? DEFAULT_CONFIG.heartbeat,
-    // Multi-agent config (optional)
     multi_agent: config.multi_agent,
   };
 }

@@ -4,6 +4,7 @@
 
 import { Router } from 'express';
 import { CronScheduler, ScheduleStore } from '../scheduler/index.js';
+import { loadConfig, saveConfig } from '../cli/config/config-manager.js';
 import {
   ApiError,
   toApiCronJob,
@@ -13,6 +14,42 @@ import {
   type ExecutionLog,
 } from './types.js';
 import { asyncHandler, validateRequired } from './error-handler.js';
+
+interface ConfigCronJob {
+  id: string;
+  name: string;
+  cron: string;
+  prompt: string;
+  enabled?: boolean;
+  channel?: string;
+  description?: string;
+}
+
+/**
+ * Sync scheduler state to config.yaml scheduling.jobs
+ */
+async function syncJobsToConfig(scheduler: CronScheduler): Promise<void> {
+  try {
+    const config = await loadConfig();
+    const configAny = config as Record<string, unknown>;
+    const scheduling = (configAny.scheduling as { jobs?: ConfigCronJob[] }) || {};
+
+    scheduling.jobs = scheduler.listJobs().map((job) => ({
+      id: job.id,
+      name: job.name,
+      cron: job.cronExpr,
+      prompt: job.prompt,
+      enabled: job.enabled,
+    }));
+
+    configAny.scheduling = scheduling;
+    await saveConfig(config);
+  } catch (err) {
+    console.warn(
+      `[Cron] Failed to sync jobs to config: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
 
 /**
  * Execution log store interface (to be implemented by S6)
@@ -141,6 +178,7 @@ export function createCronRouter(
         enabled: body.enabled ?? true,
       });
 
+      await syncJobsToConfig(scheduler);
       res.json({ id, created: true });
     })
   );
@@ -189,6 +227,7 @@ export function createCronRouter(
       scheduler.removeJob(id);
       scheduler.addJob(updatedConfig);
 
+      await syncJobsToConfig(scheduler);
       res.json({ updated: true });
     })
   );
@@ -205,6 +244,7 @@ export function createCronRouter(
       }
 
       scheduler.removeJob(id);
+      await syncJobsToConfig(scheduler);
       res.json({ deleted: true });
     })
   );
