@@ -2663,9 +2663,11 @@ function logRestartAttempt(
     .run(timestamp, sessionId, status, failureReason, latencyMs, mode);
 
   // Performance warning if exceeds threshold
+  // Note: Using console.warn directly (not logWarn) because performance warnings
+  // should always be visible regardless of MAMA_LOG_LEVEL setting
   const threshold = mode === 'summary' ? 1000 : 2500;
   if (latencyMs > threshold) {
-    logWarn(
+    console.warn(
       JSON.stringify({
         performance_warning: true,
         message: `Restart latency exceeded threshold: ${latencyMs}ms > ${threshold}ms`,
