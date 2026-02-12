@@ -17,8 +17,7 @@ const OAUTH_HEADERS: Record<string, string> = {
 /**
  * Create a one-shot Anthropic client with OAuth authentication.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function createClaudeClient(): Promise<any> {
+export async function createClaudeClient(): Promise<unknown> {
   const AnthropicSDK = (await import('@anthropic-ai/sdk')).default;
   const { OAuthManager } = await import('./index.js');
   const oauthManager = new OAuthManager();

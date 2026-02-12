@@ -32,6 +32,17 @@ import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext } from '../agent/types.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('MessageRouter');
 
 /**
  * Agent Loop interface for message processing
@@ -338,11 +349,9 @@ This protects your credentials from being exposed in chat logs.`;
     };
 
     if (shouldResume) {
-      console.log(
-        `[MessageRouter] Resuming CLI session (minimal: ${effectivePrompt.length} chars)`
-      );
+      logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
     } else {
-      console.log(`[MessageRouter] New CLI session (full: ${systemPrompt.length} chars)`);
+      logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
     }
 
     let response: string;

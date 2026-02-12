@@ -248,8 +248,12 @@ export function loadInstalledSkills(
   try {
     const rootEntries = readdirSync(skillsBase, { withFileTypes: true });
     for (const entry of rootEntries) {
-      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-      if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
+      if (!entry.isFile() || !entry.name.endsWith('.md')) {
+        continue;
+      }
+      if (EXCLUDED_SKILL_FILES.has(entry.name)) {
+        continue;
+      }
       const id = entry.name.replace(/\.md$/, '');
       const stateKey = `mama/${id}`;
 
@@ -259,7 +263,9 @@ export function loadInstalledSkills(
       }
 
       // Skip if already loaded from subdirectory
-      if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) continue;
+      if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) {
+        continue;
+      }
 
       const fullPath = join(skillsBase, entry.name);
       let content = readFileSync(fullPath, 'utf-8');
