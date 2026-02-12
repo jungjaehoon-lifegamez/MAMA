@@ -346,119 +346,128 @@
         <div class="tab-content" id="tab-dashboard">
           <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
             <!-- Header -->
-            <div class="mb-6">
-              <h1 class="text-2xl font-bold text-gray-900 text-mama-black">MAMA OS Dashboard</h1>
-              <p class="text-sm text-gray-500 text-gray-600 mt-1">System status and configuration overview</p>
+            <div class="mb-4">
+              <h1 class="text-xl font-bold text-mama-black">MAMA OS Dashboard</h1>
+              <p class="text-xs text-gray-500 mt-0.5">System status overview</p>
             </div>
 
-            <!-- Gateway Status Cards -->
-            <section class="mb-6">
-              <h2 class="text-lg font-semibold text-gray-900 text-mama-black mb-3">Gateway Status</h2>
-              <div id="dashboard-gateways" class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <!-- Gateway cards will be rendered by JavaScript -->
-                <div class="animate-pulse bg-gray-200 bg-white rounded-lg h-24"></div>
-                <div class="animate-pulse bg-gray-200 bg-white rounded-lg h-24"></div>
-                <div class="animate-pulse bg-gray-200 bg-white rounded-lg h-24"></div>
-                <div class="animate-pulse bg-gray-200 bg-white rounded-lg h-24"></div>
-              </div>
-            </section>
-
-            <!-- Active Sessions -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Active Sessions</h2>
-              <div id="dashboard-sessions" class="bg-white border border-gray-200 rounded-lg p-3">
-                <!-- Sessions will be rendered by JavaScript -->
-                <div class="animate-pulse space-y-2">
-                  <div class="h-4 bg-gray-100 rounded w-1/3"></div>
-                  <div class="h-3 bg-gray-100 rounded w-full"></div>
-                  <div class="h-3 bg-gray-100 rounded w-2/3"></div>
+            <!-- Row 1: Gateway + MCP (Connectivity) -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+              <!-- Gateway Status -->
+              <section>
+                <h2 class="text-sm font-semibold text-gray-900 mb-2">🌐 Gateways</h2>
+                <div id="dashboard-gateways" class="grid grid-cols-2 gap-2">
+                  <div class="animate-pulse bg-white rounded-lg h-20"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-20"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-20"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-20"></div>
                 </div>
-              </div>
-            </section>
+              </section>
 
-            <!-- Memory Stats -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Memory Statistics</h2>
-              <div id="dashboard-memory" class="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <!-- Memory stats will be rendered by JavaScript -->
-                <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                <div class="animate-pulse bg-white rounded-lg h-16"></div>
-              </div>
-            </section>
-
-            <!-- Agent Configuration -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Agent Configuration</h2>
-              <div id="dashboard-agent" class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <!-- Agent config will be rendered by JavaScript -->
-                <div class="animate-pulse space-y-1.5">
-                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                  <div class="h-3 bg-gray-100 rounded w-1/3"></div>
+              <!-- MCP Servers -->
+              <section>
+                <div class="flex items-center justify-between mb-2">
+                  <h2 class="text-sm font-semibold text-gray-900">🔌 MCP Servers</h2>
+                  <button onclick="window.dashboardModule?.loadMCPServers()"
+                    class="text-[10px] text-gray-400 hover:text-mama-yellow-hover">↻</button>
                 </div>
-              </div>
-            </section>
-
-            <!-- Tool Status -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Tool Execution</h2>
-              <div id="dashboard-tools" class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <!-- Tool status will be rendered by JavaScript -->
-                <div class="animate-pulse space-y-1.5">
-                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
+                <div id="dashboard-mcp" class="grid grid-cols-2 gap-2">
+                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
                 </div>
-              </div>
-            </section>
+                <p class="text-[10px] text-gray-400 mt-1">~/.mama/mama-mcp-config.json</p>
+              </section>
+            </div>
 
-            <!-- Agent Swarm (Sprint 3) -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">🎭 Agent Swarm</h2>
-              <div id="dashboard-agent-swarm" class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <div class="animate-pulse space-y-1.5">
-                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
+            <!-- Row 2: Agent Swarm + Sessions (Activity) -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+              <!-- Agent Swarm -->
+              <section>
+                <h2 class="text-sm font-semibold text-gray-900 mb-2">🎭 Agent Swarm</h2>
+                <div id="dashboard-agent-swarm" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                  <div class="animate-pulse space-y-1.5">
+                    <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                    <div class="h-3 bg-gray-100 rounded w-3/4"></div>
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
 
-            <!-- Top Topics -->
+              <!-- Active Sessions -->
+              <section>
+                <h2 class="text-sm font-semibold text-gray-900 mb-2">💬 Active Sessions</h2>
+                <div id="dashboard-sessions" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                  <div class="animate-pulse space-y-1.5">
+                    <div class="h-3 bg-gray-100 rounded w-1/3"></div>
+                    <div class="h-3 bg-gray-100 rounded w-full"></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <!-- Row 3: Agent Config + Memory Stats -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+              <!-- Agent Configuration -->
+              <section>
+                <h2 class="text-sm font-semibold text-gray-900 mb-2">🤖 Agent Config</h2>
+                <div id="dashboard-agent" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                  <div class="animate-pulse space-y-1.5">
+                    <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                    <div class="h-3 bg-gray-100 rounded w-1/3"></div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Memory Stats -->
+              <section>
+                <h2 class="text-sm font-semibold text-gray-900 mb-2">🧠 Memory</h2>
+                <div id="dashboard-memory" class="grid grid-cols-4 gap-2">
+                  <div class="animate-pulse bg-white rounded-lg h-14"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-14"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-14"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-14"></div>
+                </div>
+              </section>
+            </div>
+
+            <!-- Row 4: Token + Cron (Usage) -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+              <!-- Token Usage -->
+              <section>
+                <h2 class="text-sm font-semibold text-gray-900 mb-2">📊 Token Usage</h2>
+                <div id="dashboard-tokens" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                  <div class="animate-pulse space-y-1.5">
+                    <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                    <div class="h-3 bg-gray-100 rounded w-3/4"></div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Cron Monitor -->
+              <section>
+                <h2 class="text-sm font-semibold text-gray-900 mb-2">⏰ Cron Jobs</h2>
+                <div id="dashboard-cron" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                  <div class="animate-pulse space-y-1.5">
+                    <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                    <div class="h-3 bg-gray-100 rounded w-3/4"></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <!-- Row 5: Top Topics (Secondary) -->
             <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Top Topics</h2>
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">📈 Top Topics</h2>
               <div id="dashboard-topics" class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <!-- Topics will be rendered by JavaScript -->
                 <div class="animate-pulse space-y-1.5">
                   <div class="h-3 bg-gray-100 rounded w-3/4"></div>
                   <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                </div>
-              </div>
-            </section>
-
-            <!-- Cron Monitor -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Cron Monitor</h2>
-              <div id="dashboard-cron" class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <div class="animate-pulse space-y-1.5">
-                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
-                </div>
-              </div>
-            </section>
-
-            <!-- Token Usage -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Token Usage</h2>
-              <div id="dashboard-tokens" class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <div class="animate-pulse space-y-1.5">
-                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
                 </div>
               </div>
             </section>
 
             <!-- Status Bar -->
-            <div id="dashboard-status" class="text-sm text-gray-500 text-gray-600 text-center py-2">
+            <div id="dashboard-status" class="text-xs text-gray-400 text-center py-1">
               Loading...
             </div>
           </div>
@@ -689,45 +698,6 @@
                     </div>
                   </div>
 
-                  <!-- Browser Category -->
-                  <div class="mb-3">
-                    <div class="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
-                      <span>🌐</span> Browser (Playwright)
-                    </div>
-                    <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_navigate" checked> navigate
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_screenshot" checked> screenshot
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_click" checked> click
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_type" checked> type
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_get_text" checked> get_text
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_scroll" checked> scroll
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_wait_for" checked> wait_for
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_evaluate" checked> evaluate
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_pdf" checked> pdf
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="browser_close" checked> close
-                      </label>
-                    </div>
-                  </div>
-
                   <!-- Utility Category -->
                   <div class="mb-3">
                     <div class="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
@@ -763,18 +733,8 @@
                     </label>
                   </div>
                   <div class="grid grid-cols-2 md:grid-cols-4 gap-2" id="mcp-tools-list">
-                    <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                      <input type="checkbox" class="mcp-tool" value="mcp__plugin_mama_mama__save"> mcp_save
-                    </label>
-                    <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                      <input type="checkbox" class="mcp-tool" value="mcp__plugin_mama_mama__search"> mcp_search
-                    </label>
-                    <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                      <input type="checkbox" class="mcp-tool" value="mcp__plugin_mama_mama__update"> mcp_update
-                    </label>
-                    <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                      <input type="checkbox" class="mcp-tool" value="mcp__plugin_mama_mama__load_checkpoint"> mcp_load_checkpoint
-                    </label>
+                    <!-- MCP servers loaded dynamically from /api/mcp-servers -->
+                    <p class="text-xs text-gray-400 col-span-full">Loading MCP servers...</p>
                   </div>
                   <p class="text-xs text-gray-500 mt-2">MCP config path: ~/.mama/mama-mcp-config.json</p>
                 </div>

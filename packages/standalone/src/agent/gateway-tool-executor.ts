@@ -152,7 +152,10 @@ export class GatewayToolExecutor {
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
     });
-    this.roleManager = getRoleManager();
+    // Pass rolesConfig from config.yaml to RoleManager
+    this.roleManager = getRoleManager(
+      options.rolesConfig ? { rolesConfig: options.rolesConfig } : undefined
+    );
 
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
@@ -657,6 +660,18 @@ export class GatewayToolExecutor {
         success: false,
         error:
           'Cannot stop mama-os from within the agent. Ask the user to run this command from their terminal.',
+      };
+    }
+
+    // Block sandbox escape via cd command
+    // Allow: cd ~/.mama/, cd ./, cd ../  (within sandbox)
+    // Block: cd ~/, cd ~/project, cd /home/, cd /etc/, etc.
+    const sandboxEscape = /cd\s+(~\/(?!\.mama)|~(?!\/\.mama)|\/home\/|\/[a-z])/i;
+    if (sandboxEscape.test(command)) {
+      return {
+        success: false,
+        error:
+          'Cannot change directory outside ~/.mama/ sandbox. Use Read/Write tools for files outside sandbox.',
       };
     }
 

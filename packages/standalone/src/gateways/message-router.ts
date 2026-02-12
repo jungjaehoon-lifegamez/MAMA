@@ -314,16 +314,19 @@ This protects your credentials from being exposed in chat logs.`;
     const roleMaxTurns = agentContext.role.maxTurns;
 
     // Determine if we should resume an existing CLI session
-    // - New CLI session: start with --session-id
-    // - Continuing CLI session: use --resume flag
-    // Note: Always inject system prompt to ensure Gateway Tools and AgentContext
-    // are available even if CLI session was lost (daemon restart, timeout, etc.)
+    // - New CLI session: start with --session-id (inject full system prompt)
+    // - Continuing CLI session: use --resume flag (minimal injection - CLI has context)
     const shouldResume = !isNewCliSession;
 
+    // For resumed sessions: inject minimal context only
+    // Persistent CLI keeps the process alive with full system prompt from initial request
+    // Only inject per-message context (related decisions) to avoid context overflow
+    const effectivePrompt = shouldResume
+      ? this.buildMinimalResumePrompt(context.prompt, agentContext)
+      : systemPrompt;
+
     const options: AgentLoopOptions = {
-      // Always inject system prompt - ensures Gateway Tools and AgentContext
-      // are available even if CLI session was lost
-      systemPrompt,
+      systemPrompt: effectivePrompt,
       userId: message.userId,
       model: roleModel, // Role-specific model override
       maxTurns: roleMaxTurns, // Role-specific max turns
@@ -336,12 +339,10 @@ This protects your credentials from being exposed in chat logs.`;
 
     if (shouldResume) {
       console.log(
-        `[MessageRouter] Resuming CLI session (injecting ${systemPrompt.length} chars for safety)`
+        `[MessageRouter] Resuming CLI session (minimal: ${effectivePrompt.length} chars)`
       );
     } else {
-      console.log(
-        `[MessageRouter] New CLI session (injecting ${systemPrompt.length} chars of system prompt)`
-      );
+      console.log(`[MessageRouter] New CLI session (full: ${systemPrompt.length} chars)`);
     }
 
     let response: string;
@@ -615,6 +616,27 @@ The ONLY way to display an image is the bare outbound path in your response text
     }
 
     return prompt;
+  }
+
+  /**
+   * Build minimal prompt for resumed CLI sessions.
+   * CLI already has full system prompt from initial request.
+   * Only inject per-message context (related decisions) to avoid context overflow.
+   */
+  private buildMinimalResumePrompt(injectedContext: string, agentContext?: AgentContext): string {
+    let prompt = '';
+
+    // Only include per-message related decisions (if any)
+    if (injectedContext) {
+      prompt += injectedContext;
+    }
+
+    // Brief reminder of role (in case CLI context was partially lost)
+    if (agentContext) {
+      prompt += `\n[Role: ${agentContext.roleName}@${agentContext.platform}]\n`;
+    }
+
+    return prompt || '(continuing conversation)';
   }
 
   /**

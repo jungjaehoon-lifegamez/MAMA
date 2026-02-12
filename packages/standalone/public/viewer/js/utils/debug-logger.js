@@ -15,11 +15,11 @@ export class DebugLogger {
   }
 
   debug(...args) {
-    console.error(...this._format('DEBUG', args));
+    console.debug(...this._format('DEBUG', args));
   }
 
   info(...args) {
-    console.error(...this._format('INFO', args));
+    console.info(...this._format('INFO', args));
   }
 
   warn(...args) {

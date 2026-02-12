@@ -55,6 +55,19 @@ export class SettingsModule {
 
       this.config = await response.json();
 
+      // Load MCP servers data
+      try {
+        const mcpResponse = await fetch('/api/mcp-servers');
+        if (mcpResponse.ok) {
+          this.mcpServersData = await mcpResponse.json();
+        } else {
+          this.mcpServersData = { servers: [] };
+        }
+      } catch (e) {
+        logger.warn('MCP servers data unavailable:', e);
+        this.mcpServersData = { servers: [] };
+      }
+
       // Load multi-agent data (F3)
       try {
         const multiAgentResponse = await fetch('/api/multi-agent/agents');
@@ -253,26 +266,63 @@ export class SettingsModule {
       gatewaySelectAll.checked = isGatewayAll || this.allChecked('.gateway-tool');
     }
 
-    // Set MCP tool checkboxes
-    const mcpCheckboxes = document.querySelectorAll('.mcp-tool');
-    const isMCPAll = mcpTools.includes('*');
+    // Dynamically render MCP servers from API
+    this.renderMCPServers(mcpTools);
 
-    mcpCheckboxes.forEach((cb) => {
-      if (isMCPAll) {
-        cb.checked = true;
-      } else {
-        cb.checked = mcpTools.includes(cb.value);
-      }
-    });
+    // Update summary
+    this.updateToolSummary();
+  }
 
-    // Set Select All checkbox
+  /**
+   * Render MCP servers dynamically from loaded data
+   */
+  renderMCPServers(selectedTools = []) {
+    const container = document.getElementById('mcp-tools-list');
+    if (!container) {
+      return;
+    }
+
+    const servers = this.mcpServersData?.servers || [];
+    const isMCPAll = selectedTools.includes('*');
+
+    if (servers.length === 0) {
+      container.innerHTML = `
+        <p class="text-xs text-gray-500 col-span-full">
+          No MCP servers configured. Add servers to ~/.mama/mama-mcp-config.json
+        </p>
+      `;
+      return;
+    }
+
+    const serverColors = {
+      'brave-devtools': { border: 'border-blue-200', bg: 'bg-blue-50', icon: '🌐' },
+      'brave-search': { border: 'border-orange-200', bg: 'bg-orange-50', icon: '🔍' },
+      mama: { border: 'border-purple-200', bg: 'bg-purple-50', icon: '🧠' },
+      default: { border: 'border-gray-200', bg: 'bg-gray-50', icon: '🔌' },
+    };
+
+    const html = servers
+      .map((server) => {
+        const colors = serverColors[server.name] || serverColors['default'];
+        const toolValue = `mcp__${server.name}__*`;
+        const isChecked = isMCPAll || selectedTools.includes(toolValue);
+
+        return `
+        <label class="flex items-center gap-2 p-2 border ${colors.border} rounded-lg text-xs cursor-pointer hover:${colors.bg}">
+          <input type="checkbox" class="mcp-tool" value="${toolValue}" ${isChecked ? 'checked' : ''}>
+          ${colors.icon} ${server.name}
+        </label>
+      `;
+      })
+      .join('');
+
+    container.innerHTML = html;
+
+    // Update Select All checkbox
     const mcpSelectAll = document.getElementById('mcp-select-all');
     if (mcpSelectAll) {
       mcpSelectAll.checked = isMCPAll || this.allChecked('.mcp-tool');
     }
-
-    // Update summary
-    this.updateToolSummary();
   }
 
   /**
