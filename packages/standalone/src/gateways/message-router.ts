@@ -25,7 +25,7 @@ import type {
 } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
-import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
+import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
@@ -606,6 +606,13 @@ The ONLY way to display an image is the bare outbound path in your response text
 
     if (enhanced?.keywordInstructions) {
       prompt += `\n${enhanced.keywordInstructions}\n`;
+    }
+
+    // Include gateway tools directly in system prompt (priority 1 protection)
+    // so they don't get truncated by PromptSizeMonitor as a separate layer
+    const gatewayTools = getGatewayToolsPrompt();
+    if (gatewayTools) {
+      prompt += `\n---\n\n${gatewayTools}\n`;
     }
 
     return prompt;

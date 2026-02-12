@@ -700,7 +700,10 @@ export class AgentLoop {
 
     try {
       if (options?.systemPrompt) {
-        const gatewayToolsPrompt = this.isGatewayMode ? getGatewayToolsPrompt() : '';
+        // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
+        const alreadyHasTools = options.systemPrompt.includes('# Gateway Tools');
+        const gatewayToolsPrompt =
+          this.isGatewayMode && !alreadyHasTools ? getGatewayToolsPrompt() : '';
         const fullPrompt = gatewayToolsPrompt
           ? `${options.systemPrompt}\n\n---\n\n${gatewayToolsPrompt}`
           : options.systemPrompt;
