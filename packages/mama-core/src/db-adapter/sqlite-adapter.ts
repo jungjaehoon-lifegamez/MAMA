@@ -7,19 +7,21 @@
  * @module sqlite-adapter
  */
 
-const { DatabaseAdapter } = require('./base-adapter');
-const { SQLiteStatement } = require('./statement');
-const { info, warn, error: logError } = require('../debug-logger');
-const { cosineSimilarity } = require('../embeddings');
-const Database = require('better-sqlite3');
-const path = require('path');
-const os = require('os');
-const fs = require('fs');
-let sqliteVec = null;
+import path from 'path';
+import os from 'os';
+import fs from 'fs';
+import Database from 'better-sqlite3';
+import { DatabaseAdapter, type VectorSearchResult, type RunResult } from './base-adapter.js';
+import { SQLiteStatement, type Statement } from './statement.js';
+import { info, warn, error as logError } from '../debug-logger.js';
+import { cosineSimilarity } from '../embeddings.js';
 
+// Try to load sqlite-vec
+let sqliteVec: { load: (db: Database.Database) => void } | null = null;
 try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   sqliteVec = require('sqlite-vec');
-} catch (err) {
+} catch {
   // Defer logging until connect() so we have logger context initialized
   sqliteVec = null;
 }
@@ -29,19 +31,34 @@ const LEGACY_DB_PATH = path.join(os.homedir(), '.spinelift', 'memories.db');
 // Default to ~/.claude/mama-memory.db for Claude Code/Desktop compatibility
 const DEFAULT_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
 
-class SQLiteAdapter extends DatabaseAdapter {
-  constructor(config = {}) {
+/**
+ * Adapter configuration
+ */
+interface SQLiteAdapterConfig {
+  dbPath?: string;
+}
+
+export class SQLiteAdapter extends DatabaseAdapter {
+  private config: SQLiteAdapterConfig;
+  private db: Database.Database | null = null;
+  private _vectorSearchEnabled = false;
+
+  constructor(config: SQLiteAdapterConfig = {}) {
     super();
     this.config = config;
-    this.db = null;
-    this.lastRowid = null;
-    this.vectorSearchEnabled = false;
+  }
+
+  /**
+   * Check if vector search is enabled
+   */
+  get vectorSearchEnabled(): boolean {
+    return this._vectorSearchEnabled;
   }
 
   /**
    * Get database path with backward compatibility
    */
-  getDbPath() {
+  getDbPath(): string {
     // Support both MAMA_DB_PATH and MAMA_DATABASE_PATH for backward compatibility
     const envPath = process.env.MAMA_DB_PATH || process.env.MAMA_DATABASE_PATH;
     const configPath = this.config.dbPath;
@@ -69,7 +86,7 @@ class SQLiteAdapter extends DatabaseAdapter {
   /**
    * Connect to SQLite database
    */
-  connect() {
+  connect(): Database.Database {
     if (this.db) {
       return this.db;
     }
@@ -84,7 +101,7 @@ class SQLiteAdapter extends DatabaseAdapter {
     }
 
     // Open database
-    this.db = new Database(dbPath, { verbose: null });
+    this.db = new Database(dbPath, { verbose: undefined });
     info(`[sqlite-adapter] Opened database at: ${dbPath}`);
 
     // Production configuration
@@ -99,14 +116,15 @@ class SQLiteAdapter extends DatabaseAdapter {
     if (sqliteVec) {
       try {
         sqliteVec.load(this.db);
-        this.vectorSearchEnabled = true;
+        this._vectorSearchEnabled = true;
         info('[sqlite-adapter] Loaded sqlite-vec extension');
       } catch (err) {
-        this.vectorSearchEnabled = false;
-        warn(`[sqlite-adapter] sqlite-vec unavailable (Tier 2 fallback): ${err.message}`);
+        this._vectorSearchEnabled = false;
+        const message = err instanceof Error ? err.message : String(err);
+        warn(`[sqlite-adapter] sqlite-vec unavailable (Tier 2 fallback): ${message}`);
       }
     } else {
-      this.vectorSearchEnabled = false;
+      this._vectorSearchEnabled = false;
       warn('[sqlite-adapter] sqlite-vec package not installed; vector search disabled');
     }
 
@@ -116,7 +134,7 @@ class SQLiteAdapter extends DatabaseAdapter {
   /**
    * Disconnect from database
    */
-  disconnect() {
+  disconnect(): void {
     if (this.db) {
       this.db.close();
       this.db = null;
@@ -127,15 +145,15 @@ class SQLiteAdapter extends DatabaseAdapter {
   /**
    * Check if connected
    */
-  isConnected() {
+  isConnected(): boolean {
     return this.db !== null && this.db.open;
   }
 
   /**
    * Prepare a SQL statement
    */
-  prepare(sql) {
-    if (!this.isConnected()) {
+  prepare(sql: string): Statement {
+    if (!this.isConnected() || !this.db) {
       throw new Error('Database not connected');
     }
     const stmt = this.db.prepare(sql);
@@ -145,18 +163,18 @@ class SQLiteAdapter extends DatabaseAdapter {
   /**
    * Execute raw SQL
    */
-  exec(sql) {
-    if (!this.isConnected()) {
+  exec(sql: string): void {
+    if (!this.isConnected() || !this.db) {
       throw new Error('Database not connected');
     }
-    return this.db.exec(sql);
+    this.db.exec(sql);
   }
 
   /**
    * Execute function in transaction
    */
-  transaction(fn) {
-    if (!this.isConnected()) {
+  transaction<T>(fn: () => T): T {
+    if (!this.isConnected() || !this.db) {
       throw new Error('Database not connected');
     }
     const txn = this.db.transaction(fn);
@@ -166,11 +184,11 @@ class SQLiteAdapter extends DatabaseAdapter {
   /**
    * Vector similarity search using sqlite-vec (vec0 virtual table)
    */
-  vectorSearch(embedding, limit = 5) {
+  vectorSearch(embedding: Float32Array | number[], limit = 5): VectorSearchResult[] | null {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
-    if (!this.vectorSearchEnabled) {
+    if (!this._vectorSearchEnabled) {
       return null;
     }
 
@@ -187,10 +205,14 @@ class SQLiteAdapter extends DatabaseAdapter {
 
     const queryVector =
       embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
-    const results = stmt.all(embeddingJson, Math.max(limit, 1));
+    const results = stmt.all(embeddingJson, Math.max(limit, 1)) as Array<{
+      rowid: number;
+      embedding: Buffer;
+      distance: number;
+    }>;
 
     return results
-      .map((row) => {
+      .map((row): VectorSearchResult | null => {
         const candidate = bufferToVector(row.embedding);
         if (!candidate) {
           return null;
@@ -202,17 +224,17 @@ class SQLiteAdapter extends DatabaseAdapter {
           distance: 1 - similarity,
         };
       })
-      .filter(Boolean);
+      .filter((r): r is VectorSearchResult => r !== null);
   }
 
   /**
    * Insert vector embedding
    */
-  insertEmbedding(rowid, embedding) {
+  insertEmbedding(rowid: number, embedding: Float32Array | number[]): RunResult | null {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
-    if (!this.vectorSearchEnabled) {
+    if (!this._vectorSearchEnabled) {
       return null;
     }
 
@@ -236,18 +258,19 @@ class SQLiteAdapter extends DatabaseAdapter {
   /**
    * Get last inserted row ID
    */
-  getLastInsertRowid() {
-    if (!this.isConnected()) {
+  getLastInsertRowid(): number {
+    if (!this.isConnected() || !this.db) {
       throw new Error('Database not connected');
     }
     // better-sqlite3 provides this via Database instance
-    return this.db.prepare('SELECT last_insert_rowid() as rowid').get().rowid;
+    const result = this.db.prepare('SELECT last_insert_rowid() as rowid').get() as { rowid: number };
+    return result.rowid;
   }
 
   /**
    * Run migrations
    */
-  runMigrations(migrationsDir) {
+  runMigrations(migrationsDir: string): void {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
@@ -258,11 +281,13 @@ class SQLiteAdapter extends DatabaseAdapter {
       SELECT name FROM sqlite_master
       WHERE type='table' AND name='schema_version'
     `
-    ).all();
+    ).all() as Array<{ name: string }>;
 
     let currentVersion = 0;
     if (tables.length > 0) {
-      const version = this.prepare('SELECT MAX(version) as version FROM schema_version').get();
+      const version = this.prepare('SELECT MAX(version) as version FROM schema_version').get() as {
+        version: number | null;
+      } | undefined;
       currentVersion = version?.version || 0;
     }
 
@@ -302,42 +327,44 @@ class SQLiteAdapter extends DatabaseAdapter {
       } catch (err) {
         this.exec('ROLLBACK');
 
+        const message = err instanceof Error ? err.message : String(err);
+
         // Handle duplicate column errors as idempotent (migration 003)
-        if (err.message && err.message.includes('duplicate column')) {
+        if (message.includes('duplicate column')) {
           warn(`[sqlite-adapter] Migration ${file} skipped (duplicate column - already applied)`);
           // Record migration as applied
           this.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (?)').run(version);
           continue;
         }
 
-        if (err.message && err.message.includes('no such table')) {
+        if (message.includes('no such table')) {
           // Only skip if this migration contains an ALTER TABLE (adding column to optional table)
           // Note: migrationSQL may contain comments, so check if ALTER TABLE exists anywhere
           const hasAlterTable = migrationSQL.toUpperCase().includes('ALTER TABLE');
           if (!hasAlterTable) {
             logError(`[sqlite-adapter] Migration ${file} failed (missing required table):`, err);
-            throw new Error(`Migration ${file} failed: ${err.message}`);
+            throw new Error(`Migration ${file} failed: ${message}`);
           }
           warn(
-            `[sqlite-adapter] Migration ${file} skipped: ALTER TABLE on non-existent table (${err.message})`
+            `[sqlite-adapter] Migration ${file} skipped: ALTER TABLE on non-existent table (${message})`
           );
           this.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (?)').run(version);
           continue;
         }
 
         logError(`[sqlite-adapter] Migration ${file} failed:`, err);
-        throw new Error(`Migration ${file} failed: ${err.message}`);
+        throw new Error(`Migration ${file} failed: ${message}`);
       }
     }
 
     // Create vss_memories table if not exists
-    if (this.vectorSearchEnabled) {
+    if (this._vectorSearchEnabled) {
       const vssTables = this.prepare(
         `
         SELECT name FROM sqlite_master
         WHERE type='table' AND name='vss_memories'
       `
-      ).all();
+      ).all() as Array<{ name: string }>;
 
       if (vssTables.length === 0) {
         info('[sqlite-adapter] Creating vss_memories virtual table via sqlite-vec');
@@ -353,9 +380,9 @@ class SQLiteAdapter extends DatabaseAdapter {
   }
 }
 
-module.exports = SQLiteAdapter;
+export default SQLiteAdapter;
 
-function bufferToVector(buffer) {
+function bufferToVector(buffer: Buffer | null): Float32Array | null {
   if (!buffer) {
     return null;
   }
