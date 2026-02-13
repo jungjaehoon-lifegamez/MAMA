@@ -150,6 +150,8 @@ export interface AgentConfig {
   backend?: 'claude' | 'codex';
   /** Codex state/config home path (default: ~/.mama/.codex when backend=codex) */
   codex_home?: string;
+  /** Codex working directory (default: ~/.mama/workspace) */
+  codex_cwd?: string;
   /** Codex sandbox policy */
   codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** Skip git repo guard for Codex CLI */

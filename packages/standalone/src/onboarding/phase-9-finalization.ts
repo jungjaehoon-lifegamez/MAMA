@@ -80,7 +80,15 @@ MAMA is now ready to assist you. Just start chatting!
 - **Slack**: Mention your bot in a channel
 - **Standalone**: Use \`mama chat\` command
 
-### 2. Save Important Decisions
+### 2. Built-in LLM Backend Integration
+
+MAMA OS supports multiple authenticated CLI backends (Claude/Codex).
+
+- Check active backend: \`mama status\`
+- Change backend in config: \`~/.mama/config.yaml\` (\`agent.backend: claude | codex\`)
+- Re-initialize with explicit backend: \`mama init --backend auto|claude|codex\`
+
+### 3. Save Important Decisions
 
 Use the memory system to track decisions:
 
@@ -94,7 +102,7 @@ mama_save({
 })
 \`\`\`
 
-### 3. Search Past Decisions
+### 4. Search Past Decisions
 
 Find relevant context from your decision history:
 
@@ -105,7 +113,7 @@ mama_search({
 })
 \`\`\`
 
-### 4. Save Session Checkpoints
+### 5. Save Session Checkpoints
 
 Before ending a work session:
 
@@ -118,7 +126,7 @@ mama_save({
 })
 \`\`\`
 
-### 5. Resume Previous Sessions
+### 6. Resume Previous Sessions
 
 Pick up where you left off:
 
@@ -271,6 +279,7 @@ Your quick-start guide has been saved to: \`~/.mama/quick-start.md\`
 
 This guide includes:
 - How to use MAMA's memory system
+- How built-in backend routing works in MAMA OS
 - How to save and search decisions
 - How to set up integrations
 - Troubleshooting tips
