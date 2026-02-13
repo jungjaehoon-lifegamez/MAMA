@@ -212,6 +212,10 @@ export interface DiscordConfig {
   token?: string;
   /** Default channel ID for notifications */
   default_channel_id?: string;
+  /** Mention mode - only respond when mentioned */
+  mention_mode?: boolean;
+  /** Per-guild configuration for mention requirements */
+  guilds?: Record<string, unknown>;
 }
 
 /**

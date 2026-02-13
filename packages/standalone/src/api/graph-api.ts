@@ -2259,14 +2259,16 @@ async function handleMultiAgentUpdateAgentRequest(
     config.multi_agent.agents[agentId] = updatedAgent;
     saveMAMAConfig(config);
 
+    let runtimeReloaded = true;
     if (options.applyMultiAgentConfig) {
       try {
         await options.applyMultiAgentConfig(
           config.multi_agent as unknown as Record<string, unknown>
         );
       } catch (err) {
-        console.warn(
-          `[GraphAPI] Multi-agent hot-apply failed for ${agentId}:`,
+        runtimeReloaded = false;
+        logger.warn(
+          `Multi-agent hot-apply failed for ${agentId}:`,
           err instanceof Error ? err.message : String(err)
         );
       }
@@ -2275,8 +2277,9 @@ async function handleMultiAgentUpdateAgentRequest(
       try {
         await options.restartMultiAgentAgent(agentId);
       } catch (err) {
-        console.warn(
-          `[GraphAPI] Agent runtime restart failed for ${agentId}:`,
+        runtimeReloaded = false;
+        logger.warn(
+          `Agent runtime restart failed for ${agentId}:`,
           err instanceof Error ? err.message : String(err)
         );
       }
@@ -2286,7 +2289,9 @@ async function handleMultiAgentUpdateAgentRequest(
     res.end(
       JSON.stringify({
         success: true,
-        message: `Agent '${agentId}' updated successfully (runtime reloaded)`,
+        message: runtimeReloaded
+          ? `Agent '${agentId}' updated successfully (runtime reloaded)`
+          : `Agent '${agentId}' config saved (runtime reload skipped or failed)`,
       })
     );
   } catch (error: unknown) {

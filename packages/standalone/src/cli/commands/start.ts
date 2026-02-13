@@ -861,16 +861,14 @@ export async function runAgentLoop(
   if (config.discord?.enabled && config.discord?.token) {
     console.log('Initializing Discord gateway...');
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const discordConfig = config.discord as any;
-      const normalizedGuilds = normalizeDiscordGuilds(discordConfig.guilds);
+      const normalizedGuilds = normalizeDiscordGuilds(config.discord.guilds);
 
       const guildKeys = normalizedGuilds ? Object.keys(normalizedGuilds) : [];
       console.log(
         `[start] Discord config guild keys: ${guildKeys.length ? guildKeys.join(', ') : '(none)'}.`
       );
       console.log(
-        `[start] Discord config loaded keys: ${Object.keys(discordConfig || {}).join(', ')}`
+        `[start] Discord config loaded keys: ${Object.keys(config.discord || {}).join(', ')}`
       );
 
       discordGateway = new DiscordGateway({

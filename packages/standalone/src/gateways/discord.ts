@@ -51,7 +51,7 @@ export interface DiscordGatewayOptions {
 type UnknownRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function coerceDiscordGuildConfig(raw: unknown): Record<string, DiscordGuildConfig> | undefined {
