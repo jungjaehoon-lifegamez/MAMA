@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **Embedding server ownership clarified**:
+  - Standalone (`@jungjaehoon/mama-os`) is now the default owner of HTTP embedding runtime.
+  - MCP server no longer starts HTTP embedding by default; legacy opt-in via
+    `MAMA_MCP_START_HTTP_EMBEDDING=true`.
+- **Port model unified**:
+  - API/UI: `3847`
+  - Embedding/chat runtime: `3849`
+  - `MAMA_EMBEDDING_PORT` is primary; `MAMA_HTTP_PORT` remains backward-compatible alias for
+    embedding runtime paths.
+- **Dependency ownership cleanup**:
+  - Direct `@huggingface/transformers` dependency removed from `mcp-server`,
+    `claude-code-plugin`, and `openclaw-plugin`.
+  - Embedding warmup and checks now go through `@jungjaehoon/mama-core` exports.
+
+### Fixed
+
+- **MCP legacy embedding port parsing**:
+  - Invalid embedding port env values no longer produce `NaN` runtime behavior in
+    `packages/mcp-server/src/server.js`; fallback to `3849` is enforced.
+- **Docs/runtime command drift**:
+  - Mobile/security/troubleshooting docs now consistently use `mama start` for MAMA OS runtime
+    workflows and align systemd/PM2 examples with current startup model.
+
+### Documentation
+
+- Updated architecture, performance, reference, tutorial, installation, and troubleshooting docs
+  to match current runtime boundaries and port responsibilities.
+
 ## [mama-core-1.1.0] - 2026-02-13
 
 ### Changed

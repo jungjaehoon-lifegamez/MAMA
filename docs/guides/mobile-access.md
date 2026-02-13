@@ -570,7 +570,7 @@ export MAMA_AUTH_TOKEN="your-secret-token"
 
 **Using systemd (Linux):**
 
-1. Create service file (`/etc/systemd/system/mama-http.service`):
+1. Create service file (`/etc/systemd/system/mama-os.service`):
 
    ```ini
    [Unit]
@@ -593,13 +593,8 @@ export MAMA_AUTH_TOKEN="your-secret-token"
    sudo systemctl daemon-reload
    sudo systemctl enable mama-os
    sudo systemctl start mama-os
+   sudo systemctl status mama-os
    ```
-
-# Check status
-
-sudo systemctl status mama-os
-
-````
 
 **Using PM2 (Cross-platform):**
 
@@ -616,7 +611,7 @@ pm2 save
 
 # View logs
 pm2 logs mama-os
-````
+```
 
 ---
 
