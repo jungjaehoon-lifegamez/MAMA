@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added explicit guidance when no backend authentication exists.
 - **Cost-aware backend flexibility** (2026-02-13)
   - Documentation and onboarding now describe LLM-agnostic backend operation.
-  - This change was prioritized to mitigate premium model cost pressure (including Opus 4.6 pricing
+  - This change was prioritized to mitigate premium model cost pressure (including Opus 4.5 pricing
     increases) by allowing users to choose/rotate backend per environment.
 
 ## [0.5.0-beta] - 2026-02-09
