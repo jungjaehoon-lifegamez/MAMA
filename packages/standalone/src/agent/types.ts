@@ -720,6 +720,8 @@ export interface AgentLoopOptions {
   backend?: 'claude' | 'codex';
   /** Codex home directory for Codex backend state/config */
   codexHome?: string;
+  /** Codex working directory */
+  codexCwd?: string;
   /** Codex sandbox mode */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** Skip Git repo check for Codex backend */

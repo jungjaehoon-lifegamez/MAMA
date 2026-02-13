@@ -178,7 +178,7 @@ describe('mama init command', () => {
   });
 
   describe('error handling', () => {
-    it('should fail if Claude Code credentials not found', async () => {
+    it('should fail if no backend credentials are found', async () => {
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
         throw new Error('process.exit called');
       });
@@ -188,7 +188,7 @@ describe('mama init command', () => {
         expect.fail('Should have thrown');
       } catch {
         expect(exitSpy).toHaveBeenCalledWith(1);
-        expect(consoleErrors.some((e) => e.includes('Claude Code'))).toBe(true);
+        expect(consoleErrors.some((e) => e.includes('No authenticated backend found'))).toBe(true);
       }
     });
 

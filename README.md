@@ -120,25 +120,25 @@ mama start   # opens web dashboard at localhost:3847
 <details>
 <summary>✅ <strong>Why CLI Subprocess? (ToS & Stability)</strong></summary>
 
-MAMA OS deliberately uses **Claude Code CLI as a subprocess** rather than direct API calls with OAuth tokens. This architectural choice prioritizes long-term stability:
+MAMA OS deliberately uses an **official backend CLI as a subprocess** (Claude/Codex) rather than direct API calls with extracted auth tokens. This architectural choice prioritizes long-term stability:
 
 **How it works:**
 
 ```text
-MAMA OS → spawn('claude', [...args]) → Official Claude CLI → Anthropic API
+MAMA OS → spawn('claude' | 'codex', [...args]) → Official CLI toolchain
 ```
 
 **Why this matters:**
 
-| Approach           | Method                            | Risk                                   |
-| ------------------ | --------------------------------- | -------------------------------------- |
-| Direct OAuth       | Extract token → call API directly | Token refresh conflicts, ToS gray area |
-| **CLI Subprocess** | Spawn official `claude` binary    | ✅ Officially supported, stable        |
+| Approach           | Method                            | Risk                                        |
+| ------------------ | --------------------------------- | ------------------------------------------- |
+| Direct token usage | Extract auth token → call API     | Token refresh conflicts, compatibility risk |
+| **CLI Subprocess** | Spawn official backend CLI binary | ✅ Officially supported, stable             |
 
 **Benefits of CLI subprocess approach:**
 
-- 🔒 **ToS Compliant** - Uses the [official subagent pattern](https://code.claude.com/docs/en/sub-agents) documented by Anthropic
-- 🛡️ **Future-Proof** - Anthropic maintains CLI compatibility; no risk from internal API changes
+- 🔒 **Policy-Aligned** - Uses official CLI execution paths instead of reverse-engineered token flows
+- 🛡️ **Future-Proof** - Backend vendors maintain CLI compatibility; reduced risk from internal API changes
 - 🔄 **Auth Handled** - CLI manages token refresh internally; no race conditions
 - 📊 **Usage Tracking** - Proper session/cost tracking through official tooling
 
@@ -147,7 +147,10 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 
 </details>
 
-**Requires:** [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated.
+**Requires:** at least one backend CLI installed and authenticated:
+
+- [Claude Code CLI](https://claude.ai/claude-code), or
+- Codex CLI (`npm install -g @openai/codex && codex login`)
 
 #### Multi-Agent Swarm
 
@@ -364,6 +367,10 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```bash
 # Install globally
 npm install -g @jungjaehoon/mama-os
+
+# Authenticate one backend CLI (one-time)
+# Claude: claude
+# Codex:  codex login
 
 # Initialize workspace
 mama init
