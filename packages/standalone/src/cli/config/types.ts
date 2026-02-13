@@ -212,6 +212,10 @@ export interface DiscordConfig {
   token?: string;
   /** Default channel ID for notifications */
   default_channel_id?: string;
+  /** Mention mode - only respond when mentioned */
+  mention_mode?: boolean;
+  /** Per-guild configuration for mention requirements */
+  guilds?: Record<string, unknown>;
 }
 
 /**
@@ -422,6 +426,10 @@ export interface MultiAgentConfig {
   dangerouslySkipPermissions?: boolean;
   /** Enable @mention-based delegation between agents @default false */
   mention_delegation?: boolean;
+  /** PR review polling configuration @default false */
+  pr_review_poller?: {
+    enabled: boolean;
+  };
   /** Maximum depth of @mention delegation chains @default 3 */
   max_mention_depth?: number;
   /** Explicit delegation rules controlling which agents can delegate to which */

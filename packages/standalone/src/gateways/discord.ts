@@ -29,7 +29,19 @@ import type {
 } from './types.js';
 import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
+import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const discordLogger = new DebugLogger('discord');
 
 /**
  * Discord Gateway options
@@ -43,6 +55,58 @@ export interface DiscordGatewayOptions {
   config?: Partial<DiscordGatewayConfig>;
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
+  /** Multi-agent runtime backend options (optional) */
+  multiAgentRuntime?: MultiAgentRuntimeOptions;
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function coerceDiscordGuildConfig(raw: unknown): Record<string, DiscordGuildConfig> | undefined {
+  if (!isRecord(raw)) {
+    return undefined;
+  }
+
+  const source = raw instanceof Map ? Object.fromEntries(raw) : raw;
+  const normalized: Record<string, DiscordGuildConfig> = {};
+
+  for (const [rawGuildId, rawGuildConfig] of Object.entries(source as Record<string, unknown>)) {
+    if (!rawGuildId || !isRecord(rawGuildConfig)) {
+      continue;
+    }
+
+    const guildConfig: DiscordGuildConfig = {};
+    if (typeof rawGuildConfig.requireMention === 'boolean') {
+      guildConfig.requireMention = rawGuildConfig.requireMention;
+    }
+
+    const rawChannels = (rawGuildConfig as UnknownRecord).channels;
+    if (isRecord(rawChannels)) {
+      const channels: Record<string, DiscordChannelConfig> = {};
+      for (const [rawChannelId, rawChannelConfig] of Object.entries(
+        rawChannels as Record<string, unknown>
+      )) {
+        if (!rawChannelId || !isRecord(rawChannelConfig)) {
+          continue;
+        }
+        const next: DiscordChannelConfig = {};
+        if (typeof rawChannelConfig.requireMention === 'boolean') {
+          next.requireMention = rawChannelConfig.requireMention;
+        }
+        channels[String(rawChannelId)] = next;
+      }
+      if (Object.keys(channels).length > 0) {
+        guildConfig.channels = channels;
+      }
+    }
+
+    normalized[String(rawGuildId)] = guildConfig;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 /**
@@ -65,6 +129,7 @@ export class DiscordGateway extends BaseGateway {
 
   // Multi-agent support
   private multiAgentHandler: MultiAgentDiscordHandler | null = null;
+  private multiAgentRuntime?: MultiAgentRuntimeOptions;
 
   protected get mentionPattern(): RegExp | null {
     return null; // Discord uses custom cleanMessageContent with multiple patterns
@@ -73,11 +138,17 @@ export class DiscordGateway extends BaseGateway {
   constructor(options: DiscordGatewayOptions) {
     super({ messageRouter: options.messageRouter });
     this.token = options.token;
+    this.multiAgentRuntime = options.multiAgentRuntime;
     this.config = {
       enabled: true,
       token: options.token,
-      guilds: options.config?.guilds || {},
+      guilds: coerceDiscordGuildConfig(options.config?.guilds) || {},
     };
+    discordLogger.info(
+      `[Discord] Initialized with guild config keys: ${
+        this.config.guilds ? Object.keys(this.config.guilds).join(', ') : '(none)'
+      }`
+    );
 
     // Create Discord client with required intents
     this.client = new Client({
@@ -94,10 +165,23 @@ export class DiscordGateway extends BaseGateway {
 
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
-      this.multiAgentHandler = new MultiAgentDiscordHandler(options.multiAgentConfig, {
-        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? false,
-      });
-      console.log('[Discord] Multi-agent mode enabled');
+      // Gate dangerouslySkipPermissions behind MAMA_TRUSTED_ENV
+      const isTrustedEnv = process.env.MAMA_TRUSTED_ENV === 'true';
+      const skipPermissions =
+        isTrustedEnv && (options.multiAgentConfig.dangerouslySkipPermissions ?? false);
+      if (options.multiAgentConfig.dangerouslySkipPermissions && !isTrustedEnv) {
+        discordLogger.warn(
+          '[Discord] dangerouslySkipPermissions ignored: requires MAMA_TRUSTED_ENV=true'
+        );
+      }
+      this.multiAgentHandler = new MultiAgentDiscordHandler(
+        options.multiAgentConfig,
+        {
+          dangerouslySkipPermissions: skipPermissions,
+        },
+        options.multiAgentRuntime
+      );
+      discordLogger.info('[Discord] Multi-agent mode enabled');
     }
 
     this.setupEventListeners();
@@ -624,7 +708,7 @@ export class DiscordGateway extends BaseGateway {
     if (!guildId) return false;
 
     // Get guild config (or wildcard config)
-    const guildConfig = this.config.guilds?.[guildId] || this.config.guilds?.['*'];
+    const guildConfig = this.config.guilds?.[String(guildId)] || this.config.guilds?.['*'];
     console.log(`[Discord] guildConfig:`, JSON.stringify(guildConfig, null, 2));
 
     if (!guildConfig) {
@@ -633,7 +717,7 @@ export class DiscordGateway extends BaseGateway {
     }
 
     // Get channel config
-    const channelConfig = guildConfig.channels?.[channelId];
+    const channelConfig = guildConfig.channels?.[String(channelId)] || guildConfig.channels?.['*'];
 
     if (channelConfig) {
       // Channel-specific config
@@ -1144,9 +1228,16 @@ export class DiscordGateway extends BaseGateway {
       if (this.multiAgentHandler) {
         this.multiAgentHandler.updateConfig(config);
       } else {
-        this.multiAgentHandler = new MultiAgentDiscordHandler(config, {
-          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? false,
-        });
+        // Gate dangerouslySkipPermissions behind MAMA_TRUSTED_ENV (same as constructor)
+        const isTrustedEnv = process.env.MAMA_TRUSTED_ENV === 'true';
+        const skipPermissions = isTrustedEnv && (config.dangerouslySkipPermissions ?? false);
+        this.multiAgentHandler = new MultiAgentDiscordHandler(
+          config,
+          {
+            dangerouslySkipPermissions: skipPermissions,
+          },
+          this.multiAgentRuntime
+        );
         if (this.client.user) {
           this.multiAgentHandler.setBotUserId(this.client.user.id);
           this.multiAgentHandler.setMainBotToken(this.token);

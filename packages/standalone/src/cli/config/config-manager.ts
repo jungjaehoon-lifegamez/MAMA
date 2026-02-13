@@ -137,6 +137,8 @@ export async function createDefaultConfig(overwrite = false): Promise<string> {
  * SECURITY: Type guards ensure safe defaults for optional fields
  */
 function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
+  const multiAgent = normalizeLegacyMultiAgentConfig(config.multi_agent);
+
   return {
     // Preserve all user-defined fields (scheduling, custom sections, etc.)
     ...config,
@@ -161,8 +163,68 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     telegram: config.telegram ?? DEFAULT_CONFIG.telegram,
     chatwork: config.chatwork ?? DEFAULT_CONFIG.chatwork,
     heartbeat: config.heartbeat ?? DEFAULT_CONFIG.heartbeat,
-    multi_agent: config.multi_agent,
+    multi_agent: multiAgent,
   };
+}
+
+/**
+ * Normalize legacy multi-agent defaults for existing installations.
+ *
+ * Existing users may still have historical team profiles where "developer"
+ * used to run as advisory tier with read-only tooling. For the current
+ * default workflow, this profile is expected to orchestrate edits and
+ * delegate work, so we gently upgrade missing permission metadata.
+ */
+function normalizeLegacyMultiAgentConfig(
+  multiAgentConfig?: MultiAgentConfig
+): MultiAgentConfig | undefined {
+  if (!multiAgentConfig?.agents?.developer) {
+    return multiAgentConfig;
+  }
+
+  const developer = multiAgentConfig.agents.developer;
+  if (!developer) {
+    return multiAgentConfig;
+  }
+
+  const hasExplicitPermissionOverrides =
+    developer.tool_permissions !== undefined || developer.can_delegate !== undefined;
+
+  if (!hasExplicitPermissionOverrides && (developer.tier === 2 || developer.tier === undefined)) {
+    return {
+      ...multiAgentConfig,
+      agents: {
+        ...multiAgentConfig.agents,
+        developer: {
+          ...developer,
+          tier: 1,
+          can_delegate: true,
+          tool_permissions: {
+            allowed: ['*'],
+            blocked: [],
+          },
+        },
+      },
+    };
+  }
+
+  const needsAutoTierUpgrade =
+    developer.can_delegate === true &&
+    (developer.tier === undefined || developer.tier < 1 || developer.tier > 1);
+  if (needsAutoTierUpgrade) {
+    return {
+      ...multiAgentConfig,
+      agents: {
+        ...multiAgentConfig.agents,
+        developer: {
+          ...developer,
+          tier: 1,
+        },
+      },
+    };
+  }
+
+  return multiAgentConfig;
 }
 
 /**
@@ -251,7 +313,12 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         display_name: '🔧 DevBot',
         trigger_prefix: '!dev',
         persona_file: '~/.mama/personas/developer.md',
-        tier: 2,
+        tier: 1,
+        can_delegate: true,
+        tool_permissions: {
+          allowed: ['*'],
+          blocked: [],
+        },
       },
       reviewer: {
         name: 'Reviewer',
@@ -265,6 +332,9 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
       max_chain_length: 5,
       global_cooldown_ms: 1000,
       chain_window_ms: 60000,
+    },
+    pr_review_poller: {
+      enabled: false,
     },
   };
 }

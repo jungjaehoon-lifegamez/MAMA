@@ -117,6 +117,40 @@ describe('ConfigManager', () => {
       expect(loaded.agent.max_turns).toBe(DEFAULT_CONFIG.agent.max_turns);
       expect(loaded.logging.level).toBe(DEFAULT_CONFIG.logging.level);
     });
+
+    it('should normalize legacy developer agent permissions on load', async () => {
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+
+      const legacyConfig = {
+        version: 1,
+        agent: { model: 'custom-model' },
+        database: { path: '~/.test/db.sqlite' },
+        logging: { level: 'info', file: '~/.test/logs/test.log' },
+        multi_agent: {
+          enabled: true,
+          agents: {
+            developer: {
+              name: 'DevBot',
+              display_name: '🔧 DevBot',
+              trigger_prefix: '!dev',
+              persona_file: '~/.mama/personas/developer.md',
+              tier: 2,
+            },
+          },
+        },
+      };
+
+      await writeFile(configPath, yaml.dump(legacyConfig));
+
+      const loaded = await loadConfig();
+
+      expect(loaded.multi_agent?.agents?.developer?.tier).toBe(1);
+      expect(loaded.multi_agent?.agents?.developer?.can_delegate).toBe(true);
+      expect(loaded.multi_agent?.agents?.developer?.tool_permissions?.allowed).toContain('*');
+      expect(loaded.multi_agent?.agents?.developer?.tool_permissions?.blocked).toEqual([]);
+    });
   });
 
   describe('createDefaultConfig()', () => {

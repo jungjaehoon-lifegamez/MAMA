@@ -160,11 +160,6 @@ export class CodexCLIWrapper {
 
     if (options?.resumeSession) {
       args.push('exec', 'resume');
-      if (this.sessionId) {
-        args.push(this.sessionId);
-      } else {
-        args.push('--last');
-      }
     } else {
       args.push('exec');
     }
@@ -177,6 +172,14 @@ export class CodexCLIWrapper {
       }
       if (sandbox === 'danger-full-access') {
         args.push('--dangerously-bypass-approvals-and-sandbox');
+      }
+
+      // For `codex exec resume`, keep options before positional args so they are
+      // never parsed as PROMPT.
+      if (this.sessionId) {
+        args.push(this.sessionId);
+      } else {
+        args.push('--last');
       }
     } else {
       args.push('--json', '--output-last-message', outputFile, '--color', 'never');
@@ -211,14 +214,15 @@ export class CodexCLIWrapper {
           args.push('--add-dir', dir);
         }
       }
-    }
-    for (const override of configOverrides) {
-      if (override) {
-        args.push('-c', override);
+      // configOverrides and model are not supported in resume mode
+      for (const override of configOverrides) {
+        if (override) {
+          args.push('-c', override);
+        }
       }
-    }
-    if (model) {
-      args.push('--model', model);
+      if (model) {
+        args.push('--model', model);
+      }
     }
 
     // Read prompt from stdin to avoid arg length issues

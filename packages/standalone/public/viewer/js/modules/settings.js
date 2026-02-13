@@ -18,6 +18,12 @@ import { DebugLogger } from '../utils/debug-logger.js';
 
 const logger = new DebugLogger('Settings');
 
+// Model options by backend (single source of truth)
+const MODEL_OPTIONS = {
+  codex: ['gpt-5.3-codex', 'gpt-5.2', 'gpt-5.1', 'gpt-4.1'],
+  claude: ['claude-sonnet-4-20250514', 'claude-opus-4-5-20251101', 'claude-haiku-3-5-20241022'],
+};
+
 /**
  * Settings Module Class
  */
@@ -768,8 +774,21 @@ export class SettingsModule {
     const agentCards = agents
       .map((agent) => {
         const tierColor = tierColors[agent.tier] || tierColors[1];
-        const friendlyModel = formatModelName(agent.model) || agent.model || 'Default';
+        const backend = agent.backend || this.config?.agent?.backend || 'claude';
+        const normalizedModel = this.getNormalizedModelForBackend(backend, agent.model);
+        const friendlyModel = formatModelName(normalizedModel) || normalizedModel || 'Default';
         const maskedToken = agent.bot_token ? maskToken(agent.bot_token) : 'N/A';
+        const backendOptions = ['codex', 'claude']
+          .map(
+            (b) =>
+              `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`
+          )
+          .join('');
+        const modelListId = `agent-model-list-${agent.id}`;
+        const modelOptions = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
+        const modelOptionHtml = modelOptions
+          .map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(formatModelName(m))}</option>`)
+          .join('');
 
         return `
           <div class="bg-white border border-gray-200 rounded-lg p-2.5">
@@ -782,9 +801,9 @@ export class SettingsModule {
                 <input
                   type="checkbox"
                   class="sr-only peer"
-                  data-agent-id="${escapeHtml(agent.id)}"
+                  data-agent-id="${escapeAttr(agent.id)}"
                   ${agent.enabled ? 'checked' : ''}
-                  onchange="window.settingsModule.toggleAgent('${escapeHtml(agent.id)}', this.checked)"
+                  onchange="window.settingsModule.toggleAgent('${escapeAttr(agent.id)}', this.checked)"
                 >
                 <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
               </label>
@@ -792,6 +811,36 @@ export class SettingsModule {
             <div class="grid grid-cols-2 gap-1 text-xs text-gray-600">
               <div><span class="font-medium">Model:</span> ${escapeHtml(friendlyModel)}</div>
               <div><span class="font-medium">Token:</span> <code class="bg-gray-100 px-1 rounded">${maskedToken}</code></div>
+            </div>
+            <div class="mt-2 grid grid-cols-1 md:grid-cols-3 gap-1.5 text-xs">
+              <div>
+                <label class="block text-gray-500 mb-0.5">Backend</label>
+                <select
+                  id="agent-backend-${escapeAttr(agent.id)}"
+                  class="w-full rounded border border-gray-200 px-2 py-1"
+                  onchange="window.settingsModule.onAgentBackendChange('${escapeHtml(agent.id)}')"
+                >
+                  ${backendOptions}
+                </select>
+              </div>
+              <div>
+                <label class="block text-gray-500 mb-0.5">Model</label>
+                <input
+                  id="agent-model-${escapeAttr(agent.id)}"
+                  list="${escapeAttr(modelListId)}"
+                  value="${escapeAttr(normalizedModel)}"
+                  class="w-full rounded border border-gray-200 px-2 py-1"
+                >
+                <datalist id="${escapeAttr(modelListId)}">${modelOptionHtml}</datalist>
+              </div>
+              <div class="flex items-end">
+                <button
+                  class="w-full px-2 py-1 rounded bg-yellow-400 text-black hover:bg-yellow-300"
+                  onclick="window.settingsModule.saveAgentConfig('${escapeAttr(agent.id)}')"
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </div>
         `;
@@ -825,6 +874,55 @@ export class SettingsModule {
         checkbox.checked = !enabled;
       }
       alert(`Failed to update agent: ${error.message}`);
+    }
+  }
+
+  onAgentBackendChange(agentId) {
+    const backendSelect = document.getElementById(`agent-backend-${agentId}`);
+    const modelInput = document.getElementById(`agent-model-${agentId}`);
+    const modelList = document.getElementById(`agent-model-list-${agentId}`);
+    if (!backendSelect || !modelInput || !modelList) {
+      return;
+    }
+
+    const backend = backendSelect.value || 'claude';
+    const currentModel = modelInput.value || '';
+    const normalized = this.getNormalizedModelForBackend(backend, currentModel);
+    const options = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
+
+    modelList.innerHTML = options
+      .map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(formatModelName(m))}</option>`)
+      .join('');
+    modelInput.value = normalized;
+  }
+
+  async saveAgentConfig(agentId) {
+    try {
+      const backendSelect = document.getElementById(`agent-backend-${agentId}`);
+      const modelInput = document.getElementById(`agent-model-${agentId}`);
+      if (!backendSelect || !modelInput) {
+        throw new Error('Agent settings inputs not found');
+      }
+
+      const backend = backendSelect.value || 'claude';
+      const model = this.getNormalizedModelForBackend(backend, modelInput.value || '');
+
+      const response = await fetch(`/api/multi-agent/agents/${agentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend, model }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.message || `HTTP ${response.status}`);
+      }
+
+      showToast(`Saved ${agentId}: ${backend} / ${model} (applied)`);
+      await this.loadSettings();
+    } catch (error) {
+      logger.error('Failed to save agent config:', error);
+      alert(`Failed to save agent config: ${error.message}`);
     }
   }
 

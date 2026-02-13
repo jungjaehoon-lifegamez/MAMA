@@ -118,7 +118,7 @@ Update all package.json and plugin.json versions per the "Version Management Pol
 Record changes in `CHANGELOG.md`:
 
 ```markdown
-## [1.1.0] - 2025-11-25
+## [1.1.0] - 2026-02-13
 
 ### Added
 

@@ -35,7 +35,7 @@ import {
   getTasksBySession,
 } from './swarm-db.js';
 import { AgentProcessManager } from '../agent-process-manager.js';
-import type { PersistentClaudeProcess } from '../../agent/persistent-cli-process.js';
+import type { AgentRuntimeProcess } from '../runtime-process.js';
 import type { ContextInjector } from '../../gateways/context-injector.js';
 import type { SwarmAntiPatternDetector } from './swarm-anti-pattern-detector.js';
 
@@ -386,7 +386,7 @@ export class SwarmTaskRunner extends EventEmitter {
     // Determine agent ID from category or use default
     const agentId = task.category || 'developer';
 
-    let process: PersistentClaudeProcess | undefined; // Declare in outer scope for catch block access
+    let process: AgentRuntimeProcess | undefined; // Declare in outer scope for catch block access
 
     try {
       console.log(`[SwarmTaskRunner] Executing task ${task.id}: ${task.description}`);
