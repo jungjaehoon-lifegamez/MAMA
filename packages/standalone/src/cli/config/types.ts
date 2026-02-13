@@ -148,6 +148,20 @@ export interface ToolsConfig {
 export interface AgentConfig {
   /** Backend for agent execution (default: claude) */
   backend?: 'claude' | 'codex';
+  /** Codex state/config home path (default: ~/.mama/.codex when backend=codex) */
+  codex_home?: string;
+  /** Codex sandbox policy */
+  codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Skip git repo guard for Codex CLI */
+  codex_skip_git_repo_check?: boolean;
+  /** Codex profile name from config.toml */
+  codex_profile?: string;
+  /** Run Codex in ephemeral mode */
+  codex_ephemeral?: boolean;
+  /** Additional writable directories for Codex */
+  codex_add_dirs?: string[];
+  /** Raw Codex config overrides passed as `-c key=value` */
+  codex_config_overrides?: string[];
   /** Claude model to use */
   model: string;
   /** Maximum conversation turns */

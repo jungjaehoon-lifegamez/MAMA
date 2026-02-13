@@ -535,8 +535,14 @@ export class AgentLoop {
           model: options.model,
           sessionId,
           systemPrompt: defaultSystemPrompt,
-          sandbox: 'read-only',
-          skipGitRepoCheck: true,
+          codexHome:
+            options.codexHome ?? process.env.MAMA_CODEX_HOME ?? join(homedir(), '.mama', '.codex'),
+          sandbox: options.codexSandbox ?? 'danger-full-access',
+          skipGitRepoCheck: options.codexSkipGitRepoCheck ?? true,
+          profile: options.codexProfile,
+          ephemeral: options.codexEphemeral ?? false,
+          addDirs: options.codexAddDirs ?? [],
+          configOverrides: options.codexConfigOverrides ?? [],
         });
         logger.debug('Codex CLI backend enabled');
       } else {
