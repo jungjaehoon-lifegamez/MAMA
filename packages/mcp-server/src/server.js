@@ -433,7 +433,10 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
             throw new Error(`Unknown tool: ${name}`);
         }
 
-        if (this.legacyHttpEmbeddingMode && !this.legacyNoticeEmittedInToolResponse) {
+        const shouldInjectLegacyNotice =
+          this.legacyHttpEmbeddingMode && !this.legacyNoticeEmittedInToolResponse;
+
+        if (shouldInjectLegacyNotice) {
           this.legacyNoticeEmittedInToolResponse = true;
         }
 
@@ -445,7 +448,7 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
                 typeof result === 'string'
                   ? result
                   : JSON.stringify(
-                      this.legacyHttpEmbeddingMode && !this.legacyNoticeEmittedInToolResponse
+                      shouldInjectLegacyNotice
                         ? { ...result, migration_notice: this.getLegacyMigrationNotice() }
                         : result,
                       null,
