@@ -7,6 +7,8 @@
 import { isDaemonRunning, getUptime } from '../utils/pid-manager.js';
 import { loadConfig, configExists, expandPath } from '../config/config-manager.js';
 import { OAuthManager } from '../../auth/index.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * Execute status command
@@ -28,51 +30,72 @@ export async function statusCommand(): Promise<void> {
 
   console.log('');
 
-  // OAuth token status
-  process.stdout.write('OAuth token: ');
-  try {
-    const oauthManager = new OAuthManager();
-    const tokenStatus = await oauthManager.getStatus();
-
-    if (tokenStatus.valid) {
-      const expiresIn = tokenStatus.expiresIn;
-      if (expiresIn !== null) {
-        const hours = Math.floor(expiresIn / 3600);
-        const minutes = Math.floor((expiresIn % 3600) / 60);
-        if (hours > 0) {
-          console.log(`Valid (${hours}h ${minutes}m remaining)`);
-        } else {
-          console.log(`Valid (${minutes}m remaining)`);
-        }
-      } else {
-        console.log('Valid');
-      }
-
-      if (tokenStatus.needsRefresh) {
-        console.log('  ⚠️  Refresh needed soon');
-      }
-
-      if (tokenStatus.subscriptionType) {
-        console.log(`Subscription type: ${tokenStatus.subscriptionType}`);
-      }
-    } else {
-      console.log('Invalid ❌');
-      if (tokenStatus.error) {
-        console.log(`  Error: ${tokenStatus.error}`);
-      }
-      console.log('  Please log in to Claude Code again.');
-    }
-  } catch (error) {
-    console.log('Check failed ❌');
-    console.log(`  ${error instanceof Error ? error.message : String(error)}`);
-  }
-
   // Config status
   if (configExists()) {
     try {
       const config = await loadConfig();
+      const backend = config.agent.backend ?? 'claude';
+      console.log(`Backend: ${backend}`);
+      if (backend === 'codex') {
+        const codexHome = expandPath(config.agent.codex_home ?? '~/.mama/.codex');
+        const authPath = join(codexHome, 'auth.json');
+        console.log(`Codex home: ${codexHome}`);
+        console.log(
+          `Codex auth: ${existsSync(authPath) ? 'Present ✓' : `Missing ✗ (${authPath})`}`
+        );
+      } else {
+        process.stdout.write('OAuth token: ');
+        try {
+          const oauthManager = new OAuthManager();
+          const tokenStatus = await oauthManager.getStatus();
+
+          if (tokenStatus.valid) {
+            const expiresIn = tokenStatus.expiresIn;
+            if (expiresIn !== null) {
+              const hours = Math.floor(expiresIn / 3600);
+              const minutes = Math.floor((expiresIn % 3600) / 60);
+              if (hours > 0) {
+                console.log(`Valid (${hours}h ${minutes}m remaining)`);
+              } else {
+                console.log(`Valid (${minutes}m remaining)`);
+              }
+            } else {
+              console.log('Valid');
+            }
+
+            if (tokenStatus.needsRefresh) {
+              console.log('  ⚠️  Refresh needed soon');
+            }
+
+            if (tokenStatus.subscriptionType) {
+              console.log(`Subscription type: ${tokenStatus.subscriptionType}`);
+            }
+          } else {
+            console.log('Invalid ❌');
+            if (tokenStatus.error) {
+              console.log(`  Error: ${tokenStatus.error}`);
+            }
+            console.log('  Please log in to Claude Code again.');
+          }
+        } catch (error) {
+          console.log('Check failed ❌');
+          console.log(`  ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
       console.log(`Database: ${expandPath(config.database.path)}`);
       console.log(`Model: ${config.agent.model}`);
+      if (config.agent.tools) {
+        const gatewayTools = config.agent.tools.gateway ?? ['*'];
+        const mcpTools = config.agent.tools.mcp ?? [];
+        const mcpConfigPath = expandPath(
+          config.agent.tools.mcp_config ?? '~/.mama/mama-mcp-config.json'
+        );
+        console.log(
+          `Tool routing: gateway=${gatewayTools.length} pattern(s), mcp=${mcpTools.length} pattern(s)`
+        );
+        console.log(`MCP config: ${mcpConfigPath}`);
+      }
       console.log(`Log level: ${config.logging.level}`);
     } catch (error) {
       console.log(

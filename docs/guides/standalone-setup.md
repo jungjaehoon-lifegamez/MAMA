@@ -187,6 +187,7 @@ version: 1
 
 # Agent settings
 agent:
+  backend: claude # claude | codex
   model: claude-sonnet-4-20250514 # Claude model to use
   max_turns: 10 # Maximum conversation turns
   timeout: 300000 # Request timeout (5 minutes)
@@ -237,15 +238,53 @@ workspace:
   data: ~/.mama/workspace/data
 ```
 
+### Codex Backend Example
+
+If you want MAMA to run with Codex CLI as the backend:
+
+```yaml
+agent:
+  backend: codex
+  model: gpt-5.3-codex
+  codex_home: ~/.mama/.codex
+  codex_sandbox: danger-full-access
+  codex_skip_git_repo_check: true
+  codex_profile: default
+  codex_ephemeral: false
+  codex_add_dirs:
+    - ~/.mama/workspace
+  codex_config_overrides:
+    - model_reasoning_effort=\"high\"
+  tools:
+    gateway:
+      - '*'
+    mcp:
+      - '*'
+    mcp_config: ~/.mama/mama-mcp-config.json
+```
+
+Notes:
+
+- Codex native config normally lives under `~/.codex`, but with `codex_home` you can isolate runtime state in `~/.mama/.codex`.
+- MCP config location for MAMA tool routing is `agent.tools.mcp_config` and is backend-independent (same for Claude/Codex when running through MAMA).
+
 ### Configuration Options Reference
 
 #### Agent Settings
 
-| Option      | Type   | Default                  | Description                     |
-| ----------- | ------ | ------------------------ | ------------------------------- |
-| `model`     | string | claude-sonnet-4-20250514 | Claude model to use             |
-| `max_turns` | number | 10                       | Maximum conversation turns      |
-| `timeout`   | number | 300000                   | Request timeout in milliseconds |
+| Option                      | Type   | Default                  | Description                          |
+| --------------------------- | ------ | ------------------------ | ------------------------------------ |
+| `backend`                   | string | claude                   | Agent backend (`claude` or `codex`)  |
+| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend      |
+| `max_turns`                 | number | 10                       | Maximum conversation turns           |
+| `timeout`                   | number | 300000                   | Request timeout in milliseconds      |
+| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory         |
+| `codex_sandbox`             | string | danger-full-access       | Codex sandbox mode                   |
+| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard      |
+| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`       |
+| `codex_ephemeral`           | bool   | false                    | Disable session persistence          |
+| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex |
+| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides   |
 
 **Available models:**
 
