@@ -28,11 +28,11 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 
 ## Tier-Specific Performance
 
-### With HTTP Embedding Server (Default)
+### With HTTP Embedding Server (Recommended)
 
 **Hook latency:** ~150ms total
 
-The MCP server runs an HTTP embedding server on port 3847 that keeps the model loaded in memory. Hooks use HTTP requests instead of loading the model each time.
+MAMA Standalone runs an HTTP embedding server on port 3849 that keeps the model loaded in memory. Hooks use HTTP requests instead of loading the model each time.
 
 **Breakdown:**
 
@@ -106,7 +106,8 @@ The MCP server runs an HTTP embedding server on port 3847 that keeps the model l
 
 **Implementation:**
 
-- MCP server starts HTTP embedding server on port 3847
+- Standalone starts HTTP embedding server on port 3849 by default
+- MCP can start it only in legacy opt-in mode (`MAMA_MCP_START_HTTP_EMBEDDING=true`)
 - Model loads once when server starts, stays in memory
 - Hooks make HTTP requests to get embeddings (~50ms)
 - Port file at `~/.mama-embedding-port` for client discovery
@@ -299,7 +300,7 @@ npm run test:performance
 
 ### What MAMA Does NOT Guarantee
 
-❌ **HTTP server availability:** Port 3847 may be in use by another process
+❌ **HTTP server availability:** Port 3849 may be in use by another process
 ❌ **Disk I/O speed:** Depends on your disk (SSD recommended)
 ❌ **SQLite performance:** Depends on database size (>10k decisions may slow down)
 
@@ -309,7 +310,7 @@ npm run test:performance
 
 ### Q: Why is hook latency so fast now?
 
-**A:** The MCP server runs an HTTP embedding server on port 3847 that keeps the model loaded in memory. Hooks make HTTP requests (~50ms) instead of loading the model each time (2-9s). This results in ~150ms total hook latency.
+**A:** MAMA Standalone runs an HTTP embedding server on port 3849 that keeps the model loaded in memory. Hooks make HTTP requests (~50ms) instead of loading the model each time (2-9s). This results in ~150ms total hook latency.
 
 ### Q: What if the HTTP server is not running?
 
@@ -317,7 +318,7 @@ npm run test:performance
 
 ### Q: Can other tools use the HTTP embedding server?
 
-**A:** Yes! Any local LLM client (Cursor, Aider, Continue, etc.) can use `http://127.0.0.1:3847/embed` to get embeddings. The model stays loaded in memory, benefiting all clients.
+**A:** Yes. Any local LLM client (Cursor, Aider, Continue, etc.) can use `http://127.0.0.1:3849/embed` to get embeddings. The model stays loaded in memory, benefiting all clients.
 
 ### Q: Does database size affect performance?
 

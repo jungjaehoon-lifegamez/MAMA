@@ -356,7 +356,7 @@ MAMA uses a **5-package architecture**:
 
 3. **@jungjaehoon/mama-server** (MCP Server)
    - Independent npm package for Claude Desktop/Code
-   - Handles all AI/database operations
+   - Provides MCP stdio tools (save/search/update/checkpoint)
    - Depends on @jungjaehoon/mama-core
 
 4. **mama** (Claude Code Plugin)

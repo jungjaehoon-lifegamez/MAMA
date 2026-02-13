@@ -162,7 +162,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 **Runtime:**
 
-- Node.js >= 18.0.0 (recommended: 22+)
+- Node.js >= 22.0.0
 - SQLite 3 (better-sqlite3 ^11.0.0)
 
 **AI/ML:**

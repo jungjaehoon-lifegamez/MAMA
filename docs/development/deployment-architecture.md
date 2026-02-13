@@ -1,6 +1,6 @@
 # Deployment Architecture
 
-**Last Updated:** 2026-01-27
+**Last Updated:** 2026-02-13
 
 This document explains how MAMA is structured, developed, and deployed to users.
 
@@ -8,7 +8,7 @@ This document explains how MAMA is structured, developed, and deployed to users.
 
 ## Architecture Overview
 
-MAMA uses a **3-layer architecture** with **3 packages**:
+MAMA uses a **3-layer architecture** with **5 packages**:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -16,8 +16,10 @@ MAMA uses a **3-layer architecture** with **3 packages**:
 │ github.com/jungjaehoon-lifegamez/MAMA                       │
 │                                                             │
 │ ├── packages/                                               │
+│ │   ├── mama-core/            → npm: @jungjaehoon/mama-core │
 │ │   ├── mcp-server/           → npm: @jungjaehoon/mama-server│
 │ │   ├── claude-code-plugin/   → Claude Code marketplace     │
+│ │   ├── standalone/           → npm: @jungjaehoon/mama-os   │
 │ │   └── openclaw-plugin/      → npm: @jungjaehoon/openclaw-mama│
 │ └── docs/                                                   │
 └─────────────────────────────────────────────────────────────┘
@@ -26,8 +28,10 @@ MAMA uses a **3-layer architecture** with **3 packages**:
         │ npm Registry      │    │ Plugin Marketplace  │
         │                   │    │ jungjaehoon-lifegamez/│
         │ @jungjaehoon/     │    │ claude-plugins      │
-        │ mama-server       │    │                     │
-        │ openclaw-mama     │    │ └── plugins/mama/   │
+        │ mama-core         │    │                     │
+        │ mama-server       │    │ └── plugins/mama/   │
+        │ mama-os           │    │                     │
+        │ openclaw-mama     │    │                     │
         └───────────────────┘    └─────────────────────┘
                     ↓                    ↓
         ┌───────────────────────────────────────────┐
@@ -274,19 +278,21 @@ jobs:
 
 ## Key Design Decisions
 
-### Decision: 3-Package Architecture
+### Decision: 5-Package Architecture
 
 **Separation:**
 
-- **MCP Server** (@jungjaehoon/mama-server): Heavy dependencies (better-sqlite3, @huggingface/transformers)
+- **MAMA Core** (@jungjaehoon/mama-core): Heavy dependencies (better-sqlite3, @huggingface/transformers, sqlite-vec)
+- **MCP Server** (@jungjaehoon/mama-server): Stdio MCP transport + tools (defaults to no HTTP)
 - **Claude Code Plugin** (mama): Lightweight (Markdown + JSON configs)
+- **MAMA OS** (@jungjaehoon/mama-os): API/UI (`3847`) + embedding/chat runtime (`3849`)
 - **OpenClaw Plugin** (@jungjaehoon/openclaw-mama): Native plugin with lifecycle hooks
 
 **Benefits:**
 
-- ✅ Share MCP server across Claude Code + Claude Desktop + OpenClaw
+- ✅ Share `mama-core` across MCP server, plugin, standalone, and OpenClaw
 - ✅ Plugin updates don't require MCP server recompilation
-- ✅ MCP server can be used standalone (API server, CLI tool)
+- ✅ MCP server remains focused on stdio MCP delivery
 - ✅ OpenClaw gets native integration with auto-recall
 - ✅ Clear dependency boundaries
 
