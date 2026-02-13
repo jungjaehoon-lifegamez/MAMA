@@ -102,24 +102,18 @@ interface BackendResolution {
 function resolvePreferredBackend(
   preferredBackend: InitOptions['backend']
 ): BackendResolution | null {
-  const requestedBackend =
-    preferredBackend === 'claude' || preferredBackend === 'codex'
-      ? preferredBackend
-      : process.env.MAMA_DEFAULT_BACKEND === 'codex' ||
-          process.env.MAMA_DEFAULT_BACKEND === 'claude'
-        ? process.env.MAMA_DEFAULT_BACKEND
-        : undefined;
+  const requestedBackend = resolveRequestedBackend(preferredBackend);
 
   const codexAuthPaths = [expandPath('~/.mama/.codex/auth.json'), expandPath('~/.codex/auth.json')];
   const codexAuthPath = codexAuthPaths.find((p) => existsSync(p));
   const hasCodexAuth = Boolean(codexAuthPath);
   const hasClaudeAuth = existsSync(expandPath('~/.claude/.credentials.json'));
 
-  if (requestedBackend === 'codex' && hasCodexAuth) {
-    return { backend: 'codex', codexAuthPath };
-  }
-  if (requestedBackend === 'claude' && hasClaudeAuth) {
-    return { backend: 'claude' };
+  if (requestedBackend) {
+    if (requestedBackend === 'codex') {
+      return hasCodexAuth ? { backend: 'codex', codexAuthPath } : null;
+    }
+    return hasClaudeAuth ? { backend: 'claude' } : null;
   }
 
   // Neutral auto resolution:
@@ -135,18 +129,48 @@ function resolvePreferredBackend(
   return null;
 }
 
+function resolveRequestedBackend(
+  preferredBackend: InitOptions['backend']
+): 'claude' | 'codex' | undefined {
+  if (preferredBackend === 'claude' || preferredBackend === 'codex') {
+    return preferredBackend;
+  }
+  return process.env.MAMA_DEFAULT_BACKEND === 'codex' ||
+    process.env.MAMA_DEFAULT_BACKEND === 'claude'
+    ? process.env.MAMA_DEFAULT_BACKEND
+    : undefined;
+}
+
 /**
  * Execute init command
  */
 export async function initCommand(options: InitOptions = {}): Promise<void> {
   console.log('\n🔧 MAMA Standalone Initialization\n');
 
-  let selectedBackend: BackendResolution = { backend: 'claude' };
+  const requestedBackend = resolveRequestedBackend(options.backend);
+  let selectedBackend: BackendResolution = {
+    backend: requestedBackend === 'codex' ? 'codex' : 'claude',
+  };
   if (!options.skipAuthCheck) {
     process.stdout.write('Checking backend authentication (Codex/Claude)... ');
     const resolved = resolvePreferredBackend(options.backend);
     if (!resolved) {
       console.log('❌');
+      if (requestedBackend === 'codex') {
+        console.error('\n⚠️  Requested backend "codex" is not authenticated.');
+        console.error(
+          `   Expected auth: ${expandPath('~/.mama/.codex/auth.json')} or ${expandPath('~/.codex/auth.json')}`
+        );
+        console.error('\n   Please run: codex login\n');
+        process.exit(1);
+      }
+      if (requestedBackend === 'claude') {
+        console.error('\n⚠️  Requested backend "claude" is not authenticated.');
+        console.error(`   Expected auth: ${expandPath('~/.claude/.credentials.json')}`);
+        console.error('\n   Please authenticate Claude Code first:');
+        console.error('   https://claude.ai/code\n');
+        process.exit(1);
+      }
       console.error('\n⚠️  No authenticated backend found.');
       console.error(
         `   Codex auth: ${expandPath('~/.mama/.codex/auth.json')} or ${expandPath('~/.codex/auth.json')}`
@@ -159,19 +183,15 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
     }
     selectedBackend = resolved;
     console.log('✓');
-    if (options.backend && options.backend !== 'auto') {
-      console.log(`Using requested backend from --backend: ${options.backend}`);
-    } else if (process.env.MAMA_DEFAULT_BACKEND) {
-      console.log(
-        `Using requested backend from MAMA_DEFAULT_BACKEND=${process.env.MAMA_DEFAULT_BACKEND}`
-      );
-    } else if (selectedBackend.backend === 'codex') {
-      console.log(
-        `Using available backend: codex (auth detected at ${selectedBackend.codexAuthPath})`
-      );
-    } else {
-      console.log('Using available backend: claude');
-    }
+  }
+
+  if (selectedBackend.backend === 'codex') {
+    const authPathMsg = selectedBackend.codexAuthPath
+      ? ` (auth detected at ${selectedBackend.codexAuthPath})`
+      : '';
+    console.log(`Selected backend: codex${authPathMsg}`);
+  } else {
+    console.log('Selected backend: claude');
   }
 
   // Check if config already exists
@@ -185,19 +205,28 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
   process.stdout.write('Creating configuration file... ');
   try {
     const configPath = await createDefaultConfig(options.force);
-    if (!options.skipAuthCheck) {
-      const config = await loadConfig();
-      if (selectedBackend.backend === 'codex') {
-        config.agent.backend = 'codex';
-        config.agent.codex_home = '~/.mama/.codex';
-        config.agent.codex_cwd = '~/.mama/workspace';
-        config.agent.codex_sandbox = 'workspace-write';
-        config.agent.codex_skip_git_repo_check = true;
-        if (!config.agent.codex_add_dirs || config.agent.codex_add_dirs.length === 0) {
-          config.agent.codex_add_dirs = ['~/.mama/workspace'];
-        }
+    const config = await loadConfig();
+    if (selectedBackend.backend === 'codex') {
+      config.agent.backend = 'codex';
+      config.agent.codex_home = '~/.mama/.codex';
+      config.agent.codex_cwd = '~/.mama/workspace';
+      config.agent.codex_sandbox = 'workspace-write';
+      config.agent.codex_skip_git_repo_check = true;
+      if (!config.agent.codex_add_dirs || config.agent.codex_add_dirs.length === 0) {
+        config.agent.codex_add_dirs = ['~/.mama/workspace'];
       }
-      await saveConfig(config);
+    } else {
+      config.agent.backend = 'claude';
+    }
+    await saveConfig(config);
+    if (options.skipAuthCheck && requestedBackend) {
+      console.log(
+        `Auth check skipped; applied requested backend "${selectedBackend.backend}" to config.`
+      );
+    } else if (options.skipAuthCheck) {
+      console.log(
+        `Auth check skipped; applied default backend "${selectedBackend.backend}" to config.`
+      );
     }
     console.log('✓');
     console.log(`\n${configPath} created successfully\n`);
