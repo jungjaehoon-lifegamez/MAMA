@@ -31,6 +31,17 @@ import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const discordLogger = new DebugLogger('discord');
 
 /**
  * Discord Gateway options
@@ -133,7 +144,7 @@ export class DiscordGateway extends BaseGateway {
       token: options.token,
       guilds: coerceDiscordGuildConfig(options.config?.guilds) || {},
     };
-    console.log(
+    discordLogger.info(
       `[Discord] Initialized with guild config keys: ${
         this.config.guilds ? Object.keys(this.config.guilds).join(', ') : '(none)'
       }`
@@ -159,7 +170,7 @@ export class DiscordGateway extends BaseGateway {
       const skipPermissions =
         isTrustedEnv && (options.multiAgentConfig.dangerouslySkipPermissions ?? false);
       if (options.multiAgentConfig.dangerouslySkipPermissions && !isTrustedEnv) {
-        console.warn(
+        discordLogger.warn(
           '[Discord] dangerouslySkipPermissions ignored: requires MAMA_TRUSTED_ENV=true'
         );
       }
@@ -170,7 +181,7 @@ export class DiscordGateway extends BaseGateway {
         },
         options.multiAgentRuntime
       );
-      console.log('[Discord] Multi-agent mode enabled');
+      discordLogger.info('[Discord] Multi-agent mode enabled');
     }
 
     this.setupEventListeners();

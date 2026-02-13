@@ -1183,7 +1183,7 @@ export class PRReviewPoller {
   ): Promise<void> {
     if (!this.messageSender) {
       this.logger.error('[PRPoller] No message sender configured');
-      return;
+      throw new Error('[PRPoller] No message sender configured');
     }
 
     // Discord has a 2000 char limit; split long messages

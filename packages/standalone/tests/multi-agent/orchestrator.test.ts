@@ -6,6 +6,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { MultiAgentOrchestrator } from '../../src/multi-agent/orchestrator.js';
 import type { MultiAgentConfig, MessageContext } from '../../src/multi-agent/types.js';
 
+// Force Tier 3 to skip embeddings for faster test execution
+process.env.MAMA_FORCE_TIER_3 = 'true';
+
 describe('MultiAgentOrchestrator', () => {
   let orchestrator: MultiAgentOrchestrator;
   let config: MultiAgentConfig;

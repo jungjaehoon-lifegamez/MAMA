@@ -39,8 +39,16 @@ import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
 const startLogger = new DebugLogger('start');
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
@@ -67,7 +75,8 @@ interface NormalizedDiscordGuildConfig {
 function normalizeDiscordGuilds(
   raw: unknown
 ): Record<string, NormalizedDiscordGuildConfig> | undefined {
-  if (!raw || typeof raw !== 'object') {
+  // Reject arrays - they pass typeof 'object' check but get coerced to numeric keys
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return undefined;
   }
 
@@ -78,7 +87,7 @@ function normalizeDiscordGuilds(
     if (!guildId) {
       continue;
     }
-    if (!guildConfig || typeof guildConfig !== 'object') {
+    if (!guildConfig || typeof guildConfig !== 'object' || Array.isArray(guildConfig)) {
       continue;
     }
 
@@ -89,7 +98,8 @@ function normalizeDiscordGuilds(
     }
 
     const rawChannels = (guildConfig as Record<string, unknown>).channels;
-    if (rawChannels && typeof rawChannels === 'object') {
+    // Reject arrays for channels as well
+    if (rawChannels && typeof rawChannels === 'object' && !Array.isArray(rawChannels)) {
       const normalizedChannels: Record<string, { requireMention?: boolean }> = {};
       for (const [channelId, channelConfig] of Object.entries(
         rawChannels as Record<string, unknown>
@@ -97,7 +107,7 @@ function normalizeDiscordGuilds(
         if (!channelId) {
           continue;
         }
-        if (!channelConfig || typeof channelConfig !== 'object') {
+        if (!channelConfig || typeof channelConfig !== 'object' || Array.isArray(channelConfig)) {
           continue;
         }
         const rawChannelRequireMention = (channelConfig as Record<string, unknown>).requireMention;
@@ -872,10 +882,10 @@ export async function runAgentLoop(
       const normalizedGuilds = normalizeDiscordGuilds(config.discord.guilds);
 
       const guildKeys = normalizedGuilds ? Object.keys(normalizedGuilds) : [];
-      startLogger.log(
+      startLogger.info(
         `Discord config guild keys: ${guildKeys.length ? guildKeys.join(', ') : '(none)'}.`
       );
-      startLogger.log(
+      startLogger.info(
         `Discord config loaded keys: ${Object.keys(config.discord || {}).join(', ')}`
       );
 

@@ -48,8 +48,8 @@ const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const FAVICON_PATH = path.join(__dirname, '../../public/favicon.ico');
 
 // Model pattern helpers (used in multiple validation functions)
-const isClaudeModel = (model: string) => /^claude-/i.test(model);
-const isCodexModel = (model: string) => /^(gpt-|o\d|codex)/i.test(model);
+const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
+const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
 
 // Allowed directories for persona files (security: prevent arbitrary file read)
 const ALLOWED_PERSONA_DIRS = [
@@ -2224,12 +2224,24 @@ async function handleMultiAgentUpdateAgentRequest(
       return;
     }
 
-    if (body.name !== undefined) updatedAgent.name = body.name;
-    if (body.display_name !== undefined) updatedAgent.display_name = body.display_name;
-    if (body.tier !== undefined) updatedAgent.tier = body.tier;
-    if (body.backend !== undefined) updatedAgent.backend = String(body.backend).toLowerCase();
-    if (body.model !== undefined) updatedAgent.model = body.model;
-    if (body.enabled !== undefined) updatedAgent.enabled = body.enabled;
+    if (body.name !== undefined) {
+      updatedAgent.name = body.name;
+    }
+    if (body.display_name !== undefined) {
+      updatedAgent.display_name = body.display_name;
+    }
+    if (body.tier !== undefined) {
+      updatedAgent.tier = body.tier;
+    }
+    if (body.backend !== undefined) {
+      updatedAgent.backend = String(body.backend).toLowerCase();
+    }
+    if (body.model !== undefined) {
+      updatedAgent.model = body.model;
+    }
+    if (body.enabled !== undefined) {
+      updatedAgent.enabled = body.enabled;
+    }
     if (body.persona_file !== undefined && body.persona_file !== null) {
       if (typeof body.persona_file !== 'string' || !isValidPersonaPath(body.persona_file)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
