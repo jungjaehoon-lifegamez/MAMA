@@ -117,6 +117,10 @@ describe('MultiAgentOrchestrator', () => {
       expect(result.selectedAgents).toEqual(['developer']);
     });
 
+    // Story: MA-BOT-KEYWORD
+    // Acceptance Criteria:
+    // 1. Bot messages should match all keyword-matching agents
+    // 2. No single-agent limit should apply to bot messages
     it('should not limit auto keyword responders for bot messages', () => {
       const context: MessageContext = {
         channelId: 'channel1',
@@ -132,6 +136,10 @@ describe('MultiAgentOrchestrator', () => {
       expect(result.selectedAgents).toEqual(['developer', 'reviewer']);
     });
 
+    // Story: MA-DEFAULT-AGENT
+    // Acceptance Criteria:
+    // 1. When default_agent is configured, it should respond to unmatched messages
+    // 2. The reason should be 'default_agent'
     it('should use default agent when configured', () => {
       const configWithDefault = {
         ...config,
@@ -152,6 +160,10 @@ describe('MultiAgentOrchestrator', () => {
       expect(result.reason).toBe('default_agent');
     });
 
+    // Story: MA-NO-MATCH
+    // Acceptance Criteria:
+    // 1. When no keywords match and no default_agent is configured, return empty
+    // 2. The reason should be 'none'
     it('should return empty when no match and no default', () => {
       const context: MessageContext = {
         channelId: 'channel1',

@@ -214,14 +214,15 @@ export class CodexCLIWrapper {
           args.push('--add-dir', dir);
         }
       }
-    }
-    for (const override of configOverrides) {
-      if (override) {
-        args.push('-c', override);
+      // configOverrides and model are not supported in resume mode
+      for (const override of configOverrides) {
+        if (override) {
+          args.push('-c', override);
+        }
       }
-    }
-    if (model) {
-      args.push('--model', model);
+      if (model) {
+        args.push('--model', model);
+      }
     }
 
     // Read prompt from stdin to avoid arg length issues
