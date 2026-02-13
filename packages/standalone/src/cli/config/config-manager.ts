@@ -206,6 +206,10 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.codex_config_overrides must be an array of key=value strings');
   }
 
+  if (config.agent.codex_cwd !== undefined && typeof config.agent.codex_cwd !== 'string') {
+    errors.push('agent.codex_cwd must be a path string');
+  }
+
   if (config.agent.max_turns < 1 || config.agent.max_turns > 100) {
     errors.push('agent.max_turns must be between 1 and 100');
   }

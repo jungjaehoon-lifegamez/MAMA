@@ -537,7 +537,8 @@ export class AgentLoop {
           systemPrompt: defaultSystemPrompt,
           codexHome:
             options.codexHome ?? process.env.MAMA_CODEX_HOME ?? join(homedir(), '.mama', '.codex'),
-          sandbox: options.codexSandbox ?? 'danger-full-access',
+          cwd: options.codexCwd ?? join(homedir(), '.mama', 'workspace'),
+          sandbox: options.codexSandbox ?? 'workspace-write',
           skipGitRepoCheck: options.codexSkipGitRepoCheck ?? true,
           profile: options.codexProfile,
           ephemeral: options.codexEphemeral ?? false,

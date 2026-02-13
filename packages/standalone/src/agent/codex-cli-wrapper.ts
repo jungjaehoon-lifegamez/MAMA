@@ -23,6 +23,8 @@ export interface CodexCLIWrapperOptions {
   systemPrompt?: string;
   /** Codex home directory (config/sessions/skills) */
   codexHome?: string;
+  /** Working directory for Codex process */
+  cwd?: string;
   /** Sandbox mode for Codex CLI */
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** Codex profile from config.toml */
@@ -154,6 +156,7 @@ export class CodexCLIWrapper {
     const ephemeral = this.options.ephemeral ?? false;
     const addDirs = this.options.addDirs ?? [];
     const configOverrides = this.options.configOverrides ?? [];
+    const cwd = this.options.cwd;
 
     if (options?.resumeSession) {
       args.push('exec', 'resume');
@@ -192,15 +195,21 @@ export class CodexCLIWrapper {
       }
     }
 
-    if (profile) {
+    // `codex exec resume` supports a narrower option set than `codex exec`.
+    if (!options?.resumeSession && profile) {
       args.push('--profile', profile);
+    }
+    if (!options?.resumeSession && cwd) {
+      args.push('--cd', cwd);
     }
     if (ephemeral) {
       args.push('--ephemeral');
     }
-    for (const dir of addDirs) {
-      if (dir) {
-        args.push('--add-dir', dir);
+    if (!options?.resumeSession) {
+      for (const dir of addDirs) {
+        if (dir) {
+          args.push('--add-dir', dir);
+        }
       }
     }
     for (const override of configOverrides) {
@@ -225,7 +234,11 @@ export class CodexCLIWrapper {
         ...baseEnv,
         ...(this.options.codexHome ? { CODEX_HOME: this.options.codexHome } : {}),
       };
-      const child = spawn('codex', args, { stdio: ['pipe', 'pipe', 'pipe'], env: spawnEnv });
+      const child = spawn('codex', args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: spawnEnv,
+        cwd: this.options.cwd ?? process.cwd(),
+      });
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       const timeoutMs = this.options.timeoutMs ?? 120000;
