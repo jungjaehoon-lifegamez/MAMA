@@ -285,7 +285,7 @@ agent:
   codex_add_dirs:
     - ~/.mama/workspace
   codex_config_overrides:
-    - model_reasoning_effort=\"high\"
+    - 'model_reasoning_effort="high"'
   tools:
     gateway:
       - '*'
