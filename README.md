@@ -116,6 +116,8 @@ mama start   # opens web dashboard at localhost:3847
 > - **Sandbox** (Firejail, bubblewrap)
 >
 > See [Security Guide](docs/guides/security.md) for details.
+> For account/policy guidance (team bot vs personal account), see
+> [Standalone Compliance Notes](packages/standalone/README.md#compliance).
 
 <details>
 <summary>✅ <strong>Why CLI Subprocess? (ToS & Stability)</strong></summary>
