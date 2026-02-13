@@ -52,6 +52,61 @@ const EMBEDDING_PORT = 3849;
 let embeddingServer: any = null;
 
 /**
+ * Normalize Discord guild config before passing to gateway.
+ * Guards against null, unexpected types, and non-string keys.
+ */
+interface NormalizedDiscordGuildConfig {
+  requireMention?: boolean;
+  channels?: Record<string, { requireMention?: boolean }>;
+}
+
+function normalizeDiscordGuilds(
+  raw: unknown
+): Record<string, NormalizedDiscordGuildConfig> | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+
+  const source = raw instanceof Map ? Object.fromEntries(raw) : raw;
+  const normalized: Record<string, NormalizedDiscordGuildConfig> = {};
+
+  for (const [guildId, guildConfig] of Object.entries(source as Record<string, unknown>)) {
+    if (!guildId) continue;
+    if (!guildConfig || typeof guildConfig !== 'object') continue;
+
+    const normalizedGuildConfig: NormalizedDiscordGuildConfig = {};
+    if (typeof (guildConfig as Record<string, unknown>).requireMention === 'boolean') {
+      normalizedGuildConfig.requireMention = (guildConfig as Record<string, unknown>)
+        .requireMention as boolean;
+    }
+
+    const rawChannels = (guildConfig as Record<string, unknown>).channels;
+    if (rawChannels && typeof rawChannels === 'object') {
+      const normalizedChannels: Record<string, { requireMention?: boolean }> = {};
+      for (const [channelId, channelConfig] of Object.entries(
+        rawChannels as Record<string, unknown>
+      )) {
+        if (!channelId) continue;
+        if (!channelConfig || typeof channelConfig !== 'object') continue;
+        const rawChannelRequireMention = (channelConfig as Record<string, unknown>).requireMention;
+        if (typeof rawChannelRequireMention === 'boolean') {
+          normalizedChannels[String(channelId)] = {
+            requireMention: rawChannelRequireMention,
+          };
+        }
+      }
+      if (Object.keys(normalizedChannels).length > 0) {
+        normalizedGuildConfig.channels = normalizedChannels;
+      }
+    }
+
+    normalized[String(guildId)] = normalizedGuildConfig;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+/**
  * SECURITY P1: Wait for port to become available after shutdown
  * Polls port availability instead of using fixed setTimeout
  */
@@ -804,11 +859,24 @@ export async function runAgentLoop(
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const discordConfig = config.discord as any;
+      const normalizedGuilds = normalizeDiscordGuilds(discordConfig.guilds);
+
+      const guildKeys = normalizedGuilds ? Object.keys(normalizedGuilds) : [];
+      console.log(
+        `[start] Discord config guild keys: ${guildKeys.length ? guildKeys.join(', ') : '(none)'}.`
+      );
+      console.log(
+        `[start] Discord config loaded keys: ${Object.keys(discordConfig || {}).join(', ')}`
+      );
 
       discordGateway = new DiscordGateway({
         token: config.discord.token,
         messageRouter,
-        config: discordConfig.guilds ? { guilds: discordConfig.guilds } : undefined,
+        config: normalizedGuilds
+          ? {
+              guilds: normalizedGuilds,
+            }
+          : undefined,
         multiAgentConfig: gatewayMultiAgentConfig,
         multiAgentRuntime: gatewayMultiAgentRuntime,
       });
