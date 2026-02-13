@@ -657,10 +657,12 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       // Architecture: Standalone should own HTTP embedding/chat services.
       // Legacy opt-in: set MAMA_MCP_START_HTTP_EMBEDDING=true.
       const startHttpEmbedding = process.env.MAMA_MCP_START_HTTP_EMBEDDING === 'true';
-      const embeddingPort = parseInt(
-        process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '3849',
-        10
-      );
+      const rawEmbeddingPort = process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT;
+      const parsedEmbeddingPort = parseInt(rawEmbeddingPort || '', 10);
+      const embeddingPort =
+        Number.isInteger(parsedEmbeddingPort) && parsedEmbeddingPort > 0
+          ? parsedEmbeddingPort
+          : 3849;
 
       if (!startHttpEmbedding) {
         console.error('[MAMA MCP] HTTP embedding server startup skipped (default behavior)');
