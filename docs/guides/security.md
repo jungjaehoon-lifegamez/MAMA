@@ -44,10 +44,11 @@ MAMA follows a **localhost-first security model**:
 
 ### What It Means
 
-By default, MAMA server listens on `127.0.0.1:3847`:
+By default, MAMA OS listens on:
 
 ```bash
-[EmbeddingHTTP] Running at http://127.0.0.1:3847
+[MAMA OS] API/UI: http://127.0.0.1:3847
+[EmbeddingHTTP] Running at http://127.0.0.1:3849
 ```
 
 **This means:**
@@ -327,8 +328,8 @@ Include:
 #### Step 7: Start Tunnel
 
 ```bash
-# Start MAMA server
-npx @jungjaehoon/mama-server &
+# Start MAMA OS
+mama start &
 
 # Start Cloudflare tunnel
 cloudflared tunnel run mama-mobile
@@ -485,8 +486,8 @@ export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 # Or set a custom token
 export MAMA_AUTH_TOKEN="your-very-secret-token-here"
 
-# Restart MAMA server
-npx @jungjaehoon/mama-server
+# Restart MAMA OS
+mama start
 ```
 
 ### Example: Cloudflare Quick Tunnel
@@ -495,8 +496,8 @@ npx @jungjaehoon/mama-server
 # 1. Set authentication token
 export MAMA_AUTH_TOKEN="my-secret-token-123"
 
-# 2. Start MAMA server
-npx @jungjaehoon/mama-server &
+# 2. Start MAMA OS
+mama start &
 
 # 3. Start tunnel
 cloudflared tunnel --url http://localhost:3847
@@ -678,7 +679,7 @@ export MAMA_AUTH_TOKEN="your-secret-token"
 ```bash
 # MCP tools only, no HTTP server
 export MAMA_DISABLE_HTTP_SERVER=true
-npx @jungjaehoon/mama-server
+mama start
 ```
 
 **2. Graph Viewer Only**
@@ -686,14 +687,14 @@ npx @jungjaehoon/mama-server
 ```bash
 # Graph Viewer works, Mobile Chat disabled
 export MAMA_DISABLE_MOBILE_CHAT=true
-npx @jungjaehoon/mama-server
+mama start
 ```
 
 **3. Full Features (Default)**
 
 ```bash
 # No disable flags = all features enabled
-npx @jungjaehoon/mama-server
+mama start
 ```
 
 ---
@@ -729,7 +730,7 @@ export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 echo "Token: $MAMA_AUTH_TOKEN"  # Save this securely
 
 # 2. Start MAMA
-npx @jungjaehoon/mama-server &
+mama start &
 
 # 3. Start temporary tunnel
 cloudflared tunnel --url http://localhost:3847
