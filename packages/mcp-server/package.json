@@ -40,7 +40,6 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.0.0",
     "@jungjaehoon/mama-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.1",
     "better-sqlite3": "^11.0.0",

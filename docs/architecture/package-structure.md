@@ -39,7 +39,7 @@ MAMA uses a five-package monorepo architecture with shared core modules to elimi
 │  │ - Graph Viewer   │                                    │
 │  │ - Mobile Chat    │                                    │
 │  │ - Embed API      │                                    │
-│  │ (port 3847)      │                                    │
+│  │ (UI 3847 / Embed 3849)│                               │
 │  └──────────────────┘                                    │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -147,6 +147,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - **Cron Scheduler:** Scheduled task execution with heartbeat
 - **MAMA OS Viewer:** Graph viewer and mobile chat interface
 - **CLI Commands:** `mama init`, `start`, `stop`, `status`, `run`, `setup`
+- **Runtime Ownership:** Hosts API/UI on `3847` and embedding/chat services on `3849`
 
 **Dependencies:**
 
