@@ -38,6 +38,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
   private wrapper: CodexCLIWrapper;
   private state: 'idle' | 'busy' | 'dead' = 'idle';
   private seeded = false;
+  private stoppedDuringExecution = false;
   private readonly systemPrompt?: string;
 
   constructor(options: CodexRuntimeProcessOptions) {
@@ -104,8 +105,11 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       callbacks?.onFinal?.({ content: normalized.response, toolUseBlocks: [] });
       return normalized;
     } finally {
-      this.state = 'idle';
-      this.emit('idle');
+      // Only reset to idle if not stopped during execution
+      if (!this.stoppedDuringExecution) {
+        this.state = 'idle';
+        this.emit('idle');
+      }
     }
   }
 
@@ -114,6 +118,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
   }
 
   stop(): void {
+    this.stoppedDuringExecution = this.state === 'busy';
     this.state = 'dead';
     this.emit('close', 0);
   }

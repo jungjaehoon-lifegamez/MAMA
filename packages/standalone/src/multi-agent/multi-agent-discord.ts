@@ -454,7 +454,11 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
           const sessions = this.prReviewPoller.getSessionDetails();
           const session = sessions.find((s) => s.channelId === channelId);
-          if (!session) return;
+          if (!session) {
+            // Clean up stale summary to prevent memory leak
+            this.prPollerSummaries.delete(channelId);
+            return;
+          }
 
           const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
           const promptSummary = `\n${summaryLines}`;

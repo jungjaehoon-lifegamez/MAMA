@@ -154,10 +154,19 @@ export class DiscordGateway extends BaseGateway {
 
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
+      // Gate dangerouslySkipPermissions behind MAMA_TRUSTED_ENV
+      const isTrustedEnv = process.env.MAMA_TRUSTED_ENV === 'true';
+      const skipPermissions =
+        isTrustedEnv && (options.multiAgentConfig.dangerouslySkipPermissions ?? false);
+      if (options.multiAgentConfig.dangerouslySkipPermissions && !isTrustedEnv) {
+        console.warn(
+          '[Discord] dangerouslySkipPermissions ignored: requires MAMA_TRUSTED_ENV=true'
+        );
+      }
       this.multiAgentHandler = new MultiAgentDiscordHandler(
         options.multiAgentConfig,
         {
-          dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? false,
+          dangerouslySkipPermissions: skipPermissions,
         },
         options.multiAgentRuntime
       );

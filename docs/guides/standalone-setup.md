@@ -32,7 +32,7 @@ Before installing MAMA Standalone, ensure you have:
 
 - **Node.js >= 22.0.0** (Standalone requires Node 22+, unlike the plugin which works with 18+)
 - **At least one authenticated backend CLI**
-  - Codex CLI (`codex --login`) or
+  - Codex CLI (`codex login`) or
   - Claude CLI (`claude` OAuth login)
 - **500MB free disk space** (embedding model cache + database)
 
@@ -61,7 +61,7 @@ ls ~/.claude/.credentials.json
 
 ```bash
 npm install -g @openai/codex
-codex --login
+codex login
 ```
 
 **If Claude CLI is not installed (alternative):**

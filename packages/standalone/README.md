@@ -37,7 +37,7 @@ npx @jungjaehoon/mama-os init
 - **Node.js** >= 22.0.0 (required for native TypeScript support)
 - **At least one authenticated backend CLI**
   - Claude CLI: `npm install -g @anthropic-ai/claude-code` then `claude`
-  - Codex CLI: `npm install -g @openai/codex` then `codex --login`
+  - Codex CLI: `npm install -g @openai/codex` then `codex login`
 - **500MB disk space** - For embedding model cache
 
 ## Quick Start
@@ -47,7 +47,7 @@ Get MAMA running in 30 seconds:
 ```bash
 # 1. Authenticate one backend CLI (one-time)
 # Claude: claude
-# Codex:  codex --login
+# Codex:  codex login
 
 # 2. Initialize workspace
 mama init
@@ -733,7 +733,7 @@ MAMA OS operators are responsible for complying with their backend provider Term
 | `MAMA_HTTP_PORT` | MAMA OS port             | `3847`                     |
 | `MAMA_WORKSPACE` | Workspace directory      | `./mama-workspace`         |
 
-> **Note:** Authentication is handled by the selected backend CLI. Run `claude` or `codex --login` first.
+> **Note:** Authentication is handled by the selected backend CLI. Run `claude` or `codex login` first.
 
 ## Troubleshooting
 
@@ -767,7 +767,7 @@ cat mama-workspace/config.yaml
 claude
 
 # Re-authenticate Codex CLI
-codex --login
+codex login
 
 # Check CLI status
 claude --version

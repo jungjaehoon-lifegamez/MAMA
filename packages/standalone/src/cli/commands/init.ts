@@ -161,7 +161,7 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
         console.error(
           `   Expected auth: ${expandPath('~/.mama/.codex/auth.json')} or ${expandPath('~/.codex/auth.json')}`
         );
-        console.error('\n   Please run: codex --login\n');
+        console.error('\n   Please run: codex login\n');
         process.exit(1);
       }
       if (requestedBackend === 'claude') {
@@ -177,7 +177,7 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
       );
       console.error(`   Claude auth: ${expandPath('~/.claude/.credentials.json')}`);
       console.error('\n   Please authenticate one backend first:');
-      console.error('   - Codex: codex --login');
+      console.error('   - Codex: codex login');
       console.error('   - Claude: https://claude.ai/code\n');
       process.exit(1);
     }
