@@ -3,14 +3,14 @@
 > **Your AI Operating System**  
 > _Control + Visibility for AI-Powered Automation_
 
-Always-on AI assistant powered by Claude CLI with gateway integrations and autonomous agent capabilities.
+Always-on AI assistant powered by an authenticated backend CLI (Claude/Codex) with gateway integrations and autonomous agent capabilities.
 
 ## What is MAMA OS?
 
-MAMA OS transforms Claude into an always-on AI assistant that runs continuously on your machine. Unlike the MCP server that requires a client, MAMA OS operates independently with:
+MAMA OS transforms your configured backend into an always-on AI assistant that runs continuously on your machine. Unlike the MCP server that requires a client, MAMA OS operates independently with:
 
 - **Gateway Integrations** - Discord, Slack, Telegram bot support
-- **Autonomous Agent Loop** - Continuous conversation handling via Claude CLI (OAuth-based)
+- **Autonomous Agent Loop** - Continuous conversation handling via official backend CLI
 - **MAMA OS** - Built-in graph viewer and mobile chat interface
 - **Skills System** - Pluggable skills for document analysis, image translation, and more
 - **Cron Scheduler** - Scheduled task execution with heartbeat monitoring
@@ -19,7 +19,7 @@ MAMA OS transforms Claude into an always-on AI assistant that runs continuously 
 
 - Run MAMA as a Discord/Slack/Telegram bot for your team
 - Build custom workflows with the skills API
-- Access Claude from anywhere via mobile chat
+- Access your configured backend from anywhere via mobile chat
 - Automate tasks with scheduled cron jobs
 
 ## Installation
@@ -35,7 +35,9 @@ npx @jungjaehoon/mama-os init
 ## Prerequisites
 
 - **Node.js** >= 22.0.0 (required for native TypeScript support)
-- **Claude CLI** - Install via `npm install -g @anthropic-ai/claude-code` and run `claude` once to authenticate
+- **At least one authenticated backend CLI**
+  - Claude CLI: `npm install -g @anthropic-ai/claude-code` then `claude`
+  - Codex CLI: `npm install -g @openai/codex` then `codex login`
 - **500MB disk space** - For embedding model cache
 
 ## Quick Start
@@ -43,9 +45,9 @@ npx @jungjaehoon/mama-os init
 Get MAMA running in 30 seconds:
 
 ```bash
-# 1. Authenticate Claude CLI (one-time)
-claude
-# Follow OAuth prompts in browser
+# 1. Authenticate one backend CLI (one-time)
+# Claude: claude
+# Codex:  codex login
 
 # 2. Initialize workspace
 mama init
@@ -61,20 +63,23 @@ MAMA will start in daemon mode and run continuously in the background.
 
 ## CLI Commands
 
-| Command             | Description                          | Options                                                                                       |
-| ------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `mama init`         | Initialize MAMA workspace            | `-f, --force` - Overwrite existing config<br>`--skip-auth-check` - Skip API key validation    |
-| `mama setup`        | Interactive setup wizard with Claude | `-p, --port <port>` - Port number (default: 3847)<br>`--no-browser` - Don't auto-open browser |
-| `mama start`        | Start MAMA agent                     | `-f, --foreground` - Run in foreground (not daemon)                                           |
-| `mama stop`         | Stop MAMA agent                      |                                                                                               |
-| `mama status`       | Check agent status                   |                                                                                               |
-| `mama run <prompt>` | Execute single prompt (testing)      | `-v, --verbose` - Detailed output                                                             |
+| Command             | Description                     | Options                                                                                                                                          |
+| ------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mama init`         | Initialize MAMA workspace       | `-f, --force` - Overwrite existing config<br>`--backend <auto\|claude\|codex>` - Preferred backend<br>`--skip-auth-check` - Skip auth validation |
+| `mama setup`        | Interactive setup wizard        | `-p, --port <port>` - Port number (default: 3847)<br>`--no-browser` - Don't auto-open browser                                                    |
+| `mama start`        | Start MAMA agent                | `-f, --foreground` - Run in foreground (not daemon)                                                                                              |
+| `mama stop`         | Stop MAMA agent                 |                                                                                                                                                  |
+| `mama status`       | Check agent status              |                                                                                                                                                  |
+| `mama run <prompt>` | Execute single prompt (testing) | `-v, --verbose` - Detailed output                                                                                                                |
 
 ### Command Examples
 
 ```bash
 # Initialize with force (overwrites existing config)
 mama init --force
+
+# Initialize with explicit backend
+mama init --backend codex
 
 # Run setup wizard on custom port
 mama setup --port 8080
@@ -184,7 +189,7 @@ Hello MAMA!
 
 ## MAMA OS
 
-Built-in web interface for managing MAMA and chatting with Claude.
+Built-in web interface for managing MAMA and chatting with your configured backend.
 
 **Access:** `http://localhost:3847` (default port)
 
@@ -199,7 +204,7 @@ Built-in web interface for managing MAMA and chatting with Claude.
 
 **💬 Chat Tab**
 
-- Real-time chat with Claude Code sessions
+- Real-time chat with backend CLI sessions
 - Voice input (Web Speech API, Korean optimized)
 - Text-to-speech with adjustable speed
 - Hands-free mode (auto-listen after TTS)
@@ -436,13 +441,13 @@ multi_agent:
 
 ### Process Pool (Parallel Execution)
 
-Each agent runs as a separate Claude CLI subprocess. By default, each agent has **1 process** (sequential execution). Configure `pool_size` to enable parallel task execution per agent.
+Each agent runs as a separate backend CLI subprocess. By default, each agent has **1 process** (sequential execution). Configure `pool_size` to enable parallel task execution per agent.
 
 ```yaml
 multi_agent:
   agents:
     developer:
-      pool_size: 5 # 5 parallel Claude CLI processes for this agent
+      pool_size: 5 # 5 parallel backend CLI processes for this agent
 ```
 
 **How it works:**
@@ -464,7 +469,7 @@ multi_agent:
 
 **Recommendation:** Start with `pool_size: 3` for implementation agents (Developer) and keep `pool_size: 1` for advisory agents (Reviewer, Explorer).
 
-> **Note:** Each process spawns a separate Claude CLI subprocess. Higher pool sizes increase memory and API usage proportionally.
+> **Note:** Each process spawns a separate backend CLI subprocess. Higher pool sizes increase memory and API usage proportionally.
 
 ### Delegation
 
@@ -565,7 +570,7 @@ First-time setup includes a 9-phase autonomous onboarding:
 mama setup
 ```
 
-The wizard runs in your browser at `http://localhost:3847` and guides you through each step with Claude CLI.
+The wizard runs in your browser at `http://localhost:3847` and guides you through each step with your configured backend.
 
 ## Architecture
 
@@ -585,7 +590,7 @@ The wizard runs in your browser at `http://localhost:3847` and guides you throug
 │                     │                            │
 │          ┌──────────▼──────────┐                │
 │          │  Agent Loop         │                │
-│          │  (Claude CLI)       │                │
+│          │  (Backend CLI)      │                │
 │          └──────────┬──────────┘                │
 │                     │                            │
 │          ┌──────────▼──────────┐                │
@@ -609,7 +614,7 @@ The wizard runs in your browser at `http://localhost:3847` and guides you throug
 **Key Components:**
 
 - **Gateway Layer** - Handles Discord/Slack/Telegram message routing
-- **Agent Loop** - Continuous conversation handling via Claude CLI (OAuth-based)
+- **Agent Loop** - Continuous conversation handling via configured backend CLI
 - **Skills System** - Pluggable capabilities (image translation, document analysis)
 - **MAMA Core** - Shared memory and database (from @jungjaehoon/mama-core)
 - **MAMA OS** - Web-based management interface
@@ -666,7 +671,7 @@ viewer:
 
 ## Security
 
-**IMPORTANT:** MAMA Standalone has full access to your system via Claude CLI.
+**IMPORTANT:** MAMA Standalone has full access to your system via the configured backend CLI.
 
 ### Capabilities
 
@@ -699,9 +704,26 @@ If you want to access MAMA OS from outside localhost (e.g., from your phone):
 1. **Recommended:** Use Cloudflare Zero Trust tunnel with authentication
 2. **Testing only:** Use `cloudflared tunnel --url http://localhost:3847`
 
-⚠️ **Never expose MAMA OS to the internet without authentication** - Anyone with access can control your system via Claude.
+⚠️ **Never expose MAMA OS to the internet without authentication** - Anyone with access can control your system via your backend session.
 
 See [Security Guide](../../docs/guides/security.md) for detailed setup instructions.
+
+## Compliance
+
+MAMA OS operators are responsible for complying with their backend provider Terms/Usage policies.
+
+### Account Usage Rules
+
+- Do not share personal CLI accounts, sessions, or credentials.
+- Do not run multi-user team bots on a personal account plan.
+- For team channels, use organization-approved plans/accounts (Team/Enterprise or API org setup).
+- Do not bypass provider safeguards (token extraction, header spoofing, rate-limit evasion).
+
+### Why this matters for chat channels
+
+- A single bot in a group channel can still represent multi-user usage.
+- Even if credentials are not directly shared, providers may treat shared bot access as account sharing.
+- Multi-agent channels can increase concurrency/pattern complexity, so keep audit logs and sane limits.
 
 ## Environment Variables
 
@@ -711,7 +733,7 @@ See [Security Guide](../../docs/guides/security.md) for detailed setup instructi
 | `MAMA_HTTP_PORT` | MAMA OS port             | `3847`                     |
 | `MAMA_WORKSPACE` | Workspace directory      | `./mama-workspace`         |
 
-> **Note:** Authentication is handled by Claude CLI OAuth. Run `claude` once to authenticate.
+> **Note:** Authentication is handled by the selected backend CLI. Run `claude` or `codex login` first.
 
 ## Troubleshooting
 
@@ -738,14 +760,18 @@ cat mama-workspace/config.yaml
 # Open http://localhost:3847 → Dashboard tab
 ```
 
-### Claude CLI authentication errors
+### Backend CLI authentication errors
 
 ```bash
 # Re-authenticate Claude CLI
 claude
 
-# Check Claude CLI status
+# Re-authenticate Codex CLI
+codex login
+
+# Check CLI status
 claude --version
+codex --version
 
 # Test with verbose output
 mama run "test" --verbose

@@ -509,6 +509,14 @@ export async function runAgentLoop(
   const agentLoop = new AgentLoop(oauthManager, {
     backend,
     model: config.agent.model,
+    codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
+    codexCwd: config.agent.codex_cwd ? expandPath(config.agent.codex_cwd) : undefined,
+    codexSandbox: config.agent.codex_sandbox,
+    codexSkipGitRepoCheck: config.agent.codex_skip_git_repo_check,
+    codexProfile: config.agent.codex_profile,
+    codexEphemeral: config.agent.codex_ephemeral,
+    codexAddDirs: config.agent.codex_add_dirs,
+    codexConfigOverrides: config.agent.codex_config_overrides,
     maxTurns: config.agent.max_turns,
     toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord

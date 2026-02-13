@@ -31,7 +31,9 @@ Before installing MAMA Standalone, ensure you have:
 ### Required
 
 - **Node.js >= 22.0.0** (Standalone requires Node 22+, unlike the plugin which works with 18+)
-- **Claude CLI** installed and authenticated (OAuth-based)
+- **At least one authenticated backend CLI**
+  - Codex CLI (`codex login`) or
+  - Claude CLI (`claude` OAuth login)
 - **500MB free disk space** (embedding model cache + database)
 
 ### Optional (for gateway integrations)
@@ -46,15 +48,23 @@ Before installing MAMA Standalone, ensure you have:
 # Check Node.js version (must be >= 22.0.0)
 node --version
 
-# Check Claude CLI
-claude --version
+# Check Codex CLI (optional but recommended)
+codex --version
+ls ~/.mama/.codex/auth.json ~/.codex/auth.json
 
-# Check Claude CLI authentication
+# Check Claude CLI (alternative backend)
+claude --version
 ls ~/.claude/.credentials.json
-# Should exist if you're logged in
 ```
 
-**If Claude CLI is not installed:**
+**If Codex CLI is not installed:**
+
+```bash
+npm install -g @openai/codex
+codex login
+```
+
+**If Claude CLI is not installed (alternative):**
 
 ```bash
 npm install -g @anthropic-ai/claude-code
@@ -113,6 +123,20 @@ mama init
 │   └── data/                # Data files and outputs
 └── logs/                    # Agent logs
     └── mama.log             # Main log file
+```
+
+`mama init` auto-selects the default backend:
+
+- Uses `codex` if `~/.mama/.codex/auth.json` or `~/.codex/auth.json` exists
+- Falls back to `claude` if `~/.claude/.credentials.json` exists
+- Fails with guidance if neither backend is authenticated
+
+You can override this per user/environment:
+
+```bash
+mama init --backend auto    # default: detect installed/authenticated backend
+mama init --backend claude  # force Claude backend if authenticated
+mama init --backend codex   # force Codex backend if authenticated
 ```
 
 **Expected output:**
@@ -187,9 +211,16 @@ version: 1
 
 # Agent settings
 agent:
+  backend: claude # claude | codex (set by init auto/override)
   model: claude-sonnet-4-20250514 # Claude model to use
   max_turns: 10 # Maximum conversation turns
   timeout: 300000 # Request timeout (5 minutes)
+  codex_home: ~/.mama/.codex
+  codex_cwd: ~/.mama/workspace
+  codex_sandbox: workspace-write
+  codex_skip_git_repo_check: true
+  codex_add_dirs:
+    - ~/.mama/workspace
 
 # Database settings
 database:
@@ -237,15 +268,66 @@ workspace:
   data: ~/.mama/workspace/data
 ```
 
+### Codex Backend Example
+
+If you want MAMA to run with Codex CLI as the backend:
+
+```yaml
+agent:
+  backend: codex
+  model: gpt-5.3-codex
+  codex_home: ~/.mama/.codex
+  codex_cwd: ~/.mama/workspace
+  codex_sandbox: workspace-write
+  codex_skip_git_repo_check: true
+  codex_profile: default
+  codex_ephemeral: false
+  codex_add_dirs:
+    - ~/.mama/workspace
+  codex_config_overrides:
+    - 'model_reasoning_effort="high"'
+  tools:
+    gateway:
+      - '*'
+    mcp:
+      - '*'
+    mcp_config: ~/.mama/mama-mcp-config.json
+```
+
+Notes:
+
+- Codex native config normally lives under `~/.codex`, but with `codex_home` you can isolate runtime state in `~/.mama/.codex`.
+- MCP config location for MAMA tool routing is `agent.tools.mcp_config` and is backend-independent (same for Claude/Codex when running through MAMA).
+
 ### Configuration Options Reference
 
 #### Agent Settings
 
-| Option      | Type   | Default                  | Description                     |
-| ----------- | ------ | ------------------------ | ------------------------------- |
-| `model`     | string | claude-sonnet-4-20250514 | Claude model to use             |
-| `max_turns` | number | 10                       | Maximum conversation turns      |
-| `timeout`   | number | 300000                   | Request timeout in milliseconds |
+| Option                      | Type   | Default                  | Description                          |
+| --------------------------- | ------ | ------------------------ | ------------------------------------ |
+| `backend`                   | string | claude                   | Agent backend (`claude` or `codex`)  |
+| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend      |
+| `max_turns`                 | number | 10                       | Maximum conversation turns           |
+| `timeout`                   | number | 300000                   | Request timeout in milliseconds      |
+| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory         |
+| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory              |
+| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                   |
+| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard      |
+| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`       |
+| `codex_ephemeral`           | bool   | false                    | Disable session persistence          |
+| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex |
+| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides   |
+
+### Codex MCP Tool Notes (Brave)
+
+- Codex MCP servers are configured in `~/.codex/config.toml` (or `CODEX_HOME/config.toml`).
+- MAMA tool routing (`agent.tools.mcp_config`) is separate from Codex MCP registry.
+- Recommended Codex MCP set for this environment:
+  - `mama`
+  - `brave-search`
+- `brave-devtools` may fail on Flatpak Brave environments with:
+  - `Protocol error (Target.setDiscoverTargets): Target closed`
+- If devtools fails, use `brave-search` as fallback, or switch to a native (non-Flatpak) browser executable for devtools MCP.
 
 **Available models:**
 
