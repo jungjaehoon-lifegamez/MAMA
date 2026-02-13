@@ -13,16 +13,26 @@
 
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { readFileSync, existsSync, unlinkSync } from 'fs';
+import { readFileSync, existsSync, unlinkSync, mkdirSync, copyFileSync } from 'fs';
 import os from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 
 export interface CodexCLIWrapperOptions {
   model?: string;
   sessionId?: string;
   systemPrompt?: string;
+  /** Codex home directory (config/sessions/skills) */
+  codexHome?: string;
   /** Sandbox mode for Codex CLI */
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Codex profile from config.toml */
+  profile?: string;
+  /** Run Codex in ephemeral mode (no session persistence) */
+  ephemeral?: boolean;
+  /** Additional writable directories */
+  addDirs?: string[];
+  /** Raw -c key=value config overrides */
+  configOverrides?: string[];
   /** Skip Git repo check in Codex CLI */
   skipGitRepoCheck?: boolean;
   /** Timeout for each request in ms (default: 120000) */
@@ -140,6 +150,10 @@ export class CodexCLIWrapper {
     const model = options?.model ?? this.options.model;
     const skipGitRepoCheck = this.options.skipGitRepoCheck ?? true;
     const sandbox = this.options.sandbox ?? 'read-only';
+    const profile = this.options.profile;
+    const ephemeral = this.options.ephemeral ?? false;
+    const addDirs = this.options.addDirs ?? [];
+    const configOverrides = this.options.configOverrides ?? [];
 
     if (options?.resumeSession) {
       args.push('exec', 'resume');
@@ -155,6 +169,9 @@ export class CodexCLIWrapper {
     if (options?.resumeSession) {
       // Codex resume supports a limited flag set
       args.push('--json');
+      if (skipGitRepoCheck) {
+        args.push('--skip-git-repo-check');
+      }
       if (sandbox === 'danger-full-access') {
         args.push('--dangerously-bypass-approvals-and-sandbox');
       }
@@ -174,6 +191,23 @@ export class CodexCLIWrapper {
         args.push('--skip-git-repo-check');
       }
     }
+
+    if (profile) {
+      args.push('--profile', profile);
+    }
+    if (ephemeral) {
+      args.push('--ephemeral');
+    }
+    for (const dir of addDirs) {
+      if (dir) {
+        args.push('--add-dir', dir);
+      }
+    }
+    for (const override of configOverrides) {
+      if (override) {
+        args.push('-c', override);
+      }
+    }
     if (model) {
       args.push('--model', model);
     }
@@ -185,7 +219,13 @@ export class CodexCLIWrapper {
 
   private execute(args: string[], promptText: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn('codex', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+      this.prepareCodexHome();
+      const { CODEX_THREAD_ID: _ignoredThreadId, ...baseEnv } = process.env;
+      const spawnEnv = {
+        ...baseEnv,
+        ...(this.options.codexHome ? { CODEX_HOME: this.options.codexHome } : {}),
+      };
+      const child = spawn('codex', args, { stdio: ['pipe', 'pipe', 'pipe'], env: spawnEnv });
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       const timeoutMs = this.options.timeoutMs ?? 120000;
@@ -220,6 +260,29 @@ export class CodexCLIWrapper {
       child.stdin.write(promptText);
       child.stdin.end();
     });
+  }
+
+  private prepareCodexHome(): void {
+    const codexHome = this.options.codexHome;
+    if (!codexHome) {
+      return;
+    }
+
+    try {
+      mkdirSync(codexHome, { recursive: true });
+      const legacyHome = join(os.homedir(), '.codex');
+      const filesToMigrate = ['auth.json', 'config.toml', 'version.json'];
+      for (const relPath of filesToMigrate) {
+        const src = join(legacyHome, relPath);
+        const dest = join(codexHome, relPath);
+        if (!existsSync(dest) && existsSync(src)) {
+          mkdirSync(dirname(dest), { recursive: true });
+          copyFileSync(src, dest);
+        }
+      }
+    } catch {
+      // Non-fatal: Codex may still run with existing defaults.
+    }
   }
 
   private readLastMessage(outputFile: string): string | null {

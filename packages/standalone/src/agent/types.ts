@@ -718,6 +718,20 @@ export interface StreamingContext {
 export interface AgentLoopOptions {
   /** Backend to use for CLI execution */
   backend?: 'claude' | 'codex';
+  /** Codex home directory for Codex backend state/config */
+  codexHome?: string;
+  /** Codex sandbox mode */
+  codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Skip Git repo check for Codex backend */
+  codexSkipGitRepoCheck?: boolean;
+  /** Codex profile from CODEX_HOME config */
+  codexProfile?: string;
+  /** Run Codex without persisting sessions */
+  codexEphemeral?: boolean;
+  /** Additional writable directories for Codex */
+  codexAddDirs?: string[];
+  /** Raw Codex -c key=value overrides */
+  codexConfigOverrides?: string[];
   /** System prompt for Claude */
   systemPrompt?: string;
   /** Maximum number of conversation turns (default: 10) */
