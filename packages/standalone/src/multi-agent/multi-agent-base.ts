@@ -7,7 +7,12 @@
  * implement platform-specific messaging and formatting.
  */
 
-import type { MultiAgentConfig, AgentPersonaConfig, ChainState } from './types.js';
+import type {
+  MultiAgentConfig,
+  AgentPersonaConfig,
+  ChainState,
+  MultiAgentRuntimeOptions,
+} from './types.js';
 import { MultiAgentOrchestrator } from './orchestrator.js';
 import { AgentProcessManager } from './agent-process-manager.js';
 import { getSharedContextManager, type SharedContextManager } from './shared-context.js';
@@ -21,6 +26,7 @@ import { WorkTracker } from './work-tracker.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
 import type { GatewayToolInput } from '../agent/types.js';
+import type { AgentRuntimeProcess } from './runtime-process.js';
 
 /** Default timeout for agent responses (15 minutes -- must accommodate sub-agent spawns) */
 export const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -111,10 +117,14 @@ export abstract class MultiAgentHandlerBase {
   /** Send a notification message to a channel (for background task status, queue expiry, etc.) */
   protected abstract sendChannelNotification(channelId: string, message: string): Promise<void>;
 
-  constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
+  constructor(
+    config: MultiAgentConfig,
+    processOptions: Partial<PersistentProcessOptions> = {},
+    runtimeOptions: MultiAgentRuntimeOptions = {}
+  ) {
     this.config = config;
     this.orchestrator = new MultiAgentOrchestrator(config);
-    this.processManager = new AgentProcessManager(config, processOptions);
+    this.processManager = new AgentProcessManager(config, processOptions, runtimeOptions);
     this.sharedContext = getSharedContextManager();
     this.messageQueue = new AgentMessageQueue();
     this.prReviewPoller = new PRReviewPoller();
@@ -125,15 +135,22 @@ export abstract class MultiAgentHandlerBase {
 
     this.backgroundTaskManager = new BackgroundTaskManager(
       async (agentId: string, prompt: string): Promise<string> => {
-        const process = await this.processManager.getProcess(
-          this.getPlatformName(),
-          'background',
-          agentId
-        );
-        const result = await process.sendMessage(prompt);
-        // Execute any gateway tool calls (discord_send, mama_*) from response text
-        const cleaned = await this.executeTextToolCalls(result.response);
-        return cleaned;
+        let process: AgentRuntimeProcess | null = null;
+        try {
+          process = await this.processManager.getProcess(
+            this.getPlatformName(),
+            'background',
+            agentId
+          );
+          const result = await process.sendMessage(prompt);
+          // Execute any gateway tool calls (discord_send, mama_*) from response text
+          const cleaned = await this.executeTextToolCalls(result.response);
+          return cleaned;
+        } finally {
+          if (process) {
+            this.processManager.releaseProcess(agentId, process);
+          }
+        }
       },
       { maxConcurrentPerAgent: 2, maxTotalConcurrent: 5 }
     );
@@ -248,9 +265,13 @@ export abstract class MultiAgentHandlerBase {
   protected setupIdleListeners(): void {
     this.processManager.on('process-created', ({ agentId, process }) => {
       process.on('idle', async () => {
-        await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
-          await this.sendQueuedResponse(aid, message, response);
-        });
+        try {
+          await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
+            await this.sendQueuedResponse(aid, message, response);
+          });
+        } finally {
+          this.processManager.releaseProcess(agentId, process);
+        }
       });
     });
   }
