@@ -47,6 +47,39 @@ const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const FAVICON_PATH = path.join(__dirname, '../../public/favicon.ico');
 
+// Model pattern helpers (used in multiple validation functions)
+const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
+const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
+
+// Allowed directories for persona files (security: prevent arbitrary file read)
+const ALLOWED_PERSONA_DIRS = [
+  path.join(os.homedir(), '.mama', 'personas'),
+  path.join(os.homedir(), '.mama', 'workspace'),
+];
+
+/**
+ * Validate persona_file path to prevent arbitrary file read attacks.
+ * Only allows paths within ~/.mama/personas/ or ~/.mama/workspace/.
+ * Uses fs.realpathSync to resolve symlinks and prevent symlink escape attacks.
+ */
+function isValidPersonaPath(filePath: string): boolean {
+  if (!filePath) {
+    return false;
+  }
+  const expandedPath = filePath.startsWith('~/')
+    ? path.join(os.homedir(), filePath.slice(2))
+    : path.resolve(filePath);
+  const normalizedPath = path.normalize(expandedPath);
+  let resolvedPath: string;
+  try {
+    resolvedPath = fs.realpathSync(normalizedPath);
+  } catch {
+    // File doesn't exist or can't be resolved - reject
+    return false;
+  }
+  return ALLOWED_PERSONA_DIRS.some((dir) => resolvedPath.startsWith(dir + path.sep));
+}
+
 async function getAllNodes(): Promise<GraphNode[]> {
   const adapter = getAdapter();
 
@@ -1000,7 +1033,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: PUT /api/config - update config
     if (pathname === '/api/config' && req.method === 'PUT') {
-      await handleUpdateConfigRequest(req, res);
+      await handleUpdateConfigRequest(req, res, options);
       return true;
     }
 
@@ -1036,7 +1069,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             stdio: 'ignore',
           }).unref();
           process.exit(0);
-          return;
         }
 
         // Spawn detached daemon directly, then exit current process
@@ -1081,7 +1113,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: PUT /api/multi-agent/agents/:id - update agent config
     if (pathname.startsWith('/api/multi-agent/agents/') && req.method === 'PUT') {
-      await handleMultiAgentUpdateAgentRequest(req, res, pathname);
+      await handleMultiAgentUpdateAgentRequest(req, res, pathname, options);
       return true;
     }
 
@@ -1440,6 +1472,7 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
             default_agent: config.multi_agent.default_agent || null,
             mention_delegation: config.multi_agent.mention_delegation || false,
             max_mention_depth: config.multi_agent.max_mention_depth || 3,
+            pr_review_poller: config.multi_agent.pr_review_poller || { enabled: false },
           }
         : undefined,
     };
@@ -1460,7 +1493,11 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
   }
 }
 
-async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleUpdateConfigRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: GraphHandlerOptions = {}
+): Promise<void> {
   try {
     // Verify authentication for config modifications
     if (!isAuthenticated(req)) {
@@ -1513,6 +1550,19 @@ async function handleUpdateConfigRequest(req: IncomingMessage, res: ServerRespon
     }
 
     saveMAMAConfig(updatedConfig);
+
+    if (updatedConfig.multi_agent && options.applyMultiAgentConfig) {
+      try {
+        await options.applyMultiAgentConfig(
+          updatedConfig.multi_agent as unknown as Record<string, unknown>
+        );
+      } catch (err) {
+        logger.warn(
+          'Multi-agent hot-apply failed after config update:',
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
@@ -1758,6 +1808,22 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
     if (config.agent.timeout && config.agent.timeout < 1000) {
       errors.push('timeout must be at least 1000ms');
     }
+    if (
+      config.agent.backend &&
+      !['claude', 'codex'].includes(String(config.agent.backend).toLowerCase())
+    ) {
+      errors.push('agent.backend must be "claude" or "codex"');
+    }
+    if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
+      const backend = String(config.agent.backend).toLowerCase();
+      const model = config.agent.model;
+      if (backend === 'claude' && !isClaudeModel(model)) {
+        errors.push('agent.model must be a Claude model when agent.backend is "claude"');
+      }
+      if (backend === 'codex' && !isCodexModel(model)) {
+        errors.push('agent.model must be a Codex/OpenAI model when agent.backend is "codex"');
+      }
+    }
   }
 
   if (config.heartbeat) {
@@ -1768,6 +1834,34 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
 
   if (config.use_claude_cli !== undefined && typeof config.use_claude_cli !== 'boolean') {
     errors.push('use_claude_cli must be a boolean');
+  }
+
+  const globalBackend = config.agent?.backend;
+  if (config.multi_agent?.agents && typeof config.multi_agent.agents === 'object') {
+    for (const [agentId, agentConfig] of Object.entries(config.multi_agent.agents)) {
+      const cfg = agentConfig as Record<string, unknown>;
+      const backendRaw = cfg.backend ?? globalBackend;
+      const modelRaw = cfg.model;
+      if (backendRaw !== undefined) {
+        const backend = String(backendRaw).toLowerCase();
+        if (!['claude', 'codex'].includes(backend)) {
+          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex"`);
+          continue;
+        }
+        if (typeof modelRaw === 'string' && modelRaw.trim()) {
+          if (backend === 'claude' && !isClaudeModel(modelRaw)) {
+            errors.push(
+              `multi_agent.agents.${agentId}.model must be a Claude model when backend is "claude"`
+            );
+          }
+          if (backend === 'codex' && !isCodexModel(modelRaw)) {
+            errors.push(
+              `multi_agent.agents.${agentId}.model must be a Codex/OpenAI model when backend is "codex"`
+            );
+          }
+        }
+      }
+    }
   }
 
   return errors;
@@ -1968,6 +2062,7 @@ async function handleMultiAgentAgentsRequest(
           name: agentConfig.name || id,
           display_name: agentConfig.display_name || agentConfig.name || id,
           tier: agentConfig.tier || 1,
+          backend: agentConfig.backend || null,
           model: agentConfig.model || null,
           enabled: agentConfig.enabled !== false,
           persona_file: agentConfig.persona_file || null,
@@ -2006,7 +2101,8 @@ async function handleMultiAgentAgentsRequest(
 async function handleMultiAgentUpdateAgentRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  pathname: string
+  pathname: string,
+  options: GraphHandlerOptions = {}
 ): Promise<void> {
   try {
     // Security: require authentication for config-writing endpoint
@@ -2093,6 +2189,28 @@ async function handleMultiAgentUpdateAgentRequest(
     if (body.can_delegate !== undefined && typeof body.can_delegate !== 'boolean') {
       validationErrors.push('can_delegate must be a boolean');
     }
+    if (
+      body.backend !== undefined &&
+      (typeof body.backend !== 'string' ||
+        !['claude', 'codex'].includes(String(body.backend).toLowerCase()))
+    ) {
+      validationErrors.push('backend must be "claude" or "codex"');
+    }
+
+    const nextBackend = (
+      body.backend !== undefined ? String(body.backend).toLowerCase() : currentAgent.backend
+    ) as string | undefined;
+    const nextModel = (body.model !== undefined ? body.model : currentAgent.model) as
+      | string
+      | undefined;
+    if (typeof nextBackend === 'string' && typeof nextModel === 'string' && nextModel.trim()) {
+      if (nextBackend === 'claude' && !isClaudeModel(nextModel)) {
+        validationErrors.push('model must be a Claude model when backend is "claude"');
+      }
+      if (nextBackend === 'codex' && !isCodexModel(nextModel)) {
+        validationErrors.push('model must be a Codex/OpenAI model when backend is "codex"');
+      }
+    }
 
     if (validationErrors.length > 0) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2106,12 +2224,37 @@ async function handleMultiAgentUpdateAgentRequest(
       return;
     }
 
-    if (body.name !== undefined) updatedAgent.name = body.name;
-    if (body.display_name !== undefined) updatedAgent.display_name = body.display_name;
-    if (body.tier !== undefined) updatedAgent.tier = body.tier;
-    if (body.model !== undefined) updatedAgent.model = body.model;
-    if (body.enabled !== undefined) updatedAgent.enabled = body.enabled;
-    if (body.persona_file !== undefined) updatedAgent.persona_file = body.persona_file;
+    if (body.name !== undefined) {
+      updatedAgent.name = body.name;
+    }
+    if (body.display_name !== undefined) {
+      updatedAgent.display_name = body.display_name;
+    }
+    if (body.tier !== undefined) {
+      updatedAgent.tier = body.tier;
+    }
+    if (body.backend !== undefined) {
+      updatedAgent.backend = String(body.backend).toLowerCase();
+    }
+    if (body.model !== undefined) {
+      updatedAgent.model = body.model;
+    }
+    if (body.enabled !== undefined) {
+      updatedAgent.enabled = body.enabled;
+    }
+    if (body.persona_file !== undefined && body.persona_file !== null) {
+      if (typeof body.persona_file !== 'string' || !isValidPersonaPath(body.persona_file)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error:
+              'Invalid persona_file path. Must be within ~/.mama/personas/ or ~/.mama/workspace/',
+          })
+        );
+        return;
+      }
+      updatedAgent.persona_file = body.persona_file;
+    }
     if (body.trigger_prefix !== undefined) updatedAgent.trigger_prefix = body.trigger_prefix;
     if (body.auto_respond_keywords !== undefined)
       updatedAgent.auto_respond_keywords = body.auto_respond_keywords;
@@ -2137,11 +2280,39 @@ async function handleMultiAgentUpdateAgentRequest(
     config.multi_agent.agents[agentId] = updatedAgent;
     saveMAMAConfig(config);
 
+    let runtimeReloaded = true;
+    if (options.applyMultiAgentConfig) {
+      try {
+        await options.applyMultiAgentConfig(
+          config.multi_agent as unknown as Record<string, unknown>
+        );
+      } catch (err) {
+        runtimeReloaded = false;
+        logger.warn(
+          `Multi-agent hot-apply failed for ${agentId}:`,
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    }
+    if (options.restartMultiAgentAgent) {
+      try {
+        await options.restartMultiAgentAgent(agentId);
+      } catch (err) {
+        runtimeReloaded = false;
+        logger.warn(
+          `Agent runtime restart failed for ${agentId}:`,
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         success: true,
-        message: `Agent '${agentId}' updated successfully`,
+        message: runtimeReloaded
+          ? `Agent '${agentId}' updated successfully (runtime reloaded)`
+          : `Agent '${agentId}' config saved (runtime reload skipped or failed)`,
       })
     );
   } catch (error: unknown) {

@@ -38,6 +38,18 @@ import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
+
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const startLogger = new DebugLogger('start');
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
 
@@ -50,6 +62,71 @@ const EMBEDDING_PORT = 3849;
 // MAMA embedding server (keeps model in memory)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let embeddingServer: any = null;
+
+/**
+ * Normalize Discord guild config before passing to gateway.
+ * Guards against null, unexpected types, and non-string keys.
+ */
+interface NormalizedDiscordGuildConfig {
+  requireMention?: boolean;
+  channels?: Record<string, { requireMention?: boolean }>;
+}
+
+function normalizeDiscordGuilds(
+  raw: unknown
+): Record<string, NormalizedDiscordGuildConfig> | undefined {
+  // Reject arrays - they pass typeof 'object' check but get coerced to numeric keys
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const source = raw instanceof Map ? Object.fromEntries(raw) : raw;
+  const normalized: Record<string, NormalizedDiscordGuildConfig> = {};
+
+  for (const [guildId, guildConfig] of Object.entries(source as Record<string, unknown>)) {
+    if (!guildId) {
+      continue;
+    }
+    if (!guildConfig || typeof guildConfig !== 'object' || Array.isArray(guildConfig)) {
+      continue;
+    }
+
+    const normalizedGuildConfig: NormalizedDiscordGuildConfig = {};
+    if (typeof (guildConfig as Record<string, unknown>).requireMention === 'boolean') {
+      normalizedGuildConfig.requireMention = (guildConfig as Record<string, unknown>)
+        .requireMention as boolean;
+    }
+
+    const rawChannels = (guildConfig as Record<string, unknown>).channels;
+    // Reject arrays for channels as well
+    if (rawChannels && typeof rawChannels === 'object' && !Array.isArray(rawChannels)) {
+      const normalizedChannels: Record<string, { requireMention?: boolean }> = {};
+      for (const [channelId, channelConfig] of Object.entries(
+        rawChannels as Record<string, unknown>
+      )) {
+        if (!channelId) {
+          continue;
+        }
+        if (!channelConfig || typeof channelConfig !== 'object' || Array.isArray(channelConfig)) {
+          continue;
+        }
+        const rawChannelRequireMention = (channelConfig as Record<string, unknown>).requireMention;
+        if (typeof rawChannelRequireMention === 'boolean') {
+          normalizedChannels[String(channelId)] = {
+            requireMention: rawChannelRequireMention,
+          };
+        }
+      }
+      if (Object.keys(normalizedChannels).length > 0) {
+        normalizedGuildConfig.channels = normalizedChannels;
+      }
+    }
+
+    normalized[String(guildId)] = normalizedGuildConfig;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
 
 /**
  * SECURITY P1: Wait for port to become available after shutdown
@@ -717,6 +794,8 @@ export async function runAgentLoop(
     getAgentStates?: () => Map<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     getSwarmTasks?: (limit?: number) => Array<any>;
+    applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
+    restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   } = {};
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
@@ -781,19 +860,45 @@ export async function runAgentLoop(
   // Track active gateways for cleanup
   const gateways: { stop: () => Promise<void> }[] = [];
 
+  const gatewayMultiAgentConfig = config.multi_agent;
+  const gatewayMultiAgentRuntime = {
+    backend,
+    model: config.agent.model,
+    codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
+    codexCwd: config.agent.codex_cwd ? expandPath(config.agent.codex_cwd) : undefined,
+    codexSandbox: config.agent.codex_sandbox,
+    codexProfile: config.agent.codex_profile,
+    codexEphemeral: config.agent.codex_ephemeral,
+    codexAddDirs: config.agent.codex_add_dirs,
+    codexConfigOverrides: config.agent.codex_config_overrides,
+    codexSkipGitRepoCheck: config.agent.codex_skip_git_repo_check,
+  } as const;
+
   // Initialize Discord gateway if enabled (before API server for reference)
   let discordGateway: DiscordGateway | null = null;
   if (config.discord?.enabled && config.discord?.token) {
     console.log('Initializing Discord gateway...');
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const discordConfig = config.discord as any;
+      const normalizedGuilds = normalizeDiscordGuilds(config.discord.guilds);
+
+      const guildKeys = normalizedGuilds ? Object.keys(normalizedGuilds) : [];
+      startLogger.info(
+        `Discord config guild keys: ${guildKeys.length ? guildKeys.join(', ') : '(none)'}.`
+      );
+      startLogger.info(
+        `Discord config loaded keys: ${Object.keys(config.discord || {}).join(', ')}`
+      );
 
       discordGateway = new DiscordGateway({
         token: config.discord.token,
         messageRouter,
-        config: discordConfig.guilds ? { guilds: discordConfig.guilds } : undefined,
-        multiAgentConfig: config.multi_agent,
+        config: normalizedGuilds
+          ? {
+              guilds: normalizedGuilds,
+            }
+          : undefined,
+        multiAgentConfig: gatewayMultiAgentConfig,
+        multiAgentRuntime: gatewayMultiAgentRuntime,
       });
 
       const gatewayInterface = {
@@ -835,7 +940,8 @@ export async function runAgentLoop(
         botToken: config.slack.bot_token,
         appToken: config.slack.app_token,
         messageRouter,
-        multiAgentConfig: config.multi_agent,
+        multiAgentConfig: gatewayMultiAgentConfig,
+        multiAgentRuntime: gatewayMultiAgentRuntime,
       });
 
       await slackGateway.start();
@@ -885,6 +991,27 @@ export async function runAgentLoop(
           console.error('[GraphAPI] Failed to fetch swarm tasks:', err);
           return [];
         }
+      };
+
+      // Apply updated multi-agent config at runtime without full daemon restart.
+      graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
+        // Type assertion to MultiAgentConfig (rawConfig comes from validated YAML)
+        const nextConfig =
+          rawConfig as unknown as import('../../cli/config/types.js').MultiAgentConfig;
+        if (discordGateway) {
+          await discordGateway.setMultiAgentConfig(nextConfig);
+        }
+        if (slackGateway) {
+          await slackGateway.setMultiAgentConfig(nextConfig);
+        }
+      };
+
+      // Restart a single agent runtime (rolling restart) after per-agent config updates.
+      graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
+        const discordHandler = discordGateway?.getMultiAgentHandler();
+        const slackHandler = slackGateway?.getMultiAgentHandler();
+        discordHandler?.getProcessManager().reloadPersona(agentId);
+        slackHandler?.getProcessManager().reloadPersona(agentId);
       };
     }
   }

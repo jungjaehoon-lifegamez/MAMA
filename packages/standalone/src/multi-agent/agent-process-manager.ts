@@ -17,12 +17,12 @@ import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import {
   PersistentProcessPool,
-  PersistentClaudeProcess,
   type PersistentProcessOptions,
 } from '../agent/persistent-cli-process.js';
-import type { AgentPersonaConfig, MultiAgentConfig } from './types.js';
+import type { AgentPersonaConfig, MultiAgentConfig, MultiAgentRuntimeOptions } from './types.js';
 import { ToolPermissionManager } from './tool-permission-manager.js';
 import { AgentProcessPool } from './agent-process-pool.js';
+import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
 
 /**
  * Resolve path with ~ expansion
@@ -43,13 +43,15 @@ function resolvePath(path: string): string {
  * - Automatic process lifecycle management
  *
  * Events:
- * - 'process-created': { agentId: string, process: PersistentClaudeProcess }
+ * - 'process-created': { agentId: string, process: AgentRuntimeProcess }
  */
 export class AgentProcessManager extends EventEmitter {
   private config: MultiAgentConfig;
   private processPool: PersistentProcessPool;
   private agentProcessPool: AgentProcessPool;
+  private codexProcessPool: Map<string, AgentRuntimeProcess> = new Map();
   private permissionManager: ToolPermissionManager;
+  private runtimeOptions: MultiAgentRuntimeOptions;
 
   /** Cached persona content: Map<agentId, systemPrompt> */
   private personaCache: Map<string, string> = new Map();
@@ -63,10 +65,15 @@ export class AgentProcessManager extends EventEmitter {
   /** Default options for all processes */
   private defaultOptions: Partial<PersistentProcessOptions>;
 
-  constructor(config: MultiAgentConfig, defaultOptions: Partial<PersistentProcessOptions> = {}) {
+  constructor(
+    config: MultiAgentConfig,
+    defaultOptions: Partial<PersistentProcessOptions> = {},
+    runtimeOptions: MultiAgentRuntimeOptions = {}
+  ) {
     super(); // EventEmitter
     this.config = config;
     this.defaultOptions = defaultOptions;
+    this.runtimeOptions = runtimeOptions;
     this.processPool = new PersistentProcessPool(defaultOptions);
     this.permissionManager = new ToolPermissionManager();
 
@@ -106,6 +113,10 @@ export class AgentProcessManager extends EventEmitter {
       agentPoolSizes,
       idleTimeoutMs: 300000, // 5 minutes
     });
+  }
+
+  private getAgentBackend(agentConfig: Omit<AgentPersonaConfig, 'id'>): 'claude' | 'codex' {
+    return agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
   }
 
   /**
@@ -157,70 +168,11 @@ export class AgentProcessManager extends EventEmitter {
     source: string,
     channelId: string,
     agentId: string
-  ): Promise<PersistentClaudeProcess> {
+  ): Promise<AgentRuntimeProcess> {
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     const agentConfig = this.config.agents[agentId];
     const poolSize = agentConfig?.pool_size ?? 1;
-
-    // Use AgentProcessPool for multi-process agents (pool_size > 1)
-    if (poolSize > 1) {
-      const systemPrompt = await this.loadPersona(agentId);
-      const tier = agentConfig?.tier ?? 1;
-      const options: Partial<PersistentProcessOptions> = {
-        ...this.defaultOptions,
-        systemPrompt,
-        requestTimeout: 900000,
-      };
-
-      if (agentConfig?.model) {
-        options.model = agentConfig.model;
-      }
-
-      if (tier >= 2) {
-        options.env = { MAMA_DISABLE_HOOKS: 'true' };
-      } else {
-        // Tier 1: Enable keyword detection, AGENTS.md injection, and rules injection
-        options.env = { MAMA_HOOK_FEATURES: 'rules,agents' };
-      }
-
-      // Structural tool enforcement via CLI flags
-      const permissions = this.permissionManager.resolvePermissions({
-        id: agentId,
-        ...agentConfig,
-      } as AgentPersonaConfig);
-      if (!permissions.allowed.includes('*')) {
-        options.allowedTools = permissions.allowed;
-      }
-      if (permissions.blocked.length > 0) {
-        options.disallowedTools = permissions.blocked;
-      }
-
-      const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
-        agentId,
-        channelKey,
-        async () => {
-          // Factory: create new PersistentClaudeProcess
-          const mergedOptions: PersistentProcessOptions = {
-            sessionId: randomUUID(),
-            ...this.defaultOptions,
-            ...options,
-          } as PersistentProcessOptions;
-
-          const newProcess = new PersistentClaudeProcess(mergedOptions);
-          await newProcess.start();
-          return newProcess;
-        }
-      );
-
-      // Emit process-created event for new processes (F7: queue idle listener setup)
-      if (isNew) {
-        this.emit('process-created', { agentId, process });
-      }
-
-      return process;
-    }
-
-    // pool_size=1: use existing PersistentProcessPool (backward compatible)
+    const agentBackend = this.getAgentBackend(agentConfig);
     const systemPrompt = await this.loadPersona(agentId);
     const tier = agentConfig?.tier ?? 1;
     const options: Partial<PersistentProcessOptions> = {
@@ -236,6 +188,7 @@ export class AgentProcessManager extends EventEmitter {
     if (tier >= 2) {
       options.env = { MAMA_DISABLE_HOOKS: 'true' };
     } else {
+      // Tier 1: Enable keyword detection, AGENTS.md injection, and rules injection
       options.env = { MAMA_HOOK_FEATURES: 'rules,agents' };
     }
 
@@ -251,14 +204,80 @@ export class AgentProcessManager extends EventEmitter {
       options.disallowedTools = permissions.blocked;
     }
 
-    const process = await this.processPool.getProcess(channelKey, options);
+    if (agentBackend === 'codex') {
+      // Use AgentProcessPool for multi-process agents (pool_size > 1)
+      if (poolSize > 1) {
+        const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
+          agentId,
+          channelKey,
+          async () => this.createCodexProcess(options)
+        );
+        if (isNew) {
+          this.emit('process-created', { agentId, process });
+        }
+        return process;
+      }
 
-    // Emit process-created event if process was just created (F7)
-    // Note: PersistentProcessPool doesn't expose isNew, so we check if process has no listeners yet
+      const existing = this.codexProcessPool.get(channelKey);
+      if (existing) {
+        return existing;
+      }
+
+      const process = await this.createCodexProcess(options);
+      this.codexProcessPool.set(channelKey, process);
+      this.emit('process-created', { agentId, process });
+      return process;
+    }
+
+    // Claude backend
+    if (poolSize > 1) {
+      const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
+        agentId,
+        channelKey,
+        async () => {
+          const mergedOptions: PersistentProcessOptions = {
+            sessionId: randomUUID(),
+            ...this.defaultOptions,
+            ...options,
+          } as PersistentProcessOptions;
+
+          const { PersistentClaudeProcess } = await import('../agent/persistent-cli-process.js');
+          const newProcess = new PersistentClaudeProcess(mergedOptions);
+          await newProcess.start();
+          return newProcess;
+        }
+      );
+
+      if (isNew) {
+        this.emit('process-created', { agentId, process });
+      }
+
+      return process;
+    }
+
+    const process = await this.processPool.getProcess(channelKey, options);
     if (process.listenerCount('idle') === 0) {
       this.emit('process-created', { agentId, process });
     }
+    return process;
+  }
 
+  private async createCodexProcess(
+    options: Partial<PersistentProcessOptions>
+  ): Promise<AgentRuntimeProcess> {
+    const process = new CodexRuntimeProcess({
+      model: options.model || this.runtimeOptions.model,
+      systemPrompt: options.systemPrompt,
+      codexHome: this.runtimeOptions.codexHome,
+      cwd: this.runtimeOptions.codexCwd,
+      sandbox: this.runtimeOptions.codexSandbox,
+      profile: this.runtimeOptions.codexProfile,
+      ephemeral: this.runtimeOptions.codexEphemeral ?? false,
+      addDirs: this.runtimeOptions.codexAddDirs,
+      configOverrides: this.runtimeOptions.codexConfigOverrides,
+      skipGitRepoCheck: this.runtimeOptions.codexSkipGitRepoCheck ?? true,
+      requestTimeout: options.requestTimeout,
+    });
     return process;
   }
 
@@ -454,6 +473,11 @@ Respond to messages in a helpful and professional manner.
   stopProcess(source: string, channelId: string, agentId: string): void {
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     this.processPool.stopProcess(channelKey);
+    const codexProcess = this.codexProcessPool.get(channelKey);
+    if (codexProcess) {
+      codexProcess.stop();
+      this.codexProcessPool.delete(channelKey);
+    }
   }
 
   /**
@@ -466,6 +490,13 @@ Respond to messages in a helpful and professional manner.
     for (const channelKey of activeChannels) {
       if (channelKey.startsWith(prefix)) {
         this.processPool.stopProcess(channelKey);
+      }
+    }
+    for (const channelKey of this.codexProcessPool.keys()) {
+      if (channelKey.startsWith(prefix)) {
+        const process = this.codexProcessPool.get(channelKey);
+        process?.stop();
+        this.codexProcessPool.delete(channelKey);
       }
     }
   }
@@ -482,12 +513,19 @@ Respond to messages in a helpful and professional manner.
         this.processPool.stopProcess(channelKey);
       }
     }
+    for (const channelKey of this.codexProcessPool.keys()) {
+      if (channelKey.endsWith(suffix)) {
+        const process = this.codexProcessPool.get(channelKey);
+        process?.stop();
+        this.codexProcessPool.delete(channelKey);
+      }
+    }
   }
 
   /**
    * Release a process back to the pool (for multi-process agents)
    */
-  releaseProcess(agentId: string, process: PersistentClaudeProcess): void {
+  releaseProcess(agentId: string, process: AgentRuntimeProcess): void {
     const agentConfig = this.config.agents[agentId];
     const poolSize = agentConfig?.pool_size ?? 1;
 
@@ -503,6 +541,10 @@ Respond to messages in a helpful and professional manner.
   stopAll(): void {
     this.processPool.stopAll();
     this.agentProcessPool.stopAll();
+    for (const process of this.codexProcessPool.values()) {
+      process.stop();
+    }
+    this.codexProcessPool.clear();
     this.personaCache.clear();
   }
 
@@ -517,14 +559,14 @@ Respond to messages in a helpful and professional manner.
    * Get number of active processes
    */
   getActiveCount(): number {
-    return this.processPool.getActiveCount();
+    return this.processPool.getActiveCount() + this.codexProcessPool.size;
   }
 
   /**
    * Get all active channel keys
    */
   getActiveChannels(): string[] {
-    return this.processPool.getActiveChannels();
+    return [...this.processPool.getActiveChannels(), ...this.codexProcessPool.keys()];
   }
 
   /**
@@ -550,6 +592,18 @@ Respond to messages in a helpful and professional manner.
       }
     }
 
+    for (const channelKey of this.codexProcessPool.keys()) {
+      try {
+        const { agentId } = this.parseChannelKey(channelKey);
+        const existing = states.get(agentId);
+        if (!existing || (priority.idle ?? 0) > (priority[existing] ?? 0)) {
+          states.set(agentId, 'idle');
+        }
+      } catch {
+        // Skip malformed keys
+      }
+    }
+
     return states;
   }
 
@@ -568,6 +622,10 @@ Respond to messages in a helpful and professional manner.
   reloadAllPersonas(): void {
     this.personaCache.clear();
     this.processPool.stopAll();
+    for (const process of this.codexProcessPool.values()) {
+      process.stop();
+    }
+    this.codexProcessPool.clear();
   }
 
   /**
@@ -582,7 +640,10 @@ Respond to messages in a helpful and professional manner.
    */
   hasActiveProcess(source: string, channelId: string, agentId: string): boolean {
     const channelKey = this.buildChannelKey(source, channelId, agentId);
-    return this.processPool.getActiveChannels().includes(channelKey);
+    return (
+      this.processPool.getActiveChannels().includes(channelKey) ||
+      this.codexProcessPool.has(channelKey)
+    );
   }
 
   /**
@@ -605,6 +666,18 @@ Respond to messages in a helpful and professional manner.
     }
 
     // 2. Check agentProcessPool (pool_size>1 agents) — only include agents serving this channel
+    for (const channelKey of this.codexProcessPool.keys()) {
+      if (channelKey.startsWith(prefix)) {
+        try {
+          const { agentId } = this.parseChannelKey(channelKey);
+          agentIdSet.add(agentId);
+        } catch {
+          // Skip malformed keys
+        }
+      }
+    }
+
+    // 3. Check agentProcessPool (pool_size>1 agents) — only include agents serving this channel
     for (const [agentId] of this.agentProcessPool.getAllPoolStatuses()) {
       if (this.agentProcessPool.hasBusyProcessForChannel(agentId, prefix)) {
         agentIdSet.add(agentId);

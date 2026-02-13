@@ -72,10 +72,16 @@ export interface AgentPersonaConfig {
   cooldown_ms?: number;
 
   /**
-   * Claude model to use for this agent
+   * Model to use for this agent
    * If not specified, uses the global agent.model setting
    */
   model?: string;
+
+  /**
+   * Runtime backend for this agent.
+   * If not specified, uses global runtime backend.
+   */
+  backend?: 'claude' | 'codex';
 
   /**
    * Maximum turns for this agent
@@ -155,6 +161,17 @@ export interface LoopPreventionConfig {
    * @default 60000 (1 minute)
    */
   chain_window_ms: number;
+}
+
+/**
+ * PR review poller configuration
+ */
+export interface PRReviewPollerConfig {
+  /**
+   * Enable autonomous PR review polling and follow-up wake-up workflows
+   * @default false
+   */
+  enabled: boolean;
 }
 
 /**
@@ -242,6 +259,12 @@ export interface MultiAgentConfig {
   mention_delegation?: boolean;
 
   /**
+   * PR review polling configuration
+   * @default false
+   */
+  pr_review_poller?: PRReviewPollerConfig;
+
+  /**
    * Maximum depth of @mention delegation chains
    * Prevents infinite agent-to-agent mention loops
    * @default 3
@@ -253,6 +276,23 @@ export interface MultiAgentConfig {
    * If not set, all delegation is allowed (backward compatible)
    */
   delegation_rules?: DelegationRule[];
+}
+
+/**
+ * Runtime-only options for multi-agent process execution backend.
+ * Not persisted in config.yaml (derived from current agent runtime).
+ */
+export interface MultiAgentRuntimeOptions {
+  backend?: 'claude' | 'codex';
+  model?: string;
+  codexHome?: string;
+  codexCwd?: string;
+  codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  codexProfile?: string;
+  codexEphemeral?: boolean;
+  codexAddDirs?: string[];
+  codexConfigOverrides?: string[];
+  codexSkipGitRepoCheck?: boolean;
 }
 
 /**
@@ -395,4 +435,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   enabled: false,
   agents: {},
   loop_prevention: DEFAULT_LOOP_PREVENTION,
+  pr_review_poller: {
+    enabled: false,
+  },
 };

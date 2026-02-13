@@ -10,14 +10,8 @@ export interface DelegationValidation {
   missingSections: string[];
 }
 
-const REQUIRED_SECTIONS = [
-  'TASK:',
-  'EXPECTED OUTCOME:',
-  'MUST DO:',
-  'MUST NOT DO:',
-  'REQUIRED TOOLS:',
-  'CONTEXT:',
-];
+// Only TASK: is required. Other sections are optional.
+const REQUIRED_SECTIONS = ['TASK:'];
 
 /**
  * Check if a message is a delegation attempt (contains at least one section header).
