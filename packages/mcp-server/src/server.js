@@ -160,6 +160,9 @@ function validateEnvironment() {
  */
 class MAMAServer {
   constructor() {
+    this.legacyHttpEmbeddingMode = process.env.MAMA_MCP_START_HTTP_EMBEDDING === 'true';
+    this.legacyNoticeEmittedInToolResponse = false;
+
     this.server = new Server(
       {
         name: 'mama-server',
@@ -175,6 +178,13 @@ class MAMAServer {
     this.setupHandlers();
   }
 
+  getLegacyMigrationNotice() {
+    return (
+      '⚠️ Legacy MCP HTTP embedding mode is enabled via MAMA_MCP_START_HTTP_EMBEDDING=true. ' +
+      'This mode is deprecated. Recommended runtime: `mama start` (API/UI 3847, embedding 3849).'
+    );
+  }
+
   setupHandlers() {
     // List available tools - Simplified to 4 core tools (2025-11-25)
     // Design principle: LLM infers relationships from search results
@@ -184,7 +194,7 @@ class MAMAServer {
         // 1. SAVE - Unified save for decisions and checkpoints
         {
           name: 'save',
-          description: `🤝 Save a decision or checkpoint to your reasoning graph.
+          description: `${this.legacyHttpEmbeddingMode ? `${this.getLegacyMigrationNotice()}\n\n` : ''}🤝 Save a decision or checkpoint to your reasoning graph.
 
 ⚡ TRIGGERS - Call this when:
 • User says: "기억해줘", "remember", "decided", "결정했어"
@@ -423,11 +433,24 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
             throw new Error(`Unknown tool: ${name}`);
         }
 
+        if (this.legacyHttpEmbeddingMode && !this.legacyNoticeEmittedInToolResponse) {
+          this.legacyNoticeEmittedInToolResponse = true;
+        }
+
         return {
           content: [
             {
               type: 'text',
-              text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+              text:
+                typeof result === 'string'
+                  ? result
+                  : JSON.stringify(
+                      this.legacyHttpEmbeddingMode && !this.legacyNoticeEmittedInToolResponse
+                        ? { ...result, migration_notice: this.getLegacyMigrationNotice() }
+                        : result,
+                      null,
+                      2
+                    ),
             },
           ],
         };
