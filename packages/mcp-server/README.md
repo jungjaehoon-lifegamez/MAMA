@@ -169,17 +169,25 @@ When enabled, the HTTP embedding API keeps the model loaded in memory:
 
 ### Usage Examples
 
+Enable legacy MCP-launched HTTP mode when starting MCP server:
+
+```bash
+MAMA_MCP_START_HTTP_EMBEDDING=true npx @jungjaehoon/mama-server
+```
+
+Then query the HTTP endpoints:
+
 ```bash
 # Check server health
-MAMA_MCP_START_HTTP_EMBEDDING=true curl http://127.0.0.1:3849/health
+curl http://127.0.0.1:3849/health
 
 # Generate embedding
-MAMA_MCP_START_HTTP_EMBEDDING=true curl -X POST http://127.0.0.1:3849/embed \
+curl -X POST http://127.0.0.1:3849/embed \
   -H "Content-Type: application/json" \
   -d '{"text": "How does authentication work?"}'
 
 # Batch embeddings
-MAMA_MCP_START_HTTP_EMBEDDING=true curl -X POST http://127.0.0.1:3849/embed/batch \
+curl -X POST http://127.0.0.1:3849/embed/batch \
   -H "Content-Type: application/json" \
   -d '{"texts": ["query 1", "query 2", "query 3"]}'
 ```
