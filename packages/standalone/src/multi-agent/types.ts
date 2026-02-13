@@ -164,6 +164,17 @@ export interface LoopPreventionConfig {
 }
 
 /**
+ * PR review poller configuration
+ */
+export interface PRReviewPollerConfig {
+  /**
+   * Enable autonomous PR review polling and follow-up wake-up workflows
+   * @default false
+   */
+  enabled: boolean;
+}
+
+/**
  * Multi-agent system configuration
  */
 export interface MultiAgentConfig {
@@ -246,6 +257,12 @@ export interface MultiAgentConfig {
    * @default false
    */
   mention_delegation?: boolean;
+
+  /**
+   * PR review polling configuration
+   * @default false
+   */
+  pr_review_poller?: PRReviewPollerConfig;
 
   /**
    * Maximum depth of @mention delegation chains
@@ -418,4 +435,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   enabled: false,
   agents: {},
   loop_prevention: DEFAULT_LOOP_PREVENTION,
+  pr_review_poller: {
+    enabled: false,
+  },
 };

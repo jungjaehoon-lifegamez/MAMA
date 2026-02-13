@@ -243,15 +243,19 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       this.logger.log(
         `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
       );
+    }
 
-      // PR Review Poller: wake up LEAD with compact summaries from new review items.
-      const orchestratorId = this.config.default_agent || 'sisyphus';
-      const orchestratorUserId = botUserIdMap.get(orchestratorId);
-      if (orchestratorUserId) {
-        this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
+    if (this.isPrReviewPollingEnabled()) {
+      if (this.config.mention_delegation) {
+        const botUserIdMap = this.multiBotManager.getBotUserIdMap();
+        const orchestratorId = this.config.default_agent || 'sisyphus';
+        const orchestratorUserId = botUserIdMap.get(orchestratorId);
+        if (orchestratorUserId) {
+          this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
+        }
       }
 
-      // Keep review summaries compact and actionable at wake-up.
+      // PR Review Poller: wake up LEAD with compact summaries from new review items.
       this.prReviewPoller.setMessageSender(async () => {});
       this.prReviewPoller.setOnBatchItem(
         async (channelId: string, summary: string, item: PRPollerBatchItem) => {
@@ -388,7 +392,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     }, 'slack');
 
     // Only set PR poller sender if not already configured (e.g., by reviewer bot)
-    if (!this.prReviewPoller.hasMessageSender?.()) {
+    if (this.isPrReviewPollingEnabled() && !this.prReviewPoller.hasMessageSender?.()) {
       this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
         await client.chat.postMessage({ channel: channelId, text });
       });
@@ -423,6 +427,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     this.config = config;
     this.orchestrator.updateConfig(config);
     this.processManager.updateConfig(config);
+    if (!this.isPrReviewPollingEnabled()) {
+      this.prReviewPoller.stopAll();
+      this.prPollerSummaries.clear();
+    }
   }
 
   /**
@@ -433,6 +441,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
    * Stop: message contains "pr stop", "stop polling"
    */
   async handlePRCommand(channelId: string, content: string): Promise<boolean> {
+    if (!this.isPrReviewPollingEnabled()) {
+      return false;
+    }
+
     if (!this.mainWebClient) return false;
 
     const contentLower = content.toLowerCase();
@@ -1085,7 +1097,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     if (!this.mainWebClient || !this.heartbeatChannelId) return;
 
     const agentStates = this.processManager.getAgentStates();
-    const prSessions = this.prReviewPoller.getActiveSessions();
+    const prSessions = this.isPrReviewPollingEnabled()
+      ? this.prReviewPoller.getActiveSessions()
+      : [];
 
     // Check if any agent is busy or PR polling is active
     let hasBusy = false;
@@ -1130,6 +1144,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     } catch (err) {
       this.logger.error('[Heartbeat] Failed to post status:', err);
     }
+  }
+
+  private isPrReviewPollingEnabled(): boolean {
+    return this.config.pr_review_poller?.enabled === true;
   }
 
   /**

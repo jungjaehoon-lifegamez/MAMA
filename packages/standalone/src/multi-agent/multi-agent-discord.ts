@@ -361,9 +361,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       this.processManager.setMentionDelegation(true);
       logger.info(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
 
-      // PR Review Poller: target LEAD directly.
-      // LEAD analyzes → delegates to DevBot → DevBot fixes → Reviewer reviews after.
-      {
+      if (this.isPrReviewPollingEnabled()) {
+        // PR Review Poller: target LEAD directly.
+        // LEAD analyzes → delegates to DevBot → DevBot fixes → Reviewer reviews after.
         const orchestratorId = defaultAgentId || 'sisyphus';
         const orchestratorUserId = botUserIdMap.get(orchestratorId);
         if (orchestratorUserId) {
@@ -409,111 +409,113 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
     }, 'discord');
 
-    // Capture compact batch summaries so LEAD receives actionable context.
-    this.prReviewPoller.setMessageSender(async () => {});
-    this.prReviewPoller.setOnBatchItem(
-      async (channelId: string, summary: string, item: PRPollerBatchItem) => {
-        const bucket = this.prPollerSummaries.get(channelId) ?? [];
-        const compact = this.compactPrReviewBatchSummary(summary);
-        if (!compact || bucket.some((candidate) => candidate.id === item.id)) {
-          return;
-        }
-        const merged = {
-          ...item,
-          summary: compact,
-        };
-        // Keep bounded for prompt size and avoid repeats within one poll batch.
-        this.prPollerSummaries.set(channelId, [...bucket, merged].slice(-12));
-      }
-    );
-
-    // After poll cycle: post count to channel and wake up PR workflow agents.
-    this.prReviewPoller.setOnBatchComplete(
-      async (channelId: string, digest?: PRPollerBatchDigest) => {
-        const items =
-          (digest?.items && digest.items.length > 0
-            ? digest.items
-            : this.prPollerSummaries.get(channelId)) ?? [];
-        if (items.length === 0) {
-          return;
-        }
-        const actionItems = digest?.newItems ?? items.filter((item) => !item.isReminder);
-        const reminderItems = digest?.reminderItems ?? items.filter((item) => item.isReminder);
-        const allActionable = actionItems.length > 0;
-        const count = items.length;
-        if (!allActionable) {
-          this.prPollerSummaries.delete(channelId);
-          return;
-        }
-        const compactItems = items.map(
-          (item: PRPollerBatchItem, idx: number) =>
-            `- ${idx + 1}. [${item.severity}] ${item.summary}`
-        );
-        const summaryLines = compactItems.join('\n');
-
-        const sessions = this.prReviewPoller.getSessionDetails();
-        const session = sessions.find((s) => s.channelId === channelId);
-        if (!session) return;
-
-        const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
-        const promptSummary = `\n${summaryLines}`;
-        const reminderSummary =
-          reminderItems.length > 0 ? `\n🔔 Reminders only: ${reminderItems.length} item(s).` : '';
-
-        this.prPollerSummaries.delete(channelId);
-
-        // Post summary to channel (visible to humans)
-        const channel = await client.channels.fetch(channelId);
-        if (channel && 'send' in (channel as Record<string, unknown>)) {
-          const content = `📊 PR ${prLabel} — ${count} new review item(s)\n\n${promptSummary}${reminderSummary}`;
-          const chunks = splitForDiscord(content);
-          for (const chunk of chunks) {
-            await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
-              content: chunk,
-            });
+    if (this.isPrReviewPollingEnabled()) {
+      // Capture compact batch summaries so LEAD receives actionable context.
+      this.prReviewPoller.setMessageSender(async () => {});
+      this.prReviewPoller.setOnBatchItem(
+        async (channelId: string, summary: string, item: PRPollerBatchItem) => {
+          const bucket = this.prPollerSummaries.get(channelId) ?? [];
+          const compact = this.compactPrReviewBatchSummary(summary);
+          if (!compact || bucket.some((candidate) => candidate.id === item.id)) {
+            return;
           }
+          const merged = {
+            ...item,
+            summary: compact,
+          };
+          // Keep bounded for prompt size and avoid repeats within one poll batch.
+          this.prPollerSummaries.set(channelId, [...bucket, merged].slice(-12));
         }
+      );
 
-        // Wake up LEAD with compact PR summary + workspace path.
-        this.orchestrator.resetChain(channelId);
-        const defaultAgentId = this.config.default_agent || 'sisyphus';
-        const workspace = `\`${session.workspaceDir}\``;
-        const workflowPrompt = `📊 PR Review follow-up (${count} new item(s))`;
-        const taskContext = `Target: ${prLabel}\nWorkspace: ${workspace}\n`;
-        const itemsContext = `Items:\n${summaryLines}`;
-        const basePrompt = `${workflowPrompt}\n${taskContext}${itemsContext}${reminderSummary}`;
+      // After poll cycle: post count to channel and wake up PR workflow agents.
+      this.prReviewPoller.setOnBatchComplete(
+        async (channelId: string, digest?: PRPollerBatchDigest) => {
+          const items =
+            (digest?.items && digest.items.length > 0
+              ? digest.items
+              : this.prPollerSummaries.get(channelId)) ?? [];
+          if (items.length === 0) {
+            return;
+          }
+          const actionItems = digest?.newItems ?? items.filter((item) => !item.isReminder);
+          const reminderItems = digest?.reminderItems ?? items.filter((item) => item.isReminder);
+          const allActionable = actionItems.length > 0;
+          const count = items.length;
+          if (!allActionable) {
+            this.prPollerSummaries.delete(channelId);
+            return;
+          }
+          const compactItems = items.map(
+            (item: PRPollerBatchItem, idx: number) =>
+              `- ${idx + 1}. [${item.severity}] ${item.summary}`
+          );
+          const summaryLines = compactItems.join('\n');
 
-        this.messageQueue.enqueue(defaultAgentId, {
-          prompt: `${basePrompt}\n\nClassify severity, implement fixable items, and coordinate with Dev/Reviewer.`,
-          channelId,
-          source: 'discord',
-          enqueuedAt: Date.now(),
-          context: { channelId, userId: 'pr-poller' },
-        });
-        logger.info(`[MultiAgent] PR Poller -> LEAD wake-up (${count} items)`);
-        this.tryDrainNow(defaultAgentId, 'discord', channelId).catch(() => {});
+          const sessions = this.prReviewPoller.getSessionDetails();
+          const session = sessions.find((s) => s.channelId === channelId);
+          if (!session) return;
 
-        // Wake implementation/review agents in parallel so review loop can proceed autonomously.
-        const helperAgents = this.resolvePrReviewAssistants(defaultAgentId);
-        for (const helperAgentId of helperAgents) {
-          const helperPrompt =
-            helperAgentId === 'developer'
-              ? `${basePrompt}\n\nImplement available fixes in the workspace and request Reviewer verification when changes are made.`
-              : `${basePrompt}\n\nInspect the comments for correctness issues and provide reviewer guidance.`;
+          const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
+          const promptSummary = `\n${summaryLines}`;
+          const reminderSummary =
+            reminderItems.length > 0 ? `\n🔔 Reminders only: ${reminderItems.length} item(s).` : '';
 
-          this.messageQueue.enqueue(helperAgentId, {
-            prompt: helperPrompt,
+          this.prPollerSummaries.delete(channelId);
+
+          // Post summary to channel (visible to humans)
+          const channel = await client.channels.fetch(channelId);
+          if (channel && 'send' in (channel as Record<string, unknown>)) {
+            const content = `📊 PR ${prLabel} — ${count} new review item(s)\n\n${promptSummary}${reminderSummary}`;
+            const chunks = splitForDiscord(content);
+            for (const chunk of chunks) {
+              await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
+                content: chunk,
+              });
+            }
+          }
+
+          // Wake up LEAD with compact PR summary + workspace path.
+          this.orchestrator.resetChain(channelId);
+          const defaultAgentId = this.config.default_agent || 'sisyphus';
+          const workspace = `\`${session.workspaceDir}\``;
+          const workflowPrompt = `📊 PR Review follow-up (${count} new item(s))`;
+          const taskContext = `Target: ${prLabel}\nWorkspace: ${workspace}\n`;
+          const itemsContext = `Items:\n${summaryLines}`;
+          const basePrompt = `${workflowPrompt}\n${taskContext}${itemsContext}${reminderSummary}`;
+
+          this.messageQueue.enqueue(defaultAgentId, {
+            prompt: `${basePrompt}\n\nClassify severity, implement fixable items, and coordinate with Dev/Reviewer.`,
             channelId,
             source: 'discord',
             enqueuedAt: Date.now(),
             context: { channelId, userId: 'pr-poller' },
           });
-          logger.info(`[MultiAgent] PR Poller -> ${helperAgentId} wake-up (${count} items)`);
-          this.tryDrainNow(helperAgentId, 'discord', channelId).catch(() => {});
+          logger.info(`[MultiAgent] PR Poller -> LEAD wake-up (${count} items)`);
+          this.tryDrainNow(defaultAgentId, 'discord', channelId).catch(() => {});
+
+          // Wake implementation/review agents in parallel so review loop can proceed autonomously.
+          const helperAgents = this.resolvePrReviewAssistants(defaultAgentId);
+          for (const helperAgentId of helperAgents) {
+            const helperPrompt =
+              helperAgentId === 'developer'
+                ? `${basePrompt}\n\nImplement available fixes in the workspace and request Reviewer verification when changes are made.`
+                : `${basePrompt}\n\nInspect the comments for correctness issues and provide reviewer guidance.`;
+
+            this.messageQueue.enqueue(helperAgentId, {
+              prompt: helperPrompt,
+              channelId,
+              source: 'discord',
+              enqueuedAt: Date.now(),
+              context: { channelId, userId: 'pr-poller' },
+            });
+            logger.info(`[MultiAgent] PR Poller -> ${helperAgentId} wake-up (${count} items)`);
+            this.tryDrainNow(helperAgentId, 'discord', channelId).catch(() => {});
+          }
         }
-      }
-    );
-    logger.info('[MultiAgent] PR Review Poller message sender configured for Discord');
+      );
+      logger.info('[MultiAgent] PR Review Poller message sender configured for Discord');
+    }
   }
 
   /**
@@ -541,6 +543,10 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     this.orchestrator.updateConfig(config);
     this.processManager.updateConfig(config);
     this.multiBotManager.updateConfig(config);
+    if (!this.isPrReviewPollingEnabled()) {
+      this.prReviewPoller.stopAll();
+      this.prPollerSummaries.clear();
+    }
   }
 
   /**
@@ -568,8 +574,10 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         message.id
       );
 
-      // Auto-detect PR URLs in user messages and start polling
-      this.detectAndPollPRUrls(cleanContent, context.channelId, message);
+      if (this.isPrReviewPollingEnabled()) {
+        // Auto-detect PR URLs in user messages and start polling
+        this.detectAndPollPRUrls(cleanContent, context.channelId, message);
+      }
     }
 
     // Select responding agents
@@ -1770,6 +1778,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
    * Sends a notification to the channel when polling starts.
    */
   private detectAndPollPRUrls(text: string, channelId: string, message: Message): void {
+    if (!this.isPrReviewPollingEnabled()) return;
     const prUrls = PRReviewPoller.extractPRUrls(text);
     if (prUrls.length === 0) return;
 
@@ -1869,9 +1878,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   }
 
   private isPrReviewActive(channelId: string): boolean {
+    if (!this.isPrReviewPollingEnabled()) {
+      return false;
+    }
     return this.prReviewPoller
       .getSessionDetails()
       .some((session) => session.channelId === channelId);
+  }
+
+  private isPrReviewPollingEnabled(): boolean {
+    return this.config.pr_review_poller?.enabled === true;
   }
 
   /**
