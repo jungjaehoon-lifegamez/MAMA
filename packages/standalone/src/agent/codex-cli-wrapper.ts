@@ -13,7 +13,7 @@
 
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { readFileSync, existsSync, unlinkSync, mkdirSync, copyFileSync } from 'fs';
+import { readFileSync, existsSync, unlinkSync, mkdirSync, copyFileSync, statSync } from 'fs';
 import os from 'os';
 import { dirname, join } from 'path';
 
@@ -202,7 +202,7 @@ export class CodexCLIWrapper {
     if (!options?.resumeSession && cwd) {
       args.push('--cd', cwd);
     }
-    if (ephemeral) {
+    if (ephemeral && !options?.resumeSession) {
       args.push('--ephemeral');
     }
     if (!options?.resumeSession) {
@@ -288,7 +288,20 @@ export class CodexCLIWrapper {
       for (const relPath of filesToMigrate) {
         const src = join(legacyHome, relPath);
         const dest = join(codexHome, relPath);
-        if (!existsSync(dest) && existsSync(src)) {
+        if (!existsSync(src)) {
+          continue;
+        }
+
+        let shouldCopy = !existsSync(dest);
+        if (!shouldCopy) {
+          try {
+            shouldCopy = statSync(src).mtimeMs > statSync(dest).mtimeMs;
+          } catch {
+            shouldCopy = true;
+          }
+        }
+
+        if (shouldCopy) {
           mkdirSync(dirname(dest), { recursive: true });
           copyFileSync(src, dest);
         }
