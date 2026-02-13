@@ -86,7 +86,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - `better-sqlite3` - SQLite database
 - `sqlite-vec` - Vector similarity extension
 
-**Distribution:** npm package (future)
+**Distribution:** npm (`@jungjaehoon/mama-core`)
 
 **Used by:** All other packages
 
