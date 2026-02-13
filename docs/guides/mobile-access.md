@@ -43,8 +43,8 @@ When you expose MAMA externally, attackers can access:
 # Generate a strong random token
 export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 
-# Then start the server
-node start-http-server.js
+# Then start MAMA OS
+mama start
 ```
 
 **Without this token, anyone with your tunnel URL can access your computer.**
@@ -66,23 +66,25 @@ Access both features at `http://localhost:3847/viewer`
 
 ## Starting the HTTP Server
 
-### Option 1: Standalone Server (Recommended)
+### Option 1: MAMA OS (Recommended)
 
 ```bash
-cd packages/mcp-server
-node start-http-server.js
+mama start
 ```
 
-The server will start on port 3847 by default:
+MAMA OS starts with:
 
-- Graph Viewer: `http://localhost:3847/viewer`
-- WebSocket endpoint: `ws://localhost:3847/ws`
+- API/UI: `http://localhost:3847/viewer`
+- WebSocket: `ws://localhost:3847/ws`
+- Embedding server: `http://127.0.0.1:3849`
 
-### Option 2: Custom Port
+### Option 2: Legacy MCP HTTP Mode (Not Recommended)
 
 ```bash
-MAMA_HTTP_PORT=8080 node start-http-server.js
+MAMA_MCP_START_HTTP_EMBEDDING=true npx @jungjaehoon/mama-server
 ```
+
+This mode is for compatibility only. Use MAMA OS for Graph Viewer and Mobile Chat.
 
 ### Verify Server is Running
 
@@ -90,8 +92,8 @@ MAMA_HTTP_PORT=8080 node start-http-server.js
 # Check if server is listening
 curl http://localhost:3847/viewer
 
-# Check WebSocket endpoint
-curl http://localhost:3847/graph
+# Check API health
+curl http://localhost:3847/health
 ```
 
 ---
@@ -210,8 +212,8 @@ Go to **Cloudflare Dashboard** → **Zero Trust** → **Access** → **Applicati
 **Step 6: Start Everything**
 
 ```bash
-# Start MAMA server
-npx @jungjaehoon/mama-server &
+# Start MAMA OS
+mama start &
 
 # Start tunnel
 cloudflared tunnel run mama-mobile
@@ -253,8 +255,8 @@ https://mama.yourdomain.com/viewer
 export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 echo "Token: $MAMA_AUTH_TOKEN"  # Save this!
 
-# STEP 2: Start MAMA
-npx @jungjaehoon/mama-server &
+# STEP 2: Start MAMA OS
+mama start &
 
 # STEP 3: Start Quick Tunnel
 cloudflared tunnel --url http://localhost:3847 --no-autoupdate
@@ -427,8 +429,9 @@ lsof -i :3847
 # Kill the process
 kill -9 <PID>
 
-# Or use different port
-MAMA_HTTP_PORT=8080 node start-http-server.js
+# Or stop existing MAMA process first
+mama stop
+mama start
 ```
 
 ### WebSocket connection fails
@@ -455,7 +458,7 @@ MAMA_HTTP_PORT=8080 node start-http-server.js
 
 4. **Check firewall:**
    ```bash
-   # Linux: Allow port 3847
+   # Linux: Allow API/UI port 3847
    sudo ufw allow 3847/tcp
    ```
 
@@ -556,9 +559,6 @@ The following critical bugs were fixed:
 ### Environment Variables
 
 ```bash
-# Change HTTP port (default: 3847)
-export MAMA_HTTP_PORT=8080
-
 # Change database path (default: ~/.claude/mama-memory.db)
 export MAMA_DB_PATH=/custom/path/mama.db
 
@@ -574,16 +574,14 @@ export MAMA_AUTH_TOKEN="your-secret-token"
 
    ```ini
    [Unit]
-   Description=MAMA HTTP Server
+   Description=MAMA OS
    After=network.target
 
    [Service]
    Type=simple
    User=your-username
-   WorkingDirectory=/path/to/MAMA/packages/mcp-server
-   ExecStart=/usr/bin/node start-http-server.js
+   ExecStart=/usr/bin/env mama start --foreground
    Restart=always
-   Environment="MAMA_HTTP_PORT=3847"
 
    [Install]
    WantedBy=multi-user.target
@@ -593,12 +591,15 @@ export MAMA_AUTH_TOKEN="your-secret-token"
 
    ```bash
    sudo systemctl daemon-reload
-   sudo systemctl enable mama-http
-   sudo systemctl start mama-http
-
-   # Check status
-   sudo systemctl status mama-http
+   sudo systemctl enable mama-os
+   sudo systemctl start mama-os
    ```
+
+# Check status
+
+sudo systemctl status mama-os
+
+````
 
 **Using PM2 (Cross-platform):**
 
@@ -607,16 +608,15 @@ export MAMA_AUTH_TOKEN="your-secret-token"
 npm install -g pm2
 
 # Start server
-cd packages/mcp-server
-pm2 start start-http-server.js --name mama-http
+pm2 start "mama start --foreground" --name mama-os
 
 # Auto-start on boot
 pm2 startup
 pm2 save
 
 # View logs
-pm2 logs mama-http
-```
+pm2 logs mama-os
+````
 
 ---
 
