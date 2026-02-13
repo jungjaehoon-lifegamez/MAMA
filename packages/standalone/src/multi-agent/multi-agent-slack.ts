@@ -370,8 +370,12 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
     for (const id of candidateIds) {
       const cfg = this.config.agents[id];
-      if (!cfg || id === defaultAgentId) continue;
-      if (cfg.enabled === false) continue;
+      if (!cfg || id === defaultAgentId) {
+        continue;
+      }
+      if (cfg.enabled === false) {
+        continue;
+      }
       helperAgents.push(id);
     }
 

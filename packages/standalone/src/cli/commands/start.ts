@@ -86,8 +86,12 @@ function normalizeDiscordGuilds(
       for (const [channelId, channelConfig] of Object.entries(
         rawChannels as Record<string, unknown>
       )) {
-        if (!channelId) continue;
-        if (!channelConfig || typeof channelConfig !== 'object') continue;
+        if (!channelId) {
+          continue;
+        }
+        if (!channelConfig || typeof channelConfig !== 'object') {
+          continue;
+        }
         const rawChannelRequireMention = (channelConfig as Record<string, unknown>).requireMention;
         if (typeof rawChannelRequireMention === 'boolean') {
           normalizedChannels[String(channelId)] = {

@@ -259,14 +259,17 @@ export class MultiBotManager {
       }
 
       const chunks = splitForDiscord(content);
-      let message: Message | null = null;
+      let firstMessage: Message | null = null;
       for (const chunk of chunks) {
-        message = await (channel as TextChannel).send(chunk);
+        const sent = await (channel as TextChannel).send(chunk);
+        if (!firstMessage) {
+          firstMessage = sent;
+        }
       }
       console.log(
         `[MultiBotManager] Agent ${agentId} sent message to ${channelId} (${chunks.length} chunks)`
       );
-      return message;
+      return firstMessage;
     } catch (error) {
       console.error(`[MultiBotManager] Failed to send as ${agentId}:`, error);
       return null;
@@ -337,25 +340,25 @@ export class MultiBotManager {
       }
 
       const chunks = splitForDiscord(content);
-      let message: Message | null = null;
+      let firstMessage: Message | null = null;
 
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         if (i === 0) {
-          message = await (channel as TextChannel).send({
+          firstMessage = await (channel as TextChannel).send({
             content: chunk,
             // Reference the original message if possible
             reply: { messageReference: originalMessage.id, failIfNotExists: false },
           });
         } else {
-          message = await (channel as TextChannel).send({
+          await (channel as TextChannel).send({
             content: chunk,
           });
         }
       }
 
       console.log(`[MultiBotManager] Agent ${agentId} replied in ${originalMessage.channel.id}`);
-      return message;
+      return firstMessage;
     } catch (error) {
       // If reply fails (e.g., different guild), just send normally
       console.warn(`[MultiBotManager] Reply failed, sending normally:`, error);

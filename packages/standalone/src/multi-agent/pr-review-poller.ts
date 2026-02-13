@@ -644,7 +644,9 @@ export class PRReviewPoller {
     digest: PRPollerBatchDigest,
     seenItemIds: Set<string>
   ): boolean {
-    if (seenItemIds.has(item.id)) return false;
+    if (seenItemIds.has(item.id)) {
+      return false;
+    }
 
     seenItemIds.add(item.id);
     digest.items.push(item);

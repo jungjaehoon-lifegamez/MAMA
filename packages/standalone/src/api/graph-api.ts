@@ -47,6 +47,29 @@ const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const FAVICON_PATH = path.join(__dirname, '../../public/favicon.ico');
 
+// Model pattern helpers (used in multiple validation functions)
+const isClaudeModel = (model: string) => /^claude-/i.test(model);
+const isCodexModel = (model: string) => /^(gpt-|o\d|codex)/i.test(model);
+
+// Allowed directories for persona files (security: prevent arbitrary file read)
+const ALLOWED_PERSONA_DIRS = [
+  path.join(os.homedir(), '.mama', 'personas'),
+  path.join(os.homedir(), '.mama', 'workspace'),
+];
+
+/**
+ * Validate persona_file path to prevent arbitrary file read attacks.
+ * Only allows paths within ~/.mama/personas/ or ~/.mama/workspace/.
+ */
+function isValidPersonaPath(filePath: string): boolean {
+  if (!filePath) return false;
+  const expandedPath = filePath.startsWith('~/')
+    ? path.join(os.homedir(), filePath.slice(2))
+    : path.resolve(filePath);
+  const normalizedPath = path.normalize(expandedPath);
+  return ALLOWED_PERSONA_DIRS.some((dir) => normalizedPath.startsWith(dir + path.sep));
+}
+
 async function getAllNodes(): Promise<GraphNode[]> {
   const adapter = getAdapter();
 
@@ -1768,8 +1791,6 @@ function mergeConfigUpdates(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function validateConfigUpdate(config: Record<string, any>): string[] {
   const errors: string[] = [];
-  const isClaudeModel = (model: string) => /^claude-/i.test(model);
-  const isCodexModel = (model: string) => /^(gpt-|o\d|codex)/i.test(model);
 
   if (config.agent) {
     if (config.agent.max_turns && (config.agent.max_turns < 1 || config.agent.max_turns > 100)) {
@@ -2141,8 +2162,6 @@ async function handleMultiAgentUpdateAgentRequest(
 
     // Validate critical field types before applying
     const validationErrors: string[] = [];
-    const isClaudeModel = (model: string) => /^claude-/i.test(model);
-    const isCodexModel = (model: string) => /^(gpt-|o\d|codex)/i.test(model);
     if (
       body.tier !== undefined &&
       (typeof body.tier !== 'number' || body.tier < 1 || body.tier > 3)
@@ -2202,7 +2221,19 @@ async function handleMultiAgentUpdateAgentRequest(
     if (body.backend !== undefined) updatedAgent.backend = String(body.backend).toLowerCase();
     if (body.model !== undefined) updatedAgent.model = body.model;
     if (body.enabled !== undefined) updatedAgent.enabled = body.enabled;
-    if (body.persona_file !== undefined) updatedAgent.persona_file = body.persona_file;
+    if (body.persona_file !== undefined && body.persona_file !== null) {
+      if (typeof body.persona_file !== 'string' || !isValidPersonaPath(body.persona_file)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error:
+              'Invalid persona_file path. Must be within ~/.mama/personas/ or ~/.mama/workspace/',
+          })
+        );
+        return;
+      }
+      updatedAgent.persona_file = body.persona_file;
+    }
     if (body.trigger_prefix !== undefined) updatedAgent.trigger_prefix = body.trigger_prefix;
     if (body.auto_respond_keywords !== undefined)
       updatedAgent.auto_respond_keywords = body.auto_respond_keywords;
