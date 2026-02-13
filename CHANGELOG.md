@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-02-13
+
 ### Changed
 
 - **LLM backend strategy updated (cost-aware)**:
