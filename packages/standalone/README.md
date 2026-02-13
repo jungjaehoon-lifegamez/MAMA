@@ -708,6 +708,23 @@ If you want to access MAMA OS from outside localhost (e.g., from your phone):
 
 See [Security Guide](../../docs/guides/security.md) for detailed setup instructions.
 
+## Compliance
+
+MAMA OS operators are responsible for complying with their backend provider Terms/Usage policies.
+
+### Account Usage Rules
+
+- Do not share personal CLI accounts, sessions, or credentials.
+- Do not run multi-user team bots on a personal account plan.
+- For team channels, use organization-approved plans/accounts (Team/Enterprise or API org setup).
+- Do not bypass provider safeguards (token extraction, header spoofing, rate-limit evasion).
+
+### Why this matters for chat channels
+
+- A single bot in a group channel can still represent multi-user usage.
+- Even if credentials are not directly shared, providers may treat shared bot access as account sharing.
+- Multi-agent channels can increase concurrency/pattern complexity, so keep audit logs and sane limits.
+
 ## Environment Variables
 
 | Variable         | Description              | Default                    |
