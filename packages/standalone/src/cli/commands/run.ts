@@ -71,6 +71,7 @@ export async function runCommand(options: RunOptions): Promise<void> {
     backend,
     model: config.agent.model,
     codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
+    codexCwd: config.agent.codex_cwd ? expandPath(config.agent.codex_cwd) : undefined,
     codexSandbox: config.agent.codex_sandbox,
     codexSkipGitRepoCheck: config.agent.codex_skip_git_repo_check,
     codexProfile: config.agent.codex_profile,
