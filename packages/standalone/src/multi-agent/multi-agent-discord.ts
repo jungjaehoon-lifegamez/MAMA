@@ -465,9 +465,13 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         // Post summary to channel (visible to humans)
         const channel = await client.channels.fetch(channelId);
         if (channel && 'send' in (channel as Record<string, unknown>)) {
-          await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
-            content: `📊 PR ${prLabel} — ${count} new review item(s)\n\n${promptSummary}${reminderSummary}`,
-          });
+          const content = `📊 PR ${prLabel} — ${count} new review item(s)\n\n${promptSummary}${reminderSummary}`;
+          const chunks = splitForDiscord(content);
+          for (const chunk of chunks) {
+            await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
+              content: chunk,
+            });
+          }
         }
 
         // Wake up LEAD with compact PR summary + workspace path.

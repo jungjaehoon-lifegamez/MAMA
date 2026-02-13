@@ -14,6 +14,7 @@ import {
   type Message,
 } from 'discord.js';
 import type { MultiAgentConfig, AgentPersonaConfig } from './types.js';
+import { splitForDiscord } from '../gateways/message-splitter.js';
 
 /**
  * Bot instance for an agent
@@ -257,8 +258,14 @@ export class MultiBotManager {
         return null;
       }
 
-      const message = await (channel as TextChannel).send(content);
-      console.log(`[MultiBotManager] Agent ${agentId} sent message to ${channelId}`);
+      const chunks = splitForDiscord(content);
+      let message: Message | null = null;
+      for (const chunk of chunks) {
+        message = await (channel as TextChannel).send(chunk);
+      }
+      console.log(
+        `[MultiBotManager] Agent ${agentId} sent message to ${channelId} (${chunks.length} chunks)`
+      );
       return message;
     } catch (error) {
       console.error(`[MultiBotManager] Failed to send as ${agentId}:`, error);
@@ -329,11 +336,23 @@ export class MultiBotManager {
         return null;
       }
 
-      const message = await (channel as TextChannel).send({
-        content,
-        // Reference the original message if possible
-        reply: { messageReference: originalMessage.id, failIfNotExists: false },
-      });
+      const chunks = splitForDiscord(content);
+      let message: Message | null = null;
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        if (i === 0) {
+          message = await (channel as TextChannel).send({
+            content: chunk,
+            // Reference the original message if possible
+            reply: { messageReference: originalMessage.id, failIfNotExists: false },
+          });
+        } else {
+          message = await (channel as TextChannel).send({
+            content: chunk,
+          });
+        }
+      }
 
       console.log(`[MultiBotManager] Agent ${agentId} replied in ${originalMessage.channel.id}`);
       return message;
