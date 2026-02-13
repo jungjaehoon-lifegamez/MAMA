@@ -7,7 +7,12 @@
  * implement platform-specific messaging and formatting.
  */
 
-import type { MultiAgentConfig, AgentPersonaConfig, ChainState } from './types.js';
+import type {
+  MultiAgentConfig,
+  AgentPersonaConfig,
+  ChainState,
+  MultiAgentRuntimeOptions,
+} from './types.js';
 import { MultiAgentOrchestrator } from './orchestrator.js';
 import { AgentProcessManager } from './agent-process-manager.js';
 import { getSharedContextManager, type SharedContextManager } from './shared-context.js';
@@ -111,10 +116,14 @@ export abstract class MultiAgentHandlerBase {
   /** Send a notification message to a channel (for background task status, queue expiry, etc.) */
   protected abstract sendChannelNotification(channelId: string, message: string): Promise<void>;
 
-  constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
+  constructor(
+    config: MultiAgentConfig,
+    processOptions: Partial<PersistentProcessOptions> = {},
+    runtimeOptions: MultiAgentRuntimeOptions = {}
+  ) {
     this.config = config;
     this.orchestrator = new MultiAgentOrchestrator(config);
-    this.processManager = new AgentProcessManager(config, processOptions);
+    this.processManager = new AgentProcessManager(config, processOptions, runtimeOptions);
     this.sharedContext = getSharedContextManager();
     this.messageQueue = new AgentMessageQueue();
     this.prReviewPoller = new PRReviewPoller();

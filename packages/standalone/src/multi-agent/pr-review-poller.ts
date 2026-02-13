@@ -7,7 +7,7 @@
  * Flow:
  * 1. Agent pushes and posts PR URL in channel
  * 2. Poller detects URL → starts polling `gh api` every 60s
- * 3. New review comments → formatted and sent to Slack as @Sisyphus mention
+ * 3. New review comments → posted through callback (e.g., as lightweight reminders)
  * 4. Sisyphus analyzes severity → delegates fixes to @DevBot
  * 5. DevBot fixes → @Reviewer → approve or request changes
  * 6. Poller detects new comments or Approved → loop continues or ends
@@ -20,6 +20,7 @@ import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { mkdir, readFile, writeFile, unlink } from 'fs/promises';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { splitForDiscord } from '../gateways/message-splitter.js';
 
 const execFileAsync = promisify(execFile);
 const { DebugLogger } = debugLogger as {
@@ -99,6 +100,7 @@ interface PollSession {
  * Callback for sending messages to Slack
  */
 type MessageSender = (channelId: string, text: string) => Promise<void>;
+type BatchItemCallback = (channelId: string, summary: string) => Promise<void>;
 
 /**
  * PR Review Poller
@@ -108,6 +110,7 @@ type MessageSender = (channelId: string, text: string) => Promise<void>;
 export class PRReviewPoller {
   private sessions: Map<string, PollSession> = new Map();
   private messageSender: MessageSender | null = null;
+  private onBatchItem: BatchItemCallback | null = null;
   private onBatchComplete: ((channelId: string) => Promise<void>) | null = null;
   private logger = new DebugLogger('PRReviewPoller');
 
@@ -126,8 +129,16 @@ export class PRReviewPoller {
   }
 
   /**
+   * Set callback fired once per logical poll item (before chunking/sending).
+   * Useful for counting poll items and passing compact summaries upstream.
+   */
+  setOnBatchItem(callback: BatchItemCallback): void {
+    this.onBatchItem = callback;
+  }
+
+  /**
    * Set callback fired after all message chunks for a poll cycle are sent.
-   * Used by Discord handler to trigger agent processing once (not per-chunk).
+   * Used by handlers to trigger lead wake-up once per poll cycle (not per-chunk).
    */
   setOnBatchComplete(callback: (channelId: string) => Promise<void>): void {
     this.onBatchComplete = callback;
@@ -1066,24 +1077,35 @@ export class PRReviewPoller {
       return;
     }
 
-    // Discord has a 2000 char limit; split long messages
-    this.logger.info(`[PRPoller] sendMessage: ${text.length} chars`);
-    if (text.length <= 1900) {
-      await this.messageSender(channelId, text);
-      return;
-    }
-
-    // Split by lines, keeping chunks under 1900 chars
-    const lines = text.split('\n');
-    let chunk = '';
-    for (const line of lines) {
-      if (chunk.length + line.length + 1 > 1900) {
-        if (chunk) await this.messageSender(channelId, chunk);
-        chunk = line;
-      } else {
-        chunk += (chunk ? '\n' : '') + line;
+    if (this.onBatchItem) {
+      try {
+        const summary = this.extractBatchSummary(text);
+        await this.onBatchItem(channelId, summary);
+      } catch (err) {
+        this.logger.error('[PRPoller] Failed to notify batch item callback:', err);
       }
     }
-    if (chunk) await this.messageSender(channelId, chunk);
+
+    // Discord has a 2000 char limit; split long messages
+    const chunks = splitForDiscord(text);
+    this.logger.info(`[PRPoller] sendMessage split into ${chunks.length} chunk(s)`);
+
+    for (const chunk of chunks) {
+      await this.messageSender(channelId, chunk);
+    }
+  }
+
+  /**
+   * Build a compact, single-line summary for orchestrator wake-up prompts.
+   * Keep the text intentionally short to avoid PR wake-up context bloat.
+   */
+  private extractBatchSummary(text: string): string {
+    const stripped = text
+      .replace(/<@[^>]+>\s*/g, '')
+      .replace(/\*\*/g, '')
+      .trim()
+      .replace(/\s+/g, ' ');
+    const maxLength = 320;
+    return stripped.length > maxLength ? `${stripped.slice(0, maxLength)}…` : stripped;
   }
 }

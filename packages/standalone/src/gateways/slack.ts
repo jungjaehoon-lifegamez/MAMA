@@ -12,6 +12,7 @@ import { BaseGateway } from './base-gateway.js';
 import type { NormalizedMessage, SlackGatewayConfig, SlackChannelConfig } from './types.js';
 import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
+import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentSlackHandler } from '../multi-agent/multi-agent-slack.js';
 import { getChannelHistory } from './channel-history.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
@@ -44,6 +45,8 @@ export interface SlackGatewayOptions {
   config?: Partial<SlackGatewayConfig>;
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
+  /** Multi-agent runtime backend options (optional) */
+  multiAgentRuntime?: MultiAgentRuntimeOptions;
 }
 
 /**
@@ -61,6 +64,7 @@ export class SlackGateway extends BaseGateway {
 
   // Multi-agent support
   private multiAgentHandler: MultiAgentSlackHandler | null = null;
+  private multiAgentRuntime?: MultiAgentRuntimeOptions;
   private botToken: string;
 
   // Dedup: prevent double processing from app_mention + message events
@@ -77,6 +81,7 @@ export class SlackGateway extends BaseGateway {
   constructor(options: SlackGatewayOptions) {
     super({ messageRouter: options.messageRouter });
     this.botToken = options.botToken;
+    this.multiAgentRuntime = options.multiAgentRuntime;
     this.config = {
       enabled: true,
       botToken: options.botToken,
@@ -96,10 +101,14 @@ export class SlackGateway extends BaseGateway {
 
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
-      this.multiAgentHandler = new MultiAgentSlackHandler(options.multiAgentConfig, {
-        // Headless daemon — no interactive permission prompts possible
-        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
-      });
+      this.multiAgentHandler = new MultiAgentSlackHandler(
+        options.multiAgentConfig,
+        {
+          // Headless daemon — no interactive permission prompts possible
+          dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
+        },
+        options.multiAgentRuntime
+      );
       this.logger.log('Multi-agent mode enabled');
     }
 
@@ -660,10 +669,14 @@ export class SlackGateway extends BaseGateway {
       if (this.multiAgentHandler) {
         this.multiAgentHandler.updateConfig(config);
       } else {
-        this.multiAgentHandler = new MultiAgentSlackHandler(config, {
-          // Headless daemon — no interactive permission prompts possible
-          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
-        });
+        this.multiAgentHandler = new MultiAgentSlackHandler(
+          config,
+          {
+            // Headless daemon — no interactive permission prompts possible
+            dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
+          },
+          this.multiAgentRuntime
+        );
         // If already connected, initialize multi-bots
         if (this.connected) {
           try {

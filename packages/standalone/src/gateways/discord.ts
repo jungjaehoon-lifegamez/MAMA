@@ -29,6 +29,7 @@ import type {
 } from './types.js';
 import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
+import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
 
 /**
@@ -43,6 +44,8 @@ export interface DiscordGatewayOptions {
   config?: Partial<DiscordGatewayConfig>;
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
+  /** Multi-agent runtime backend options (optional) */
+  multiAgentRuntime?: MultiAgentRuntimeOptions;
 }
 
 /**
@@ -65,6 +68,7 @@ export class DiscordGateway extends BaseGateway {
 
   // Multi-agent support
   private multiAgentHandler: MultiAgentDiscordHandler | null = null;
+  private multiAgentRuntime?: MultiAgentRuntimeOptions;
 
   protected get mentionPattern(): RegExp | null {
     return null; // Discord uses custom cleanMessageContent with multiple patterns
@@ -73,6 +77,7 @@ export class DiscordGateway extends BaseGateway {
   constructor(options: DiscordGatewayOptions) {
     super({ messageRouter: options.messageRouter });
     this.token = options.token;
+    this.multiAgentRuntime = options.multiAgentRuntime;
     this.config = {
       enabled: true,
       token: options.token,
@@ -94,9 +99,13 @@ export class DiscordGateway extends BaseGateway {
 
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
-      this.multiAgentHandler = new MultiAgentDiscordHandler(options.multiAgentConfig, {
-        dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? false,
-      });
+      this.multiAgentHandler = new MultiAgentDiscordHandler(
+        options.multiAgentConfig,
+        {
+          dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? false,
+        },
+        options.multiAgentRuntime
+      );
       console.log('[Discord] Multi-agent mode enabled');
     }
 
@@ -1144,9 +1153,13 @@ export class DiscordGateway extends BaseGateway {
       if (this.multiAgentHandler) {
         this.multiAgentHandler.updateConfig(config);
       } else {
-        this.multiAgentHandler = new MultiAgentDiscordHandler(config, {
-          dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? false,
-        });
+        this.multiAgentHandler = new MultiAgentDiscordHandler(
+          config,
+          {
+            dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? false,
+          },
+          this.multiAgentRuntime
+        );
         if (this.client.user) {
           this.multiAgentHandler.setBotUserId(this.client.user.id);
           this.multiAgentHandler.setMainBotToken(this.token);

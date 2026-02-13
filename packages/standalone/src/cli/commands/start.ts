@@ -717,6 +717,8 @@ export async function runAgentLoop(
     getAgentStates?: () => Map<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     getSwarmTasks?: (limit?: number) => Array<any>;
+    applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
+    restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   } = {};
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
@@ -781,6 +783,20 @@ export async function runAgentLoop(
   // Track active gateways for cleanup
   const gateways: { stop: () => Promise<void> }[] = [];
 
+  const gatewayMultiAgentConfig = config.multi_agent;
+  const gatewayMultiAgentRuntime = {
+    backend,
+    model: config.agent.model,
+    codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
+    codexCwd: config.agent.codex_cwd ? expandPath(config.agent.codex_cwd) : undefined,
+    codexSandbox: config.agent.codex_sandbox,
+    codexProfile: config.agent.codex_profile,
+    codexEphemeral: config.agent.codex_ephemeral,
+    codexAddDirs: config.agent.codex_add_dirs,
+    codexConfigOverrides: config.agent.codex_config_overrides,
+    codexSkipGitRepoCheck: config.agent.codex_skip_git_repo_check,
+  } as const;
+
   // Initialize Discord gateway if enabled (before API server for reference)
   let discordGateway: DiscordGateway | null = null;
   if (config.discord?.enabled && config.discord?.token) {
@@ -793,7 +809,8 @@ export async function runAgentLoop(
         token: config.discord.token,
         messageRouter,
         config: discordConfig.guilds ? { guilds: discordConfig.guilds } : undefined,
-        multiAgentConfig: config.multi_agent,
+        multiAgentConfig: gatewayMultiAgentConfig,
+        multiAgentRuntime: gatewayMultiAgentRuntime,
       });
 
       const gatewayInterface = {
@@ -835,7 +852,8 @@ export async function runAgentLoop(
         botToken: config.slack.bot_token,
         appToken: config.slack.app_token,
         messageRouter,
-        multiAgentConfig: config.multi_agent,
+        multiAgentConfig: gatewayMultiAgentConfig,
+        multiAgentRuntime: gatewayMultiAgentRuntime,
       });
 
       await slackGateway.start();
@@ -885,6 +903,25 @@ export async function runAgentLoop(
           console.error('[GraphAPI] Failed to fetch swarm tasks:', err);
           return [];
         }
+      };
+
+      // Apply updated multi-agent config at runtime without full daemon restart.
+      graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
+        const nextConfig = rawConfig as any;
+        if (discordGateway) {
+          await discordGateway.setMultiAgentConfig(nextConfig);
+        }
+        if (slackGateway) {
+          await slackGateway.setMultiAgentConfig(nextConfig);
+        }
+      };
+
+      // Restart a single agent runtime (rolling restart) after per-agent config updates.
+      graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
+        const discordHandler = discordGateway?.getMultiAgentHandler();
+        const slackHandler = slackGateway?.getMultiAgentHandler();
+        discordHandler?.getProcessManager().reloadPersona(agentId);
+        slackHandler?.getProcessManager().reloadPersona(agentId);
       };
     }
   }

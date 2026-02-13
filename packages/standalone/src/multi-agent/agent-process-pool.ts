@@ -15,7 +15,7 @@
  * @version 1.0
  */
 
-import type { PersistentClaudeProcess } from '../agent/persistent-cli-process.js';
+import type { AgentRuntimeProcess } from './runtime-process.js';
 
 /**
  * Pool status for an agent
@@ -49,7 +49,7 @@ export interface AgentProcessPoolOptions {
  * Wraps a process with metadata for pool management
  */
 interface PooledProcess {
-  process: PersistentClaudeProcess;
+  process: AgentRuntimeProcess;
   agentId: string;
   busy: boolean;
   lastUsedAt: number;
@@ -59,7 +59,7 @@ interface PooledProcess {
 /**
  * Agent Process Pool
  *
- * Manages pools of PersistentClaudeProcess instances per agent.
+ * Manages pools of runtime process instances per agent.
  * Enables parallel task execution by maintaining multiple processes.
  *
  * @example
@@ -100,15 +100,15 @@ export class AgentProcessPool {
    *
    * @param agentId - Agent ID
    * @param channelKey - Channel key for process creation
-   * @param createProcess - Factory function to create new PersistentClaudeProcess
+   * @param createProcess - Factory function to create new runtime process
    * @returns { process, isNew } — isNew=true if a new process was created
    * @throws Error if pool is full (all busy, at max capacity)
    */
   async getAvailableProcess(
     agentId: string,
     channelKey: string,
-    createProcess: () => Promise<PersistentClaudeProcess>
-  ): Promise<{ process: PersistentClaudeProcess; isNew: boolean }> {
+    createProcess: () => Promise<AgentRuntimeProcess>
+  ): Promise<{ process: AgentRuntimeProcess; isNew: boolean }> {
     const pool = this.pools.get(agentId) || [];
     const maxSize = this.getPoolSize(agentId);
 
@@ -165,7 +165,7 @@ export class AgentProcessPool {
    * @param agentId - Agent ID
    * @param process - Process to release
    */
-  releaseProcess(agentId: string, process: PersistentClaudeProcess): void {
+  releaseProcess(agentId: string, process: AgentRuntimeProcess): void {
     const pool = this.pools.get(agentId);
     if (!pool) {
       if (this.options.verbose) {

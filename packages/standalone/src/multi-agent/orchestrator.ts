@@ -94,6 +94,39 @@ export class MultiAgentOrchestrator {
       };
     }
 
+    // Check channel-specific overrides
+    const channelOverride = this.config.channel_overrides?.[context.channelId];
+    const allowedAgents = channelOverride?.allowed_agents;
+    const disabledAgents = channelOverride?.disabled_agents || [];
+
+    // Filter agents based on channel config
+    const availableAgents = this.getEnabledAgents().filter((agent) => {
+      if (disabledAgents.includes(agent.id)) return false;
+      if (allowedAgents && !allowedAgents.includes(agent.id)) return false;
+      return true;
+    });
+
+    // 0b. Human mentions: route mentioned agents directly.
+    // Useful when free_chat is disabled but users still explicitly ping agents.
+    if (!context.isBot && context.mentionedAgentIds && context.mentionedAgentIds.length > 0) {
+      const mentionedAvailable = availableAgents.filter((a) =>
+        context.mentionedAgentIds!.includes(a.id)
+      );
+
+      if (mentionedAvailable.length > 0) {
+        // Filter out agents on cooldown and preserve mention order for predictability.
+        const readyMentions = mentionedAvailable.filter((agent) => this.isAgentReady(agent.id));
+        if (readyMentions.length > 0) {
+          // If at least one mentioned agent is ready, only return those.
+          return {
+            selectedAgents: readyMentions.map((a) => a.id),
+            reason: 'keyword_match',
+            blocked: false,
+          };
+        }
+      }
+    }
+
     // If sender is human, reset chain and process selection
     if (!context.isBot) {
       this.resetChain(context.channelId);
@@ -123,18 +156,6 @@ export class MultiAgentOrchestrator {
         blockReason: `Global cooldown active (${this.config.loop_prevention.global_cooldown_ms - timeSinceLastResponse}ms remaining)`,
       };
     }
-
-    // Get channel-specific overrides
-    const channelOverride = this.config.channel_overrides?.[context.channelId];
-    const allowedAgents = channelOverride?.allowed_agents;
-    const disabledAgents = channelOverride?.disabled_agents || [];
-
-    // Filter agents based on channel config
-    const availableAgents = this.getEnabledAgents().filter((agent) => {
-      if (disabledAgents.includes(agent.id)) return false;
-      if (allowedAgents && !allowedAgents.includes(agent.id)) return false;
-      return true;
-    });
 
     // 0. Free chat mode
     if (this.config.free_chat) {
