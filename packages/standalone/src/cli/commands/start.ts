@@ -38,6 +38,10 @@ import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
+const startLogger = new DebugLogger('start');
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
 
@@ -864,11 +868,11 @@ export async function runAgentLoop(
       const normalizedGuilds = normalizeDiscordGuilds(config.discord.guilds);
 
       const guildKeys = normalizedGuilds ? Object.keys(normalizedGuilds) : [];
-      console.log(
-        `[start] Discord config guild keys: ${guildKeys.length ? guildKeys.join(', ') : '(none)'}.`
+      startLogger.log(
+        `Discord config guild keys: ${guildKeys.length ? guildKeys.join(', ') : '(none)'}.`
       );
-      console.log(
-        `[start] Discord config loaded keys: ${Object.keys(config.discord || {}).join(', ')}`
+      startLogger.log(
+        `Discord config loaded keys: ${Object.keys(config.discord || {}).join(', ')}`
       );
 
       discordGateway = new DiscordGateway({
@@ -977,7 +981,9 @@ export async function runAgentLoop(
 
       // Apply updated multi-agent config at runtime without full daemon restart.
       graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
-        const nextConfig = rawConfig as any;
+        // Type assertion to MultiAgentConfig (rawConfig comes from validated YAML)
+        const nextConfig =
+          rawConfig as unknown as import('../../cli/config/types.js').MultiAgentConfig;
         if (discordGateway) {
           await discordGateway.setMultiAgentConfig(nextConfig);
         }

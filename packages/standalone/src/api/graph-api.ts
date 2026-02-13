@@ -1548,8 +1548,8 @@ async function handleUpdateConfigRequest(
           updatedConfig.multi_agent as unknown as Record<string, unknown>
         );
       } catch (err) {
-        console.warn(
-          '[GraphAPI] Multi-agent hot-apply failed after config update:',
+        logger.warn(
+          'Multi-agent hot-apply failed after config update:',
           err instanceof Error ? err.message : String(err)
         );
       }
