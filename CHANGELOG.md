@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-02-14
+
+### Fixed
+
+- **Security: Symlink escape prevention** in `graph-api.ts` persona_file validation
+  - Now uses `fs.realpathSync` to resolve symlinks before path validation
+- **Security: MAMA_TRUSTED_ENV guard** enforced consistently in `discord.ts` setMultiAgentConfig
+- **PR Review Poller**:
+  - Fixed immediate reminder firing after initial report (`lastUnresolvedReminderAt` timing)
+  - Added hot-reload support via `configurePrPoller()` helper
+  - `sendMessage` now throws Error instead of silent return when sender is missing
+- **Array input validation** in `normalizeDiscordGuilds` to prevent numeric key coercion
+
+### Changed
+
+- **DebugLogger migration**: Replaced `console.log/warn/error` with DebugLogger in:
+  - `discord.ts` (init/permission diagnostics)
+  - `multi-bot-manager.ts` (all logging)
+- **ESM import**: Replaced `require()` with ESM import for DebugLogger in `start.ts`
+- **Code style**: Added braces to all single-line if statements per coding guidelines
+- **Test performance**: Added `MAMA_FORCE_TIER_3=true` in orchestrator tests to skip embeddings
+
 ## [0.8.2] - 2026-02-13
 
 ### Changed
