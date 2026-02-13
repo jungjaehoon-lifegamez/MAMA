@@ -61,6 +61,7 @@ mama start
 - Automatic context injection (UserPromptSubmit hook)
 - Session continuity (`/mama-checkpoint`, `/mama-resume`)
 - Full decision memory in Claude conversations
+- Optional HTTP embedding mode (legacy): `MAMA_MCP_START_HTTP_EMBEDDING=true` (port `3849`)
 
 **→ Continue with this tutorial below**
 
@@ -93,7 +94,7 @@ npm install @jungjaehoon/mama-core
 
 Before starting this tutorial, ensure you have:
 
-- ✅ Node.js >= 18.0.0 installed
+- ✅ Node.js >= 22.0.0 installed
 - ✅ Claude Code (latest version) installed
 - ✅ MAMA plugin installed (see [Installation Guide](../guides/installation.md))
 - ✅ Claude Code restarted after installation
