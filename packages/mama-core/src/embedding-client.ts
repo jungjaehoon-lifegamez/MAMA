@@ -17,7 +17,8 @@ import path from 'path';
 import { info, warn } from './debug-logger.js';
 
 // Configuration
-export const DEFAULT_PORT = 3847;
+export const DEFAULT_PORT =
+  parseInt(process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '', 10) || 3849;
 export const HOST = '127.0.0.1';
 export const TIMEOUT_MS = 500; // 500ms timeout for fast response
 export const PORT_FILE = path.join(process.env.HOME || '/tmp', '.mama-embedding-port');
@@ -42,6 +43,10 @@ export function getServerPort(): number {
     }
   } catch {
     // Ignore errors, use default
+  }
+  const envPort = parseInt(process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '', 10);
+  if (envPort > 0 && envPort < 65536) {
+    return envPort;
   }
   return DEFAULT_PORT;
 }

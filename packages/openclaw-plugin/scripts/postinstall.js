@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * MAMA OpenClaw Plugin - Postinstall Script
- * Downloads embedding model during installation
+ * Warms up embedding stack during installation
  */
 
 const { execSync } = require('child_process');
@@ -9,7 +9,7 @@ const path = require('path');
 
 /**
  * Main postinstall function for MAMA OpenClaw Plugin.
- * Downloads embedding model and ensures SQLite native module is ready.
+ * Warms up embedding stack and ensures SQLite native module is ready.
  * @returns {Promise<void>}
  */
 async function main() {
@@ -21,26 +21,17 @@ async function main() {
     console.warn('[MAMA] Warning: Node.js 18+ recommended, current:', process.versions.node);
   }
 
-  // Try to download embedding model
-  console.log('[MAMA] Pre-downloading embedding model...');
+  // Try to warm up embedding stack via mama-core (single source of truth)
+  console.log('[MAMA] Warming up embedding stack via mama-core...');
 
   try {
-    // Dynamic import for ESM module
-    const { pipeline } = await import('@huggingface/transformers');
-
-    // This will download and cache the model
-    console.log('[MAMA] Downloading Xenova/all-MiniLM-L6-v2 (~30MB)...');
-    const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-      quantized: true,
-    });
-
-    // Quick test to verify it works
-    const testResult = await extractor('test', { pooling: 'mean', normalize: true });
-    console.log('[MAMA] Embedding model ready (dimension:', testResult.data.length, ')');
+    const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
+    const vector = await generateEmbedding('MAMA openclaw postinstall warmup');
+    console.log('[MAMA] Embedding stack ready (dimension:', vector.length, ')');
   } catch (err) {
-    // Non-fatal - model will be downloaded on first use
-    console.warn('[MAMA] Could not pre-download model:', err.message);
-    console.warn('[MAMA] Model will be downloaded on first use.');
+    // Non-fatal - embedding stack will initialize on first use
+    console.warn('[MAMA] Could not warm embedding stack:', err.message);
+    console.warn('[MAMA] Embedding stack will initialize on first use.');
   }
 
   // Check better-sqlite3 via mama-core dependency (not direct dependency)
