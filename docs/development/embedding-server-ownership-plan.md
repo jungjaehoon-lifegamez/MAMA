@@ -82,7 +82,7 @@ Out of scope:
   - Mitigation: Keep opt-in env to enable legacy behavior.
 - Risk: Existing docs/examples assume `3847` embedding endpoint.
   - Mitigation: Document migration and fallback behavior clearly.
-- Risk: Status confusion due PID-only checks.
+- Risk: Status confusion due to PID-only checks.
   - Mitigation: Follow-up task to improve `mama status` runtime probing.
 
 ## 6) Definition of Done

@@ -188,7 +188,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 ### Prerequisites
 
-- **Node.js**: >= 18.0.0 (22+ recommended for best Transformers.js support)
+- **Node.js**: >= 22.0.0
 - **Git**: For version control
 - **Claude Code**: Latest version (for testing plugin integration)
 

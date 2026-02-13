@@ -330,9 +330,7 @@ node -e "
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 (async () => {
   console.log('Downloading model...');
-  await generateEmbedding('warmup', {
-    modelName: 'Xenova/multilingual-e5-small'
-  });
+  await generateEmbedding('warmup');
   console.log('✅ Model downloaded successfully');
   console.log('Cache location:', process.env.HOME + '/.cache/huggingface/');
 })();

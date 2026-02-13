@@ -42,9 +42,17 @@ import { SessionManager } from './mobile/session-manager.js';
 const sessionManager = new SessionManager();
 const sessionHandler = createSessionHandler(sessionManager);
 
+function resolveConfiguredPort(): number {
+  const rawPort = process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '';
+  const parsedPort = parseInt(rawPort, 10);
+  if (Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort < 65536) {
+    return parsedPort;
+  }
+  return 3849;
+}
+
 // Configuration
-export const DEFAULT_PORT: number =
-  parseInt(process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '', 10) || 3849;
+export const DEFAULT_PORT: number = resolveConfiguredPort();
 export const HOST = '127.0.0.1'; // localhost only for security
 
 // Port file for clients to discover the server
