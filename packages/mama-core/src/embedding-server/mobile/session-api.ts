@@ -19,7 +19,8 @@ import { authenticate } from './auth.js';
 /**
  * Default WebSocket port (same as HTTP port)
  */
-export const DEFAULT_WS_PORT: number = parseInt(process.env.MAMA_HTTP_PORT || '', 10) || 3847;
+export const DEFAULT_WS_PORT: number =
+  parseInt(process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '', 10) || 3849;
 
 /**
  * Request body type

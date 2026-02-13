@@ -68,21 +68,16 @@ async function main() {
     console.warn('⚠️  경고: Node.js 18+ 권장 (현재:', process.versions.node, ')\n');
   }
 
-  console.log('📝 Embedding 모델 다운로드 중...');
-  console.log('   모델: Xenova/all-MiniLM-L6-v2 (~30MB)\n');
+  console.log('📝 Embedding 스택 워밍업 중...');
+  console.log('   source: @jungjaehoon/mama-core/embeddings\n');
 
   try {
-    const { pipeline } = await import('@huggingface/transformers');
-
-    const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-      quantized: true,
-    });
-
-    const testResult = await extractor('test', { pooling: 'mean', normalize: true });
-    console.log('✓ Embedding 모델 준비 완료 (차원:', testResult.data.length, ')\n');
+    const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
+    const vector = await generateEmbedding('MAMA standalone postinstall warmup');
+    console.log('✓ Embedding 스택 준비 완료 (차원:', vector.length, ')\n');
   } catch (err) {
-    console.warn('⚠️  모델 다운로드 실패:', err.message);
-    console.warn('   모델은 첫 사용 시 자동으로 다운로드됩니다.\n');
+    console.warn('⚠️  Embedding 스택 워밍업 실패:', err.message);
+    console.warn('   첫 사용 시 자동 초기화됩니다.\n');
   }
 
   const credentialsPath = path.join(
