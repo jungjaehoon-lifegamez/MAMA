@@ -60,14 +60,24 @@ const ALLOWED_PERSONA_DIRS = [
 /**
  * Validate persona_file path to prevent arbitrary file read attacks.
  * Only allows paths within ~/.mama/personas/ or ~/.mama/workspace/.
+ * Uses fs.realpathSync to resolve symlinks and prevent symlink escape attacks.
  */
 function isValidPersonaPath(filePath: string): boolean {
-  if (!filePath) return false;
+  if (!filePath) {
+    return false;
+  }
   const expandedPath = filePath.startsWith('~/')
     ? path.join(os.homedir(), filePath.slice(2))
     : path.resolve(filePath);
   const normalizedPath = path.normalize(expandedPath);
-  return ALLOWED_PERSONA_DIRS.some((dir) => normalizedPath.startsWith(dir + path.sep));
+  let resolvedPath: string;
+  try {
+    resolvedPath = fs.realpathSync(normalizedPath);
+  } catch {
+    // File doesn't exist or can't be resolved - reject
+    return false;
+  }
+  return ALLOWED_PERSONA_DIRS.some((dir) => resolvedPath.startsWith(dir + path.sep));
 }
 
 async function getAllNodes(): Promise<GraphNode[]> {
@@ -1059,7 +1069,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             stdio: 'ignore',
           }).unref();
           process.exit(0);
-          return;
         }
 
         // Spawn detached daemon directly, then exit current process

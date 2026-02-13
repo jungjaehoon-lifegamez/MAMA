@@ -15,6 +15,17 @@ import {
 } from 'discord.js';
 import type { MultiAgentConfig, AgentPersonaConfig } from './types.js';
 import { splitForDiscord } from '../gateways/message-splitter.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('MultiBotManager');
 
 /**
  * Bot instance for an agent
@@ -77,7 +88,7 @@ export class MultiBotManager {
       ([, config]) => config.bot_token && config.enabled !== false
     );
 
-    console.log(`[MultiBotManager] Initializing ${agentsWithTokens.length} agent bots...`);
+    logger.info(`[MultiBotManager] Initializing ${agentsWithTokens.length} agent bots...`);
 
     // Get main bot token to avoid duplicate login
     const mainToken = this.mainBotToken;
@@ -94,7 +105,7 @@ export class MultiBotManager {
       try {
         await this.createAgentBot(agentId, agentConfig);
       } catch (error) {
-        console.error(`[MultiBotManager] Failed to create bot for ${agentId}:`, error);
+        logger.error(`[MultiBotManager] Failed to create bot for ${agentId}:`, error);
       }
     }
   }
@@ -151,7 +162,7 @@ export class MultiBotManager {
       }
       if (!bot.userId || !msg.mentions.has(bot.userId)) return;
       if (this.onMentionCallback) {
-        console.log(`[MultiBotManager] Agent ${agentId} mentioned by ${msg.author.tag}`);
+        logger.info(`[MultiBotManager] Agent ${agentId} mentioned by ${msg.author.tag}`);
         Promise.resolve(this.onMentionCallback(agentId, msg)).catch((err) => {
           console.error(
             `[MultiBotManager] onMention callback failed for ${agentId}:`,
@@ -164,13 +175,13 @@ export class MultiBotManager {
     // Set up error handler
     client.on('error', (error) => {
       bot.connected = false;
-      console.error(`[MultiBotManager] Agent ${agentId} bot error:`, error);
+      logger.error(`[MultiBotManager] Agent ${agentId} bot error:`, error);
     });
 
     // Set up disconnect handlers
     client.on('shardDisconnect', () => {
       bot.connected = false;
-      console.log(`[MultiBotManager] Agent ${agentId} bot disconnected`);
+      logger.info(`[MultiBotManager] Agent ${agentId} bot disconnected`);
     });
 
     // Login and wait for ready event (ensures userId is available)
@@ -254,7 +265,7 @@ export class MultiBotManager {
     try {
       const channel = await bot.client.channels.fetch(channelId);
       if (!channel || !('send' in channel)) {
-        console.error(`[MultiBotManager] Channel ${channelId} not found or not text channel`);
+        logger.error(`[MultiBotManager] Channel ${channelId} not found or not text channel`);
         return null;
       }
 
@@ -271,7 +282,7 @@ export class MultiBotManager {
       );
       return firstMessage;
     } catch (error) {
-      console.error(`[MultiBotManager] Failed to send as ${agentId}:`, error);
+      logger.error(`[MultiBotManager] Failed to send as ${agentId}:`, error);
       return null;
     }
   }
@@ -294,7 +305,7 @@ export class MultiBotManager {
     try {
       const channel = await bot.client.channels.fetch(channelId);
       if (!channel || !('send' in channel)) {
-        console.error(`[MultiBotManager] Channel ${channelId} not found or not text channel`);
+        logger.error(`[MultiBotManager] Channel ${channelId} not found or not text channel`);
         return null;
       }
 
@@ -302,10 +313,10 @@ export class MultiBotManager {
         content: message || undefined,
         files: [filePath],
       });
-      console.log(`[MultiBotManager] Agent ${agentId} sent file to ${channelId}: ${filePath}`);
+      logger.info(`[MultiBotManager] Agent ${agentId} sent file to ${channelId}: ${filePath}`);
       return msg;
     } catch (error) {
-      console.error(`[MultiBotManager] Failed to send file as ${agentId}:`, error);
+      logger.error(`[MultiBotManager] Failed to send file as ${agentId}:`, error);
       return null;
     }
   }
@@ -325,7 +336,7 @@ export class MultiBotManager {
       try {
         return await originalMessage.reply({ content });
       } catch (err) {
-        console.error(`[MultiBotManager] Failed to reply with main bot:`, err);
+        logger.error(`[MultiBotManager] Failed to reply with main bot:`, err);
         return null;
       }
     }
@@ -335,7 +346,7 @@ export class MultiBotManager {
       // mentioning the user instead
       const channel = await bot.client.channels.fetch(originalMessage.channel.id);
       if (!channel || !('send' in channel)) {
-        console.error(`[MultiBotManager] Channel not found`);
+        logger.error(`[MultiBotManager] Channel not found`);
         return null;
       }
 
@@ -357,7 +368,7 @@ export class MultiBotManager {
         }
       }
 
-      console.log(`[MultiBotManager] Agent ${agentId} replied in ${originalMessage.channel.id}`);
+      logger.info(`[MultiBotManager] Agent ${agentId} replied in ${originalMessage.channel.id}`);
       return firstMessage;
     } catch (error) {
       // If reply fails (e.g., different guild), just send normally
@@ -401,7 +412,7 @@ export class MultiBotManager {
     if (bot) {
       await bot.client.destroy();
       this.bots.delete(agentId);
-      console.log(`[MultiBotManager] Stopped bot for agent ${agentId}`);
+      logger.info(`[MultiBotManager] Stopped bot for agent ${agentId}`);
     }
   }
 
@@ -409,13 +420,13 @@ export class MultiBotManager {
    * Stop all agent bots
    */
   async stopAll(): Promise<void> {
-    console.log(`[MultiBotManager] Stopping ${this.bots.size} agent bots...`);
+    logger.info(`[MultiBotManager] Stopping ${this.bots.size} agent bots...`);
     for (const [agentId, bot] of this.bots) {
       try {
         await bot.client.destroy();
-        console.log(`[MultiBotManager] Stopped bot for ${agentId}`);
+        logger.info(`[MultiBotManager] Stopped bot for ${agentId}`);
       } catch (error) {
-        console.error(`[MultiBotManager] Error stopping bot for ${agentId}:`, error);
+        logger.error(`[MultiBotManager] Error stopping bot for ${agentId}:`, error);
       }
     }
     this.bots.clear();
@@ -440,7 +451,7 @@ export class MultiBotManager {
       if (agentConfig.bot_token && agentConfig.enabled !== false && !this.bots.has(agentId)) {
         // Skip if agent uses the same token as main bot (avoid duplicate login)
         if (this.mainBotToken && agentConfig.bot_token === this.mainBotToken) {
-          console.log(`[MultiBotManager] Agent ${agentId} uses main bot token - skipping`);
+          logger.info(`[MultiBotManager] Agent ${agentId} uses main bot token - skipping`);
           continue;
         }
         await this.createAgentBot(agentId, agentConfig);

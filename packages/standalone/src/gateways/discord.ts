@@ -1217,10 +1217,13 @@ export class DiscordGateway extends BaseGateway {
       if (this.multiAgentHandler) {
         this.multiAgentHandler.updateConfig(config);
       } else {
+        // Gate dangerouslySkipPermissions behind MAMA_TRUSTED_ENV (same as constructor)
+        const isTrustedEnv = process.env.MAMA_TRUSTED_ENV === 'true';
+        const skipPermissions = isTrustedEnv && (config.dangerouslySkipPermissions ?? false);
         this.multiAgentHandler = new MultiAgentDiscordHandler(
           config,
           {
-            dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? false,
+            dangerouslySkipPermissions: skipPermissions,
           },
           this.multiAgentRuntime
         );

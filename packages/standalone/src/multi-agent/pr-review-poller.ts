@@ -584,9 +584,9 @@ export class PRReviewPoller {
           for (const t of toReport) {
             session.seenUnresolvedThreadIds.set(t.id, now);
           }
-          if (needsReminder) {
-            session.lastUnresolvedReminderAt = now;
-          }
+          // Update lastUnresolvedReminderAt on all notifications (not just reminders)
+          // to prevent immediate reminder on the next poll after initial report
+          session.lastUnresolvedReminderAt = now;
           this.logger.info(
             `[PRPoller] Sent ${toReport.length} unresolved threads for ${sessionKey}${isReminder ? ' (reminder)' : ''}`
           );
