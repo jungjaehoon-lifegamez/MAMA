@@ -20,6 +20,7 @@ node scripts/validate-manifests.js
 ## 1. Plugin Not Loading
 
 **Symptoms:**
+
 - `/mama-*` commands don't appear in command palette
 - No MAMA context injections
 - Claude Code shows "Plugin load failed" error
@@ -34,6 +35,7 @@ node --version
 ```
 
 **If Node too old:**
+
 ```bash
 # Install Node 20 LTS via nvm
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
@@ -52,6 +54,7 @@ ls -la ~/.claude/plugins/mama/.claude-plugin/plugin.json
 ```
 
 **If missing:**
+
 ```bash
 # Re-copy plugin directory
 cp -r /path/to/mama-plugin ~/.claude/plugins/mama
@@ -85,6 +88,7 @@ npm install
 ## 2. SQLite Build Failures (better-sqlite3)
 
 **Symptoms:**
+
 ```
 npm ERR! node-gyp rebuild
 npm ERR! gyp ERR! stack Error: Python executable "python" is not found
@@ -152,6 +156,7 @@ npm install better-sqlite3 --build-from-source=false
 ## 3. Disk Space Issues
 
 **Symptoms:**
+
 - Model download fails
 - Database writes fail
 - `ENOSPC: no space left on device`
@@ -200,6 +205,7 @@ echo "SELECT COUNT(*) FROM decisions;" | sqlite3 ~/.claude/mama-memory.db
 ```
 
 **Expected Database Growth:**
+
 - 100 decisions: ~5MB
 - 1,000 decisions: ~20MB
 - 10,000 decisions: ~100MB
@@ -209,6 +215,7 @@ echo "SELECT COUNT(*) FROM decisions;" | sqlite3 ~/.claude/mama-memory.db
 ## 4. Hooks Not Firing
 
 **Symptoms:**
+
 - No automatic context injection
 - UserPromptSubmit hook doesn't show MAMA banner
 
@@ -222,6 +229,7 @@ echo $MAMA_DISABLE_HOOKS
 ```
 
 **Re-enable hooks:**
+
 ```bash
 unset MAMA_DISABLE_HOOKS
 
@@ -241,6 +249,7 @@ ls -la ~/.claude/plugins/mama/scripts/*.js
 ```
 
 **Fix permissions:**
+
 ```bash
 chmod +x ~/.claude/plugins/mama/scripts/*.js
 ```
@@ -263,6 +272,7 @@ node scripts/userpromptsubmit-hook.js
 ## 5. Database Corruption
 
 **Symptoms:**
+
 - `SQLITE_CORRUPT` errors
 - `/mama-*` commands fail
 - Database queries return empty results
@@ -296,6 +306,7 @@ rm ~/.claude/mama-memory.db
 ## 6. Embedding Model Download Fails
 
 **Symptoms:**
+
 - Stuck at "Downloading model..."
 - Network timeout errors
 - Falls back to Tier 2 permanently
@@ -316,10 +327,10 @@ cd ~/.claude/plugins/mama
 
 # Force model download with debug output
 node -e "
-const { pipeline } = require('@huggingface/transformers');
+const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 (async () => {
   console.log('Downloading model...');
-  const extractor = await pipeline('feature-extraction', 'Xenova/multilingual-e5-small');
+  await generateEmbedding('warmup');
   console.log('✅ Model downloaded successfully');
   console.log('Cache location:', process.env.HOME + '/.cache/huggingface/');
 })();
@@ -339,6 +350,7 @@ ls -lah ~/.cache/huggingface/transformers/
 ```
 
 **Clear corrupt cache:**
+
 ```bash
 rm -rf ~/.cache/huggingface/transformers/
 # Then retry download
@@ -428,6 +440,7 @@ emb.generateEmbedding('test').then(v => console.log('✅ Embeddings OK', v.lengt
 ---
 
 **Related:**
+
 - [Installation Guide](installation.md)
 - [Tier 2 Remediation Guide](tier-2-remediation.md)
 - [Configuration Guide](configuration.md)

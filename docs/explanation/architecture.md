@@ -20,7 +20,7 @@
 │  └──────┬─────┘         │                │                  │
 │         │               │                │                  │
 │         │       ┌───────▼────────────────▼──────────┐      │
-│         │       │  HTTP Embedding Server (3847)     │      │
+│         │       │  HTTP Embedding Server (3849)     │      │
 │         │       │  Model stays in memory            │      │
 │         │       └───────────────────────────────────┘      │
 │         │                       │                           │
@@ -90,11 +90,13 @@
 
 ### HTTP Embedding Server
 
-- **Port:** 3847 (localhost only)
+- **Port:** 3849 (localhost only)
 - **Purpose:** Keep embedding model in memory for fast access
 - **Endpoints:** `/health`, `/embed`, `/embed/batch`
 - **Benefit:** ~50ms embedding requests (vs 2-9s model load)
 - **Clients:** Any local LLM tool can use this shared service
+- **Owner (default):** MAMA Standalone (`@jungjaehoon/mama-os`)
+- **MCP mode:** Optional legacy startup via `MAMA_MCP_START_HTTP_EMBEDDING=true`
 
 ### Hooks
 
