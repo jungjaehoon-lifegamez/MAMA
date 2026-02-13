@@ -8,7 +8,7 @@
  * 1. Node.js version (>=18.0.0)
  * 2. Disk space (>=100MB)
  * 3. SQLite native module (better-sqlite3)
- * 4. Embedding support (@huggingface/transformers)
+ * 4. Embedding support (via @jungjaehoon/mama-core)
  * 5. Tier detection and reporting
  *
  * Exit codes:
@@ -16,7 +16,7 @@
  * 1 - Critical failure (Node version, disk space)
  *
  * Tier levels:
- * Tier 1 - Full features (SQLite + Transformers.js)
+ * Tier 1 - Full features (SQLite + mama-core embedding stack)
  * Tier 2 - Degraded (exact match only, no vector search)
  */
 
@@ -43,11 +43,13 @@ function printBox(title, content, color = colors.green) {
   const border = '━'.repeat(width);
 
   console.log(`\n${color}┏${border}┓${colors.reset}`);
-  console.log(`${color}┃${colors.bold} ${title.padEnd(width - 1)}${colors.reset}${color}┃${colors.reset}`);
+  console.log(
+    `${color}┃${colors.bold} ${title.padEnd(width - 1)}${colors.reset}${color}┃${colors.reset}`
+  );
   console.log(`${color}┣${border}┫${colors.reset}`);
 
   if (Array.isArray(content)) {
-    content.forEach(line => {
+    content.forEach((line) => {
       console.log(`${color}┃${colors.reset} ${line.padEnd(width - 1)} ${color}┃${colors.reset}`);
     });
   } else {
@@ -71,7 +73,11 @@ function checkNodeVersion() {
   const [major, minor, patch] = currentVersion.split('.').map(Number);
   const [reqMajor, reqMinor, reqPatch] = requiredVersion.split('.').map(Number);
 
-  if (major < reqMajor || (major === reqMajor && minor < reqMinor) || (major === reqMajor && minor === reqMinor && patch < reqPatch)) {
+  if (
+    major < reqMajor ||
+    (major === reqMajor && minor < reqMinor) ||
+    (major === reqMajor && minor === reqMinor && patch < reqPatch)
+  ) {
     log(colors.red, `\n❌ Node.js ${requiredVersion}+ required (found: ${process.version})`);
     log(colors.yellow, `\nFix options:`);
     log(colors.yellow, `  • Using nvm: nvm install 22 && nvm use 22`);
@@ -171,19 +177,21 @@ function checkSQLite() {
 
 /**
  * Check embedding support
- * AC2: Detect Transformers.js availability
+ * AC2: Detect embedding stack availability
  */
 function checkEmbeddings() {
-  log(colors.cyan, '🔍 Checking embedding support (@huggingface/transformers)...');
+  log(colors.cyan, '🔍 Checking embedding support (via @jungjaehoon/mama-core)...');
 
   try {
-    require('@huggingface/transformers');
+    const mamaCoreEntry = require.resolve('@jungjaehoon/mama-core');
+    const mamaCoreDir = path.dirname(mamaCoreEntry);
+    require.resolve('@huggingface/transformers', { paths: [mamaCoreDir] });
     log(colors.green, '✅ Embedding support available\n');
     return { available: true };
   } catch (error) {
-    log(colors.yellow, `⚠️  Transformers.js not available: ${error.message}`);
+    log(colors.yellow, `⚠️  Embedding stack not available via mama-core: ${error.message}`);
     log(colors.yellow, `   Vector search will be disabled (Tier 2 mode)\n`);
-    return { available: false, reason: 'Transformers.js unavailable' };
+    return { available: false, reason: 'Embedding stack unavailable via mama-core' };
   }
 }
 
@@ -202,18 +210,22 @@ function detectTier(sqliteCheck, embeddingsCheck) {
         '✅ Graph search (decision evolution)',
         '✅ Recency weighting',
         '✅ Multi-language support (Korean-English)',
-        '✅ Auto-context injection'
+        '✅ Auto-context injection',
       ],
       performance: {
         embedding: '~3ms',
         search: '~50ms',
-        hookLatency: '~100ms'
-      }
+        hookLatency: '~100ms',
+      },
     };
   } else {
     const reasons = [];
-    if (!sqliteCheck.available) reasons.push(sqliteCheck.reason);
-    if (!embeddingsCheck.available) reasons.push(embeddingsCheck.reason);
+    if (!sqliteCheck.available) {
+      reasons.push(sqliteCheck.reason);
+    }
+    if (!embeddingsCheck.available) {
+      reasons.push(embeddingsCheck.reason);
+    }
 
     return {
       tier: 2,
@@ -224,13 +236,13 @@ function detectTier(sqliteCheck, embeddingsCheck) {
         '❌ No vector search',
         '❌ No semantic similarity',
         '✅ Graph search (decision evolution)',
-        '✅ All data saved and retrievable'
+        '✅ All data saved and retrievable',
       ],
       limitations: reasons,
       performance: {
         search: '~10ms (exact match)',
-        hookLatency: '~50ms'
-      }
+        hookLatency: '~50ms',
+      },
     };
   }
 }
@@ -251,16 +263,16 @@ function printTierStatus(tierInfo) {
       `Accuracy: ${tierInfo.accuracy}`,
       ``,
       `Features:`,
-      ...tierInfo.features.map(f => `  ${f}`),
+      ...tierInfo.features.map((f) => `  ${f}`),
       ``,
       `Performance:`,
-      ...Object.entries(tierInfo.performance).map(([k, v]) => `  • ${k}: ${v}`)
+      ...Object.entries(tierInfo.performance).map(([k, v]) => `  • ${k}: ${v}`),
     ],
     color
   );
 
   if (tierInfo.tier === 2) {
-    log(colors.yellow, 'ℹ️  You\'re running in Tier 2 (degraded mode)');
+    log(colors.yellow, "ℹ️  You're running in Tier 2 (degraded mode)");
     log(colors.yellow, '   This is fully functional but with reduced accuracy.');
     log(colors.yellow, '   See installation instructions above to upgrade to Tier 1.\n');
   }
@@ -329,7 +341,6 @@ function main() {
 
     // AC3: Print success message with tier
     printTierStatus(tierInfo);
-
   } catch (error) {
     log(colors.red, `\n❌ Installation failed: ${error.message}`);
     log(colors.red, `   Stack: ${error.stack}\n`);
@@ -348,5 +359,5 @@ module.exports = {
   checkDiskSpace,
   checkSQLite,
   checkEmbeddings,
-  detectTier
+  detectTier,
 };

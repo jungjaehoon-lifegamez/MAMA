@@ -160,6 +160,9 @@ function validateEnvironment() {
  */
 class MAMAServer {
   constructor() {
+    this.legacyHttpEmbeddingMode = process.env.MAMA_MCP_START_HTTP_EMBEDDING === 'true';
+    this.legacyNoticeEmittedInToolResponse = false;
+
     this.server = new Server(
       {
         name: 'mama-server',
@@ -175,6 +178,13 @@ class MAMAServer {
     this.setupHandlers();
   }
 
+  getLegacyMigrationNotice() {
+    return (
+      '⚠️ Legacy MCP HTTP embedding mode is enabled via MAMA_MCP_START_HTTP_EMBEDDING=true. ' +
+      'This mode is deprecated. Recommended runtime: `mama start` (API/UI 3847, embedding 3849).'
+    );
+  }
+
   setupHandlers() {
     // List available tools - Simplified to 4 core tools (2025-11-25)
     // Design principle: LLM infers relationships from search results
@@ -184,7 +194,7 @@ class MAMAServer {
         // 1. SAVE - Unified save for decisions and checkpoints
         {
           name: 'save',
-          description: `🤝 Save a decision or checkpoint to your reasoning graph.
+          description: `${this.legacyHttpEmbeddingMode ? `${this.getLegacyMigrationNotice()}\n\n` : ''}🤝 Save a decision or checkpoint to your reasoning graph.
 
 ⚡ TRIGGERS - Call this when:
 • User says: "기억해줘", "remember", "decided", "결정했어"
@@ -423,11 +433,27 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
             throw new Error(`Unknown tool: ${name}`);
         }
 
+        const shouldInjectLegacyNotice =
+          this.legacyHttpEmbeddingMode && !this.legacyNoticeEmittedInToolResponse;
+
+        if (shouldInjectLegacyNotice) {
+          this.legacyNoticeEmittedInToolResponse = true;
+        }
+
         return {
           content: [
             {
               type: 'text',
-              text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+              text:
+                typeof result === 'string'
+                  ? result
+                  : JSON.stringify(
+                      shouldInjectLegacyNotice
+                        ? { ...result, migration_notice: this.getLegacyMigrationNotice() }
+                        : result,
+                      null,
+                      2
+                    ),
             },
           ],
         };
@@ -653,12 +679,25 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       console.error('[MAMA MCP] Listening on stdio transport');
       console.error('[MAMA MCP] Ready to accept connections');
 
-      // Start HTTP embedding server in background (non-blocking)
-      // Architecture: Standalone owns the server with chat, MCP reuses if available
-      const embeddingPort = parseInt(
-        process.env.MAMA_HTTP_PORT || process.env.MAMA_EMBEDDING_PORT || '3847',
-        10
-      );
+      // HTTP embedding server startup is disabled by default for MCP.
+      // Architecture: Standalone should own HTTP embedding/chat services.
+      // Legacy opt-in: set MAMA_MCP_START_HTTP_EMBEDDING=true.
+      const startHttpEmbedding = process.env.MAMA_MCP_START_HTTP_EMBEDDING === 'true';
+      const rawEmbeddingPort = process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT;
+      const parsedEmbeddingPort = parseInt(rawEmbeddingPort || '', 10);
+      const embeddingPort =
+        Number.isInteger(parsedEmbeddingPort) && parsedEmbeddingPort > 0
+          ? parsedEmbeddingPort
+          : 3849;
+
+      if (!startHttpEmbedding) {
+        console.error('[MAMA MCP] HTTP embedding server startup skipped (default behavior)');
+        console.error('[MAMA MCP] Use Standalone for Graph Viewer/Mobile Chat');
+        console.error(
+          '[MAMA MCP] To enable legacy MCP-launched HTTP: MAMA_MCP_START_HTTP_EMBEDDING=true'
+        );
+        return;
+      }
 
       // Check if Standalone (or another instance) already started the embedding server
       const serverAlreadyRunning = await isEmbeddingServerRunning(embeddingPort);
@@ -667,29 +706,28 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
         console.error(`[MAMA MCP] Embedding server already running on port ${embeddingPort}`);
         console.error('[MAMA MCP] Using existing server (likely started by Standalone with chat)');
         console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
-      } else {
-        console.error('[MAMA MCP] Starting HTTP embedding server in background...');
-        embeddingServer
-          .startEmbeddingServer(embeddingPort)
-          .then((httpServer) => {
-            if (httpServer) {
-              console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
-              console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
-              console.error('[MAMA MCP] Note: Chat disabled (start Standalone for full features)');
-              embeddingServer
-                .warmModel()
-                .catch((err) => console.error('[MAMA MCP] Model warmup error:', err.message));
-            } else {
-              console.error(
-                '[MAMA MCP] HTTP embedding server skipped (port unavailable or blocked)'
-              );
-            }
-          })
-          .catch((err) => {
-            console.error('[MAMA MCP] HTTP embedding server error:', err.message);
-            console.error('[MAMA MCP] MCP tools will continue to work without Graph Viewer');
-          });
+        return;
       }
+
+      console.error('[MAMA MCP] Starting HTTP embedding server in background (legacy opt-in)...');
+      embeddingServer
+        .startEmbeddingServer(embeddingPort)
+        .then((httpServer) => {
+          if (httpServer) {
+            console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
+            console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
+            console.error('[MAMA MCP] Note: Chat disabled (start Standalone for full features)');
+            embeddingServer
+              .warmModel()
+              .catch((err) => console.error('[MAMA MCP] Model warmup error:', err.message));
+          } else {
+            console.error('[MAMA MCP] HTTP embedding server skipped (port unavailable or blocked)');
+          }
+        })
+        .catch((err) => {
+          console.error('[MAMA MCP] HTTP embedding server error:', err.message);
+          console.error('[MAMA MCP] MCP tools will continue to work without Graph Viewer');
+        });
     } catch (error) {
       console.error('[MAMA MCP] Failed to start server:', error);
       process.exit(1);

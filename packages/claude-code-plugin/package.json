@@ -37,7 +37,6 @@
   },
   "dependencies": {
     "@jungjaehoon/mama-core": "workspace:^1.0.2",
-    "@huggingface/transformers": "^3.0.0",
     "better-sqlite3": "^11.0.0",
     "sqlite-vec": "^0.1.1",
     "chalk": "^5.3.0"

@@ -20,7 +20,10 @@ MAMA provides hooks that integrate with Claude Code's hook system. Hooks use an 
 
 ## HTTP Embedding Server
 
-Hooks use an HTTP embedding server running on `127.0.0.1:3847` for fast embedding generation:
+Hooks use an HTTP embedding server running on `127.0.0.1:3849` for fast embedding generation:
+
+- Default owner: `@jungjaehoon/mama-os` (Standalone)
+- MCP legacy mode: `MAMA_MCP_START_HTTP_EMBEDDING=true`
 
 - **Model stays in memory**: No 2-9 second model load per hook
 - **~50ms embedding requests**: HTTP call to localhost
@@ -28,7 +31,7 @@ Hooks use an HTTP embedding server running on `127.0.0.1:3847` for fast embeddin
 
 ```bash
 # Check if HTTP server is running
-curl http://127.0.0.1:3847/health
+curl http://127.0.0.1:3849/health
 
 # Expected response
 {"status":"ok","modelLoaded":true,"model":"Xenova/multilingual-e5-small","dim":384}
@@ -69,7 +72,7 @@ curl http://127.0.0.1:3847/health
 **Behavior:**
 
 - Reads `$USER_PROMPT` environment variable
-- Requests embedding via HTTP server (port 3847)
+- Requests embedding via HTTP server (port 3849)
 - Falls back to local model load if HTTP server unavailable
 - Runs semantic search (Tier 1) or exact match (Tier 2)
 - Shows tier status banner with latency
@@ -250,7 +253,8 @@ export MAMA_DISABLE_HOOKS=true
 - `$USER_PROMPT` - Current user prompt (UserPromptSubmit only)
 - `$TOOL_NAME` - Tool being called (Pre/PostToolUse only)
 - `$MAMA_DB_PATH` - Database path
-- `$MAMA_EMBEDDING_PORT` - HTTP embedding server port (default: 3847)
+- `$MAMA_EMBEDDING_PORT` - HTTP embedding server port (default: 3849)
+- `$MAMA_HTTP_PORT` - Legacy alias for embedding port (backward compatibility)
 
 ---
 
@@ -265,7 +269,7 @@ export MAMA_DB_PATH=~/.claude/mama-memory.db
 node scripts/userpromptsubmit-hook.js
 
 # Check HTTP embedding server
-curl http://127.0.0.1:3847/health
+curl http://127.0.0.1:3849/health
 
 # Measure hook latency
 time USER_PROMPT="test prompt" node scripts/userpromptsubmit-hook.js

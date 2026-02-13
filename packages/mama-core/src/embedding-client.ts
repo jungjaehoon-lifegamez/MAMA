@@ -16,8 +16,17 @@ import fs from 'fs';
 import path from 'path';
 import { info, warn } from './debug-logger.js';
 
+function resolveConfiguredPort(): number {
+  const rawPort = process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '';
+  const parsedPort = parseInt(rawPort, 10);
+  if (Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort < 65536) {
+    return parsedPort;
+  }
+  return 3849;
+}
+
 // Configuration
-export const DEFAULT_PORT = 3847;
+export const DEFAULT_PORT = resolveConfiguredPort();
 export const HOST = '127.0.0.1';
 export const TIMEOUT_MS = 500; // 500ms timeout for fast response
 export const PORT_FILE = path.join(process.env.HOME || '/tmp', '.mama-embedding-port');

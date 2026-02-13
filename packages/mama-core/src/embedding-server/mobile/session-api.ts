@@ -16,10 +16,19 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { SessionManager } from './session-manager.js';
 import { authenticate } from './auth.js';
 
+function resolveConfiguredPort(): number {
+  const rawPort = process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '';
+  const parsedPort = parseInt(rawPort, 10);
+  if (Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort < 65536) {
+    return parsedPort;
+  }
+  return 3849;
+}
+
 /**
  * Default WebSocket port (same as HTTP port)
  */
-export const DEFAULT_WS_PORT: number = parseInt(process.env.MAMA_HTTP_PORT || '', 10) || 3847;
+export const DEFAULT_WS_PORT: number = resolveConfiguredPort();
 
 /**
  * Request body type
