@@ -254,7 +254,7 @@ npm run test:coverage
 
 ## 📦 Architecture
 
-MAMA uses a **2-package structure** with a shared HTTP embedding server:
+MAMA uses a **core-first package structure**:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -265,29 +265,38 @@ MAMA uses a **2-package structure** with a shared HTTP embedding server:
 │       └────────────┴────────────┴───────┘        │
 │                      │                           │
 │     ┌────────────────▼────────────────┐         │
-│     │  HTTP Embedding Server          │         │
-│     │  127.0.0.1:3847                 │         │
-│     └─────────────────────────────────┘         │
+│     │  MAMA Core                      │         │
+│     │  Embeddings + SQLite + Graph    │         │
+│     └────────────────┬────────────────┘         │
 │                      │                           │
 │     ┌────────────────▼────────────────┐         │
-│     │  MCP Server + SQLite            │         │
-│     │  mama-memory.db (shared)        │         │
+│     │  MCP Server (stdio)             │         │
+│     │  Tools: save/search/update/load │         │
+│     └─────────────────────────────────┘         │
+│     ┌─────────────────────────────────┐         │
+│     │  Optional Standalone Runtime    │         │
+│     │  API/UI: 3847, Embed: 3849      │         │
 │     └─────────────────────────────────┘         │
 └─────────────────────────────────────────────────┘
 ```
 
 ### 1. MCP Server (@jungjaehoon/mama-server)
 
-Independent npm package shared across all MCP clients. Includes HTTP embedding server on port 3847.
+Independent npm package shared across all MCP clients. Default mode is pure stdio MCP (no HTTP embedding server startup).
 
-### 2. Claude Code Plugin (mama-plugin)
+### 2. MAMA Core (@jungjaehoon/mama-core)
 
-Lightweight plugin referencing the MCP server. Hooks use HTTP embedding server for fast context injection.
+Shared runtime for embeddings, storage, and graph logic. Owns heavy dependencies like `@huggingface/transformers`.
+
+### 3. Claude Code Plugin (mama-plugin)
+
+Lightweight plugin referencing the MCP server. Hooks can use a shared HTTP embedding endpoint (`127.0.0.1:3849`) for fast context injection when Standalone (or MCP legacy opt-in mode) is running.
 
 **Benefits:**
 
 - ✅ One MCP server → Multiple clients (Code, Desktop, etc.)
-- ✅ Shared HTTP embedding server → Fast hook execution (~150ms)
+- ✅ Heavy runtime centralized in `mama-core`
+- ✅ Shared HTTP embedding endpoint (`3849`) keeps hook latency low (~150ms)
 - ✅ Shared decision database across all tools
 
 **Guide:** [Developer Playbook](docs/development/developer-playbook.md)

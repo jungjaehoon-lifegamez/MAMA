@@ -336,8 +336,8 @@ export MAMA_SERVER_TOKEN="dev-token"
 # Server port (default: 3000)
 export MAMA_SERVER_PORT="3000"
 
-# Embedding server port (default: 3847)
-export MAMA_EMBEDDING_PORT="3847"
+# Embedding server port (default: 3849)
+export MAMA_EMBEDDING_PORT="3849"
 ```
 
 ---
@@ -346,7 +346,9 @@ export MAMA_EMBEDDING_PORT="3847"
 
 MAMA provides HTTP endpoints for web-based interfaces like the Graph Viewer and Mobile Chat.
 
-**Base URL:** `http://localhost:3847` (configurable via `MAMA_HTTP_PORT`)
+**Base URL:** `http://localhost:3847` (API/UI, configurable via `MAMA_SERVER_PORT`)
+
+**Embedding URL:** `http://127.0.0.1:3849` (configurable via `MAMA_EMBEDDING_PORT`, legacy alias: `MAMA_HTTP_PORT`)
 
 **Compatibility:**
 
