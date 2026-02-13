@@ -275,7 +275,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
               ? digest.items
               : this.prPollerSummaries.get(channelId)) ?? [];
           const count = items.length;
-          if (count === 0) return;
+          if (count === 0) {
+            return;
+          }
           const actionableItems = digest?.newItems ?? items.filter((item) => !item.isReminder);
           if (actionableItems.length === 0) {
             this.prPollerSummaries.delete(channelId);
@@ -287,7 +289,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
           const sessions = this.prReviewPoller.getSessionDetails();
           const session = sessions.find((s) => s.channelId === channelId);
-          if (!session) return;
+          if (!session) {
+            return;
+          }
 
           const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
           const summaryLines = items
@@ -357,7 +361,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   private compactPrReviewBatchSummary(summary: string): string {
     const compact = summary.replace(/[\r\n]+/g, ' ').trim();
     const max = 230;
-    if (!compact) return '';
+    if (!compact) {
+      return '';
+    }
     return compact.length > max ? `${compact.slice(0, max)}…` : compact;
   }
 

@@ -528,7 +528,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   private compactPrReviewBatchSummary(summary: string): string {
     const compact = summary.replace(/[\r\n]+/g, ' ').trim();
     const max = 230;
-    if (!compact) return '';
+    if (!compact) {
+      return '';
+    }
     return compact.length > max ? `${compact.slice(0, max)}…` : compact;
   }
 

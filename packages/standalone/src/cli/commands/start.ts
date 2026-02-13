@@ -75,8 +75,12 @@ function normalizeDiscordGuilds(
   const normalized: Record<string, NormalizedDiscordGuildConfig> = {};
 
   for (const [guildId, guildConfig] of Object.entries(source as Record<string, unknown>)) {
-    if (!guildId) continue;
-    if (!guildConfig || typeof guildConfig !== 'object') continue;
+    if (!guildId) {
+      continue;
+    }
+    if (!guildConfig || typeof guildConfig !== 'object') {
+      continue;
+    }
 
     const normalizedGuildConfig: NormalizedDiscordGuildConfig = {};
     if (typeof (guildConfig as Record<string, unknown>).requireMention === 'boolean') {
