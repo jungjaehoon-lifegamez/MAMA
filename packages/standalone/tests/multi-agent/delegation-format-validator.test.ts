@@ -23,29 +23,26 @@ CONTEXT: packages/standalone/src/agent/persistent-cli-process.ts, start() method
     expect(result.missingSections).toEqual([]);
   });
 
-  it('should detect missing sections', () => {
+  it('should pass with only TASK: section (other sections optional)', () => {
     const content = `@DevBot
 TASK: Fix race condition
 EXPECTED OUTCOME: Process should not crash`;
 
     const result = validateDelegationFormat(content);
-    expect(result.valid).toBe(false);
-    expect(result.missingSections).toContain('MUST DO:');
-    expect(result.missingSections).toContain('MUST NOT DO:');
-    expect(result.missingSections).toContain('REQUIRED TOOLS:');
-    expect(result.missingSections).toContain('CONTEXT:');
+    expect(result.valid).toBe(true);
+    expect(result.missingSections).toEqual([]);
   });
 
-  it('should detect all sections missing for empty content', () => {
+  it('should detect TASK: missing for empty content', () => {
     const result = validateDelegationFormat('');
     expect(result.valid).toBe(false);
-    expect(result.missingSections).toHaveLength(6);
+    expect(result.missingSections).toEqual(['TASK:']);
   });
 
-  it('should detect all sections missing for non-delegation message', () => {
+  it('should detect TASK: missing for non-delegation message', () => {
     const result = validateDelegationFormat('Hey team, great work on the PR!');
     expect(result.valid).toBe(false);
-    expect(result.missingSections).toHaveLength(6);
+    expect(result.missingSections).toEqual(['TASK:']);
   });
 
   it('should pass when sections are in any order', () => {
@@ -61,17 +58,17 @@ EXPECTED OUTCOME: feature works`;
     expect(result.missingSections).toEqual([]);
   });
 
-  it('should detect single missing section', () => {
+  it('should pass with TASK: even without other optional sections', () => {
     const content = `TASK: Fix bug
 EXPECTED OUTCOME: Bug is fixed
 MUST DO: Apply patch
 MUST NOT DO: Touch other files
 REQUIRED TOOLS: Edit`;
-    // Missing CONTEXT:
+    // Missing CONTEXT: but that's optional now
 
     const result = validateDelegationFormat(content);
-    expect(result.valid).toBe(false);
-    expect(result.missingSections).toEqual(['CONTEXT:']);
+    expect(result.valid).toBe(true);
+    expect(result.missingSections).toEqual([]);
   });
 });
 

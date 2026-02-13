@@ -44,6 +44,8 @@ export interface CheckpointData {
 export interface GraphHandlerOptions {
   getAgentStates?: () => Map<string, string>;
   getSwarmTasks?: (limit: number) => SwarmTask[];
+  applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
+  restartMultiAgentAgent?: (agentId: string) => Promise<void>;
 }
 
 export interface SwarmTask {

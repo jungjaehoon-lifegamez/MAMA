@@ -11,12 +11,17 @@
  */
 
 import type { WebClient } from '@slack/web-api';
-import type { MultiAgentConfig, MessageContext } from './types.js';
+import type { MultiAgentConfig, MessageContext, MultiAgentRuntimeOptions } from './types.js';
 import { SlackMultiBotManager, type SlackMentionEvent } from './slack-multi-bot-manager.js';
 import type { PersistentProcessOptions } from '../agent/persistent-cli-process.js';
 import { splitForSlack } from '../gateways/message-splitter.js';
+import type { AgentRuntimeProcess } from './runtime-process.js';
 import type { QueuedMessage } from './agent-message-queue.js';
-import { PRReviewPoller } from './pr-review-poller.js';
+import {
+  PRReviewPoller,
+  type PRPollerBatchDigest,
+  type PRPollerBatchItem,
+} from './pr-review-poller.js';
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import {
@@ -57,11 +62,18 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   /** Heartbeat polling interval handle */
   private heartbeatInterval?: ReturnType<typeof setInterval>;
 
+  /** PR poller summaries by channel for LEAD wake-up context. */
+  private prPollerSummaries = new Map<string, PRPollerBatchItem[]>();
+
   /** Interval handle for periodic cleanup */
   private mentionCleanupInterval?: ReturnType<typeof setInterval>;
 
-  constructor(config: MultiAgentConfig, processOptions: Partial<PersistentProcessOptions> = {}) {
-    super(config, processOptions);
+  constructor(
+    config: MultiAgentConfig,
+    processOptions: Partial<PersistentProcessOptions> = {},
+    runtimeOptions: MultiAgentRuntimeOptions = {}
+  ) {
+    super(config, processOptions, runtimeOptions);
     this.multiBotManager = new SlackMultiBotManager(config);
 
     // Start periodic cleanup of processed mentions (every 60 seconds)
@@ -231,25 +243,160 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       this.logger.log(
         `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
       );
+    }
 
-      // PR Review Poller: reviewer bot sends messages mentioning @Sisyphus (orchestrator)
-      // Sisyphus analyzes severity, delegates atomic fix tasks to @DevBot
+    // Configure PR poller wiring (if enabled)
+    this.configurePrPoller();
+  }
+
+  /**
+   * Configure PR Review Poller callbacks.
+   * Extracted so it can be called from both initializeMultiBots() and updateConfig()
+   * to enable hot-reload of PR poller.
+   */
+  private configurePrPoller(): void {
+    if (!this.isPrReviewPollingEnabled()) {
+      return;
+    }
+
+    if (this.config.mention_delegation) {
+      const botUserIdMap = this.multiBotManager.getBotUserIdMap();
       const orchestratorId = this.config.default_agent || 'sisyphus';
       const orchestratorUserId = botUserIdMap.get(orchestratorId);
       if (orchestratorUserId) {
         this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
       }
-
-      // Use reviewer bot's WebClient to send PR review messages
-      // (avoids self-mention issue when main bot = Sisyphus)
-      const reviewerClient = this.multiBotManager.getAgentWebClient('reviewer');
-      if (reviewerClient) {
-        this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
-          await reviewerClient.chat.postMessage({ channel: channelId, text });
-        });
-        this.logger.log('[MultiAgentSlack] PR Poller will send messages via reviewer bot');
-      }
     }
+
+    // PR Review Poller: wake up LEAD with compact summaries from new review items.
+    this.prReviewPoller.setMessageSender(async () => {});
+    this.prReviewPoller.setOnBatchItem(
+      async (channelId: string, summary: string, item: PRPollerBatchItem) => {
+        const compact = this.compactPrReviewBatchSummary(summary);
+        const bucket = this.prPollerSummaries.get(channelId) ?? [];
+        if (!compact || bucket.some((candidate) => candidate.id === item.id)) {
+          return;
+        }
+        const merged = { ...item, summary: compact };
+        this.prPollerSummaries.set(channelId, [...bucket, merged].slice(-12));
+      }
+    );
+    this.prReviewPoller.setOnBatchComplete(
+      async (channelId: string, digest?: PRPollerBatchDigest) => {
+        const items =
+          (digest?.items && digest.items.length > 0
+            ? digest.items
+            : this.prPollerSummaries.get(channelId)) ?? [];
+        const count = items.length;
+        if (count === 0) {
+          return;
+        }
+        const actionableItems = digest?.newItems ?? items.filter((item) => !item.isReminder);
+        if (actionableItems.length === 0) {
+          this.prPollerSummaries.delete(channelId);
+          return;
+        }
+        const reminderCount = (digest?.reminderItems ?? items.filter((item) => item.isReminder))
+          .length;
+        this.prPollerSummaries.delete(channelId);
+
+        const sessions = this.prReviewPoller.getSessionDetails();
+        const session = sessions.find((s) => s.channelId === channelId);
+        if (!session) {
+          return;
+        }
+
+        const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
+        const summaryLines = items
+          .map(
+            (item: PRPollerBatchItem, idx: number) =>
+              `- ${idx + 1}. [${item.severity}] ${item.summary}`
+          )
+          .join('\n');
+        const promptSummary = `\n${summaryLines}`;
+        const reminderSuffix = reminderCount > 0 ? `\n🔔 Reminders: ${reminderCount} item(s).` : '';
+
+        if (this.mainWebClient) {
+          await this.mainWebClient.chat.postMessage({
+            channel: channelId,
+            text: `📊 PR ${prLabel} — ${count} new review item(s)\n\n${promptSummary}${reminderSuffix}`,
+          });
+        }
+
+        this.orchestrator.resetChain(channelId);
+        const defaultAgentId = this.config.default_agent || 'sisyphus';
+
+        const basePrompt =
+          `📊 PR Review follow-up (${count} new item(s))\n` +
+          `Target: ${prLabel}\n` +
+          `Workspace: \`${session.workspaceDir}\`\n` +
+          `Items:\n${promptSummary}${reminderSuffix}`;
+
+        this.messageQueue.enqueue(defaultAgentId, {
+          prompt: `${basePrompt}\n\nClassify severity, implement fixable items, and coordinate with Dev/Reviewer.`,
+          channelId,
+          source: 'slack',
+          enqueuedAt: Date.now(),
+          context: { channelId, userId: 'pr-poller' },
+        });
+        this.logger.info(`[MultiAgentSlack] PR Poller -> LEAD wake-up (${count} items)`);
+        this.tryDrainNow(defaultAgentId, 'slack', channelId).catch(() => {});
+
+        const helperAgents = this.resolvePrReviewAssistants(defaultAgentId);
+        for (const helperAgentId of helperAgents) {
+          const helperPrompt =
+            helperAgentId === 'developer'
+              ? `${basePrompt}\n\nImplement available fixes in the workspace and request Reviewer verification when changes are made.`
+              : `${basePrompt}\n\nInspect the comments for correctness issues and provide reviewer guidance.`;
+
+          this.messageQueue.enqueue(helperAgentId, {
+            prompt: helperPrompt,
+            channelId,
+            source: 'slack',
+            enqueuedAt: Date.now(),
+            context: { channelId, userId: 'pr-poller' },
+          });
+          this.logger.info(
+            `[MultiAgentSlack] PR Poller -> ${helperAgentId} wake-up (${count} items)`
+          );
+          this.tryDrainNow(helperAgentId, 'slack', channelId).catch(() => {});
+        }
+      }
+    );
+    this.logger.log('[MultiAgentSlack] PR Poller summaries now feed LEAD wake-up');
+  }
+
+  /**
+   * Keep PR poller summaries short and remove duplicates.
+   */
+  private compactPrReviewBatchSummary(summary: string): string {
+    const compact = summary.replace(/[\r\n]+/g, ' ').trim();
+    const max = 230;
+    if (!compact) {
+      return '';
+    }
+    return compact.length > max ? `${compact.slice(0, max)}…` : compact;
+  }
+
+  /**
+   * Resolve helper agents for PR review workflow in addition to default lead.
+   */
+  private resolvePrReviewAssistants(defaultAgentId: string): string[] {
+    const candidateIds = ['developer', 'reviewer', 'dev', 'lead'];
+    const helperAgents: string[] = [];
+
+    for (const id of candidateIds) {
+      const cfg = this.config.agents[id];
+      if (!cfg || id === defaultAgentId) {
+        continue;
+      }
+      if (cfg.enabled === false) {
+        continue;
+      }
+      helperAgents.push(id);
+    }
+
+    return [...new Set(helperAgents)];
   }
 
   /**
@@ -266,7 +413,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     }, 'slack');
 
     // Only set PR poller sender if not already configured (e.g., by reviewer bot)
-    if (!this.prReviewPoller.hasMessageSender?.()) {
+    if (this.isPrReviewPollingEnabled() && !this.prReviewPoller.hasMessageSender?.()) {
       this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
         await client.chat.postMessage({ channel: channelId, text });
       });
@@ -301,6 +448,13 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     this.config = config;
     this.orchestrator.updateConfig(config);
     this.processManager.updateConfig(config);
+    if (this.isPrReviewPollingEnabled()) {
+      // Re-wire PR poller callbacks on hot-reload enable
+      this.configurePrPoller();
+    } else {
+      this.prReviewPoller.stopAll();
+      this.prPollerSummaries.clear();
+    }
   }
 
   /**
@@ -311,6 +465,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
    * Stop: message contains "pr stop", "stop polling"
    */
   async handlePRCommand(channelId: string, content: string): Promise<boolean> {
+    if (!this.isPrReviewPollingEnabled()) {
+      return false;
+    }
+
     if (!this.mainWebClient) return false;
 
     const contentLower = content.toLowerCase();
@@ -478,9 +636,11 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     // Track work start (completed in finally block)
     this.workTracker.startWork(agentId, context.channelId, cleanMessage);
 
+    let process: AgentRuntimeProcess | null = null;
+
     try {
       // Get or create process for this agent in this channel
-      const process = await this.processManager.getProcess('slack', context.channelId, agentId);
+      process = await this.processManager.getProcess('slack', context.channelId, agentId);
 
       // Send message and get response (with timeout, properly cleaned up)
       let timeoutHandle: ReturnType<typeof setTimeout>;
@@ -573,6 +733,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       }
       return null;
     } finally {
+      if (process) {
+        this.processManager.releaseProcess(agentId, process);
+      }
       this.workTracker.completeWork(agentId, context.channelId);
     }
   }
@@ -958,7 +1121,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     if (!this.mainWebClient || !this.heartbeatChannelId) return;
 
     const agentStates = this.processManager.getAgentStates();
-    const prSessions = this.prReviewPoller.getActiveSessions();
+    const prSessions = this.isPrReviewPollingEnabled()
+      ? this.prReviewPoller.getActiveSessions()
+      : [];
 
     // Check if any agent is busy or PR polling is active
     let hasBusy = false;
@@ -1003,6 +1168,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     } catch (err) {
       this.logger.error('[Heartbeat] Failed to post status:', err);
     }
+  }
+
+  private isPrReviewPollingEnabled(): boolean {
+    return this.config.pr_review_poller?.enabled === true;
   }
 
   /**
