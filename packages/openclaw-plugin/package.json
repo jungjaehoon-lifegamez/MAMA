@@ -39,7 +39,6 @@
     "openclaw": ">=2026.1.26"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.0.0",
     "@jungjaehoon/mama-core": "workspace:*",
     "@sinclair/typebox": "^0.32.0"
   },
