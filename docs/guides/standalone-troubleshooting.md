@@ -381,21 +381,14 @@ lsof -i :3847
 kill -9 PID
 ```
 
-**Option 2: Change MAMA port**
+**Option 2: Free the fixed default ports**
+
+MAMA OS currently uses fixed runtime ports (`3847`, `3849`). Stop conflicting processes, then restart:
 
 ```bash
-# Set custom port via environment variable
-export MAMA_HTTP_PORT=8080
-
-# Or edit config.yaml
-vim ~/.mama/config.yaml
-```
-
-```yaml
-# Add viewer port configuration
-viewer:
-  enabled: true
-  port: 8080 # Use different port
+mama stop
+sleep 2
+mama start
 ```
 
 **Option 3: Stop existing MAMA instance**
@@ -454,8 +447,9 @@ mama start --foreground
 3. **Port conflict:**
 
    ```bash
-   # Change port
-   export MAMA_HTTP_PORT=8080
+   lsof -i :3847
+   lsof -i :3849
+   # stop or kill conflicting process, then restart mama
    ```
 
 4. **Database locked:**
