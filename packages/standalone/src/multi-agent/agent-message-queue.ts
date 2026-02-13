@@ -13,7 +13,7 @@
  * Sprint 3 F7
  */
 
-import type { PersistentClaudeProcess } from '../agent/persistent-cli-process.js';
+import type { AgentRuntimeProcess } from './runtime-process.js';
 
 /**
  * Message context (from multi-agent-slack.ts or multi-agent-discord.ts)
@@ -103,7 +103,7 @@ export class AgentMessageQueue {
    */
   async drain(
     agentId: string,
-    process: PersistentClaudeProcess,
+    process: AgentRuntimeProcess,
     sendCallback: (agentId: string, message: QueuedMessage, response: string) => Promise<void>,
     depth: number = 0
   ): Promise<void> {

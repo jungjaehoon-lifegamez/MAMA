@@ -409,7 +409,7 @@ multi_agent:
       trigger_prefix: '!review'
       persona_file: '~/.mama/personas/reviewer.md'
       bot_token: 'DISCORD_BOT_TOKEN_3'
-      tier: 2 # Read-only for analysis
+      tier: 1 # Full access for code changes
       auto_respond_keywords: ['review', 'check', '리뷰', '검토']
 
   # Regex-based category routing
