@@ -105,7 +105,7 @@ mama init    # copies default skills to ~/.mama/skills/
 mama start   # opens web dashboard at localhost:3847
 ```
 
-**Package:** `@jungjaehoon/mama-os` 0.8.0
+**Package:** `@jungjaehoon/mama-os` 0.8.1
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -116,29 +116,31 @@ mama start   # opens web dashboard at localhost:3847
 > - **Sandbox** (Firejail, bubblewrap)
 >
 > See [Security Guide](docs/guides/security.md) for details.
+> For account/policy guidance (team bot vs personal account), see
+> [Standalone Compliance Notes](packages/standalone/README.md#compliance).
 
 <details>
 <summary>✅ <strong>Why CLI Subprocess? (ToS & Stability)</strong></summary>
 
-MAMA OS deliberately uses **Claude Code CLI as a subprocess** rather than direct API calls with OAuth tokens. This architectural choice prioritizes long-term stability:
+MAMA OS deliberately uses an **official backend CLI as a subprocess** (Claude/Codex) rather than direct API calls with extracted auth tokens. This architectural choice prioritizes long-term stability:
 
 **How it works:**
 
 ```text
-MAMA OS → spawn('claude', [...args]) → Official Claude CLI → Anthropic API
+MAMA OS → spawn('claude' | 'codex', [...args]) → Official CLI toolchain
 ```
 
 **Why this matters:**
 
-| Approach           | Method                            | Risk                                   |
-| ------------------ | --------------------------------- | -------------------------------------- |
-| Direct OAuth       | Extract token → call API directly | Token refresh conflicts, ToS gray area |
-| **CLI Subprocess** | Spawn official `claude` binary    | ✅ Officially supported, stable        |
+| Approach           | Method                            | Risk                                        |
+| ------------------ | --------------------------------- | ------------------------------------------- |
+| Direct token usage | Extract auth token → call API     | Token refresh conflicts, compatibility risk |
+| **CLI Subprocess** | Spawn official backend CLI binary | ✅ Officially supported, stable             |
 
 **Benefits of CLI subprocess approach:**
 
-- 🔒 **ToS Compliant** - Uses the [official subagent pattern](https://code.claude.com/docs/en/sub-agents) documented by Anthropic
-- 🛡️ **Future-Proof** - Anthropic maintains CLI compatibility; no risk from internal API changes
+- 🔒 **Policy-Aligned** - Uses official CLI execution paths instead of reverse-engineered token flows
+- 🛡️ **Future-Proof** - Backend vendors maintain CLI compatibility; reduced risk from internal API changes
 - 🔄 **Auth Handled** - CLI manages token refresh internally; no race conditions
 - 📊 **Usage Tracking** - Proper session/cost tracking through official tooling
 
@@ -147,7 +149,10 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 
 </details>
 
-**Requires:** [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated.
+**Requires:** at least one backend CLI installed and authenticated:
+
+- [Claude Code CLI](https://claude.ai/claude-code), or
+- Codex CLI (`npm install -g @openai/codex && codex login`)
 
 #### Multi-Agent Swarm
 
@@ -212,7 +217,7 @@ User message → Orchestrator → 5-Stage Routing
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` 1.7.4
+**Package:** `@jungjaehoon/mama-server` 1.7.5
 
 **What happens after installation:**
 
@@ -286,7 +291,7 @@ Add to `~/.openclaw/openclaw.json`:
 }
 ```
 
-**Package:** `@jungjaehoon/openclaw-mama` 0.4.1
+**Package:** `@jungjaehoon/openclaw-mama` 0.4.2
 
 ---
 
@@ -307,7 +312,7 @@ const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
 const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```
 
-**Package:** `@jungjaehoon/mama-core` 1.1.0
+**Package:** `@jungjaehoon/mama-core` 1.1.1
 
 ---
 
@@ -315,11 +320,11 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.8.0   | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.4   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.0   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.8   | Claude Code plugin                           | Claude Marketplace |
-| [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.1   | OpenClaw plugin                              | npm                |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.8.1   | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.5   | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.1   | Shared core library (embeddings, DB, memory) | npm                |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.9   | Claude Code plugin                           | Claude Marketplace |
+| [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.2   | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
 
@@ -364,6 +369,10 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```bash
 # Install globally
 npm install -g @jungjaehoon/mama-os
+
+# Authenticate one backend CLI (one-time)
+# Claude: claude
+# Codex:  codex login
 
 # Initialize workspace
 mama init

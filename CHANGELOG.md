@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **LLM backend strategy updated (cost-aware)**:
+  - Standalone onboarding/init now supports backend-agnostic selection (`auto | claude | codex`).
+  - Motivation includes rising premium model operating costs (including Opus 4.6 tiers), so runtime
+    backend choice is now user/environment-driven instead of vendor-fixed defaults.
+  - New users can start with whichever authenticated CLI is available and switch later without
+    architecture changes.
 - **Embedding server ownership clarified**:
   - Standalone (`@jungjaehoon/mama-os`) is now the default owner of HTTP embedding runtime.
   - MCP server no longer starts HTTP embedding by default; legacy opt-in via

@@ -178,7 +178,7 @@ describe('mama init command', () => {
   });
 
   describe('error handling', () => {
-    it('should fail if Claude Code credentials not found', async () => {
+    it('should fail if no backend credentials are found', async () => {
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
         throw new Error('process.exit called');
       });
@@ -188,7 +188,7 @@ describe('mama init command', () => {
         expect.fail('Should have thrown');
       } catch {
         expect(exitSpy).toHaveBeenCalledWith(1);
-        expect(consoleErrors.some((e) => e.includes('Claude Code'))).toBe(true);
+        expect(consoleErrors.some((e) => e.includes('No authenticated backend found'))).toBe(true);
       }
     });
 
@@ -211,6 +211,36 @@ describe('mama init command', () => {
       } finally {
         exitSpy.mockRestore();
       }
+    });
+
+    it('should fail when codex backend is requested without codex auth', async () => {
+      const claudeDir = join(testHome, '.claude');
+      await mkdir(claudeDir, { recursive: true });
+      await writeFile(join(claudeDir, '.credentials.json'), '{}');
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('process.exit called');
+      });
+
+      try {
+        await initCommand({ backend: 'codex' });
+        expect.fail('Should have thrown');
+      } catch {
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(consoleErrors.some((e) => e.includes('Requested backend "codex"'))).toBe(true);
+      } finally {
+        exitSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('backend selection', () => {
+    it('should apply codex backend when skipAuthCheck is enabled', async () => {
+      await initCommand({ skipAuthCheck: true, backend: 'codex' });
+
+      const config = await loadConfig();
+      expect(config.agent.backend).toBe('codex');
+      expect(config.agent.codex_home).toBe('~/.mama/.codex');
     });
   });
 

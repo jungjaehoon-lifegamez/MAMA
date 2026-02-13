@@ -4,7 +4,7 @@
  * Run a single prompt through the agent loop (for testing)
  */
 
-import { loadConfig, configExists } from '../config/config-manager.js';
+import { loadConfig, configExists, expandPath } from '../config/config-manager.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 
@@ -70,6 +70,14 @@ export async function runCommand(options: RunOptions): Promise<void> {
   const agentLoop = new AgentLoop(oauthManager, {
     backend,
     model: config.agent.model,
+    codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
+    codexCwd: config.agent.codex_cwd ? expandPath(config.agent.codex_cwd) : undefined,
+    codexSandbox: config.agent.codex_sandbox,
+    codexSkipGitRepoCheck: config.agent.codex_skip_git_repo_check,
+    codexProfile: config.agent.codex_profile,
+    codexEphemeral: config.agent.codex_ephemeral,
+    codexAddDirs: config.agent.codex_add_dirs,
+    codexConfigOverrides: config.agent.codex_config_overrides,
     maxTurns: config.agent.max_turns,
     onTurn: options.verbose
       ? (turn) => {

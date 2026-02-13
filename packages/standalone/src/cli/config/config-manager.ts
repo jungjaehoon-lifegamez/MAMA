@@ -186,6 +186,30 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.backend must be "claude" or "codex"');
   }
 
+  if (
+    config.agent.codex_sandbox &&
+    !['read-only', 'workspace-write', 'danger-full-access'].includes(config.agent.codex_sandbox)
+  ) {
+    errors.push(
+      'agent.codex_sandbox must be one of: read-only, workspace-write, danger-full-access'
+    );
+  }
+
+  if (config.agent.codex_add_dirs !== undefined && !Array.isArray(config.agent.codex_add_dirs)) {
+    errors.push('agent.codex_add_dirs must be an array of paths');
+  }
+
+  if (
+    config.agent.codex_config_overrides !== undefined &&
+    !Array.isArray(config.agent.codex_config_overrides)
+  ) {
+    errors.push('agent.codex_config_overrides must be an array of key=value strings');
+  }
+
+  if (config.agent.codex_cwd !== undefined && typeof config.agent.codex_cwd !== 'string') {
+    errors.push('agent.codex_cwd must be a path string');
+  }
+
   if (config.agent.max_turns < 1 || config.agent.max_turns > 100) {
     errors.push('agent.max_turns must be between 1 and 100');
   }
