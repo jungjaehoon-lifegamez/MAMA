@@ -35,6 +35,9 @@ const { DebugLogger } = debugLogger as {
 /** Default polling interval (60 seconds) */
 const POLL_INTERVAL_MS = 60 * 1000;
 
+/** Reminder interval for unresolved threads (15 minutes) */
+const REMIND_INTERVAL_MS = 15 * 60 * 1000;
+
 /** Max polling duration before auto-stop (2 hours) */
 const MAX_POLL_DURATION_MS = 2 * 60 * 60 * 1000;
 
@@ -77,6 +80,23 @@ interface PRReview {
   submitted_at: string;
 }
 
+type PRPollerItemKind = 'review' | 'comment' | 'thread';
+type PRPollerSeverity = 'high' | 'medium' | 'low';
+
+export interface PRPollerBatchItem {
+  id: string;
+  kind: PRPollerItemKind;
+  severity: PRPollerSeverity;
+  summary: string;
+  isReminder: boolean;
+}
+
+export interface PRPollerBatchDigest {
+  items: PRPollerBatchItem[];
+  newItems: PRPollerBatchItem[];
+  reminderItems: PRPollerBatchItem[];
+}
+
 /**
  * Active polling session
  */
@@ -90,6 +110,7 @@ interface PollSession {
   seenReviewIds: Set<number>;
   addressedCommentIds: Set<number>;
   seenUnresolvedThreadIds: Map<string, number>; // id → last reported timestamp
+  lastUnresolvedReminderAt: number;
   lastHeadSha: string | null;
   isPolling: boolean; // Prevent concurrent polling
   startedAt: number;
@@ -100,7 +121,11 @@ interface PollSession {
  * Callback for sending messages to Slack
  */
 type MessageSender = (channelId: string, text: string) => Promise<void>;
-type BatchItemCallback = (channelId: string, summary: string) => Promise<void>;
+type BatchItemCallback = (
+  channelId: string,
+  summary: string,
+  item: PRPollerBatchItem
+) => Promise<void>;
 
 /**
  * PR Review Poller
@@ -111,7 +136,9 @@ export class PRReviewPoller {
   private sessions: Map<string, PollSession> = new Map();
   private messageSender: MessageSender | null = null;
   private onBatchItem: BatchItemCallback | null = null;
-  private onBatchComplete: ((channelId: string) => Promise<void>) | null = null;
+  private onBatchComplete:
+    | ((channelId: string, digest?: PRPollerBatchDigest) => Promise<void>)
+    | null = null;
   private logger = new DebugLogger('PRReviewPoller');
 
   /**
@@ -140,7 +167,9 @@ export class PRReviewPoller {
    * Set callback fired after all message chunks for a poll cycle are sent.
    * Used by handlers to trigger lead wake-up once per poll cycle (not per-chunk).
    */
-  setOnBatchComplete(callback: (channelId: string) => Promise<void>): void {
+  setOnBatchComplete(
+    callback: (channelId: string, digest?: PRPollerBatchDigest) => Promise<void>
+  ): void {
     this.onBatchComplete = callback;
   }
 
@@ -226,6 +255,7 @@ export class PRReviewPoller {
       seenReviewIds,
       addressedCommentIds: new Set<number>(),
       seenUnresolvedThreadIds: new Map<string, number>(),
+      lastUnresolvedReminderAt: 0,
       lastHeadSha,
       startedAt: Date.now(),
       isPolling: false,
@@ -333,8 +363,24 @@ export class PRReviewPoller {
     }
 
     session.isPolling = true;
-    // Track if any new data is found (for onBatchComplete trigger)
-    let hasNewData = false;
+    // Track batch items discovered in this poll cycle.
+    const cycleDigest: PRPollerBatchDigest = {
+      items: [],
+      newItems: [],
+      reminderItems: [],
+    };
+    const seenItemIds = new Set<string>();
+
+    const registerItem = async (text: string, item: PRPollerBatchItem): Promise<void> => {
+      if (!this.addPollerBatchItem(session.channelId, item, cycleDigest, seenItemIds)) {
+        return;
+      }
+
+      await this.sendMessage(session.channelId, text, item);
+      this.logger.info(
+        `[PRPoller] Sent ${item.kind} item for ${sessionKey}${item.isReminder ? ' (reminder)' : ''}: ${item.id}`
+      );
+    };
 
     try {
       // Auto-stop after max duration
@@ -379,18 +425,21 @@ export class PRReviewPoller {
           session.seenReviewIds.add(review.id);
 
           if (review.state === 'APPROVED') {
+            const summary = `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. Polling stopped.`;
+            const item: PRPollerBatchItem = {
+              id: `${sessionKey}:review:${review.id}`,
+              kind: 'review',
+              severity: 'high',
+              summary,
+              isReminder: false,
+            };
             try {
-              await this.sendMessage(
-                session.channelId,
-                `✅ *PR Review* — ${sessionKey} **APPROVED** by ${review.user.login}. Polling stopped.`
-              );
+              await registerItem(summary, item);
 
-              hasNewData = true; // Set flag for APPROVED review
-
-              // Trigger onBatchComplete for LEAD agent to handle commit+push
+              // Trigger onBatchComplete for follow-up workflow.
               if (this.onBatchComplete) {
                 try {
-                  await this.onBatchComplete(session.channelId);
+                  await this.onBatchComplete(session.channelId, cycleDigest);
                 } catch (err) {
                   this.logger.error(`[PRPoller] onBatchComplete error after APPROVE:`, err);
                 }
@@ -405,11 +454,15 @@ export class PRReviewPoller {
           }
 
           if (review.state === 'CHANGES_REQUESTED') {
-            await this.sendMessage(
-              session.channelId,
-              `🔴 *PR Review* — ${sessionKey} **CHANGES REQUESTED** by ${review.user.login}`
-            );
-            hasNewData = true; // Set flag for CHANGES_REQUESTED review
+            const summary = `🔴 *PR Review* — ${sessionKey} **CHANGES REQUESTED** by ${review.user.login}`;
+            const item: PRPollerBatchItem = {
+              id: `${sessionKey}:review:${review.id}`,
+              kind: 'review',
+              severity: 'high',
+              summary,
+              isReminder: false,
+            };
+            await registerItem(summary, item);
           }
         }
       } catch (err) {
@@ -452,7 +505,7 @@ export class PRReviewPoller {
       // After a push, check unresolved threads and auto-reply to addressed ones
       if (newPush && changedFiles.length > 0) {
         try {
-          await this.handlePostPush(session, sessionKey, changedFiles, allComments);
+          await this.handlePostPush(session, changedFiles, allComments);
         } catch (err) {
           this.logger.error(`[PRPoller] Failed to handle post-push:`, err);
         }
@@ -468,16 +521,20 @@ export class PRReviewPoller {
           // Format and send new comments
           const formatted = this.formatComments(sessionKey, newComments);
           const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
-          await this.sendMessage(session.channelId, `${mention}${formatted}`);
+          const summary = `${mention}${formatted}`;
+          const item: PRPollerBatchItem = {
+            id: `${sessionKey}:comments:${newComments.map((comment) => comment.id).join(',')}`,
+            kind: 'comment',
+            severity: this.classifyCommentBatchSeverity(newComments),
+            summary: summary,
+            isReminder: false,
+          };
+          await registerItem(summary, item);
 
           // Mark as seen only after successful send
           for (const c of newComments) {
             session.seenCommentIds.add(c.id);
           }
-
-          // Set flag to trigger onBatchComplete
-          hasNewData = true;
-
           this.logger.info(`[PRPoller] Sent ${newComments.length} new comments for ${sessionKey}`);
         }
       } catch (err) {
@@ -493,29 +550,42 @@ export class PRReviewPoller {
         );
         const allUnresolved = threads.filter((t) => !t.isResolved);
         const now = Date.now();
-        const REMIND_INTERVAL_MS = 60 * 1000; // Re-remind after 1 minute
 
-        // New = never seen, or seen but still unresolved after remind interval
+        // Report unresolved threads only when they are first seen, and remind at bounded intervals.
         const toReport = allUnresolved.filter((t) => {
           const lastReported = session.seenUnresolvedThreadIds.get(t.id);
-          if (!lastReported) return true; // never reported
-          return now - lastReported >= REMIND_INTERVAL_MS; // stale reminder
+          return !lastReported;
         });
 
+        const needsReminder =
+          toReport.length === 0 &&
+          now - session.lastUnresolvedReminderAt >= REMIND_INTERVAL_MS &&
+          allUnresolved.length > 0;
+
+        if (needsReminder) {
+          toReport.push(...allUnresolved.slice(0, 20));
+        }
+
         if (toReport.length > 0) {
-          hasNewData = true;
-          // More accurate reminder detection: only if ALL threads are already seen
-          const seenCount = toReport.filter((t) =>
-            session.seenUnresolvedThreadIds.has(t.id)
-          ).length;
-          const isReminder = seenCount === toReport.length && seenCount > 0;
+          const isReminder = needsReminder;
           const prefix = isReminder ? '🔔 *Reminder*: ' : '';
           const formatted = this.formatUnresolvedThreads(sessionKey, toReport, threads.length);
           const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
-          await this.sendMessage(session.channelId, `${mention}${prefix}${formatted}`);
+          const summary = `${mention}${prefix}${formatted}`;
+          const item: PRPollerBatchItem = {
+            id: `${sessionKey}:threads:${toReport.map((thread) => thread.id).join(':')}`,
+            kind: 'thread',
+            severity: 'high',
+            summary,
+            isReminder,
+          };
+          await registerItem(summary, item);
 
           for (const t of toReport) {
             session.seenUnresolvedThreadIds.set(t.id, now);
+          }
+          if (needsReminder) {
+            session.lastUnresolvedReminderAt = now;
           }
           this.logger.info(
             `[PRPoller] Sent ${toReport.length} unresolved threads for ${sessionKey}${isReminder ? ' (reminder)' : ''}`
@@ -534,9 +604,12 @@ export class PRReviewPoller {
       }
 
       // Notify batch complete — triggers agent processing once after all chunks (only when new data found)
-      if (hasNewData && this.onBatchComplete) {
+      if (
+        cycleDigest.newItems.length + cycleDigest.reminderItems.length > 0 &&
+        this.onBatchComplete
+      ) {
         try {
-          await this.onBatchComplete(session.channelId);
+          await this.onBatchComplete(session.channelId, cycleDigest);
         } catch (err) {
           this.logger.error(`[PRPoller] onBatchComplete error:`, err);
         }
@@ -556,6 +629,41 @@ export class PRReviewPoller {
    * Format PR comments with full details grouped by file.
    * Enables parallel delegation — independent files can be fixed simultaneously.
    */
+  private classifyCommentBatchSeverity(comments: PRComment[]): PRPollerSeverity {
+    const hasFixHint = comments.some(
+      (comment) =>
+        comment.body.toLowerCase().includes('must') || comment.body.toLowerCase().includes('fail')
+    );
+
+    return hasFixHint ? 'high' : comments.length > 2 ? 'medium' : 'low';
+  }
+
+  private addPollerBatchItem(
+    channelId: string,
+    item: PRPollerBatchItem,
+    digest: PRPollerBatchDigest,
+    seenItemIds: Set<string>
+  ): boolean {
+    if (seenItemIds.has(item.id)) return false;
+
+    seenItemIds.add(item.id);
+    digest.items.push(item);
+
+    if (item.isReminder) {
+      digest.reminderItems.push(item);
+    } else {
+      digest.newItems.push(item);
+    }
+
+    if (this.onBatchItem) {
+      this.onBatchItem(channelId, this.extractBatchSummary(item.summary), item).catch((err) => {
+        this.logger.error('[PRPoller] Failed to report batch item:', err);
+      });
+    }
+
+    return true;
+  }
+
   private formatComments(sessionKey: string, comments: PRComment[]): string {
     // Group by file
     const byFile = new Map<string, PRComment[]>();
@@ -631,13 +739,12 @@ export class PRReviewPoller {
 
   /**
    * Handle post-push: check unresolved threads, auto-reply to addressed ones,
-   * and re-inject truly unresolved comments to Slack.
+   * and keep unresolved-thread state fresh for the next poll cycle.
    *
    * @param allComments - Pre-fetched comments (to avoid N+1 API calls)
    */
   private async handlePostPush(
     session: PollSession,
-    sessionKey: string,
     changedFiles: string[],
     allComments: PRComment[]
   ): Promise<void> {
@@ -701,17 +808,13 @@ export class PRReviewPoller {
         }
       }
       this.logger.info(
-        `[PRPoller] Auto-replied to ${addressed.length} addressed threads for ${sessionKey}`
+        `[PRPoller] Auto-replied to ${addressed.length} addressed threads for ${session.owner}/${session.repo}#${session.prNumber}`
       );
     }
 
-    // Report still-unresolved threads to Slack
     if (stillUnresolved.length > 0) {
-      const formatted = this.formatUnresolvedThreads(sessionKey, stillUnresolved, threads.length);
-      const mention = this.targetAgentUserId ? `<@${this.targetAgentUserId}> ` : '';
-      await this.sendMessage(session.channelId, `${mention}${formatted}`);
       this.logger.info(
-        `[PRPoller] Sent ${stillUnresolved.length} unresolved threads for ${sessionKey}`
+        `[PRPoller] Detected ${stillUnresolved.length} still-unresolved threads in push context for ${session.owner}/${session.repo}#${session.prNumber}`
       );
     }
   }
@@ -1071,19 +1174,14 @@ export class PRReviewPoller {
   /**
    * Send message to Slack via callback
    */
-  private async sendMessage(channelId: string, text: string): Promise<void> {
+  private async sendMessage(
+    channelId: string,
+    text: string,
+    _batchItem?: PRPollerBatchItem
+  ): Promise<void> {
     if (!this.messageSender) {
       this.logger.error('[PRPoller] No message sender configured');
       return;
-    }
-
-    if (this.onBatchItem) {
-      try {
-        const summary = this.extractBatchSummary(text);
-        await this.onBatchItem(channelId, summary);
-      } catch (err) {
-        this.logger.error('[PRPoller] Failed to notify batch item callback:', err);
-      }
     }
 
     // Discord has a 2000 char limit; split long messages

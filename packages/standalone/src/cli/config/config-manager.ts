@@ -208,6 +208,22 @@ function normalizeLegacyMultiAgentConfig(
     };
   }
 
+  const needsAutoTierUpgrade =
+    developer.can_delegate === true &&
+    (developer.tier === undefined || developer.tier < 1 || developer.tier > 1);
+  if (needsAutoTierUpgrade) {
+    return {
+      ...multiAgentConfig,
+      agents: {
+        ...multiAgentConfig.agents,
+        developer: {
+          ...developer,
+          tier: 1,
+        },
+      },
+    };
+  }
+
   return multiAgentConfig;
 }
 

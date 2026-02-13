@@ -103,6 +103,35 @@ describe('MultiAgentOrchestrator', () => {
       expect(result.reason).toBe('keyword_match');
     });
 
+    it('should limit auto keyword responders for non-bot messages when free_chat is disabled', () => {
+      const context: MessageContext = {
+        channelId: 'channel1',
+        userId: 'user1',
+        content: 'review this bug fix code',
+        isBot: false,
+        timestamp: Date.now(),
+      };
+
+      const result = orchestrator.selectRespondingAgents(context);
+      expect(result.reason).toBe('keyword_match');
+      expect(result.selectedAgents).toEqual(['developer']);
+    });
+
+    it('should not limit auto keyword responders for bot messages', () => {
+      const context: MessageContext = {
+        channelId: 'channel1',
+        userId: 'bot1',
+        content: 'review this bug fix code',
+        isBot: true,
+        senderAgentId: undefined,
+        timestamp: Date.now(),
+      };
+
+      const result = orchestrator.selectRespondingAgents(context);
+      expect(result.reason).toBe('keyword_match');
+      expect(result.selectedAgents).toEqual(['developer', 'reviewer']);
+    });
+
     it('should use default agent when configured', () => {
       const configWithDefault = {
         ...config,

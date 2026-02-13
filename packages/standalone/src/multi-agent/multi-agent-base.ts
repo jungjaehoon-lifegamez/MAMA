@@ -26,6 +26,7 @@ import { WorkTracker } from './work-tracker.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
 import type { GatewayToolInput } from '../agent/types.js';
+import type { AgentRuntimeProcess } from './runtime-process.js';
 
 /** Default timeout for agent responses (15 minutes -- must accommodate sub-agent spawns) */
 export const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -134,15 +135,22 @@ export abstract class MultiAgentHandlerBase {
 
     this.backgroundTaskManager = new BackgroundTaskManager(
       async (agentId: string, prompt: string): Promise<string> => {
-        const process = await this.processManager.getProcess(
-          this.getPlatformName(),
-          'background',
-          agentId
-        );
-        const result = await process.sendMessage(prompt);
-        // Execute any gateway tool calls (discord_send, mama_*) from response text
-        const cleaned = await this.executeTextToolCalls(result.response);
-        return cleaned;
+        let process: AgentRuntimeProcess | null = null;
+        try {
+          process = await this.processManager.getProcess(
+            this.getPlatformName(),
+            'background',
+            agentId
+          );
+          const result = await process.sendMessage(prompt);
+          // Execute any gateway tool calls (discord_send, mama_*) from response text
+          const cleaned = await this.executeTextToolCalls(result.response);
+          return cleaned;
+        } finally {
+          if (process) {
+            this.processManager.releaseProcess(agentId, process);
+          }
+        }
       },
       { maxConcurrentPerAgent: 2, maxTotalConcurrent: 5 }
     );
@@ -257,9 +265,13 @@ export abstract class MultiAgentHandlerBase {
   protected setupIdleListeners(): void {
     this.processManager.on('process-created', ({ agentId, process }) => {
       process.on('idle', async () => {
-        await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
-          await this.sendQueuedResponse(aid, message, response);
-        });
+        try {
+          await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
+            await this.sendQueuedResponse(aid, message, response);
+          });
+        } finally {
+          this.processManager.releaseProcess(agentId, process);
+        }
       });
     });
   }

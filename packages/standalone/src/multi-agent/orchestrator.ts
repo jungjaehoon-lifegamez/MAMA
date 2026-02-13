@@ -222,7 +222,7 @@ export class MultiAgentOrchestrator {
       const readyAgents = categoryMatch.agentIds.filter((id) => this.isAgentReady(id));
       if (readyAgents.length > 0) {
         return {
-          selectedAgents: readyAgents,
+          selectedAgents: this.limitAutoResponderSelection(readyAgents, context),
           reason: 'category_match',
           blocked: false,
         };
@@ -239,10 +239,12 @@ export class MultiAgentOrchestrator {
 
     if (readyAgents.length > 0) {
       // If message is from another agent, only allow one response to prevent cross-talk spam
-      const selectedCount = context.isBot ? 1 : readyAgents.length;
+      const selectedCount = this.shouldLimitAutoSelection(context) ? 1 : readyAgents.length;
+
+      const selectedAgents = readyAgents.slice(0, selectedCount).map((a) => a.id);
 
       return {
-        selectedAgents: readyAgents.slice(0, selectedCount).map((a) => a.id),
+        selectedAgents,
         reason: 'keyword_match',
         blocked: false,
       };
@@ -268,6 +270,25 @@ export class MultiAgentOrchestrator {
       reason: 'none',
       blocked: false,
     };
+  }
+
+  /**
+   * Select limited responders for non-bot messages unless free-chat is explicitly enabled.
+   * This protects the pool from burst fan-out and queue overflow while preserving explicit mentions.
+   */
+  private limitAutoResponderSelection(agentIds: string[], context: MessageContext): string[] {
+    if (!this.shouldLimitAutoSelection(context)) {
+      return agentIds;
+    }
+
+    return agentIds.slice(0, 1);
+  }
+
+  /**
+   * Determine whether a message should be auto-responded by a single agent.
+   */
+  private shouldLimitAutoSelection(context: MessageContext): boolean {
+    return !context.isBot && !this.config.free_chat;
   }
 
   /**
