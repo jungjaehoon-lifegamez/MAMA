@@ -6,7 +6,7 @@
  *
  * Features:
  * - Model stays loaded in memory (singleton)
- * - HTTP API at localhost:${MAMA_HTTP_PORT || 3849}
+ * - HTTP API at localhost:${MAMA_EMBEDDING_PORT || MAMA_HTTP_PORT || 3849}
  * - Health check endpoint
  * - Shared model with MCP server
  *
@@ -43,7 +43,8 @@ const sessionManager = new SessionManager();
 const sessionHandler = createSessionHandler(sessionManager);
 
 // Configuration
-export const DEFAULT_PORT: number = parseInt(process.env.MAMA_HTTP_PORT || '', 10) || 3849;
+export const DEFAULT_PORT: number =
+  parseInt(process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '', 10) || 3849;
 export const HOST = '127.0.0.1'; // localhost only for security
 
 // Port file for clients to discover the server
@@ -431,8 +432,12 @@ export async function startEmbeddingServer(
           if (messageRouter && sessionStore) {
             _wssInstance = createWebSocketHandler({
               httpServer: server,
-              messageRouter: messageRouter as Parameters<typeof createWebSocketHandler>[0]['messageRouter'],
-              sessionStore: sessionStore as Parameters<typeof createWebSocketHandler>[0]['sessionStore'],
+              messageRouter: messageRouter as Parameters<
+                typeof createWebSocketHandler
+              >[0]['messageRouter'],
+              sessionStore: sessionStore as Parameters<
+                typeof createWebSocketHandler
+              >[0]['sessionStore'],
               authToken: process.env.MAMA_AUTH_TOKEN,
             });
             console.error(
@@ -440,9 +445,7 @@ export async function startEmbeddingServer(
             );
           } else {
             // Legacy mode without MessageRouter - skip for now
-            console.error(
-              `[EmbeddingHTTP] WebSocket server skipped (no MessageRouter provided)`
-            );
+            console.error(`[EmbeddingHTTP] WebSocket server skipped (no MessageRouter provided)`);
           }
         } catch (wsError) {
           const errMsg = wsError instanceof Error ? wsError.message : String(wsError);
