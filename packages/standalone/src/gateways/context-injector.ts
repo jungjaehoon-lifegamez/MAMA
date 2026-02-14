@@ -94,7 +94,7 @@ export class ContextInjector {
     config: Pick<MessageRouterConfig, 'similarityThreshold' | 'maxDecisions'> = {}
   ) {
     this.mamaApi = mamaApi;
-    this.similarityThreshold = config.similarityThreshold ?? 0.7;
+    this.similarityThreshold = config.similarityThreshold ?? 0.8;
     this.maxDecisions = config.maxDecisions ?? 3;
   }
 
