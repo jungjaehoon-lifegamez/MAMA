@@ -140,7 +140,7 @@ jobs:
             packages/*/dist
           key: ${{ runner.os }}-build-${{ github.sha }}
       - name: Test plugin
-        run: pnpm --filter @jungjaehoon/mama-plugin test
+        run: pnpm --filter mama-plugin test
         env:
           MAMA_FORCE_TIER_3: true
 
