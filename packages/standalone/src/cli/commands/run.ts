@@ -78,6 +78,7 @@ export async function runCommand(options: RunOptions): Promise<void> {
     codexEphemeral: config.agent.codex_ephemeral,
     codexAddDirs: config.agent.codex_add_dirs,
     codexConfigOverrides: config.agent.codex_config_overrides,
+    timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
     onTurn: options.verbose
       ? (turn) => {
