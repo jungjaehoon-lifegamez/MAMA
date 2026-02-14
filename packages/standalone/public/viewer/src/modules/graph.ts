@@ -333,7 +333,7 @@ export class GraphModule {
     return `
       <strong>${escapeHtml(node.topic || 'Unknown')}</strong><br>
       Decision: ${escapeHtml((node.decision || '').substring(0, 100))}...<br>
-      Outcome: ${node.outcome || 'PENDING'}<br>
+      Outcome: ${escapeHtml(node.outcome || 'PENDING')}<br>
       Confidence: ${Math.round((node.confidence || 0) * 100)}%
     `;
   }

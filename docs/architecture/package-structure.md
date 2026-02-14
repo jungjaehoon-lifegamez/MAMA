@@ -411,4 +411,4 @@ Existing decisions remain valid across all package updates. SQLite schema change
 
 ---
 
-**Last Updated:** 2026-02-07
+**Last Updated:** 2026-02-14

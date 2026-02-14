@@ -15,6 +15,9 @@
 import { escapeHtml, debounce, showToast, getElementByIdOrNull } from '../utils/dom.js';
 import { formatRelativeTime, truncateText } from '../utils/format.js';
 import { API, type MemorySearchItem } from '../utils/api.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('Memory');
 
 /**
  * Memory Module Class
@@ -120,7 +123,7 @@ export class MemoryModule {
       this.setStatus(`Found ${this.searchData.length} decision(s)`, '');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error('[Memory] Search error:', message);
+      logger.error('Search error:', message);
       this.setStatus(`Error: ${message}`, 'error');
     }
   }
@@ -140,7 +143,7 @@ export class MemoryModule {
       return data.results || [];
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error('[Memory] Related search error:', message);
+      logger.error('Related search error:', message);
       return [];
     }
   }
@@ -194,8 +197,13 @@ export class MemoryModule {
     }
 
     const html = results
-      .map(
-        (item, idx) => `
+      .map((item, idx) => {
+        const rawOutcome = String(item.outcome || 'PENDING');
+        const normalizedOutcome = rawOutcome.toLowerCase();
+        const outcomeClass = ['success', 'failed', 'partial', 'pending'].includes(normalizedOutcome)
+          ? normalizedOutcome
+          : 'pending';
+        return `
         <div class="memory-card" data-memory-card="${idx}">
           <div class="memory-card-header">
             <span class="memory-card-topic">${escapeHtml(item.topic || 'Unknown')}</span>
@@ -203,13 +211,13 @@ export class MemoryModule {
           </div>
           <div class="memory-card-decision">${escapeHtml(truncateText(item.decision, 150))}</div>
           <div class="memory-card-meta">
-            <span class="memory-card-outcome ${(item.outcome || 'pending').toLowerCase()}">${item.outcome || 'PENDING'}</span>
+            <span class="memory-card-outcome ${outcomeClass}">${escapeHtml(rawOutcome)}</span>
             <span>${formatRelativeTime(item.created_at)}</span>
           </div>
           <div class="memory-card-reasoning">${escapeHtml(item.reasoning || 'No reasoning provided')}</div>
         </div>
-      `
-      )
+      `;
+      })
       .join('');
 
     container.innerHTML = html;
@@ -378,9 +386,7 @@ export class MemoryModule {
     const confidenceInput = getElementByIdOrNull<HTMLInputElement>('save-confidence');
     const statusEl = getElementByIdOrNull<HTMLElement>('save-form-status');
     // Select the Save button (last button in the modal actions)
-    const submitBtn = document.querySelector<HTMLButtonElement>(
-      '#save-decision-modal button.bg-mama-yellow'
-    );
+    const submitBtn = getElementByIdOrNull<HTMLButtonElement>('save-form-submit');
     if (
       !topicInput ||
       !decisionInput ||
@@ -437,7 +443,7 @@ export class MemoryModule {
       }, 1500);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error('[Memory] Save error:', message);
+      logger.error('Save error:', message);
       statusEl.textContent = `Error: ${message}`;
       statusEl.className = 'save-form-status error';
     } finally {

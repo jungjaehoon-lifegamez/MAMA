@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Session State Manager for MAMA Hooks
  *
@@ -118,7 +117,9 @@ function wereContractsShown(filePath) {
 function normalizePath(filePath) {
   const resolved = path.resolve(filePath);
   // Linux is case-sensitive, macOS/Windows are not
-  return process.platform === 'linux' ? resolved : resolved.toLowerCase();
+  return process.platform === 'linux' || process.platform === 'freebsd'
+    ? resolved
+    : resolved.toLowerCase();
 }
 
 /**

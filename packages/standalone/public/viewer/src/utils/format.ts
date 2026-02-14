@@ -162,7 +162,7 @@ export function formatAssistantMessage(text: string | null | undefined): string 
   formatted = wrapCheckpointSections(formatted);
 
   // Code blocks with optional language (```js ... ```)
-  formatted = formatted.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+  formatted = formatted.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
     const langClass = lang ? ` class="language-${lang}"` : '';
     return `<pre class="code-block"><code${langClass}>${code.trim()}</code></pre>`;
   });

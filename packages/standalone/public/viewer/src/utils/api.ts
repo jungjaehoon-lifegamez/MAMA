@@ -554,18 +554,10 @@ export class API {
 
   /**
    * Get the last active session
-   * @returns {Promise<Object|null>} Last active session or null
+   * @returns {Promise<Object>} Last active session
    */
-  static async getLastActiveSession(): Promise<LastActiveSessionResponse | null> {
-    try {
-      return await this.get<LastActiveSessionResponse>('/api/sessions/last-active');
-    } catch (error) {
-      console.warn(
-        '[API] Failed to get last active session, fallback to local session.',
-        error instanceof Error ? error.message : String(error)
-      );
-      return null;
-    }
+  static async getLastActiveSession(): Promise<LastActiveSessionResponse> {
+    return this.get<LastActiveSessionResponse>('/api/sessions/last-active');
   }
 
   /**

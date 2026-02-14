@@ -25,6 +25,7 @@ const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/memory-store');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { isFirstEdit, markFileEdited, markContractsShown } = require('./session-state');
+const { shouldProcessFile } = require('./hook-file-filter');
 
 // Threshold for relevance (lowered from 0.85 to show more decisions)
 const SIMILARITY_THRESHOLD = 0.75;
@@ -32,50 +33,6 @@ const SEARCH_LIMIT = 3;
 
 // Tools that need contract check
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
-
-// Code file extensions
-const CODE_EXTENSIONS = new Set([
-  '.js',
-  '.ts',
-  '.jsx',
-  '.tsx',
-  '.mjs',
-  '.cjs',
-  '.py',
-  '.go',
-  '.rs',
-  '.java',
-  '.kt',
-  '.scala',
-  '.c',
-  '.cpp',
-  '.h',
-  '.hpp',
-  '.cs',
-  '.rb',
-  '.php',
-]);
-
-// Files to skip
-const SKIP_PATTERNS = [
-  /\.md$/i,
-  /\.txt$/i,
-  /\.json$/i,
-  /\.ya?ml$/i,
-  /\.toml$/i,
-  /\.ini$/i,
-  /\.env/i,
-  /\.lock$/i,
-  /\.gitignore$/i,
-  /LICENSE/i,
-  /README/i,
-  /\/test[s]?\//i,
-  /\.test\./i,
-  /\.spec\./i,
-  /\/docs?\//i,
-  /\/examples?\//i,
-  /node_modules\//i,
-];
 
 /**
  * Extract module tokens from file path for context matching
@@ -119,24 +76,6 @@ function hasModuleOverlap(contractTopic, moduleTokens) {
 
   const topicLower = contractTopic.toLowerCase();
   return moduleTokens.some((token) => topicLower.includes(token));
-}
-
-/**
- * Check if file should trigger contract search
- */
-function shouldProcessFile(filePath) {
-  if (!filePath) {
-    return false;
-  }
-
-  for (const pattern of SKIP_PATTERNS) {
-    if (pattern.test(filePath)) {
-      return false;
-    }
-  }
-
-  const ext = path.extname(filePath).toLowerCase();
-  return CODE_EXTENSIONS.has(ext);
 }
 
 /**

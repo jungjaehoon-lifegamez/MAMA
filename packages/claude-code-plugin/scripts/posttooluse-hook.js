@@ -20,52 +20,10 @@ const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
+const { shouldProcessFile } = require('./hook-file-filter');
 
 // Tools that trigger pattern detection
 const CODE_TOOLS = new Set(['Edit', 'Write']);
-
-// Code file extensions
-const CODE_EXTENSIONS = new Set([
-  '.js',
-  '.ts',
-  '.jsx',
-  '.tsx',
-  '.mjs',
-  '.cjs',
-  '.py',
-  '.go',
-  '.rs',
-  '.java',
-  '.kt',
-  '.scala',
-  '.c',
-  '.cpp',
-  '.h',
-  '.hpp',
-  '.cs',
-  '.rb',
-  '.php',
-]);
-
-// Files to skip (config, docs, tests)
-const SKIP_PATTERNS = [
-  /\.md$/i,
-  /\.txt$/i,
-  /\.json$/i,
-  /\.ya?ml$/i,
-  /\.toml$/i,
-  /\.ini$/i,
-  /\.env/i,
-  /\.lock$/i,
-  /\.gitignore$/i,
-  /LICENSE/i,
-  /README/i,
-  /\/test[s]?\//i,
-  /\.test\./i,
-  /\.spec\./i,
-  /\/docs?\//i,
-  /\/examples?\//i,
-];
 
 // Contract-like patterns in code
 // Note: Using ^\s* to allow matching indented code in partial snippets
@@ -93,21 +51,6 @@ const CONTRACT_PATTERNS = [
   { pattern: /^\s*type\s+\w+\s+(struct|interface)\s*\{/m, name: 'Go type' },
   { pattern: /^\s*func\s+\([^)]+\)\s+\w+\s*\([^)]*\)\s*\(?[^{]*/m, name: 'Go method' },
 ];
-
-function shouldProcessFile(filePath) {
-  if (!filePath) {
-    return false;
-  }
-
-  for (const pattern of SKIP_PATTERNS) {
-    if (pattern.test(filePath)) {
-      return false;
-    }
-  }
-
-  const ext = path.extname(filePath).toLowerCase();
-  return CODE_EXTENSIONS.has(ext);
-}
 
 /**
  * Detect contract-like patterns in code

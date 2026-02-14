@@ -62,7 +62,7 @@ function execHook(input, env = {}) {
   });
 }
 
-describe('PostToolUse Hook (Redesigned Feb 2025)', () => {
+describe('Story M2.3: PostToolUse Hook', () => {
   describe('Hook Structure', () => {
     it('should be executable script with shebang', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
@@ -81,6 +81,13 @@ describe('PostToolUse Hook (Redesigned Feb 2025)', () => {
       expect(content).toContain('CONTRACT_PATTERNS');
       expect(content).toContain('interface/type');
       expect(content).toContain('typed function');
+    });
+
+    it('should use shared file-filter helper for code-only processing', () => {
+      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
+      expect(content).toContain('require');
+      expect(content).toContain('hook-file-filter');
+      expect(content).toContain('shouldProcessFile');
     });
   });
 
@@ -123,26 +130,9 @@ describe('PostToolUse Hook (Redesigned Feb 2025)', () => {
   });
 
   describe('File Filtering', () => {
-    it('should define CODE_EXTENSIONS', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      expect(content).toContain('CODE_EXTENSIONS');
-      expect(content).toContain('.ts');
-      expect(content).toContain('.js');
-      expect(content).toContain('.py');
-    });
-
-    it('should define SKIP_PATTERNS', () => {
-      const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-      expect(content).toContain('SKIP_PATTERNS');
-      expect(content).toContain('.md');
-      expect(content).toContain('.json');
-      expect(content).toContain('test');
-    });
-
     it('should implement shouldProcessFile function', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
       expect(content).toContain('shouldProcessFile');
-      expect(content).toContain('path.extname');
     });
   });
 

@@ -49,30 +49,19 @@ export const SkillsModule = {
    */
   async loadSkills(): Promise<void> {
     try {
-      const [installedRes, catalogRes] = await Promise.allSettled([
+      const [installedResponse, catalogResponse] = await Promise.all([
         API.getSkills(),
         API.getSkillCatalog('all'),
       ]);
 
-      if (installedRes.status === 'fulfilled') {
-        this.installed = installedRes.value.skills || [];
-      } else {
-        logger.warn('Failed to load installed skills:', this.getErrorMessage(installedRes.reason));
-        this.installed = [];
-      }
-
-      if (catalogRes.status === 'fulfilled') {
-        const catalogItems = catalogRes.value.skills || [];
-        const installedMap = new Set(
-          this.installed.map((item: SkillItem) => `${item.source}::${item.id}`)
-        );
-        this.catalog = catalogItems.filter(
-          (s: SkillItem) => !installedMap.has(`${s.source}::${s.id}`)
-        );
-      } else {
-        logger.warn('Failed to load skill catalog:', this.getErrorMessage(catalogRes.reason));
-        this.catalog = [];
-      }
+      this.installed = installedResponse.skills || [];
+      const catalogItems = catalogResponse.skills || [];
+      const installedMap = new Set(
+        this.installed.map((item: SkillItem) => `${item.source}::${item.id}`)
+      );
+      this.catalog = catalogItems.filter(
+        (s: SkillItem) => !installedMap.has(`${s.source}::${s.id}`)
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Unexpected error while loading skills:', message);
@@ -80,13 +69,6 @@ export const SkillsModule = {
       this.installed = [];
       this.catalog = [];
     }
-  },
-
-  getErrorMessage(error: unknown): string {
-    if (error instanceof Error) {
-      return error.message;
-    }
-    return String(error);
   },
 
   /**

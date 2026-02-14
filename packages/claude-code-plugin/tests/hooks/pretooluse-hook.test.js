@@ -120,13 +120,12 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(content).toContain('process.env.FILE_PATH');
     });
 
-    it('should define code file extensions filter', () => {
+    it('should use shared file-filter helper for code-only processing', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      expect(content).toContain('CODE_EXTENSIONS');
-      expect(content).toContain('.js');
-      expect(content).toContain('.ts');
-      expect(content).toContain('.py');
+      expect(content).toContain('require');
+      expect(content).toContain('hook-file-filter');
+      expect(content).toContain('shouldProcessFile');
     });
 
     it('should define write tools that need contract check', () => {
@@ -146,13 +145,9 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(content).toContain('!WRITE_TOOLS.has');
     });
 
-    it('should define skip patterns for non-code files', () => {
+    it('should delegate file extension and skip logic to shared helper', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
-
-      expect(content).toContain('SKIP_PATTERNS');
-      expect(content).toContain('.md');
-      expect(content).toContain('.json');
-      expect(content).toContain('node_modules');
+      expect(content).toContain('shouldProcessFile(filePath)');
     });
   });
 
