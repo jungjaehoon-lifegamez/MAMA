@@ -8,11 +8,11 @@
  */
 
 /* eslint-env browser */
-/* global marked */
 
 import { API, type SkillItem } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 import { getElementByIdOrNull } from '../utils/dom.js';
+import { renderSafeMarkdown } from '../utils/markdown.js';
 
 const logger = new DebugLogger('Skills');
 
@@ -470,19 +470,6 @@ export const SkillsModule = {
     }
     // Remove frontmatter
     md = md.replace(/^---\n[\s\S]*?\n---\n/, '');
-
-    if (typeof marked !== 'undefined' && marked.parse) {
-      // Note: sanitize option is deprecated in marked.js
-      // Content is escaped via escapeHtml in render functions
-      return marked.parse(md, {
-        mangle: false,
-        headerIds: false,
-      });
-    }
-
-    // Fallback if marked.js is not available (should not happen in viewer)
-    const div = document.createElement('div');
-    div.textContent = md;
-    return div.innerHTML;
+    return renderSafeMarkdown(md);
   },
 };

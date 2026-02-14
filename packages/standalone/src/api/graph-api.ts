@@ -37,11 +37,14 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Config paths
 const MAMA_CONFIG_PATH = path.join(os.homedir(), '.mama', 'config.yaml');
+const PACKAGE_ROOT_DIR = path.resolve(__dirname, '../..');
 
 // Paths to viewer files (now in public/viewer/)
 function getViewerDirectory(): string {
+  const packagePublicViewer = path.join(PACKAGE_ROOT_DIR, 'public', 'viewer');
   const candidateDirs = [
     path.join(process.cwd(), 'public', 'viewer'),
+    packagePublicViewer,
     path.join(__dirname, '../../public/viewer'),
     path.join(__dirname, '../../../public/viewer'),
     path.join(process.cwd(), 'packages', 'standalone', 'public', 'viewer'),
@@ -224,6 +227,10 @@ function filterEdgesByNodes(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[]
 
 function serveStaticFile(res: ServerResponse, filePath: string, contentType: string): void {
   try {
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) {
+      throw new Error('Requested path is not a file');
+    }
     const isBinary = contentType.startsWith('image/') || contentType === 'application/octet-stream';
     const content = isBinary ? fs.readFileSync(filePath) : fs.readFileSync(filePath, 'utf8');
     const etag = `"${Date.now()}"`;
@@ -241,7 +248,8 @@ function serveStaticFile(res: ServerResponse, filePath: string, contentType: str
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[GraphAPI] Static file error: ${message}`);
-    if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+    const err = error as NodeJS.ErrnoException;
+    if (err?.code === 'ENOENT' || err?.code === 'EISDIR' || /not a file/i.test(message)) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('File not found: ' + filePath);
       return;

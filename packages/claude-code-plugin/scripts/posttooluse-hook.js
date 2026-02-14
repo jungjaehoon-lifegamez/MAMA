@@ -16,6 +16,11 @@
 
 const path = require('path');
 
+const PLUGIN_ROOT = path.resolve(__dirname, '..');
+const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
+require('module').globalPaths.push(CORE_PATH);
+const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
+
 // Tools that trigger pattern detection
 const CODE_TOOLS = new Set(['Edit', 'Write']);
 
@@ -140,6 +145,12 @@ async function readStdin() {
 }
 
 async function main() {
+  const features = getEnabledFeatures();
+  if (!features.has('contracts')) {
+    console.error(JSON.stringify({ decision: 'allow', reason: '' }));
+    process.exit(0);
+  }
+
   try {
     const input = await readStdin();
 

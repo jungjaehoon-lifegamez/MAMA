@@ -111,6 +111,16 @@ declare global {
       }
     ): string;
   };
+  interface DOMPurifyConfig {
+    [key: string]: unknown;
+    ALLOWED_TAGS?: string[];
+    ALLOWED_ATTR?: string[];
+    ADD_TAGS?: string[];
+    ADD_ATTR?: string[];
+  }
+  const DOMPurify: {
+    sanitize(dirty: string, options?: DOMPurifyConfig): string;
+  };
   const lucide: {
     createIcons(config?: unknown): void;
   };

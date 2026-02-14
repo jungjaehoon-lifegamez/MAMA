@@ -1,4 +1,3 @@
-/* global marked */
 /**
  * Graph Module - Decision Graph Visualization
  * @module modules/graph
@@ -24,6 +23,7 @@ import {
 } from '../utils/dom.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 import { API, type GraphNode, type GraphEdge, type SimilarDecision } from '../utils/api.js';
+import { renderSafeMarkdown } from '../utils/markdown.js';
 
 type GraphNodeRecord = GraphNode & {
   topic?: string;
@@ -70,6 +70,14 @@ export class GraphModule {
   searchMatches: GraphNodeRecord[] = [];
   currentSearchIndex = 0;
   debouncedSearch = debounce(() => this.search(), 300);
+  private similarDecisionClickHandler = (event: Event): void => {
+    const target = event.target as HTMLElement;
+    const btn = target.closest('.similar-decision-btn') as HTMLElement | null;
+    if (!btn || !btn.dataset.nodeId) {
+      return;
+    }
+    this.navigateToNode(btn.dataset.nodeId);
+  };
   topicColors: Record<string, string> = {};
   colorPalette = [
     '#FFCE00', // mama yellow (primary)
@@ -508,30 +516,8 @@ export class GraphModule {
         topicEl.textContent = node.topic || 'Unknown Topic';
       }
 
-      // Use marked for markdown if available (textContent to avoid XSS)
-      if (typeof marked !== 'undefined' && marked.parse) {
-        try {
-          const renderedDecision = marked.parse(node.decision || '-', {
-            mangle: false,
-            headerIds: false,
-          });
-          const renderedReasoning = marked.parse(node.reasoning || '-', {
-            mangle: false,
-            headerIds: false,
-          });
-          decisionEl.innerHTML = renderedDecision;
-          reasoningEl.innerHTML = renderedReasoning;
-        } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
-          showToast(`Markdown render failed: ${message}`);
-          logger.warn('[Graph] Markdown parse failed:', e);
-          decisionEl.textContent = node.decision || '-';
-          reasoningEl.textContent = node.reasoning || '-';
-        }
-      } else {
-        decisionEl.textContent = node.decision || '-';
-        reasoningEl.textContent = node.reasoning || '-';
-      }
+      decisionEl.innerHTML = renderSafeMarkdown(node.decision || '-');
+      reasoningEl.innerHTML = renderSafeMarkdown(node.reasoning || '-');
 
       const outcomeSelect = getElementByIdOrNull<HTMLSelectElement>('detail-outcome-select');
       if (outcomeSelect) {
@@ -667,14 +653,9 @@ export class GraphModule {
       logger.debug('[MAMA] Setting similar decisions HTML');
       container.innerHTML = html;
 
-      // Bind click handlers via event delegation (avoid inline onclick)
-      container.addEventListener('click', (e: Event) => {
-        const target = e.target as HTMLElement;
-        const btn = target.closest('.similar-decision-btn') as HTMLElement | null;
-        if (btn && btn.dataset.nodeId) {
-          this.navigateToNode(btn.dataset.nodeId);
-        }
-      });
+      // Bind click handler once to avoid duplicate listeners.
+      container.removeEventListener('click', this.similarDecisionClickHandler);
+      container.addEventListener('click', this.similarDecisionClickHandler);
       logger.debug('[MAMA] fetchSimilarDecisions completed');
     } catch (error) {
       const message = getErrorMessage(error);

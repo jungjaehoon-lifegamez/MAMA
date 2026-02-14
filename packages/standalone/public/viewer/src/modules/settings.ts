@@ -129,7 +129,15 @@ export class SettingsModule {
     return parsed;
   }
 
-  private parseOptionalNonNegativeInteger(id: string, fieldName: string): number | undefined {
+  private parseOptionalNumber(
+    id: string,
+    fieldName: string,
+    options: {
+      min: number;
+      max?: number;
+      integerOnly?: boolean;
+    }
+  ): number | undefined {
     const raw = this.getValue(id);
     const trimmed = raw.trim();
     if (!trimmed) {
@@ -137,8 +145,20 @@ export class SettingsModule {
     }
 
     const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
-      throw new Error(`${fieldName}은(는) 0 이상의 정수여야 합니다.`);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`${fieldName}은(는) 유효한 숫자여야 합니다.`);
+    }
+
+    if (parsed < options.min) {
+      throw new Error(`${fieldName}은(는) ${options.min} 이상이어야 합니다.`);
+    }
+
+    if (options.max !== undefined && parsed > options.max) {
+      throw new Error(`${fieldName}은(는) ${options.max} 이하여야 합니다.`);
+    }
+
+    if (options.integerOnly !== false && !Number.isInteger(parsed)) {
+      throw new Error(`${fieldName}은(는) 정수여야 합니다.`);
     }
 
     return parsed;
@@ -599,6 +619,7 @@ export class SettingsModule {
   private async waitForServiceAfterRestart(): Promise<boolean> {
     const maxAttempts = 40;
     const intervalMs = 1000;
+    const readinessChecks = ['/api/health', '/api/dashboard/status'];
     // Server waits 500ms + shell sleeps 1s before stopping, so wait at least 2.5s
     // before first poll to ensure old server is actually down
     const initialDelayMs = 2500;
@@ -609,29 +630,24 @@ export class SettingsModule {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       this.setStatus(`Restarting... reconnecting (${attempt}/${maxAttempts})`, '');
 
-      try {
-        // Use simple health endpoint - less likely to fail during startup
-        const response = await fetch('/api/health', {
-          method: 'GET',
-          cache: 'no-store',
-        });
-        if (!response.ok) {
-          await new Promise((resolve) => setTimeout(resolve, intervalMs));
-          continue;
+      let isReady = false;
+      for (const endpoint of readinessChecks) {
+        try {
+          // Use shared API client for strict JSON response parsing and consistent errors.
+          await API.get(endpoint);
+          logger.debug('[Settings] Service ready check passed:', endpoint);
+          isReady = true;
+          break;
+        } catch {
+          logger.debug('[Settings] Service not ready yet:', endpoint);
         }
-
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          await new Promise((resolve) => setTimeout(resolve, intervalMs));
-          continue;
-        }
-
-        await response.json();
-        return true;
-      } catch {
-        // Ignore until service is reachable again.
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
       }
+
+      if (isReady) {
+        return true;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
 
     return false;
@@ -701,13 +717,19 @@ export class SettingsModule {
         tools: this.collectToolModeData(),
       },
       token_budget: {
-        daily_limit: this.parseOptionalNonNegativeInteger(
-          'settings-token-daily-limit',
-          'daily_limit'
-        ),
-        alert_threshold: this.parseOptionalNonNegativeInteger(
+        // Keep existing integer constraint for daily limit to avoid partial values.
+        daily_limit: this.parseOptionalNumber('settings-token-daily-limit', 'daily_limit', {
+          min: 0,
+          integerOnly: true,
+        }),
+        alert_threshold: this.parseOptionalNumber(
           'settings-token-alert-threshold',
-          'alert_threshold'
+          'alert_threshold',
+          {
+            min: 0,
+            max: 100,
+            integerOnly: false,
+          }
         ),
       },
     };
