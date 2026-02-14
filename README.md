@@ -312,7 +312,7 @@ const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
 const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```
 
-**Package:** `@jungjaehoon/mama-core` 1.1.2
+**Package:** `@jungjaehoon/mama-core` 1.1.3
 
 ---
 
@@ -322,7 +322,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
 | [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.8.6   | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.6   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.2   | Shared core library (embeddings, DB, memory) | npm                |
+| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.3   | Shared core library (embeddings, DB, memory) | npm                |
 | [mama](packages/claude-code-plugin/README.md)                    | 1.7.12   | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.4.3   | OpenClaw plugin                              | npm                |
 
