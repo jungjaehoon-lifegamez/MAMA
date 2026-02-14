@@ -11,7 +11,7 @@
  * @param {string} text - Text to escape
  * @returns {string} Escaped HTML
  */
-export function escapeHtml(text) {
+export function escapeHtml(text: string | null | undefined): string {
   if (!text) {
     return '';
   }
@@ -25,11 +25,33 @@ export function escapeHtml(text) {
  * @param {string} text - Text to escape
  * @returns {string} Escaped text safe for HTML attributes
  */
-export function escapeAttr(text) {
+export function escapeAttr(text: string | null | undefined): string {
   if (!text) {
     return '';
   }
   return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Get DOM element by id with typed generic casting
+ * @param {string} id - Element id
+ * @returns {T | null} Matched element or null
+ */
+export function getElementByIdOrNull<T extends Element>(id: string): T | null {
+  const element = document.getElementById(id);
+  return element ? (element as unknown as T) : null;
+}
+
+/**
+ * Normalize error values to a safe message string
+ * @param error - Unknown thrown value
+ * @returns {string} Error message
+ */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 /**
@@ -38,14 +60,19 @@ export function escapeAttr(text) {
  * @param {number} wait - Wait time in milliseconds
  * @returns {Function} Debounced function
  */
-export function debounce(func, wait) {
-  let timeout;
+export function debounce<T extends (...args: unknown[]) => unknown>(
+  func: T,
+  wait: number
+): (...args: Parameters<T>) => void {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   return function executedFunction(...args) {
     const later = () => {
-      clearTimeout(timeout);
+      timeout = undefined;
       func(...args);
     };
-    clearTimeout(timeout);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
     timeout = setTimeout(later, wait);
   };
 }
@@ -55,7 +82,7 @@ export function debounce(func, wait) {
  * @param {string} message - Message to display
  * @param {number} duration - Duration in milliseconds
  */
-export function showToast(message, duration = 3000) {
+export function showToast(message: string, duration = 3000): void {
   // Remove existing toast
   const existingToast = document.querySelector('.toast-notification');
   if (existingToast) {
@@ -83,7 +110,7 @@ export function showToast(message, duration = 3000) {
  * Scroll element to bottom
  * @param {HTMLElement} container - Container to scroll
  */
-export function scrollToBottom(container) {
+export function scrollToBottom(container: HTMLElement): void {
   // Use setTimeout to ensure DOM has updated before scrolling
   const doScroll = () => {
     container.scrollTop = container.scrollHeight;
@@ -100,9 +127,11 @@ export function scrollToBottom(container) {
  * @param {HTMLTextAreaElement} textarea - Textarea element
  * @param {number} maxRows - Maximum number of rows (default: 5)
  */
-export function autoResizeTextarea(textarea, maxRows = 5) {
+export function autoResizeTextarea(textarea: HTMLTextAreaElement, maxRows = 5): void {
   textarea.style.height = 'auto';
-  const lineHeight = parseInt(getComputedStyle(textarea).lineHeight);
+  const computedLineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight);
+  const lineHeight =
+    Number.isFinite(computedLineHeight) && computedLineHeight > 0 ? computedLineHeight : 20;
   const maxHeight = lineHeight * maxRows;
   const newHeight = Math.min(textarea.scrollHeight, maxHeight);
   textarea.style.height = newHeight + 'px';

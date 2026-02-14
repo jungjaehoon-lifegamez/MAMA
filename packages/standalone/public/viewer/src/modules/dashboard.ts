@@ -12,17 +12,120 @@
 
 /* eslint-env browser */
 
-import { escapeHtml } from '../utils/dom.js';
+import { escapeAttr, escapeHtml, getElementByIdOrNull, getErrorMessage } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
-import { API } from '../utils/api.js';
+import {
+  API,
+  type McpServer,
+  type McpServersResponse,
+  type MultiAgentAgent,
+  type MultiAgentDashboardStatus,
+  type TokenSummaryResponse,
+  type TokensByAgentResponse,
+} from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 
 const logger = new DebugLogger('Dashboard');
+
+type DashboardGateway = {
+  enabled?: boolean;
+  configured?: boolean;
+  channel?: string;
+  chats?: string[];
+  rooms?: string[];
+};
+
+type DashboardSessionChannel = {
+  source: string;
+  channelId: string;
+  channelName?: string;
+  messageCount?: number;
+  lastActive?: number | string;
+};
+
+type DashboardSessions = {
+  total: number;
+  bySource: Record<string, number>;
+  channels: DashboardSessionChannel[];
+};
+
+type DashboardMemoryStats = {
+  total?: number;
+  thisWeek?: number;
+  thisMonth?: number;
+  checkpoints?: number;
+  topTopics?: Array<{ topic: string; count: number }>;
+};
+
+type DashboardAgentConfig = {
+  model?: string;
+  maxTurns?: number;
+  timeout?: number;
+};
+
+type DashboardData = {
+  gateways?: Record<string, DashboardGateway>;
+  sessions?: DashboardSessions;
+  memory?: DashboardMemoryStats;
+  agent?: DashboardAgentConfig;
+  heartbeat?: {
+    enabled?: boolean;
+    interval?: number;
+    quiet_start?: number;
+    quiet_end?: number;
+    quietStart?: number;
+    quietEnd?: number;
+  };
+};
+
+type MultiAgentDashboardData = {
+  enabled: boolean;
+  agents: MultiAgentAgent[];
+  activeChains?: number;
+};
+
+type DashboardDelegation = {
+  status: string;
+  claimedBy?: string;
+  description?: string;
+  wave?: number;
+  completedAt?: number | string;
+  claimedAt?: number | string;
+};
+
+type DashboardDelegationsData = {
+  delegations: DashboardDelegation[];
+  count?: number;
+};
+
+type DashboardTokenData = {
+  summary?: TokenSummaryResponse;
+  byAgent?: TokensByAgentResponse;
+};
 
 /**
  * Dashboard Module Class
  */
 export class DashboardModule {
+  data: DashboardData | null = null;
+  updateInterval: ReturnType<typeof setInterval> | null = null;
+  initialized = false;
+  onCronClick: ((event: MouseEvent) => void) | null = null;
+  mcpServers: McpServer[] = [];
+  multiAgentData: MultiAgentDashboardData = { enabled: false, agents: [] };
+  delegationsData: DashboardDelegationsData = { delegations: [], count: 0 };
+  cronData: {
+    jobs?: Array<{
+      id: string;
+      name: string;
+      schedule?: string;
+      cron?: string;
+      nextRun?: string;
+      enabled?: boolean;
+    }>;
+  } | null = null;
+  tokenData: DashboardTokenData | null = null;
+
   constructor() {
     this.data = null;
     this.updateInterval = null;
@@ -34,18 +137,34 @@ export class DashboardModule {
   /**
    * Initialize dashboard
    */
-  async init() {
+  async init(): Promise<void> {
     if (this.initialized) {
       return;
     }
     this.initialized = true;
 
-    // Event delegation for cron job buttons
-    this.onCronClick = (e) => {
-      const btn = e.target.closest('[data-cron-id]');
-      if (btn) {
-        const jobId = btn.getAttribute('data-cron-id');
-        this.runCronJob(jobId);
+    // Event delegation for dashboard actions
+    this.onCronClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) {
+        return;
+      }
+
+      const cronButton = target.closest<HTMLElement>('[data-action="run-cron"]');
+      if (cronButton) {
+        const jobId = cronButton.getAttribute('data-cron-id');
+        if (jobId) {
+          this.runCronJob(jobId);
+        }
+        return;
+      }
+
+      const settingsLink = target.closest<HTMLElement>('[data-action="open-settings"]');
+      if (settingsLink) {
+        const settingsTab = document.querySelector<HTMLElement>('[data-tab="settings"]');
+        if (settingsTab) {
+          settingsTab.click();
+        }
       }
     };
     document.addEventListener('click', this.onCronClick);
@@ -59,23 +178,13 @@ export class DashboardModule {
   /**
    * Load dashboard status from API
    */
-  async loadStatus() {
+  async loadStatus(): Promise<void> {
     try {
-      const response = await fetch('/api/dashboard/status');
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      this.data = await response.json();
+      this.data = await API.get<DashboardData>('/api/dashboard/status');
 
       // Load multi-agent status (Sprint 3 F2)
       try {
-        const multiAgentResponse = await fetch('/api/multi-agent/status');
-        if (multiAgentResponse.ok) {
-          this.multiAgentData = await multiAgentResponse.json();
-        } else {
-          this.multiAgentData = { enabled: false, agents: [] };
-        }
+        this.multiAgentData = await API.get<MultiAgentDashboardStatus>('/api/multi-agent/status');
       } catch (e) {
         logger.warn('[Dashboard] Multi-agent status unavailable:', e);
         this.multiAgentData = { enabled: false, agents: [] };
@@ -83,12 +192,9 @@ export class DashboardModule {
 
       // Load delegations (F4 endpoint)
       try {
-        const delegationsResponse = await fetch('/api/multi-agent/delegations?limit=10');
-        if (delegationsResponse.ok) {
-          this.delegationsData = await delegationsResponse.json();
-        } else {
-          this.delegationsData = { delegations: [], count: 0 };
-        }
+        this.delegationsData = await API.get<DashboardDelegationsData>(
+          '/api/multi-agent/delegations?limit=10'
+        );
       } catch (e) {
         logger.warn('[Dashboard] Delegations unavailable:', e);
         this.delegationsData = { delegations: [], count: 0 };
@@ -121,18 +227,17 @@ export class DashboardModule {
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       logger.error('[Dashboard] Load error:', error);
-      this.setStatus(`Error: ${error.message}`, 'error');
+      this.setStatus(`Error: ${getErrorMessage(error)}`, 'error');
     }
   }
 
   /**
    * Load MCP servers from API
    */
-  async loadMCPServers() {
+  async loadMCPServers(): Promise<void> {
     try {
-      const response = await fetch('/api/mcp-servers');
-      if (response.ok) {
-        const data = await response.json();
+      const data = await API.get<McpServersResponse>('/api/mcp-servers');
+      if (data && 'servers' in data) {
         this.mcpServers = data.servers || [];
         this.renderMCPServers();
       }
@@ -144,7 +249,7 @@ export class DashboardModule {
   /**
    * Render all dashboard sections
    */
-  render() {
+  render(): void {
     if (!this.data) {
       return;
     }
@@ -163,8 +268,8 @@ export class DashboardModule {
   /**
    * Render gateway status cards
    */
-  renderGateways() {
-    const container = document.getElementById('dashboard-gateways');
+  renderGateways(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-gateways');
     if (!container || !this.data.gateways) {
       return;
     }
@@ -236,8 +341,8 @@ export class DashboardModule {
   /**
    * Render MCP servers
    */
-  renderMCPServers() {
-    const container = document.getElementById('dashboard-mcp');
+  renderMCPServers(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-mcp');
     if (!container) {
       return;
     }
@@ -295,8 +400,8 @@ export class DashboardModule {
   /**
    * Render session statistics
    */
-  renderSessions() {
-    const container = document.getElementById('dashboard-sessions');
+  renderSessions(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-sessions');
     if (!container) {
       return;
     }
@@ -330,8 +435,9 @@ export class DashboardModule {
           label: source,
           color: 'bg-gray-100 text-gray-700',
         };
+        const safeLabel = escapeHtml(info.label);
         return `<span class="inline-flex items-center gap-1 ${info.color} px-2 py-1 rounded text-xs font-medium">
-          ${info.icon} ${info.label}: ${count}
+          ${info.icon} ${safeLabel}: ${count}
         </span>`;
       })
       .join('');
@@ -402,13 +508,14 @@ export class DashboardModule {
   /**
    * Format relative time (e.g., "2h ago", "3d ago")
    */
-  formatRelativeTime(timestamp) {
-    if (!timestamp) {
+  formatRelativeTime(timestamp: number | string | Date | undefined): string {
+    if (timestamp === undefined || timestamp === null || timestamp === '') {
       return 'Never';
     }
 
     const now = Date.now();
-    const diff = now - timestamp;
+    const target = typeof timestamp === 'number' ? timestamp : new Date(timestamp).getTime();
+    const diff = now - target;
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
@@ -428,8 +535,8 @@ export class DashboardModule {
   /**
    * Render memory statistics
    */
-  renderMemoryStats() {
-    const container = document.getElementById('dashboard-memory');
+  renderMemoryStats(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-memory');
     if (!container || !this.data.memory) {
       return;
     }
@@ -461,8 +568,8 @@ export class DashboardModule {
   /**
    * Render agent configuration
    */
-  renderAgentConfig() {
-    const container = document.getElementById('dashboard-agent');
+  renderAgentConfig(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-agent');
     if (!container || !this.data.agent) {
       return;
     }
@@ -503,7 +610,9 @@ export class DashboardModule {
           ? `
         <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
           <p class="text-[10px] text-gray-500">
-            Quiet hours: ${heartbeat.quietStart || 23}:00 - ${heartbeat.quietEnd || 8}:00
+            Quiet hours: ${heartbeat.quiet_start ?? heartbeat.quietStart ?? 23}:00 - ${
+              heartbeat.quiet_end ?? heartbeat.quietEnd ?? 8
+            }:00
           </p>
         </div>
       `
@@ -516,8 +625,8 @@ export class DashboardModule {
    * Render agent swarm section
    * Sprint 3 F2: Multi-agent dashboard
    */
-  renderAgentSwarm() {
-    const container = document.getElementById('dashboard-agent-swarm');
+  renderAgentSwarm(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-agent-swarm');
     if (!container) {
       return;
     }
@@ -527,7 +636,7 @@ export class DashboardModule {
     if (!multiAgent.enabled) {
       container.innerHTML = `
         <p class="text-gray-500 dark:text-gray-400 text-sm text-center py-4">
-          Multi-agent is not enabled. Enable in <a href="#" class="text-indigo-600 hover:underline" onclick="document.querySelector('[data-tab=\\'settings\\']').click(); return false;">Settings</a>.
+          Multi-agent is not enabled. Enable in <a href="/viewer?tab=settings" class="text-indigo-600 hover:underline" data-action="open-settings">Settings</a>.
         </p>
       `;
       return;
@@ -647,7 +756,7 @@ export class DashboardModule {
           ${agentCards}
         </div>
       </div>
-      <div class="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">
+        <div class="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">
         <div class="flex items-center justify-between mb-2">
           <p class="text-xs text-gray-500">Delegation Chain:</p>
           ${chainBadge}
@@ -662,8 +771,8 @@ export class DashboardModule {
   /**
    * Render top topics
    */
-  renderTopTopics() {
-    const container = document.getElementById('dashboard-topics');
+  renderTopTopics(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-topics');
     if (!container || !this.data.memory) {
       return;
     }
@@ -677,24 +786,28 @@ export class DashboardModule {
       return;
     }
 
-    const maxCount = Math.max(...topics.map((t) => t.count));
+    const counts = topics
+      .map((topic) => (Number.isFinite(topic.count) ? topic.count : 0))
+      .filter((count) => count >= 0);
+    const maxCount = Math.max(1, ...counts);
 
     const html = topics
-      .map(
-        (topic) => `
+      .map((topic) => {
+        const safeCount = Number.isFinite(topic.count) ? topic.count : 0;
+        return `
         <div class="flex items-center gap-3 mb-2">
           <div class="flex-1">
             <div class="flex justify-between items-center mb-1">
               <span class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(topic.topic)}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">${topic.count}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">${safeCount}</span>
             </div>
             <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-              <div class="bg-indigo-500 h-2 rounded-full" style="width: ${(topic.count / maxCount) * 100}%"></div>
+              <div class="bg-indigo-500 h-2 rounded-full" style="width: ${(safeCount / maxCount) * 100}%"></div>
             </div>
           </div>
         </div>
-      `
-      )
+            `;
+      })
       .join('');
 
     container.innerHTML = html;
@@ -703,7 +816,7 @@ export class DashboardModule {
   /**
    * Format timeout in human readable format
    */
-  formatTimeout(ms) {
+  formatTimeout(ms?: number): string {
     if (!ms) {
       return 'N/A';
     }
@@ -716,8 +829,8 @@ export class DashboardModule {
   /**
    * Render cron jobs section
    */
-  renderCronJobs() {
-    const container = document.getElementById('dashboard-cron');
+  renderCronJobs(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-cron');
     if (!container) {
       return;
     }
@@ -758,7 +871,8 @@ export class DashboardModule {
           </div>
           <div class="flex items-center gap-1 ml-2 shrink-0">
             <button class="text-xs px-2 py-1 bg-mama-yellow hover:bg-mama-yellow-hover text-mama-black rounded transition-colors"
-              data-cron-id="${escapeHtml(job.id)}" title="Run Now">
+              data-action="run-cron"
+              data-cron-id="${escapeAttr(job.id)}" title="Run Now">
               Run
             </button>
           </div>
@@ -777,19 +891,19 @@ export class DashboardModule {
   /**
    * Run a cron job immediately
    */
-  async runCronJob(id) {
+  async runCronJob(id: string): Promise<void> {
     try {
       await API.runCronJob(id);
-      const statusEl = document.getElementById('dashboard-status');
+      const statusEl = getElementByIdOrNull<HTMLElement>('dashboard-status');
       if (statusEl) {
         statusEl.textContent = `Cron job "${id}" triggered`;
       }
       await this.loadStatus();
     } catch (e) {
       logger.error('[Dashboard] Failed to run cron job:', e);
-      const statusEl = document.getElementById('dashboard-status');
+      const statusEl = getElementByIdOrNull<HTMLElement>('dashboard-status');
       if (statusEl) {
-        const message = e instanceof Error ? e.message : String(e);
+        const message = getErrorMessage(e);
         statusEl.textContent = `Cron job "${id}" failed: ${message}`;
       }
     }
@@ -798,8 +912,8 @@ export class DashboardModule {
   /**
    * Render token usage summary section
    */
-  renderTokenSummary() {
-    const container = document.getElementById('dashboard-tokens');
+  renderTokenSummary(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-tokens');
     if (!container) {
       return;
     }
@@ -816,7 +930,7 @@ export class DashboardModule {
     const s = this.tokenData.summary;
     const agents = this.tokenData.byAgent?.agents || [];
 
-    const formatTokens = (n) => {
+    const formatTokens = (n: number | undefined): string => {
       if (!n || n === 0) {
         return '0';
       }
@@ -829,7 +943,7 @@ export class DashboardModule {
       return n.toString();
     };
 
-    const formatCost = (usd) => {
+    const formatCost = (usd: number | undefined): string => {
       if (!usd || usd === 0) {
         return '$0.00';
       }
@@ -914,8 +1028,8 @@ export class DashboardModule {
   /**
    * Set status message
    */
-  setStatus(message, type = '') {
-    const statusEl = document.getElementById('dashboard-status');
+  setStatus(message: string, type = ''): void {
+    const statusEl = getElementByIdOrNull<HTMLElement>('dashboard-status');
     if (statusEl) {
       statusEl.textContent = message;
       statusEl.className = `text-sm text-center py-2 ${type === 'error' ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}`;
@@ -925,7 +1039,7 @@ export class DashboardModule {
   /**
    * Cleanup interval on destroy
    */
-  cleanup() {
+  cleanup(): void {
     if (this.updateInterval) {
       clearInterval(this.updateInterval);
       this.updateInterval = null;

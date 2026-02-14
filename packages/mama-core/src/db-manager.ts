@@ -788,3 +788,38 @@ export function getDbPath(): string {
 // Note: Removed auto-registered SIGINT/SIGTERM handlers that called process.exit(0)
 // This was causing issues with host cleanup in parent processes.
 // If graceful shutdown is needed, the host application should handle closeDB().
+
+/**
+ * Reset database state for testing
+ *
+ * Resets internal state without closing connection.
+ * Use this in test teardown to allow re-initialization with different DB path.
+ *
+ * @param options - Reset options
+ * @param options.disconnect - If true, also disconnect adapter (default: true)
+ */
+export function resetDBState(options: { disconnect?: boolean } = {}): void {
+  const { disconnect = true } = options;
+
+  if (disconnect && dbAdapter) {
+    try {
+      dbAdapter.disconnect();
+    } catch {
+      // Ignore disconnect errors during reset
+    }
+  }
+
+  dbAdapter = null;
+  dbConnection = null;
+  isInitialized = false;
+  initializingPromise = null;
+}
+
+/**
+ * Check if running in test mode
+ *
+ * Returns true if MAMA_TEST_MODE or VITEST env vars are set
+ */
+export function isTestMode(): boolean {
+  return !!(process.env.MAMA_TEST_MODE || process.env.VITEST);
+}

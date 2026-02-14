@@ -46,6 +46,7 @@ import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboa
 import { createGraphHandler } from '../../api/graph-api.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { getEmbeddingDim, getModelName } from '@jungjaehoon/mama-core/config-loader';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -174,6 +175,8 @@ async function waitForPortAvailable(port: number, maxWaitMs: number = 5000): Pro
  * SECURITY P1: Uses port polling instead of fixed timeout
  */
 async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
+  const targetModel = getModelName();
+  const targetDim = getEmbeddingDim();
   return new Promise((resolve) => {
     const req = http.request(
       {
@@ -189,15 +192,35 @@ async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
         res.on('end', async () => {
           try {
             const health = JSON.parse(data);
+            const healthModel = typeof health.model === 'string' ? health.model : null;
+            const healthDim = typeof health.dim === 'number' ? health.dim : null;
+            const metadataMismatch =
+              healthModel !== targetModel || (healthDim !== null && healthDim !== targetDim);
+            const metadataMissing = healthModel === null || healthDim === null;
             // SECURITY P1: Validate health response before reuse
-            if (health.chatEnabled && health.status === 'ok' && health.modelLoaded) {
+            if (
+              health.chatEnabled &&
+              health.status === 'ok' &&
+              health.modelLoaded &&
+              !metadataMismatch &&
+              !metadataMissing
+            ) {
               // Fully functional server, reuse it
               console.log('✓ Fully functional embedding server (reusing)');
               resolve(true);
-            } else if (health.status === 'ok') {
+              return;
+            }
+
+            if (health.status === 'ok') {
               // Server healthy but incomplete features
               if (!health.modelLoaded) {
                 console.warn('[EmbeddingServer] Warning: Model not loaded');
+              }
+              if (metadataMismatch || metadataMissing) {
+                console.warn(
+                  `[EmbeddingServer] Metadata mismatch -> replacing. ` +
+                    `Expected ${targetModel}/${targetDim}, got ${healthModel ?? 'unknown'}/${healthDim ?? 'unknown'}`
+                );
               }
               // MCP server running without chat, request shutdown
               console.log('[EmbeddingServer] MCP server detected, requesting takeover...');
@@ -220,10 +243,11 @@ async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
                   if (portAvailable) {
                     console.log('[EmbeddingServer] Port available, proceeding');
                   } else {
-                    console.error(
-                      `[EmbeddingServer] Error: Port ${port} still in use after 5s. Exiting to prevent EADDRINUSE.`
+                    console.warn(
+                      `[EmbeddingServer] Warning: Port ${port} still in use after 5s. ` +
+                        'Attempting best-effort cleanup and proceeding.'
                     );
-                    process.exit(1);
+                    await killProcessesOnPorts([port]);
                   }
                   resolve(false);
                 }
@@ -323,6 +347,10 @@ function isOnboardingComplete(): boolean {
   return existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
 }
 
+function shouldAutoOpenBrowser(): boolean {
+  return process.env.MAMA_NO_AUTO_OPEN_BROWSER !== '1';
+}
+
 /**
  * Options for start command
  */
@@ -400,14 +428,16 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     const targetUrl = needsOnboarding
       ? `http://localhost:${API_PORT}/setup`
       : `http://localhost:${API_PORT}/viewer`;
-    setTimeout(() => {
-      if (needsOnboarding) {
-        console.log('🎭 First-time setup - Opening onboarding wizard...\n');
-      } else {
-        console.log('🌐 Opening MAMA OS...\n');
-      }
-      openBrowser(targetUrl);
-    }, 3000); // Wait for embedding server
+    if (shouldAutoOpenBrowser()) {
+      setTimeout(() => {
+        if (needsOnboarding) {
+          console.log('🎭 First-time setup - Opening onboarding wizard...\n');
+        } else {
+          console.log('🌐 Opening MAMA OS...\n');
+        }
+        openBrowser(targetUrl);
+      }, 3000); // Wait for embedding server
+    }
 
     await writePid(process.pid);
     await runAgentLoop(config);
@@ -430,14 +460,16 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
         : `http://localhost:${API_PORT}/viewer`;
 
       // Wait for server to be ready
-      setTimeout(() => {
-        if (needsOnboarding) {
-          console.log('🎭 First-time setup - Opening onboarding wizard...\n');
-        } else {
-          console.log('🌐 Opening MAMA OS...\n');
-        }
-        openBrowser(targetUrl);
-      }, 2000); // Wait 2 seconds for embedding server to start
+      if (shouldAutoOpenBrowser()) {
+        setTimeout(() => {
+          if (needsOnboarding) {
+            console.log('🎭 First-time setup - Opening onboarding wizard...\n');
+          } else {
+            console.log('🌐 Opening MAMA OS...\n');
+          }
+          openBrowser(targetUrl);
+        }, 2000); // Wait 2 seconds for embedding server to start
+      }
     } catch (error) {
       console.log('❌');
       console.error(

@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --ignore-scripts
 
+      - name: Build
+        run: pnpm build
+
       - name: Publish to npmjs.org
         run: npm publish --access public || echo "Already published on npmjs, skipping"
         env:

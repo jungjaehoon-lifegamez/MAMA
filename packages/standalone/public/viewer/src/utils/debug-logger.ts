@@ -5,28 +5,30 @@
  * Mirrors mama-core DebugLogger behavior (no console.log usage).
  */
 export class DebugLogger {
+  context: string;
+
   constructor(context = 'Viewer') {
-    this.context = context;
+    this.context = String(context);
   }
 
-  _format(level, args) {
+  private _format(level: string, args: unknown[]) {
     const ts = new Date().toISOString();
     return [`[${ts}] [${this.context}] [${level}]`, ...args];
   }
 
-  debug(...args) {
+  debug(...args: unknown[]) {
     console.debug(...this._format('DEBUG', args));
   }
 
-  info(...args) {
+  info(...args: unknown[]) {
     console.info(...this._format('INFO', args));
   }
 
-  warn(...args) {
+  warn(...args: unknown[]) {
     console.warn(...this._format('WARN', args));
   }
 
-  error(...args) {
+  error(...args: unknown[]) {
     console.error(...this._format('ERROR', args));
   }
 }

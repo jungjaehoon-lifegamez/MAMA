@@ -113,7 +113,7 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   describe('Feature Guard: MAMA_DISABLE_HOOKS', () => {
-    it('should output contracts disabled when MAMA_DISABLE_HOOKS=true', async () => {
+    it('should silently allow when MAMA_DISABLE_HOOKS=true', async () => {
       const result = await execHookWithStdin(
         PRETOOLUSE_HOOK,
         { tool_name: 'Edit', tool_input: { file_path: '/path/to/test.js' } },
@@ -121,7 +121,8 @@ describe('Story M4.2: Hook Stdin Simulation - Regression Harness', () => {
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stderr).toContain('contracts disabled');
+      // When disabled, silently allows (no "contracts disabled" message)
+      expect(result.stderr).toContain('allow');
     });
   });
 });

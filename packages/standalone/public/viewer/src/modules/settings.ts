@@ -12,14 +12,74 @@
 
 /* eslint-env browser */
 
-import { showToast, escapeHtml, escapeAttr } from '../utils/dom.js';
+import { showToast, escapeHtml, escapeAttr, getElementByIdOrNull } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 import { DebugLogger } from '../utils/debug-logger.js';
+import {
+  API,
+  type ApiConfigResponse,
+  type ApiRoleDefinition,
+  type CronJob,
+  type CronJobsResponse,
+  type McpServer,
+  type McpServersResponse,
+  type MultiAgentAgent,
+  type MultiAgentAgentsResponse,
+  type SkillsResponse,
+} from '../utils/api.js';
 
 const logger = new DebugLogger('Settings');
 
+type AgentBackend = 'claude' | 'codex';
+type SettingsFilterValue = 'loading' | 'error' | 'success' | '';
+type SettingsPayloadToolConfig = {
+  gateway: string[];
+  mcp: string[];
+  mcp_config: string;
+};
+
+type SettingsPayload = {
+  discord: {
+    enabled: boolean;
+    token: string;
+    default_channel_id: string;
+  };
+  slack: {
+    enabled: boolean;
+    bot_token: string;
+    app_token: string;
+  };
+  telegram: {
+    enabled: boolean;
+    token: string;
+  };
+  chatwork: {
+    enabled: boolean;
+    api_token: string;
+  };
+  heartbeat: {
+    enabled: boolean;
+    interval: number;
+    quiet_start: number;
+    quiet_end: number;
+  };
+  use_claude_cli: boolean;
+  agent: {
+    backend: AgentBackend;
+    use_persistent_cli: boolean;
+    model: string;
+    max_turns: number;
+    timeout: number;
+    tools: SettingsPayloadToolConfig;
+  };
+  token_budget: {
+    daily_limit?: number;
+    alert_threshold?: number;
+  };
+};
+
 // Model options by backend (single source of truth)
-const MODEL_OPTIONS = {
+const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
   codex: ['gpt-5.3-codex', 'gpt-5.2', 'gpt-5.1', 'gpt-4.1'],
   claude: ['claude-sonnet-4-20250514', 'claude-opus-4-5-20251101', 'claude-haiku-3-5-20241022'],
 };
@@ -28,16 +88,86 @@ const MODEL_OPTIONS = {
  * Settings Module Class
  */
 export class SettingsModule {
-  constructor() {
-    this.config = null;
-    this.initialized = false;
-    this.backendListenersInitialized = false;
+  config: ApiConfigResponse | null = null;
+  mcpServersData: McpServersResponse = { servers: [] };
+  multiAgentData: MultiAgentAgentsResponse = { agents: [] };
+  initialized = false;
+  backendListenersInitialized = false;
+  delegatedListenersInitialized = false;
+
+  constructor() {}
+
+  /**
+   * Parse and validate required integer input.
+   */
+  private parseIntegerInput(id: string, min: number, max: number, fallback: number | null): number {
+    const raw = this.getValue(id);
+    if (raw === null) {
+      if (fallback === null) {
+        throw new Error(`필수 값이 비어 있습니다: ${id}`);
+      }
+      return fallback;
+    }
+
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      if (fallback === null) {
+        throw new Error(`필수 값이 비어 있습니다: ${id}`);
+      }
+      return fallback;
+    }
+
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+      throw new Error(`숫자 형식이 유효하지 않습니다: ${id}`);
+    }
+
+    if (parsed < min || parsed > max) {
+      throw new Error(`${id}는 ${min}~${max} 사이여야 합니다.`);
+    }
+
+    return parsed;
+  }
+
+  private parseOptionalNumber(
+    id: string,
+    fieldName: string,
+    options: {
+      min: number;
+      max?: number;
+      integerOnly?: boolean;
+    }
+  ): number | undefined {
+    const raw = this.getValue(id);
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`${fieldName}은(는) 유효한 숫자여야 합니다.`);
+    }
+
+    if (parsed < options.min) {
+      throw new Error(`${fieldName}은(는) ${options.min} 이상이어야 합니다.`);
+    }
+
+    if (options.max !== undefined && parsed > options.max) {
+      throw new Error(`${fieldName}은(는) ${options.max} 이하여야 합니다.`);
+    }
+
+    if (options.integerOnly !== false && !Number.isInteger(parsed)) {
+      throw new Error(`${fieldName}은(는) 정수여야 합니다.`);
+    }
+
+    return parsed;
   }
 
   /**
    * Initialize settings module
    */
-  async init() {
+  async init(): Promise<void> {
     if (this.initialized) {
       return;
     }
@@ -45,30 +175,96 @@ export class SettingsModule {
 
     await this.loadSettings();
     this.initBackendModelBinding();
+    this.initDelegatedEventHandlers();
+  }
+
+  initDelegatedEventHandlers(): void {
+    if (this.delegatedListenersInitialized) {
+      return;
+    }
+    this.delegatedListenersInitialized = true;
+
+    document.addEventListener('change', (e: Event) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      const actionElement = target.closest<HTMLElement>('[data-action]');
+      const action = actionElement?.dataset.action;
+      if (!action || !actionElement) {
+        return;
+      }
+
+      if (action === 'agent-toggle') {
+        const checkbox = actionElement as HTMLInputElement;
+        const agentId = checkbox.dataset.agentId || '';
+        if (agentId) {
+          void this.toggleAgent(agentId, checkbox.checked);
+        }
+        return;
+      }
+
+      if (action === 'agent-backend') {
+        const select = actionElement as HTMLSelectElement;
+        const agentId = select.dataset.agentId || '';
+        if (agentId) {
+          this.onAgentBackendChange(agentId);
+        }
+        return;
+      }
+
+      if (action === 'agent-save') {
+        const button = actionElement as HTMLButtonElement;
+        const agentId = button.dataset.agentId || '';
+        if (agentId) {
+          void this.saveAgentConfig(agentId);
+        }
+        return;
+      }
+
+      if (action === 'cron-toggle') {
+        const checkbox = actionElement as HTMLInputElement;
+        const cronId = checkbox.dataset.cronId || '';
+        if (cronId) {
+          void this.toggleCronJob(cronId, checkbox.checked);
+        }
+        return;
+      }
+    });
+
+    document.addEventListener('click', (e: MouseEvent) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      const actionElement = target.closest<HTMLElement>('[data-action="cron-delete"]');
+      if (!actionElement) {
+        return;
+      }
+
+      e.preventDefault();
+      const button = actionElement as HTMLButtonElement;
+      const cronId = button.dataset.cronId || '';
+      if (cronId) {
+        void this.deleteCronJob(cronId);
+      }
+    });
   }
 
   /**
    * Load current settings from API
    */
-  async loadSettings() {
+  async loadSettings(): Promise<void> {
     this.setStatus('Loading...');
 
     try {
-      const response = await fetch('/api/config');
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      this.config = await response.json();
+      this.config = await API.get<ApiConfigResponse>('/api/config');
 
       // Load MCP servers data
       try {
-        const mcpResponse = await fetch('/api/mcp-servers');
-        if (mcpResponse.ok) {
-          this.mcpServersData = await mcpResponse.json();
-        } else {
-          this.mcpServersData = { servers: [] };
-        }
+        this.mcpServersData = await API.get<McpServersResponse>('/api/mcp-servers');
       } catch (e) {
         logger.warn('MCP servers data unavailable:', e);
         this.mcpServersData = { servers: [] };
@@ -76,12 +272,7 @@ export class SettingsModule {
 
       // Load multi-agent data (F3)
       try {
-        const multiAgentResponse = await fetch('/api/multi-agent/agents');
-        if (multiAgentResponse.ok) {
-          this.multiAgentData = await multiAgentResponse.json();
-        } else {
-          this.multiAgentData = { agents: [] };
-        }
+        this.multiAgentData = await API.get<MultiAgentAgentsResponse>('/api/multi-agent/agents');
       } catch (e) {
         logger.warn('Multi-agent data unavailable:', e);
         this.multiAgentData = { agents: [] };
@@ -90,15 +281,16 @@ export class SettingsModule {
       this.populateForm();
       this.setStatus('');
     } catch (error) {
-      logger.error('Load error:', error);
-      this.setStatus(`Error: ${error.message}`, 'error');
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Load error:', message);
+      this.setStatus(`Error: ${message}`, 'error');
     }
   }
 
   /**
    * Populate form with current config values
    */
-  populateForm() {
+  populateForm(): void {
     if (!this.config) {
       return;
     }
@@ -131,7 +323,7 @@ export class SettingsModule {
     this.setValue('settings-heartbeat-quiet-end', this.config.heartbeat?.quiet_end ?? 8);
 
     // Agent
-    const backend = this.config.agent?.backend || 'claude';
+    const backend = (this.config.agent?.backend || 'claude') as AgentBackend;
     const model = this.config.agent?.model || 'claude-sonnet-4-20250514';
     this.setSelectValue('settings-agent-backend', backend);
     this.updateModelOptions(backend, model);
@@ -161,8 +353,8 @@ export class SettingsModule {
   /**
    * Populate role permissions from config
    */
-  populateRoles() {
-    const container = document.getElementById('settings-roles-container');
+  populateRoles(): void {
+    const container = getElementByIdOrNull<HTMLElement>('settings-roles-container');
     if (!container || !this.config.roles) {
       return;
     }
@@ -173,7 +365,7 @@ export class SettingsModule {
     }
 
     // Build reverse mapping: role -> sources
-    const roleSources = {};
+    const roleSources: Record<string, string[]> = {};
     for (const [source, role] of Object.entries(sourceMapping)) {
       if (!roleSources[role]) {
         roleSources[role] = [];
@@ -182,17 +374,18 @@ export class SettingsModule {
     }
 
     // Render each role
-    const roleColors = {
+    const roleColors: Record<string, { badge: string; label: string }> = {
       os_agent: { badge: 'green', label: 'Full Access' },
       chat_bot: { badge: 'yellow', label: 'Limited' },
     };
 
-    const roleIcons = {
+    const roleIcons: Record<string, string> = {
       os_agent: '🖥️',
       chat_bot: '🤖',
     };
 
-    const html = Object.entries(definitions)
+    const roleDefs = definitions as Record<string, ApiRoleDefinition>;
+    const html = Object.entries(roleDefs)
       .map(([roleName, roleConfig]) => {
         const sources = roleSources[roleName] || [];
         const color = roleColors[roleName] || { badge: 'gray', label: 'Custom' };
@@ -224,7 +417,11 @@ export class SettingsModule {
               <div class="flex items-center gap-2">
                 <span class="font-medium">Model:</span>
                 <span class="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">${displayModel}</span>
-                ${maxTurns ? `<span class="text-gray-400">| ${escapeHtml(maxTurns)} turns</span>` : ''}
+                ${
+                  maxTurns
+                    ? `<span class="text-gray-400">| ${escapeHtml(String(maxTurns))} turns</span>`
+                    : ''
+                }
               </div>
               <div><span class="font-medium">Source:</span> ${sources.map((s) => `<code class="bg-gray-100 px-1 rounded">${escapeHtml(s)}</code>`).join(' ')}</div>
               <div><span class="font-medium">Allowed:</span> <code class="text-green-600 text-[10px]">${escapeHtml(allowedTools.join(', '))}</code></div>
@@ -249,13 +446,13 @@ export class SettingsModule {
   /**
    * Populate tool selection checkboxes
    */
-  populateToolMode() {
+  populateToolMode(): void {
     const tools = this.config.agent?.tools || { gateway: ['*'], mcp: [] };
     const gatewayTools = tools.gateway || ['*'];
     const mcpTools = tools.mcp || [];
 
     // Set Gateway tool checkboxes
-    const gatewayCheckboxes = document.querySelectorAll('.gateway-tool');
+    const gatewayCheckboxes = document.querySelectorAll<HTMLInputElement>('.gateway-tool');
     const isGatewayAll = gatewayTools.includes('*');
 
     gatewayCheckboxes.forEach((cb) => {
@@ -267,7 +464,7 @@ export class SettingsModule {
     });
 
     // Set Select All checkbox
-    const gatewaySelectAll = document.getElementById('gateway-select-all');
+    const gatewaySelectAll = getElementByIdOrNull<HTMLInputElement>('gateway-select-all');
     if (gatewaySelectAll) {
       gatewaySelectAll.checked = isGatewayAll || this.allChecked('.gateway-tool');
     }
@@ -282,13 +479,13 @@ export class SettingsModule {
   /**
    * Render MCP servers dynamically from loaded data
    */
-  renderMCPServers(selectedTools = []) {
-    const container = document.getElementById('mcp-tools-list');
+  renderMCPServers(selectedTools: string[] = []): void {
+    const container = getElementByIdOrNull<HTMLElement>('mcp-tools-list');
     if (!container) {
       return;
     }
 
-    const servers = this.mcpServersData?.servers || [];
+    const servers = (this.mcpServersData?.servers || []) as McpServer[];
     const isMCPAll = selectedTools.includes('*');
 
     if (servers.length === 0) {
@@ -300,7 +497,7 @@ export class SettingsModule {
       return;
     }
 
-    const serverColors = {
+    const serverColors: Record<string, { border: string; bg: string; icon: string }> = {
       'brave-devtools': { border: 'border-blue-200', bg: 'bg-blue-50', icon: '🌐' },
       'brave-search': { border: 'border-orange-200', bg: 'bg-orange-50', icon: '🔍' },
       mama: { border: 'border-purple-200', bg: 'bg-purple-50', icon: '🧠' },
@@ -309,11 +506,12 @@ export class SettingsModule {
 
     const html = servers
       .map((server) => {
-        const colors = serverColors[server.name] || serverColors['default'];
-        const toolValue = `mcp__${server.name}__*`;
+        const serverName = server.name || '';
+        const colors = serverColors[serverName] || serverColors['default'];
+        const toolValue = `mcp__${serverName}__*`;
         const isChecked = isMCPAll || selectedTools.includes(toolValue);
         // Escape server.name for safe HTML rendering (XSS prevention)
-        const safeName = escapeHtml(server.name);
+        const safeName = escapeHtml(serverName);
         const safeToolValue = escapeAttr(toolValue);
 
         return `
@@ -328,7 +526,7 @@ export class SettingsModule {
     container.innerHTML = html;
 
     // Update Select All checkbox
-    const mcpSelectAll = document.getElementById('mcp-select-all');
+    const mcpSelectAll = getElementByIdOrNull<HTMLInputElement>('mcp-select-all');
     if (mcpSelectAll) {
       mcpSelectAll.checked = isMCPAll || this.allChecked('.mcp-tool');
     }
@@ -337,16 +535,16 @@ export class SettingsModule {
   /**
    * Check if all checkboxes of a class are checked
    */
-  allChecked(selector) {
-    const checkboxes = document.querySelectorAll(selector);
+  allChecked(selector: string): boolean {
+    const checkboxes = document.querySelectorAll<HTMLInputElement>(selector);
     return Array.from(checkboxes).every((cb) => cb.checked);
   }
 
   /**
    * Toggle all Gateway tools
    */
-  toggleAllGateway(checked) {
-    document.querySelectorAll('.gateway-tool').forEach((cb) => {
+  toggleAllGateway(checked: boolean): void {
+    document.querySelectorAll<HTMLInputElement>('.gateway-tool').forEach((cb) => {
       cb.checked = checked;
     });
     this.updateToolSummary();
@@ -355,8 +553,8 @@ export class SettingsModule {
   /**
    * Toggle all MCP tools
    */
-  toggleAllMCP(checked) {
-    document.querySelectorAll('.mcp-tool').forEach((cb) => {
+  toggleAllMCP(checked: boolean): void {
+    document.querySelectorAll<HTMLInputElement>('.mcp-tool').forEach((cb) => {
       cb.checked = checked;
     });
     this.updateToolSummary();
@@ -365,11 +563,12 @@ export class SettingsModule {
   /**
    * Update tool summary display
    */
-  updateToolSummary() {
-    const gatewayCount = document.querySelectorAll('.gateway-tool:checked').length;
-    const mcpCount = document.querySelectorAll('.mcp-tool:checked').length;
+  updateToolSummary(): void {
+    const gatewayCount =
+      document.querySelectorAll<HTMLInputElement>('.gateway-tool:checked').length;
+    const mcpCount = document.querySelectorAll<HTMLInputElement>('.mcp-tool:checked').length;
 
-    const summaryEl = document.getElementById('tool-summary');
+    const summaryEl = getElementByIdOrNull<HTMLElement>('tool-summary');
     if (summaryEl) {
       summaryEl.textContent = `Gateway: ${gatewayCount} tools | MCP: ${mcpCount} tools`;
     }
@@ -378,67 +577,107 @@ export class SettingsModule {
   /**
    * Save settings and restart daemon to apply changes
    */
-  async saveAndRestart() {
+  async saveAndRestart(): Promise<void> {
     this.setStatus('Saving...');
 
     try {
       const updates = this.collectFormData();
-
-      const response = await fetch('/api/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.message || `HTTP ${response.status}`);
-      }
+      await API.put('/api/config', updates);
 
       this.setStatus('Saved! Restarting...', 'success');
       showToast('Settings saved. Restarting daemon...');
 
       // Trigger restart after save
       try {
-        await fetch('/api/restart', { method: 'POST' });
+        await API.post('/api/restart', {});
       } catch {
         // Expected: connection drops when server exits
       }
 
-      this.setStatus('Restarting... page will reconnect automatically', '');
+      const isServiceReady = await this.waitForServiceAfterRestart();
+      if (!isServiceReady) {
+        this.setStatus('Restarted, but reconnect timed out. Please refresh manually.', 'error');
+        showToast('Restart request sent. Auto reconnect timed out - please refresh page.');
+        return;
+      }
+
+      this.setStatus('Reconnected. Reloading page...', 'success');
+      setTimeout(() => {
+        window.location.reload();
+      }, 400);
     } catch (error) {
-      logger.error('Save error:', error);
-      this.setStatus(`Error: ${error.message}`, 'error');
-      showToast(`Failed to save: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Save error:', message);
+      this.setStatus(`Error: ${message}`, 'error');
+      showToast(`Failed to save: ${message}`);
     }
+  }
+
+  /**
+   * Wait for service recovery after restart by polling dashboard status endpoint.
+   */
+  private async waitForServiceAfterRestart(): Promise<boolean> {
+    const maxAttempts = 40;
+    const intervalMs = 1000;
+    const readinessChecks = ['/api/health', '/api/dashboard/status'];
+    // Server waits 500ms + shell sleeps 1s before stopping, so wait at least 2.5s
+    // before first poll to ensure old server is actually down
+    const initialDelayMs = 2500;
+
+    this.setStatus('Restarting... waiting for shutdown', '');
+    await new Promise((resolve) => setTimeout(resolve, initialDelayMs));
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      this.setStatus(`Restarting... reconnecting (${attempt}/${maxAttempts})`, '');
+
+      let isReady = false;
+      for (const endpoint of readinessChecks) {
+        try {
+          // Use shared API client for strict JSON response parsing and consistent errors.
+          await API.get(endpoint);
+          logger.debug('[Settings] Service ready check passed:', endpoint);
+          isReady = true;
+          break;
+        } catch {
+          logger.debug('[Settings] Service not ready yet:', endpoint);
+        }
+      }
+
+      if (isReady) {
+        return true;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+
+    return false;
   }
 
   /**
    * Collect form data into config update object
    */
-  collectFormData() {
-    const backend = this.getSelectValue('settings-agent-backend') || 'claude';
+  collectFormData(): SettingsPayload {
+    const backend = (this.getSelectValue('settings-agent-backend') || 'claude') as AgentBackend;
     const model = this.getValue('settings-agent-model');
     const useClaudeCli = backend === 'claude';
 
     // Get token values - if empty and original was masked, keep original
-    const discordToken = this.getTokenValue('settings-discord-token', this.config.discord?.token);
+    const discordToken = this.getTokenValue('settings-discord-token', this.config?.discord?.token);
     const slackBotToken = this.getTokenValue(
       'settings-slack-bot-token',
-      this.config.slack?.bot_token
+      this.config?.slack?.bot_token
     );
     const slackAppToken = this.getTokenValue(
       'settings-slack-app-token',
-      this.config.slack?.app_token
+      this.config?.slack?.app_token
     );
     const telegramToken = this.getTokenValue(
       'settings-telegram-token',
-      this.config.telegram?.token
+      this.config?.telegram?.token
     );
     const chatworkToken = this.getTokenValue(
       'settings-chatwork-token',
-      this.config.chatwork?.api_token
+      this.config?.chatwork?.api_token
     );
 
     return {
@@ -462,9 +701,9 @@ export class SettingsModule {
       },
       heartbeat: {
         enabled: this.getCheckbox('settings-heartbeat-enabled'),
-        interval: parseInt(this.getValue('settings-heartbeat-interval') || '30', 10) * 60000,
-        quiet_start: parseInt(this.getValue('settings-heartbeat-quiet-start') || '23', 10),
-        quiet_end: parseInt(this.getValue('settings-heartbeat-quiet-end') || '8', 10),
+        interval: this.parseIntegerInput('settings-heartbeat-interval', 1, 1440, 30) * 60000,
+        quiet_start: this.parseIntegerInput('settings-heartbeat-quiet-start', 0, 23, 23),
+        quiet_end: this.parseIntegerInput('settings-heartbeat-quiet-end', 0, 23, 8),
       },
       use_claude_cli: useClaudeCli,
       agent: {
@@ -473,29 +712,40 @@ export class SettingsModule {
           ? this.getCheckbox('settings-agent-persistent-cli')
           : false,
         model: model || (backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514'),
-        max_turns: parseInt(this.getValue('settings-agent-max-turns') || '10', 10),
-        timeout: parseInt(this.getValue('settings-agent-timeout') || '300', 10) * 1000,
+        max_turns: this.parseIntegerInput('settings-agent-max-turns', 1, 100, 10),
+        timeout: this.parseIntegerInput('settings-agent-timeout', 1, 600, 300) * 1000,
         tools: this.collectToolModeData(),
       },
       token_budget: {
-        daily_limit: parseInt(this.getValue('settings-token-daily-limit') || '0', 10) || undefined,
-        alert_threshold:
-          parseInt(this.getValue('settings-token-alert-threshold') || '0', 10) || undefined,
+        // Keep existing integer constraint for daily limit to avoid partial values.
+        daily_limit: this.parseOptionalNumber('settings-token-daily-limit', 'daily_limit', {
+          min: 0,
+          integerOnly: true,
+        }),
+        alert_threshold: this.parseOptionalNumber(
+          'settings-token-alert-threshold',
+          'alert_threshold',
+          {
+            min: 0,
+            max: 100,
+            integerOnly: false,
+          }
+        ),
       },
     };
   }
 
-  initBackendModelBinding() {
+  initBackendModelBinding(): void {
     if (this.backendListenersInitialized) {
       return;
     }
     this.backendListenersInitialized = true;
-    const backendSelect = document.getElementById('settings-agent-backend');
+    const backendSelect = getElementByIdOrNull<HTMLSelectElement>('settings-agent-backend');
     if (!backendSelect) {
       return;
     }
     backendSelect.addEventListener('change', () => {
-      const backend = this.getSelectValue('settings-agent-backend') || 'claude';
+      const backend = (this.getSelectValue('settings-agent-backend') || 'claude') as AgentBackend;
       const currentModel = this.getValue('settings-agent-model');
       this.updateModelOptions(backend, currentModel);
       this.setValue(
@@ -506,8 +756,8 @@ export class SettingsModule {
     });
   }
 
-  updatePersistentCliToggle(backend, isChecked) {
-    const checkbox = document.getElementById('settings-agent-persistent-cli');
+  updatePersistentCliToggle(backend: AgentBackend, isChecked: boolean): void {
+    const checkbox = getElementByIdOrNull<HTMLInputElement>('settings-agent-persistent-cli');
     if (!checkbox) {
       return;
     }
@@ -522,8 +772,8 @@ export class SettingsModule {
     }
   }
 
-  updateModelOptions(backend, currentModel) {
-    const datalist = document.getElementById('settings-agent-model-list');
+  updateModelOptions(backend: AgentBackend, currentModel: string): void {
+    const datalist = getElementByIdOrNull<HTMLDataListElement>('settings-agent-model-list');
     if (!datalist) {
       return;
     }
@@ -542,13 +792,13 @@ export class SettingsModule {
       .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
       .join('');
     const normalized = this.getNormalizedModelForBackend(backend, currentModel);
-    const input = document.getElementById('settings-agent-model');
+    const input = getElementByIdOrNull<HTMLInputElement>('settings-agent-model');
     if (input && normalized) {
       input.placeholder = backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
     }
   }
 
-  getNormalizedModelForBackend(backend, model) {
+  getNormalizedModelForBackend(backend: AgentBackend, model: string): string {
     if (!model) {
       return backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
     }
@@ -565,22 +815,22 @@ export class SettingsModule {
   /**
    * Collect tool selection data from checkboxes
    */
-  collectToolModeData() {
-    const gatewayTools = [];
-    const mcpTools = [];
+  collectToolModeData(): SettingsPayloadToolConfig {
+    const gatewayTools: string[] = [];
+    const mcpTools: string[] = [];
 
     // Collect selected Gateway tools
-    document.querySelectorAll('.gateway-tool:checked').forEach((cb) => {
+    document.querySelectorAll<HTMLInputElement>('.gateway-tool:checked').forEach((cb) => {
       gatewayTools.push(cb.value);
     });
 
     // Collect selected MCP tools
-    document.querySelectorAll('.mcp-tool:checked').forEach((cb) => {
+    document.querySelectorAll<HTMLInputElement>('.mcp-tool:checked').forEach((cb) => {
       mcpTools.push(cb.value);
     });
 
     // If all Gateway tools are selected, use wildcard
-    const allGateway = document.querySelectorAll('.gateway-tool');
+    const allGateway = document.querySelectorAll<HTMLInputElement>('.gateway-tool');
     if (gatewayTools.length === allGateway.length && gatewayTools.length > 0) {
       return {
         gateway: ['*'],
@@ -599,7 +849,7 @@ export class SettingsModule {
   /**
    * Reset form to current saved values
    */
-  resetForm() {
+  resetForm(): void {
     this.populateForm();
     this.setStatus('Form reset');
     setTimeout(() => this.setStatus(''), 2000);
@@ -608,8 +858,8 @@ export class SettingsModule {
   /**
    * Helper: Set checkbox value
    */
-  setCheckbox(id, checked) {
-    const el = document.getElementById(id);
+  setCheckbox(id: string, checked: boolean): void {
+    const el = getElementByIdOrNull<HTMLInputElement>(id);
     if (el) {
       el.checked = !!checked;
     }
@@ -618,8 +868,8 @@ export class SettingsModule {
   /**
    * Helper: Get checkbox value
    */
-  getCheckbox(id) {
-    const el = document.getElementById(id);
+  getCheckbox(id: string): boolean {
+    const el = getElementByIdOrNull<HTMLInputElement>(id);
     return el ? el.checked : false;
   }
 
@@ -629,15 +879,16 @@ export class SettingsModule {
    * @param {string} value - Value to set
    * @param {boolean} isSensitive - If true, treat as sensitive token (keep if masked)
    */
-  setValue(id, value, isSensitive = false) {
-    const el = document.getElementById(id);
+  setValue(id: string, value: string | number, isSensitive = false): void {
+    const el = getElementByIdOrNull<HTMLInputElement>(id);
     if (el) {
       // For sensitive fields (tokens), preserve placeholder if value is masked
-      if (isSensitive && this.isMaskedToken(value)) {
-        el.placeholder = value;
+      const normalized = String(value ?? '');
+      if (isSensitive && this.isMaskedToken(normalized)) {
+        el.placeholder = normalized;
         el.value = '';
       } else {
-        el.value = value;
+        el.value = normalized;
       }
     }
   }
@@ -645,11 +896,12 @@ export class SettingsModule {
   /**
    * Check if a token is masked (e.g., "***[redacted]***")
    */
-  isMaskedToken(token) {
-    if (!token || typeof token !== 'string') {
+  isMaskedToken(token: string | number | undefined): boolean {
+    if (token === undefined || token === null) {
       return false;
     }
-    return token === '***[redacted]***' || (token.startsWith('***[') && token.endsWith(']***'));
+    const str = String(token);
+    return str === '***[redacted]***' || (str.startsWith('***[') && str.endsWith(']***'));
   }
 
   /**
@@ -658,7 +910,7 @@ export class SettingsModule {
    * @param {string} originalToken - Original token value from config
    * @returns {string} Token to send (either new value or original masked token)
    */
-  getTokenValue(id, originalToken) {
+  getTokenValue(id: string, originalToken?: string): string {
     const inputValue = this.getValue(id);
 
     // If user entered a new value, use it
@@ -678,16 +930,16 @@ export class SettingsModule {
   /**
    * Helper: Get input value
    */
-  getValue(id) {
-    const el = document.getElementById(id);
+  getValue(id: string): string {
+    const el = getElementByIdOrNull<HTMLInputElement>(id);
     return el ? el.value : '';
   }
 
   /**
    * Helper: Set select value
    */
-  setSelectValue(id, value) {
-    const el = document.getElementById(id);
+  setSelectValue(id: string, value: string): void {
+    const el = getElementByIdOrNull<HTMLSelectElement>(id);
     if (el) {
       el.value = value;
     }
@@ -696,16 +948,16 @@ export class SettingsModule {
   /**
    * Helper: Get select value
    */
-  getSelectValue(id) {
-    const el = document.getElementById(id);
+  getSelectValue(id: string): string {
+    const el = getElementByIdOrNull<HTMLSelectElement>(id);
     return el ? el.value : '';
   }
 
   /**
    * Helper: Set radio button
    */
-  setRadio(id, checked) {
-    const el = document.getElementById(id);
+  setRadio(id: string, checked: boolean): void {
+    const el = getElementByIdOrNull<HTMLInputElement>(id);
     if (el) {
       el.checked = !!checked;
     }
@@ -714,16 +966,16 @@ export class SettingsModule {
   /**
    * Helper: Get radio button value
    */
-  getRadio(id) {
-    const el = document.getElementById(id);
+  getRadio(id: string): boolean {
+    const el = getElementByIdOrNull<HTMLInputElement>(id);
     return el ? el.checked : false;
   }
 
   /**
    * Set status message
    */
-  setStatus(message, type = '') {
-    const statusEl = document.getElementById('settings-status');
+  setStatus(message: string, type: SettingsFilterValue = ''): void {
+    const statusEl = getElementByIdOrNull<HTMLElement>('settings-status');
     if (statusEl) {
       statusEl.textContent = message;
       statusEl.className = `text-sm ${
@@ -739,13 +991,13 @@ export class SettingsModule {
   /**
    * Populate Multi-Agent Team section (F3)
    */
-  populateMultiAgentSection() {
-    const container = document.getElementById('settings-multi-agent-container');
+  populateMultiAgentSection(): void {
+    const container = getElementByIdOrNull<HTMLElement>('settings-multi-agent-container');
     if (!container) {
       return;
     }
 
-    const agents = this.multiAgentData?.agents || [];
+    const agents = (this.multiAgentData?.agents || []) as MultiAgentAgent[];
 
     if (agents.length === 0) {
       container.innerHTML = `
@@ -757,14 +1009,14 @@ export class SettingsModule {
     }
 
     // Tier badge colors
-    const tierColors = {
+    const tierColors: Record<number, string> = {
       1: 'bg-indigo-100 text-indigo-700',
       2: 'bg-green-100 text-green-700',
       3: 'bg-yellow-100 text-yellow-700',
     };
 
     // Mask token (show last 4 chars)
-    const maskToken = (token) => {
+    const maskToken = (token: string) => {
       if (!token || token.length < 8) {
         return '****';
       }
@@ -772,19 +1024,21 @@ export class SettingsModule {
     };
 
     const agentCards = agents
-      .map((agent) => {
-        const tierColor = tierColors[agent.tier] || tierColors[1];
-        const backend = agent.backend || this.config?.agent?.backend || 'claude';
-        const normalizedModel = this.getNormalizedModelForBackend(backend, agent.model);
+      .map((agent: MultiAgentAgent) => {
+        const tierColor = tierColors[agent.tier || 1] || tierColors[1];
+        const backend =
+          ((agent.backend || this.config?.agent?.backend || 'claude') as AgentBackend) || 'claude';
+        const normalizedModel = this.getNormalizedModelForBackend(backend, agent.model || '');
         const friendlyModel = formatModelName(normalizedModel) || normalizedModel || 'Default';
         const maskedToken = agent.bot_token ? maskToken(agent.bot_token) : 'N/A';
+        const agentId = agent.id || '';
         const backendOptions = ['codex', 'claude']
           .map(
             (b) =>
               `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`
           )
           .join('');
-        const modelListId = `agent-model-list-${agent.id}`;
+        const modelListId = `agent-model-list-${agentId}`;
         const modelOptions = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
         const modelOptionHtml = modelOptions
           .map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(formatModelName(m))}</option>`)
@@ -801,9 +1055,9 @@ export class SettingsModule {
                 <input
                   type="checkbox"
                   class="sr-only peer"
-                  data-agent-id="${escapeAttr(agent.id)}"
+                  data-action="agent-toggle"
+                  data-agent-id="${escapeAttr(agentId)}"
                   ${agent.enabled ? 'checked' : ''}
-                  onchange="window.settingsModule.toggleAgent('${escapeAttr(agent.id)}', this.checked)"
                 >
                 <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
               </label>
@@ -816,9 +1070,10 @@ export class SettingsModule {
               <div>
                 <label class="block text-gray-500 mb-0.5">Backend</label>
                 <select
-                  id="agent-backend-${escapeAttr(agent.id)}"
+                  id="agent-backend-${escapeAttr(agentId)}"
+                  data-action="agent-backend"
+                  data-agent-id="${escapeAttr(agentId)}"
                   class="w-full rounded border border-gray-200 px-2 py-1"
-                  onchange="window.settingsModule.onAgentBackendChange('${escapeHtml(agent.id)}')"
                 >
                   ${backendOptions}
                 </select>
@@ -826,7 +1081,7 @@ export class SettingsModule {
               <div>
                 <label class="block text-gray-500 mb-0.5">Model</label>
                 <input
-                  id="agent-model-${escapeAttr(agent.id)}"
+                  id="agent-model-${escapeAttr(agentId)}"
                   list="${escapeAttr(modelListId)}"
                   value="${escapeAttr(normalizedModel)}"
                   class="w-full rounded border border-gray-200 px-2 py-1"
@@ -835,8 +1090,10 @@ export class SettingsModule {
               </div>
               <div class="flex items-end">
                 <button
+                  type="button"
+                  data-action="agent-save"
+                  data-agent-id="${escapeAttr(agentId)}"
                   class="w-full px-2 py-1 rounded bg-yellow-400 text-black hover:bg-yellow-300"
-                  onclick="window.settingsModule.saveAgentConfig('${escapeAttr(agent.id)}')"
                 >
                   Save
                 </button>
@@ -853,39 +1110,33 @@ export class SettingsModule {
   /**
    * Toggle agent enabled status (F3)
    */
-  async toggleAgent(agentId, enabled) {
+  async toggleAgent(agentId: string, enabled: boolean): Promise<void> {
     try {
-      const response = await fetch(`/api/multi-agent/agents/${agentId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      await API.put(`/api/multi-agent/agents/${agentId}`, { enabled });
 
       logger.info(`Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`);
     } catch (error) {
       logger.error('Failed to toggle agent:', error);
       // Revert checkbox on error
-      const checkbox = document.querySelector(`input[data-agent-id="${agentId}"]`);
+      const checkbox = document.querySelector<HTMLInputElement>(
+        `input[data-action="agent-toggle"][data-agent-id="${agentId}"]`
+      );
       if (checkbox) {
         checkbox.checked = !enabled;
       }
-      alert(`Failed to update agent: ${error.message}`);
+      alert(`Failed to update agent: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  onAgentBackendChange(agentId) {
-    const backendSelect = document.getElementById(`agent-backend-${agentId}`);
-    const modelInput = document.getElementById(`agent-model-${agentId}`);
-    const modelList = document.getElementById(`agent-model-list-${agentId}`);
+  onAgentBackendChange(agentId: string): void {
+    const backendSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-backend-${agentId}`);
+    const modelInput = getElementByIdOrNull<HTMLInputElement>(`agent-model-${agentId}`);
+    const modelList = getElementByIdOrNull<HTMLDataListElement>(`agent-model-list-${agentId}`);
     if (!backendSelect || !modelInput || !modelList) {
       return;
     }
 
-    const backend = backendSelect.value || 'claude';
+    const backend = (backendSelect.value || 'claude') as AgentBackend;
     const currentModel = modelInput.value || '';
     const normalized = this.getNormalizedModelForBackend(backend, currentModel);
     const options = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
@@ -896,53 +1147,40 @@ export class SettingsModule {
     modelInput.value = normalized;
   }
 
-  async saveAgentConfig(agentId) {
+  async saveAgentConfig(agentId: string): Promise<void> {
     try {
-      const backendSelect = document.getElementById(`agent-backend-${agentId}`);
-      const modelInput = document.getElementById(`agent-model-${agentId}`);
+      const backendSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-backend-${agentId}`);
+      const modelInput = getElementByIdOrNull<HTMLInputElement>(`agent-model-${agentId}`);
       if (!backendSelect || !modelInput) {
         throw new Error('Agent settings inputs not found');
       }
 
-      const backend = backendSelect.value || 'claude';
+      const backend = (backendSelect.value || 'claude') as AgentBackend;
       const model = this.getNormalizedModelForBackend(backend, modelInput.value || '');
 
-      const response = await fetch(`/api/multi-agent/agents/${agentId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend, model }),
-      });
-
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.message || `HTTP ${response.status}`);
-      }
+      await API.put(`/api/multi-agent/agents/${agentId}`, { backend, model });
 
       showToast(`Saved ${agentId}: ${backend} / ${model} (applied)`);
       await this.loadSettings();
     } catch (error) {
       logger.error('Failed to save agent config:', error);
-      alert(`Failed to save agent config: ${error.message}`);
+      alert(
+        `Failed to save agent config: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
   /**
    * Populate installed skills section
    */
-  async populateSkillsSection() {
-    const container = document.getElementById('settings-skills-container');
+  async populateSkillsSection(): Promise<void> {
+    const container = getElementByIdOrNull<HTMLElement>('settings-skills-container');
     if (!container) {
       return;
     }
 
     try {
-      const response = await fetch('/api/skills');
-      if (!response.ok) {
-        container.innerHTML = '<p class="text-xs text-gray-400">Skills API not available</p>';
-        return;
-      }
-
-      const { skills } = await response.json();
+      const { skills } = await API.get<SkillsResponse>('/api/skills');
       if (!skills || skills.length === 0) {
         container.innerHTML = '<p class="text-xs text-gray-400">No skills installed</p>';
         return;
@@ -992,7 +1230,7 @@ export class SettingsModule {
         });
       });
     } catch (error) {
-      logger.warn('Skills load error:', error);
+      logger.warn('Skills load error:', error instanceof Error ? error.message : String(error));
       container.innerHTML = '<p class="text-xs text-gray-400">Failed to load skills</p>';
     }
   }
@@ -1000,18 +1238,11 @@ export class SettingsModule {
   /**
    * Toggle skill enabled/disabled from settings
    */
-  async toggleSkill(source, name, enabled) {
+  async toggleSkill(source: string, name: string, enabled: boolean): Promise<void> {
     try {
-      const response = await fetch(`/api/skills/${encodeURIComponent(name)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, source }),
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      await API.toggleSkill(name, enabled, source);
     } catch (error) {
-      logger.error('Skill toggle failed:', error);
+      logger.error('Skill toggle failed:', error instanceof Error ? error.message : String(error));
       this.populateSkillsSection();
     }
   }
@@ -1019,26 +1250,21 @@ export class SettingsModule {
   /**
    * Populate scheduled jobs section
    */
-  async populateCronSection() {
-    const container = document.getElementById('settings-cron-container');
+  async populateCronSection(): Promise<void> {
+    const container = getElementByIdOrNull<HTMLElement>('settings-cron-container');
     if (!container) {
       return;
     }
 
     try {
-      const response = await fetch('/api/cron');
-      if (!response.ok) {
-        container.innerHTML = '<p class="text-xs text-gray-400">Cron API not available</p>';
-        return;
-      }
-
-      const { jobs } = await response.json();
+      const { jobs } = await API.get<CronJobsResponse>('/api/cron');
       if (!jobs || jobs.length === 0) {
         container.innerHTML = '<p class="text-xs text-gray-400">No scheduled jobs</p>';
         return;
       }
 
-      container.innerHTML = `<div class="space-y-1.5">${jobs
+      const cronJobs = jobs as CronJob[];
+      container.innerHTML = `<div class="space-y-1.5">${cronJobs
         .map((job) => {
           const nextRun = job.nextRun
             ? new Date(job.nextRun).toLocaleString([], {
@@ -1057,36 +1283,48 @@ export class SettingsModule {
               </div>
               <p class="text-[10px] text-gray-500 truncate">${escapeHtml((job.prompt || '').slice(0, 80))}</p>
             </div>
-            <div class="flex items-center gap-1 ml-2 shrink-0">
-              <span class="text-[10px] text-gray-400">${nextRun}</span>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" ${job.enabled !== false ? 'checked' : ''}
-                  data-cron-id="${escapeHtml(job.id)}"
-                  class="sr-only peer cron-toggle">
+              <div class="flex items-center gap-1 ml-2 shrink-0">
+                <span class="text-[10px] text-gray-400">${nextRun}</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                    ${job.enabled !== false ? 'checked' : ''}
+                    data-action="cron-toggle"
+                    data-cron-id="${escapeAttr(job.id)}"
+                    class="sr-only peer cron-toggle"
+                  >
                 <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
               </label>
-              <button onclick="settingsModule.deleteCronJob('${escapeHtml(job.id)}')" class="text-red-400 hover:text-red-600 text-xs px-1" title="Delete">✕</button>
+              <button
+                type="button"
+                data-action="cron-delete"
+                data-cron-id="${escapeAttr(job.id)}"
+                class="text-red-400 hover:text-red-600 text-xs px-1"
+                title="Delete"
+              >
+                ✕
+              </button>
             </div>
           </div>`;
         })
         .join('')}</div>`;
-
-      container.querySelectorAll('.cron-toggle').forEach((input) => {
-        input.addEventListener('change', (e) => {
-          const id = e.target.dataset.cronId;
-          this.toggleCronJob(id, e.target.checked);
-        });
-      });
     } catch (error) {
       logger.warn('Cron load error:', error);
       container.innerHTML = '<p class="text-xs text-gray-400">Failed to load jobs</p>';
     }
   }
 
-  async addCronJob() {
-    const name = document.getElementById('settings-cron-name')?.value?.trim();
-    const cronExpr = document.getElementById('settings-cron-expr')?.value?.trim();
-    const prompt = document.getElementById('settings-cron-prompt')?.value?.trim();
+  async addCronJob(): Promise<void> {
+    const nameInput = getElementByIdOrNull<HTMLInputElement>('settings-cron-name');
+    const cronExprInput = getElementByIdOrNull<HTMLInputElement>('settings-cron-expr');
+    const promptInput = getElementByIdOrNull<HTMLInputElement>('settings-cron-prompt');
+    if (!nameInput || !cronExprInput || !promptInput) {
+      return;
+    }
+
+    const name = nameInput.value.trim();
+    const cronExpr = cronExprInput.value.trim();
+    const prompt = promptInput.value.trim();
 
     if (!name || !cronExpr || !prompt) {
       showToast('Please fill in all fields');
@@ -1094,63 +1332,44 @@ export class SettingsModule {
     }
 
     try {
-      const response = await fetch('/api/cron', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, cron_expr: cronExpr, prompt }),
-      });
+      await API.post('/api/cron', { name, cron_expr: cronExpr, prompt });
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${response.status}`);
-      }
-
-      document.getElementById('settings-cron-name').value = '';
-      document.getElementById('settings-cron-expr').value = '';
-      document.getElementById('settings-cron-prompt').value = '';
+      nameInput.value = '';
+      cronExprInput.value = '';
+      promptInput.value = '';
       showToast('Job created');
       this.populateCronSection();
     } catch (error) {
-      showToast(`Failed: ${error.message}`);
+      showToast(`Failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  async toggleCronJob(id, enabled) {
+  async toggleCronJob(id: string, enabled: boolean): Promise<void> {
     try {
-      const response = await fetch(`/api/cron/${encodeURIComponent(id)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      await API.updateCronJob(id, { enabled });
     } catch (error) {
       logger.error('Cron toggle failed:', error);
       this.populateCronSection();
     }
   }
 
-  async deleteCronJob(id) {
+  async deleteCronJob(id: string): Promise<void> {
     if (!confirm('Delete this scheduled job?')) {
       return;
     }
     try {
-      const response = await fetch(`/api/cron/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      await API.del(`/api/cron/${encodeURIComponent(id)}`);
       showToast('Job deleted');
       this.populateCronSection();
     } catch (error) {
-      showToast(`Failed: ${error.message}`);
+      showToast(`Failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   /**
    * Populate token budget section from config
    */
-  populateTokenSection() {
+  populateTokenSection(): void {
     const budget = this.config?.token_budget;
     if (!budget) {
       return;

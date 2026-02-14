@@ -9,8 +9,10 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
-    "build": "tsc && cp src/agent/gateway-tools.md dist/agent/",
+    "build": "tsc && cp src/agent/gateway-tools.md dist/agent/ && tsc -p public/viewer/tsconfig.viewer.json",
     "build:watch": "tsc --watch",
+    "build:viewer": "tsc -p public/viewer/tsconfig.viewer.json",
+    "build:viewer:watch": "tsc -p public/viewer/tsconfig.viewer.json --watch",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "clean": "rm -rf dist node_modules",
