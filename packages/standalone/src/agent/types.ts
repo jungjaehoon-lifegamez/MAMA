@@ -740,6 +740,8 @@ export interface AgentLoopOptions {
   maxTurns?: number;
   /** Maximum tokens per response (default: 4096) */
   maxTokens?: number;
+  /** Request timeout in milliseconds (mapped to Codex CLI `timeoutMs`) */
+  timeoutMs?: number;
   /** Claude model to use (default: claude-sonnet-4-20250514) */
   model?: string;
   /** Callback for each turn */

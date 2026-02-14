@@ -285,6 +285,8 @@ export interface MultiAgentConfig {
 export interface MultiAgentRuntimeOptions {
   backend?: 'claude' | 'codex';
   model?: string;
+  /** Timeout in milliseconds for each agent process request */
+  requestTimeout?: number;
   codexHome?: string;
   codexCwd?: string;
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
