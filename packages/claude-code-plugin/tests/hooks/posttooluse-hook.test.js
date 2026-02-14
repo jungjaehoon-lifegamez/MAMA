@@ -17,15 +17,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SCRIPT_PATH = path.join(__dirname, '../../scripts/posttooluse-hook.js');
 
-// Helper to execute hook with stdin
+// Helper to execute hook with stdin (with timeout and error handling)
+const HOOK_TIMEOUT = 5000;
+
 function execHook(input, env = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const child = spawn('node', [SCRIPT_PATH], {
       env: { ...process.env, ...env },
     });
 
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+      resolve({ exitCode: -1, stdout, stderr: stderr + '\n[TIMEOUT]', timedOut: true });
+    }, HOOK_TIMEOUT);
 
     child.stdout.on('data', (data) => {
       stdout += data;
@@ -34,8 +43,16 @@ function execHook(input, env = {}) {
       stderr += data;
     });
 
+    child.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+
     child.on('close', (code) => {
-      resolve({ exitCode: code, stdout, stderr });
+      clearTimeout(timeout);
+      if (!timedOut) {
+        resolve({ exitCode: code, stdout, stderr });
+      }
     });
 
     if (input) {

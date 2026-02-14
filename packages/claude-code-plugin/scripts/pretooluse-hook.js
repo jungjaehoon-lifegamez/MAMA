@@ -24,7 +24,7 @@ require('module').globalPaths.push(CORE_PATH);
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/memory-store');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
-const { isFirstEdit, markContractsShown } = require('./session-state');
+const { isFirstEdit, markFileEdited, markContractsShown } = require('./session-state');
 
 // High threshold for relevance
 const SIMILARITY_THRESHOLD = 0.85;
@@ -228,7 +228,8 @@ async function main() {
     const results = await vectorSearch(embedding, SEARCH_LIMIT * 2, SIMILARITY_THRESHOLD);
 
     if (!results || results.length === 0) {
-      // No contracts found - silent pass (no noise)
+      // No contracts found - mark file as processed and silent pass
+      markFileEdited(filePath);
       console.error(JSON.stringify({ decision: 'allow', reason: '' }));
       process.exit(0);
     }
@@ -246,7 +247,8 @@ async function main() {
     });
 
     if (contracts.length === 0) {
-      // No relevant contracts - silent pass
+      // No relevant contracts - mark file as processed and silent pass
+      markFileEdited(filePath);
       console.error(JSON.stringify({ decision: 'allow', reason: '' }));
       process.exit(0);
     }
@@ -255,7 +257,8 @@ async function main() {
     const formatted = contracts.slice(0, SEARCH_LIMIT).map(formatContract).join('\n\n');
     const message = `\n📋 **Relevant Contracts** (${fileName})\n\n${formatted}\n`;
 
-    // Mark that we showed contracts for this file
+    // Mark file as processed and that contracts were shown
+    markFileEdited(filePath);
     markContractsShown(filePath);
 
     const response = {

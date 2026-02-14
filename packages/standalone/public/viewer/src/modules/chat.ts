@@ -1932,7 +1932,7 @@ export class ChatModule {
       window.addEventListener('mousemove', this._onDragMouseMove);
       window.addEventListener('mouseup', this._onDragMouseUp);
 
-      this._onDragTouchMove = (e) => {
+      this._onDragTouchMove = (e: TouchEvent) => {
         const touch = e.touches[0];
         if (!touch) {
           return;
@@ -2019,7 +2019,7 @@ export class ChatModule {
       window.addEventListener('mousemove', this._onResizeMouseMove);
       window.addEventListener('mouseup', this._onResizeMouseUp);
 
-      this._onResizeTouchMove = (e) => {
+      this._onResizeTouchMove = (e: TouchEvent) => {
         const touch = e.touches[0];
         if (!touch) {
           return;
@@ -2034,7 +2034,7 @@ export class ChatModule {
 
       resizeHandle.addEventListener(
         'touchstart',
-        (e) => {
+        (e: TouchEvent) => {
           const touch = e.touches[0];
           if (!touch) {
             return;

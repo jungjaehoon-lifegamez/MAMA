@@ -73,20 +73,25 @@ function createEmptyState() {
 }
 
 /**
- * Check if this is the first edit of a file in this session
+ * Check if this is the first edit of a file in this session (read-only)
+ * Does NOT mark the file - caller should use markFileEdited() after successful operations
  */
 function isFirstEdit(filePath) {
   const state = loadSessionState();
   const normalizedPath = normalizePath(filePath);
+  return !state.editedFiles.includes(normalizedPath);
+}
 
-  if (state.editedFiles.includes(normalizedPath)) {
-    return false;
+/**
+ * Mark a file as edited in this session
+ */
+function markFileEdited(filePath) {
+  const state = loadSessionState();
+  const normalizedPath = normalizePath(filePath);
+  if (!state.editedFiles.includes(normalizedPath)) {
+    state.editedFiles.push(normalizedPath);
+    saveSessionState(state);
   }
-
-  // Mark as edited
-  state.editedFiles.push(normalizedPath);
-  saveSessionState(state);
-  return true;
 }
 
 /**
@@ -108,9 +113,12 @@ function wereContractsShown(filePath) {
 
 /**
  * Normalize file path for consistent comparison
+ * Platform-aware: only lowercase on case-insensitive systems (macOS, Windows)
  */
 function normalizePath(filePath) {
-  return path.resolve(filePath).toLowerCase();
+  const resolved = path.resolve(filePath);
+  // Linux is case-sensitive, macOS/Windows are not
+  return process.platform === 'linux' ? resolved : resolved.toLowerCase();
 }
 
 /**
@@ -143,6 +151,7 @@ module.exports = {
   loadSessionState,
   saveSessionState,
   isFirstEdit,
+  markFileEdited,
   markContractsShown,
   wereContractsShown,
   cleanupOldSessions,

@@ -450,11 +450,11 @@ export const SkillsModule = {
     md = md.replace(/^---\n[\s\S]*?\n---\n/, '');
 
     if (typeof marked !== 'undefined' && marked.parse) {
+      // Note: sanitize option is deprecated in marked.js
+      // Content is escaped via escapeHtml in render functions
       return marked.parse(md, {
         mangle: false,
         headerIds: false,
-        // Sanitize any HTML in the markdown content
-        sanitize: true,
       });
     }
 

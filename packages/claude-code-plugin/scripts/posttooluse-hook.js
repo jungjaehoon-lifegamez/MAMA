@@ -63,11 +63,12 @@ const SKIP_PATTERNS = [
 ];
 
 // Contract-like patterns in code
+// Note: Using ^\s* to allow matching indented code in partial snippets
 const CONTRACT_PATTERNS = [
   // TypeScript/JavaScript
-  { pattern: /^export\s+(interface|type)\s+\w+/m, name: 'interface/type' },
-  { pattern: /^export\s+(async\s+)?function\s+\w+\s*\([^)]*\)\s*:/m, name: 'typed function' },
-  { pattern: /^export\s+const\s+\w+\s*:\s*\w+/m, name: 'typed export' },
+  { pattern: /^\s*export\s+(interface|type)\s+\w+/m, name: 'interface/type' },
+  { pattern: /^\s*export\s+(async\s+)?function\s+\w+\s*\([^)]*\)\s*:/m, name: 'typed function' },
+  { pattern: /^\s*export\s+const\s+\w+\s*:\s*\w+/m, name: 'typed export' },
 
   // API patterns
   { pattern: /@(api|endpoint|route|get|post|put|delete|patch)/im, name: 'API decorator' },
@@ -80,12 +81,12 @@ const CONTRACT_PATTERNS = [
   { pattern: /@returns?\s+\{\w+\}/m, name: 'JSDoc return' },
 
   // Python
-  { pattern: /^def\s+\w+\s*\([^)]*\)\s*->/m, name: 'typed Python function' },
-  { pattern: /^class\s+\w+\s*\([^)]*\)\s*:/m, name: 'Python class' },
+  { pattern: /^\s*def\s+\w+\s*\([^)]*\)\s*->/m, name: 'typed Python function' },
+  { pattern: /^\s*class\s+\w+\s*\([^)]*\)\s*:/m, name: 'Python class' },
 
   // Go
-  { pattern: /^type\s+\w+\s+(struct|interface)\s*\{/m, name: 'Go type' },
-  { pattern: /^func\s+\([^)]+\)\s+\w+\s*\([^)]*\)\s*\(?[^{]*/m, name: 'Go method' },
+  { pattern: /^\s*type\s+\w+\s+(struct|interface)\s*\{/m, name: 'Go type' },
+  { pattern: /^\s*func\s+\([^)]+\)\s+\w+\s*\([^)]*\)\s*\(?[^{]*/m, name: 'Go method' },
 ];
 
 function shouldProcessFile(filePath) {
