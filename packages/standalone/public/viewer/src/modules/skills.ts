@@ -8,10 +8,11 @@
  */
 
 /* eslint-env browser */
-/* global marked */
 
-import { API } from '../utils/api.js';
+import { API, type SkillItem } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
+import { getElementByIdOrNull } from '../utils/dom.js';
+import { renderSafeMarkdown } from '../utils/markdown.js';
 
 const logger = new DebugLogger('Skills');
 
@@ -20,8 +21,8 @@ const logger = new DebugLogger('Skills');
  */
 export const SkillsModule = {
   /** All skills (installed + catalog) */
-  installed: [],
-  catalog: [],
+  installed: [] as SkillItem[],
+  catalog: [] as SkillItem[],
   /** Current filter */
   currentFilter: 'all',
   /** Search query */
@@ -29,12 +30,12 @@ export const SkillsModule = {
   /** Whether initialized */
   _initialized: false,
   /** Debounce timer */
-  _searchTimer: null,
+  _searchTimer: null as ReturnType<typeof setTimeout> | null,
 
   /**
    * Initialize the skills tab
    */
-  async init() {
+  async init(): Promise<void> {
     if (!this._initialized) {
       this._bindEvents();
       this._initialized = true;
@@ -46,54 +47,70 @@ export const SkillsModule = {
   /**
    * Load installed + catalog skills
    */
-  async loadSkills() {
+  async loadSkills(): Promise<void> {
     try {
-      const [installedRes, catalogRes] = await Promise.all([
-        API.getSkills().catch(() => ({ skills: [] })),
-        API.getSkillCatalog('all').catch(() => ({ skills: [] })),
+      const [installedResponse, catalogResponse] = await Promise.all([
+        API.getSkills(),
+        API.getSkillCatalog('all'),
       ]);
 
-      this.installed = installedRes.skills || [];
-      this.catalog = (catalogRes.skills || []).filter(
-        (s) => !this.installed.some((i) => i.id === s.id && i.source === s.source)
+      this.installed = installedResponse.skills || [];
+      const catalogItems = catalogResponse.skills || [];
+      const installedMap = new Set(
+        this.installed.map((item: SkillItem) => `${item.source}::${item.id}`)
+      );
+      this.catalog = catalogItems.filter(
+        (s: SkillItem) => !installedMap.has(`${s.source}::${s.id}`)
       );
     } catch (error) {
-      logger.error('Failed to load:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Unexpected error while loading skills:', message);
+      // Initialize with empty arrays on failure
+      this.installed = [];
+      this.catalog = [];
     }
   },
 
   /**
    * Bind UI events
    */
-  _bindEvents() {
+  _bindEvents(): void {
     // Search input
-    const searchInput = document.getElementById('skills-search');
+    const searchInput = getElementByIdOrNull<HTMLInputElement>('skills-search');
     if (searchInput) {
-      searchInput.addEventListener('input', (e) => {
+      searchInput.addEventListener('input', (e: Event) => {
         clearTimeout(this._searchTimer);
         this._searchTimer = setTimeout(() => {
-          this.searchQuery = e.target.value.trim();
+          const target = e.target;
+          if (!(target instanceof HTMLInputElement)) {
+            return;
+          }
+          this.searchQuery = target.value.trim();
           this.render();
         }, 300);
       });
     }
 
     // URL install
-    const urlBtn = document.getElementById('skills-url-install-btn');
+    const urlBtn = getElementByIdOrNull<HTMLButtonElement>('skills-url-install-btn');
     if (urlBtn) {
       urlBtn.addEventListener('click', () => {
-        const input = document.getElementById('skills-url-input');
+        const input = getElementByIdOrNull<HTMLInputElement>('skills-url-input');
         const url = input?.value?.trim();
         if (url) {
           this.installFromUrl(url);
         }
       });
     }
-    const urlInput = document.getElementById('skills-url-input');
+    const urlInput = getElementByIdOrNull<HTMLInputElement>('skills-url-input');
     if (urlInput) {
-      urlInput.addEventListener('keydown', (e) => {
+      urlInput.addEventListener('keydown', (e: KeyboardEvent) => {
         if (e.key === 'Enter') {
-          const url = e.target.value.trim();
+          const target = e.target;
+          if (!(target instanceof HTMLInputElement)) {
+            return;
+          }
+          const url = target.value.trim();
           if (url) {
             this.installFromUrl(url);
           }
@@ -102,16 +119,22 @@ export const SkillsModule = {
     }
 
     // Filter buttons
-    const filterBar = document.getElementById('skills-filter-bar');
+    const filterBar = getElementByIdOrNull<HTMLElement>('skills-filter-bar');
     if (filterBar) {
-      filterBar.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-filter]');
+      filterBar.addEventListener('click', (e: MouseEvent) => {
+        const target = e.target;
+        const btn =
+          target instanceof HTMLElement ? target.closest<HTMLElement>('[data-filter]') : null;
         if (!btn) {
           return;
         }
-        this.currentFilter = btn.dataset.filter;
+        const filter = btn.dataset.filter;
+        if (!filter) {
+          return;
+        }
+        this.currentFilter = filter;
         // Update active state
-        filterBar.querySelectorAll('[data-filter]').forEach((b) => {
+        filterBar.querySelectorAll<HTMLElement>('[data-filter]').forEach((b) => {
           b.classList.toggle('bg-yellow-400', b.dataset.filter === this.currentFilter);
           b.classList.toggle('text-gray-900', b.dataset.filter === this.currentFilter);
           b.classList.toggle('bg-gray-700', b.dataset.filter !== this.currentFilter);
@@ -125,8 +148,8 @@ export const SkillsModule = {
   /**
    * Render the full skills view
    */
-  render() {
-    const container = document.getElementById('skills-content');
+  render(): void {
+    const container = getElementByIdOrNull<HTMLElement>('skills-content');
     if (!container) {
       return;
     }
@@ -171,12 +194,15 @@ export const SkillsModule = {
     `;
 
     // Bind card actions
-    container.querySelectorAll('[data-action]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
+    container.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
+      btn.addEventListener('click', (e: MouseEvent) => {
         e.stopPropagation();
         const action = btn.dataset.action;
         const id = btn.dataset.id;
         const source = btn.dataset.source;
+        if (!action || !id || !source) {
+          return;
+        }
         if (action === 'install') {
           this.install(source, id);
         } else if (action === 'uninstall') {
@@ -188,9 +214,14 @@ export const SkillsModule = {
     });
 
     // Bind card click for detail
-    container.querySelectorAll('[data-skill-card]').forEach((card) => {
+    container.querySelectorAll<HTMLElement>('[data-skill-card]').forEach((card) => {
       card.addEventListener('click', () => {
-        this.showDetail(card.dataset.source, card.dataset.id);
+        const source = card.dataset.source;
+        const id = card.dataset.id;
+        if (!source || !id) {
+          return;
+        }
+        this.showDetail(source, id);
       });
     });
   },
@@ -198,7 +229,7 @@ export const SkillsModule = {
   /**
    * Filter skills by current filter + search query
    */
-  _filterSkills(skills) {
+  _filterSkills(skills: SkillItem[]): SkillItem[] {
     let filtered = skills;
 
     // Source filter
@@ -212,7 +243,7 @@ export const SkillsModule = {
       filtered = filtered.filter(
         (s) =>
           s.name.toLowerCase().includes(q) ||
-          s.description.toLowerCase().includes(q) ||
+          (s.description || '').toLowerCase().includes(q) ||
           s.id.toLowerCase().includes(q)
       );
     }
@@ -223,7 +254,7 @@ export const SkillsModule = {
   /**
    * Render a single skill card
    */
-  _renderCard(skill, isInstalled) {
+  _renderCard(skill: SkillItem, isInstalled: boolean): string {
     const sourceColors = {
       mama: 'bg-yellow-900/30 text-yellow-400',
       cowork: 'bg-blue-900/30 text-blue-400',
@@ -242,7 +273,7 @@ export const SkillsModule = {
             ${this._escapeHtml(skill.source)}
           </span>
         </div>
-        <p class="text-xs text-gray-400 line-clamp-2 mb-3">${this._escapeHtml(skill.description)}</p>
+        <p class="text-xs text-gray-400 line-clamp-2 mb-3">${this._escapeHtml(skill.description || '')}</p>
         <div class="flex items-center justify-between">
           ${
             isInstalled
@@ -273,10 +304,10 @@ export const SkillsModule = {
   /**
    * Install a skill
    */
-  async install(source, name) {
+  async install(source: string, name: string): Promise<void> {
     try {
-      const btn = document.querySelector(
-        `[data-action="install"][data-id="${name}"][data-source="${source}"]`
+      const btn = document.querySelector<HTMLButtonElement>(
+        `[data-action="install"][data-id="${CSS.escape(name)}"][data-source="${CSS.escape(source)}"]`
       );
       if (btn) {
         btn.textContent = 'Installing...';
@@ -286,8 +317,9 @@ export const SkillsModule = {
       await this.loadSkills();
       this.render();
     } catch (error) {
-      logger.error('Install failed:', error);
-      alert(`Failed to install ${name}: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Install failed:', message);
+      alert(`Failed to install ${name}: ${message}`);
       this.render();
     }
   },
@@ -295,9 +327,9 @@ export const SkillsModule = {
   /**
    * Install from GitHub URL
    */
-  async installFromUrl(url) {
-    const btn = document.getElementById('skills-url-install-btn');
-    const input = document.getElementById('skills-url-input');
+  async installFromUrl(url: string): Promise<void> {
+    const btn = getElementByIdOrNull<HTMLButtonElement>('skills-url-install-btn');
+    const input = getElementByIdOrNull<HTMLInputElement>('skills-url-input');
     try {
       if (btn) {
         btn.textContent = 'Installing...';
@@ -310,8 +342,9 @@ export const SkillsModule = {
       await this.loadSkills();
       this.render();
     } catch (error) {
-      logger.error('URL install failed:', error);
-      alert(`Failed to install from URL: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('URL install failed:', message);
+      alert(`Failed to install from URL: ${message}`);
     } finally {
       if (btn) {
         btn.textContent = 'Install URL';
@@ -323,7 +356,7 @@ export const SkillsModule = {
   /**
    * Uninstall a skill
    */
-  async uninstall(source, name) {
+  async uninstall(source: string, name: string): Promise<void> {
     if (!confirm(`Remove skill "${name}"?`)) {
       return;
     }
@@ -333,14 +366,14 @@ export const SkillsModule = {
       await this.loadSkills();
       this.render();
     } catch (error) {
-      logger.error('Uninstall failed:', error);
+      logger.error('Uninstall failed:', error instanceof Error ? error.message : String(error));
     }
   },
 
   /**
    * Toggle skill enabled/disabled
    */
-  async toggle(source, name, enabled) {
+  async toggle(source: string, name: string, enabled: boolean): Promise<void> {
     try {
       await API.toggleSkill(name, enabled, source);
       // Update local state
@@ -350,16 +383,16 @@ export const SkillsModule = {
       }
       this.render();
     } catch (error) {
-      logger.error('Toggle failed:', error);
+      logger.error('Toggle failed:', error instanceof Error ? error.message : String(error));
     }
   },
 
   /**
    * Show skill detail modal
    */
-  async showDetail(source, name) {
-    const modal = document.getElementById('skill-detail-modal');
-    const modalContent = document.getElementById('skill-detail-content');
+  async showDetail(source: string, name: string): Promise<void> {
+    const modal = getElementByIdOrNull<HTMLElement>('skill-detail-modal');
+    const modalContent = getElementByIdOrNull<HTMLElement>('skill-detail-content');
     if (!modal || !modalContent) {
       return;
     }
@@ -387,8 +420,8 @@ export const SkillsModule = {
   /**
    * Close detail modal
    */
-  closeDetail() {
-    const modal = document.getElementById('skill-detail-modal');
+  closeDetail(): void {
+    const modal = getElementByIdOrNull<HTMLElement>('skill-detail-modal');
     if (modal) {
       modal.classList.add('hidden');
     }
@@ -397,7 +430,7 @@ export const SkillsModule = {
   /**
    * Escape HTML special characters
    */
-  _escapeHtml(unsafe) {
+  _escapeHtml(unsafe: unknown): string {
     if (!unsafe) {
       return '';
     }
@@ -413,25 +446,12 @@ export const SkillsModule = {
   /**
    * Render markdown to HTML using marked.js, with sanitization
    */
-  _renderMarkdown(md) {
+  _renderMarkdown(md: string): string {
     if (!md) {
       return '';
     }
     // Remove frontmatter
     md = md.replace(/^---\n[\s\S]*?\n---\n/, '');
-
-    if (typeof marked !== 'undefined' && marked.parse) {
-      return marked.parse(md, {
-        mangle: false,
-        headerIds: false,
-        // Sanitize any HTML in the markdown content
-        sanitize: true,
-      });
-    }
-
-    // Fallback if marked.js is not available (should not happen in viewer)
-    const div = document.createElement('div');
-    div.textContent = md;
-    return div.innerHTML;
+    return renderSafeMarkdown(md);
   },
 };

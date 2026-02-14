@@ -18,60 +18,116 @@ import {
   showToast,
   scrollToBottom,
   autoResizeTextarea,
+  getElementByIdOrNull,
+  getErrorMessage,
 } from '../utils/dom.js';
 import { formatMessageTime, formatAssistantMessage } from '../utils/format.js';
-import { API } from '../utils/api.js';
+import { API, type JsonRecord } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 
 const logger = new DebugLogger('Chat');
+
+type ChatAttachment = {
+  isImage: boolean;
+  mediaUrl: string;
+  filename: string;
+  originalName: string;
+};
+
+type ChatHistoryMessage = {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string;
+  attachment?: ChatAttachment;
+};
+
+type ChatToolInput = {
+  file_path?: string;
+  command?: string;
+  [key: string]: unknown;
+};
+
+type ChatIncomingMessage = {
+  type?: string;
+  sessionId?: string;
+  messages?: ChatHistoryMessage[];
+  content?: string;
+  error?: string;
+  tool?: string;
+  toolId?: string;
+  input?: ChatToolInput | Record<string, unknown> | null;
+  index?: number;
+  elapsed?: number;
+  [key: string]: unknown;
+};
+
+type CheckpointRecord = {
+  timestamp: string;
+  summary: string;
+};
+
+// Reserved for future use - attachment message handling
+type _ChatMessageWithAttachment = {
+  id?: string;
+  [key: string]: unknown;
+};
 
 /**
  * Chat Module Class
  */
 export class ChatModule {
-  constructor(memoryModule = null) {
+  memoryModule: {
+    showRelatedForMessage: (message: string) => void;
+    showSaveFormWithText: (text: string) => void;
+    searchWithQuery: (query: string) => Promise<void>;
+  } | null = null;
+  ws: WebSocket | null = null;
+  sessionId: string | null = null;
+  reconnectAttempts = 0;
+  maxReconnectDelay = 30000;
+  speechRecognition: SpeechRecognition | null = null;
+  isRecording = false;
+  silenceTimeout: ReturnType<typeof setTimeout> | null = null;
+  silenceDelay = 2500;
+  accumulatedTranscript = '';
+  speechSynthesis: SpeechSynthesis = window.speechSynthesis;
+  isSpeaking = false;
+  ttsEnabled = false;
+  handsFreeMode = false;
+  ttsVoice: SpeechSynthesisVoice | null = null;
+  ttsRate = 1.8;
+  ttsPitch = 1.0;
+  currentStreamEl: HTMLDivElement | null = null;
+  currentStreamText = '';
+  streamBuffer = '';
+  rafPending = false;
+  history: ChatHistoryMessage[] = [];
+  historyPrefix = 'mama_chat_history_';
+  maxHistoryMessages = 50;
+  historyExpiryMs = 24 * 60 * 60 * 1000;
+  checkpointCooldown = false;
+  COOLDOWN_MS = 60 * 1000;
+  idleTimer: ReturnType<typeof setTimeout> | null = null;
+  IDLE_TIMEOUT = 5 * 60 * 1000;
+  _onDragMouseMove: ((event: MouseEvent) => void) | null = null;
+  _onDragMouseUp: ((event: MouseEvent) => void) | null = null;
+  _onDragTouchMove: ((event: TouchEvent) => void) | null = null;
+  _onDragTouchEnd: (() => void) | null = null;
+  _onResizeMouseMove: ((event: MouseEvent) => void) | null = null;
+  _onResizeMouseUp: ((event: MouseEvent) => void) | null = null;
+  _onResizeTouchMove: ((event: TouchEvent) => void) | null = null;
+  _onResizeTouchEnd: (() => void) | null = null;
+  _onEscapeKey: ((event: KeyboardEvent) => void) | null = null;
+
+  constructor(
+    memoryModule: {
+      showRelatedForMessage: (message: string) => void;
+      showSaveFormWithText: (text: string) => void;
+      searchWithQuery: (query: string) => Promise<void>;
+    } | null = null
+  ) {
     // External dependencies
     this.memoryModule = memoryModule;
-
-    // WebSocket state
-    this.ws = null;
-    this.sessionId = null;
-    this.reconnectAttempts = 0;
-    this.maxReconnectDelay = 30000; // 30 seconds
-
-    // Voice input state (STT)
-    this.speechRecognition = null;
-    this.isRecording = false;
-    this.silenceTimeout = null;
-    this.silenceDelay = 2500; // 2.5 seconds (increased for continuous mode)
-    this.accumulatedTranscript = ''; // Track accumulated final transcripts
-
-    // Voice output state (TTS)
-    this.speechSynthesis = window.speechSynthesis;
-    this.isSpeaking = false;
-    this.ttsEnabled = false; // Auto-play toggle
-    this.handsFreeMode = false; // Auto-listen after TTS
-    this.ttsVoice = null;
-    this.ttsRate = 1.8; // Speech rate (0.5 - 2.0), optimized for Korean
-    this.ttsPitch = 1.0; // Speech pitch (0.0 - 2.0)
-
-    // Streaming state
-    this.currentStreamEl = null;
-    this.currentStreamText = '';
-    this.streamBuffer = '';
-    this.rafPending = false;
-
-    // History state
-    this.history = [];
-    this.historyPrefix = 'mama_chat_history_';
-    this.maxHistoryMessages = 50;
-    this.historyExpiryMs = 24 * 60 * 60 * 1000; // 24 hours
-
-    // Idle auto-checkpoint state
-    this.idleTimer = null;
-    this.IDLE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-    this.checkpointCooldown = false;
-    this.COOLDOWN_MS = 60 * 1000; // 1 minute between checkpoints
 
     // Initialize
     this.initChatInput();
@@ -84,7 +140,7 @@ export class ChatModule {
   // Idle Auto-Checkpoint
   // =============================================
 
-  resetIdleTimer() {
+  resetIdleTimer(): void {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
     }
@@ -96,7 +152,7 @@ export class ChatModule {
     }
   }
 
-  async autoCheckpoint() {
+  async autoCheckpoint(): Promise<void> {
     // DISABLED: Auto-checkpoint was saving raw conversation history to MAMA memory.
     // Checkpoints should only be saved manually via /checkpoint command with proper summaries.
     // The viewer chat uses localStorage for session persistence instead.
@@ -111,12 +167,12 @@ export class ChatModule {
   /**
    * Initialize chat session
    */
-  async initSession() {
+  async initSession(): Promise<void> {
     // Check for resumable session first
     await this.checkForResumableSession();
 
     // Try to get last active server session first
-    const lastActiveSession = await API.getLastActiveSession();
+    const lastActiveSession = await API.getLastActiveSession().catch(() => null);
     if (lastActiveSession && lastActiveSession.id && lastActiveSession.isAlive) {
       logger.info('Resuming last active session:', lastActiveSession.id);
       this.addSystemMessage('Resuming previous session...');
@@ -143,7 +199,8 @@ export class ChatModule {
         this.initWebSocket(sessionId);
       } catch (error) {
         logger.error('Failed to create session:', error);
-        this.addSystemMessage(`Failed to create session: ${error.message}`, 'error');
+        const message = getErrorMessage(error);
+        this.addSystemMessage(`Failed to create session: ${message}`, 'error');
       }
     }
   }
@@ -151,14 +208,14 @@ export class ChatModule {
   /**
    * Connect to session (public method)
    */
-  connectToSession(sessionId) {
+  connectToSession(sessionId: string): void {
     this.initWebSocket(sessionId);
   }
 
   /**
    * Disconnect from session (public method)
    */
-  disconnect() {
+  disconnect(): void {
     if (this.ws) {
       this.sessionId = null; // Prevent auto-reconnect
       this.ws.close();
@@ -175,7 +232,7 @@ export class ChatModule {
   /**
    * Initialize WebSocket connection
    */
-  initWebSocket(sessionId) {
+  initWebSocket(sessionId: string): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       logger.info('Already connected');
       return;
@@ -234,7 +291,7 @@ export class ChatModule {
   /**
    * Handle incoming WebSocket message
    */
-  handleMessage(data) {
+  handleMessage(data: ChatIncomingMessage): void {
     switch (data.type) {
       case 'attached':
         logger.info('Attached to session:', data.sessionId);
@@ -282,11 +339,17 @@ export class ChatModule {
         break;
 
       case 'tool_use':
-        this.addToolCard(data.tool, data.toolId, data.input);
+        this.addToolCard(
+          data.tool || 'tool',
+          data.toolId || '',
+          data.input && typeof data.input === 'object' ? (data.input as ChatToolInput) : null
+        );
         break;
 
       case 'tool_complete':
-        this.completeToolCard(data.index);
+        if (typeof data.index === 'number') {
+          this.completeToolCard(data.index);
+        }
         break;
 
       case 'typing':
@@ -308,7 +371,7 @@ export class ChatModule {
   /**
    * Schedule reconnection with exponential backoff
    */
-  scheduleReconnect() {
+  scheduleReconnect(): void {
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
     this.reconnectAttempts++;
 
@@ -332,8 +395,11 @@ export class ChatModule {
   /**
    * Send chat message
    */
-  send() {
-    const input = document.getElementById('chat-input');
+  send(): void {
+    const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
+    if (!input) {
+      return;
+    }
     const message = input.value.trim();
 
     if (!message) {
@@ -378,9 +444,8 @@ export class ChatModule {
 
   /**
    * Send quiz choice (A, B, C, D)
-   * Called from quiz-choice-btn onclick
    */
-  sendQuizChoice(choice) {
+  sendQuizChoice(choice: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.addSystemMessage('Not connected.', 'error');
       return;
@@ -406,7 +471,7 @@ export class ChatModule {
   /**
    * Handle slash commands
    */
-  handleCommand(message) {
+  handleCommand(message: string): void {
     const parts = message.slice(1).split(' ');
     const command = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
@@ -439,7 +504,7 @@ export class ChatModule {
    * Send a message directly to the agent (bypass command parsing)
    * Rewrites /command to avoid Claude CLI slash command interception
    */
-  sendRaw(message) {
+  sendRaw(message: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.addSystemMessage('Not connected. Please connect to a session first.', 'error');
       return;
@@ -486,7 +551,7 @@ export class ChatModule {
   /**
    * /save <text> - Open Memory form with text
    */
-  commandSave(text) {
+  commandSave(text: string): void {
     if (!this.memoryModule) {
       this.addSystemMessage('Memory module not available', 'error');
       return;
@@ -506,7 +571,7 @@ export class ChatModule {
   /**
    * /search <query> - Search in Memory tab
    */
-  commandSearch(query) {
+  commandSearch(query: string): void {
     if (!this.memoryModule) {
       this.addSystemMessage('Memory module not available', 'error');
       return;
@@ -526,21 +591,22 @@ export class ChatModule {
   /**
    * /checkpoint - Save current session as checkpoint
    */
-  async commandCheckpoint() {
+  async commandCheckpoint(): Promise<void> {
     try {
       const summary = this.generateCheckpointSummary();
       await this.saveCheckpoint(summary);
       this.addSystemMessage('✅ Checkpoint saved successfully');
     } catch (error) {
       logger.error('Checkpoint save failed:', error);
-      this.addSystemMessage(`Failed to save checkpoint: ${error.message}`, 'error');
+      const message = getErrorMessage(error);
+      this.addSystemMessage(`Failed to save checkpoint: ${message}`, 'error');
     }
   }
 
   /**
    * /resume - Load last checkpoint
    */
-  async commandResume() {
+  async commandResume(): Promise<void> {
     try {
       const checkpoint = await this.loadCheckpoint();
       if (checkpoint) {
@@ -553,14 +619,15 @@ export class ChatModule {
       }
     } catch (error) {
       logger.error('Checkpoint load failed:', error);
-      this.addSystemMessage(`Failed to load checkpoint: ${error.message}`, 'error');
+      const message = getErrorMessage(error);
+      this.addSystemMessage(`Failed to load checkpoint: ${message}`, 'error');
     }
   }
 
   /**
    * /help - Show available commands
    */
-  commandHelp() {
+  commandHelp(): void {
     const helpText = `
 **Available Commands:**
 
@@ -582,8 +649,11 @@ export class ChatModule {
   /**
    * Add user message to chat
    */
-  addUserMessage(text) {
-    const container = document.getElementById('chat-messages');
+  addUserMessage(text: string): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
     this.removePlaceholder();
 
     const timestamp = new Date();
@@ -600,8 +670,11 @@ export class ChatModule {
     this.saveToHistory('user', text, timestamp);
   }
 
-  addUserMessageWithAttachment(text, attachment) {
-    const container = document.getElementById('chat-messages');
+  addUserMessageWithAttachment(text: string, attachment: ChatAttachment): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
     this.removePlaceholder();
 
     const timestamp = new Date();
@@ -632,8 +705,11 @@ export class ChatModule {
   /**
    * Add assistant message to chat
    */
-  addAssistantMessage(text) {
-    const container = document.getElementById('chat-messages');
+  addAssistantMessage(text: string): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
     this.removePlaceholder();
 
     this.enableSend(true);
@@ -664,8 +740,11 @@ export class ChatModule {
   /**
    * Add system message to chat
    */
-  addSystemMessage(text, type = 'info') {
-    const container = document.getElementById('chat-messages');
+  addSystemMessage(text: string, type = 'info'): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
     this.removePlaceholder();
 
     const msgEl = document.createElement('div');
@@ -681,8 +760,11 @@ export class ChatModule {
   /**
    * Add tool usage card
    */
-  addToolCard(toolName, toolId, input) {
-    const container = document.getElementById('chat-messages');
+  addToolCard(toolName: string, toolId: string, input: ChatToolInput | null): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
     this.removePlaceholder();
 
     // Tool icon mapping
@@ -701,25 +783,34 @@ export class ChatModule {
 
     // Extract file path for Read tool
     let detail = '';
-    if (toolName === 'Read' && input && input.file_path) {
+    if (toolName === 'Read' && input?.file_path) {
       const fileName = input.file_path.split('/').pop();
       detail = `<div class="tool-detail">${escapeHtml(fileName)}</div>`;
-    } else if (toolName === 'Bash' && input && input.command) {
-      detail = `<div class="tool-detail">${escapeHtml(input.command.substring(0, 50))}${input.command.length > 50 ? '...' : ''}</div>`;
+    } else if (toolName === 'Bash' && input?.command) {
+      const command = String(input.command);
+      detail = `<div class="tool-detail">${escapeHtml(command.substring(0, 50))}${
+        command.length > 50 ? '...' : ''
+      }</div>`;
     }
 
     const cardEl = document.createElement('div');
     cardEl.className = 'tool-card loading';
-    cardEl.dataset.toolId = toolId;
     cardEl.dataset.collapsed = 'true';
+    cardEl.dataset.toolId = toolId;
     cardEl.innerHTML = `
-      <div class="tool-header" onclick="window.chatModule.toggleToolCard('${toolId}')">
+      <div class="tool-header" data-tool-toggle="true">
         <span class="tool-icon">${icon}</span>
         <span class="tool-name">${escapeHtml(toolName)}</span>
         <span class="tool-spinner">⏳</span>
       </div>
       ${detail}
     `;
+
+    // Bind click handler safely (avoid inline onclick with string interpolation)
+    const header = cardEl.querySelector('.tool-header');
+    if (header) {
+      header.addEventListener('click', () => this.toggleToolCard(toolId));
+    }
 
     container.appendChild(cardEl);
     scrollToBottom(container);
@@ -728,7 +819,7 @@ export class ChatModule {
   /**
    * Complete tool card (mark as finished)
    */
-  completeToolCard(_index) {
+  completeToolCard(_index: number): void {
     // Find the most recent loading tool card
     const loadingCards = document.querySelectorAll('.tool-card.loading');
     if (loadingCards.length > 0) {
@@ -748,19 +839,20 @@ export class ChatModule {
   /**
    * Toggle tool card collapsed/expanded state
    */
-  toggleToolCard(toolId) {
-    const card = document.querySelector(`.tool-card[data-tool-id="${toolId}"]`);
-    if (card) {
-      const isCollapsed = card.dataset.collapsed === 'true';
-      card.dataset.collapsed = isCollapsed ? 'false' : 'true';
-      // Future: expand to show detailed results
+  toggleToolCard(toolId: string): void {
+    const card = document.querySelector(`.tool-card[data-tool-id="${CSS.escape(toolId)}"]`);
+    if (!card) {
+      return;
     }
+    const toolCard = card as HTMLElement;
+    const isCollapsed = toolCard.dataset.collapsed === 'true';
+    toolCard.dataset.collapsed = isCollapsed ? 'false' : 'true';
   }
 
   /**
    * Remove placeholder
    */
-  removePlaceholder() {
+  removePlaceholder(): void {
     const placeholder = document.querySelector('.chat-placeholder');
     if (placeholder) {
       placeholder.remove();
@@ -774,8 +866,11 @@ export class ChatModule {
   /**
    * Append streaming chunk with RAF batching
    */
-  appendStreamChunk(content) {
-    const container = document.getElementById('chat-messages');
+  appendStreamChunk(content: string): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
 
     if (!this.currentStreamEl) {
       this.removePlaceholder();
@@ -800,7 +895,9 @@ export class ChatModule {
           this.streamBuffer = '';
 
           const contentEl = this.currentStreamEl.querySelector('.message-content');
-          contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
+          if (contentEl) {
+            contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
+          }
 
           container.scrollTo({
             top: container.scrollHeight,
@@ -815,7 +912,7 @@ export class ChatModule {
   /**
    * Finalize streaming message
    */
-  finalizeStreamMessage() {
+  finalizeStreamMessage(): void {
     if (this.streamBuffer && this.currentStreamEl) {
       this.currentStreamText += this.streamBuffer;
       const contentEl = this.currentStreamEl.querySelector('.message-content');
@@ -847,8 +944,11 @@ export class ChatModule {
   /**
    * Show typing indicator while agent is processing
    */
-  showTypingIndicator(elapsed) {
-    const container = document.getElementById('chat-messages');
+  showTypingIndicator(elapsed: number): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
     let indicator = container.querySelector('.chat-typing-indicator');
     if (!indicator) {
       indicator = document.createElement('div');
@@ -863,16 +963,21 @@ export class ChatModule {
     }
     if (elapsed) {
       const label = indicator.querySelector('.typing-label');
-      label.textContent = `thinking... (${elapsed}s)`;
+      if (label) {
+        label.textContent = `thinking... (${elapsed}s)`;
+      }
     }
   }
 
   /**
    * Hide typing indicator
    */
-  hideTypingIndicator() {
-    const container = document.getElementById('chat-messages');
-    const indicator = container?.querySelector('.chat-typing-indicator');
+  hideTypingIndicator(): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
+    const indicator = container.querySelector('.chat-typing-indicator');
     if (indicator) {
       indicator.remove();
     }
@@ -885,8 +990,8 @@ export class ChatModule {
   /**
    * Update chat status
    */
-  updateStatus(status) {
-    const statusEl = document.getElementById('chat-status');
+  updateStatus(status: string): void {
+    const statusEl = getElementByIdOrNull<HTMLDivElement>('chat-status');
     if (!statusEl) {
       logger.warn('Status element not found');
       return;
@@ -920,9 +1025,12 @@ export class ChatModule {
   /**
    * Enable/disable chat input
    */
-  enableInput(enabled) {
-    const input = document.getElementById('chat-input');
-    const sendBtn = document.getElementById('chat-send');
+  enableInput(enabled: boolean): void {
+    const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
+    const sendBtn = getElementByIdOrNull<HTMLButtonElement>('chat-send');
+    if (!input || !sendBtn) {
+      return;
+    }
 
     input.disabled = !enabled;
     sendBtn.disabled = !enabled;
@@ -937,8 +1045,11 @@ export class ChatModule {
   /**
    * Enable/disable send button
    */
-  enableSend(enabled) {
-    const sendBtn = document.getElementById('chat-send');
+  enableSend(enabled: boolean): void {
+    const sendBtn = getElementByIdOrNull<HTMLButtonElement>('chat-send');
+    if (!sendBtn) {
+      return;
+    }
     sendBtn.disabled = !enabled;
 
     if (enabled) {
@@ -953,8 +1064,8 @@ export class ChatModule {
   /**
    * Enable/disable mic button
    */
-  enableMic(enabled) {
-    const micBtn = document.getElementById('chat-mic');
+  enableMic(enabled: boolean): void {
+    const micBtn = getElementByIdOrNull<HTMLButtonElement>('chat-mic');
     if (micBtn) {
       micBtn.disabled = !enabled;
     }
@@ -967,7 +1078,7 @@ export class ChatModule {
   /**
    * Handle chat input keydown
    */
-  handleInputKeydown(event) {
+  handleInputKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       this.send();
@@ -977,12 +1088,34 @@ export class ChatModule {
   /**
    * Initialize chat input handlers
    */
-  initChatInput() {
-    const input = document.getElementById('chat-input');
+  initChatInput(): void {
+    const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
+    if (!input) {
+      return;
+    }
+
+    const messagesContainer = getElementByIdOrNull<HTMLDivElement>('chat-messages');
 
     input.addEventListener('input', () => {
       autoResizeTextarea(input);
     });
+
+    if (messagesContainer) {
+      messagesContainer.addEventListener('click', (event: MouseEvent) => {
+        const target = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>(
+          '.quiz-choice-btn'
+        );
+        if (!target) {
+          return;
+        }
+        const choice = target.dataset.choice;
+        if (!choice) {
+          return;
+        }
+        event.preventDefault();
+        this.sendQuizChoice(choice);
+      });
+    }
 
     input.addEventListener('keydown', (event) => {
       this.handleInputKeydown(event);
@@ -993,14 +1126,18 @@ export class ChatModule {
    * Initialize long press to copy message functionality
    * Supports both touch (mobile) and mouse (desktop) events
    */
-  initLongPressCopy() {
-    const messagesContainer = document.getElementById('chat-messages');
-    let pressTimer = null;
+  initLongPressCopy(): void {
+    const messagesContainer = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!messagesContainer) {
+      return;
+    }
+    let pressTimer: ReturnType<typeof setTimeout> | null = null;
     const PRESS_DURATION = 750; // milliseconds
 
     // Touch events (mobile)
-    messagesContainer.addEventListener('touchstart', (e) => {
-      const message = e.target.closest('.message');
+    messagesContainer.addEventListener('touchstart', (e: TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      const message = target?.closest('.chat-message') as HTMLElement | null;
       if (!message || message.classList.contains('system')) {
         return;
       }
@@ -1025,8 +1162,9 @@ export class ChatModule {
     });
 
     // Mouse events (desktop)
-    messagesContainer.addEventListener('mousedown', (e) => {
-      const message = e.target.closest('.message');
+    messagesContainer.addEventListener('mousedown', (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const message = target?.closest('.chat-message') as HTMLElement | null;
       if (!message || message.classList.contains('system')) {
         return;
       }
@@ -1053,13 +1191,13 @@ export class ChatModule {
     /**
      * Copy message text to clipboard
      */
-    async function copyMessageText(messageEl) {
-      const textContent = messageEl.querySelector('.message-text');
+    async function copyMessageText(messageEl: HTMLElement) {
+      const textContent = messageEl.querySelector('.message-content') as HTMLElement | null;
       if (!textContent) {
         return;
       }
 
-      const text = textContent.textContent;
+      const text = textContent.textContent || '';
 
       try {
         await navigator.clipboard.writeText(text);
@@ -1072,7 +1210,7 @@ export class ChatModule {
         }, 300);
       } catch (err) {
         logger.error('Copy failed:', err);
-        showToast('Failed to copy', 'error');
+        showToast('Failed to copy');
       }
     }
   }
@@ -1084,12 +1222,12 @@ export class ChatModule {
   /**
    * Initialize speech recognition
    */
-  initSpeechRecognition() {
+  initSpeechRecognition(): void {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       logger.warn('SpeechRecognition not supported');
-      const micBtn = document.getElementById('chat-mic');
+      const micBtn = getElementByIdOrNull<HTMLButtonElement>('chat-mic');
       if (micBtn) {
         micBtn.style.display = 'none';
       }
@@ -1102,8 +1240,11 @@ export class ChatModule {
     this.speechRecognition.interimResults = true;
     this.speechRecognition.maxAlternatives = 3; // Get multiple recognition candidates for better accuracy
 
-    this.speechRecognition.onresult = (event) => {
-      const input = document.getElementById('chat-input');
+    this.speechRecognition.onresult = (event: SpeechRecognitionEvent) => {
+      const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
+      if (!input) {
+        return;
+      }
       let interimTranscript = '';
       let finalTranscript = '';
 
@@ -1173,7 +1314,7 @@ export class ChatModule {
       this.stopVoice();
     };
 
-    this.speechRecognition.onerror = (event) => {
+    this.speechRecognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       logger.error('Error:', event.error);
       this.stopVoice();
 
@@ -1201,7 +1342,7 @@ export class ChatModule {
   /**
    * Toggle voice input
    */
-  toggleVoice() {
+  toggleVoice(): void {
     if (this.isRecording) {
       this.stopVoice();
     } else {
@@ -1212,15 +1353,18 @@ export class ChatModule {
   /**
    * Start voice recording
    */
-  startVoice() {
+  startVoice(): void {
     if (!this.speechRecognition) {
       this.addSystemMessage('이 브라우저에서는 음성 인식이 지원되지 않습니다.', 'error');
       return;
     }
 
     try {
-      const micBtn = document.getElementById('chat-mic');
-      const input = document.getElementById('chat-input');
+      const micBtn = getElementByIdOrNull<HTMLButtonElement>('chat-mic');
+      const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
+      if (!micBtn || !input) {
+        return;
+      }
 
       // Clear input and accumulated transcript for new recording
       input.value = '';
@@ -1255,7 +1399,7 @@ export class ChatModule {
   /**
    * Stop voice recording
    */
-  stopVoice() {
+  stopVoice(): void {
     if (!this.isRecording) {
       return;
     }
@@ -1264,14 +1408,17 @@ export class ChatModule {
 
     try {
       this.speechRecognition.stop();
-    } catch (e) {
+    } catch {
       // Ignore errors
     }
 
     this.isRecording = false;
 
-    const micBtn = document.getElementById('chat-mic');
-    const input = document.getElementById('chat-input');
+    const micBtn = getElementByIdOrNull<HTMLButtonElement>('chat-mic');
+    const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
+    if (!micBtn || !input || !this.speechRecognition) {
+      return;
+    }
 
     micBtn.classList.remove('recording');
     input.classList.remove('voice-active');
@@ -1288,7 +1435,7 @@ export class ChatModule {
   /**
    * Initialize Speech Synthesis
    */
-  initSpeechSynthesis() {
+  initSpeechSynthesis(): void {
     if (!this.speechSynthesis) {
       logger.warn('SpeechSynthesis not supported');
       return;
@@ -1323,12 +1470,12 @@ export class ChatModule {
   /**
    * Toggle TTS auto-play
    */
-  toggleTTS() {
+  toggleTTS(): void {
     this.ttsEnabled = !this.ttsEnabled;
     if (!this.ttsEnabled) {
       this.stopSpeaking();
     }
-    const btn = document.getElementById('chat-tts-toggle');
+    const btn = getElementByIdOrNull<HTMLButtonElement>('chat-tts-toggle');
 
     if (btn) {
       btn.classList.toggle('active', this.ttsEnabled);
@@ -1344,9 +1491,9 @@ export class ChatModule {
   /**
    * Toggle hands-free mode
    */
-  toggleHandsFree() {
+  toggleHandsFree(): void {
     this.handsFreeMode = !this.handsFreeMode;
-    const btn = document.getElementById('chat-handsfree-toggle');
+    const btn = getElementByIdOrNull<HTMLButtonElement>('chat-handsfree-toggle');
 
     if (btn) {
       btn.classList.toggle('active', this.handsFreeMode);
@@ -1365,7 +1512,7 @@ export class ChatModule {
   /**
    * Speak text using TTS
    */
-  stripMarkdownForTTS(text) {
+  stripMarkdownForTTS(text: string): string {
     return text
       .replace(/```[\s\S]*?```/g, '') // code blocks
       .replace(/`([^`]+)`/g, '$1') // inline code
@@ -1385,7 +1532,7 @@ export class ChatModule {
       .trim();
   }
 
-  speak(text) {
+  speak(text: string): void {
     if (!this.speechSynthesis || !text) {
       return;
     }
@@ -1434,7 +1581,7 @@ export class ChatModule {
   /**
    * Stop speaking
    */
-  stopSpeaking() {
+  stopSpeaking(): void {
     if (this.speechSynthesis && this.isSpeaking) {
       this.speechSynthesis.cancel();
       this.isSpeaking = false;
@@ -1445,7 +1592,7 @@ export class ChatModule {
   /**
    * Set TTS rate (0.5 - 2.0)
    */
-  setTTSRate(rate) {
+  setTTSRate(rate: number): void {
     this.ttsRate = Math.max(0.5, Math.min(2.0, rate));
     logger.info('Rate set to:', this.ttsRate);
   }
@@ -1457,19 +1604,22 @@ export class ChatModule {
   /**
    * Save message to history
    */
-  saveToHistory(role, content, timestamp = new Date(), attachment = null) {
+  saveToHistory(
+    role: ChatHistoryMessage['role'],
+    content: string,
+    timestamp: Date = new Date(),
+    attachment: ChatHistoryMessage['attachment'] | null = null
+  ): void {
     if (!this.sessionId) {
       return;
     }
 
-    const entry = {
+    const entry: ChatHistoryMessage = {
       role,
       content,
       timestamp: timestamp.toISOString(),
+      ...(attachment ? { attachment } : {}),
     };
-    if (attachment) {
-      entry.attachment = attachment;
-    }
 
     this.history.push(entry);
 
@@ -1492,7 +1642,7 @@ export class ChatModule {
   /**
    * Load history from localStorage
    */
-  loadHistory(sessionId) {
+  loadHistory(sessionId: string): ChatHistoryMessage[] | null {
     try {
       const storageKey = this.historyPrefix + sessionId;
       const stored = localStorage.getItem(storageKey);
@@ -1518,7 +1668,7 @@ export class ChatModule {
   /**
    * Restore chat history
    */
-  restoreHistory(sessionId) {
+  restoreHistory(sessionId: string): boolean {
     const history = this.loadHistory(sessionId);
 
     if (!history || history.length === 0) {
@@ -1526,7 +1676,10 @@ export class ChatModule {
     }
 
     this.history = history;
-    const container = document.getElementById('chat-messages');
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return false;
+    }
 
     this.removePlaceholder();
 
@@ -1574,8 +1727,8 @@ export class ChatModule {
   /**
    * Display history received from server
    */
-  displayHistory(messages) {
-    const container = document.getElementById('chat-messages');
+  displayHistory(messages: ChatHistoryMessage[]): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
     if (!container) {
       return;
     }
@@ -1621,7 +1774,7 @@ export class ChatModule {
   /**
    * Clear chat history
    */
-  clearHistory(sessionId = null) {
+  clearHistory(sessionId: string | null = null): void {
     try {
       const storageKey = this.historyPrefix + (sessionId || this.sessionId);
       localStorage.removeItem(storageKey);
@@ -1634,7 +1787,7 @@ export class ChatModule {
   /**
    * Clean up expired histories
    */
-  cleanupExpiredHistories() {
+  cleanupExpiredHistories(): void {
     try {
       const keys = Object.keys(localStorage);
       const now = Date.now();
@@ -1647,7 +1800,7 @@ export class ChatModule {
               localStorage.removeItem(key);
               logger.info('Cleaned up expired history:', key);
             }
-          } catch (e) {
+          } catch {
             // Invalid data, remove it
             localStorage.removeItem(key);
           }
@@ -1665,7 +1818,7 @@ export class ChatModule {
   /**
    * Generate checkpoint summary from current session (for manual /checkpoint command)
    */
-  generateCheckpointSummary() {
+  generateCheckpointSummary(): string {
     const summary = {
       sessionId: this.sessionId,
       messageCount: this.history.length,
@@ -1683,34 +1836,22 @@ export class ChatModule {
   /**
    * Save checkpoint via API
    */
-  async saveCheckpoint(summary) {
-    const response = await fetch('/api/checkpoint/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ summary }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to save checkpoint');
-    }
-
-    return await response.json();
+  async saveCheckpoint(summary: string): Promise<JsonRecord> {
+    return await API.post<JsonRecord, { summary: string }>('/api/checkpoint/save', { summary });
   }
 
   /**
    * Load last checkpoint via API
    */
-  async loadCheckpoint() {
-    const response = await fetch('/api/checkpoint/load');
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        return null; // No checkpoint found
+  async loadCheckpoint(): Promise<CheckpointRecord | null> {
+    try {
+      return await API.get<CheckpointRecord>('/api/checkpoint/load');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('HTTP 404')) {
+        return null;
       }
-      throw new Error('Failed to load checkpoint');
+      throw error;
     }
-
-    return await response.json();
   }
 
   /**
@@ -1721,13 +1862,13 @@ export class ChatModule {
       const checkpoint = await this.loadCheckpoint();
       if (checkpoint) {
         // Show resume banner
-        const banner = document.getElementById('session-resume-banner');
+        const banner = getElementByIdOrNull<HTMLDivElement>('session-resume-banner');
         if (banner) {
           banner.style.display = 'flex';
           logger.info('Resume banner shown');
         }
       }
-    } catch (error) {
+    } catch {
       // Silent fail - no checkpoint is okay
       logger.info('No resumable session');
     }
@@ -1740,12 +1881,12 @@ export class ChatModule {
   /**
    * Initialize floating chat panel bindings
    */
-  initFloating() {
-    const bubble = document.getElementById('chat-bubble');
-    const closeBtn = document.getElementById('chat-close');
-    const resizeHandle = document.getElementById('chat-resize-handle');
-    const panel = document.getElementById('chat-panel');
-    const header = document.getElementById('chat-header');
+  initFloating(): void {
+    const bubble = getElementByIdOrNull<HTMLButtonElement>('chat-bubble');
+    const closeBtn = getElementByIdOrNull<HTMLButtonElement>('chat-close');
+    const resizeHandle = getElementByIdOrNull<HTMLDivElement>('chat-resize-handle');
+    const panel = getElementByIdOrNull<HTMLDivElement>('chat-panel');
+    const header = getElementByIdOrNull<HTMLDivElement>('chat-header');
 
     if (bubble) {
       bubble.addEventListener('click', () => this.togglePanel());
@@ -1761,7 +1902,7 @@ export class ChatModule {
       let startLeft = 0;
       let startTop = 0;
 
-      const startDrag = (clientX, clientY) => {
+      const startDrag = (clientX: number, clientY: number) => {
         dragging = true;
         const rect = panel.getBoundingClientRect();
         startX = clientX;
@@ -1772,7 +1913,7 @@ export class ChatModule {
         document.body.style.userSelect = 'none';
       };
 
-      const doDrag = (clientX, clientY) => {
+      const doDrag = (clientX: number, clientY: number) => {
         if (!dragging) {
           return;
         }
@@ -1794,20 +1935,21 @@ export class ChatModule {
         this.savePanelState(panel);
       };
 
-      header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('button, a, input, select')) {
+      header.addEventListener('mousedown', (e: MouseEvent) => {
+        const target = e.target as Element | null;
+        if (target?.closest('button, a, input, select')) {
           return;
         }
         e.preventDefault();
         startDrag(e.clientX, e.clientY);
       });
 
-      this._onDragMouseMove = (e) => doDrag(e.clientX, e.clientY);
+      this._onDragMouseMove = (e: MouseEvent) => doDrag(e.clientX, e.clientY);
       this._onDragMouseUp = endDrag;
       window.addEventListener('mousemove', this._onDragMouseMove);
       window.addEventListener('mouseup', this._onDragMouseUp);
 
-      this._onDragTouchMove = (e) => {
+      this._onDragTouchMove = (e: TouchEvent) => {
         const touch = e.touches[0];
         if (!touch) {
           return;
@@ -1822,8 +1964,9 @@ export class ChatModule {
 
       header.addEventListener(
         'touchstart',
-        (e) => {
-          if (e.target.closest('button, a, input, select')) {
+        (e: TouchEvent) => {
+          const target = e.target as Element | null;
+          if (target?.closest('button, a, input, select')) {
             return;
           }
           const touch = e.touches[0];
@@ -1847,7 +1990,7 @@ export class ChatModule {
       let startW = 0;
       let startH = 0;
 
-      const startResize = (clientX, clientY) => {
+      const startResize = (clientX: number, clientY: number) => {
         resizing = true;
         const rect = panel.getBoundingClientRect();
         startX = clientX;
@@ -1857,7 +2000,7 @@ export class ChatModule {
         document.body.style.userSelect = 'none';
       };
 
-      const doResize = (clientX, clientY) => {
+      const doResize = (clientX: number, clientY: number) => {
         if (!resizing) {
           return;
         }
@@ -1883,17 +2026,17 @@ export class ChatModule {
         this.savePanelState(panel);
       };
 
-      resizeHandle.addEventListener('mousedown', (e) => {
+      resizeHandle.addEventListener('mousedown', (e: MouseEvent) => {
         e.preventDefault();
         startResize(e.clientX, e.clientY);
       });
 
-      this._onResizeMouseMove = (e) => doResize(e.clientX, e.clientY);
+      this._onResizeMouseMove = (e: MouseEvent) => doResize(e.clientX, e.clientY);
       this._onResizeMouseUp = endResize;
       window.addEventListener('mousemove', this._onResizeMouseMove);
       window.addEventListener('mouseup', this._onResizeMouseUp);
 
-      this._onResizeTouchMove = (e) => {
+      this._onResizeTouchMove = (e: TouchEvent) => {
         const touch = e.touches[0];
         if (!touch) {
           return;
@@ -1908,7 +2051,7 @@ export class ChatModule {
 
       resizeHandle.addEventListener(
         'touchstart',
-        (e) => {
+        (e: TouchEvent) => {
           const touch = e.touches[0];
           if (!touch) {
             return;
@@ -1923,7 +2066,7 @@ export class ChatModule {
       window.addEventListener('touchend', this._onResizeTouchEnd);
     }
 
-    this._onEscapeKey = (e) => {
+    this._onEscapeKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && this.isFloatingOpen()) {
         this.togglePanel(false);
       }
@@ -1937,10 +2080,10 @@ export class ChatModule {
    * Toggle floating chat panel open/close
    * @param {boolean} [forceState] - Force open (true) or close (false)
    */
-  togglePanel(forceState) {
-    const panel = document.getElementById('chat-panel');
-    const bubble = document.getElementById('chat-bubble');
-    const badge = document.getElementById('chat-badge');
+  togglePanel(forceState?: boolean): void {
+    const panel = getElementByIdOrNull<HTMLDivElement>('chat-panel');
+    const bubble = getElementByIdOrNull<HTMLButtonElement>('chat-bubble');
+    const badge = getElementByIdOrNull<HTMLSpanElement>('chat-badge');
     if (!panel) {
       return;
     }
@@ -1957,11 +2100,11 @@ export class ChatModule {
       if (badge) {
         badge.classList.add('hidden');
       }
-      const input = document.getElementById('chat-input');
+      const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
       if (input) {
         setTimeout(() => input.focus(), 100);
       }
-      const messages = document.getElementById('chat-messages');
+      const messages = getElementByIdOrNull<HTMLDivElement>('chat-messages');
       if (messages) {
         messages.scrollTop = messages.scrollHeight;
       }
@@ -1977,7 +2120,7 @@ export class ChatModule {
   /**
    * Persist panel size + position
    */
-  savePanelState(panel) {
+  savePanelState(panel: HTMLDivElement): void {
     try {
       const rect = panel.getBoundingClientRect();
       const state = {
@@ -1995,7 +2138,7 @@ export class ChatModule {
   /**
    * Restore panel size + position
    */
-  restorePanelState(panel) {
+  restorePanelState(panel: HTMLDivElement): void {
     try {
       const raw = localStorage.getItem('mama_chat_panel_state');
       if (!raw) {
@@ -2021,19 +2164,19 @@ export class ChatModule {
   /**
    * Check if floating panel is open
    */
-  isFloatingOpen() {
-    const panel = document.getElementById('chat-panel');
-    return panel && !panel.classList.contains('hidden');
+  isFloatingOpen(): boolean {
+    const panel = getElementByIdOrNull<HTMLDivElement>('chat-panel');
+    return Boolean(panel && !panel.classList.contains('hidden'));
   }
 
   /**
    * Show unread badge on bubble when panel is closed
    */
-  showUnreadBadge() {
+  showUnreadBadge(): void {
     if (this.isFloatingOpen()) {
       return;
     }
-    const badge = document.getElementById('chat-badge');
+    const badge = getElementByIdOrNull<HTMLSpanElement>('chat-badge');
     if (badge) {
       badge.classList.remove('hidden');
     }
@@ -2043,7 +2186,7 @@ export class ChatModule {
    * Cleanup resources when module is destroyed
    * Prevents memory leaks by cleaning up timers, connections, and APIs
    */
-  cleanup() {
+  cleanup(): void {
     // Clean up WebSocket
     if (this.ws) {
       this.ws.close();

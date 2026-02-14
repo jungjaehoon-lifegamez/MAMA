@@ -6,55 +6,28 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-// eslint-disable-next-line no-unused-vars
-import { initDB, closeDB, getAdapter } from '@jungjaehoon/mama-core/db-manager';
+import {
+  initTestDB,
+  cleanupTestDB,
+  isEmbeddingsAvailable,
+  createMockToolContext,
+} from '@jungjaehoon/mama-core/test-utils';
 import { saveDecisionTool } from '../../src/tools/save-decision.js';
 import { searchNarrativeTool } from '../../src/tools/search-narrative.js';
-import { generateEmbedding } from '@jungjaehoon/mama-core/embeddings';
-import path from 'path';
-import fs from 'fs';
-import os from 'os';
 
-// Test database path (isolated from production)
-const TEST_DB_PATH = path.join(os.tmpdir(), `mama-test-search-narrative-${Date.now()}.db`);
+// Test database path (set by initTestDB)
+let testDbPath;
 
-// Check if embedding model is available (may fail on CI with corrupted ONNX model)
-let embeddingsAvailable = true;
-try {
-  await generateEmbedding('test');
-} catch {
-  embeddingsAvailable = false;
-  console.warn(
-    '[search-narrative.test] Embedding model unavailable — skipping semantic search tests'
-  );
-}
+// Check if embedding model is available (preloaded by globalSetup)
+const embeddingsAvailable = await isEmbeddingsAvailable();
 
 // Mock tool context
-const mockContext = {
-  logger: {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-  },
-};
+const mockContext = createMockToolContext();
 
 describe('search_narrative MCP Tool', () => {
   beforeAll(async () => {
-    // Clean up any existing database files
-    if (fs.existsSync(TEST_DB_PATH)) {
-      fs.unlinkSync(TEST_DB_PATH);
-    }
-    [TEST_DB_PATH + '-wal', TEST_DB_PATH + '-shm'].forEach((file) => {
-      if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
-      }
-    });
-
-    // Set test database path
-    process.env.MAMA_DB_PATH = TEST_DB_PATH;
-
-    // Initialize test database
-    await initDB();
+    // Initialize isolated test database (handles cleanup, env var, and init)
+    testDbPath = await initTestDB('search-narrative');
 
     // Insert test decisions using save tool
     const testDecisions = [
@@ -90,20 +63,8 @@ describe('search_narrative MCP Tool', () => {
   });
 
   afterAll(async () => {
-    // Clean up test database
-    await closeDB();
-    if (fs.existsSync(TEST_DB_PATH)) {
-      fs.unlinkSync(TEST_DB_PATH);
-    }
-    // Clean up WAL files
-    [TEST_DB_PATH + '-wal', TEST_DB_PATH + '-shm'].forEach((file) => {
-      if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
-      }
-    });
-
-    // Clean up environment
-    delete process.env.MAMA_DB_PATH;
+    // Clean up test database (handles close, cleanup files, and env var)
+    await cleanupTestDB(testDbPath);
   });
 
   describe('Input Validation', () => {

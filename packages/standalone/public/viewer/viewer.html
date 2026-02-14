@@ -28,6 +28,7 @@
     <script src="https://unpkg.com/vis-network@9/dist/vis-network.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.5/purify.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -630,7 +631,7 @@
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Max Turns</label>
-                    <input type="number" id="settings-agent-max-turns" value="10" min="1" max="50" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
+                    <input type="number" id="settings-agent-max-turns" value="10" min="1" max="100" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Timeout (seconds)</label>
@@ -1261,7 +1262,11 @@
           </div>
           <div class="flex justify-end gap-2 px-4 py-3 border-t border-gray-200 border-mama-lavender-dark bg-gray-50 bg-mama-lavender-light/50">
             <button class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-white hover:bg-gray-200 hover:bg-mama-lavender rounded-lg transition-colors" onclick="hideSaveDecisionForm()">Cancel</button>
-            <button class="px-4 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors" onclick="submitSaveDecision()">Save</button>
+            <button
+              class="px-4 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors"
+              id="save-form-submit"
+              onclick="submitSaveDecision()"
+            >Save</button>
           </div>
           <div id="save-form-status" class="px-5 pb-4 text-center text-sm"></div>
         </div>
@@ -1375,6 +1380,7 @@
       import { DashboardModule } from '/viewer/js/modules/dashboard.js';
       import { SettingsModule } from '/viewer/js/modules/settings.js';
       import { SkillsModule } from '/viewer/js/modules/skills.js';
+      import { API } from '/viewer/js/utils/api.js';
 
       const memory = new MemoryModule();
       const chat = new ChatModule(memory);
@@ -1934,10 +1940,7 @@
 
       async function updateMemoryStats() {
         try {
-          const response = await fetch('/api/dashboard/status');
-          if (!response.ok) return;
-
-          const data = await response.json();
+          const data = await API.get('/api/dashboard/status');
           const memory = data.memory || {};
 
           document.querySelector('#memory-stats-total p').textContent = memory.total || 0;
@@ -1989,8 +1992,7 @@
         console.log('[MAMA] Loading checkpoints...');
 
         try {
-          const response = await fetch('/api/checkpoints');
-          const data = await response.json();
+          const data = await API.get('/api/checkpoints');
           checkpointsData = data.checkpoints || [];
 
           console.log('[MAMA] Loaded', checkpointsData.length, 'checkpoints');

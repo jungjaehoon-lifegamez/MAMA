@@ -215,8 +215,8 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe(''); // No output when disabled
-      // When disabled via hook-features.js, outputs allow + "contracts disabled"
-      expect(result.stderr).toContain('contracts disabled');
+      // When disabled via hook-features.js, silently allows
+      expect(result.stderr).toContain('allow');
     });
 
     it('should skip non-code files for Edit tool', async () => {
@@ -242,7 +242,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
         FILE_PATH: '/path/to/new-file.js',
       });
 
-      // PostToolUse uses exit(2)+stderr for visibility (Feb 2025 change)
+      // PostToolUse: exit(2) for reminder visibility, exit(0) for silent skip
       expect([0, 2]).toContain(result.exitCode);
 
       console.log(`[Regression] PostToolUse (Write) latency: ${result.latency}ms`);
@@ -255,7 +255,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
         FILE_PATH: '/path/to/existing-file.js',
       });
 
-      // PostToolUse uses exit(2)+stderr for visibility (Feb 2025 change)
+      // PostToolUse: exit(2) for reminder visibility, exit(0) for silent skip
       expect([0, 2]).toContain(result.exitCode);
 
       console.log(`[Regression] PostToolUse (Edit) latency: ${result.latency}ms`);
@@ -274,12 +274,13 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
     it('should respect MAMA_DISABLE_HOOKS flag', async () => {
       const result = await execHook(POSTTOOLUSE_HOOK, {
         TOOL_NAME: 'Write',
-        FILE_PATH: '/path/to/test.js',
+        FILE_PATH: '/path/to/typed.ts',
         MAMA_DISABLE_HOOKS: 'true',
       });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toBe(''); // No output when disabled
+      // When disabled, hook exits silently with no output
+      expect(result.stdout).toBe('');
     });
   });
 
@@ -315,8 +316,12 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       const disableEnv = { MAMA_DISABLE_HOOKS: 'true' };
 
       const results = await Promise.all([
-        execHook(PRETOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Edit' }),
-        execHook(POSTTOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Write' }),
+        execHook(PRETOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Read' }),
+        execHook(POSTTOOLUSE_HOOK, {
+          ...disableEnv,
+          TOOL_NAME: 'Write',
+          FILE_PATH: '/path/to/pattern.ts',
+        }),
       ]);
 
       results.forEach((result) => {

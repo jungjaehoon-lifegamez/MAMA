@@ -12,19 +12,22 @@
 /* eslint-env browser */
 /* global lucide */
 
-import { escapeHtml, debounce, showToast } from '../utils/dom.js';
+import { escapeHtml, debounce, showToast, getElementByIdOrNull } from '../utils/dom.js';
 import { formatRelativeTime, truncateText } from '../utils/format.js';
-import { API } from '../utils/api.js';
+import { API, type MemorySearchItem } from '../utils/api.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('Memory');
 
 /**
  * Memory Module Class
  */
 export class MemoryModule {
-  constructor() {
-    // State
-    this.searchData = [];
-    this.debouncedSearch = debounce(() => this.performSearch(), 300);
+  searchData: MemorySearchItem[] = [];
+  debouncedSearch = debounce(() => this.performSearch(), 300);
+  currentQuery = '';
 
+  constructor() {
     // Initialize event listeners
     this.initEventListeners();
   }
@@ -32,19 +35,33 @@ export class MemoryModule {
   /**
    * Initialize all event listeners
    */
-  initEventListeners() {
+  initEventListeners(): void {
+    // Memory card click handler (event delegation)
+    const resultsContainer = getElementByIdOrNull<HTMLElement>('memory-results');
+    if (resultsContainer) {
+      resultsContainer.addEventListener('click', (e: MouseEvent) => {
+        const card = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-memory-card]');
+        if (card) {
+          const idx = parseInt(card.dataset.memoryCard || '', 10);
+          if (!Number.isNaN(idx)) {
+            this.toggleCard(idx);
+          }
+        }
+      });
+    }
+
     // Modal click outside to close
-    document.addEventListener('click', (e) => {
-      const modal = document.getElementById('save-decision-modal');
+    document.addEventListener('click', (e: MouseEvent) => {
+      const modal = getElementByIdOrNull<HTMLDivElement>('save-decision-modal');
       if (modal && e.target === modal) {
         this.hideSaveForm();
       }
     });
 
     // Escape key to close modal
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        const modal = document.getElementById('save-decision-modal');
+        const modal = getElementByIdOrNull<HTMLDivElement>('save-decision-modal');
         if (modal && modal.classList.contains('visible')) {
           this.hideSaveForm();
         }
@@ -56,7 +73,7 @@ export class MemoryModule {
    * Handle memory search input event
    * @param {KeyboardEvent} event - Keyboard event
    */
-  handleSearchInput(event) {
+  handleSearchInput(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
       this.search();
     } else {
@@ -67,8 +84,11 @@ export class MemoryModule {
   /**
    * Perform search (internal, debounced)
    */
-  async performSearch() {
-    const input = document.getElementById('memory-search-input');
+  async performSearch(): Promise<void> {
+    const input = getElementByIdOrNull<HTMLInputElement>('memory-search-input');
+    if (!input) {
+      return;
+    }
     const query = input.value.trim();
 
     if (!query) {
@@ -82,8 +102,11 @@ export class MemoryModule {
   /**
    * Search memory decisions via API
    */
-  async search() {
-    const input = document.getElementById('memory-search-input');
+  async search(): Promise<void> {
+    const input = getElementByIdOrNull<HTMLInputElement>('memory-search-input');
+    if (!input) {
+      return;
+    }
     const query = input.value.trim();
 
     if (!query) {
@@ -99,8 +122,9 @@ export class MemoryModule {
       this.renderResults(this.searchData, query);
       this.setStatus(`Found ${this.searchData.length} decision(s)`, '');
     } catch (error) {
-      console.error('[Memory] Search error:', error);
-      this.setStatus(`Error: ${error.message}`, 'error');
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Search error:', message);
+      this.setStatus(`Error: ${message}`, 'error');
     }
   }
 
@@ -109,7 +133,7 @@ export class MemoryModule {
    * @param {string} message - Chat message text
    * @returns {Promise<Array>} Related decisions
    */
-  async searchRelated(message) {
+  async searchRelated(message: string): Promise<MemorySearchItem[]> {
     if (!message || message.length < 3) {
       return [];
     }
@@ -118,7 +142,8 @@ export class MemoryModule {
       const data = await API.searchMemory(message, 5);
       return data.results || [];
     } catch (error) {
-      console.error('[Memory] Related search error:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Related search error:', message);
       return [];
     }
   }
@@ -127,14 +152,14 @@ export class MemoryModule {
    * Show related decisions for a chat message
    * @param {string} message - Chat message text
    */
-  async showRelatedForMessage(message) {
+  async showRelatedForMessage(message: string): Promise<void> {
     const results = await this.searchRelated(message);
 
     if (results.length > 0) {
       this.searchData = results;
 
       // Update search input with the query (if element exists)
-      const input = document.getElementById('memory-search-input');
+      const input = getElementByIdOrNull<HTMLInputElement>('memory-search-input');
       if (input) {
         input.value = message.substring(0, 50) + (message.length > 50 ? '...' : '');
       }
@@ -153,8 +178,8 @@ export class MemoryModule {
    * @param {Array} results - Search results
    * @param {string} query - Search query
    */
-  renderResults(results, query) {
-    const container = document.getElementById('memory-results');
+  renderResults(results: MemorySearchItem[], query: string): void {
+    const container = getElementByIdOrNull<HTMLElement>('memory-results');
 
     // Guard: element may not exist if not on Memory tab
     if (!container) {
@@ -172,22 +197,27 @@ export class MemoryModule {
     }
 
     const html = results
-      .map(
-        (item, idx) => `
-        <div class="memory-card" onclick="window.memoryModule.toggleCard(${idx})">
+      .map((item, idx) => {
+        const rawOutcome = String(item.outcome || 'PENDING');
+        const normalizedOutcome = rawOutcome.toLowerCase();
+        const outcomeClass = ['success', 'failed', 'partial', 'pending'].includes(normalizedOutcome)
+          ? normalizedOutcome
+          : 'pending';
+        return `
+        <div class="memory-card" data-memory-card="${idx}">
           <div class="memory-card-header">
             <span class="memory-card-topic">${escapeHtml(item.topic || 'Unknown')}</span>
             ${item.similarity ? `<span class="memory-card-score">${Math.round(item.similarity * 100)}%</span>` : ''}
           </div>
           <div class="memory-card-decision">${escapeHtml(truncateText(item.decision, 150))}</div>
           <div class="memory-card-meta">
-            <span class="memory-card-outcome ${(item.outcome || 'pending').toLowerCase()}">${item.outcome || 'PENDING'}</span>
+            <span class="memory-card-outcome ${outcomeClass}">${escapeHtml(rawOutcome)}</span>
             <span>${formatRelativeTime(item.created_at)}</span>
           </div>
           <div class="memory-card-reasoning">${escapeHtml(item.reasoning || 'No reasoning provided')}</div>
         </div>
-      `
-      )
+      `;
+      })
       .join('');
 
     container.innerHTML = html;
@@ -197,8 +227,8 @@ export class MemoryModule {
    * Toggle memory card expand/collapse
    * @param {number} idx - Card index
    */
-  toggleCard(idx) {
-    const cards = document.querySelectorAll('.memory-card');
+  toggleCard(idx: number): void {
+    const cards = document.querySelectorAll<HTMLElement>('.memory-card');
     cards.forEach((card, i) => {
       if (i === idx) {
         card.classList.toggle('expanded');
@@ -211,8 +241,11 @@ export class MemoryModule {
   /**
    * Show memory placeholder
    */
-  showPlaceholder() {
-    const container = document.getElementById('memory-results');
+  showPlaceholder(): void {
+    const container = getElementByIdOrNull<HTMLElement>('memory-results');
+    if (!container) {
+      return;
+    }
     container.innerHTML = `
       <div class="memory-placeholder">
         <p><i data-lucide="brain"></i> Search your MAMA decisions</p>
@@ -231,8 +264,8 @@ export class MemoryModule {
    * @param {string} message - Status message
    * @param {string} type - Status type (loading, error, success, '')
    */
-  setStatus(message, type) {
-    const status = document.getElementById('memory-status');
+  setStatus(message: string, type: 'loading' | 'error' | 'success' | '' = ''): void {
+    const status = getElementByIdOrNull<HTMLElement>('memory-status');
     if (!status) {
       return;
     } // Guard: element may not exist if not on Memory tab
@@ -243,58 +276,99 @@ export class MemoryModule {
   /**
    * Show save decision form modal
    */
-  showSaveForm() {
-    const modal = document.getElementById('save-decision-modal');
+  showSaveForm(): void {
+    const modal = getElementByIdOrNull<HTMLDivElement>('save-decision-modal');
+    if (!modal) {
+      return;
+    }
     modal.classList.add('visible');
 
     // Clear form
-    document.getElementById('save-topic').value = '';
-    document.getElementById('save-decision').value = '';
-    document.getElementById('save-reasoning').value = '';
-    document.getElementById('save-confidence').value = '0.8';
-    document.getElementById('save-form-status').textContent = '';
-    document.getElementById('save-form-status').className = 'save-form-status';
+    const topicInput = getElementByIdOrNull<HTMLInputElement>('save-topic');
+    const decisionInput = getElementByIdOrNull<HTMLTextAreaElement>('save-decision');
+    const reasoningInput = getElementByIdOrNull<HTMLTextAreaElement>('save-reasoning');
+    const confidenceInput = getElementByIdOrNull<HTMLInputElement>('save-confidence');
+    const statusEl = getElementByIdOrNull<HTMLElement>('save-form-status');
+    if (topicInput) {
+      topicInput.value = '';
+    }
+    if (decisionInput) {
+      decisionInput.value = '';
+    }
+    if (reasoningInput) {
+      reasoningInput.value = '';
+    }
+    if (confidenceInput) {
+      confidenceInput.value = '0.8';
+    }
+    if (statusEl) {
+      statusEl.textContent = '';
+      statusEl.className = 'save-form-status';
+    }
 
     // Focus on topic field
     setTimeout(() => {
-      document.getElementById('save-topic').focus();
+      const focusTarget = getElementByIdOrNull<HTMLInputElement>('save-topic');
+      focusTarget?.focus();
     }, 100);
   }
 
   /**
    * Show save form with pre-filled text (for /save command)
    */
-  showSaveFormWithText(text) {
-    const modal = document.getElementById('save-decision-modal');
+  showSaveFormWithText(text: string): void {
+    const modal = getElementByIdOrNull<HTMLDivElement>('save-decision-modal');
+    if (!modal) {
+      return;
+    }
     modal.classList.add('visible');
 
     // Pre-fill decision field
-    document.getElementById('save-topic').value = '';
-    document.getElementById('save-decision').value = text;
-    document.getElementById('save-reasoning').value = '';
-    document.getElementById('save-confidence').value = '0.8';
-    document.getElementById('save-form-status').textContent = '';
-    document.getElementById('save-form-status').className = 'save-form-status';
+    const topicInput = getElementByIdOrNull<HTMLInputElement>('save-topic');
+    const decisionInput = getElementByIdOrNull<HTMLTextAreaElement>('save-decision');
+    const reasoningInput = getElementByIdOrNull<HTMLTextAreaElement>('save-reasoning');
+    const confidenceInput = getElementByIdOrNull<HTMLInputElement>('save-confidence');
+    const statusEl = getElementByIdOrNull<HTMLElement>('save-form-status');
+    if (topicInput) {
+      topicInput.value = '';
+    }
+    if (decisionInput) {
+      decisionInput.value = text;
+    }
+    if (reasoningInput) {
+      reasoningInput.value = '';
+    }
+    if (confidenceInput) {
+      confidenceInput.value = '0.8';
+    }
+    if (statusEl) {
+      statusEl.textContent = '';
+      statusEl.className = 'save-form-status';
+    }
 
     // Focus on topic field
     setTimeout(() => {
-      document.getElementById('save-topic').focus();
+      const focusTarget = getElementByIdOrNull<HTMLInputElement>('save-topic');
+      focusTarget?.focus();
     }, 100);
   }
 
   /**
    * Hide save decision form modal
    */
-  hideSaveForm() {
-    const modal = document.getElementById('save-decision-modal');
+  hideSaveForm(): void {
+    const modal = getElementByIdOrNull<HTMLDivElement>('save-decision-modal');
+    if (!modal) {
+      return;
+    }
     modal.classList.remove('visible');
   }
 
   /**
    * Execute search with query (for /search command)
    */
-  async searchWithQuery(query) {
-    const searchInput = document.getElementById('memory-search');
+  async searchWithQuery(query: string): Promise<void> {
+    const searchInput = getElementByIdOrNull<HTMLInputElement>('memory-search-input');
     if (searchInput) {
       searchInput.value = query;
     }
@@ -305,14 +379,29 @@ export class MemoryModule {
   /**
    * Submit save decision form
    */
-  async submitSaveForm() {
-    const topic = document.getElementById('save-topic').value.trim();
-    const decision = document.getElementById('save-decision').value.trim();
-    const reasoning = document.getElementById('save-reasoning').value.trim();
-    const confidence = parseFloat(document.getElementById('save-confidence').value);
+  async submitSaveForm(): Promise<void> {
+    const topicInput = getElementByIdOrNull<HTMLInputElement>('save-topic');
+    const decisionInput = getElementByIdOrNull<HTMLTextAreaElement>('save-decision');
+    const reasoningInput = getElementByIdOrNull<HTMLTextAreaElement>('save-reasoning');
+    const confidenceInput = getElementByIdOrNull<HTMLInputElement>('save-confidence');
+    const statusEl = getElementByIdOrNull<HTMLElement>('save-form-status');
+    // Select the Save button (last button in the modal actions)
+    const submitBtn = getElementByIdOrNull<HTMLButtonElement>('save-form-submit');
+    if (
+      !topicInput ||
+      !decisionInput ||
+      !reasoningInput ||
+      !confidenceInput ||
+      !statusEl ||
+      !submitBtn
+    ) {
+      return;
+    }
 
-    const statusEl = document.getElementById('save-form-status');
-    const submitBtn = document.querySelector('.save-form-submit');
+    const topic = topicInput.value.trim();
+    const decision = decisionInput.value.trim();
+    const reasoning = reasoningInput.value.trim();
+    const confidence = parseFloat(confidenceInput.value);
 
     // Validation
     if (!topic || !decision || !reasoning) {
@@ -347,14 +436,15 @@ export class MemoryModule {
         this.hideSaveForm();
 
         // Refresh memory search if there's a query
-        const searchInput = document.getElementById('memory-search-input');
-        if (searchInput.value.trim()) {
+        const searchInput = getElementByIdOrNull<HTMLInputElement>('memory-search-input');
+        if (searchInput?.value.trim()) {
           this.search();
         }
       }, 1500);
     } catch (error) {
-      console.error('[Memory] Save error:', error);
-      statusEl.textContent = `Error: ${error.message}`;
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Save error:', message);
+      statusEl.textContent = `Error: ${message}`;
       statusEl.className = 'save-form-status error';
     } finally {
       submitBtn.disabled = false;

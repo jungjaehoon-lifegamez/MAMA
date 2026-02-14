@@ -37,15 +37,37 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Config paths
 const MAMA_CONFIG_PATH = path.join(os.homedir(), '.mama', 'config.yaml');
+const PACKAGE_ROOT_DIR = path.resolve(__dirname, '../..');
 
 // Paths to viewer files (now in public/viewer/)
-const VIEWER_DIR = path.join(__dirname, '../../public/viewer');
+function getViewerDirectory(): string {
+  const packagePublicViewer = path.join(PACKAGE_ROOT_DIR, 'public', 'viewer');
+  const candidateDirs = [
+    path.join(process.cwd(), 'public', 'viewer'),
+    packagePublicViewer,
+    path.join(__dirname, '../../public/viewer'),
+    path.join(__dirname, '../../../public/viewer'),
+    path.join(process.cwd(), 'packages', 'standalone', 'public', 'viewer'),
+  ];
+
+  for (const candidate of candidateDirs) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  }
+
+  // Fallback for unusual launch locations.
+  return path.join(process.cwd(), 'public', 'viewer');
+}
+
+const VIEWER_DIR = getViewerDirectory();
 const VIEWER_HTML_PATH = path.join(VIEWER_DIR, 'viewer.html');
 const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
 const VIEWER_JS_PATH = path.join(VIEWER_DIR, 'viewer.js');
 const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
-const FAVICON_PATH = path.join(__dirname, '../../public/favicon.ico');
+const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
+const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
 
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
@@ -205,6 +227,10 @@ function filterEdgesByNodes(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[]
 
 function serveStaticFile(res: ServerResponse, filePath: string, contentType: string): void {
   try {
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) {
+      throw new Error('Requested path is not a file');
+    }
     const isBinary = contentType.startsWith('image/') || contentType === 'application/octet-stream';
     const content = isBinary ? fs.readFileSync(filePath) : fs.readFileSync(filePath, 'utf8');
     const etag = `"${Date.now()}"`;
@@ -222,8 +248,14 @@ function serveStaticFile(res: ServerResponse, filePath: string, contentType: str
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[GraphAPI] Static file error: ${message}`);
+    const err = error as NodeJS.ErrnoException;
+    if (err?.code === 'ENOENT' || err?.code === 'EISDIR' || /not a file/i.test(message)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found');
+      return;
+    }
     res.writeHead(500, { 'Content-Type': 'text/plain' });
-    res.end('Error loading file: ' + message);
+    res.end('Internal server error');
   }
 }
 
@@ -808,8 +840,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET /viewer - serve HTML viewer
-    if (pathname === '/viewer' && req.method === 'GET') {
+    // Route: GET/HEAD /viewer or /viewer/ - serve HTML viewer
+    if (
+      (pathname === '/viewer' || pathname === '/viewer/') &&
+      (req.method === 'GET' || req.method === 'HEAD')
+    ) {
       console.log('[GraphHandler] Serving viewer.html');
       handleViewerRequest(req, res);
       return true;
@@ -851,9 +886,15 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: GET/HEAD /manifest.json - legacy or custom host compatibility
+    if (pathname === '/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
+      serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
+      return true;
+    }
+
     // Route: GET/HEAD /favicon.ico - serve favicon
     if (pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, FAVICON_PATH, 'image/x-icon');
+      serveStaticFile(res, VIEWER_FAVICON_PATH, 'image/x-icon');
       return true;
     }
 
@@ -863,8 +904,8 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       pathname.endsWith('.png') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
+      const fileName = path.basename(pathname.split('/').pop() || '');
+      const filePath = path.join(VIEWER_ICON_DIR, fileName);
       serveStaticFile(res, filePath, 'image/png');
       return true;
     }
@@ -875,8 +916,8 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       pathname.endsWith('.svg') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
+      const fileName = path.basename(pathname.split('/').pop() || '');
+      const filePath = path.join(VIEWER_ICON_DIR, fileName);
       serveStaticFile(res, filePath, 'image/svg+xml');
       return true;
     }
@@ -1054,11 +1095,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { spawn: spawnChild } = require('node:child_process');
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { openSync, writeFileSync } = require('node:fs');
+        const { openSync } = require('node:fs');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { join: joinPath, dirname: dirnamePath } = require('node:path');
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { homedir: getHome } = require('node:os');
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { join: joinPath } = require('node:path');
 
         const isSystemd =
           Boolean(process.env.INVOCATION_ID) || Boolean(process.env.SYSTEMD_EXEC_PID);
@@ -1071,24 +1112,31 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           process.exit(0);
         }
 
-        // Spawn detached daemon directly, then exit current process
-        // Cannot use `mama start` because it checks PID (current process still alive)
         const script = process.argv[1];
+        if (!script) {
+          throw new Error('Unable to determine executable script path');
+        }
         const logDir = joinPath(getHome(), '.mama', 'logs');
         const logFile = joinPath(logDir, 'daemon.log');
         const out = openSync(logFile, 'a');
-        const child = spawnChild(process.execPath, [script, 'daemon'], {
-          detached: true,
-          stdio: ['ignore', out, out],
-          cwd: getHome(),
-          env: { ...process.env, MAMA_DAEMON: '1' },
-        });
-        child.unref();
-        if (child.pid) {
-          const pidFile = joinPath(getHome(), '.mama', 'mama.pid');
-          writeFileSync(pidFile, String(child.pid));
-        }
-        process.exit(0);
+        const runCli = (cmd: string) => {
+          const child = spawnChild(process.execPath, [script, cmd], {
+            detached: true,
+            stdio: ['ignore', out, out],
+            cwd: dirnamePath(script),
+            env: { ...process.env, MAMA_DAEMON: '1' },
+          });
+          child.unref();
+        };
+
+        // Wait for port to be released after stop (2s delay between stop and start)
+        setTimeout(() => {
+          runCli('stop');
+          setTimeout(() => {
+            runCli('start');
+            process.exit(0);
+          }, 2000);
+        }, 1000);
       }, 500);
       return true;
     }
@@ -1659,11 +1707,41 @@ function mergeConfigUpdates(
     merged.use_claude_cli = updates.use_claude_cli;
   }
 
-  if (updates.agent) {
-    merged.agent = {
+  const normalizeAgentNumber = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+
+  if (updates.agent && typeof updates.agent === 'object') {
+    const agentUpdates = updates.agent as Record<string, unknown>;
+    const normalizedAgent = {
       ...current.agent,
-      ...(updates.agent as Record<string, unknown>),
+      ...agentUpdates,
     };
+
+    if (agentUpdates.max_turns !== undefined) {
+      const normalized = normalizeAgentNumber(agentUpdates.max_turns);
+      if (normalized === undefined) {
+        throw new Error('agent.max_turns must be a number');
+      }
+      normalizedAgent.max_turns = normalized;
+    }
+
+    if (agentUpdates.timeout !== undefined) {
+      const normalized = normalizeAgentNumber(agentUpdates.timeout);
+      if (normalized === undefined) {
+        throw new Error('agent.timeout must be a number');
+      }
+      normalizedAgent.timeout = normalized;
+    }
+
+    merged.agent = normalizedAgent;
   }
 
   if (updates.heartbeat) {
@@ -1801,11 +1879,33 @@ function mergeConfigUpdates(
 function validateConfigUpdate(config: Record<string, any>): string[] {
   const errors: string[] = [];
 
+  const normalizeNumber = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+
   if (config.agent) {
-    if (config.agent.max_turns && (config.agent.max_turns < 1 || config.agent.max_turns > 100)) {
+    const maxTurns = normalizeNumber(config.agent.max_turns);
+    if (
+      config.agent.max_turns !== undefined &&
+      (maxTurns === undefined || !Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 100)
+    ) {
       errors.push('max_turns must be between 1 and 100');
     }
-    if (config.agent.timeout && config.agent.timeout < 1000) {
+    const timeoutMs = normalizeNumber(config.agent.timeout);
+    if (
+      config.agent.timeout !== undefined &&
+      (timeoutMs === undefined ||
+        !Number.isFinite(timeoutMs) ||
+        !Number.isInteger(timeoutMs) ||
+        timeoutMs < 1000)
+    ) {
       errors.push('timeout must be at least 1000ms');
     }
     if (
@@ -1827,7 +1927,13 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
   }
 
   if (config.heartbeat) {
-    if (config.heartbeat.interval && config.heartbeat.interval < 60000) {
+    const heartbeatIntervalMs = normalizeNumber(config.heartbeat.interval);
+    if (
+      config.heartbeat.interval !== undefined &&
+      (heartbeatIntervalMs === undefined ||
+        !Number.isFinite(heartbeatIntervalMs) ||
+        heartbeatIntervalMs < 60000)
+    ) {
       errors.push('heartbeat interval must be at least 60000ms (1 minute)');
     }
   }

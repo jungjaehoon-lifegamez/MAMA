@@ -221,8 +221,8 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       // Verify timeout in skill
       expect(skillContent).toContain('1200ms');
 
-      // PreToolUse handles contract checking for Edit/Write
-      expect(preToolContent).toContain('WRITE_TOOLS');
+      // PreToolUse handles decision lookup for Read
+      expect(preToolContent).toContain('READ_TOOLS');
     });
 
     it('should reference related stories in SKILL.md', () => {

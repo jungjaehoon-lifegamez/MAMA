@@ -9,7 +9,7 @@
 /**
  * Known Claude model name mappings
  */
-const MODEL_NAMES = {
+const MODEL_NAMES: Record<string, string> = {
   'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
   'claude-opus-4-20250514': 'Claude 4 Opus',
   'claude-opus-4-5-20251101': 'Claude 4.5 Opus',
@@ -24,7 +24,7 @@ const MODEL_NAMES = {
  * @param {string} model - Model ID (e.g., 'claude-sonnet-4-20250514')
  * @returns {string} Human-friendly name (e.g., 'Claude 4 Sonnet')
  */
-export function formatModelName(model) {
+export function formatModelName(model: string | null | undefined): string {
   if (!model || model === 'default') {
     return 'Default';
   }
@@ -53,7 +53,7 @@ export function formatModelName(model) {
  * @param {Date} date - Date object
  * @returns {string} Formatted time (HH:MM)
  */
-export function formatMessageTime(date) {
+export function formatMessageTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -62,10 +62,10 @@ export function formatMessageTime(date) {
  * @param {string|Date} timestamp - Timestamp
  * @returns {string} Formatted relative time
  */
-export function formatCheckpointTime(timestamp) {
+export function formatCheckpointTime(timestamp: string | Date): string {
   const date = new Date(timestamp);
   const now = new Date();
-  const diff = now - date;
+  const diff = now.getTime() - date.getTime();
 
   if (diff < 3600000) {
     const mins = Math.floor(diff / 60000);
@@ -88,14 +88,18 @@ export function formatCheckpointTime(timestamp) {
  * @param {string|Date} timestamp - Timestamp
  * @returns {string} Relative time string
  */
-export function formatRelativeTime(timestamp) {
+export function formatRelativeTime(timestamp: string | number | Date | null | undefined): string {
   if (!timestamp) {
-    return '';
+    return 'Never';
   }
 
   const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return 'Never';
+  }
+
   const now = new Date();
-  const diff = now - date;
+  const diff = now.getTime() - date.getTime();
 
   if (diff < 60000) {
     return 'Just now';
@@ -122,7 +126,7 @@ export function formatRelativeTime(timestamp) {
  * @param {number} maxLength - Maximum length
  * @returns {string} Truncated text
  */
-export function truncateText(text, maxLength) {
+export function truncateText(text: string | null | undefined, maxLength: number): string {
   if (!text) {
     return '';
   }
@@ -137,7 +141,7 @@ export function truncateText(text, maxLength) {
  * @param {string} text - Text to extract from
  * @returns {string} First meaningful line
  */
-export function extractFirstLine(text) {
+export function extractFirstLine(text: string | null | undefined): string {
   if (!text) {
     return 'No summary';
   }
@@ -150,7 +154,7 @@ export function extractFirstLine(text) {
  * @param {string} text - Text to format
  * @returns {string} Formatted HTML
  */
-export function formatAssistantMessage(text) {
+export function formatAssistantMessage(text: string | null | undefined): string {
   if (!text) {
     return '';
   }
@@ -162,7 +166,7 @@ export function formatAssistantMessage(text) {
   formatted = wrapCheckpointSections(formatted);
 
   // Code blocks with optional language (```js ... ```)
-  formatted = formatted.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+  formatted = formatted.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
     const langClass = lang ? ` class="language-${lang}"` : '';
     return `<pre class="code-block"><code${langClass}>${code.trim()}</code></pre>`;
   });
@@ -179,7 +183,7 @@ export function formatAssistantMessage(text) {
 
   // Helper: build safe media HTML from captured filename
   // Note: filename may contain HTML entities from prior escaping, so decode first
-  const buildMediaHtml = (filename) => {
+  const buildMediaHtml = (filename: string): string => {
     const decodedName = decodeHtmlEntities(filename);
     const safeName = encodeURIComponent(decodedName);
     const safeAlt = escapeHtmlForMarkdown(decodedName).replace(/"/g, '&quot;');
@@ -230,7 +234,7 @@ export function formatAssistantMessage(text) {
     /^(?:&gt;\s*)?(?:<strong>)?([A-D])\)(?:<\/strong>)?\s*(.+)$/gim,
     (match, letter, text) => {
       const upperLetter = letter.toUpperCase();
-      return `<button class="quiz-choice-btn" data-choice="${upperLetter}" onclick="window.sendQuizChoice('${upperLetter}')">${upperLetter}) ${text.trim()}</button>`;
+      return `<button class="quiz-choice-btn" type="button" data-choice="${upperLetter}">${upperLetter}) ${text.trim()}</button>`;
     }
   );
 
@@ -252,7 +256,7 @@ export function formatAssistantMessage(text) {
  * @param {string} text - Text to escape
  * @returns {string} Escaped text
  */
-function escapeHtmlForMarkdown(text) {
+function escapeHtmlForMarkdown(text: string): string {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
@@ -264,7 +268,7 @@ function escapeHtmlForMarkdown(text) {
  * @param {string} text - Text with HTML entities
  * @returns {string} Decoded plain text
  */
-function decodeHtmlEntities(text) {
+function decodeHtmlEntities(text: string): string {
   const div = document.createElement('div');
   div.innerHTML = text;
   return div.textContent || div.innerText || '';
@@ -276,7 +280,7 @@ function decodeHtmlEntities(text) {
  * @param {string} text - Text to process
  * @returns {string} Text with collapsible sections
  */
-function wrapCheckpointSections(text) {
+function wrapCheckpointSections(text: string): string {
   // Pattern to detect checkpoint section start
   // Matches: "📍 Summary", "🎯 Goal", "📍 **Last Checkpoint**", etc.
   const checkpointStartPatterns = [

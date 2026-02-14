@@ -18,6 +18,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Viewer build outputs
+/packages/standalone/public/viewer/js/
+
 # Tests
 coverage/
 .vitest/

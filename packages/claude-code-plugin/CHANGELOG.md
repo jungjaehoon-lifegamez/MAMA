@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.11] - 2026-02-14
+
+### Changed
+
+- **Hook purpose redesign**: Hooks now serve distinct purposes
+  - **PreToolUse**: Triggers on `Read` (instead of Edit/Write) - shows related decision history before file exploration
+  - **PostToolUse**: Lightweight reminder for future Claude sessions (no pattern detection)
+- **Decision-centric messaging**: Replaced "contract" terminology with "decision history"
+- **English-first messages**: Purpose-driven hints in English for clearer LLM understanding
+- **Reduced noise**: PreToolUse only fires on first Read, PostToolUse gives minimal hints
+
+### Technical
+
+- Updated plugin.json matchers: PreToolUse now matches `Read`, PostToolUse matches `Edit|Write`
+- Simplified hook logic: removed pattern detection, focused on decision context
+
+## [1.7.10] - 2026-02-13
+
+### Fixed
+
+- **Code review fixes**: Addressed PR #25 review comments
+  - Hardened viewer helpers with proper TS typing
+  - Fixed delegated event attributes in dashboard
+  - Migrated inline events to delegated handlers
+
 ## [1.7.5] - 2026-02-05
 
 ### Fixed
