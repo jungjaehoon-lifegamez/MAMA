@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-02-14
+
+### Fixed
+
+- **Configuration safety**: Improve `mama start` diagnostics when `~/.mama/config.yaml` cron fields use
+  unquoted expressions like `*/10 * * * *`, which YAML parses as an alias.
+  - Added explicit guidance to quote such cron values on startup failure.
+- **Runtime resilience**: Keep `mama-core` API compatibility while injecting context by validating and
+  normalizing search/save/update interfaces before wiring `ContextInjector`.
+
 ## [0.8.2] - 2026-02-13
 
 ### Changed
