@@ -39,13 +39,30 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const MAMA_CONFIG_PATH = path.join(os.homedir(), '.mama', 'config.yaml');
 
 // Paths to viewer files (now in public/viewer/)
-const VIEWER_DIR = path.join(__dirname, '../../public/viewer');
+function getViewerDirectory(): string {
+  const candidateDirs = [
+    path.join(process.cwd(), 'public', 'viewer'),
+    path.join(__dirname, '../../public/viewer'),
+    path.join(__dirname, '../../../public/viewer'),
+  ];
+
+  for (const candidate of candidateDirs) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  }
+
+  // Fallback for unusual launch locations.
+  return path.join(process.cwd(), 'public', 'viewer');
+}
+
+const VIEWER_DIR = getViewerDirectory();
 const VIEWER_HTML_PATH = path.join(VIEWER_DIR, 'viewer.html');
 const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
 const VIEWER_JS_PATH = path.join(VIEWER_DIR, 'viewer.js');
 const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
-const FAVICON_PATH = path.join(__dirname, '../../public/favicon.ico');
+const FAVICON_PATH = path.join(process.cwd(), 'public', 'favicon.ico');
 
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
@@ -222,6 +239,11 @@ function serveStaticFile(res: ServerResponse, filePath: string, contentType: str
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[GraphAPI] Static file error: ${message}`);
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('File not found: ' + filePath);
+      return;
+    }
     res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end('Error loading file: ' + message);
   }
@@ -808,8 +830,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET /viewer - serve HTML viewer
-    if (pathname === '/viewer' && req.method === 'GET') {
+    // Route: GET/HEAD /viewer or /viewer/ - serve HTML viewer
+    if (
+      (pathname === '/viewer' || pathname === '/viewer/') &&
+      (req.method === 'GET' || req.method === 'HEAD')
+    ) {
       console.log('[GraphHandler] Serving viewer.html');
       handleViewerRequest(req, res);
       return true;
@@ -1054,11 +1079,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { spawn: spawnChild } = require('node:child_process');
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { openSync, writeFileSync } = require('node:fs');
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { homedir: getHome } = require('node:os');
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { join: joinPath } = require('node:path');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { openSync } = require('node:fs');
 
         const isSystemd =
           Boolean(process.env.INVOCATION_ID) || Boolean(process.env.SYSTEMD_EXEC_PID);
@@ -1071,23 +1096,27 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           process.exit(0);
         }
 
-        // Spawn detached daemon directly, then exit current process
-        // Cannot use `mama start` because it checks PID (current process still alive)
+        // Restart via detached shell command to avoid bind race:
+        // stop old daemon first, then start a fresh one.
         const script = process.argv[1];
         const logDir = joinPath(getHome(), '.mama', 'logs');
         const logFile = joinPath(logDir, 'daemon.log');
         const out = openSync(logFile, 'a');
-        const child = spawnChild(process.execPath, [script, 'daemon'], {
+        const nodePath = JSON.stringify(process.execPath);
+        const quotedScript = JSON.stringify(script);
+        // Wait for port to be released after stop (2s delay between stop and start)
+        const shellCmd =
+          `sleep 1; ` +
+          `${nodePath} ${quotedScript} stop >/dev/null 2>&1 || true; ` +
+          `sleep 2; ` +
+          `MAMA_NO_AUTO_OPEN_BROWSER=1 ${nodePath} ${quotedScript} start >/dev/null 2>&1 || true`;
+        const child = spawnChild('bash', ['-lc', shellCmd], {
           detached: true,
           stdio: ['ignore', out, out],
           cwd: getHome(),
           env: { ...process.env, MAMA_DAEMON: '1' },
         });
         child.unref();
-        if (child.pid) {
-          const pidFile = joinPath(getHome(), '.mama', 'mama.pid');
-          writeFileSync(pidFile, String(child.pid));
-        }
         process.exit(0);
       }, 500);
       return true;
@@ -1801,11 +1830,33 @@ function mergeConfigUpdates(
 function validateConfigUpdate(config: Record<string, any>): string[] {
   const errors: string[] = [];
 
+  const normalizeNumber = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+
   if (config.agent) {
-    if (config.agent.max_turns && (config.agent.max_turns < 1 || config.agent.max_turns > 100)) {
+    const maxTurns = normalizeNumber(config.agent.max_turns);
+    if (
+      config.agent.max_turns !== undefined &&
+      (maxTurns === undefined || !Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 100)
+    ) {
       errors.push('max_turns must be between 1 and 100');
     }
-    if (config.agent.timeout && config.agent.timeout < 1000) {
+    const timeoutMs = normalizeNumber(config.agent.timeout);
+    if (
+      config.agent.timeout !== undefined &&
+      (timeoutMs === undefined ||
+        !Number.isFinite(timeoutMs) ||
+        !Number.isInteger(timeoutMs) ||
+        timeoutMs < 1000)
+    ) {
       errors.push('timeout must be at least 1000ms');
     }
     if (
@@ -1827,7 +1878,13 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
   }
 
   if (config.heartbeat) {
-    if (config.heartbeat.interval && config.heartbeat.interval < 60000) {
+    const heartbeatIntervalMs = normalizeNumber(config.heartbeat.interval);
+    if (
+      config.heartbeat.interval !== undefined &&
+      (heartbeatIntervalMs === undefined ||
+        !Number.isFinite(heartbeatIntervalMs) ||
+        heartbeatIntervalMs < 60000)
+    ) {
       errors.push('heartbeat interval must be at least 60000ms (1 minute)');
     }
   }
