@@ -1,4 +1,3 @@
-/* global marked */
 /**
  * Graph Module - Decision Graph Visualization
  * @module modules/graph
@@ -15,9 +14,49 @@
 /* eslint-env browser */
 /* global vis */
 
-import { escapeHtml, debounce, showToast } from '../utils/dom.js';
+import {
+  escapeHtml,
+  escapeAttr,
+  debounce,
+  showToast,
+  getElementByIdOrNull,
+  getErrorMessage,
+} from '../utils/dom.js';
 import { DebugLogger } from '../utils/debug-logger.js';
-import { API } from '../utils/api.js';
+import { API, type GraphNode, type GraphEdge, type SimilarDecision } from '../utils/api.js';
+import { renderSafeMarkdown } from '../utils/markdown.js';
+
+type GraphNodeRecord = GraphNode & {
+  topic?: string;
+  outcome?: string;
+  decision?: string;
+  reasoning?: string;
+  confidence?: number;
+  created_at?: string;
+};
+
+type GraphEdgeRecord = GraphEdge & {
+  from: GraphNodeRecord['id'];
+  to: GraphNodeRecord['id'];
+};
+
+type EdgeStyle = {
+  color: string;
+  dashes: boolean | number[];
+  width: number;
+};
+
+type ConnectedEdges = {
+  outgoing: GraphEdgeRecord[];
+  incoming: GraphEdgeRecord[];
+  all: GraphEdgeRecord[];
+};
+
+type GraphInput = {
+  nodes: GraphNodeRecord[];
+  edges: GraphEdgeRecord[];
+  meta?: Record<string, unknown>;
+};
 
 const logger = new DebugLogger('Graph');
 
@@ -25,43 +64,46 @@ const logger = new DebugLogger('Graph');
  * Graph Module Class
  */
 export class GraphModule {
+  network: VisNetwork | null = null;
+  graphData: GraphInput = { nodes: [], edges: [], meta: {} };
+  currentNodeId: string | null = null;
+  adjacencyList: Map<string, string[]> = new Map();
+  searchMatches: GraphNodeRecord[] = [];
+  currentSearchIndex = 0;
+  debouncedSearch = debounce(() => this.search(), 300);
+  private similarDecisionClickHandler = (event: Event): void => {
+    const target = event.target as HTMLElement;
+    const btn = target.closest('.similar-decision-btn') as HTMLElement | null;
+    if (!btn || !btn.dataset.nodeId) {
+      return;
+    }
+    this.navigateToNode(btn.dataset.nodeId);
+  };
+  topicColors: Record<string, string> = {};
+  colorPalette = [
+    '#FFCE00', // mama yellow (primary)
+    '#E6B800', // mama yellow-hover
+    '#FF9999', // mama blush
+    '#D4C4E0', // mama lavender-dark
+    '#22c55e', // success green
+    '#f97316', // warning orange
+    '#06b6d4', // info cyan
+    '#8b5cf6', // purple accent
+    '#ec4899', // pink accent
+    '#f59e0b', // amber
+    '#10b981', // teal
+    '#0ea5e9', // sky blue
+  ];
+  colorIndex = 0;
+  edgeStyles: Record<string, EdgeStyle> = {
+    supersedes: { color: '#666666', dashes: false, width: 2 },
+    builds_on: { color: '#B8860B', dashes: [5, 5], width: 2.5 }, // dark goldenrod
+    debates: { color: '#DC143C', dashes: [5, 5], width: 2.5 }, // crimson
+    synthesizes: { color: '#6B4C9A', width: 3, dashes: false }, // dark purple
+  };
+
   constructor() {
     // Network state
-    this.network = null;
-    this.graphData = { nodes: [], edges: [], meta: {} };
-    this.currentNodeId = null;
-    this.adjacencyList = new Map();
-
-    // Search state
-    this.searchMatches = [];
-    this.currentSearchIndex = 0;
-    this.debouncedSearch = debounce(() => this.search(), 300);
-
-    // Color management - MAMA Brand Palette
-    this.topicColors = {};
-    this.colorPalette = [
-      '#FFCE00', // mama yellow (primary)
-      '#E6B800', // mama yellow-hover
-      '#FF9999', // mama blush
-      '#D4C4E0', // mama lavender-dark
-      '#22c55e', // success green
-      '#f97316', // warning orange
-      '#06b6d4', // info cyan
-      '#8b5cf6', // purple accent
-      '#ec4899', // pink accent
-      '#f59e0b', // amber
-      '#10b981', // teal
-      '#0ea5e9', // sky blue
-    ];
-    this.colorIndex = 0;
-
-    // Edge styles - High contrast for lavender background
-    this.edgeStyles = {
-      supersedes: { color: '#666666', dashes: false, width: 2 },
-      builds_on: { color: '#B8860B', dashes: [5, 5], width: 2.5 }, // dark goldenrod
-      debates: { color: '#DC143C', dashes: [5, 5], width: 2.5 }, // crimson
-      synthesizes: { color: '#6B4C9A', width: 3, dashes: false }, // dark purple
-    };
   }
 
   // =============================================
@@ -71,7 +113,7 @@ export class GraphModule {
   /**
    * Fetch graph data from API
    */
-  async fetchData() {
+  async fetchData(): Promise<GraphInput> {
     try {
       this.graphData = await API.getGraph();
       logger.info('Graph data loaded:', this.graphData.meta);
@@ -89,8 +131,8 @@ export class GraphModule {
   /**
    * Initialize vis-network
    */
-  init(data) {
-    const container = document.getElementById('graph-canvas');
+  init(data: GraphInput): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('graph-canvas');
     if (!container) {
       logger.error('graph-canvas element not found');
       return;
@@ -114,14 +156,14 @@ export class GraphModule {
     // Map nodes to vis-network format
     const nodes = data.nodes.map((n) => ({
       id: n.id,
-      label: n.topic || n.id.substring(0, 20),
+      label: n.topic || String(n.id).substring(0, 20),
       title: this.createNodeTooltip(n),
       color: {
         background: this.getTopicColor(n.topic),
         border: this.getOutcomeBorderColor(n.outcome),
         highlight: { background: this.getTopicColor(n.topic), border: '#fff' },
       },
-      size: this.getNodeSize(connectionCounts[n.id] || 0),
+      size: this.getNodeSize(connectionCounts[String(n.id)] || 0),
       font: { color: '#131313', size: 12 },
       borderWidth: 3,
       data: n,
@@ -182,15 +224,16 @@ export class GraphModule {
     this.network = new vis.Network(container, networkData, options);
 
     // Event handlers
-    this.network.on('click', (params) => {
+    this.network.on('click', (params: { nodes: Array<string | number> }) => {
       try {
         if (params.nodes.length > 0) {
           const nodeId = params.nodes[0];
-          const node = data.nodes.find((n) => n.id === nodeId);
+          const targetId = String(nodeId);
+          const node = data.nodes.find((n) => String(n.id) === targetId);
           if (node) {
             logger.debug('Node clicked:', nodeId, node);
             this.showDetail(node);
-            this.highlightConnectedNodes(nodeId);
+            this.highlightConnectedNodes(targetId);
           }
         } else {
           this.closeDetail();
@@ -198,12 +241,14 @@ export class GraphModule {
         }
       } catch (error) {
         logger.error('Error handling click:', error);
-        logger.error('Error stack:', error.stack);
+        if (error instanceof Error && error.stack) {
+          logger.error('Error stack:', error.stack);
+        }
       }
     });
 
     this.network.on('stabilized', () => {
-      const loadingEl = document.getElementById('graph-loading');
+      const loadingEl = getElementByIdOrNull<HTMLElement>('graph-loading');
       if (loadingEl) {
         loadingEl.style.display = 'none';
       }
@@ -212,7 +257,7 @@ export class GraphModule {
 
     // Backup: hide loading after 3 seconds even if stabilization doesn't complete
     setTimeout(() => {
-      const loadingEl = document.getElementById('graph-loading');
+      const loadingEl = getElementByIdOrNull<HTMLElement>('graph-loading');
       if (loadingEl && loadingEl.style.display !== 'none') {
         loadingEl.style.display = 'none';
         logger.warn('Graph loading hidden by timeout');
@@ -220,7 +265,7 @@ export class GraphModule {
     }, 3000);
 
     // Populate topic filter
-    const topics = [...new Set(data.nodes.map((n) => n.topic))].sort();
+    const topics = [...new Set(data.nodes.map((n) => n.topic || ''))].sort();
     this.populateTopicFilter(topics);
 
     logger.info('Graph initialized with', nodes.length, 'nodes and', edges.length, 'edges');
@@ -233,7 +278,7 @@ export class GraphModule {
   /**
    * Get color for topic
    */
-  getTopicColor(topic) {
+  getTopicColor(topic = ''): string {
     if (!this.topicColors[topic]) {
       this.topicColors[topic] = this.colorPalette[this.colorIndex % this.colorPalette.length];
       this.colorIndex++;
@@ -244,7 +289,7 @@ export class GraphModule {
   /**
    * Get border color based on outcome
    */
-  getOutcomeBorderColor(outcome) {
+  getOutcomeBorderColor(outcome?: string): string {
     switch (outcome?.toLowerCase()) {
       case 'success':
         return '#22c55e';
@@ -260,14 +305,16 @@ export class GraphModule {
   /**
    * Get edge style by relationship type
    */
-  getEdgeStyle(relationship) {
-    return this.edgeStyles[relationship] || { color: '#4a4a6a', dashes: false };
+  getEdgeStyle(relationship?: string): EdgeStyle {
+    return (
+      this.edgeStyles[relationship || 'default'] || { color: '#4a4a6a', dashes: false, width: 2 }
+    );
   }
 
   /**
    * Get node size based on connection count
    */
-  getNodeSize(connectionCount) {
+  getNodeSize(connectionCount: number): number {
     if (connectionCount <= 2) {
       return 12;
     }
@@ -283,11 +330,11 @@ export class GraphModule {
   /**
    * Create node tooltip
    */
-  createNodeTooltip(node) {
+  createNodeTooltip(node: GraphNodeRecord): string {
     return `
       <strong>${escapeHtml(node.topic || 'Unknown')}</strong><br>
       Decision: ${escapeHtml((node.decision || '').substring(0, 100))}...<br>
-      Outcome: ${node.outcome || 'PENDING'}<br>
+      Outcome: ${escapeHtml(node.outcome || 'PENDING')}<br>
       Confidence: ${Math.round((node.confidence || 0) * 100)}%
     `;
   }
@@ -299,18 +346,21 @@ export class GraphModule {
   /**
    * Build adjacency list for BFS
    */
-  buildAdjacencyList(edges) {
+  buildAdjacencyList(edges: GraphEdgeRecord[]): void {
     this.adjacencyList = new Map();
 
     edges.forEach((edge) => {
-      if (!this.adjacencyList.has(edge.from)) {
-        this.adjacencyList.set(edge.from, []);
+      const from = String(edge.from);
+      const to = String(edge.to);
+
+      if (!this.adjacencyList.has(from)) {
+        this.adjacencyList.set(from, []);
       }
-      if (!this.adjacencyList.has(edge.to)) {
-        this.adjacencyList.set(edge.to, []);
+      if (!this.adjacencyList.has(to)) {
+        this.adjacencyList.set(to, []);
       }
-      this.adjacencyList.get(edge.from).push(edge.to);
-      this.adjacencyList.get(edge.to).push(edge.from);
+      this.adjacencyList.get(from).push(to);
+      this.adjacencyList.get(to).push(from);
     });
 
     logger.debug('Adjacency list built with', this.adjacencyList.size, 'nodes');
@@ -319,16 +369,23 @@ export class GraphModule {
   /**
    * Calculate connection count for each node
    */
-  calculateConnectionCounts(nodes, edges) {
-    const counts = {};
-    nodes.forEach((n) => (counts[n.id] = 0));
+  calculateConnectionCounts(
+    nodes: GraphNodeRecord[],
+    edges: GraphEdgeRecord[]
+  ): Record<string, number> {
+    const counts: Record<string, number> = {};
+    nodes.forEach((n) => {
+      counts[String(n.id)] = 0;
+    });
 
     edges.forEach((edge) => {
-      if (counts[edge.from] !== undefined) {
-        counts[edge.from]++;
+      const from = String(edge.from);
+      const to = String(edge.to);
+      if (counts[from] !== undefined) {
+        counts[from]++;
       }
-      if (counts[edge.to] !== undefined) {
-        counts[edge.to]++;
+      if (counts[to] !== undefined) {
+        counts[to]++;
       }
     });
 
@@ -342,13 +399,17 @@ export class GraphModule {
   /**
    * Get connected node IDs using BFS
    */
-  getConnectedNodeIds(nodeId, maxDepth = 3) {
-    const visited = new Set();
-    const queue = [{ id: nodeId, depth: 0 }];
+  getConnectedNodeIds(nodeId: string, maxDepth = 3): string[] {
+    const visited = new Set<string>();
+    const queue: { id: string; depth: number }[] = [{ id: nodeId, depth: 0 }];
     visited.add(nodeId);
 
     while (queue.length > 0) {
-      const { id, depth } = queue.shift();
+      const next = queue.shift();
+      if (!next) {
+        continue;
+      }
+      const { id, depth } = next;
 
       if (depth >= maxDepth) {
         continue;
@@ -369,16 +430,17 @@ export class GraphModule {
   /**
    * Highlight connected nodes
    */
-  highlightConnectedNodes(nodeId) {
+  highlightConnectedNodes(nodeId: string | number): void {
+    const targetId = String(nodeId);
     if (!this.network) {
       return;
     }
 
-    const connectedIds = this.getConnectedNodeIds(nodeId, 3);
+    const connectedIds = this.getConnectedNodeIds(targetId, 3);
     const allNodes = this.network.body.data.nodes.get();
 
     allNodes.forEach((node) => {
-      const isConnected = connectedIds.includes(node.id);
+      const isConnected = connectedIds.includes(String(node.id));
       const opacity = isConnected ? 1.0 : 0.2;
 
       this.network.body.data.nodes.update({
@@ -390,7 +452,8 @@ export class GraphModule {
 
     const allEdges = this.network.body.data.edges.get();
     allEdges.forEach((edge) => {
-      const isConnected = connectedIds.includes(edge.from) && connectedIds.includes(edge.to);
+      const isConnected =
+        connectedIds.includes(String(edge.from)) && connectedIds.includes(String(edge.to));
       this.network.body.data.edges.update({
         id: edge.id,
         opacity: isConnected ? 1.0 : 0.1,
@@ -401,7 +464,7 @@ export class GraphModule {
   /**
    * Reset node highlight
    */
-  resetNodeHighlight() {
+  resetNodeHighlight(): void {
     if (!this.network) {
       return;
     }
@@ -431,11 +494,11 @@ export class GraphModule {
   /**
    * Show node detail panel
    */
-  async showDetail(node) {
+  async showDetail(node: GraphNodeRecord): Promise<void> {
     try {
       logger.debug('showDetail called with node:', node);
-      this.currentNodeId = node.id;
-      const panel = document.getElementById('decision-detail-modal');
+      this.currentNodeId = String(node.id);
+      const panel = getElementByIdOrNull<HTMLDivElement>('decision-detail-modal');
 
       if (!panel) {
         logger.error('decision-detail-modal element not found');
@@ -443,65 +506,51 @@ export class GraphModule {
       }
 
       // Update existing DOM elements with markdown rendering
-      document.getElementById('detail-topic').textContent = node.topic || 'Unknown Topic';
-      const decisionEl = document.getElementById('detail-decision');
-      const reasoningEl = document.getElementById('detail-reasoning');
-
-      // Use marked for markdown if available (textContent to avoid XSS)
-      if (typeof marked !== 'undefined' && marked.parse) {
-        try {
-          const renderedDecision = marked.parse(node.decision || '-', {
-            mangle: false,
-            headerIds: false,
-          });
-          const renderedReasoning = marked.parse(node.reasoning || '-', {
-            mangle: false,
-            headerIds: false,
-          });
-          decisionEl.textContent = renderedDecision;
-          reasoningEl.textContent = renderedReasoning;
-        } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
-          showToast(`Markdown render failed: ${message}`);
-          logger.warn('[Graph] Markdown parse failed:', e);
-          decisionEl.textContent = node.decision || '-';
-          reasoningEl.textContent = node.reasoning || '-';
-        }
-      } else {
-        decisionEl.textContent = node.decision || '-';
-        reasoningEl.textContent = node.reasoning || '-';
+      const topicEl = getElementByIdOrNull<HTMLElement>('detail-topic');
+      const decisionEl = getElementByIdOrNull<HTMLElement>('detail-decision');
+      const reasoningEl = getElementByIdOrNull<HTMLElement>('detail-reasoning');
+      if (!decisionEl || !reasoningEl) {
+        logger.error('Required detail elements missing');
+        return;
+      }
+      if (topicEl) {
+        topicEl.textContent = node.topic || 'Unknown Topic';
       }
 
-      const outcomeSelect = document.getElementById('detail-outcome-select');
+      decisionEl.innerHTML = renderSafeMarkdown(node.decision || '-');
+      reasoningEl.innerHTML = renderSafeMarkdown(node.reasoning || '-');
+
+      const outcomeSelect = getElementByIdOrNull<HTMLSelectElement>('detail-outcome-select');
       if (outcomeSelect) {
         outcomeSelect.value = (node.outcome || 'PENDING').toUpperCase();
       }
 
       // Clear outcome status
-      const outcomeStatus = document.getElementById('outcome-status');
+      const outcomeStatus = getElementByIdOrNull<HTMLElement>('outcome-status');
       if (outcomeStatus) {
         outcomeStatus.textContent = '';
         outcomeStatus.className = '';
       }
 
-      document.getElementById('detail-confidence').textContent = node.confidence
-        ? `${(node.confidence * 100).toFixed(0)}%`
-        : '-';
+      const confidenceEl = getElementByIdOrNull<HTMLElement>('detail-confidence');
+      if (confidenceEl) {
+        confidenceEl.textContent = node.confidence ? `${(node.confidence * 100).toFixed(0)}%` : '-';
+      }
 
-      const createdEl = document.getElementById('detail-created');
+      const createdEl = getElementByIdOrNull<HTMLElement>('detail-created');
       if (createdEl) {
         createdEl.textContent = node.created_at ? new Date(node.created_at).toLocaleString() : '-';
       }
 
       // Reset reasoning toggle
-      const reasoningArrow = document.getElementById('reasoning-arrow');
+      const reasoningArrow = getElementByIdOrNull<HTMLElement>('reasoning-arrow');
       if (reasoningArrow) {
         reasoningArrow.textContent = '▶';
       }
-      document.getElementById('detail-reasoning').classList.add('hidden');
+      reasoningEl.classList.add('hidden');
 
       // Show loading state for similar decisions
-      const similarEl = document.getElementById('detail-similar');
+      const similarEl = getElementByIdOrNull<HTMLElement>('detail-similar');
       if (similarEl) {
         similarEl.innerHTML = '<span class="loading-similar">Searching...</span>';
       }
@@ -511,11 +560,13 @@ export class GraphModule {
 
       // Fetch similar decisions
       logger.info('Fetching similar decisions...');
-      this.fetchSimilarDecisions(node.id);
+      await this.fetchSimilarDecisions(String(node.id));
       logger.debug('showDetail completed successfully');
     } catch (error) {
       logger.error('Error in showDetail:', error);
-      logger.error('Error stack:', error.stack);
+      if (error instanceof Error && error.stack) {
+        logger.error('Error stack:', error.stack);
+      }
       logger.error('Node data:', node);
     }
   }
@@ -523,7 +574,7 @@ export class GraphModule {
   /**
    * Get outcome icon name
    */
-  getOutcomeIcon(outcome) {
+  getOutcomeIcon(outcome?: string): string {
     const outcomeMap = {
       pending: 'clock',
       success: 'check-circle',
@@ -536,9 +587,9 @@ export class GraphModule {
   /**
    * Toggle reasoning full text
    */
-  toggleReasoning() {
-    const arrow = document.getElementById('reasoning-arrow');
-    const content = document.getElementById('detail-reasoning');
+  toggleReasoning(): void {
+    const arrow = getElementByIdOrNull<HTMLElement>('reasoning-arrow');
+    const content = getElementByIdOrNull<HTMLElement>('detail-reasoning');
     if (arrow && content) {
       const isHidden = content.classList.contains('hidden');
       content.classList.toggle('hidden');
@@ -549,8 +600,8 @@ export class GraphModule {
   /**
    * Close detail panel
    */
-  closeDetail() {
-    const panel = document.getElementById('decision-detail-modal');
+  closeDetail(): void {
+    const panel = getElementByIdOrNull<HTMLDivElement>('decision-detail-modal');
     if (panel) {
       panel.classList.remove('visible');
     }
@@ -561,9 +612,9 @@ export class GraphModule {
   /**
    * Fetch similar decisions
    */
-  async fetchSimilarDecisions(nodeId) {
+  async fetchSimilarDecisions(nodeId: string): Promise<void> {
     logger.debug('fetchSimilarDecisions called for node:', nodeId);
-    const container = document.getElementById('detail-similar');
+    const container = getElementByIdOrNull<HTMLElement>('detail-similar');
 
     if (!container) {
       logger.warn('detail-similar element not found');
@@ -575,38 +626,44 @@ export class GraphModule {
       const data = await API.getSimilarDecisions(nodeId);
       logger.debug('Similar decisions received:', data);
 
-      if (data.error) {
-        container.innerHTML = `<span style="color:#666">${escapeHtml(data.message || 'Search failed')}</span>`;
-        return;
-      }
-
-      const similar = data.similar || [];
+      const similar = (data.similar || []) as SimilarDecision[];
 
       if (similar.length === 0) {
-        console.log('[MAMA] No similar decisions found');
+        logger.debug('[MAMA] No similar decisions found');
         container.innerHTML = '<span style="color:#666">No similar decisions found</span>';
         return;
       }
 
-      console.log('[MAMA] Building similar decisions HTML for', similar.length, 'items');
+      logger.debug('[MAMA] Building similar decisions HTML for', similar.length, 'items');
       const html = similar
         .map(
           (s) => `
-          <button class="w-full text-left p-2 mb-2 bg-gray-100 dark:bg-gray-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors" onclick="window.graphModule.navigateToNode('${s.id}')">
-            <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">${escapeHtml(s.topic)}</div>
-            <div class="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">${escapeHtml((s.decision || '').substring(0, 80))}...</div>
+          <button class="similar-decision-btn w-full text-left p-2 mb-2 bg-gray-100 dark:bg-gray-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors" data-node-id="${escapeAttr(String(s.id))}">
+            <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">${escapeHtml(
+              String(s.topic || '')
+            )}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">${escapeHtml(
+              String(s.decision || '').substring(0, 80)
+            )}...</div>
             <div class="text-xs text-gray-500 mt-1">${Math.round((s.similarity || 0) * 100)}% match</div>
           </button>
         `
         )
         .join('');
 
-      console.log('[MAMA] Setting similar decisions HTML...');
+      logger.debug('[MAMA] Setting similar decisions HTML');
       container.innerHTML = html;
-      console.log('[MAMA] fetchSimilarDecisions completed');
+
+      // Bind click handler once to avoid duplicate listeners.
+      container.removeEventListener('click', this.similarDecisionClickHandler);
+      container.addEventListener('click', this.similarDecisionClickHandler);
+      logger.debug('[MAMA] fetchSimilarDecisions completed');
     } catch (error) {
-      console.error('[MAMA] Failed to fetch similar decisions:', error);
-      logger.error('Error stack:', error.stack);
+      const message = getErrorMessage(error);
+      logger.error('[MAMA] Failed to fetch similar decisions:', message, error);
+      if (error instanceof Error && error.stack) {
+        logger.error('Error stack:', error.stack);
+      }
       container.innerHTML = '<span style="color:#f66">Failed to load</span>';
     }
   }
@@ -614,8 +671,11 @@ export class GraphModule {
   /**
    * Save outcome for current node
    */
-  async saveOutcome() {
-    const select = document.getElementById('detail-outcome-select');
+  async saveOutcome(): Promise<void> {
+    const select = getElementByIdOrNull<HTMLSelectElement>('detail-outcome-select');
+    if (!select) {
+      return;
+    }
     const newOutcome = select.value;
 
     if (!this.currentNodeId || !newOutcome) {
@@ -626,7 +686,7 @@ export class GraphModule {
       await API.updateOutcome(this.currentNodeId, newOutcome);
 
       // Update local data
-      const node = this.graphData.nodes.find((n) => n.id === this.currentNodeId);
+      const node = this.graphData.nodes.find((n) => String(n.id) === this.currentNodeId);
       if (node) {
         node.outcome = newOutcome.toUpperCase();
 
@@ -642,10 +702,11 @@ export class GraphModule {
         this.showDetail(node);
       }
 
-      console.log('[MAMA] Outcome updated:', this.currentNodeId, newOutcome);
+      logger.debug('[MAMA] Outcome updated:', this.currentNodeId, newOutcome);
     } catch (error) {
-      console.error('[MAMA] Failed to update outcome:', error);
-      alert('Failed to update outcome: ' + error.message);
+      const message = getErrorMessage(error);
+      logger.error('[MAMA] Failed to update outcome:', message);
+      alert(`Failed to update outcome: ${message}`);
     }
   }
 
@@ -656,31 +717,33 @@ export class GraphModule {
   /**
    * Navigate to specific node
    */
-  async navigateToNode(nodeId) {
+  async navigateToNode(nodeId: string | number): Promise<void> {
     if (!this.network) {
       return;
     }
 
+    let nodeIdString = String(nodeId);
+
     // Try exact match first
-    let node = this.graphData.nodes.find((n) => n.id === nodeId);
+    let node = this.graphData.nodes.find((n) => String(n.id) === nodeIdString);
 
     // If not found, try partial match (for short IDs from checkpoints)
     if (!node) {
-      console.log('[MAMA] Exact match not found, trying partial match for:', nodeId);
-      node = this.graphData.nodes.find((n) => n.id.startsWith(nodeId));
+      logger.debug('[MAMA] Exact match not found, trying partial match for:', nodeIdString);
+      node = this.graphData.nodes.find((n) => String(n.id).startsWith(nodeIdString));
 
       if (node) {
-        console.log('[MAMA] Found node via partial match:', node.id);
-        nodeId = node.id; // Update nodeId to the full ID
+        logger.debug('[MAMA] Found node via partial match:', node.id);
+        nodeIdString = String(node.id); // Update to the full ID
       }
     }
 
     // If node not in current graph, reload without filters
     if (!node) {
-      console.log('[MAMA] Node not in current graph, reloading all nodes...');
+      logger.warn('[MAMA] Node not in current graph, reloading all nodes...');
 
       // Reset topic filter
-      const topicFilter = document.getElementById('topic-filter');
+      const topicFilter = getElementByIdOrNull<HTMLSelectElement>('topic-filter');
       if (topicFilter) {
         topicFilter.value = '';
       }
@@ -690,46 +753,48 @@ export class GraphModule {
       this.init(this.graphData);
 
       // Try exact match again
-      node = this.graphData.nodes.find((n) => n.id === nodeId);
+      node = this.graphData.nodes.find((n) => String(n.id) === nodeIdString);
 
       // If still not found, try partial match
       if (!node) {
-        node = this.graphData.nodes.find((n) => n.id.startsWith(nodeId));
+        node = this.graphData.nodes.find((n) => String(n.id).startsWith(nodeIdString));
         if (node) {
-          console.log('[MAMA] Found node via partial match after reload:', node.id);
-          nodeId = node.id;
+          logger.debug('[MAMA] Found node via partial match after reload:', node.id);
+          nodeIdString = String(node.id);
         }
       }
 
       if (!node) {
-        console.warn('[MAMA] Node not found even after reload:', nodeId);
+        logger.warn('[MAMA] Node not found even after reload:', nodeIdString);
         showToast('⚠️ Decision not found in graph');
         return;
       }
     }
 
-    // Focus on node
-    this.network.focus(nodeId, {
+    // Focus on node (use resolved nodeIdString, not original nodeId)
+    this.network.focus(nodeIdString, {
       scale: 1.5,
       animation: { duration: 500, easingFunction: 'easeInOutQuad' },
     });
 
     // Select node (triggers click event)
-    this.network.selectNodes([nodeId]);
+    this.network.selectNodes([nodeIdString]);
 
     // Show detail
     this.showDetail(node);
-    this.highlightConnectedNodes(nodeId);
+    this.highlightConnectedNodes(nodeIdString);
   }
 
   /**
    * Get connected edge types
    */
-  getConnectedEdges(nodeId) {
-    const edges = this.graphData.edges.filter((e) => e.from === nodeId || e.to === nodeId);
+  getConnectedEdges(nodeId: string): ConnectedEdges {
+    const edges = this.graphData.edges.filter(
+      (e) => String(e.from) === nodeId || String(e.to) === nodeId
+    );
 
-    const outgoing = edges.filter((e) => e.from === nodeId);
-    const incoming = edges.filter((e) => e.to === nodeId);
+    const outgoing = edges.filter((e) => String(e.from) === nodeId);
+    const incoming = edges.filter((e) => String(e.to) === nodeId);
 
     return { outgoing, incoming, all: edges };
   }
@@ -741,8 +806,8 @@ export class GraphModule {
   /**
    * Populate topic filter dropdown
    */
-  populateTopicFilter(topics) {
-    const select = document.getElementById('topic-filter');
+  populateTopicFilter(topics: string[]): void {
+    const select = getElementByIdOrNull<HTMLSelectElement>('topic-filter');
     if (!select) {
       return;
     }
@@ -759,7 +824,7 @@ export class GraphModule {
   /**
    * Filter by topic
    */
-  filterByTopic(topic) {
+  filterByTopic(topic: string): void {
     if (!this.network) {
       return;
     }
@@ -777,7 +842,7 @@ export class GraphModule {
     } else {
       // Filter
       allNodes.forEach((node) => {
-        const nodeData = this.graphData.nodes.find((n) => n.id === node.id);
+        const nodeData = this.graphData.nodes.find((n) => String(n.id) === String(node.id));
         this.network.body.data.nodes.update({
           id: node.id,
           hidden: nodeData?.topic !== topic,
@@ -785,13 +850,13 @@ export class GraphModule {
       });
     }
 
-    console.log('[MAMA] Filtered by topic:', topic || 'all');
+    logger.debug('[MAMA] Filtered by topic:', topic || 'all');
   }
 
   /**
    * Filter by outcome
    */
-  filterByOutcome(outcome) {
+  filterByOutcome(outcome: string): void {
     if (!this.network) {
       return;
     }
@@ -809,7 +874,7 @@ export class GraphModule {
     } else {
       // Filter by outcome
       allNodes.forEach((node) => {
-        const nodeData = this.graphData.nodes.find((n) => n.id === node.id);
+        const nodeData = this.graphData.nodes.find((n) => String(n.id) === String(node.id));
         const nodeOutcome = (nodeData?.outcome || 'pending').toLowerCase();
         this.network.body.data.nodes.update({
           id: node.id,
@@ -818,13 +883,13 @@ export class GraphModule {
       });
     }
 
-    console.log('[MAMA] Filtered by outcome:', outcome || 'all');
+    logger.debug('[MAMA] Filtered by outcome:', outcome || 'all');
   }
 
   /**
    * Clear all filters
    */
-  clearFilters() {
+  clearFilters(): void {
     if (!this.network) {
       return;
     }
@@ -853,12 +918,12 @@ export class GraphModule {
     this.searchMatches = [];
     this.currentSearchIndex = 0;
 
-    const countEl = document.getElementById('search-count');
+    const countEl = getElementByIdOrNull<HTMLElement>('search-count');
     if (countEl) {
       countEl.style.display = 'none';
     }
 
-    console.log('[MAMA] All filters cleared');
+    logger.debug('[MAMA] All filters cleared');
   }
 
   // =============================================
@@ -868,8 +933,9 @@ export class GraphModule {
   /**
    * Perform search
    */
-  search() {
-    const query = document.getElementById('search-input').value.trim().toLowerCase();
+  search(): void {
+    const queryInput = getElementByIdOrNull<HTMLInputElement>('search-input');
+    const query = queryInput ? queryInput.value.trim().toLowerCase() : '';
 
     if (!query) {
       this.clearSearch();
@@ -889,16 +955,16 @@ export class GraphModule {
 
     if (this.searchMatches.length > 0) {
       this.highlightSearchResults();
-      this.navigateToNode(this.searchMatches[0].id);
+      this.navigateToNode(String(this.searchMatches[0].id));
     }
 
-    console.log('[MAMA] Search:', query, '- Found', this.searchMatches.length, 'matches');
+    logger.debug('[MAMA] Search:', query, '- Found', this.searchMatches.length, 'matches');
   }
 
   /**
    * Handle search input
    */
-  handleSearchInput(event) {
+  handleSearchInput(event: KeyboardEvent): void {
     if (event.key === 'Enter' && this.searchMatches.length > 0) {
       this.nextSearchResult();
     } else {
@@ -909,7 +975,7 @@ export class GraphModule {
   /**
    * Navigate to next search result
    */
-  nextSearchResult() {
+  nextSearchResult(): void {
     if (this.searchMatches.length === 0) {
       return;
     }
@@ -922,7 +988,7 @@ export class GraphModule {
   /**
    * Navigate to previous search result
    */
-  prevSearchResult() {
+  prevSearchResult(): void {
     if (this.searchMatches.length === 0) {
       return;
     }
@@ -936,8 +1002,8 @@ export class GraphModule {
   /**
    * Update search count display
    */
-  updateSearchResults() {
-    const countEl = document.getElementById('search-count');
+  updateSearchResults(): void {
+    const countEl = getElementByIdOrNull<HTMLElement>('search-count');
     if (!countEl) {
       return;
     }
@@ -954,7 +1020,7 @@ export class GraphModule {
   /**
    * Highlight search results
    */
-  highlightSearchResults() {
+  highlightSearchResults(): void {
     if (!this.network) {
       return;
     }
@@ -963,7 +1029,7 @@ export class GraphModule {
     const allNodes = this.network.body.data.nodes.get();
 
     allNodes.forEach((node) => {
-      const isMatch = matchIds.includes(node.id);
+      const isMatch = matchIds.includes(String(node.id));
       this.network.body.data.nodes.update({
         id: node.id,
         opacity: isMatch ? 1.0 : 0.2,
@@ -975,12 +1041,12 @@ export class GraphModule {
   /**
    * Clear search
    */
-  clearSearch() {
+  clearSearch(): void {
     this.searchMatches = [];
     this.currentSearchIndex = 0;
     this.resetNodeHighlight();
 
-    const countEl = document.getElementById('search-count');
+    const countEl = getElementByIdOrNull<HTMLElement>('search-count');
     if (countEl) {
       countEl.style.display = 'none';
     }
@@ -989,10 +1055,13 @@ export class GraphModule {
   /**
    * Open search panel
    */
-  openSearch() {
-    const searchContainer = document.getElementById('search-container');
-    const searchInput = document.getElementById('search-input');
+  openSearch(): void {
+    const searchContainer = getElementByIdOrNull<HTMLElement>('search-container');
+    const searchInput = getElementByIdOrNull<HTMLInputElement>('search-input');
 
+    if (!searchContainer || !searchInput) {
+      return;
+    }
     searchContainer.style.display = 'flex';
     searchInput.focus();
   }
@@ -1000,8 +1069,12 @@ export class GraphModule {
   /**
    * Close search panel
    */
-  closeSearch() {
-    document.getElementById('search-container').style.display = 'none';
+  closeSearch(): void {
+    const searchContainer = getElementByIdOrNull<HTMLElement>('search-container');
+    if (!searchContainer) {
+      return;
+    }
+    searchContainer.style.display = 'none';
     this.clearSearch();
   }
 }

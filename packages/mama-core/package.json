@@ -24,7 +24,8 @@
     "./errors": "./dist/errors.js",
     "./time-formatter": "./dist/time-formatter.js",
     "./outcome-tracker": "./dist/outcome-tracker.js",
-    "./query-intent": "./dist/query-intent.js"
+    "./query-intent": "./dist/query-intent.js",
+    "./test-utils": "./dist/test-utils.js"
   },
   "scripts": {
     "build": "tsc",
