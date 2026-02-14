@@ -143,13 +143,27 @@ export class DashboardModule {
     }
     this.initialized = true;
 
-    // Event delegation for cron job buttons
+    // Event delegation for dashboard actions
     this.onCronClick = (e: MouseEvent) => {
-      const btn = (e.target as HTMLElement | null)?.closest('[data-cron-id]');
-      if (btn) {
-        const jobId = btn.getAttribute('data-cron-id');
+      const target = e.target as HTMLElement | null;
+      if (!target) {
+        return;
+      }
+
+      const cronButton = target.closest<HTMLElement>('[data-action="run-cron"]');
+      if (cronButton) {
+        const jobId = cronButton.getAttribute('data-cron-id');
         if (jobId) {
           this.runCronJob(jobId);
+        }
+        return;
+      }
+
+      const settingsLink = target.closest<HTMLElement>('[data-action="open-settings"]');
+      if (settingsLink) {
+        const settingsTab = document.querySelector<HTMLElement>('[data-tab="settings"]');
+        if (settingsTab) {
+          settingsTab.click();
         }
       }
     };
@@ -622,7 +636,7 @@ export class DashboardModule {
     if (!multiAgent.enabled) {
       container.innerHTML = `
         <p class="text-gray-500 dark:text-gray-400 text-sm text-center py-4">
-          Multi-agent is not enabled. Enable in <a href="#" class="text-indigo-600 hover:underline" onclick="document.querySelector('[data-tab=\\'settings\\']').click(); return false;">Settings</a>.
+          Multi-agent is not enabled. Enable in <a href="/viewer?tab=settings" class="text-indigo-600 hover:underline" data-action="open-settings">Settings</a>.
         </p>
       `;
       return;
@@ -742,7 +756,7 @@ export class DashboardModule {
           ${agentCards}
         </div>
       </div>
-      <div class="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">
+        <div class="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">
         <div class="flex items-center justify-between mb-2">
           <p class="text-xs text-gray-500">Delegation Chain:</p>
           ${chainBadge}
@@ -772,7 +786,8 @@ export class DashboardModule {
       return;
     }
 
-    const maxCount = Math.max(...topics.map((t) => t.count));
+    const counts = topics.map((topic) => topic.count).filter((count) => Number.isFinite(count));
+    const maxCount = Math.max(1, ...counts);
 
     const html = topics
       .map(
@@ -853,6 +868,7 @@ export class DashboardModule {
           </div>
           <div class="flex items-center gap-1 ml-2 shrink-0">
             <button class="text-xs px-2 py-1 bg-mama-yellow hover:bg-mama-yellow-hover text-mama-black rounded transition-colors"
+              data-action="run-cron"
               data-cron-id="${escapeHtml(job.id)}" title="Run Now">
               Run
             </button>

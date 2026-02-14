@@ -93,6 +93,7 @@ export class SettingsModule {
   multiAgentData: MultiAgentAgentsResponse = { agents: [] };
   initialized = false;
   backendListenersInitialized = false;
+  delegatedListenersInitialized = false;
 
   constructor() {}
 
@@ -116,13 +117,28 @@ export class SettingsModule {
       return fallback;
     }
 
-    const parsed = Number.parseInt(trimmed, 10);
-    if (!Number.isInteger(parsed)) {
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
       throw new Error(`숫자 형식이 유효하지 않습니다: ${id}`);
     }
 
     if (parsed < min || parsed > max) {
       throw new Error(`${id}는 ${min}~${max} 사이여야 합니다.`);
+    }
+
+    return parsed;
+  }
+
+  private parseOptionalNonNegativeInteger(id: string, fieldName: string): number | undefined {
+    const raw = this.getValue(id);
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+      throw new Error(`${fieldName}은(는) 0 이상의 정수여야 합니다.`);
     }
 
     return parsed;
@@ -139,6 +155,82 @@ export class SettingsModule {
 
     await this.loadSettings();
     this.initBackendModelBinding();
+    this.initDelegatedEventHandlers();
+  }
+
+  initDelegatedEventHandlers(): void {
+    if (this.delegatedListenersInitialized) {
+      return;
+    }
+    this.delegatedListenersInitialized = true;
+
+    document.addEventListener('change', (e: Event) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      const actionElement = target.closest<HTMLElement>('[data-action]');
+      const action = actionElement?.dataset.action;
+      if (!action || !actionElement) {
+        return;
+      }
+
+      if (action === 'agent-toggle') {
+        const checkbox = actionElement as HTMLInputElement;
+        const agentId = checkbox.dataset.agentId || '';
+        if (agentId) {
+          void this.toggleAgent(agentId, checkbox.checked);
+        }
+        return;
+      }
+
+      if (action === 'agent-backend') {
+        const select = actionElement as HTMLSelectElement;
+        const agentId = select.dataset.agentId || '';
+        if (agentId) {
+          this.onAgentBackendChange(agentId);
+        }
+        return;
+      }
+
+      if (action === 'agent-save') {
+        const button = actionElement as HTMLButtonElement;
+        const agentId = button.dataset.agentId || '';
+        if (agentId) {
+          void this.saveAgentConfig(agentId);
+        }
+        return;
+      }
+
+      if (action === 'cron-toggle') {
+        const checkbox = actionElement as HTMLInputElement;
+        const cronId = checkbox.dataset.cronId || '';
+        if (cronId) {
+          void this.toggleCronJob(cronId, checkbox.checked);
+        }
+        return;
+      }
+    });
+
+    document.addEventListener('click', (e: MouseEvent) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      const actionElement = target.closest<HTMLElement>('[data-action="cron-delete"]');
+      if (!actionElement) {
+        return;
+      }
+
+      e.preventDefault();
+      const button = actionElement as HTMLButtonElement;
+      const cronId = button.dataset.cronId || '';
+      if (cronId) {
+        void this.deleteCronJob(cronId);
+      }
+    });
   }
 
   /**
@@ -609,9 +701,14 @@ export class SettingsModule {
         tools: this.collectToolModeData(),
       },
       token_budget: {
-        daily_limit: parseInt(this.getValue('settings-token-daily-limit') || '0', 10) || undefined,
-        alert_threshold:
-          parseInt(this.getValue('settings-token-alert-threshold') || '0', 10) || undefined,
+        daily_limit: this.parseOptionalNonNegativeInteger(
+          'settings-token-daily-limit',
+          'daily_limit'
+        ),
+        alert_threshold: this.parseOptionalNonNegativeInteger(
+          'settings-token-alert-threshold',
+          'alert_threshold'
+        ),
       },
     };
   }
@@ -936,9 +1033,9 @@ export class SettingsModule {
                 <input
                   type="checkbox"
                   class="sr-only peer"
+                  data-action="agent-toggle"
                   data-agent-id="${escapeAttr(agentId)}"
                   ${agent.enabled ? 'checked' : ''}
-                  onchange="window.settingsModule.toggleAgent('${escapeAttr(agentId)}', this.checked)"
                 >
                 <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
               </label>
@@ -952,8 +1049,9 @@ export class SettingsModule {
                 <label class="block text-gray-500 mb-0.5">Backend</label>
                 <select
                   id="agent-backend-${escapeAttr(agentId)}"
+                  data-action="agent-backend"
+                  data-agent-id="${escapeAttr(agentId)}"
                   class="w-full rounded border border-gray-200 px-2 py-1"
-                  onchange="window.settingsModule.onAgentBackendChange('${escapeAttr(agentId)}')"
                 >
                   ${backendOptions}
                 </select>
@@ -970,8 +1068,10 @@ export class SettingsModule {
               </div>
               <div class="flex items-end">
                 <button
+                  type="button"
+                  data-action="agent-save"
+                  data-agent-id="${escapeAttr(agentId)}"
                   class="w-full px-2 py-1 rounded bg-yellow-400 text-black hover:bg-yellow-300"
-                  onclick="window.settingsModule.saveAgentConfig('${escapeAttr(agentId)}')"
                 >
                   Save
                 </button>
@@ -997,7 +1097,7 @@ export class SettingsModule {
       logger.error('Failed to toggle agent:', error);
       // Revert checkbox on error
       const checkbox = document.querySelector<HTMLInputElement>(
-        `input[data-agent-id="${agentId}"]`
+        `input[data-action="agent-toggle"][data-agent-id="${agentId}"]`
       );
       if (checkbox) {
         checkbox.checked = !enabled;
@@ -1161,30 +1261,31 @@ export class SettingsModule {
               </div>
               <p class="text-[10px] text-gray-500 truncate">${escapeHtml((job.prompt || '').slice(0, 80))}</p>
             </div>
-            <div class="flex items-center gap-1 ml-2 shrink-0">
-              <span class="text-[10px] text-gray-400">${nextRun}</span>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" ${job.enabled !== false ? 'checked' : ''}
-                  data-cron-id="${escapeHtml(job.id)}"
-                  class="sr-only peer cron-toggle">
+              <div class="flex items-center gap-1 ml-2 shrink-0">
+                <span class="text-[10px] text-gray-400">${nextRun}</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    ${job.enabled !== false ? 'checked' : ''}
+                    data-action="cron-toggle"
+                    data-cron-id="${escapeHtml(job.id)}"
+                    class="sr-only peer cron-toggle"
+                  >
                 <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
               </label>
-              <button onclick="settingsModule.deleteCronJob('${escapeHtml(job.id)}')" class="text-red-400 hover:text-red-600 text-xs px-1" title="Delete">✕</button>
+              <button
+                type="button"
+                data-action="cron-delete"
+                data-cron-id="${escapeHtml(job.id)}"
+                class="text-red-400 hover:text-red-600 text-xs px-1"
+                title="Delete"
+              >
+                ✕
+              </button>
             </div>
           </div>`;
         })
         .join('')}</div>`;
-
-      container.querySelectorAll<HTMLInputElement>('.cron-toggle').forEach((input) => {
-        input.addEventListener('change', (event) => {
-          const target = event.target;
-          if (!(target instanceof HTMLInputElement)) {
-            return;
-          }
-          const id = target.dataset.cronId || '';
-          this.toggleCronJob(id, target.checked);
-        });
-      });
     } catch (error) {
       logger.warn('Cron load error:', error);
       container.innerHTML = '<p class="text-xs text-gray-400">Failed to load jobs</p>';

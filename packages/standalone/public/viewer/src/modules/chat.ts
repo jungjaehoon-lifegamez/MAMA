@@ -172,7 +172,7 @@ export class ChatModule {
     await this.checkForResumableSession();
 
     // Try to get last active server session first
-    const lastActiveSession = await API.getLastActiveSession();
+    const lastActiveSession = await API.getLastActiveSession().catch(() => null);
     if (lastActiveSession && lastActiveSession.id && lastActiveSession.isAlive) {
       logger.info('Resuming last active session:', lastActiveSession.id);
       this.addSystemMessage('Resuming previous session...');
@@ -444,7 +444,6 @@ export class ChatModule {
 
   /**
    * Send quiz choice (A, B, C, D)
-   * Called from quiz-choice-btn onclick
    */
   sendQuizChoice(choice: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -1096,9 +1095,28 @@ export class ChatModule {
       return;
     }
 
+    const messagesContainer = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+
     input.addEventListener('input', () => {
       autoResizeTextarea(input);
     });
+
+    if (messagesContainer) {
+      messagesContainer.addEventListener('click', (event: MouseEvent) => {
+        const target = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>(
+          '.quiz-choice-btn'
+        );
+        if (!target) {
+          return;
+        }
+        const choice = target.dataset.choice;
+        if (!choice) {
+          return;
+        }
+        event.preventDefault();
+        this.sendQuizChoice(choice);
+      });
+    }
 
     input.addEventListener('keydown', (event) => {
       this.handleInputKeydown(event);

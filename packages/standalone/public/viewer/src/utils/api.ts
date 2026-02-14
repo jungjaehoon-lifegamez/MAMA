@@ -560,10 +560,11 @@ export class API {
     try {
       return await this.get<LastActiveSessionResponse>('/api/sessions/last-active');
     } catch (error) {
-      // Rethrow to allow callers to distinguish network failures from "no session"
-      throw new Error(
-        `Failed to get last active session: ${error instanceof Error ? error.message : String(error)}`
+      console.warn(
+        '[API] Failed to get last active session, fallback to local session.',
+        error instanceof Error ? error.message : String(error)
       );
+      return null;
     }
   }
 

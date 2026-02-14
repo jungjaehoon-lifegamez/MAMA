@@ -33,6 +33,20 @@ export class MemoryModule {
    * Initialize all event listeners
    */
   initEventListeners(): void {
+    // Memory card click handler (event delegation)
+    const resultsContainer = getElementByIdOrNull<HTMLElement>('memory-results');
+    if (resultsContainer) {
+      resultsContainer.addEventListener('click', (e: MouseEvent) => {
+        const card = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-memory-card]');
+        if (card) {
+          const idx = parseInt(card.dataset.memoryCard || '', 10);
+          if (!Number.isNaN(idx)) {
+            this.toggleCard(idx);
+          }
+        }
+      });
+    }
+
     // Modal click outside to close
     document.addEventListener('click', (e: MouseEvent) => {
       const modal = getElementByIdOrNull<HTMLDivElement>('save-decision-modal');
@@ -182,7 +196,7 @@ export class MemoryModule {
     const html = results
       .map(
         (item, idx) => `
-        <div class="memory-card" onclick="window.memoryModule.toggleCard(${idx})">
+        <div class="memory-card" data-memory-card="${idx}">
           <div class="memory-card-header">
             <span class="memory-card-topic">${escapeHtml(item.topic || 'Unknown')}</span>
             ${item.similarity ? `<span class="memory-card-score">${Math.round(item.similarity * 100)}%</span>` : ''}

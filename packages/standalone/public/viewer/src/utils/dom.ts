@@ -131,7 +131,9 @@ export function scrollToBottom(container: HTMLElement): void {
  */
 export function autoResizeTextarea(textarea: HTMLTextAreaElement, maxRows = 5): void {
   textarea.style.height = 'auto';
-  const lineHeight = parseInt(getComputedStyle(textarea).lineHeight);
+  const computedLineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight);
+  const lineHeight =
+    Number.isFinite(computedLineHeight) && computedLineHeight > 0 ? computedLineHeight : 20;
   const maxHeight = lineHeight * maxRows;
   const newHeight = Math.min(textarea.scrollHeight, maxHeight);
   textarea.style.height = newHeight + 'px';

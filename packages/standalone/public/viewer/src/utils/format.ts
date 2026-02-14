@@ -230,7 +230,7 @@ export function formatAssistantMessage(text: string | null | undefined): string 
     /^(?:&gt;\s*)?(?:<strong>)?([A-D])\)(?:<\/strong>)?\s*(.+)$/gim,
     (match, letter, text) => {
       const upperLetter = letter.toUpperCase();
-      return `<button class="quiz-choice-btn" data-choice="${upperLetter}" onclick="window.sendQuizChoice('${upperLetter}')">${upperLetter}) ${text.trim()}</button>`;
+      return `<button class="quiz-choice-btn" type="button" data-choice="${upperLetter}">${upperLetter}) ${text.trim()}</button>`;
     }
   );
 

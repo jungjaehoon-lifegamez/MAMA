@@ -62,7 +62,8 @@ const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
 const VIEWER_JS_PATH = path.join(VIEWER_DIR, 'viewer.js');
 const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
-const FAVICON_PATH = path.join(process.cwd(), 'public', 'favicon.ico');
+const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
+const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
 
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
@@ -878,7 +879,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: GET/HEAD /favicon.ico - serve favicon
     if (pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, FAVICON_PATH, 'image/x-icon');
+      serveStaticFile(res, VIEWER_FAVICON_PATH, 'image/x-icon');
       return true;
     }
 
@@ -888,8 +889,8 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       pathname.endsWith('.png') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
+      const fileName = path.basename(pathname.split('/').pop() || '');
+      const filePath = path.join(VIEWER_ICON_DIR, fileName);
       serveStaticFile(res, filePath, 'image/png');
       return true;
     }
@@ -900,8 +901,8 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       pathname.endsWith('.svg') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(__dirname, '../../public/viewer/icons', fileName);
+      const fileName = path.basename(pathname.split('/').pop() || '');
+      const filePath = path.join(VIEWER_ICON_DIR, fileName);
       serveStaticFile(res, filePath, 'image/svg+xml');
       return true;
     }
