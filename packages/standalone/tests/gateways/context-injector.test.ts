@@ -89,6 +89,17 @@ describe('ContextInjector', () => {
       expect(result.prompt).toContain('85%'); // Relevance percentage
     });
 
+    it('should include verification warning in prompt', async () => {
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const injector = new ContextInjector(mamaApi);
+
+      const result = await injector.getRelevantContext('auth');
+
+      expect(result.prompt).toContain('REQUIRES VERIFICATION');
+      expect(result.prompt).toContain('WARNING');
+      expect(result.prompt).not.toContain('your memory');
+    });
+
     it('should handle API errors gracefully', async () => {
       const mamaApi = {
         async search(): Promise<SearchResult[]> {
