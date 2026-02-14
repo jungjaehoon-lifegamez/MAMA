@@ -7,92 +7,178 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  # Detect which packages changed (PR only)
+  changes:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22]
-
+    outputs:
+      core: ${{ steps.filter.outputs.core }}
+      standalone: ${{ steps.filter.outputs.standalone }}
+      plugin: ${{ steps.filter.outputs.plugin }}
+      mcp-server: ${{ steps.filter.outputs.mcp-server }}
     steps:
       - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
         with:
-          fetch-depth: 0  # Full history for turbo affected detection
+          filters: |
+            core:
+              - 'packages/mama-core/**'
+              - 'pnpm-lock.yaml'
+            standalone:
+              - 'packages/standalone/**'
+              - 'packages/mama-core/**'
+              - 'pnpm-lock.yaml'
+            plugin:
+              - 'packages/claude-code-plugin/**'
+              - 'pnpm-lock.yaml'
+            mcp-server:
+              - 'packages/mcp-server/**'
+              - 'pnpm-lock.yaml'
 
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+  # Shared setup (reusable)
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+          node-version: '22'
+      - uses: pnpm/action-setup@v2
         with:
           version: 9
-
       - name: Get pnpm store directory
         shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Setup Turbo cache
-        uses: actions/cache@v4
+          restore-keys: ${{ runner.os }}-pnpm-store-
+      - run: pnpm install
+      - run: pnpm build
+      - uses: actions/cache/save@v4
         with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/dist
+          key: ${{ runner.os }}-build-${{ github.sha }}
 
-      - name: Cache HuggingFace models
-        uses: actions/cache@v4
+  # Test mama-core
+  test-core:
+    needs: [changes, setup]
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.core == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          path: ~/.cache/huggingface/transformers
-          key: ${{ runner.os }}-hf-models-v1
-          restore-keys: |
-            ${{ runner.os }}-hf-models-
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build packages
-        run: pnpm build
-
-      - name: Type check
-        run: pnpm typecheck
-
-      - name: Run tests (affected packages only on PR)
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            pnpm test:affected
-          else
-            pnpm test
-          fi
+          node-version: '22'
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/dist
+          key: ${{ runner.os }}-build-${{ github.sha }}
+      - name: Test mama-core
+        run: pnpm --filter @jungjaehoon/mama-core test
         env:
           MAMA_FORCE_TIER_3: true
 
+  # Test standalone (depends on core)
+  test-standalone:
+    needs: [changes, setup]
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.standalone == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/dist
+          key: ${{ runner.os }}-build-${{ github.sha }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/transformers
+          key: ${{ runner.os }}-hf-models-v1
+          restore-keys: ${{ runner.os }}-hf-models-
+      - name: Test standalone
+        run: pnpm --filter @jungjaehoon/mama-os test
+        env:
+          MAMA_FORCE_TIER_3: true
+
+  # Test plugin (independent)
+  test-plugin:
+    needs: [changes, setup]
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.plugin == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/dist
+          key: ${{ runner.os }}-build-${{ github.sha }}
+      - name: Test plugin
+        run: pnpm --filter @jungjaehoon/mama-plugin test
+        env:
+          MAMA_FORCE_TIER_3: true
+
+  # Test mcp-server (independent)
+  test-mcp-server:
+    needs: [changes, setup]
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp-server == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/dist
+          key: ${{ runner.os }}-build-${{ github.sha }}
+      - name: Test mcp-server
+        run: pnpm --filter @jungjaehoon/mama-server test
+        env:
+          MAMA_FORCE_TIER_3: true
+
+  # Lint (always run)
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v2
         with:
           version: 9
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Lint check
-        run: pnpm lint || true  # Don't fail on lint warnings for now
+      - run: pnpm install
+      - run: pnpm lint || true
