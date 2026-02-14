@@ -784,7 +784,18 @@
         };
 
         ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
+          let data;
+          try {
+            data = JSON.parse(event.data);
+          } catch (error) {
+            console.error('[Setup] Invalid websocket payload:', event.data);
+            const preview = String(event.data).slice(0, 200);
+            showStatus(
+              `서버 응답이 JSON이 아닙니다. 응답 미리보기: ${preview}`,
+              'error'
+            );
+            return;
+          }
           handleMessage(data);
         };
 
