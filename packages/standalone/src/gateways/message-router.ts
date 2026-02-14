@@ -424,6 +424,20 @@ This protects your credentials from being exposed in chat logs.`;
         const result = await this.agentLoop.run(message.text, options);
         response = result.response;
       }
+    } catch (error) {
+      // CLI timeout or resume failure - invalidate session to force fresh start next time
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const isCriticalError =
+        errorMsg.includes('timeout') ||
+        errorMsg.includes('resume') ||
+        errorMsg.includes('exited with code');
+
+      if (isCriticalError) {
+        logger.warn(`CLI error detected, invalidating session: ${errorMsg}`);
+        sessionPool.resetSession(channelKey);
+      }
+
+      throw error;
     } finally {
       // Release the session lock so subsequent requests can reuse it
       sessionPool.releaseSession(channelKey);
