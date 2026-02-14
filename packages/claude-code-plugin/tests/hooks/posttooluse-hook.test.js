@@ -21,9 +21,9 @@ const SCRIPT_PATH = path.join(__dirname, '../../scripts/posttooluse-hook.js');
 const HOOK_TIMEOUT = 5000;
 
 function execHook(input, env = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const child = spawn('node', [SCRIPT_PATH], {
-      env: { ...process.env, ...env },
+      env: { ...process.env, MAMA_FORCE_TIER_3: 'true', ...env },
     });
 
     let stdout = '';
@@ -45,7 +45,12 @@ function execHook(input, env = {}) {
 
     child.on('error', (err) => {
       clearTimeout(timeout);
-      reject(err);
+      resolve({
+        exitCode: -1,
+        stdout,
+        stderr: stderr + `\n[SPAWN_ERROR] ${err.message}`,
+        spawnError: true,
+      });
     });
 
     child.on('close', (code) => {

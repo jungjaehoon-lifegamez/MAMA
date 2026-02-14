@@ -88,13 +88,13 @@ async function readStdin() {
 }
 
 async function main() {
-  const features = getEnabledFeatures();
-  if (!features.has('contracts')) {
-    console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-    process.exit(0);
-  }
-
   try {
+    const features = getEnabledFeatures();
+    if (!features.has('contracts')) {
+      console.error(JSON.stringify({ decision: 'allow', reason: '' }));
+      process.exit(0);
+    }
+
     const input = await readStdin();
 
     // Support both stdin and environment variables for backward compatibility
@@ -148,4 +148,7 @@ This ensures future sessions understand this interface/contract.
   }
 }
 
-main();
+main().catch((err) => {
+  console.error(JSON.stringify({ decision: 'allow', reason: '', error: String(err) }));
+  process.exit(1);
+});

@@ -3,7 +3,7 @@
  * PreToolUse Hook for MAMA Plugin
  *
  * Redesigned Feb 2025:
- * - High threshold (0.85) for relevance
+ * - High threshold (0.75) for relevance
  * - First-edit-only: Show contracts only on first edit per session
  * - Module context matching for better relevance
  * - Silent pass when no contracts found (no noise)

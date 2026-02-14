@@ -1132,11 +1132,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         // Wait for port to be released after stop (2s delay between stop and start)
         setTimeout(() => {
           runCli('stop');
+          setTimeout(() => {
+            runCli('start');
+            process.exit(0);
+          }, 2000);
         }, 1000);
-        setTimeout(() => {
-          runCli('start');
-        }, 3000);
-        process.exit(0);
       }, 500);
       return true;
     }

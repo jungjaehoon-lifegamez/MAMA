@@ -627,7 +627,7 @@ export class API {
   }
 
   static async uninstallSkill(name: string, source = 'mama'): Promise<JsonRecord> {
-    return this.del(`/api/skills/${encodeURIComponent(name)}?source=${source}`);
+    return this.del(`/api/skills/${encodeURIComponent(name)}?source=${encodeURIComponent(source)}`);
   }
 
   static async toggleSkill(name: string, enabled: boolean, source = 'mama'): Promise<JsonRecord> {
