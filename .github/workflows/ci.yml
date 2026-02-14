@@ -14,7 +14,7 @@ jobs:
       core: ${{ steps.filter.outputs.core }}
       standalone: ${{ steps.filter.outputs.standalone }}
       plugin: ${{ steps.filter.outputs.plugin }}
-      mcp-server: ${{ steps.filter.outputs.mcp-server }}
+      mcp_server: ${{ steps.filter.outputs.mcp_server }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -31,7 +31,7 @@ jobs:
             plugin:
               - 'packages/claude-code-plugin/**'
               - 'pnpm-lock.yaml'
-            mcp-server:
+            mcp_server:
               - 'packages/mcp-server/**'
               - 'pnpm-lock.yaml'
 
@@ -147,7 +147,7 @@ jobs:
   # Test mcp-server (independent)
   test-mcp-server:
     needs: [changes, setup]
-    if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp-server == 'true' }}
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp_server == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
