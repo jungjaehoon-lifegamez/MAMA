@@ -1017,7 +1017,11 @@ export class AgentLoop {
         }
 
         // Track tokens in session pool for auto-reset at 80% context
-        const tokenStatus = this.sessionPool.updateTokens(channelKey, response.usage.input_tokens);
+        const tokenStatus = this.sessionPool.updateTokens(
+          channelKey,
+          response.usage.input_tokens,
+          this.backend
+        );
 
         // PreCompact: inject compaction summary when approaching context limit
         if (tokenStatus.nearThreshold && this.preCompactHandler && !this.preCompactInjected) {

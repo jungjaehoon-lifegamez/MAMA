@@ -163,23 +163,30 @@ export class SessionPool {
    */
   updateTokens(
     channelKey: string,
-    inputTokens: number
+    inputTokens: number,
+    backend?: 'claude' | 'codex'
   ): { totalTokens: number; nearThreshold: boolean } {
     const existing = this.sessions.get(channelKey);
     if (!existing) {
       return { totalTokens: 0, nearThreshold: false };
     }
 
-    // Validate token count - Claude max is ~200K, anything above is likely a bug
-    // (e.g., Codex CLI returning characters/bytes instead of tokens)
-    const MAX_VALID_TOKENS = 250000;
-    const validatedTokens = inputTokens > MAX_VALID_TOKENS ? 0 : inputTokens;
-    if (inputTokens > MAX_VALID_TOKENS) {
-      logger.warn(`Invalid token count ${inputTokens} exceeds max ${MAX_VALID_TOKENS}, ignoring`);
+    // Codex resume sessions accumulate ~20-25K tokens per message
+    // After ~50 messages, context exceeds 200K (Claude max)
+    // Force reset to prevent degraded responses from overflowed context
+    if (backend === 'codex') {
+      const MAX_CONTEXT_TOKENS = 200000;
+      if (inputTokens > MAX_CONTEXT_TOKENS) {
+        logger.warn(
+          `[Codex] Session overflow: ${inputTokens} tokens > ${MAX_CONTEXT_TOKENS} max, forcing reset`
+        );
+        existing.totalInputTokens = CONTEXT_THRESHOLD_TOKENS;
+        return { totalTokens: existing.totalInputTokens, nearThreshold: true };
+      }
     }
 
     // Use latest value, not cumulative - Claude API returns total context tokens per request
-    existing.totalInputTokens = Math.max(existing.totalInputTokens, validatedTokens);
+    existing.totalInputTokens = Math.max(existing.totalInputTokens, inputTokens);
     const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS * 0.9; // 90% of threshold
 
     if (nearThreshold) {
