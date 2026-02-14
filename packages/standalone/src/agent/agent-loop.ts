@@ -544,6 +544,7 @@ export class AgentLoop {
           ephemeral: options.codexEphemeral ?? false,
           addDirs: options.codexAddDirs ?? [],
           configOverrides: options.codexConfigOverrides ?? [],
+          timeoutMs: options.timeoutMs,
         });
         logger.debug('Codex CLI backend enabled');
       } else {
