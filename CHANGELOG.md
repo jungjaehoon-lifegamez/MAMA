@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-02-14
+
+### Changed
+
+- **Viewer TypeScript migration**: Converted all viewer modules (chat, dashboard, graph, memory, settings, skills) from JavaScript to TypeScript
+- **Typed API client**: New fully-typed API module with proper error handling
+- **Plugin hook redesign**: PreToolUse triggers on Read (decision context), PostToolUse shows lightweight reminder
+
+### Added
+
+- **Viewer utilities**: DebugLogger, DOM helpers, format helpers, markdown renderer with DOMPurify
+- **Test utilities**: `@jungjaehoon/mama-core/test-utils` export for isolated test databases
+- **Session state**: Hook session isolation via SESSION_DIR environment variable
+
+### Fixed
+
+- **URL encoding**: All API path parameters now use encodeURIComponent
+- **Hook performance**: Simplified hook logic, removed pattern detection
+
 ## [0.8.4] - 2026-02-14
 
 ### Fixed
