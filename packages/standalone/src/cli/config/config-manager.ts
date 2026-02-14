@@ -252,8 +252,8 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.model is required');
   }
 
-  if (config.agent.backend && !['claude', 'codex'].includes(config.agent.backend)) {
-    errors.push('agent.backend must be "claude" or "codex"');
+  if (config.agent.backend && !['claude', 'codex', 'codex-mcp'].includes(config.agent.backend)) {
+    errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
   }
 
   if (

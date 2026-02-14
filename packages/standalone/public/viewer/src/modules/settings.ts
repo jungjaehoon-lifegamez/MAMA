@@ -30,7 +30,7 @@ import {
 
 const logger = new DebugLogger('Settings');
 
-type AgentBackend = 'claude' | 'codex';
+type AgentBackend = 'claude' | 'codex' | 'codex-mcp';
 type SettingsFilterValue = 'loading' | 'error' | 'success' | '';
 type SettingsPayloadToolConfig = {
   gateway: string[];
@@ -80,8 +80,37 @@ type SettingsPayload = {
 
 // Model options by backend (single source of truth)
 const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
-  codex: ['gpt-5.3-codex', 'gpt-5.2', 'gpt-5.1', 'gpt-4.1'],
-  claude: ['claude-sonnet-4-20250514', 'claude-opus-4-5-20251101', 'claude-haiku-3-5-20241022'],
+  codex: [
+    'gpt-5.3-codex',
+    'gpt-5.2',
+    'gpt-5.1',
+    'gpt-4.1',
+    'gpt-4o',
+    'gpt-4o-mini',
+    'o1',
+    'o1-mini',
+    'o3-mini',
+  ],
+  'codex-mcp': [
+    'gpt-5.3-codex',
+    'gpt-5.2',
+    'gpt-5.1',
+    'gpt-4.1',
+    'gpt-4o',
+    'gpt-4o-mini',
+    'o1',
+    'o1-mini',
+    'o3-mini',
+  ],
+  claude: [
+    'claude-opus-4-6-20250115',
+    'claude-sonnet-4-5-20250514',
+    'claude-opus-4-5-20251101',
+    'claude-sonnet-4-20250514',
+    'claude-haiku-3-5-20241022',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-opus-20240229',
+  ],
 };
 
 /**
@@ -761,7 +790,8 @@ export class SettingsModule {
     if (!checkbox) {
       return;
     }
-    if (backend === 'codex') {
+    const isCodexBackend = backend === 'codex' || backend === 'codex-mcp';
+    if (isCodexBackend) {
       checkbox.checked = false;
       checkbox.disabled = true;
       checkbox.title = 'Persistent CLI is supported for Claude backend only';
@@ -799,11 +829,12 @@ export class SettingsModule {
   }
 
   getNormalizedModelForBackend(backend: AgentBackend, model: string): string {
+    const isCodexBackend = backend === 'codex' || backend === 'codex-mcp';
     if (!model) {
-      return backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
+      return isCodexBackend ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
     }
     const isClaudeModel = /^claude-/i.test(model);
-    if (backend === 'codex' && isClaudeModel) {
+    if (isCodexBackend && isClaudeModel) {
       return 'gpt-5.2';
     }
     if (backend === 'claude' && !isClaudeModel) {
@@ -1032,7 +1063,7 @@ export class SettingsModule {
         const friendlyModel = formatModelName(normalizedModel) || normalizedModel || 'Default';
         const maskedToken = agent.bot_token ? maskToken(agent.bot_token) : 'N/A';
         const agentId = agent.id || '';
-        const backendOptions = ['codex', 'claude']
+        const backendOptions = ['codex-mcp', 'codex', 'claude']
           .map(
             (b) =>
               `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`

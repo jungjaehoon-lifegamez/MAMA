@@ -1910,9 +1910,9 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
     }
     if (
       config.agent.backend &&
-      !['claude', 'codex'].includes(String(config.agent.backend).toLowerCase())
+      !['claude', 'codex', 'codex-mcp'].includes(String(config.agent.backend).toLowerCase())
     ) {
-      errors.push('agent.backend must be "claude" or "codex"');
+      errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
     }
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
@@ -1950,8 +1950,10 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       const modelRaw = cfg.model;
       if (backendRaw !== undefined) {
         const backend = String(backendRaw).toLowerCase();
-        if (!['claude', 'codex'].includes(backend)) {
-          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex"`);
+        if (!['claude', 'codex', 'codex-mcp'].includes(backend)) {
+          errors.push(
+            `multi_agent.agents.${agentId}.backend must be "claude", "codex", or "codex-mcp"`
+          );
           continue;
         }
         if (typeof modelRaw === 'string' && modelRaw.trim()) {
@@ -2298,9 +2300,9 @@ async function handleMultiAgentUpdateAgentRequest(
     if (
       body.backend !== undefined &&
       (typeof body.backend !== 'string' ||
-        !['claude', 'codex'].includes(String(body.backend).toLowerCase()))
+        !['claude', 'codex', 'codex-mcp'].includes(String(body.backend).toLowerCase()))
     ) {
-      validationErrors.push('backend must be "claude" or "codex"');
+      validationErrors.push('backend must be "claude", "codex", or "codex-mcp"');
     }
 
     const nextBackend = (

@@ -95,11 +95,17 @@ export class SessionPool {
    * This allows session reuse for conversation continuity.
    *
    * Auto-resets session when context window reaches 80% (160K tokens).
+   * If session is in use, returns busy=true immediately (no waiting).
    *
    * @param channelKey - Channel identifier (format: "{source}:{channelId}")
-   * @returns Object with sessionId and isNew flag
+   * @returns Object with sessionId, isNew flag, and busy status
    */
-  getSession(channelKey: string): { sessionId: string; isNew: boolean } {
+  getSession(channelKey: string): {
+    sessionId: string;
+    isNew: boolean;
+    busy: boolean;
+    queuePosition?: number;
+  } {
     const existing = this.sessions.get(channelKey);
     const now = Date.now();
 
@@ -117,24 +123,9 @@ export class SessionPool {
           `[SessionPool] Context 80% full (${existing.totalInputTokens} tokens) for ${channelKey}, creating fresh session`
         );
       } else if (existing.inUse) {
-        // Session is currently in use - DON'T delete it!
-        // Create a temporary unique session to avoid CLI lock conflict
-        // Use a unique key so it doesn't overwrite the existing session
-        const tempKey = `${channelKey}:temp:${randomUUID()}`;
-        const tempSessionId = randomUUID();
-        const entry: SessionEntry = {
-          sessionId: tempSessionId,
-          lastActive: now,
-          messageCount: 1,
-          createdAt: now,
-          inUse: true,
-          totalInputTokens: 0,
-        };
-        this.sessions.set(tempKey, entry);
-        console.log(
-          `[SessionPool] Session in use for ${channelKey}, using temp session: ${tempSessionId}`
-        );
-        return { sessionId: tempSessionId, isNew: true };
+        // Session is currently in use - return busy immediately
+        console.log(`[SessionPool] Session busy for ${channelKey}, will be queued`);
+        return { sessionId: existing.sessionId, isNew: false, busy: true };
       } else {
         // Reuse existing session
         existing.lastActive = now;
@@ -144,13 +135,13 @@ export class SessionPool {
         console.log(
           `[SessionPool] Reusing session for ${channelKey}: ${existing.sessionId} (msg #${existing.messageCount}, ${usagePercent}% context)`
         );
-        return { sessionId: existing.sessionId, isNew: false };
+        return { sessionId: existing.sessionId, isNew: false, busy: false };
       }
     }
 
     // Create new session
     const sessionId = this.createSession(channelKey);
-    return { sessionId, isNew: true };
+    return { sessionId, isNew: true, busy: false };
   }
 
   /**
@@ -164,7 +155,7 @@ export class SessionPool {
   updateTokens(
     channelKey: string,
     inputTokens: number,
-    backend?: 'claude' | 'codex'
+    backend?: 'claude' | 'codex' | 'codex-mcp'
   ): { totalTokens: number; nearThreshold: boolean } {
     const existing = this.sessions.get(channelKey);
     if (!existing) {

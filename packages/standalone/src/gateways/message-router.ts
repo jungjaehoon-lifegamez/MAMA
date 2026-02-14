@@ -15,6 +15,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { SessionStore } from './session-store.js';
+import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type MamaApiClient } from './context-injector.js';
 import type {
   NormalizedMessage,
@@ -241,8 +242,14 @@ export class MessageRouter {
 
   /**
    * Process a normalized message and return response
+   * @param message - The normalized message to process
+   * @param processOptions - Optional callbacks for async notifications
+   * @param processOptions.onQueued - Called immediately if session is busy (message queued)
    */
-  async process(message: NormalizedMessage): Promise<ProcessingResult> {
+  async process(
+    message: NormalizedMessage,
+    processOptions?: { onQueued?: () => void }
+  ): Promise<ProcessingResult> {
     const startTime = Date.now();
 
     // Security: Block sensitive configuration requests from non-viewer sources
@@ -277,10 +284,42 @@ This protects your credentials from being exposed in chat logs.`;
       message.channelName
     );
 
-    // 2. Check if this is a new CLI session (need to inject history from DB)
+    // 2. Check if session is busy (another request in progress)
     const channelKey = buildChannelKey(message.source, message.channelId);
     const sessionPool = getSessionPool();
-    const { sessionId: cliSessionId, isNew: isNewCliSession } = sessionPool.getSession(channelKey);
+    const {
+      sessionId: cliSessionId,
+      isNew: isNewCliSession,
+      busy,
+    } = sessionPool.getSession(channelKey);
+
+    // If session is busy, notify caller immediately and wait for it to be released
+    if (busy) {
+      console.log(`[MessageRouter] Session busy for ${channelKey}, notifying client`);
+      processOptions?.onQueued?.();
+
+      // Wait for session to be released (poll with timeout)
+      const maxWaitMs = 600000; // 10 minutes max wait
+      const pollIntervalMs = 500;
+      const waitStart = Date.now();
+
+      while (Date.now() - waitStart < maxWaitMs) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        const check = sessionPool.getSession(channelKey);
+        if (!check.busy) {
+          console.log(
+            `[MessageRouter] Session released for ${channelKey} after ${Math.round((Date.now() - waitStart) / 1000)}s`
+          );
+          break;
+        }
+        // Log every 30 seconds
+        if ((Date.now() - waitStart) % 30000 < pollIntervalMs) {
+          console.log(
+            `[MessageRouter] Still waiting for session ${channelKey} (${Math.round((Date.now() - waitStart) / 1000)}s)...`
+          );
+        }
+      }
+    }
 
     // 3. Create AgentContext for role-aware execution
     const agentContext = this.createAgentContext(message, session.id);
@@ -448,7 +487,31 @@ This protects your credentials from being exposed in chat logs.`;
       response = await this.resolveMediaPaths(response);
     }
 
-    // 5. Update session context
+    // 5. Record to channel history (for all sources including viewer)
+    const channelHistory = getChannelHistory();
+    if (channelHistory) {
+      const now = Date.now();
+      // Record user message
+      channelHistory.record(message.channelId, {
+        messageId: `user_${now}`,
+        sender: message.userId,
+        userId: message.userId,
+        body: message.text,
+        timestamp: now,
+        isBot: false,
+      });
+      // Record bot response
+      channelHistory.record(message.channelId, {
+        messageId: `bot_${now}`,
+        sender: 'MAMA',
+        userId: 'mama',
+        body: response,
+        timestamp: now + 1,
+        isBot: true,
+      });
+    }
+
+    // 6. Update session context
     this.sessionStore.updateSession(session.id, message.text, response);
 
     // 6. Return result

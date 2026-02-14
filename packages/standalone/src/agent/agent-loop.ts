@@ -14,7 +14,7 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
-import { CodexAppServerProcess } from './codex-app-server-process.js';
+import { CodexMCPProcess } from './codex-mcp-process.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
@@ -92,7 +92,7 @@ void _matchToolPattern;
  * Load CLAUDE.md system prompt
  * Tries multiple paths: project root, ~/.mama, /etc/mama
  */
-function loadSystemPrompt(verbose = false, backend?: 'claude' | 'codex'): string {
+function loadSystemPrompt(verbose = false, backend?: 'claude' | 'codex' | 'codex-mcp'): string {
   const searchPaths = [
     // Codex-specific prompt (if configured)
     ...(backend === 'codex' ? [join(homedir(), '.mama/CODEX.md')] : []),
@@ -285,7 +285,8 @@ export function loadInstalledSkills(
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
-  const backend = (process.env.MAMA_BACKEND as 'claude' | 'codex' | undefined) ?? 'claude';
+  const backend =
+    (process.env.MAMA_BACKEND as 'claude' | 'codex' | 'codex-mcp' | undefined) ?? 'claude';
 
   // Load state for conditional loading (skills + system docs)
   const stateFile = join(mamaHome, 'skills', 'state.json');
@@ -399,7 +400,7 @@ To call a Gateway Tool, output a JSON block:
 }
 
 export class AgentLoop {
-  private readonly agent: ClaudeCLIWrapper | PersistentCLIAdapter | CodexAppServerProcess;
+  private readonly agent: ClaudeCLIWrapper | PersistentCLIAdapter | CodexMCPProcess;
   private readonly claudeCLI: ClaudeCLIWrapper | null = null;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
@@ -423,7 +424,7 @@ export class AgentLoop {
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
   private readonly usePersistentCLI: boolean;
-  private readonly backend: 'claude' | 'codex';
+  private readonly backend: 'claude' | 'codex' | 'codex-mcp';
   private readonly postToolHandler: PostToolHandler | null;
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
@@ -502,10 +503,13 @@ export class AgentLoop {
 
     // Choose backend (default: claude)
     this.backend = options.backend ?? 'claude';
+    // Store in local var with explicit type to avoid TypeScript control flow narrowing
+    const backendType: 'claude' | 'codex' | 'codex-mcp' = this.backend;
 
     // Choose CLI mode: Persistent (fast, experimental) or Standard (stable)
-    this.usePersistentCLI = this.backend === 'codex' ? false : (options.usePersistentCLI ?? false);
-    if (this.backend === 'codex' && options.usePersistentCLI) {
+    const isCodexBackend = backendType.startsWith('codex');
+    this.usePersistentCLI = isCodexBackend ? false : (options.usePersistentCLI ?? false);
+    if (isCodexBackend && options.usePersistentCLI) {
       logger.warn('Codex backend does not support persistent CLI mode; disabling');
     }
 
@@ -529,19 +533,21 @@ export class AgentLoop {
       this.agent = this.persistentCLI;
       logger.debug('🚀 Persistent CLI mode enabled - faster responses');
     } else {
-      if (this.backend === 'codex') {
-        // Codex app-server mode: persistent process with JSON-RPC
-        // Avoids context explosion from exec resume (20K tokens/message)
-        this.agent = new CodexAppServerProcess({
+      // Re-check backend without TypeScript narrowing interference
+      const selectedBackend = this.backend as 'claude' | 'codex' | 'codex-mcp';
+      if (selectedBackend === 'codex-mcp') {
+        // Codex MCP mode: standard MCP protocol
+        // 채팅 → MCP → Codex → MCP → 채팅
+        this.agent = new CodexMCPProcess({
           model: options.model,
           cwd: options.codexCwd ?? join(homedir(), '.mama', 'workspace'),
           sandbox: options.codexSandbox ?? 'workspace-write',
-          approvalPolicy: 'never', // Headless mode
           systemPrompt: defaultSystemPrompt,
+          compactPrompt:
+            'Summarize the conversation concisely, preserving key decisions and context.',
           timeoutMs: options.timeoutMs,
-          compactionThreshold: 160000, // 80% of 200K
         });
-        logger.debug('Codex app-server backend enabled');
+        logger.debug('Codex MCP backend enabled');
       } else {
         // Standard Claude CLI mode: spawns new process per message
         this.claudeCLI = new ClaudeCLIWrapper({
@@ -642,6 +648,15 @@ export class AgentLoop {
     return this.sessionKey;
   }
 
+  private resolveGlobalLaneForSession(sessionKey: string): string | undefined {
+    const key = sessionKey.toLowerCase();
+    // Don't let background cron runs block interactive chat.
+    if (key.startsWith('cron:')) {
+      return 'cron';
+    }
+    return undefined;
+  }
+
   /**
    * Set system prompt override (for per-message context injection)
    */
@@ -679,8 +694,11 @@ export class AgentLoop {
 
     // Use lane-based queueing if enabled
     if (this.useLanes) {
-      return this.laneManager.enqueueWithSession(this.sessionKey, () =>
-        this.runWithContentInternal(content, options)
+      const globalLane = this.resolveGlobalLaneForSession(this.sessionKey);
+      return this.laneManager.enqueueWithSession(
+        this.sessionKey,
+        () => this.runWithContentInternal(content, options),
+        globalLane
       );
     }
 
@@ -706,8 +724,11 @@ export class AgentLoop {
 
     // Use lane-based queueing if enabled
     if (this.useLanes) {
-      return this.laneManager.enqueueWithSession(sessionKey, () =>
-        this.runWithContentInternal(content, options)
+      const globalLane = this.resolveGlobalLaneForSession(sessionKey);
+      return this.laneManager.enqueueWithSession(
+        sessionKey,
+        () => this.runWithContentInternal(content, options),
+        globalLane
       );
     }
 
@@ -753,7 +774,11 @@ export class AgentLoop {
       );
     } else {
       // Fallback: get session from pool (for direct AgentLoop usage)
-      const { sessionId: cliSessionId, isNew } = this.sessionPool.getSession(channelKey);
+      // getSession() returns immediately - if busy, we create a new session
+      const { sessionId: cliSessionId, isNew, busy } = this.sessionPool.getSession(channelKey);
+      if (busy) {
+        console.log(`[AgentLoop] Session busy for ${channelKey}, will be queued by Lane`);
+      }
       sessionIsNew = isNew;
       ownedSession = true;
       this.agent.setSessionId(cliSessionId);

@@ -81,7 +81,7 @@ export interface AgentPersonaConfig {
    * Runtime backend for this agent.
    * If not specified, uses global runtime backend.
    */
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
 
   /**
    * Maximum turns for this agent
@@ -283,7 +283,7 @@ export interface MultiAgentConfig {
  * Not persisted in config.yaml (derived from current agent runtime).
  */
 export interface MultiAgentRuntimeOptions {
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   model?: string;
   /** Timeout in milliseconds for each agent process request */
   requestTimeout?: number;

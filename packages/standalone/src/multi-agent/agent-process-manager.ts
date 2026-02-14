@@ -115,7 +115,9 @@ export class AgentProcessManager extends EventEmitter {
     });
   }
 
-  private getAgentBackend(agentConfig: Omit<AgentPersonaConfig, 'id'>): 'claude' | 'codex' {
+  private getAgentBackend(
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): 'claude' | 'codex' | 'codex-mcp' {
     return agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
   }
 
@@ -205,7 +207,7 @@ export class AgentProcessManager extends EventEmitter {
       options.disallowedTools = permissions.blocked;
     }
 
-    if (agentBackend === 'codex') {
+    if (agentBackend === 'codex' || agentBackend === 'codex-mcp') {
       // Use AgentProcessPool for multi-process agents (pool_size > 1)
       if (poolSize > 1) {
         const { process, isNew } = await this.agentProcessPool.getAvailableProcess(

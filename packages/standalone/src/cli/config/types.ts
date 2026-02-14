@@ -147,7 +147,7 @@ export interface ToolsConfig {
  */
 export interface AgentConfig {
   /** Backend for agent execution (default: claude) */
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   /** Codex state/config home path (default: ~/.mama/.codex when backend=codex) */
   codex_home?: string;
   /** Codex working directory (default: ~/.mama/workspace) */

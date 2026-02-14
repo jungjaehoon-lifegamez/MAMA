@@ -717,7 +717,7 @@ export interface StreamingContext {
  */
 export interface AgentLoopOptions {
   /** Backend to use for CLI execution */
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   /** Codex home directory for Codex backend state/config */
   codexHome?: string;
   /** Codex working directory */

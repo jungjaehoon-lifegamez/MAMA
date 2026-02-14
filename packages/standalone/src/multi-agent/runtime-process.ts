@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
 import {
-  CodexAppServerProcess,
-  type CodexAppServerOptions,
+  CodexMCPProcess,
+  type CodexMCPOptions,
   type PromptCallbacks as CodexPromptCallbacks,
-} from '../agent/codex-app-server-process.js';
+} from '../agent/codex-mcp-process.js';
 import type {
   PromptCallbacks as ClaudePromptCallbacks,
   PromptResult as ClaudePromptResult,
@@ -23,7 +23,7 @@ export interface CodexRuntimeProcessOptions {
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   requestTimeout?: number;
   codexHome?: string;
-  // Legacy options (from old CLI approach - some may not be supported in app-server mode)
+  // Legacy options (from old CLI approach - some may not be supported in MCP mode)
   profile?: string;
   ephemeral?: boolean;
   addDirs?: string[];
@@ -35,26 +35,24 @@ export interface CodexRuntimeProcessOptions {
  * Session-persistent Codex wrapper with the same minimal contract used by
  * multi-agent runtime (sendMessage/isReady/stop + idle events).
  *
- * Uses CodexAppServerProcess for persistent stdio communication.
+ * Uses CodexMCPProcess for persistent MCP communication.
  */
 export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimeProcess {
-  private wrapper: CodexAppServerProcess;
+  private wrapper: CodexMCPProcess;
   private state: 'idle' | 'busy' | 'dead' = 'idle';
   private stoppedDuringExecution = false;
 
   constructor(options: CodexRuntimeProcessOptions) {
     super();
-    const wrapperOptions: CodexAppServerOptions = {
+    const wrapperOptions: CodexMCPOptions = {
       model: options.model,
       systemPrompt: options.systemPrompt,
       cwd: options.cwd,
       sandbox: options.sandbox,
-      approvalPolicy: 'never', // Headless mode
+      compactPrompt: 'Summarize the conversation concisely, preserving key decisions and context.',
       timeoutMs: options.requestTimeout,
-      compactionThreshold: 160000, // 80% of 200K
-      env: options.codexHome ? { CODEX_HOME: options.codexHome } : undefined,
     };
-    this.wrapper = new CodexAppServerProcess(wrapperOptions);
+    this.wrapper = new CodexMCPProcess(wrapperOptions);
   }
 
   async sendMessage(

@@ -495,12 +495,18 @@ async function startDaemon(): Promise<number> {
   const out = openSync(logFile, 'a');
 
   // Spawn daemon process directly
+  // Remove Claude Code env vars to allow nested Claude CLI spawning
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.CLAUDECODE;
+  delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
+  delete cleanEnv.CLAUDE_CODE_SSE_PORT;
+
   const child = spawn(process.execPath, [process.argv[1], 'daemon'], {
     detached: true,
     stdio: ['ignore', out, out],
     cwd: homedir(),
     env: {
-      ...process.env,
+      ...cleanEnv,
       MAMA_DAEMON: '1',
     },
   });

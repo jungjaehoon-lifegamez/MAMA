@@ -89,7 +89,7 @@ function extractUserId(req: IncomingMessage): string {
  * Message router interface
  */
 interface MessageRouter {
-  process(message: NormalizedMessage): Promise<RouterResult>;
+  process(message: NormalizedMessage, options?: { onQueued?: () => void }): Promise<RouterResult>;
 }
 
 /**
@@ -446,7 +446,18 @@ async function handleClientMessage(
             },
           };
 
-          result = await messageRouter.process(normalizedMessage);
+          result = await messageRouter.process(normalizedMessage, {
+            onQueued: () => {
+              // Notify client that message is queued (session busy)
+              clientInfo.ws.send(
+                JSON.stringify({
+                  type: 'queued',
+                  message: '⏳ 이전 요청 처리 중... 대기열에 추가되었습니다.',
+                })
+              );
+              logger.info(`Message queued for ${clientId} (session busy)`);
+            },
+          });
         } finally {
           clearInterval(keepAliveInterval);
         }
