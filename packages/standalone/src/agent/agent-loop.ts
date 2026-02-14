@@ -14,7 +14,7 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
 import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
-import { CodexCLIWrapper } from './codex-cli-wrapper.js';
+import { CodexAppServerProcess } from './codex-app-server-process.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
@@ -399,7 +399,7 @@ To call a Gateway Tool, output a JSON block:
 }
 
 export class AgentLoop {
-  private readonly agent: ClaudeCLIWrapper | PersistentCLIAdapter | CodexCLIWrapper;
+  private readonly agent: ClaudeCLIWrapper | PersistentCLIAdapter | CodexAppServerProcess;
   private readonly claudeCLI: ClaudeCLIWrapper | null = null;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
@@ -530,23 +530,18 @@ export class AgentLoop {
       logger.debug('🚀 Persistent CLI mode enabled - faster responses');
     } else {
       if (this.backend === 'codex') {
-        // Codex CLI mode: spawns new Codex process per message
-        this.agent = new CodexCLIWrapper({
+        // Codex app-server mode: persistent process with JSON-RPC
+        // Avoids context explosion from exec resume (20K tokens/message)
+        this.agent = new CodexAppServerProcess({
           model: options.model,
-          sessionId,
-          systemPrompt: defaultSystemPrompt,
-          codexHome:
-            options.codexHome ?? process.env.MAMA_CODEX_HOME ?? join(homedir(), '.mama', '.codex'),
           cwd: options.codexCwd ?? join(homedir(), '.mama', 'workspace'),
           sandbox: options.codexSandbox ?? 'workspace-write',
-          skipGitRepoCheck: options.codexSkipGitRepoCheck ?? true,
-          profile: options.codexProfile,
-          ephemeral: options.codexEphemeral ?? false,
-          addDirs: options.codexAddDirs ?? [],
-          configOverrides: options.codexConfigOverrides ?? [],
+          approvalPolicy: 'never', // Headless mode
+          systemPrompt: defaultSystemPrompt,
           timeoutMs: options.timeoutMs,
+          compactionThreshold: 160000, // 80% of 200K
         });
-        logger.debug('Codex CLI backend enabled');
+        logger.debug('Codex app-server backend enabled');
       } else {
         // Standard Claude CLI mode: spawns new process per message
         this.claudeCLI = new ClaudeCLIWrapper({
