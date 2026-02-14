@@ -1,7 +1,7 @@
 /**
  * Tests for PostToolUse Hook
  *
- * Redesigned Feb 2025:
+ * Redesigned Feb 2026:
  * - Lightweight reminder for future Claude sessions
  * - No pattern detection - Claude decides what to save
  * - Shows on first edit only per session
@@ -33,10 +33,15 @@ afterEach(() => {
   }
 });
 
-function execHook(input, env = {}) {
+function execHook(input, env = {}, sessionDir = null) {
   return new Promise((resolve) => {
     const child = spawn('node', [SCRIPT_PATH], {
-      env: { ...process.env, MAMA_FORCE_TIER_3: 'true', ...env },
+      env: {
+        ...process.env,
+        MAMA_FORCE_TIER_3: 'true',
+        ...(sessionDir ? { SESSION_DIR: sessionDir } : {}),
+        ...env,
+      },
     });
 
     let stdout = '';
@@ -135,19 +140,26 @@ describe('Story M2.3: PostToolUse Hook', () => {
       expect(result.exitCode).toBe(0);
     });
 
-    it('should execute quickly without DB calls', async () => {
+    it('should execute quickly and show reminder on first edit', async () => {
       const start = Date.now();
 
-      await execHook({
-        tool_name: 'Edit',
-        tool_input: {
-          file_path: '/path/to/test.js',
-          new_string: 'const x = 1;',
+      const result = await execHook(
+        {
+          tool_name: 'Edit',
+          tool_input: {
+            file_path: '/path/to/unique-test-file.js',
+            new_string: 'const x = 1;',
+          },
         },
-      });
+        {},
+        testSessionDir
+      );
 
       const elapsed = Date.now() - start;
       expect(elapsed).toBeLessThan(500);
+      // Verify the reminder path was exercised (exit 2 + stderr contains reminder)
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('Reminder');
     });
   });
 

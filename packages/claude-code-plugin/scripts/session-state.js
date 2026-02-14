@@ -13,7 +13,8 @@ const path = require('path');
 const os = require('os');
 
 // Session file in temp directory, keyed by parent process ID
-const SESSION_DIR = path.join(os.tmpdir(), 'mama-sessions');
+// Supports SESSION_DIR env override for test isolation
+const SESSION_DIR = process.env.SESSION_DIR || path.join(os.tmpdir(), 'mama-sessions');
 const getSessionFile = () => path.join(SESSION_DIR, `session-${process.ppid}.json`);
 
 // Session expires after 4 hours of inactivity (240 minutes)

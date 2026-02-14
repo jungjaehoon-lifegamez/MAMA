@@ -2,7 +2,7 @@
 /**
  * PreToolUse Hook for MAMA Plugin
  *
- * Redesigned Feb 2025:
+ * Redesigned Feb 2026:
  * - Triggers on Read (before file is viewed)
  * - Shows related decisions on first read per session
  * - Helps Claude understand context before making changes
@@ -27,8 +27,8 @@ const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { isFirstEdit, markFileEdited } = require('./session-state');
 const { shouldProcessFile } = require('./hook-file-filter');
 
-// Threshold for relevance
-const SIMILARITY_THRESHOLD = 0.65;
+// Threshold for relevance (documented: 60% in SKILL.md)
+const SIMILARITY_THRESHOLD = 0.6;
 const SEARCH_LIMIT = 3;
 
 // Tools that trigger decision lookup

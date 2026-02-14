@@ -2,7 +2,7 @@
 /**
  * PostToolUse Hook for MAMA Plugin
  *
- * Redesigned Feb 2025:
+ * Redesigned Feb 2026:
  * - Lightweight reminder for future Claude sessions
  * - No pattern detection - Claude decides what's worth saving
  * - Purpose-driven hint, not intrusive prompt
@@ -68,17 +68,13 @@ async function main() {
     // Mark file as edited
     markFileEdited(filePath);
 
-    const response = {
-      decision: 'allow',
-      message: `
+    // Use exit(2) + stderr for visibility to Claude (per hook protocol)
+    console.error(`
 💡 **Reminder**: If this change contains decisions future Claude sessions should know:
    \`/mama:decision topic="<module>_<what>" decision="<why this approach>"\`
    Include file paths in reasoning for better matching on Read.
-`,
-    };
-
-    console.error(JSON.stringify(response));
-    process.exit(0);
+`);
+    process.exit(2);
   } catch {
     process.exit(0);
   }

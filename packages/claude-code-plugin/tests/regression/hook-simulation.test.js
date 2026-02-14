@@ -242,7 +242,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
         FILE_PATH: '/path/to/new-file.js',
       });
 
-      // PostToolUse uses exit(2)+stderr for visibility (Feb 2025 change)
+      // PostToolUse: exit(2) for reminder visibility, exit(0) for silent skip
       expect([0, 2]).toContain(result.exitCode);
 
       console.log(`[Regression] PostToolUse (Write) latency: ${result.latency}ms`);
@@ -255,7 +255,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
         FILE_PATH: '/path/to/existing-file.js',
       });
 
-      // PostToolUse uses exit(2)+stderr for visibility (Feb 2025 change)
+      // PostToolUse: exit(2) for reminder visibility, exit(0) for silent skip
       expect([0, 2]).toContain(result.exitCode);
 
       console.log(`[Regression] PostToolUse (Edit) latency: ${result.latency}ms`);
@@ -275,7 +275,6 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       const result = await execHook(POSTTOOLUSE_HOOK, {
         TOOL_NAME: 'Write',
         FILE_PATH: '/path/to/typed.ts',
-        DIFF_CONTENT: 'export interface UserProfile { id: string; }',
         MAMA_DISABLE_HOOKS: 'true',
       });
 
@@ -322,7 +321,6 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
           ...disableEnv,
           TOOL_NAME: 'Write',
           FILE_PATH: '/path/to/pattern.ts',
-          DIFF_CONTENT: 'export interface UserProfile { id: string; }',
         }),
       ]);
 

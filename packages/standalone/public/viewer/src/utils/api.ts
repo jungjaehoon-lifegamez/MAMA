@@ -579,15 +579,15 @@ export class API {
   }
 
   static async updateCronJob(id: string, data: JsonRecord): Promise<JsonRecord> {
-    return this.put<JsonRecord, JsonRecord>(`/api/cron/${id}`, data);
+    return this.put<JsonRecord, JsonRecord>(`/api/cron/${encodeURIComponent(id)}`, data);
   }
 
   static async runCronJob(id: string): Promise<JsonRecord> {
-    return this.post<JsonRecord, JsonRecord>(`/api/cron/${id}/run`, {});
+    return this.post<JsonRecord, JsonRecord>(`/api/cron/${encodeURIComponent(id)}/run`, {});
   }
 
   static async getCronLogs(id: string, limit = 5): Promise<CronLogResponse> {
-    return this.get<CronLogResponse>(`/api/cron/${id}/logs`, { limit });
+    return this.get<CronLogResponse>(`/api/cron/${encodeURIComponent(id)}/logs`, { limit });
   }
 
   // =============================================
