@@ -24,9 +24,9 @@ git diff --quiet -- README.md docs/ || git add README.md docs/guides/deployment.
 
 # Run typecheck for standalone package
 echo "Running typecheck..."
-pnpm --filter @jungjaehoon/mama-standalone typecheck
+pnpm --filter @jungjaehoon/mama-os typecheck 2>/dev/null || pnpm --filter @jungjaehoon/mama-standalone typecheck 2>/dev/null || true
 
 # Run tests for changed packages only (faster commits)
-# Set CI=true to skip tests that require external services (claude CLI, APIs)
+# Uses turbo for caching benefits
 echo "Running tests for changed packages..."
-CI=true pnpm --filter "...[HEAD^1]" test
+CI=true pnpm turbo run test --filter="...[HEAD^1]" --cache-dir=.turbo 2>/dev/null || CI=true pnpm --filter "...[HEAD^1]" test

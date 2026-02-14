@@ -39,6 +39,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      - name: Setup Turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
       - name: Cache HuggingFace models
         uses: actions/cache@v4
         with:
@@ -56,8 +64,13 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
-      - name: Run tests
-        run: pnpm test
+      - name: Run tests (affected packages only on PR)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            pnpm test:affected
+          else
+            pnpm test
+          fi
         env:
           MAMA_FORCE_TIER_3: true
 
