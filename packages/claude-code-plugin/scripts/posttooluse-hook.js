@@ -3,15 +3,9 @@
  * PostToolUse Hook for MAMA Plugin
  *
  * Redesigned Feb 2025:
- * - Detects contract-like patterns in code changes
- * - Only prompts when significant patterns found
- * - No auto-save, LLM decides what to save
- *
- * Contract patterns detected:
- * - Interface/type definitions
- * - Function signatures with explicit types
- * - API endpoint definitions
- * - expects/returns patterns
+ * - Lightweight reminder for future Claude sessions
+ * - No pattern detection - Claude decides what's worth saving
+ * - Purpose-driven hint, not intrusive prompt
  */
 
 const path = require('path');
@@ -21,54 +15,10 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 const { shouldProcessFile } = require('./hook-file-filter');
+const { isFirstEdit, markFileEdited } = require('./session-state');
 
-// Tools that trigger pattern detection
+// Tools that trigger the reminder
 const CODE_TOOLS = new Set(['Edit', 'Write']);
-
-// Contract-like patterns in code
-// Note: Using ^\s* to allow matching indented code in partial snippets
-const CONTRACT_PATTERNS = [
-  // TypeScript/JavaScript
-  { pattern: /^\s*export\s+(interface|type)\s+\w+/m, name: 'interface/type' },
-  { pattern: /^\s*export\s+(async\s+)?function\s+\w+\s*\([^)]*\)\s*:/m, name: 'typed function' },
-  { pattern: /^\s*export\s+const\s+\w+\s*:\s*\w+/m, name: 'typed export' },
-
-  // API patterns
-  { pattern: /@(api|endpoint|route|get|post|put|delete|patch)/im, name: 'API decorator' },
-  { pattern: /\.(get|post|put|delete|patch)\s*\(\s*['"`]/m, name: 'route handler' },
-
-  // Contract documentation
-  { pattern: /expects\s*[:=]\s*\{/i, name: 'expects clause' },
-  { pattern: /returns\s*[:=]\s*\{/i, name: 'returns clause' },
-  { pattern: /@param\s+\{\w+\}/m, name: 'JSDoc param' },
-  { pattern: /@returns?\s+\{\w+\}/m, name: 'JSDoc return' },
-
-  // Python
-  { pattern: /^\s*def\s+\w+\s*\([^)]*\)\s*->/m, name: 'typed Python function' },
-  { pattern: /^\s*class\s+\w+\s*\([^)]*\)\s*:/m, name: 'Python class' },
-
-  // Go
-  { pattern: /^\s*type\s+\w+\s+(struct|interface)\s*\{/m, name: 'Go type' },
-  { pattern: /^\s*func\s+\([^)]+\)\s+\w+\s*\([^)]*\)\s*\(?[^{]*/m, name: 'Go method' },
-];
-
-/**
- * Detect contract-like patterns in code
- * Returns array of detected pattern names
- */
-function detectContractPatterns(code) {
-  if (!code || typeof code !== 'string') {
-    return [];
-  }
-
-  const detected = [];
-  for (const { pattern, name } of CONTRACT_PATTERNS) {
-    if (pattern.test(code)) {
-      detected.push(name);
-    }
-  }
-  return detected;
-}
 
 async function readStdin() {
   return new Promise((resolve) => {
@@ -91,13 +41,11 @@ async function main() {
   try {
     const features = getEnabledFeatures();
     if (!features.has('contracts')) {
-      console.error(JSON.stringify({ decision: 'allow', reason: '' }));
       process.exit(0);
     }
 
     const input = await readStdin();
 
-    // Support both stdin and environment variables for backward compatibility
     const toolName = input.tool_name || input.toolName || process.env.TOOL_NAME || '';
     const toolInput = input.tool_input || {};
     const filePath = toolInput.file_path || input.filePath || process.env.FILE_PATH || '';
@@ -112,43 +60,30 @@ async function main() {
       process.exit(0);
     }
 
-    // Get the code being written/edited (stdin only - env vars don't carry content)
-    const newCode = toolInput.new_string || toolInput.content || process.env.DIFF_CONTENT || '';
-
-    // Detect contract patterns
-    const patterns = detectContractPatterns(newCode);
-
-    if (patterns.length === 0) {
-      // No contract patterns - silent pass
+    // Only show reminder on first edit of this file per session
+    if (!isFirstEdit(filePath)) {
       process.exit(0);
     }
 
-    // Found contract patterns - STRONGLY prompt for save
-    const patternList = patterns.slice(0, 3).join(', ');
-    const fileName = path.basename(filePath);
+    // Mark file as edited
+    markFileEdited(filePath);
 
     const response = {
       decision: 'allow',
       message: `
-⚠️ **IMPORTANT: Contract Change Detected** in \`${fileName}\`
-
-Patterns: ${patternList}
-
-🔴 **ACTION REQUIRED**: You MUST save this decision to MAMA memory.
-   Run: \`/mama:decision topic="${fileName.replace(/\.[^.]+$/, '')}" decision="<describe the change>"\`
-
-This ensures future sessions understand this interface/contract.
+💡 **Reminder**: If this change contains decisions future Claude sessions should know:
+   \`/mama:decision topic="<module>_<what>" decision="<why this approach>"\`
+   Include file paths in reasoning for better matching on Read.
 `,
     };
 
     console.error(JSON.stringify(response));
-    process.exit(2);
+    process.exit(0);
   } catch {
     process.exit(0);
   }
 }
 
-main().catch((err) => {
-  console.error(JSON.stringify({ decision: 'allow', reason: '', error: String(err) }));
-  process.exit(1);
+main().catch(() => {
+  process.exit(0);
 });

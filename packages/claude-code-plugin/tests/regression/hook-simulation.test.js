@@ -280,8 +280,8 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stderr).toContain('allow');
-      expect(result.stdout).toBe(''); // No output when disabled
+      // When disabled, hook exits silently with no output
+      expect(result.stdout).toBe('');
     });
   });
 
@@ -317,7 +317,7 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       const disableEnv = { MAMA_DISABLE_HOOKS: 'true' };
 
       const results = await Promise.all([
-        execHook(PRETOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Edit' }),
+        execHook(PRETOOLUSE_HOOK, { ...disableEnv, TOOL_NAME: 'Read' }),
         execHook(POSTTOOLUSE_HOOK, {
           ...disableEnv,
           TOOL_NAME: 'Write',
@@ -329,7 +329,6 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
       results.forEach((result) => {
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toBe(''); // No injection when disabled
-        expect(result.stderr).toContain('allow');
       });
     });
   });

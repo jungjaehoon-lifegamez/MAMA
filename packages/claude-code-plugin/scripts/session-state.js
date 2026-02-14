@@ -16,7 +16,7 @@ const os = require('os');
 const SESSION_DIR = path.join(os.tmpdir(), 'mama-sessions');
 const getSessionFile = () => path.join(SESSION_DIR, `session-${process.ppid}.json`);
 
-// Session expires after 4 hours of inactivity
+// Session expires after 4 hours of inactivity (240 minutes)
 const SESSION_EXPIRY_MS = 4 * 60 * 60 * 1000;
 
 /**

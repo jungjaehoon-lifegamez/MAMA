@@ -6,8 +6,8 @@
  *
  * Architecture (Feb 2025 rewrite):
  * - Standalone script reading JSON from stdin (no exports)
- * - Edit/Write: contract search via MAMA DB + embeddings
- * - Read: allow freely (OMC handles rules/AGENTS.md injection)
+ * - Read: decision search via MAMA DB + embeddings (first read only)
+ * - Edit/Write: handled by PostToolUse for reminders
  * - Grep/Glob: allow freely without injection
  * - Feature gating via hook-features.js (MAMA_DISABLE_HOOKS support)
  */
@@ -128,21 +128,19 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(content).toContain('shouldProcessFile');
     });
 
-    it('should define write tools that need contract check', () => {
+    it('should define Read tool for decision lookup', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      expect(content).toContain('WRITE_TOOLS');
-      expect(content).toContain("'Edit'");
-      expect(content).toContain("'Write'");
-      expect(content).toContain("'NotebookEdit'");
+      expect(content).toContain('READ_TOOLS');
+      expect(content).toContain("'Read'");
     });
 
-    it('should only process write tools (skip read tools)', () => {
+    it('should only process Read tool (skip Edit/Write)', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      // New design: only WRITE_TOOLS are processed, others silently pass
-      expect(content).toContain('WRITE_TOOLS');
-      expect(content).toContain('!WRITE_TOOLS.has');
+      // New design: only READ_TOOLS are processed for decision lookup
+      expect(content).toContain('READ_TOOLS');
+      expect(content).toContain('!READ_TOOLS.has');
     });
 
     it('should delegate file extension and skip logic to shared helper', () => {
