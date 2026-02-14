@@ -178,7 +178,8 @@ export class AgentProcessManager extends EventEmitter {
     const options: Partial<PersistentProcessOptions> = {
       ...this.defaultOptions,
       systemPrompt,
-      requestTimeout: 900000,
+      requestTimeout:
+        this.defaultOptions.requestTimeout ?? this.runtimeOptions.requestTimeout ?? 900000,
     };
 
     if (agentConfig?.model) {

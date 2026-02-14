@@ -51,6 +51,8 @@ export interface DiscordGatewayOptions {
   token: string;
   /** Message router for processing messages */
   messageRouter: MessageRouter;
+  /** Default channel ID for fallback message/file sends */
+  defaultChannelId?: string;
   /** Gateway configuration */
   config?: Partial<DiscordGatewayConfig>;
   /** Multi-agent configuration (optional) */
@@ -121,6 +123,7 @@ export class DiscordGateway extends BaseGateway {
   private client: Client;
   private token: string;
   private config: DiscordGatewayConfig;
+  private defaultChannelId?: string;
 
   // Message editing throttle state
   private lastEditTime = 0;
@@ -138,6 +141,7 @@ export class DiscordGateway extends BaseGateway {
   constructor(options: DiscordGatewayOptions) {
     super({ messageRouter: options.messageRouter });
     this.token = options.token;
+    this.defaultChannelId = options.defaultChannelId;
     this.multiAgentRuntime = options.multiAgentRuntime;
     this.config = {
       enabled: true,
@@ -1009,6 +1013,58 @@ export class DiscordGateway extends BaseGateway {
     this.config.guilds[guildId].channels[channelId] = config;
   }
 
+  private async resolveSendChannel(channelId: string): Promise<{
+    channelId: string;
+    send: (payload: string | { content?: string; files?: string[] }) => Promise<unknown>;
+  }> {
+    const tryResolve = async (
+      targetChannelId: string
+    ): Promise<{
+      channelId: string;
+      send: (payload: string | { content?: string; files?: string[] }) => Promise<unknown>;
+    } | null> => {
+      try {
+        const channel = await this.client.channels.fetch(targetChannelId);
+        if (!channel || !('send' in channel)) {
+          return null;
+        }
+
+        return {
+          channelId: targetChannelId,
+          send: (
+            channel as {
+              send: (payload: string | { content?: string; files?: string[] }) => Promise<unknown>;
+            }
+          ).send.bind(channel),
+        };
+      } catch (error) {
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          (error as { code?: number }).code === 10003
+        ) {
+          return null;
+        }
+        throw error;
+      }
+    };
+
+    const direct = await tryResolve(channelId);
+    if (direct) {
+      return direct;
+    }
+
+    if (this.defaultChannelId && this.defaultChannelId !== channelId) {
+      const fallback = await tryResolve(this.defaultChannelId);
+      if (fallback) {
+        console.warn(`[Discord] Falling back send target: ${channelId} -> ${fallback.channelId}`);
+        return fallback;
+      }
+    }
+
+    throw new Error(`Channel not found: ${channelId}`);
+  }
+
   /**
    * Send a message to a specific channel
    */
@@ -1017,18 +1073,11 @@ export class DiscordGateway extends BaseGateway {
       throw new Error('Discord gateway not connected');
     }
 
-    const channel = await this.client.channels.fetch(channelId);
-    if (!channel) {
-      throw new Error(`Channel not found: ${channelId}`);
-    }
-
-    if (!('send' in channel)) {
-      throw new Error(`Channel ${channelId} is not a text channel`);
-    }
+    const channel = await this.resolveSendChannel(channelId);
 
     const chunks = splitForDiscord(content);
     for (const chunk of chunks) {
-      await (channel as { send: (content: string) => Promise<unknown> }).send(chunk);
+      await channel.send(chunk);
     }
   }
 
@@ -1187,19 +1236,8 @@ export class DiscordGateway extends BaseGateway {
       throw new Error('Discord gateway not connected');
     }
 
-    const channel = await this.client.channels.fetch(channelId);
-    if (!channel) {
-      throw new Error(`Channel not found: ${channelId}`);
-    }
-
-    if (!('send' in channel)) {
-      throw new Error(`Channel ${channelId} is not a text channel`);
-    }
-
-    const sendFn = (
-      channel as { send: (options: { content?: string; files: string[] }) => Promise<unknown> }
-    ).send.bind(channel);
-    await sendFn({
+    const channel = await this.resolveSendChannel(channelId);
+    await channel.send({
       content: caption,
       files: [filePath],
     });
