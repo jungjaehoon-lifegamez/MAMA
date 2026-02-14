@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-02-14
+
+### Fixed
+
+- **Configuration loading diagnostics**: On startup, `~/.mama/config.yaml` parsing now surfaces a clear
+  hint when cron expressions like `*/10 * * * *` are provided without quotes, avoiding silent
+  startup failure and reducing recovery time.
+- **Standalone/core API compatibility hardening**: Added startup-time normalization around `mama-core`
+  memory API adapters used by context injection and scheduled jobs to guard against export-shape drift.
+
 ## [0.8.3] - 2026-02-14
 
 ### Fixed

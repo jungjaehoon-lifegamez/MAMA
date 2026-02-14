@@ -72,9 +72,17 @@ export async function loadConfig(): Promise<MAMAConfig> {
     if (error instanceof Error && error.message.includes('missing required')) {
       throw error;
     }
-    throw new Error(
-      `Failed to load configuration: ${error instanceof Error ? error.message : String(error)}`
-    );
+
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('unidentified alias')) {
+      throw new Error(
+        `Failed to load configuration: ${message}\n` +
+          'Hint: YAML cron expressions starting with "*" must be quoted. ' +
+          'Use: cron: "*/10 * * * *" (or "0 * * * *").'
+      );
+    }
+
+    throw new Error(`Failed to load configuration: ${message}`);
   }
 }
 
