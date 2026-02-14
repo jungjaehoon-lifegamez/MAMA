@@ -12,7 +12,7 @@
 
 /* eslint-env browser */
 
-import { escapeHtml, getElementByIdOrNull, getErrorMessage } from '../utils/dom.js';
+import { escapeAttr, escapeHtml, getElementByIdOrNull, getErrorMessage } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 import {
   API,
@@ -786,25 +786,28 @@ export class DashboardModule {
       return;
     }
 
-    const counts = topics.map((topic) => topic.count).filter((count) => Number.isFinite(count));
+    const counts = topics
+      .map((topic) => (Number.isFinite(topic.count) ? topic.count : 0))
+      .filter((count) => count >= 0);
     const maxCount = Math.max(1, ...counts);
 
     const html = topics
-      .map(
-        (topic) => `
+      .map((topic) => {
+        const safeCount = Number.isFinite(topic.count) ? topic.count : 0;
+        return `
         <div class="flex items-center gap-3 mb-2">
           <div class="flex-1">
             <div class="flex justify-between items-center mb-1">
               <span class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(topic.topic)}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">${topic.count}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">${safeCount}</span>
             </div>
             <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-              <div class="bg-indigo-500 h-2 rounded-full" style="width: ${(topic.count / maxCount) * 100}%"></div>
+              <div class="bg-indigo-500 h-2 rounded-full" style="width: ${(safeCount / maxCount) * 100}%"></div>
             </div>
           </div>
         </div>
-      `
-      )
+            `;
+      })
       .join('');
 
     container.innerHTML = html;
@@ -869,7 +872,7 @@ export class DashboardModule {
           <div class="flex items-center gap-1 ml-2 shrink-0">
             <button class="text-xs px-2 py-1 bg-mama-yellow hover:bg-mama-yellow-hover text-mama-black rounded transition-colors"
               data-action="run-cron"
-              data-cron-id="${escapeHtml(job.id)}" title="Run Now">
+              data-cron-id="${escapeAttr(job.id)}" title="Run Now">
               Run
             </button>
           </div>

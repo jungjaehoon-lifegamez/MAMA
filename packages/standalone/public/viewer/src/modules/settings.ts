@@ -1264,11 +1264,11 @@ export class SettingsModule {
               <div class="flex items-center gap-1 ml-2 shrink-0">
                 <span class="text-[10px] text-gray-400">${nextRun}</span>
                 <label class="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
+                <input
+                  type="checkbox"
                     ${job.enabled !== false ? 'checked' : ''}
                     data-action="cron-toggle"
-                    data-cron-id="${escapeHtml(job.id)}"
+                    data-cron-id="${escapeAttr(job.id)}"
                     class="sr-only peer cron-toggle"
                   >
                 <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
@@ -1276,7 +1276,7 @@ export class SettingsModule {
               <button
                 type="button"
                 data-action="cron-delete"
-                data-cron-id="${escapeHtml(job.id)}"
+                data-cron-id="${escapeAttr(job.id)}"
                 class="text-red-400 hover:text-red-600 text-xs px-1"
                 title="Delete"
               >

@@ -44,6 +44,7 @@ function getViewerDirectory(): string {
     path.join(process.cwd(), 'public', 'viewer'),
     path.join(__dirname, '../../public/viewer'),
     path.join(__dirname, '../../../public/viewer'),
+    path.join(process.cwd(), 'packages', 'standalone', 'public', 'viewer'),
   ];
 
   for (const candidate of candidateDirs) {
@@ -873,6 +874,12 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: GET/HEAD /viewer/manifest.json - serve PWA manifest
     if (pathname === '/viewer/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
+      serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
+      return true;
+    }
+
+    // Route: GET/HEAD /manifest.json - legacy or custom host compatibility
+    if (pathname === '/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
       return true;
     }
