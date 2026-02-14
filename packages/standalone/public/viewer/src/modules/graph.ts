@@ -519,8 +519,8 @@ export class GraphModule {
             mangle: false,
             headerIds: false,
           });
-          decisionEl.textContent = renderedDecision;
-          reasoningEl.textContent = renderedReasoning;
+          decisionEl.innerHTML = renderedDecision;
+          reasoningEl.innerHTML = renderedReasoning;
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           showToast(`Markdown render failed: ${message}`);
@@ -651,7 +651,7 @@ export class GraphModule {
       const html = similar
         .map(
           (s) => `
-          <button class="w-full text-left p-2 mb-2 bg-gray-100 dark:bg-gray-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors" onclick="window.graphModule.navigateToNode('${String(s.id)}')">
+          <button class="similar-decision-btn w-full text-left p-2 mb-2 bg-gray-100 dark:bg-gray-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors" data-node-id="${escapeHtml(String(s.id))}">
             <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">${escapeHtml(
               String(s.topic || '')
             )}</div>
@@ -666,6 +666,15 @@ export class GraphModule {
 
       logger.debug('[MAMA] Setting similar decisions HTML');
       container.innerHTML = html;
+
+      // Bind click handlers via event delegation (avoid inline onclick)
+      container.addEventListener('click', (e: Event) => {
+        const target = e.target as HTMLElement;
+        const btn = target.closest('.similar-decision-btn') as HTMLElement | null;
+        if (btn && btn.dataset.nodeId) {
+          this.navigateToNode(btn.dataset.nodeId);
+        }
+      });
       logger.debug('[MAMA] fetchSimilarDecisions completed');
     } catch (error) {
       const message = getErrorMessage(error);
@@ -780,18 +789,18 @@ export class GraphModule {
       }
     }
 
-    // Focus on node
-    this.network.focus(nodeId, {
+    // Focus on node (use resolved nodeIdString, not original nodeId)
+    this.network.focus(nodeIdString, {
       scale: 1.5,
       animation: { duration: 500, easingFunction: 'easeInOutQuad' },
     });
 
     // Select node (triggers click event)
-    this.network.selectNodes([nodeId]);
+    this.network.selectNodes([nodeIdString]);
 
     // Show detail
     this.showDetail(node);
-    this.highlightConnectedNodes(nodeId);
+    this.highlightConnectedNodes(nodeIdString);
   }
 
   /**
@@ -851,7 +860,7 @@ export class GraphModule {
     } else {
       // Filter
       allNodes.forEach((node) => {
-        const nodeData = this.graphData.nodes.find((n) => n.id === String(node.id));
+        const nodeData = this.graphData.nodes.find((n) => String(n.id) === String(node.id));
         this.network.body.data.nodes.update({
           id: node.id,
           hidden: nodeData?.topic !== topic,
@@ -883,7 +892,7 @@ export class GraphModule {
     } else {
       // Filter by outcome
       allNodes.forEach((node) => {
-        const nodeData = this.graphData.nodes.find((n) => n.id === String(node.id));
+        const nodeData = this.graphData.nodes.find((n) => String(n.id) === String(node.id));
         const nodeOutcome = (nodeData?.outcome || 'pending').toLowerCase();
         this.network.body.data.nodes.update({
           id: node.id,

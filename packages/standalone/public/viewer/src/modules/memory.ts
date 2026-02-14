@@ -363,7 +363,10 @@ export class MemoryModule {
     const reasoningInput = getElementByIdOrNull<HTMLTextAreaElement>('save-reasoning');
     const confidenceInput = getElementByIdOrNull<HTMLInputElement>('save-confidence');
     const statusEl = getElementByIdOrNull<HTMLElement>('save-form-status');
-    const submitBtn = document.querySelector<HTMLButtonElement>('.save-form-submit');
+    // Select the Save button (last button in the modal actions)
+    const submitBtn = document.querySelector<HTMLButtonElement>(
+      '#save-decision-modal button.bg-mama-yellow'
+    );
     if (
       !topicInput ||
       !decisionInput ||

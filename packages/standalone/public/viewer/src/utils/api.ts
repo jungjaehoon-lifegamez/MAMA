@@ -559,8 +559,11 @@ export class API {
   static async getLastActiveSession(): Promise<LastActiveSessionResponse | null> {
     try {
       return await this.get<LastActiveSessionResponse>('/api/sessions/last-active');
-    } catch {
-      return null;
+    } catch (error) {
+      // Rethrow to allow callers to distinguish network failures from "no session"
+      throw new Error(
+        `Failed to get last active session: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

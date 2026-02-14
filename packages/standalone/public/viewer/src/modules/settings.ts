@@ -477,7 +477,7 @@ export class SettingsModule {
 
       // Trigger restart after save
       try {
-        await fetch('/api/restart', { method: 'POST' });
+        await API.post('/api/restart', {});
       } catch {
         // Expected: connection drops when server exits
       }

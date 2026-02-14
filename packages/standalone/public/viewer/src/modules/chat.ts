@@ -798,14 +798,21 @@ export class ChatModule {
     cardEl.className = 'tool-card loading';
     cardEl.dataset.toolId = toolId;
     cardEl.dataset.collapsed = 'true';
+    cardEl.dataset.toolId = toolId;
     cardEl.innerHTML = `
-      <div class="tool-header" onclick="window.chatModule.toggleToolCard('${toolId}')">
+      <div class="tool-header" data-tool-toggle="true">
         <span class="tool-icon">${icon}</span>
         <span class="tool-name">${escapeHtml(toolName)}</span>
         <span class="tool-spinner">⏳</span>
       </div>
       ${detail}
     `;
+
+    // Bind click handler safely (avoid inline onclick with string interpolation)
+    const header = cardEl.querySelector('.tool-header');
+    if (header) {
+      header.addEventListener('click', () => this.toggleToolCard(toolId));
+    }
 
     container.appendChild(cardEl);
     scrollToBottom(container);
@@ -1107,13 +1114,13 @@ export class ChatModule {
     if (!messagesContainer) {
       return;
     }
-    let pressTimer = null;
+    let pressTimer: ReturnType<typeof setTimeout> | null = null;
     const PRESS_DURATION = 750; // milliseconds
 
     // Touch events (mobile)
     messagesContainer.addEventListener('touchstart', (e: TouchEvent) => {
       const target = e.target as HTMLElement | null;
-      const message = target?.closest('.message') as HTMLElement | null;
+      const message = target?.closest('.chat-message') as HTMLElement | null;
       if (!message || message.classList.contains('system')) {
         return;
       }
@@ -1140,7 +1147,7 @@ export class ChatModule {
     // Mouse events (desktop)
     messagesContainer.addEventListener('mousedown', (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
-      const message = target?.closest('.message') as HTMLElement | null;
+      const message = target?.closest('.chat-message') as HTMLElement | null;
       if (!message || message.classList.contains('system')) {
         return;
       }
@@ -1168,7 +1175,7 @@ export class ChatModule {
      * Copy message text to clipboard
      */
     async function copyMessageText(messageEl: HTMLElement) {
-      const textContent = messageEl.querySelector('.message-text') as HTMLElement | null;
+      const textContent = messageEl.querySelector('.message-content') as HTMLElement | null;
       if (!textContent) {
         return;
       }
@@ -1878,7 +1885,7 @@ export class ChatModule {
       let startLeft = 0;
       let startTop = 0;
 
-      const startDrag = (clientX, clientY) => {
+      const startDrag = (clientX: number, clientY: number) => {
         dragging = true;
         const rect = panel.getBoundingClientRect();
         startX = clientX;
@@ -1889,7 +1896,7 @@ export class ChatModule {
         document.body.style.userSelect = 'none';
       };
 
-      const doDrag = (clientX, clientY) => {
+      const doDrag = (clientX: number, clientY: number) => {
         if (!dragging) {
           return;
         }
@@ -1966,7 +1973,7 @@ export class ChatModule {
       let startW = 0;
       let startH = 0;
 
-      const startResize = (clientX, clientY) => {
+      const startResize = (clientX: number, clientY: number) => {
         resizing = true;
         const rect = panel.getBoundingClientRect();
         startX = clientX;
@@ -1976,7 +1983,7 @@ export class ChatModule {
         document.body.style.userSelect = 'none';
       };
 
-      const doResize = (clientX, clientY) => {
+      const doResize = (clientX: number, clientY: number) => {
         if (!resizing) {
           return;
         }

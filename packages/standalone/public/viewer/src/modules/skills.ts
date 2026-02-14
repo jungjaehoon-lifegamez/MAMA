@@ -50,17 +50,20 @@ export const SkillsModule = {
   async loadSkills(): Promise<void> {
     try {
       const [installedRes, catalogRes] = await Promise.all([
-        API.getSkills().catch(() => ({ skills: [] })),
-        API.getSkillCatalog('all').catch(() => ({ skills: [] })),
+        API.getSkills(),
+        API.getSkillCatalog('all'),
       ]);
 
       this.installed = installedRes.skills || [];
       this.catalog = (catalogRes.skills || []).filter(
-        (s) => !this.installed.some((i) => i.id === s.id && i.source === s.source)
+        (s: SkillItem) => !this.installed.some((i) => i.id === s.id && i.source === s.source)
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error('Failed to load:', message);
+      logger.error('Failed to load skills:', message);
+      // Initialize with empty arrays on failure
+      this.installed = [];
+      this.catalog = [];
     }
   },
 
@@ -236,7 +239,7 @@ export const SkillsModule = {
       filtered = filtered.filter(
         (s) =>
           s.name.toLowerCase().includes(q) ||
-          s.description.toLowerCase().includes(q) ||
+          (s.description || '').toLowerCase().includes(q) ||
           s.id.toLowerCase().includes(q)
       );
     }

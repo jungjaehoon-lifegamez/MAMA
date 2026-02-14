@@ -421,8 +421,9 @@ export class DashboardModule {
           label: source,
           color: 'bg-gray-100 text-gray-700',
         };
+        const safeLabel = escapeHtml(info.label);
         return `<span class="inline-flex items-center gap-1 ${info.color} px-2 py-1 rounded text-xs font-medium">
-          ${info.icon} ${info.label}: ${count}
+          ${info.icon} ${safeLabel}: ${count}
         </span>`;
       })
       .join('');
