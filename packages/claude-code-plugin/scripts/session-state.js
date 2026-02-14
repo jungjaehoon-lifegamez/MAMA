@@ -135,12 +135,22 @@ function cleanupOldSessions() {
     const now = Date.now();
 
     for (const file of files) {
-      const filePath = path.join(SESSION_DIR, file);
-      const stat = fs.statSync(filePath);
+      try {
+        const filePath = path.join(SESSION_DIR, file);
+        const stat = fs.statSync(filePath);
 
-      // Remove files older than expiry
-      if (now - stat.mtimeMs > SESSION_EXPIRY_MS) {
-        fs.unlinkSync(filePath);
+        // Remove files older than expiry
+        if (now - stat.mtimeMs > SESSION_EXPIRY_MS) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (err) {
+            if (!(err && err.code === 'ENOENT')) {
+              console.error(`[session-state] Failed to remove old session file: ${filePath}`, err);
+            }
+          }
+        }
+      } catch {
+        // Ignore per-file errors and continue cleanup.
       }
     }
   } catch {

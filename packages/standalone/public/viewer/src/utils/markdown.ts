@@ -6,10 +6,7 @@
 
 import { escapeHtml } from './dom.js';
 
-const MARKDOWN_PARSE_OPTIONS = {
-  mangle: false,
-  headerIds: false,
-} as const;
+const MARKDOWN_PARSE_OPTIONS = {} as const;
 
 /**
  * Render markdown string to HTML and sanitize.
@@ -41,5 +38,9 @@ export function renderSafeMarkdown(markdown: string): string {
     return DOMPurify.sanitize(html);
   }
 
-  return html;
+  if (typeof console !== 'undefined') {
+    console.warn('[SafeMarkdown] DOMPurify is unavailable. Rendering escaped content as fallback.');
+  }
+  const safeFallback = escapeHtml(markdownText).replace(/\\n/g, '<br/>');
+  return safeFallback;
 }

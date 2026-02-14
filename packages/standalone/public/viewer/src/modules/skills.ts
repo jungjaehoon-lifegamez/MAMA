@@ -307,7 +307,7 @@ export const SkillsModule = {
   async install(source: string, name: string): Promise<void> {
     try {
       const btn = document.querySelector<HTMLButtonElement>(
-        `[data-action="install"][data-id="${name}"][data-source="${source}"]`
+        `[data-action="install"][data-id="${CSS.escape(name)}"][data-source="${CSS.escape(source)}"]`
       );
       if (btn) {
         btn.textContent = 'Installing...';

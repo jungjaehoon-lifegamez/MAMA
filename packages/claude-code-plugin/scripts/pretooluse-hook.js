@@ -71,7 +71,7 @@ function extractModuleTokens(filePath) {
  */
 function hasModuleOverlap(contractTopic, moduleTokens) {
   if (!contractTopic || moduleTokens.length === 0) {
-    return true;
+    return false;
   } // Allow if no tokens
 
   const topicLower = contractTopic.toLowerCase();

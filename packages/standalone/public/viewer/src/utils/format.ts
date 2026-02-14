@@ -88,12 +88,16 @@ export function formatCheckpointTime(timestamp: string | Date): string {
  * @param {string|Date} timestamp - Timestamp
  * @returns {string} Relative time string
  */
-export function formatRelativeTime(timestamp: string | Date | null | undefined): string {
+export function formatRelativeTime(timestamp: string | number | Date | null | undefined): string {
   if (!timestamp) {
-    return '';
+    return 'Never';
   }
 
   const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return 'Never';
+  }
+
   const now = new Date();
   const diff = now.getTime() - date.getTime();
 

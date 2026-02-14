@@ -339,7 +339,9 @@ export class API {
 
     try {
       if (!text) {
-        return {} as T;
+        throw new Error(
+          `${context} 응답 본문이 비어 있습니다. status=${response.status}, url=${response.url}`
+        );
       }
       return JSON.parse(text) as T;
     } catch (error) {
@@ -371,8 +373,8 @@ export class API {
           `GET ${endpoint}`
         );
         errorMessage = errorData.message || errorData.error || errorMessage;
-      } catch (error) {
-        errorMessage = `${error.message}`;
+      } catch (parseError: unknown) {
+        errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
       }
       throw new Error(errorMessage);
     }
@@ -401,8 +403,8 @@ export class API {
           `POST ${endpoint}`
         );
         errorMessage = errorData.message || errorData.error || errorMessage;
-      } catch (error) {
-        errorMessage = `${error.message}`;
+      } catch (parseError: unknown) {
+        errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
       }
       throw new Error(errorMessage);
     }
@@ -427,8 +429,8 @@ export class API {
           `PUT ${endpoint}`
         );
         errorMessage = errorData.message || errorData.error || errorMessage;
-      } catch (error) {
-        errorMessage = `${error.message}`;
+      } catch (parseError: unknown) {
+        errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
       }
       throw new Error(errorMessage);
     }
@@ -448,8 +450,8 @@ export class API {
           `DELETE ${endpoint}`
         );
         errorMessage = errorData.message || errorData.error || errorMessage;
-      } catch (error) {
-        errorMessage = `${error.message}`;
+      } catch (parseError: unknown) {
+        errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
       }
       throw new Error(errorMessage);
     }
@@ -593,15 +595,15 @@ export class API {
   // =============================================
 
   static async getTokenSummary(): Promise<TokenSummaryResponse> {
-    return this.get('/api/tokens/summary');
+    return this.get<TokenSummaryResponse>('/api/tokens/summary');
   }
 
   static async getTokensByAgent(): Promise<TokensByAgentResponse> {
-    return this.get('/api/tokens/by-agent');
+    return this.get<TokensByAgentResponse>('/api/tokens/by-agent');
   }
 
   static async getTokensDaily(days = 30): Promise<JsonRecord> {
-    return this.get('/api/tokens/daily', { days });
+    return this.get<JsonRecord>('/api/tokens/daily', { days });
   }
 
   // =============================================

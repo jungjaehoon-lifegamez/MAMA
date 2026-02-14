@@ -795,7 +795,6 @@ export class ChatModule {
 
     const cardEl = document.createElement('div');
     cardEl.className = 'tool-card loading';
-    cardEl.dataset.toolId = toolId;
     cardEl.dataset.collapsed = 'true';
     cardEl.dataset.toolId = toolId;
     cardEl.innerHTML = `
@@ -841,7 +840,7 @@ export class ChatModule {
    * Toggle tool card collapsed/expanded state
    */
   toggleToolCard(toolId: string): void {
-    const card = document.querySelector(`.tool-card[data-tool-id="${toolId}"]`);
+    const card = document.querySelector(`.tool-card[data-tool-id="${CSS.escape(toolId)}"]`);
     if (!card) {
       return;
     }
@@ -2027,7 +2026,7 @@ export class ChatModule {
         this.savePanelState(panel);
       };
 
-      resizeHandle.addEventListener('mousedown', (e) => {
+      resizeHandle.addEventListener('mousedown', (e: MouseEvent) => {
         e.preventDefault();
         startResize(e.clientX, e.clientY);
       });

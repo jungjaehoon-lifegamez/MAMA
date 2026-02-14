@@ -251,11 +251,11 @@ function serveStaticFile(res: ServerResponse, filePath: string, contentType: str
     const err = error as NodeJS.ErrnoException;
     if (err?.code === 'ENOENT' || err?.code === 'EISDIR' || /not a file/i.test(message)) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('File not found: ' + filePath);
+      res.end('Not found');
       return;
     }
     res.writeHead(500, { 'Content-Type': 'text/plain' });
-    res.end('Error loading file: ' + message);
+    res.end('Internal server error');
   }
 }
 
@@ -1095,11 +1095,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { spawn: spawnChild } = require('node:child_process');
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { homedir: getHome } = require('node:os');
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { join: joinPath } = require('node:path');
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { openSync } = require('node:fs');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { join: joinPath, dirname: dirnamePath } = require('node:path');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { homedir: getHome } = require('node:os');
 
         const isSystemd =
           Boolean(process.env.INVOCATION_ID) || Boolean(process.env.SYSTEMD_EXEC_PID);
@@ -1112,27 +1112,30 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           process.exit(0);
         }
 
-        // Restart via detached shell command to avoid bind race:
-        // stop old daemon first, then start a fresh one.
         const script = process.argv[1];
+        if (!script) {
+          throw new Error('Unable to determine executable script path');
+        }
         const logDir = joinPath(getHome(), '.mama', 'logs');
         const logFile = joinPath(logDir, 'daemon.log');
         const out = openSync(logFile, 'a');
-        const nodePath = JSON.stringify(process.execPath);
-        const quotedScript = JSON.stringify(script);
+        const runCli = (cmd: string) => {
+          const child = spawnChild(process.execPath, [script, cmd], {
+            detached: true,
+            stdio: ['ignore', out, out],
+            cwd: dirnamePath(script),
+            env: { ...process.env, MAMA_DAEMON: '1' },
+          });
+          child.unref();
+        };
+
         // Wait for port to be released after stop (2s delay between stop and start)
-        const shellCmd =
-          `sleep 1; ` +
-          `${nodePath} ${quotedScript} stop >/dev/null 2>&1 || true; ` +
-          `sleep 2; ` +
-          `MAMA_NO_AUTO_OPEN_BROWSER=1 ${nodePath} ${quotedScript} start >/dev/null 2>&1 || true`;
-        const child = spawnChild('bash', ['-lc', shellCmd], {
-          detached: true,
-          stdio: ['ignore', out, out],
-          cwd: getHome(),
-          env: { ...process.env, MAMA_DAEMON: '1' },
-        });
-        child.unref();
+        setTimeout(() => {
+          runCli('stop');
+        }, 1000);
+        setTimeout(() => {
+          runCli('start');
+        }, 3000);
         process.exit(0);
       }, 500);
       return true;
@@ -1704,11 +1707,41 @@ function mergeConfigUpdates(
     merged.use_claude_cli = updates.use_claude_cli;
   }
 
-  if (updates.agent) {
-    merged.agent = {
+  const normalizeAgentNumber = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+
+  if (updates.agent && typeof updates.agent === 'object') {
+    const agentUpdates = updates.agent as Record<string, unknown>;
+    const normalizedAgent = {
       ...current.agent,
-      ...(updates.agent as Record<string, unknown>),
+      ...agentUpdates,
     };
+
+    if (agentUpdates.max_turns !== undefined) {
+      const normalized = normalizeAgentNumber(agentUpdates.max_turns);
+      if (normalized === undefined) {
+        throw new Error('agent.max_turns must be a number');
+      }
+      normalizedAgent.max_turns = normalized;
+    }
+
+    if (agentUpdates.timeout !== undefined) {
+      const normalized = normalizeAgentNumber(agentUpdates.timeout);
+      if (normalized === undefined) {
+        throw new Error('agent.timeout must be a number');
+      }
+      normalizedAgent.timeout = normalized;
+    }
+
+    merged.agent = normalizedAgent;
   }
 
   if (updates.heartbeat) {

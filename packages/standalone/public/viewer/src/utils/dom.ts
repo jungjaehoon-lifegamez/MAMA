@@ -67,9 +67,7 @@ export function debounce<T extends (...args: unknown[]) => unknown>(
   let timeout: ReturnType<typeof setTimeout> | undefined;
   return function executedFunction(...args) {
     const later = () => {
-      if (timeout) {
-        clearTimeout(timeout);
-      }
+      timeout = undefined;
       func(...args);
     };
     if (timeout) {

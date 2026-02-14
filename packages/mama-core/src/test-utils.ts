@@ -12,6 +12,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { resetDBState, initDB, closeDB } from './db-manager.js';
+import { warn } from './debug-logger.js';
 
 // Track test databases for cleanup
 const testDatabases: string[] = [];
@@ -37,7 +38,7 @@ export async function preloadEmbeddingModel(): Promise<void> {
   } catch (error) {
     // Non-fatal: some CI environments may not have ONNX runtime
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[test-utils] Embedding model preload failed: ${message}`);
+    warn(`[test-utils] Embedding model preload failed: ${message}`);
   }
 }
 
@@ -82,9 +83,6 @@ export async function initTestDB(testName: string): Promise<string> {
 export async function cleanupTestDB(testDbPath?: string): Promise<void> {
   // Close database connection
   await closeDB();
-
-  // Reset state for next test
-  resetDBState({ disconnect: false });
 
   // Clean up files
   if (testDbPath) {

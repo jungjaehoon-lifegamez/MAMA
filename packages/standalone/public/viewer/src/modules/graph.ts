@@ -16,6 +16,7 @@
 
 import {
   escapeHtml,
+  escapeAttr,
   debounce,
   showToast,
   getElementByIdOrNull,
@@ -637,7 +638,7 @@ export class GraphModule {
       const html = similar
         .map(
           (s) => `
-          <button class="similar-decision-btn w-full text-left p-2 mb-2 bg-gray-100 dark:bg-gray-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors" data-node-id="${escapeHtml(String(s.id))}">
+          <button class="similar-decision-btn w-full text-left p-2 mb-2 bg-gray-100 dark:bg-gray-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors" data-node-id="${escapeAttr(String(s.id))}">
             <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">${escapeHtml(
               String(s.topic || '')
             )}</div>
