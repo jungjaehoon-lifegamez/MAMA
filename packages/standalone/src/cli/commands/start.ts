@@ -31,6 +31,12 @@ import {
   PluginLoader,
   initChannelHistory,
 } from '../../gateways/index.js';
+import type {
+  Checkpoint,
+  Decision,
+  MamaApiClient,
+  SearchResult,
+} from '../../gateways/context-injector.js';
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer, insertTokenUsage } from '../../api/index.js';
@@ -594,6 +600,7 @@ export async function runAgentLoop(
     codexEphemeral: config.agent.codex_ephemeral,
     codexAddDirs: config.agent.codex_add_dirs,
     codexConfigOverrides: config.agent.codex_config_overrides,
+    timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
     toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord
@@ -763,28 +770,142 @@ export async function runAgentLoop(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { initDB } = require('@jungjaehoon/mama-core/db-manager');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const {
-    suggest,
-    save,
-    updateOutcome,
-    loadCheckpoint,
-    list: listDecisions,
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-  } = require('@jungjaehoon/mama-core');
+  const mamaCore = require('@jungjaehoon/mama-core');
+  const mamaApi = (
+    mamaCore && typeof mamaCore === 'object' && 'mama' in mamaCore ? mamaCore.mama : mamaCore
+  ) as {
+    suggest?: (query: string, options?: { limit?: number }) => Promise<unknown>;
+    search?: (query: string, limit?: number) => Promise<unknown>;
+    save?: (input: unknown) => Promise<unknown>;
+    update?: (decisionId: string, updates: unknown) => Promise<unknown>;
+    updateOutcome?: (decisionId: string, updates: unknown) => Promise<unknown>;
+    loadCheckpoint?: () => Promise<unknown>;
+    list?: (options?: { limit?: number }) => Promise<unknown>;
+    listDecisions?: (options?: { limit?: number }) => Promise<unknown>;
+  };
+  const suggest = (mamaApi.suggest ?? mamaApi.search) as
+    | ((query: string, options?: { limit?: number }) => Promise<unknown>)
+    | ((query: string, limit?: number) => Promise<unknown>)
+    | undefined;
+  const loadCheckpoint = mamaApi.loadCheckpoint;
+  const listDecisions = mamaApi.list ?? mamaApi.listDecisions;
+  if (!suggest) {
+    throw new Error('MAMA API shape is incompatible; failed to initialize memory helpers');
+  }
 
   // Initialize MAMA database first
   await initDB();
 
   console.log('✓ MAMA memory API available (loaded directly in auto-recall)');
 
+  const search = async (query: string, limit?: number): Promise<unknown> => {
+    if (!suggest) {
+      throw new Error('MAMA search/suggest API is unavailable');
+    }
+
+    try {
+      return await (suggest as (q: string, options?: { limit?: number }) => Promise<unknown>)(
+        query,
+        limit !== undefined ? { limit } : undefined
+      );
+    } catch (error) {
+      const shouldFallback = error instanceof TypeError && /object/i.test(error.message);
+      if (!shouldFallback) {
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+
+      return await (suggest as (q: string, limit?: number) => Promise<unknown>)(query, limit);
+    }
+  };
+
+  const searchForContext = async (query: string, limit?: number): Promise<SearchResult[]> => {
+    const result = await search(query, limit);
+
+    if (!result) {
+      return [];
+    }
+
+    if (Array.isArray(result)) {
+      return result as SearchResult[];
+    }
+
+    const wrapped = result as { results?: unknown };
+    if (wrapped.results && Array.isArray(wrapped.results)) {
+      return wrapped.results as SearchResult[];
+    }
+
+    return [];
+  };
+
+  const loadCheckpointForContext =
+    loadCheckpoint !== undefined
+      ? async (): Promise<Checkpoint | null> => {
+          const result = await loadCheckpoint();
+          if (!result || typeof result !== 'object' || Array.isArray(result)) {
+            return null;
+          }
+
+          const checkpointRow = result as {
+            id?: unknown;
+            timestamp?: unknown;
+            summary?: unknown;
+            next_steps?: unknown;
+            open_files?: unknown;
+          };
+
+          if (
+            typeof checkpointRow.timestamp !== 'number' &&
+            typeof checkpointRow.timestamp !== 'string'
+          ) {
+            return null;
+          }
+
+          const timestamp =
+            typeof checkpointRow.timestamp === 'number'
+              ? checkpointRow.timestamp
+              : Date.parse(checkpointRow.timestamp);
+          if (!Number.isFinite(timestamp)) {
+            return null;
+          }
+
+          const parsedOpenFiles = Array.isArray(checkpointRow.open_files)
+            ? checkpointRow.open_files.filter((item): item is string => typeof item === 'string')
+            : [];
+
+          return {
+            id:
+              typeof checkpointRow.id === 'number'
+                ? checkpointRow.id
+                : Number.isFinite(Number(checkpointRow.id))
+                  ? Number(checkpointRow.id)
+                  : 0,
+            timestamp,
+            summary: typeof checkpointRow.summary === 'string' ? checkpointRow.summary : '',
+            next_steps:
+              typeof checkpointRow.next_steps === 'string' ? checkpointRow.next_steps : undefined,
+            open_files: parsedOpenFiles,
+          };
+        }
+      : undefined;
+
+  const listDecisionsForContext =
+    listDecisions !== undefined
+      ? async (options?: { limit?: number }): Promise<Decision[]> => {
+          const result = await listDecisions(options);
+          if (!Array.isArray(result)) {
+            return [];
+          }
+
+          return result as Decision[];
+        }
+      : undefined;
+
   // Create MAMA API client for context injection
   // Provides both SessionStart (checkpoint + recent decisions) and UserPromptSubmit (related decisions) functionality
-  const mamaApiClient = {
-    search: suggest, // mama-core exports 'suggest' for semantic search
-    save,
-    update: updateOutcome, // mama-core exports 'updateOutcome' for decision updates
-    loadCheckpoint,
-    listDecisions, // For SessionStart-like functionality
+  const mamaApiClient: MamaApiClient = {
+    search: searchForContext, // mama-core exports 'suggest' for semantic search
+    loadCheckpoint: loadCheckpointForContext,
+    listDecisions: listDecisionsForContext,
   };
 
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);
@@ -864,6 +985,7 @@ export async function runAgentLoop(
   const gatewayMultiAgentRuntime = {
     backend,
     model: config.agent.model,
+    requestTimeout: config.agent.timeout,
     codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
     codexCwd: config.agent.codex_cwd ? expandPath(config.agent.codex_cwd) : undefined,
     codexSandbox: config.agent.codex_sandbox,
@@ -892,6 +1014,7 @@ export async function runAgentLoop(
       discordGateway = new DiscordGateway({
         token: config.discord.token,
         messageRouter,
+        defaultChannelId: config.discord.default_channel_id,
         config: normalizedGuilds
           ? {
               guilds: normalizedGuilds,
