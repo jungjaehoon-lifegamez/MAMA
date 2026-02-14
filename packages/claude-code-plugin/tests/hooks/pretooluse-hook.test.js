@@ -198,19 +198,19 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(content).toContain('generateEmbedding');
     });
 
-    it('should format contract output safely', () => {
+    it('should format decision output safely', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      // New hook uses formatContract for safe output
-      expect(content).toContain('formatContract');
+      // New hook uses formatDecision for safe output
+      expect(content).toContain('formatDecision');
     });
 
-    it('should include contract reference format in output', () => {
+    it('should include decision reference format in output', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      // Updated format: "Relevant Contracts" with module context matching
-      expect(content).toContain('Relevant Contracts');
-      expect(content).toContain('formatContract');
+      // Updated format: "Related Decisions" with module context matching
+      expect(content).toContain('Related Decisions');
+      expect(content).toContain('formatDecision');
       expect(content).toContain('similarity');
     });
   });

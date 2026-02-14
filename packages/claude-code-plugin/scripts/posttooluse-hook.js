@@ -169,13 +169,22 @@ async function main() {
       process.exit(0);
     }
 
-    // Found contract patterns - prompt for review
+    // Found contract patterns - STRONGLY prompt for save
     const patternList = patterns.slice(0, 3).join(', ');
     const fileName = path.basename(filePath);
 
     const response = {
       decision: 'allow',
-      message: `\n💡 **Contract patterns detected** in ${fileName}: ${patternList}\n   Consider saving with \`/mama:decision\` if this is an important interface.\n`,
+      message: `
+⚠️ **IMPORTANT: Contract Change Detected** in \`${fileName}\`
+
+Patterns: ${patternList}
+
+🔴 **ACTION REQUIRED**: You MUST save this decision to MAMA memory.
+   Run: \`/mama:decision topic="${fileName.replace(/\.[^.]+$/, '')}" decision="<describe the change>"\`
+
+This ensures future sessions understand this interface/contract.
+`,
     };
 
     console.error(JSON.stringify(response));

@@ -189,7 +189,7 @@ describe('PostToolUse Hook (Redesigned Feb 2025)', () => {
       });
 
       expect(result.exitCode).toBe(2); // Uses exit(2) for visibility
-      expect(result.stderr).toContain('Contract patterns detected');
+      expect(result.stderr).toContain('Contract Change Detected');
       expect(result.stderr).toContain('interface/type');
     });
 
@@ -203,7 +203,7 @@ describe('PostToolUse Hook (Redesigned Feb 2025)', () => {
       });
 
       expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain('Contract patterns detected');
+      expect(result.stderr).toContain('Contract Change Detected');
       expect(result.stderr).toContain('typed function');
     });
 

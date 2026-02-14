@@ -26,8 +26,8 @@ const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/memory-store');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { isFirstEdit, markFileEdited, markContractsShown } = require('./session-state');
 
-// High threshold for relevance
-const SIMILARITY_THRESHOLD = 0.85;
+// Threshold for relevance (lowered from 0.85 to show more decisions)
+const SIMILARITY_THRESHOLD = 0.75;
 const SEARCH_LIMIT = 3;
 
 // Tools that need contract check
@@ -140,29 +140,19 @@ function shouldProcessFile(filePath) {
 }
 
 /**
- * Format contract for display
+ * Format decision for display
  */
-function formatContract(contract) {
-  const topic = contract.topic || 'unknown';
-  const decision = contract.decision || '';
-  const similarity = contract.similarity ? Math.round(contract.similarity * 100) : 0;
+function formatDecision(item) {
+  const topic = item.topic || 'unknown';
+  const decision = item.decision || '';
+  const outcome = item.outcome || 'pending';
+  const similarity = item.similarity ? Math.round(item.similarity * 100) : 0;
 
-  // Extract key info from decision
-  const expectsMatch = decision.match(/expects\s*(\{[^}]+\})/i);
-  const returnsMatch = decision.match(/returns\s*(\{[^}]+\})/i);
+  // Truncate decision to ~80 chars for teaser
+  const shortDecision = decision.length > 80 ? decision.slice(0, 77) + '...' : decision;
+  const outcomeIcon = outcome === 'SUCCESS' ? '✅' : outcome === 'FAILED' ? '❌' : '⏳';
 
-  const expects = expectsMatch ? expectsMatch[1] : '';
-  const returns = returnsMatch ? returnsMatch[1] : '';
-
-  let info = `**${topic}** (${similarity}% match)`;
-  if (expects) {
-    info += `\n  - expects: ${expects}`;
-  }
-  if (returns) {
-    info += `\n  - returns: ${returns}`;
-  }
-
-  return info;
+  return `${outcomeIcon} **${topic}** (${similarity}%)\n   ${shortDecision}`;
 }
 
 async function main() {
@@ -234,11 +224,8 @@ async function main() {
       process.exit(0);
     }
 
-    // Filter: only contract_* topics with module overlap
-    const contracts = results.filter((r) => {
-      if (!r.topic?.startsWith('contract_')) {
-        return false;
-      }
+    // Filter: all decisions above threshold with module overlap
+    const relevant = results.filter((r) => {
       if (r.similarity < SIMILARITY_THRESHOLD) {
         return false;
       }
@@ -246,18 +233,18 @@ async function main() {
       return hasModuleOverlap(r.topic, moduleTokens);
     });
 
-    if (contracts.length === 0) {
-      // No relevant contracts - mark file as processed and silent pass
+    if (relevant.length === 0) {
+      // No relevant decisions - mark file as processed and silent pass
       markFileEdited(filePath);
       console.error(JSON.stringify({ decision: 'allow', reason: '' }));
       process.exit(0);
     }
 
-    // Format output
-    const formatted = contracts.slice(0, SEARCH_LIMIT).map(formatContract).join('\n\n');
-    const message = `\n📋 **Relevant Contracts** (${fileName})\n\n${formatted}\n`;
+    // Format output - show past decisions related to this code
+    const formatted = relevant.slice(0, SEARCH_LIMIT).map(formatDecision).join('\n\n');
+    const message = `\n🧠 **Related Decisions** (${fileName})\n\n${formatted}\n`;
 
-    // Mark file as processed and that contracts were shown
+    // Mark file as processed and that decisions were shown
     markFileEdited(filePath);
     markContractsShown(filePath);
 
@@ -265,7 +252,7 @@ async function main() {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
-        permissionDecisionReason: 'Contract reference provided',
+        permissionDecisionReason: 'Related decisions provided',
         additionalContext: message,
       },
     };
