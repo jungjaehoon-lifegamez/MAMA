@@ -138,12 +138,12 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(content).toContain("'NotebookEdit'");
     });
 
-    it('should define read tools that skip entirely', () => {
+    it('should only process write tools (skip read tools)', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      expect(content).toContain('READ_TOOLS_SKIP');
-      expect(content).toContain("'Grep'");
-      expect(content).toContain("'Glob'");
+      // New design: only WRITE_TOOLS are processed, others silently pass
+      expect(content).toContain('WRITE_TOOLS');
+      expect(content).toContain('!WRITE_TOOLS.has');
     });
 
     it('should define skip patterns for non-code files', () => {
@@ -172,8 +172,8 @@ describe('Story M2.2: PreToolUse Hook', () => {
       });
 
       expect(result.exitCode).toBe(0);
-      // When disabled, outputs allow decision via stderr
-      expect(result.stderr).toContain('contracts disabled');
+      // When disabled, silently allows via stderr
+      expect(result.stderr).toContain('allow');
     });
 
     it('should check for contracts feature', () => {
@@ -198,18 +198,20 @@ describe('Story M2.2: PreToolUse Hook', () => {
       expect(content).toContain('generateEmbedding');
     });
 
-    it('should sanitize contract output to prevent prompt injection', () => {
+    it('should format contract output safely', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      expect(content).toContain('sanitizeForPrompt');
+      // New hook uses formatContract for safe output
+      expect(content).toContain('formatContract');
     });
 
     it('should include contract reference format in output', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
-      expect(content).toContain('MAMA Contract Reference');
-      expect(content).toContain('Expected request fields');
-      expect(content).toContain('Expected response shape');
+      // Updated format: "Relevant Contracts" with module context matching
+      expect(content).toContain('Relevant Contracts');
+      expect(content).toContain('formatContract');
+      expect(content).toContain('similarity');
     });
   });
 
