@@ -170,8 +170,16 @@ export class SessionPool {
       return { totalTokens: 0, nearThreshold: false };
     }
 
+    // Validate token count - Claude max is ~200K, anything above is likely a bug
+    // (e.g., Codex CLI returning characters/bytes instead of tokens)
+    const MAX_VALID_TOKENS = 250000;
+    const validatedTokens = inputTokens > MAX_VALID_TOKENS ? 0 : inputTokens;
+    if (inputTokens > MAX_VALID_TOKENS) {
+      logger.warn(`Invalid token count ${inputTokens} exceeds max ${MAX_VALID_TOKENS}, ignoring`);
+    }
+
     // Use latest value, not cumulative - Claude API returns total context tokens per request
-    existing.totalInputTokens = Math.max(existing.totalInputTokens, inputTokens);
+    existing.totalInputTokens = Math.max(existing.totalInputTokens, validatedTokens);
     const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS * 0.9; // 90% of threshold
 
     if (nearThreshold) {
