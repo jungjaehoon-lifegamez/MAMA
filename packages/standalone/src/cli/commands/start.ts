@@ -1015,6 +1015,8 @@ export async function runAgentLoop(
     backend,
     model: config.agent.model,
     requestTimeout: config.agent.timeout,
+    codexCwd: config.agent.codex_cwd,
+    codexSandbox: config.agent.codex_sandbox,
   } as const;
 
   // Initialize Discord gateway if enabled (before API server for reference)
