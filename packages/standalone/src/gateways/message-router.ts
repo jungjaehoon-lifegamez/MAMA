@@ -288,11 +288,10 @@ This protects your credentials from being exposed in chat logs.`;
     // 2. Check if session is busy (another request in progress)
     const channelKey = buildChannelKey(message.source, message.channelId);
     const sessionPool = getSessionPool();
-    const {
-      sessionId: cliSessionId,
-      isNew: isNewCliSession,
-      busy,
-    } = sessionPool.getSession(channelKey);
+    const initialSession = sessionPool.getSession(channelKey);
+    let cliSessionId = initialSession.sessionId;
+    let isNewCliSession = initialSession.isNew;
+    const busy = initialSession.busy;
 
     // If session is busy, notify caller immediately and wait for it to be released
     if (busy) {
@@ -324,11 +323,13 @@ This protects your credentials from being exposed in chat logs.`;
         }
       }
 
-      // Check if we timed out (session still busy)
-      const finalCheck = sessionPool.peekSession(channelKey);
-      if (finalCheck.busy) {
+      // Re-acquire session after wait (properly locks it this time)
+      const reacquired = sessionPool.getSession(channelKey);
+      if (reacquired.busy) {
         throw new Error(`Session for ${channelKey} timed out after ${maxWaitMs / 1000}s`);
       }
+      cliSessionId = reacquired.sessionId;
+      isNewCliSession = reacquired.isNew;
     }
 
     // 3. Create AgentContext for role-aware execution

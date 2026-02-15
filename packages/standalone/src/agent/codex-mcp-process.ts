@@ -177,12 +177,15 @@ export class CodexMCPProcess extends EventEmitter {
     // Override model if provided
     const effectiveModel = options?.model || this.options.model;
 
-    // Wait if busy (with timeout)
+    // Wait if not ready (with timeout)
     const maxWaitMs = this.options.timeoutMs ?? 120000;
     const waitStart = Date.now();
-    while (this.state === 'busy') {
+    while (this.state !== 'ready') {
+      if (this.state === 'dead') {
+        throw new Error('Process is not running');
+      }
       if (Date.now() - waitStart > maxWaitMs) {
-        throw new Error('Timed out waiting for previous prompt to complete');
+        throw new Error('Timed out waiting for process to be ready');
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
