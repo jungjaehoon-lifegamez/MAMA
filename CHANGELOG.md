@@ -4,6 +4,54 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-15
+
+### Added
+
+- **Codex MCP backend**: New `codex-mcp` backend using MCP protocol instead of CLI wrapper
+  - Proper threadId-based session management
+  - compact-prompt parameter for context compaction control
+  - Token usage tracking from MCP response metadata
+- **Session busy queue**: Messages wait when session is processing, with `onQueued` notification
+- **CI/CD improvements**: Turborepo for package-scoped builds and tests
+  - Path-filtered test jobs (only run affected package tests)
+  - Husky pre-commit uses turbo for faster checks
+
+### Changed
+
+- **Backend simplification**: Reduced to 2 backends (`claude` | `codex-mcp`)
+  - Removed legacy `codex` CLI wrapper
+  - Mixed agent support (Claude + Codex MCP in same conversation)
+- **Session pool token tracking**: Disabled 160K threshold reset for Codex MCP (handles own compaction)
+- **Viewer settings**: Added effort level selector for Codex models
+- **WebSocket safety**: All `ws.send()` calls now use `safeSend()` helper with readyState check
+
+### Fixed
+
+- **MCP server startup**: Fixed timeout issue by using simple sleep instead of stdout wait
+  - MCP protocol requires client to send first request
+  - Added proper cleanup on initialization failure
+- **PreToolUse hook**: Fixed decision display using `exit(2)` + stderr (additionalContext not supported)
+- **Plugin hook search**: Simplified buildSearchQuery to filename tokens only (reduced noise)
+
+## [mama-core-1.1.4] - 2026-02-15
+
+### Added
+
+- **safeSend helper**: WebSocket send with readyState guard and try-catch for race conditions
+- **onQueued callback**: MessageRouter process() now supports busy queue notification
+
+## [plugin-1.7.13] - 2026-02-15
+
+### Changed
+
+- **PreToolUse hook**: Use exit(2) + stderr for decision context (additionalContext not supported)
+- **Search query**: Simplified to filename tokens only for better embedding relevance
+
+### Removed
+
+- **POC files**: Removed haiku-agent-poc.js and mcp-direct-poc.js
+
 ## [0.8.6] - 2026-02-14
 
 ### Changed
