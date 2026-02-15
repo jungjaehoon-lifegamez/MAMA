@@ -5,22 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-02-15
-
-### Added
-
-- **Session Lifecycle Hooks**: Complete session memory management
-  - `session_start`: Loads checkpoint and recent decisions at session start
-  - `session_end`: Auto-saves checkpoint when session ends
-  - `before_compaction`: Saves checkpoint before context compression
-  - `after_compaction`: Prepares context recovery after compression
-- **Post-Compaction Context Enhancement**: Automatically adds note to context after compaction to help restore state
-- **Better than Claude Code**: OpenClaw's `after_compaction` hook enables immediate state awareness after compression (Claude Code only has PreCompact)
-
-### Changed
-
-- Enhanced `before_agent_start` hook to detect post-compaction state and inject recovery context
-
 ## [0.4.0] - 2026-02-01
 
 ### Changed
