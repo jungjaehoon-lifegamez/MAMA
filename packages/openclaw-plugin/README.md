@@ -8,6 +8,8 @@ MAMA Memory Plugin for OpenClaw Gateway - Direct integration without HTTP overhe
 - **4 Native Tools**: `mama_search`, `mama_save`, `mama_load_checkpoint`, `mama_update`
 - **Semantic Search**: Vector-based decision retrieval using sqlite-vec
 - **Decision Graph**: Track decision evolution with `builds_on`, `debates`, `synthesizes` edges
+- **Session Lifecycle Hooks**: Auto-recall at session start, auto-checkpoint at session end
+- **Compaction Recovery**: Saves checkpoint before context compression and restores state after
 
 ## Installation
 
@@ -95,6 +97,28 @@ id: "decision_xxx"
 outcome: "success" | "failed" | "partial"
 reason: "Works well in production"
 ```
+
+## Session Lifecycle Hooks
+
+MAMA provides comprehensive session memory management through OpenClaw hooks:
+
+| Hook                 | Trigger                    | Action                                    |
+| -------------------- | -------------------------- | ----------------------------------------- |
+| `session_start`      | Session begins             | Load checkpoint and recent decisions      |
+| `before_agent_start` | Before each agent turn     | Inject relevant memories into context     |
+| `agent_end`          | After agent completes      | Detect decision patterns (auto-capture)   |
+| `session_end`        | Session ends               | Auto-save checkpoint                      |
+| `before_compaction`  | Before context compression | Save checkpoint with pre-compaction state |
+| `after_compaction`   | After context compression  | Prepare recovery context for next turn    |
+
+### Compaction Recovery (Better than Claude Code)
+
+Unlike Claude Code which only has `PreCompact`, OpenClaw's `after_compaction` hook allows MAMA to:
+
+1. Save a checkpoint before compression
+2. Detect when context was compressed
+3. Add a recovery note to the next agent turn
+4. Help restore working state seamlessly
 
 ## Architecture
 
