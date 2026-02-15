@@ -10,7 +10,8 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
-    "test": "echo 'No tests yet'",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf node_modules"
   },
   "keywords": [
@@ -42,11 +43,18 @@
     "@jungjaehoon/mama-core": "workspace:*",
     "@sinclair/typebox": "^0.32.0"
   },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
   "optionalDependencies": {
     "prebuild-install": "^7.1.0"
   },
   "files": [
     "index.ts",
+    "utils.ts",
+    "openclaw.d.ts",
     "openclaw.plugin.json",
     "scripts/",
     "README.md"

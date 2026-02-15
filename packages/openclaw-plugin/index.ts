@@ -14,6 +14,14 @@ import { Type, type Static } from '@sinclair/typebox';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import path from 'node:path';
 import os from 'node:os';
+import {
+  truncateText,
+  isRecord,
+  getStringField,
+  getErrorMessage,
+  formatReasoning,
+  isRecentCheckpoint,
+} from './utils';
 
 // MAMA module path - resolve from workspace dependency
 const MAMA_MODULE_PATH = path.dirname(require.resolve('@jungjaehoon/mama-core/mama-api'));
@@ -95,16 +103,11 @@ let initialDbPath: string | null = null;
 // Compaction tracking flag (module-level for cross-hook communication)
 let compactionOccurred = false;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object';
-}
-
-function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return String(err);
-}
+// Session-level state for more useful auto-checkpoints
+let sessionStartedAt: string | null = null;
+let lastUserPrompt: string | null = null;
+let lastCompactionAt: string | null = null;
+let lastAutoCaptureCandidates: string[] = [];
 
 /**
  * Get MAMA API with null guard
@@ -115,44 +118,6 @@ function getMAMA(): MAMAApi {
     throw new Error('MAMA not initialized. Call initMAMA() first.');
   }
   return mama;
-}
-
-/**
- * Safely extract error message from unknown error type
- */
-function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) {
-    return err.message;
-  }
-  if (typeof err === 'string') {
-    return err;
-  }
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
-  }
-}
-
-/**
- * Format reasoning with link extraction
- * Shows truncated reasoning + preserves builds_on/debates/synthesizes links
- */
-function formatReasoning(reasoning: string, maxLen: number = 80): string {
-  if (!reasoning) return '';
-
-  // Extract link patterns
-  const linkMatch = reasoning.match(/(builds_on|debates|synthesizes):\s*[\w[\],\s_-]+/i);
-
-  // Truncate main reasoning
-  const truncated = reasoning.length > maxLen ? reasoning.substring(0, maxLen) + '...' : reasoning;
-
-  // Add link info if found and not already in truncated part
-  if (linkMatch && !truncated.includes(linkMatch[0])) {
-    return `${truncated}\n  🔗 ${linkMatch[0]}`;
-  }
-
-  return truncated;
 }
 
 /**
@@ -220,6 +185,10 @@ const mamaPlugin = {
     api.on('session_start', async (_event: unknown) => {
       try {
         await initMAMA(config);
+        sessionStartedAt = new Date().toISOString();
+        lastUserPrompt = null;
+        lastCompactionAt = null;
+        lastAutoCaptureCandidates = [];
 
         // 1. Load checkpoint
         const checkpoint = await getMAMA().loadCheckpoint();
@@ -246,13 +215,11 @@ const mamaPlugin = {
       try {
         await initMAMA(config);
 
-        const userPrompt = (() => {
-          if (!isRecord(event)) {
-            return '';
-          }
-          const prompt = event['prompt'];
-          return typeof prompt === 'string' ? prompt : '';
-        })();
+        let userPrompt = '';
+        if (isRecord(event)) {
+          userPrompt = getStringField(event, 'prompt') ?? '';
+        }
+        lastUserPrompt = userPrompt ? truncateText(userPrompt, 200) : null;
 
         const mamaApi = getMAMA();
 
@@ -343,9 +310,13 @@ const mamaPlugin = {
     // Auto-capture: Auto-save decisions at agent end
     // =====================================================
     api.on('agent_end', async (event: unknown) => {
-      const success = isRecord(event) ? event['success'] : undefined;
-      const messages = isRecord(event) ? event['messages'] : undefined;
-      if (success !== true || !Array.isArray(messages) || messages.length === 0) {
+      if (!isRecord(event)) {
+        return;
+      }
+
+      const success = event.success === true;
+      const messages = Array.isArray(event.messages) ? event.messages : [];
+      if (!success || messages.length === 0) {
         return;
       }
 
@@ -357,17 +328,17 @@ const mamaPlugin = {
         for (const msg of messages) {
           if (!isRecord(msg)) continue;
 
-          const role = msg['role'];
+          const role = msg.role;
           if (role !== 'user' && role !== 'assistant') continue;
 
-          const content = msg['content'];
+          const content = msg.content;
           if (typeof content === 'string') {
             texts.push(content);
           } else if (Array.isArray(content)) {
             for (const block of content) {
               if (!isRecord(block)) continue;
-              if (block['type'] === 'text' && typeof block['text'] === 'string') {
-                texts.push(block['text']);
+              if (block.type === 'text' && typeof block.text === 'string') {
+                texts.push(block.text);
               }
             }
           }
@@ -391,7 +362,11 @@ const mamaPlugin = {
           if (!isDecision) continue;
 
           // Auto-save detected decision (logged only, not actually saved without explicit topic)
-          console.log(`[MAMA] Auto-capture candidate: ${text.substring(0, 50)}...`);
+          const candidate = truncateText(text, 160);
+          if (!lastAutoCaptureCandidates.includes(candidate)) {
+            lastAutoCaptureCandidates = [candidate, ...lastAutoCaptureCandidates].slice(0, 3);
+          }
+          console.log(`[MAMA] Auto-capture candidate: ${candidate}`);
           // Note: Actual save requires an explicit topic, so only logging for now
           // Future: Add topic extraction via LLM
         }
@@ -407,15 +382,69 @@ const mamaPlugin = {
       try {
         await initMAMA(config);
 
-        // Auto-save checkpoint on session end
-        const summary = `Session ended at ${new Date().toISOString()}`;
+        // Check if recent checkpoint exists (avoid noisy auto-saves)
+        const existingCheckpoint = await getMAMA().loadCheckpoint();
+
+        if (existingCheckpoint && isRecentCheckpoint(existingCheckpoint.timestamp)) {
+          console.log('[MAMA] Session end: Skipping auto-save (recent checkpoint exists)');
+          return;
+        }
+
+        // Load session metrics for meaningful checkpoint
+        const endedAt = new Date().toISOString();
+        const recentDecisions = await getMAMA().list({ limit: 10 });
+        const decisionCount = recentDecisions.length;
+        const recentTopics = recentDecisions
+          .map((d) => d.topic)
+          .filter((t) => typeof t === 'string' && t.trim().length > 0)
+          .slice(0, 5);
+
+        const summaryParts: string[] = [`Session ended: ${endedAt}`];
+        if (sessionStartedAt) {
+          summaryParts.push(`Session started: ${sessionStartedAt}`);
+        }
+        if (lastUserPrompt) {
+          summaryParts.push(`Last user prompt: ${lastUserPrompt}`);
+        }
+        if (lastCompactionAt) {
+          summaryParts.push(`Last compaction: ${lastCompactionAt}`);
+        }
+        summaryParts.push(`Decisions recorded (recent): ${decisionCount}`);
+        if (recentTopics.length > 0) {
+          summaryParts.push(`Recent topics: ${recentTopics.join(', ')}`);
+        }
+
+        const nextStepsParts: string[] = [];
+        if (lastAutoCaptureCandidates.length > 0) {
+          nextStepsParts.push(
+            `Review auto-capture candidates:\n- ${lastAutoCaptureCandidates.join('\n- ')}`
+          );
+        }
+        if (decisionCount > 0) {
+          nextStepsParts.push(
+            `Review recent decisions (count: ${decisionCount}). Last topic: ${
+              recentDecisions[0]?.topic || 'unknown'
+            }`
+          );
+        } else {
+          nextStepsParts.push('No new decisions recorded in this session.');
+        }
+        nextStepsParts.push(
+          'On next session start: load checkpoint and continue from the last prompt.'
+        );
+
+        const summary = summaryParts.join('\n');
+        const nextSteps = nextStepsParts.join('\n\n');
+
         const checkpointId = await getMAMA().saveCheckpoint(
           summary,
           [], // openFiles - session_end doesn't have file info
-          'Session auto-saved on end'
+          nextSteps
         );
 
-        console.log(`[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId})`);
+        console.log(
+          `[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId}, decisions: ${decisionCount})`
+        );
       } catch (err: unknown) {
         console.error('[MAMA] Session end error:', getErrorMessage(err));
       }
@@ -429,7 +458,9 @@ const mamaPlugin = {
         await initMAMA(config);
 
         // Save checkpoint before compaction
-        const summary = `Pre-compaction checkpoint at ${new Date().toISOString()}. Context will be compressed.`;
+        const now = new Date().toISOString();
+        lastCompactionAt = now;
+        const summary = `Pre-compaction checkpoint: ${now}. Context will be compressed.`;
         const checkpointId = await getMAMA().saveCheckpoint(
           summary,
           [],
@@ -534,7 +565,7 @@ const mamaPlugin = {
 
           // Format output
           let output = `Found ${result.results.length} related decisions:\n\n`;
-          result.results.forEach((r, idx: number) => {
+          result.results.forEach((r, idx) => {
             const pct = Math.round((r.similarity || 0) * 100);
             output += `**${idx + 1}. ${r.topic}** [${pct}% match]\n`;
             output += `   Decision: ${r.decision}\n`;

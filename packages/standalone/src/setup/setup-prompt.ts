@@ -99,8 +99,8 @@ Ask users about agent permission settings:
 This controls whether agents can execute tools (file writes, bash commands, git operations) without asking for permission.
 
 **Options:**
-- **true**: Agents run autonomously without approval prompts. Required for headless/daemon operation.
-- **false** (default): Agents ask for permission before executing each tool.
+- **true** (default): Agents run autonomously without approval prompts. Required for headless/daemon operation.
+- **false**: Agents ask for permission before executing each tool.
 
 ⚠️ **Warning**: Setting this to \`true\` gives agents full system access. Only enable in trusted environments.
 

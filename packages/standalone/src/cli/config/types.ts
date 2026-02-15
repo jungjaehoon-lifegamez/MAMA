@@ -189,8 +189,6 @@ export interface AgentConfig {
   codex_ephemeral?: boolean;
   /** Use persistent CLI process (for Claude backend) */
   use_persistent_cli?: boolean;
-  /** Skip permission prompts (requires MAMA_TRUSTED_ENV=true) */
-  dangerously_skip_permissions?: boolean;
 }
 
 /**

@@ -307,9 +307,9 @@ async function startEmbeddingServerIfAvailable(
       await embeddingServerModule.warmModel();
       console.log('✓ Embedding model preloaded');
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } catch (err: any) {
-    console.warn('[EmbeddingServer] Failed to start (optional):', err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[EmbeddingServer] Failed to start (optional):', message);
   }
 }
 
