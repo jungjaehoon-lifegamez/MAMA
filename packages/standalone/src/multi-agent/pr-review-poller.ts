@@ -1061,6 +1061,8 @@ export class PRReviewPoller {
         timeout: 60000,
         cwd: workspaceDir,
       });
+      // Set default git identity for new clones
+      await this.setGitIdentity(workspaceDir);
       return;
     }
 
@@ -1069,6 +1071,47 @@ export class PRReviewPoller {
       throw new Error(
         `Workspace repo mismatch. Expected ${owner}/${repo} but found ${remoteUrl || 'unknown'}`
       );
+    }
+
+    // Ensure git identity is set for existing repos too
+    await this.setGitIdentity(workspaceDir);
+  }
+
+  /**
+   * Git identity configuration for PR workspaces
+   * Can be overridden per-agent via setAgentGitIdentity
+   */
+  private gitIdentity: { name: string; email: string } = {
+    name: 'MAMA Bot',
+    email: 'mama-bot@mama-os.local',
+  };
+
+  /**
+   * Set git identity for a specific agent (called before agent starts work)
+   */
+  setAgentGitIdentity(identity: { name: string; email: string }): void {
+    this.gitIdentity = identity;
+    this.logger.info(`[PRPoller] Git identity set to: ${identity.name} <${identity.email}>`);
+  }
+
+  /**
+   * Set git identity in workspace
+   */
+  private async setGitIdentity(workspaceDir: string): Promise<void> {
+    try {
+      await execFileAsync('git', ['config', 'user.name', this.gitIdentity.name], {
+        cwd: workspaceDir,
+        timeout: 5000,
+      });
+      await execFileAsync('git', ['config', 'user.email', this.gitIdentity.email], {
+        cwd: workspaceDir,
+        timeout: 5000,
+      });
+      this.logger.debug(
+        `[PRPoller] Set git identity: ${this.gitIdentity.name} <${this.gitIdentity.email}>`
+      );
+    } catch (err) {
+      this.logger.warn(`[PRPoller] Failed to set git identity:`, err);
     }
   }
 
