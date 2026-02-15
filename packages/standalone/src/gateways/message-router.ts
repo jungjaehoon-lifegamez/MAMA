@@ -293,9 +293,12 @@ This protects your credentials from being exposed in chat logs.`;
     let isNewCliSession = initialSession.isNew;
     const busy = initialSession.busy;
 
+    // Track lock ownership for proper cleanup in finally block
+    let acquiredLock = !busy; // If not busy, we acquired lock from initialSession
+
     // If session is busy, notify caller immediately and wait for it to be released
     if (busy) {
-      console.log(`[MessageRouter] Session busy for ${channelKey}, notifying client`);
+      logger.debug(`Session busy for ${channelKey}, notifying client`);
       processOptions?.onQueued?.();
 
       // Wait for session to be released (poll with timeout)
@@ -309,15 +312,15 @@ This protects your credentials from being exposed in chat logs.`;
         // Use read-only peek to avoid side effects (no lock increment)
         const check = sessionPool.peekSession(channelKey);
         if (!check.busy) {
-          console.log(
-            `[MessageRouter] Session released for ${channelKey} after ${Math.round((Date.now() - waitStart) / 1000)}s`
+          logger.debug(
+            `Session released for ${channelKey} after ${Math.round((Date.now() - waitStart) / 1000)}s`
           );
           break;
         }
         // Log every 30 seconds
         if (Date.now() - lastLogTime >= 30000) {
-          console.log(
-            `[MessageRouter] Still waiting for session ${channelKey} (${Math.round((Date.now() - waitStart) / 1000)}s)...`
+          logger.debug(
+            `Still waiting for session ${channelKey} (${Math.round((Date.now() - waitStart) / 1000)}s)...`
           );
           lastLogTime = Date.now();
         }
@@ -326,17 +329,17 @@ This protects your credentials from being exposed in chat logs.`;
       // Re-acquire session after wait (properly locks it this time)
       const reacquired = sessionPool.getSession(channelKey);
       if (reacquired.busy) {
+        // Still busy after timeout - we never acquired the lock
         throw new Error(`Session for ${channelKey} timed out after ${maxWaitMs / 1000}s`);
       }
       cliSessionId = reacquired.sessionId;
       isNewCliSession = reacquired.isNew;
+      acquiredLock = true; // Successfully acquired lock after wait
     }
 
     // 3. Create AgentContext for role-aware execution
     const agentContext = this.createAgentContext(message, session.id);
-    console.log(
-      `[MessageRouter] Created context: ${agentContext.roleName}@${agentContext.platform}`
-    );
+    logger.debug(`Created context: ${agentContext.roleName}@${agentContext.platform}`);
 
     // 4. Get session startup context (like SessionStart hook)
     // Always inject to ensure Claude has context about checkpoint and recent decisions
@@ -487,10 +490,17 @@ This protects your credentials from being exposed in chat logs.`;
         sessionPool.resetSession(channelKey);
       }
 
-      throw error;
+      // Normalize error to ensure proper Error object is thrown
+      if (error instanceof Error) {
+        throw error;
+      }
+      const normalizedError = new Error(String(error));
+      throw normalizedError;
     } finally {
-      // Release the session lock so subsequent requests can reuse it
-      sessionPool.releaseSession(channelKey);
+      // Only release the session lock if we actually acquired it
+      if (acquiredLock) {
+        sessionPool.releaseSession(channelKey);
+      }
     }
 
     // Post-process: auto-copy image paths to outbound for webchat rendering

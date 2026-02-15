@@ -202,12 +202,17 @@ type ExtendedWebSocketServer = WebSocketServer & {
 };
 
 /**
- * Safe send helper - guards against closed socket
+ * Safe send helper - guards against closed socket with try-catch for race conditions
  */
 function safeSend(ws: WebSocket, data: string): boolean {
   if (ws.readyState === WebSocket.OPEN) {
-    ws.send(data);
-    return true;
+    try {
+      ws.send(data);
+      return true;
+    } catch {
+      // Socket may have closed between readyState check and send
+      return false;
+    }
   }
   return false;
 }

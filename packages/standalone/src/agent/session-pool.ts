@@ -116,18 +116,18 @@ export class SessionPool {
 
       if (isExpired) {
         this.sessions.delete(channelKey);
-        console.log(`[SessionPool] Session expired for ${channelKey}, creating new one`);
+        logger.info(`Session expired for ${channelKey}, creating new one`);
       } else if (isContextFull) {
         this.sessions.delete(channelKey);
-        console.log(
-          `[SessionPool] Context 80% full (${existing.totalInputTokens} tokens) for ${channelKey}, creating fresh session`
+        logger.info(
+          `Context 80% full (${existing.totalInputTokens} tokens) for ${channelKey}, creating fresh session`
         );
       } else if (existing.inUse) {
         // Session is currently in use - return busy immediately
         // Still update lastActive and messageCount for queued messages
         existing.lastActive = now;
         existing.messageCount++;
-        console.log(`[SessionPool] Session busy for ${channelKey}, will be queued`);
+        logger.debug(`Session busy for ${channelKey}, will be queued`);
         return { sessionId: existing.sessionId, isNew: false, busy: true };
       } else {
         // Reuse existing session
@@ -135,8 +135,8 @@ export class SessionPool {
         existing.messageCount++;
         existing.inUse = true; // Lock the session
         const usagePercent = Math.round((existing.totalInputTokens / 200000) * 100);
-        console.log(
-          `[SessionPool] Reusing session for ${channelKey}: ${existing.sessionId} (msg #${existing.messageCount}, ${usagePercent}% context)`
+        logger.debug(
+          `Reusing session for ${channelKey}: ${existing.sessionId} (msg #${existing.messageCount}, ${usagePercent}% context)`
         );
         return { sessionId: existing.sessionId, isNew: false, busy: false };
       }
@@ -305,7 +305,9 @@ export class SessionPool {
    */
   hasActiveSession(channelKey: string): boolean {
     const existing = this.sessions.get(channelKey);
-    if (!existing) return false;
+    if (!existing) {
+      return false;
+    }
 
     const isExpired = Date.now() - existing.lastActive > this.config.sessionTimeoutMs;
     return !isExpired;
