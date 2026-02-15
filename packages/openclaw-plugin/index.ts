@@ -125,10 +125,10 @@ function getMAMA(): MAMAApi {
 }
 
 /**
- * Get session key from context with fallback
+ * Get session key from context (returns undefined if not available)
  */
-function getSessionKey(ctx?: HookContext): string {
-  return ctx?.sessionKey || 'default';
+function getSessionKey(ctx?: HookContext): string | undefined {
+  return ctx?.sessionKey;
 }
 
 /**
@@ -143,8 +143,8 @@ async function withMAMA<T>(
     await initMAMA(config);
     return await handler(getMAMA());
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[MAMA] Hook error:', message);
+    // Log full error for debugging (includes stack trace if Error instance)
+    console.error('[MAMA] Hook error:', err);
     return undefined;
   }
 }
@@ -234,11 +234,13 @@ const mamaPlugin = {
     api.on('session_start', async (_event: SessionHookEvent, ctx?: HookContext) => {
       await withMAMA(config, async () => {
         const sessionKey = getSessionKey(ctx);
-        // Initialize session state (clean slate)
-        sessionCompactionState.delete(sessionKey);
+        // Initialize session state (clean slate) - only if sessionKey available
+        if (sessionKey) {
+          sessionCompactionState.delete(sessionKey);
+        }
 
         // Log session start (data loading deferred to before_agent_start)
-        console.log(`[MAMA] Session start: initialized (session: ${sessionKey})`);
+        console.log(`[MAMA] Session start: initialized${sessionKey ? ` (session: ${sessionKey})` : ''}`);
       });
     });
 
@@ -273,7 +275,7 @@ const mamaPlugin = {
 
         // 4. Compaction note if context was recently compressed (per-session)
         let compactionNote = '';
-        if (sessionCompactionState.get(sessionKey)) {
+        if (sessionKey && sessionCompactionState.get(sessionKey)) {
           compactionNote =
             '\n**Note:** Context was recently compressed. Above memories help restore state.\n';
           sessionCompactionState.delete(sessionKey); // Consume the flag
@@ -403,11 +405,13 @@ const mamaPlugin = {
           'Session auto-saved on end'
         );
 
-        // Cleanup session state to avoid memory leaks
-        sessionCompactionState.delete(sessionKey);
+        // Cleanup session state to avoid memory leaks (only if sessionKey available)
+        if (sessionKey) {
+          sessionCompactionState.delete(sessionKey);
+        }
 
         console.log(
-          `[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId}), session: ${sessionKey}`
+          `[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId})${sessionKey ? `, session: ${sessionKey}` : ''}`
         );
       });
     });
@@ -427,11 +431,13 @@ const mamaPlugin = {
           'Resume after compaction - check previous context'
         );
 
-        // Set flag for post-compaction context enhancement (per-session)
-        sessionCompactionState.set(sessionKey, true);
+        // Set flag for post-compaction context enhancement (per-session, only if sessionKey available)
+        if (sessionKey) {
+          sessionCompactionState.set(sessionKey, true);
+        }
 
         console.log(
-          `[MAMA] Before compaction: Saved checkpoint (id: ${checkpointId}), session: ${sessionKey}`
+          `[MAMA] Before compaction: Saved checkpoint (id: ${checkpointId})${sessionKey ? `, session: ${sessionKey}` : ''}`
         );
       });
     });
@@ -443,10 +449,9 @@ const mamaPlugin = {
       await withMAMA(config, async () => {
         const sessionKey = getSessionKey(ctx);
 
-        // Log (void hook - cannot inject directly, before_agent_start handles it)
-        console.log(`[MAMA] After compaction: Context compressed, session: ${sessionKey}`);
-        // Note: sessionCompactionState flag set in before_compaction
-        // before_agent_start will detect this and add context enhancement
+        // Log compaction completion (void hook - context injection handled by before_agent_start)
+        // Note: withMAMA initializes MAMA if needed; sessionCompactionState flag was set in before_compaction
+        console.log(`[MAMA] After compaction: Context compressed${sessionKey ? `, session: ${sessionKey}` : ''}`);
       });
     });
 
