@@ -362,6 +362,8 @@ export interface AgentPersonaConfig {
   auto_continue?: boolean;
   /** Explicit tool permissions (overrides tier defaults) */
   tool_permissions?: { allowed?: string[]; blocked?: string[] };
+  /** Git identity for commits made by this agent */
+  git_identity?: { name: string; email: string };
 }
 
 /**

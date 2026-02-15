@@ -136,6 +136,17 @@ export interface AgentPersonaConfig {
     /** Blocked tools (takes precedence over allowed) */
     blocked?: string[];
   };
+
+  /**
+   * Git identity for commits made by this agent
+   * Used in PR review workspaces to attribute commits to specific bots
+   */
+  git_identity?: {
+    /** Git user.name for commits */
+    name: string;
+    /** Git user.email for commits */
+    email: string;
+  };
 }
 
 /**
