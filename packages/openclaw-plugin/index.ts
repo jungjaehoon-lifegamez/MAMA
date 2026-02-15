@@ -107,6 +107,23 @@ function getMAMA(): MAMAApi {
 }
 
 /**
+ * Safely extract error message from unknown error type
+ */
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  if (typeof err === 'string') {
+    return err;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+/**
  * Format reasoning with link extraction
  * Shows truncated reasoning + preserves builds_on/debates/synthesizes links
  */
@@ -158,9 +175,10 @@ async function initMAMA(config?: PluginConfig): Promise<void> {
     initialized = true;
     initialDbPath = dbPath;
     console.log(`[MAMA Plugin] Initialized with direct module integration (db: ${dbPath})`);
-  } catch (err: any) {
-    console.error('[MAMA Plugin] Init failed:', err.message);
-    throw err;
+  } catch (err: unknown) {
+    const msg = getErrorMessage(err);
+    console.error('[MAMA Plugin] Init failed:', msg);
+    throw err instanceof Error ? err : new Error(msg);
   }
 }
 
@@ -205,8 +223,8 @@ const mamaPlugin = {
         if (recentDecisions.length > 0) {
           console.log(`[MAMA] Session start: ${recentDecisions.length} recent decisions available`);
         }
-      } catch (err: any) {
-        console.error('[MAMA] Session start error:', err.message);
+      } catch (err: unknown) {
+        console.error('[MAMA] Session start error:', getErrorMessage(err));
       }
     });
 
@@ -227,8 +245,8 @@ const mamaPlugin = {
           try {
             const searchResult = await mamaApi.suggest(userPrompt, { limit: 3, threshold: 0.5 });
             semanticResults = searchResult?.results || [];
-          } catch (searchErr: any) {
-            console.error('[MAMA] Semantic search error:', searchErr.message);
+          } catch (searchErr: unknown) {
+            console.error('[MAMA] Semantic search error:', getErrorMessage(searchErr));
           }
         }
 
@@ -299,8 +317,8 @@ const mamaPlugin = {
             prependContext: content,
           };
         }
-      } catch (err: any) {
-        console.error('[MAMA] Auto-recall error:', err.message);
+      } catch (err: unknown) {
+        console.error('[MAMA] Auto-recall error:', getErrorMessage(err));
       }
     });
 
@@ -357,8 +375,8 @@ const mamaPlugin = {
           // Note: Actual save requires an explicit topic, so only logging for now
           // Future: Add topic extraction via LLM
         }
-      } catch (err: any) {
-        console.error('[MAMA] Auto-capture error:', err.message);
+      } catch (err: unknown) {
+        console.error('[MAMA] Auto-capture error:', getErrorMessage(err));
       }
     });
 
@@ -378,8 +396,8 @@ const mamaPlugin = {
         );
 
         console.log(`[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId})`);
-      } catch (err: any) {
-        console.error('[MAMA] Session end error:', err.message);
+      } catch (err: unknown) {
+        console.error('[MAMA] Session end error:', getErrorMessage(err));
       }
     });
 
@@ -402,8 +420,8 @@ const mamaPlugin = {
         compactionOccurred = true;
 
         console.log(`[MAMA] Before compaction: Saved checkpoint (id: ${checkpointId})`);
-      } catch (err: any) {
-        console.error('[MAMA] Before compaction error:', err.message);
+      } catch (err: unknown) {
+        console.error('[MAMA] Before compaction error:', getErrorMessage(err));
       }
     });
 
@@ -431,8 +449,8 @@ const mamaPlugin = {
 
         // Note: compactionOccurred flag set in before_compaction
         // before_agent_start will detect this and add context enhancement
-      } catch (err: any) {
-        console.error('[MAMA] After compaction error:', err.message);
+      } catch (err: unknown) {
+        console.error('[MAMA] After compaction error:', getErrorMessage(err));
       }
     });
 
@@ -505,8 +523,8 @@ const mamaPlugin = {
           });
 
           return { content: [{ type: 'text', text: output }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          return { content: [{ type: 'text', text: `MAMA error: ${getErrorMessage(err)}` }] };
         }
       },
     });
@@ -634,8 +652,8 @@ const mamaPlugin = {
           }
 
           return { content: [{ type: 'text', text: msg }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          return { content: [{ type: 'text', text: `MAMA error: ${getErrorMessage(err)}` }] };
         }
       },
     });
@@ -691,8 +709,8 @@ Also returns recent decisions for context.`,
           }
 
           return { content: [{ type: 'text', text: msg }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          return { content: [{ type: 'text', text: `MAMA error: ${getErrorMessage(err)}` }] };
         }
       },
     });
@@ -747,8 +765,8 @@ Helps future sessions learn from experience.`,
           return {
             content: [{ type: 'text', text: `Decision ${decisionId} updated to ${outcome}` }],
           };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          return { content: [{ type: 'text', text: `MAMA error: ${getErrorMessage(err)}` }] };
         }
       },
     });
