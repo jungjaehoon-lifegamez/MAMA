@@ -40,11 +40,14 @@ interface SessionEntry {
   inUse: boolean;
   /** Cumulative input tokens for this session */
   totalInputTokens: number;
+  /** Backend type for context threshold selection */
+  backend?: 'claude' | 'codex-mcp';
 }
 
 /**
  * Context window threshold (80% of 200K)
  * When exceeded, session will be reset on next request
+ * Note: Only applies to Claude CLI backend. Codex MCP handles its own compaction.
  */
 const CONTEXT_THRESHOLD_TOKENS = 160000;
 
@@ -112,7 +115,10 @@ export class SessionPool {
     // Check if existing session is still valid
     if (existing) {
       const isExpired = now - existing.lastActive > this.config.sessionTimeoutMs;
-      const isContextFull = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS;
+      // Codex MCP handles its own compaction - never reset session based on tokens
+      // Only Claude CLI backend uses token-based session reset
+      const isContextFull =
+        existing.backend !== 'codex-mcp' && existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS;
 
       if (isExpired) {
         this.sessions.delete(channelKey);
@@ -180,6 +186,11 @@ export class SessionPool {
       return { totalTokens: 0, nearThreshold: false };
     }
 
+    // Store backend for context threshold selection in getSession()
+    if (backend) {
+      existing.backend = backend;
+    }
+
     // Codex MCP resume sessions accumulate ~20-25K tokens per message
     // After ~50 messages, context exceeds 200K (max)
     // Force reset to prevent degraded responses from overflowed context
@@ -196,7 +207,9 @@ export class SessionPool {
 
     // Use latest value, not cumulative - Claude API returns total context tokens per request
     existing.totalInputTokens = Math.max(existing.totalInputTokens, inputTokens);
-    const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS * 0.9; // 90% of threshold
+
+    // nearThreshold for monitoring (Codex MCP doesn't reset, but we track for UI display)
+    const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS * 0.9; // 90% of 160K
 
     if (nearThreshold) {
       logger.warn(

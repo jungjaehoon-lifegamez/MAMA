@@ -190,8 +190,8 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
         FILE_PATH: '/path/to/db-manager.js',
       });
 
-      // Read path: checks agents/rules only (no DB), may exit with 0
-      expect(result.exitCode).toBe(0);
+      // Read path: exit(0) if no decisions found, exit(2) if decisions found (context via stderr)
+      expect([0, 2]).toContain(result.exitCode);
       console.log(`[Regression] PreToolUse (Read) latency: ${result.latency}ms`);
       expect(result.latency).toBeLessThan(5000);
     });

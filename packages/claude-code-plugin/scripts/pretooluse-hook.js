@@ -36,39 +36,21 @@ const READ_TOOLS = new Set(['Read']);
 
 /**
  * Build search query from file path
- * Extracts meaningful tokens for embedding search
+ * Focus on filename tokens only - path segments add noise to embeddings
  */
 function buildSearchQuery(filePath) {
   if (!filePath) {
     return '';
   }
 
-  const normalized = filePath.toLowerCase().replace(/\\/g, '/');
-  const parts = normalized.split('/');
-  const tokens = [];
-
-  // Extract meaningful tokens from path segments
-  for (const part of parts) {
-    // Skip common non-meaningful segments
-    if (['src', 'lib', 'dist', 'build', 'node_modules', 'packages', 'public'].includes(part)) {
-      continue;
-    }
-
-    // Split by common separators and add
-    const subParts = part.replace(/\.[^.]+$/, '').split(/[-_]/);
-    for (const sub of subParts) {
-      if (sub.length >= 2) {
-        tokens.push(sub);
-      }
-    }
-  }
-
-  // Include full filename without extension
+  // Extract filename without extension
   const fileName = path.basename(filePath, path.extname(filePath));
-  tokens.push(fileName);
 
-  // Include file path itself for direct matches in reasoning
-  tokens.push(path.basename(filePath));
+  // Split by common separators (kebab-case, snake_case)
+  const tokens = fileName.split(/[-_]/).filter((t) => t.length >= 2);
+
+  // Add full filename for exact matches
+  tokens.push(fileName);
 
   return [...new Set(tokens)].join(' ');
 }
@@ -168,27 +150,19 @@ async function main() {
     // Format output
     const fileName = path.basename(filePath);
     const formatted = relevant.map(formatDecision).join('\n\n');
-    const message = `
-🧠 **Related Decisions** for \`${fileName}\`
+    const message = `🧠 **Related Decisions** for \`${fileName}\`
 
 ${formatted}
 
-Use \`/mama:search <query>\` for more context.
-`;
+Use \`/mama:search <query>\` for more context.`;
 
     // Mark file as processed
     markFileEdited(filePath);
 
-    const response = {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'allow',
-        permissionDecisionReason: 'Related decisions provided',
-        additionalContext: message,
-      },
-    };
-    console.log(JSON.stringify(response));
-    process.exit(0);
+    // PreToolUse doesn't support additionalContext
+    // Use exit(2) to pass context via stderr (shown as "blocking" message)
+    console.error(message);
+    process.exit(2);
   } catch (err) {
     // Error - silent pass
     markFileEdited(filePath);
