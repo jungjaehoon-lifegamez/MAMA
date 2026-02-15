@@ -58,7 +58,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-mcp-server:
-    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/mcp-server-')
+    needs: [publish-mama-core]
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/mcp-server-')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -149,9 +150,10 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Publish mama-os (standalone)
+  # Publish mama-os (standalone) - depends on mama-core being published first
   publish-mama-os:
-    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/os-v') || startsWith(github.ref, 'refs/tags/mama-os-') || startsWith(github.ref, 'refs/tags/standalone-v')
+    needs: [publish-mama-core]
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/os-v') || startsWith(github.ref, 'refs/tags/mama-os-') || startsWith(github.ref, 'refs/tags/standalone-v')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
