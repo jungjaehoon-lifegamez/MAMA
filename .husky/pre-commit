@@ -29,4 +29,4 @@ pnpm --filter @jungjaehoon/mama-os typecheck 2>/dev/null || pnpm --filter @jungj
 # Run tests for changed packages only (faster commits)
 # Uses turbo for caching benefits
 echo "Running tests for changed packages..."
-CI=true pnpm turbo run test --filter="...[HEAD^1]" --cache-dir=.turbo || CI=true pnpm test
+CI=true pnpm turbo run test --filter="...[HEAD^1]" --cache-dir=.turbo 2>&1 || CI=true pnpm test
