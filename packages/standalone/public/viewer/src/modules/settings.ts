@@ -736,7 +736,7 @@ export class SettingsModule {
       use_claude_cli: useClaudeCli,
       agent: {
         backend,
-        model: model || (backend === 'codex-mcp' ? 'gpt-5.2' : 'claude-sonnet-4-20250514'),
+        model: model || (backend === 'codex-mcp' ? 'gpt-5.2-codex' : 'claude-sonnet-4-20250514'),
         // Only include effort for Opus 4.6 (supports adaptive thinking)
         effort: model === 'claude-opus-4-6' ? effort : undefined,
         max_turns: this.parseIntegerInput('settings-agent-max-turns', 1, 100, 10),
@@ -825,11 +825,11 @@ export class SettingsModule {
   getNormalizedModelForBackend(backend: AgentBackend, model: string): string {
     const isCodexBackend = backend === 'codex-mcp';
     if (!model) {
-      return isCodexBackend ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
+      return isCodexBackend ? 'gpt-5.2-codex' : 'claude-sonnet-4-20250514';
     }
     const isClaudeModel = /^claude-/i.test(model);
     if (isCodexBackend && isClaudeModel) {
-      return 'gpt-5.2';
+      return 'gpt-5.2-codex';
     }
     if (backend === 'claude' && !isClaudeModel) {
       return 'claude-sonnet-4-20250514';

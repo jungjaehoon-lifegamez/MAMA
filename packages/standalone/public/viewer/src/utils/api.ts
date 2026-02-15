@@ -125,7 +125,7 @@ export interface ApiAgentToolsConfig {
 }
 
 export interface ApiAgentConfig {
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   model?: string;
   tools?: ApiAgentToolsConfig;
   use_persistent_cli?: boolean;
@@ -181,7 +181,7 @@ export interface MultiAgentAgent {
   tier?: number;
   status?: string;
   model?: string;
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   bot_token?: string;
   slack_bot_token?: string | null;
   slack_app_token?: string | null;
