@@ -212,35 +212,14 @@ describe('mama init command', () => {
         exitSpy.mockRestore();
       }
     });
-
-    it('should fail when codex backend is requested without codex auth', async () => {
-      const claudeDir = join(testHome, '.claude');
-      await mkdir(claudeDir, { recursive: true });
-      await writeFile(join(claudeDir, '.credentials.json'), '{}');
-
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-        throw new Error('process.exit called');
-      });
-
-      try {
-        await initCommand({ backend: 'codex' });
-        expect.fail('Should have thrown');
-      } catch {
-        expect(exitSpy).toHaveBeenCalledWith(1);
-        expect(consoleErrors.some((e) => e.includes('Requested backend "codex"'))).toBe(true);
-      } finally {
-        exitSpy.mockRestore();
-      }
-    });
   });
 
   describe('backend selection', () => {
-    it('should apply codex backend when skipAuthCheck is enabled', async () => {
-      await initCommand({ skipAuthCheck: true, backend: 'codex' });
+    it('should apply codex-mcp backend when skipAuthCheck is enabled', async () => {
+      await initCommand({ skipAuthCheck: true, backend: 'codex-mcp' });
 
       const config = await loadConfig();
-      expect(config.agent.backend).toBe('codex');
-      expect(config.agent.codex_home).toBe('~/.mama/.codex');
+      expect(config.agent.backend).toBe('codex-mcp');
     });
   });
 

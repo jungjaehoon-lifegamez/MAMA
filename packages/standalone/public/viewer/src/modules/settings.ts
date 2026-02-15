@@ -30,7 +30,8 @@ import {
 
 const logger = new DebugLogger('Settings');
 
-type AgentBackend = 'claude' | 'codex' | 'codex-mcp';
+type AgentBackend = 'claude' | 'codex-mcp';
+type EffortLevel = 'low' | 'medium' | 'high';
 type SettingsFilterValue = 'loading' | 'error' | 'success' | '';
 type SettingsPayloadToolConfig = {
   gateway: string[];
@@ -66,8 +67,8 @@ type SettingsPayload = {
   use_claude_cli: boolean;
   agent: {
     backend: AgentBackend;
-    use_persistent_cli: boolean;
     model: string;
+    effort?: EffortLevel;
     max_turns: number;
     timeout: number;
     tools: SettingsPayloadToolConfig;
@@ -79,18 +80,8 @@ type SettingsPayload = {
 };
 
 // Model options by backend (single source of truth)
+// Claude models: https://platform.claude.com/docs/en/about-claude/models/overview
 const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
-  codex: [
-    'gpt-5.3-codex',
-    'gpt-5.2',
-    'gpt-5.1',
-    'gpt-4.1',
-    'gpt-4o',
-    'gpt-4o-mini',
-    'o1',
-    'o1-mini',
-    'o3-mini',
-  ],
   'codex-mcp': [
     'gpt-5.3-codex',
     'gpt-5.2',
@@ -103,13 +94,16 @@ const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
     'o3-mini',
   ],
   claude: [
-    'claude-opus-4-6-20250115',
-    'claude-sonnet-4-5-20250514',
+    // Latest models
+    'claude-opus-4-6',
+    'claude-sonnet-4-5-20250929',
+    'claude-haiku-4-5-20251001',
+    // Legacy models
     'claude-opus-4-5-20251101',
     'claude-sonnet-4-20250514',
-    'claude-haiku-3-5-20241022',
-    'claude-3-5-sonnet-20241022',
-    'claude-3-opus-20240229',
+    'claude-opus-4-20250514',
+    'claude-3-7-sonnet-20250219',
+    'claude-3-haiku-20240307',
   ],
 };
 
@@ -243,15 +237,6 @@ export class SettingsModule {
         return;
       }
 
-      if (action === 'agent-save') {
-        const button = actionElement as HTMLButtonElement;
-        const agentId = button.dataset.agentId || '';
-        if (agentId) {
-          void this.saveAgentConfig(agentId);
-        }
-        return;
-      }
-
       if (action === 'cron-toggle') {
         const checkbox = actionElement as HTMLInputElement;
         const cronId = checkbox.dataset.cronId || '';
@@ -268,16 +253,26 @@ export class SettingsModule {
         return;
       }
 
-      const actionElement = target.closest<HTMLElement>('[data-action="cron-delete"]');
-      if (!actionElement) {
+      // Handle agent-save button click
+      const saveButton = target.closest<HTMLElement>('[data-action="agent-save"]');
+      if (saveButton) {
+        e.preventDefault();
+        const agentId = saveButton.dataset.agentId || '';
+        if (agentId) {
+          void this.saveAgentConfig(agentId);
+        }
         return;
       }
 
-      e.preventDefault();
-      const button = actionElement as HTMLButtonElement;
-      const cronId = button.dataset.cronId || '';
-      if (cronId) {
-        void this.deleteCronJob(cronId);
+      // Handle cron-delete button click
+      const deleteButton = target.closest<HTMLElement>('[data-action="cron-delete"]');
+      if (deleteButton) {
+        e.preventDefault();
+        const cronId = deleteButton.dataset.cronId || '';
+        if (cronId) {
+          void this.deleteCronJob(cronId);
+        }
+        return;
       }
     });
   }
@@ -354,10 +349,13 @@ export class SettingsModule {
     // Agent
     const backend = (this.config.agent?.backend || 'claude') as AgentBackend;
     const model = this.config.agent?.model || 'claude-sonnet-4-20250514';
+    const effort = (this.config.agent?.effort || 'medium') as EffortLevel;
     this.setSelectValue('settings-agent-backend', backend);
     this.updateModelOptions(backend, model);
-    this.setValue('settings-agent-model', this.getNormalizedModelForBackend(backend, model));
-    this.updatePersistentCliToggle(backend, this.config.agent?.use_persistent_cli || false);
+    const normalizedModel = this.getNormalizedModelForBackend(backend, model);
+    this.setSelectValue('settings-agent-model', normalizedModel);
+    this.setSelectValue('settings-agent-effort', effort);
+    this.updateEffortVisibility(normalizedModel);
     this.setValue('settings-agent-max-turns', this.config.agent?.max_turns || 10);
     this.setValue(
       'settings-agent-timeout',
@@ -687,7 +685,8 @@ export class SettingsModule {
    */
   collectFormData(): SettingsPayload {
     const backend = (this.getSelectValue('settings-agent-backend') || 'claude') as AgentBackend;
-    const model = this.getValue('settings-agent-model');
+    const model = this.getSelectValue('settings-agent-model');
+    const effort = (this.getSelectValue('settings-agent-effort') || 'medium') as EffortLevel;
     const useClaudeCli = backend === 'claude';
 
     // Get token values - if empty and original was masked, keep original
@@ -737,10 +736,9 @@ export class SettingsModule {
       use_claude_cli: useClaudeCli,
       agent: {
         backend,
-        use_persistent_cli: useClaudeCli
-          ? this.getCheckbox('settings-agent-persistent-cli')
-          : false,
-        model: model || (backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514'),
+        model: model || (backend === 'codex-mcp' ? 'gpt-5.2' : 'claude-sonnet-4-20250514'),
+        // Only include effort for Opus 4.6 (supports adaptive thinking)
+        effort: model === 'claude-opus-4-6' ? effort : undefined,
         max_turns: this.parseIntegerInput('settings-agent-max-turns', 1, 100, 10),
         timeout: this.parseIntegerInput('settings-agent-timeout', 1, 600, 300) * 1000,
         tools: this.collectToolModeData(),
@@ -775,61 +773,57 @@ export class SettingsModule {
     }
     backendSelect.addEventListener('change', () => {
       const backend = (this.getSelectValue('settings-agent-backend') || 'claude') as AgentBackend;
-      const currentModel = this.getValue('settings-agent-model');
+      const currentModel = this.getSelectValue('settings-agent-model');
       this.updateModelOptions(backend, currentModel);
-      this.setValue(
-        'settings-agent-model',
-        this.getNormalizedModelForBackend(backend, currentModel)
-      );
-      this.updatePersistentCliToggle(backend, this.getCheckbox('settings-agent-persistent-cli'));
+      const normalizedModel = this.getNormalizedModelForBackend(backend, currentModel);
+      this.setSelectValue('settings-agent-model', normalizedModel);
+      this.updateEffortVisibility(normalizedModel);
     });
-  }
 
-  updatePersistentCliToggle(backend: AgentBackend, isChecked: boolean): void {
-    const checkbox = getElementByIdOrNull<HTMLInputElement>('settings-agent-persistent-cli');
-    if (!checkbox) {
-      return;
-    }
-    const isCodexBackend = backend === 'codex' || backend === 'codex-mcp';
-    if (isCodexBackend) {
-      checkbox.checked = false;
-      checkbox.disabled = true;
-      checkbox.title = 'Persistent CLI is supported for Claude backend only';
-    } else {
-      checkbox.disabled = false;
-      checkbox.title = '';
-      checkbox.checked = Boolean(isChecked);
+    // Also listen for model changes to update effort visibility
+    const modelSelect = getElementByIdOrNull<HTMLSelectElement>('settings-agent-model');
+    if (modelSelect) {
+      modelSelect.addEventListener('change', () => {
+        const model = this.getSelectValue('settings-agent-model');
+        this.updateEffortVisibility(model);
+      });
     }
   }
 
   updateModelOptions(backend: AgentBackend, currentModel: string): void {
-    const datalist = getElementByIdOrNull<HTMLDataListElement>('settings-agent-model-list');
-    if (!datalist) {
+    const select = getElementByIdOrNull<HTMLSelectElement>('settings-agent-model');
+    if (!select) {
       return;
     }
-    const claudeModels = [
-      { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 (Recommended)' },
-      { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
-      { value: 'claude-haiku-3-5-20241022', label: 'Claude Haiku 3.5' },
-    ];
-    const codexModels = [
-      { value: 'gpt-5.2', label: 'GPT-5.2 (Recommended)' },
-      { value: 'gpt-5.1', label: 'GPT-5.1' },
-      { value: 'gpt-4.1', label: 'GPT-4.1' },
-    ];
-    const list = backend === 'codex' ? codexModels : claudeModels;
-    datalist.innerHTML = list
-      .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
-      .join('');
+    const modelList = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
     const normalized = this.getNormalizedModelForBackend(backend, currentModel);
-    const input = getElementByIdOrNull<HTMLInputElement>('settings-agent-model');
-    if (input && normalized) {
-      input.placeholder = backend === 'codex' ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
+    select.innerHTML = modelList
+      .map(
+        (m) =>
+          `<option value="${escapeHtml(m)}" ${m === normalized ? 'selected' : ''}>${escapeHtml(formatModelName(m))}</option>`
+      )
+      .join('');
+
+    // Update effort visibility when model options change
+    this.updateEffortVisibility(normalized);
+  }
+
+  /**
+   * Show/hide effort level dropdown based on model selection
+   * Effort level only applies to Claude Opus 4.6 which supports adaptive thinking
+   */
+  updateEffortVisibility(model: string): void {
+    const effortContainer = getElementByIdOrNull<HTMLElement>('settings-effort-container');
+    if (!effortContainer) {
+      return;
     }
+    // Show effort only for Opus 4.6 which supports adaptive thinking
+    const supportsEffort = model === 'claude-opus-4-6';
+    effortContainer.style.display = supportsEffort ? 'block' : 'none';
   }
 
   getNormalizedModelForBackend(backend: AgentBackend, model: string): string {
-    const isCodexBackend = backend === 'codex' || backend === 'codex-mcp';
+    const isCodexBackend = backend === 'codex-mcp';
     if (!model) {
       return isCodexBackend ? 'gpt-5.2' : 'claude-sonnet-4-20250514';
     }
@@ -1046,96 +1040,72 @@ export class SettingsModule {
       3: 'bg-yellow-100 text-yellow-700',
     };
 
-    // Mask token (show last 4 chars)
-    const maskToken = (token: string) => {
-      if (!token || token.length < 8) {
-        return '****';
-      }
-      return '****' + token.slice(-4);
-    };
-
     const agentCards = agents
       .map((agent: MultiAgentAgent) => {
         const tierColor = tierColors[agent.tier || 1] || tierColors[1];
         const backend =
           ((agent.backend || this.config?.agent?.backend || 'claude') as AgentBackend) || 'claude';
         const normalizedModel = this.getNormalizedModelForBackend(backend, agent.model || '');
-        const friendlyModel = formatModelName(normalizedModel) || normalizedModel || 'Default';
-        const maskedToken = agent.bot_token ? maskToken(agent.bot_token) : 'N/A';
         const agentId = agent.id || '';
-        const backendOptions = ['codex-mcp', 'codex', 'claude']
+        const backendOptions = ['codex-mcp', 'claude']
           .map(
             (b) =>
               `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`
           )
           .join('');
-        const modelListId = `agent-model-list-${agentId}`;
         const modelOptions = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
         const modelOptionHtml = modelOptions
-          .map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(formatModelName(m))}</option>`)
+          .map(
+            (m) =>
+              `<option value="${escapeAttr(m)}" ${m === normalizedModel ? 'selected' : ''}>${escapeHtml(formatModelName(m))}</option>`
+          )
           .join('');
 
+        // Permission flags
+        const canDelegate = agent.can_delegate ?? false;
+        const hasAllTools = agent.tool_permissions?.allowed?.includes('*') ?? true;
+
         return `
-          <div class="bg-white border border-gray-200 rounded-lg p-2.5">
-            <div class="flex items-center justify-between mb-1.5">
-              <div class="flex items-center gap-2">
-                <span class="${tierColor} text-xs font-bold px-1.5 py-0.5 rounded">T${agent.tier}</span>
-                <h3 class="font-semibold text-gray-900 text-sm">${escapeHtml(agent.name)}</h3>
+          <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm hover:shadow-md transition-shadow">
+            <!-- Header: Tier + Name + Toggle -->
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-1.5">
+                <span class="${tierColor} text-[10px] font-bold px-1 py-0.5 rounded">T${agent.tier}</span>
+                <span class="font-medium text-gray-900 text-xs truncate max-w-[80px]" title="${escapeAttr(agent.display_name || agent.name)}">${escapeHtml(agent.display_name || agent.name)}</span>
               </div>
               <label class="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  class="sr-only peer"
-                  data-action="agent-toggle"
-                  data-agent-id="${escapeAttr(agentId)}"
-                  ${agent.enabled ? 'checked' : ''}
-                >
-                <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                <input type="checkbox" class="sr-only peer" data-action="agent-toggle" data-agent-id="${escapeAttr(agentId)}" ${agent.enabled ? 'checked' : ''}>
+                <div class="w-7 h-4 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-green-500"></div>
               </label>
             </div>
-            <div class="grid grid-cols-2 gap-1 text-xs text-gray-600">
-              <div><span class="font-medium">Model:</span> ${escapeHtml(friendlyModel)}</div>
-              <div><span class="font-medium">Token:</span> <code class="bg-gray-100 px-1 rounded">${maskedToken}</code></div>
+
+            <!-- Backend + Model Row -->
+            <div class="flex gap-1 mb-2">
+              <select id="agent-backend-${escapeAttr(agentId)}" data-action="agent-backend" data-agent-id="${escapeAttr(agentId)}" class="flex-1 text-[10px] rounded border border-gray-200 px-1 py-0.5 bg-gray-50">${backendOptions}</select>
+              <select id="agent-model-${escapeAttr(agentId)}" class="flex-1 text-[10px] rounded border border-gray-200 px-1 py-0.5 bg-gray-50">${modelOptionHtml}</select>
             </div>
-            <div class="mt-2 grid grid-cols-1 md:grid-cols-3 gap-1.5 text-xs">
-              <div>
-                <label class="block text-gray-500 mb-0.5">Backend</label>
-                <select
-                  id="agent-backend-${escapeAttr(agentId)}"
-                  data-action="agent-backend"
-                  data-agent-id="${escapeAttr(agentId)}"
-                  class="w-full rounded border border-gray-200 px-2 py-1"
-                >
-                  ${backendOptions}
-                </select>
-              </div>
-              <div>
-                <label class="block text-gray-500 mb-0.5">Model</label>
-                <input
-                  id="agent-model-${escapeAttr(agentId)}"
-                  list="${escapeAttr(modelListId)}"
-                  value="${escapeAttr(normalizedModel)}"
-                  class="w-full rounded border border-gray-200 px-2 py-1"
-                >
-                <datalist id="${escapeAttr(modelListId)}">${modelOptionHtml}</datalist>
-              </div>
-              <div class="flex items-end">
-                <button
-                  type="button"
-                  data-action="agent-save"
-                  data-agent-id="${escapeAttr(agentId)}"
-                  class="w-full px-2 py-1 rounded bg-yellow-400 text-black hover:bg-yellow-300"
-                >
-                  Save
-                </button>
-              </div>
+
+            <!-- Permissions Row -->
+            <div class="flex items-center gap-2 mb-2 text-[10px] text-gray-600">
+              <label class="flex items-center gap-0.5 cursor-pointer">
+                <input type="checkbox" id="agent-delegate-${escapeAttr(agentId)}" class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400" ${canDelegate ? 'checked' : ''}>
+                <span>Delegate</span>
+              </label>
+              <label class="flex items-center gap-0.5 cursor-pointer">
+                <input type="checkbox" id="agent-alltools-${escapeAttr(agentId)}" class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400" ${hasAllTools ? 'checked' : ''}>
+                <span>All Tools</span>
+              </label>
             </div>
+
+            <!-- Save Button -->
+            <button type="button" data-action="agent-save" data-agent-id="${escapeAttr(agentId)}" class="w-full text-[10px] px-2 py-1 rounded bg-yellow-400 text-black hover:bg-yellow-300 font-medium">Save</button>
           </div>
         `;
       })
       .join('');
 
-    container.innerHTML = agentCards;
+    // Grid layout: 2 cols on mobile, 3 cols on md+
+    container.innerHTML = `<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">${agentCards}</div>`;
   }
 
   /**
@@ -1161,37 +1131,53 @@ export class SettingsModule {
 
   onAgentBackendChange(agentId: string): void {
     const backendSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-backend-${agentId}`);
-    const modelInput = getElementByIdOrNull<HTMLInputElement>(`agent-model-${agentId}`);
-    const modelList = getElementByIdOrNull<HTMLDataListElement>(`agent-model-list-${agentId}`);
-    if (!backendSelect || !modelInput || !modelList) {
+    const modelSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-model-${agentId}`);
+    if (!backendSelect || !modelSelect) {
       return;
     }
 
     const backend = (backendSelect.value || 'claude') as AgentBackend;
-    const currentModel = modelInput.value || '';
+    const currentModel = modelSelect.value || '';
     const normalized = this.getNormalizedModelForBackend(backend, currentModel);
     const options = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
 
-    modelList.innerHTML = options
-      .map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(formatModelName(m))}</option>`)
+    modelSelect.innerHTML = options
+      .map(
+        (m) =>
+          `<option value="${escapeAttr(m)}" ${m === normalized ? 'selected' : ''}>${escapeHtml(formatModelName(m))}</option>`
+      )
       .join('');
-    modelInput.value = normalized;
   }
 
   async saveAgentConfig(agentId: string): Promise<void> {
     try {
       const backendSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-backend-${agentId}`);
-      const modelInput = getElementByIdOrNull<HTMLInputElement>(`agent-model-${agentId}`);
-      if (!backendSelect || !modelInput) {
+      const modelSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-model-${agentId}`);
+      const delegateCheckbox = getElementByIdOrNull<HTMLInputElement>(`agent-delegate-${agentId}`);
+      const allToolsCheckbox = getElementByIdOrNull<HTMLInputElement>(`agent-alltools-${agentId}`);
+
+      if (!backendSelect || !modelSelect) {
         throw new Error('Agent settings inputs not found');
       }
 
       const backend = (backendSelect.value || 'claude') as AgentBackend;
-      const model = this.getNormalizedModelForBackend(backend, modelInput.value || '');
+      const model = this.getNormalizedModelForBackend(backend, modelSelect.value || '');
+      const can_delegate = delegateCheckbox?.checked ?? false;
+      const hasAllTools = allToolsCheckbox?.checked ?? true;
 
-      await API.put(`/api/multi-agent/agents/${agentId}`, { backend, model });
+      // Build tool_permissions based on checkbox
+      const tool_permissions = hasAllTools
+        ? { allowed: ['*'], blocked: [] }
+        : { allowed: ['Read', 'Grep', 'Glob'], blocked: [] };
 
-      showToast(`Saved ${agentId}: ${backend} / ${model} (applied)`);
+      await API.put(`/api/multi-agent/agents/${agentId}`, {
+        backend,
+        model,
+        can_delegate,
+        tool_permissions,
+      });
+
+      showToast(`Saved ${agentId} (applied)`);
       await this.loadSettings();
     } catch (error) {
       logger.error('Failed to save agent config:', error);

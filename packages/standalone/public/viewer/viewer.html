@@ -476,344 +476,245 @@
 
         <!-- Settings Tab -->
         <div class="tab-content" id="tab-settings">
-          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-3 md:p-4">
-            <!-- Header -->
-            <div class="mb-4">
-              <h1 class="text-lg font-bold text-gray-900">Settings</h1>
-              <p class="text-xs text-gray-500 mt-0.5">Configure MAMA gateways and agent settings</p>
+          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-2 md:p-3">
+            <!-- Compact Header -->
+            <div class="flex items-center justify-between mb-3">
+              <h1 class="text-sm font-bold text-gray-900">⚙️ Settings</h1>
+              <span class="text-[10px] text-gray-400">MAMA OS Configuration</span>
             </div>
 
-            <!-- Gateway Settings -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Gateway Connections</h2>
-              <div class="grid gap-2">
-                <!-- Discord -->
-                <div class="bg-white border border-gray-200 rounded-lg p-2.5">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-2">
-                      <span class="text-xl">💬</span>
-                      <h3 class="font-semibold text-gray-900 text-mama-black">Discord</h3>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" id="settings-discord-enabled" class="sr-only peer">
-                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-mama-yellow/50 rounded-full peer bg-mama-lavender-light peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all border-mama-lavender-dark peer-checked:bg-mama-yellow"></div>
-                    </label>
-                  </div>
-                  <div class="space-y-1.5">
-                    <div>
-                      <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Bot Token</label>
-                      <input type="password" id="settings-discord-token" placeholder="Enter Discord bot token" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400 focus:border-transparent">
-                    </div>
-                    <div>
-                      <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Default Channel ID</label>
-                      <input type="text" id="settings-discord-channel" placeholder="Channel ID for notifications" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400 focus:border-transparent">
-                    </div>
-                  </div>
-                </div>
+            <!-- Main Grid: 2 columns on desktop -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
 
-                <!-- Slack -->
-                <div class="bg-white border border-gray-200 rounded-lg p-2.5">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-1.5">
-                      <span class="text-base">📱</span>
-                      <h3 class="font-semibold text-gray-900 text-sm">Slack</h3>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" id="settings-slack-enabled" class="sr-only peer">
-                      <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-yellow-400"></div>
-                    </label>
-                  </div>
-                  <div class="space-y-1.5">
-                    <div>
-                      <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Bot Token</label>
-                      <input type="password" id="settings-slack-bot-token" placeholder="xoxb-..." class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400 focus:border-transparent">
-                    </div>
-                    <div>
-                      <label class="block text-[10px] font-medium text-gray-500 mb-0.5">App Token</label>
-                      <input type="password" id="settings-slack-app-token" placeholder="xapp-..." class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400 focus:border-transparent">
-                    </div>
-                  </div>
-                </div>
+              <!-- Left Column -->
+              <div class="space-y-3">
 
-                <!-- Telegram -->
-                <div class="bg-white border border-gray-200 rounded-lg p-2.5">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-2">
-                      <span class="text-xl">✈️</span>
-                      <h3 class="font-semibold text-gray-900 text-mama-black">Telegram</h3>
+                <!-- Gateway Connections - 2x2 Grid -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">🌐 Gateways</h2>
+                  <div class="grid grid-cols-2 gap-1.5">
+                    <!-- Discord -->
+                    <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                      <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-xs font-medium">💬 Discord</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" id="settings-discord-enabled" class="sr-only peer">
+                          <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                      </div>
+                      <input type="password" id="settings-discord-token" placeholder="Bot Token" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 mb-1">
+                      <input type="text" id="settings-discord-channel" placeholder="Channel ID" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
                     </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" id="settings-telegram-enabled" class="sr-only peer">
-                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-mama-yellow/50 rounded-full peer bg-mama-lavender-light peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all border-mama-lavender-dark peer-checked:bg-mama-yellow"></div>
-                    </label>
+                    <!-- Slack -->
+                    <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                      <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-xs font-medium">📱 Slack</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" id="settings-slack-enabled" class="sr-only peer">
+                          <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                      </div>
+                      <input type="password" id="settings-slack-bot-token" placeholder="Bot Token (xoxb-)" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 mb-1">
+                      <input type="password" id="settings-slack-app-token" placeholder="App Token (xapp-)" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                    </div>
+                    <!-- Telegram -->
+                    <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                      <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-xs font-medium">✈️ Telegram</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" id="settings-telegram-enabled" class="sr-only peer">
+                          <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                      </div>
+                      <input type="password" id="settings-telegram-token" placeholder="Bot Token" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                    </div>
+                    <!-- Chatwork -->
+                    <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                      <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-xs font-medium">💼 Chatwork</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" id="settings-chatwork-enabled" class="sr-only peer">
+                          <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                      </div>
+                      <input type="password" id="settings-chatwork-token" placeholder="API Token" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                    </div>
                   </div>
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Bot Token</label>
-                    <input type="password" id="settings-telegram-token" placeholder="123456:ABC-DEF..." class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
-                  </div>
-                </div>
+                </section>
 
-                <!-- Chatwork -->
-                <div class="bg-white border border-gray-200 rounded-lg p-2.5">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-2">
-                      <span class="text-xl">💼</span>
-                      <h3 class="font-semibold text-gray-900 text-mama-black">Chatwork</h3>
+                <!-- Agent Config Card -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">🤖 Default Agent</h2>
+                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                    <div class="grid grid-cols-2 gap-1.5 mb-2">
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Backend</label>
+                        <select id="settings-agent-backend" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                          <option value="claude">Claude CLI</option>
+                          <option value="codex-mcp">Codex MCP</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Model</label>
+                        <select id="settings-agent-model" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"></select>
+                      </div>
+                      <div id="settings-effort-container" style="display: none;">
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Effort <span class="text-indigo-500">(4.6)</span></label>
+                        <select id="settings-agent-effort" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                          <option value="low">Low</option>
+                          <option value="medium" selected>Medium</option>
+                          <option value="high">High</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Max Turns</label>
+                        <input type="number" id="settings-agent-max-turns" value="10" min="1" max="100" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Timeout (s)</label>
+                        <input type="number" id="settings-agent-timeout" value="300" min="30" max="600" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
                     </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" id="settings-chatwork-enabled" class="sr-only peer">
-                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-mama-yellow/50 rounded-full peer bg-mama-lavender-light peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all border-mama-lavender-dark peer-checked:bg-mama-yellow"></div>
-                    </label>
                   </div>
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">API Token</label>
-                    <input type="password" id="settings-chatwork-token" placeholder="Enter Chatwork API token" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
+                </section>
+
+                <!-- Heartbeat Card -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">⏰ Heartbeat</h2>
+                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                    <div class="flex items-center justify-between mb-2">
+                      <span class="text-[10px] text-gray-600">Enable scheduler</span>
+                      <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="settings-heartbeat-enabled" class="sr-only peer">
+                        <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
+                      </label>
+                    </div>
+                    <div class="grid grid-cols-3 gap-1">
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Interval (min)</label>
+                        <input type="number" id="settings-heartbeat-interval" value="30" min="5" max="1440" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Quiet Start</label>
+                        <input type="number" id="settings-heartbeat-quiet-start" value="23" min="0" max="23" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Quiet End</label>
+                        <input type="number" id="settings-heartbeat-quiet-end" value="8" min="0" max="23" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
+                    </div>
                   </div>
-                </div>
+                </section>
+
+                <!-- Role Permissions -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">🔐 Roles</h2>
+                  <div id="settings-roles-container" class="grid grid-cols-2 gap-1.5">
+                    <div class="animate-pulse bg-white rounded-lg h-12"></div>
+                    <div class="animate-pulse bg-white rounded-lg h-12"></div>
+                  </div>
+                </section>
+
               </div>
-            </section>
 
-            <!-- Role Permissions -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">🔐 Role Permissions</h2>
-              <div class="grid gap-2" id="settings-roles-container">
-                <!-- Roles will be rendered dynamically from config -->
-                <div class="animate-pulse bg-white rounded-lg h-20"></div>
-                <div class="animate-pulse bg-white rounded-lg h-20"></div>
+              <!-- Right Column -->
+              <div class="space-y-3">
+
+                <!-- Multi-Agent Team -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">👥 Multi-Agent Team</h2>
+                  <div id="settings-multi-agent-container">
+                    <div class="animate-pulse bg-white rounded-lg h-20"></div>
+                  </div>
+                </section>
+
+                <!-- Installed Skills -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">📚 Skills</h2>
+                  <div id="settings-skills-container" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                    <p class="text-[10px] text-gray-500">Loading...</p>
+                  </div>
+                </section>
+
+                <!-- Token Budget -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">💰 Token Budget</h2>
+                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                    <div class="grid grid-cols-2 gap-1.5">
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Daily Limit</label>
+                        <input type="number" id="settings-token-daily-limit" placeholder="1000000" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Alert ($)</label>
+                        <input type="number" id="settings-token-alert-threshold" step="0.01" placeholder="5.00" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Scheduled Jobs -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">📅 Scheduled Jobs</h2>
+                  <div id="settings-cron-container" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm mb-1.5">
+                    <p class="text-[10px] text-gray-500">Loading...</p>
+                  </div>
+                  <details class="bg-white border border-gray-200 rounded-lg shadow-sm">
+                    <summary class="px-2 py-1.5 text-[10px] font-medium text-gray-600 cursor-pointer hover:bg-gray-50">+ Add New Job</summary>
+                    <div class="p-2 border-t border-gray-100 space-y-1.5" id="settings-cron-form">
+                      <div class="grid grid-cols-2 gap-1.5">
+                        <input type="text" id="settings-cron-name" placeholder="Job Name" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                        <input type="text" id="settings-cron-expr" placeholder="0 * * * *" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
+                      <textarea id="settings-cron-prompt" rows="2" placeholder="Task prompt..." class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 resize-none"></textarea>
+                      <button onclick="settingsModule.addCronJob()" class="w-full px-2 py-1 text-[10px] font-medium bg-yellow-400 hover:bg-yellow-300 rounded">Add</button>
+                    </div>
+                  </details>
+                </section>
+
               </div>
-              <p class="text-[10px] text-gray-400 mt-1.5">💡 OS Agent can manage roles using: <code>os_set_permissions</code> tool</p>
-            </section>
+            </div>
 
-            <!-- Heartbeat Settings -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Heartbeat Scheduler</h2>
-              <div class="bg-white border border-gray-200 rounded-lg p-2.5">
+            <!-- Full Width: Tools Section (collapsible) -->
+            <details class="mt-3">
+              <summary class="text-xs font-semibold text-gray-700 cursor-pointer mb-1.5 flex items-center gap-1">🔧 Tool Selection <span class="text-[9px] text-gray-400 font-normal">(click to expand)</span></summary>
+              <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
                 <div class="flex items-center justify-between mb-2">
-                  <span class="text-sm text-gray-700 text-gray-700">Enable Heartbeat</span>
-                  <label class="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" id="settings-heartbeat-enabled" class="sr-only peer">
-                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-mama-yellow/50 rounded-full peer bg-mama-lavender-light peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all border-mama-lavender-dark peer-checked:bg-mama-yellow"></div>
-                  </label>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Interval (minutes)</label>
-                    <input type="number" id="settings-heartbeat-interval" value="30" min="5" max="1440" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
-                  </div>
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Quiet Start (hour)</label>
-                    <input type="number" id="settings-heartbeat-quiet-start" value="23" min="0" max="23" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
-                  </div>
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Quiet End (hour)</label>
-                    <input type="number" id="settings-heartbeat-quiet-end" value="8" min="0" max="23" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <!-- Agent Settings -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Agent Configuration</h2>
-              <div class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Backend</label>
-                    <select id="settings-agent-backend" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
-                      <option value="claude">Claude CLI</option>
-                      <option value="codex">Codex CLI</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Model</label>
-                    <input id="settings-agent-model" list="settings-agent-model-list" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent" placeholder="Select or type a model">
-                    <datalist id="settings-agent-model-list"></datalist>
-                  </div>
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Max Turns</label>
-                    <input type="number" id="settings-agent-max-turns" value="10" min="1" max="100" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
-                  </div>
-                  <div>
-                    <label class="block text-xs font-medium text-gray-500 text-gray-600 mb-1">Timeout (seconds)</label>
-                    <input type="number" id="settings-agent-timeout" value="300" min="30" max="600" class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 text-gray-900 text-mama-black focus:ring-2 focus:ring-mama-yellow focus:border-transparent">
-                  </div>
-                </div>
-                <div class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-100">
-                  <label class="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" id="settings-agent-persistent-cli" class="sr-only peer">
-                    <div class="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-mama-yellow rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
-                  </label>
-                  <div>
-                    <span class="text-xs font-medium text-gray-700">Persistent CLI</span>
-                    <span class="text-[10px] text-gray-400 ml-1">~2-3s response (Claude only)</span>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <!-- Multi-Agent Team Settings (F3) -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">🤖 Multi-Agent Team</h2>
-              <div id="settings-multi-agent-container" class="grid gap-2">
-                <div class="animate-pulse bg-white rounded-lg h-20"></div>
-              </div>
-            </section>
-
-            <!-- Tool Selection Settings -->
-            <section class="mb-6">
-              <h2 class="text-lg font-semibold text-gray-900 text-mama-black mb-3">Tool Selection</h2>
-              <div class="bg-white bg-white border border-gray-200 border-mama-lavender-dark rounded-lg p-4">
-                <p class="text-sm text-gray-600 mb-4">Select which tools to enable. Gateway tools run directly (self-contained), MCP tools use external servers.</p>
-
-                <!-- Gateway Tools -->
-                <div class="mb-4">
-                  <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-sm font-semibold text-mama-black flex items-center gap-2">
-                      <span class="w-2 h-2 bg-green-500 rounded-full"></span>
-                      Gateway Tools (Self-contained)
-                    </h3>
-                    <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
-                      <input type="checkbox" id="gateway-select-all" onchange="settingsModule.toggleAllGateway(this.checked)" checked>
-                      Select All
-                    </label>
-                  </div>
-
-                  <!-- MAMA Memory Category -->
-                  <div class="mb-3">
-                    <div class="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
-                      <span>🧠</span> MAMA Memory
-                    </div>
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="mama_search" checked> mama_search
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="mama_save" checked> mama_save
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="mama_update" checked> mama_update
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="mama_load_checkpoint" checked> mama_load_checkpoint
-                      </label>
-                    </div>
-                  </div>
-
-                  <!-- Utility Category -->
-                  <div class="mb-3">
-                    <div class="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
-                      <span>🛠️</span> Utility
-                    </div>
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="discord_send" checked> discord_send
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="Read" checked> Read
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="Write" checked> Write
-                      </label>
-                      <label class="flex items-center gap-2 p-2 border border-gray-200 rounded-lg text-xs cursor-pointer hover:bg-mama-lavender-light">
-                        <input type="checkbox" class="gateway-tool" value="Bash" checked> Bash
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- MCP Tools -->
-                <div class="mb-4">
-                  <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-sm font-semibold text-mama-black flex items-center gap-2">
-                      <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
-                      MCP Tools (External Server)
-                    </h3>
-                    <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
-                      <input type="checkbox" id="mcp-select-all" onchange="settingsModule.toggleAllMCP(this.checked)">
-                      Select All
-                    </label>
-                  </div>
-                  <div class="grid grid-cols-2 md:grid-cols-4 gap-2" id="mcp-tools-list">
-                    <!-- MCP servers loaded dynamically from /api/mcp-servers -->
-                    <p class="text-xs text-gray-400 col-span-full">Loading MCP servers...</p>
-                  </div>
-                  <p class="text-xs text-gray-500 mt-2">MCP config path: ~/.mama/mama-mcp-config.json</p>
-                </div>
-
-                <!-- Status Display -->
-                <div class="mt-4 p-3 bg-mama-lavender-light rounded-lg" id="tool-mode-status">
                   <div class="flex items-center gap-2">
-                    <span class="text-sm font-medium text-mama-black" id="tool-summary">Gateway: 18 tools | MCP: 0 tools</span>
+                    <span class="text-[10px] text-gray-500">Gateway</span>
+                    <label class="flex items-center gap-1 text-[10px] cursor-pointer">
+                      <input type="checkbox" id="gateway-select-all" onchange="settingsModule.toggleAllGateway(this.checked)" checked class="w-3 h-3">All
+                    </label>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-gray-500">MCP</span>
+                    <label class="flex items-center gap-1 text-[10px] cursor-pointer">
+                      <input type="checkbox" id="mcp-select-all" onchange="settingsModule.toggleAllMCP(this.checked)" class="w-3 h-3">All
+                    </label>
                   </div>
                 </div>
-              </div>
-            </section>
-
-            <!-- Installed Skills -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Installed Skills</h2>
-              <div id="settings-skills-container" class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <p class="text-xs text-gray-500">Loading skills...</p>
-              </div>
-              <p class="text-[10px] text-gray-400 mt-1">Skills directory: ~/.mama/skills/</p>
-            </section>
-
-            <!-- Token Budget -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Token Budget</h2>
-              <div class="bg-white border border-gray-200 rounded-lg p-2.5 space-y-2">
-                <div>
-                  <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Daily Token Limit</label>
-                  <input type="number" id="settings-token-daily-limit" placeholder="e.g. 1000000" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
+                <div class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-1 mb-2">
+                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="mama_search" checked>mama_search</label>
+                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="mama_save" checked>mama_save</label>
+                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="mama_update" checked>mama_update</label>
+                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="mama_load_checkpoint" checked>checkpoint</label>
+                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="discord_send" checked>discord_send</label>
+                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="Read" checked>Read</label>
+                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="Write" checked>Write</label>
+                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="Bash" checked>Bash</label>
                 </div>
-                <div>
-                  <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Cost Alert Threshold (USD)</label>
-                  <input type="number" id="settings-token-alert-threshold" step="0.01" placeholder="e.g. 5.00" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
-                </div>
+                <div id="mcp-tools-list" class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-1 text-[9px] text-gray-400">Loading MCP...</div>
+                <div class="mt-2 pt-2 border-t border-gray-100 text-[10px] text-gray-500" id="tool-summary">Gateway: 8 | MCP: 0</div>
               </div>
-            </section>
-
-            <!-- Scheduled Jobs (Cron) -->
-            <section class="mb-4">
-              <h2 class="text-sm font-semibold text-gray-900 mb-2">Scheduled Jobs</h2>
-              <div id="settings-cron-container" class="bg-white border border-gray-200 rounded-lg p-2.5">
-                <p class="text-xs text-gray-500">Loading scheduled jobs...</p>
-              </div>
-              <div class="mt-2 bg-white border border-gray-200 rounded-lg p-2.5 space-y-2" id="settings-cron-form">
-                <h3 class="text-xs font-medium text-gray-700">Add New Job</h3>
-                <div class="grid grid-cols-2 gap-2">
-                  <div>
-                    <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Name</label>
-                    <input type="text" id="settings-cron-name" placeholder="e.g. Danggeun Monitor" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
-                  </div>
-                  <div>
-                    <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Schedule (cron)</label>
-                    <input type="text" id="settings-cron-expr" placeholder="0 * * * *" class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400">
-                  </div>
-                </div>
-                <div>
-                  <label class="block text-[10px] font-medium text-gray-500 mb-0.5">Prompt</label>
-                  <textarea id="settings-cron-prompt" rows="2" placeholder="Task prompt for agent to execute each tick..." class="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 text-gray-900 focus:ring-1 focus:ring-yellow-400 resize-none"></textarea>
-                </div>
-                <button onclick="settingsModule.addCronJob()" class="px-3 py-1 text-xs font-medium text-mama-black bg-mama-yellow hover:bg-mama-yellow-hover rounded transition-colors">
-                  Add Job
-                </button>
-              </div>
-            </section>
+            </details>
 
             <!-- Action Buttons -->
-            <div class="flex items-center justify-between pt-4 border-t border-gray-200 border-mama-lavender-dark">
-              <button onclick="settingsModule.resetForm()" class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-mama-lavender-light hover:bg-gray-200 hover:bg-mama-lavender-light rounded-lg transition-colors">
-                Reset
-              </button>
-              <div class="flex items-center gap-3">
-                <span id="settings-status" class="text-sm text-gray-500 text-gray-600"></span>
-                <button onclick="settingsModule.saveAndRestart()" class="px-6 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                    <polyline points="17 21 17 13 7 13 7 21"/>
-                    <polyline points="7 3 7 8 15 8"/>
-                  </svg>
+            <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-200">
+              <button onclick="settingsModule.resetForm()" class="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition-colors">Reset</button>
+              <div class="flex items-center gap-2">
+                <span id="settings-status" class="text-[10px] text-gray-500"></span>
+                <button onclick="settingsModule.saveAndRestart()" class="px-4 py-1.5 text-xs font-medium text-black bg-yellow-400 hover:bg-yellow-300 rounded transition-colors flex items-center gap-1.5">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                   Save &amp; Restart
                 </button>
               </div>

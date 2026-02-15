@@ -79,9 +79,11 @@ export interface AgentPersonaConfig {
 
   /**
    * Runtime backend for this agent.
+   * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
+   * - 'codex-mcp': Codex via MCP protocol
    * If not specified, uses global runtime backend.
    */
-  backend?: 'claude' | 'codex' | 'codex-mcp';
+  backend?: 'claude' | 'codex-mcp';
 
   /**
    * Maximum turns for this agent
@@ -283,18 +285,19 @@ export interface MultiAgentConfig {
  * Not persisted in config.yaml (derived from current agent runtime).
  */
 export interface MultiAgentRuntimeOptions {
-  backend?: 'claude' | 'codex' | 'codex-mcp';
+  /**
+   * Backend for agent execution
+   * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
+   * - 'codex-mcp': Codex via MCP protocol
+   */
+  backend?: 'claude' | 'codex-mcp';
   model?: string;
   /** Timeout in milliseconds for each agent process request */
   requestTimeout?: number;
-  codexHome?: string;
+  /** Codex working directory (for codex-mcp backend) */
   codexCwd?: string;
+  /** Codex sandbox mode (for codex-mcp backend) */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
-  codexProfile?: string;
-  codexEphemeral?: boolean;
-  codexAddDirs?: string[];
-  codexConfigOverrides?: string[];
-  codexSkipGitRepoCheck?: boolean;
 }
 
 /**

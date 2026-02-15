@@ -13,7 +13,6 @@
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
-import { ClaudeCLIWrapper } from './claude-cli-wrapper.js';
 import { CodexMCPProcess } from './codex-mcp-process.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
@@ -92,10 +91,8 @@ void _matchToolPattern;
  * Load CLAUDE.md system prompt
  * Tries multiple paths: project root, ~/.mama, /etc/mama
  */
-function loadSystemPrompt(verbose = false, backend?: 'claude' | 'codex' | 'codex-mcp'): string {
+function loadSystemPrompt(verbose = false): string {
   const searchPaths = [
-    // Codex-specific prompt (if configured)
-    ...(backend === 'codex' ? [join(homedir(), '.mama/CODEX.md')] : []),
     // User home - MAMA standalone config (priority)
     join(homedir(), '.mama/CLAUDE.md'),
     // System config
@@ -109,11 +106,6 @@ function loadSystemPrompt(verbose = false, backend?: 'claude' | 'codex' | 'codex
       if (verbose) console.log(`[AgentLoop] Loaded system prompt from: ${path}`);
       return readFileSync(path, 'utf-8');
     }
-  }
-
-  if (backend === 'codex') {
-    console.warn('[AgentLoop] CODEX.md not found, using minimal Codex identity');
-    return 'You are MAMA OS running on Codex CLI. Follow user and MAMA rules.';
   }
 
   console.warn('[AgentLoop] CLAUDE.md not found, using default identity');
@@ -285,8 +277,6 @@ export function loadInstalledSkills(
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
-  const backend =
-    (process.env.MAMA_BACKEND as 'claude' | 'codex' | 'codex-mcp' | undefined) ?? 'claude';
 
   // Load state for conditional loading (skills + system docs)
   const stateFile = join(mamaHome, 'skills', 'state.json');
@@ -303,7 +293,7 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   }
 
   // Load persona files: SOUL.md, IDENTITY.md, USER.md
-  const personaFiles = backend === 'codex' ? ['USER.md'] : ['SOUL.md', 'IDENTITY.md', 'USER.md'];
+  const personaFiles = ['SOUL.md', 'IDENTITY.md', 'USER.md'];
   for (const file of personaFiles) {
     const path = join(mamaHome, file);
     if (existsSync(path)) {
@@ -316,7 +306,7 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   }
 
   // Load installed & enabled skills (HIGH PRIORITY — before CLAUDE.md)
-  const skillBlocks = loadInstalledSkills(verbose, { onlyCommands: backend === 'codex' });
+  const skillBlocks = loadInstalledSkills(verbose);
   if (skillBlocks.length > 0) {
     const skillDirective = [
       '# Installed Skills (PRIORITY)',
@@ -347,7 +337,7 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   }
 
   // Load CLAUDE.md (base instructions)
-  const claudeMd = loadSystemPrompt(verbose, backend);
+  const claudeMd = loadSystemPrompt(verbose);
   layers.push(claudeMd);
 
   // Load ONBOARDING.md only if not disabled in state
@@ -400,8 +390,7 @@ To call a Gateway Tool, output a JSON block:
 }
 
 export class AgentLoop {
-  private readonly agent: ClaudeCLIWrapper | PersistentCLIAdapter | CodexMCPProcess;
-  private readonly claudeCLI: ClaudeCLIWrapper | null = null;
+  private readonly agent: PersistentCLIAdapter | CodexMCPProcess;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
   private systemPromptOverride?: string;
@@ -423,8 +412,7 @@ export class AgentLoop {
   private readonly sessionPool: SessionPool;
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
-  private readonly usePersistentCLI: boolean;
-  private readonly backend: 'claude' | 'codex' | 'codex-mcp';
+  private readonly backend: 'claude' | 'codex-mcp';
   private readonly postToolHandler: PostToolHandler | null;
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
@@ -503,19 +491,21 @@ export class AgentLoop {
 
     // Choose backend (default: claude)
     this.backend = options.backend ?? 'claude';
-    // Store in local var with explicit type to avoid TypeScript control flow narrowing
-    const backendType: 'claude' | 'codex' | 'codex-mcp' = this.backend;
 
-    // Choose CLI mode: Persistent (fast, experimental) or Standard (stable)
-    const isCodexBackend = backendType.startsWith('codex');
-    this.usePersistentCLI = isCodexBackend ? false : (options.usePersistentCLI ?? false);
-    if (isCodexBackend && options.usePersistentCLI) {
-      logger.warn('Codex backend does not support persistent CLI mode; disabling');
-    }
-
-    if (this.usePersistentCLI) {
-      // Persistent CLI mode: keeps Claude process alive for multi-turn conversations
-      // Response time: ~2-3s instead of ~16-30s
+    if (this.backend === 'codex-mcp') {
+      // Codex MCP mode: standard MCP protocol
+      this.agent = new CodexMCPProcess({
+        model: options.model,
+        cwd: join(homedir(), '.mama', 'workspace'),
+        sandbox: 'workspace-write',
+        systemPrompt: defaultSystemPrompt,
+        compactPrompt:
+          'Summarize the conversation concisely, preserving key decisions and context.',
+        timeoutMs: options.timeoutMs,
+      });
+      logger.debug('Codex MCP backend enabled');
+    } else {
+      // Claude backend: always use PersistentCLI for fast responses (~2-3s vs ~16-30s)
       this.persistentCLI = new PersistentCLIAdapter({
         model: options.model ?? 'claude-sonnet-4-20250514',
         sessionId,
@@ -531,42 +521,7 @@ export class AgentLoop {
         useGatewayTools: useGatewayMode,
       });
       this.agent = this.persistentCLI;
-      logger.debug('🚀 Persistent CLI mode enabled - faster responses');
-    } else {
-      // Re-check backend without TypeScript narrowing interference
-      const selectedBackend = this.backend as 'claude' | 'codex' | 'codex-mcp';
-      if (selectedBackend === 'codex-mcp') {
-        // Codex MCP mode: standard MCP protocol
-        // 채팅 → MCP → Codex → MCP → 채팅
-        this.agent = new CodexMCPProcess({
-          model: options.model,
-          cwd: options.codexCwd ?? join(homedir(), '.mama', 'workspace'),
-          sandbox: options.codexSandbox ?? 'workspace-write',
-          systemPrompt: defaultSystemPrompt,
-          compactPrompt:
-            'Summarize the conversation concisely, preserving key decisions and context.',
-          timeoutMs: options.timeoutMs,
-        });
-        logger.debug('Codex MCP backend enabled');
-      } else {
-        // Standard Claude CLI mode: spawns new process per message
-        this.claudeCLI = new ClaudeCLIWrapper({
-          model: options.model ?? 'claude-sonnet-4-20250514',
-          sessionId,
-          systemPrompt: defaultSystemPrompt,
-          // Hybrid mode: pass MCP config even with Gateway tools enabled
-          mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-          // Headless daemon requires skipping permission prompts (no TTY available).
-          // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
-          // MAMA_TRUSTED_ENV must be set to enable this flag (defense in depth)
-          dangerouslySkipPermissions:
-            process.env.MAMA_TRUSTED_ENV === 'true' &&
-            (options.dangerouslySkipPermissions ?? false),
-          // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
-          useGatewayTools: useGatewayMode,
-        });
-        this.agent = this.claudeCLI;
-      }
+      logger.debug('🚀 Claude PersistentCLI mode enabled - faster responses');
     }
     logger.debug(
       'Config: gateway=' +
@@ -883,23 +838,13 @@ export class AgentLoop {
         // First turn of new session: --session-id (inject system prompt)
         // Subsequent turns (tool loop) or resumed sessions: --resume (skip system prompt)
         const shouldResume = !sessionIsNew || turn > 1;
-        // Persistent CLI preserves context automatically - only send new messages
-        // Codex resume also preserves context - send only last message
-        // Non-persistent CLI needs full history formatted as prompt
-        const promptText =
-          this.usePersistentCLI || (this.backend === 'codex' && shouldResume)
-            ? this.formatLastMessageOnly(history)
-            : this.formatHistoryAsPrompt(history);
+        // Both Claude PersistentCLI and Codex MCP preserve context - only send new messages
+        const promptText = this.formatLastMessageOnly(history);
         try {
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
           });
-          // Codex returns its own thread_id; map it into the session pool for continuity
-          if (this.backend === 'codex' && piResult.session_id && ownedSession) {
-            this.sessionPool.setSessionId(channelKey, piResult.session_id);
-            this.agent.setSessionId(piResult.session_id);
-          }
           // After first successful call, mark session as not new for subsequent turns
           if (turn === 1) sessionIsNew = false;
         } catch (error) {
@@ -1365,96 +1310,6 @@ export class AgentLoop {
     }
 
     return '';
-  }
-
-  /**
-   * Format conversation history as prompt text for Claude CLI
-   * Note: Claude CLI -p mode only supports text, so images are converted to file paths
-   * that Claude Code can read using the Read tool.
-   */
-  private formatHistoryAsPrompt(history: Message[]): string {
-    return history
-      .map((msg) => {
-        const content = msg.content;
-        let text: string;
-
-        if (typeof content === 'string') {
-          text = content;
-        } else if (Array.isArray(content)) {
-          const parts: string[] = [];
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          for (const block of content as any[]) {
-            if (block.type === 'text') {
-              parts.push(block.text);
-            } else if (block.type === 'tool_use') {
-              // Format tool_use block for Claude to see its previous tool calls
-              parts.push(
-                `[Tool Call: ${block.name}]\nInput: ${JSON.stringify(block.input, null, 2)}`
-              );
-            } else if (block.type === 'tool_result') {
-              // Format tool_result block for Claude to see tool execution results
-              const status = block.is_error ? 'ERROR' : 'SUCCESS';
-              parts.push(`[Tool Result: ${status}]\n${block.content}`);
-            } else if (block.type === 'image') {
-              if (block.localPath) {
-                parts.push(
-                  `⚠️ CRITICAL: The user has uploaded an image file.\n` +
-                    `Image path: ${block.localPath}\n` +
-                    `You MUST call the Read tool on "${block.localPath}" to view this image FIRST.\n` +
-                    `DO NOT describe or guess the image contents without reading it.\n` +
-                    `DO NOT say you cannot read images - the Read tool supports image files.`
-                );
-              } else if (block.source?.data) {
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                const fs = require('fs');
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                const path = require('path');
-                const mediaDir = path.join(homedir(), '.mama', 'workspace', 'media', 'inbound');
-                fs.mkdirSync(mediaDir, { recursive: true });
-                // Map MIME type to file extension (support PNG, JPEG, GIF, WebP)
-                const mimeToExt: Record<string, string> = {
-                  'image/png': '.png',
-                  'image/jpeg': '.jpg',
-                  'image/jpg': '.jpg',
-                  'image/gif': '.gif',
-                  'image/webp': '.webp',
-                };
-                const ext = mimeToExt[block.source.media_type?.toLowerCase() || ''] || '.jpg';
-                const imagePath = path.join(
-                  mediaDir,
-                  `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`
-                );
-                try {
-                  fs.writeFileSync(imagePath, Buffer.from(block.source.data, 'base64'));
-                  parts.push(
-                    `⚠️ CRITICAL: The user has uploaded an image file.\n` +
-                      `Image path: ${imagePath}\n` +
-                      `You MUST call the Read tool on "${imagePath}" to view this image FIRST.\n` +
-                      `DO NOT describe or guess the image contents without reading it.\n` +
-                      `DO NOT say you cannot read images - the Read tool supports image files.`
-                  );
-                } catch {
-                  parts.push('[Image attached but could not be processed]');
-                }
-              }
-            }
-          }
-
-          text = parts.join('\n');
-        } else {
-          return '';
-        }
-
-        if (msg.role === 'user') {
-          return `User: ${text}`;
-        } else if (msg.role === 'assistant') {
-          return `Assistant: ${text}`;
-        }
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n\n');
   }
 
   /**
