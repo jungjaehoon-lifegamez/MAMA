@@ -175,18 +175,19 @@ jobs:
         with:
           version: 9
 
+      - name: Replace workspace protocol before install
+        run: |
+          # Replace workspace:* with actual npm version BEFORE install
+          # This ensures pnpm fetches mama-core from npm, not workspace
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\\*\"/\"^$CORE_VERSION\"/" package.json
+          cat package.json
+
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build
         run: pnpm build
-
-      - name: Replace workspace protocol
-        run: |
-          # Replace workspace:* with actual version from mama-core
-          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
-          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
-          cat package.json
 
       - name: Publish to npmjs.org
         run: npm publish --access public || echo "Already published on npmjs, skipping"
