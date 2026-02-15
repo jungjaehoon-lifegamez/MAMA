@@ -124,9 +124,12 @@ export interface ApiAgentToolsConfig {
   [key: string]: unknown;
 }
 
+export type EffortLevel = 'low' | 'medium' | 'high';
+
 export interface ApiAgentConfig {
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex-mcp';
   model?: string;
+  effort?: EffortLevel;
   tools?: ApiAgentToolsConfig;
   use_persistent_cli?: boolean;
   max_turns?: number;
@@ -181,7 +184,7 @@ export interface MultiAgentAgent {
   tier?: number;
   status?: string;
   model?: string;
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex-mcp';
   bot_token?: string;
   slack_bot_token?: string | null;
   slack_app_token?: string | null;
@@ -201,7 +204,10 @@ export interface MultiAgentAgent {
     mcp_config?: string;
   };
   auto_respond_keywords?: string[];
-  tool_permissions?: string[];
+  tool_permissions?: {
+    allowed?: string[];
+    blocked?: string[];
+  };
   [key: string]: unknown;
 }
 

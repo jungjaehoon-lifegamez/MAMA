@@ -716,24 +716,13 @@ export interface StreamingContext {
  * Agent loop configuration options
  */
 export interface AgentLoopOptions {
-  /** Backend to use for CLI execution */
-  backend?: 'claude' | 'codex';
-  /** Codex home directory for Codex backend state/config */
-  codexHome?: string;
-  /** Codex working directory */
-  codexCwd?: string;
-  /** Codex sandbox mode */
-  codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
-  /** Skip Git repo check for Codex backend */
-  codexSkipGitRepoCheck?: boolean;
-  /** Codex profile from CODEX_HOME config */
-  codexProfile?: string;
-  /** Run Codex without persisting sessions */
-  codexEphemeral?: boolean;
-  /** Additional writable directories for Codex */
-  codexAddDirs?: string[];
-  /** Raw Codex -c key=value overrides */
-  codexConfigOverrides?: string[];
+  /**
+   * Backend to use for CLI execution
+   * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
+   * - 'codex-mcp': Codex via MCP protocol
+   * @default 'claude'
+   */
+  backend?: 'claude' | 'codex-mcp';
   /** System prompt for Claude */
   systemPrompt?: string;
   /** Maximum number of conversation turns (default: 10) */
@@ -787,12 +776,6 @@ export interface AgentLoopOptions {
    * This prevents double-locking of the session pool
    */
   cliSessionId?: string;
-  /**
-   * Use persistent CLI process for faster responses (experimental)
-   * When true, keeps Claude process alive for multi-turn conversations
-   * Response time: ~2-3s instead of ~16-30s
-   */
-  usePersistentCLI?: boolean;
 
   /**
    * Skip permission prompts for CLI tool execution

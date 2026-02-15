@@ -43,10 +43,14 @@ program
   .description('Initialize MAMA configuration')
   .option('-f, --force', 'Overwrite existing configuration')
   .option('--skip-auth-check', 'Skip authentication check (for testing)')
-  .option('--backend <backend>', 'Preferred backend: auto | claude | codex (default: auto)', 'auto')
+  .option(
+    '--backend <backend>',
+    'Preferred backend: auto | claude | codex-mcp (default: auto)',
+    'auto'
+  )
   .action(async (options) => {
     const backend =
-      options.backend === 'claude' || options.backend === 'codex' ? options.backend : 'auto';
+      options.backend === 'claude' || options.backend === 'codex-mcp' ? options.backend : 'auto';
     await initCommand({
       force: options.force,
       skipAuthCheck: options.skipAuthCheck,

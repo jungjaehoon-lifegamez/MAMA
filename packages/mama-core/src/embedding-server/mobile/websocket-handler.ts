@@ -89,7 +89,7 @@ function extractUserId(req: IncomingMessage): string {
  * Message router interface
  */
 interface MessageRouter {
-  process(message: NormalizedMessage): Promise<RouterResult>;
+  process(message: NormalizedMessage, options?: { onQueued?: () => void }): Promise<RouterResult>;
 }
 
 /**
@@ -200,6 +200,22 @@ type ExtendedWebSocketServer = WebSocketServer & {
   getClients: () => Map<string, ClientInfo>;
   getClientCount: () => number;
 };
+
+/**
+ * Safe send helper - guards against closed socket with try-catch for race conditions
+ */
+function safeSend(ws: WebSocket, data: string): boolean {
+  if (ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(data);
+      return true;
+    } catch {
+      // Socket may have closed between readyState check and send
+      return false;
+    }
+  }
+  return false;
+}
 
 /**
  * Create WebSocket handler with MessageRouter integration
@@ -446,13 +462,36 @@ async function handleClientMessage(
             },
           };
 
-          result = await messageRouter.process(normalizedMessage);
+          result = await messageRouter.process(normalizedMessage, {
+            onQueued: () => {
+              // Guard: check if socket is still open before sending
+              if (clientInfo.ws.readyState !== WebSocket.OPEN) {
+                return;
+              }
+              // Notify client that message is queued (session busy)
+              try {
+                clientInfo.ws.send(
+                  JSON.stringify({
+                    type: 'queued',
+                    message: '⏳ 이전 요청 처리 중... 대기열에 추가되었습니다.',
+                  })
+                );
+              } catch (err) {
+                logger.warn(
+                  'Queued notification failed:',
+                  err instanceof Error ? err.message : String(err)
+                );
+              }
+              logger.info(`Message queued for ${clientId} (session busy)`);
+            },
+          });
         } finally {
           clearInterval(keepAliveInterval);
         }
 
         // Send response as stream (for Chat tab compatibility)
-        clientInfo.ws.send(
+        safeSend(
+          clientInfo.ws,
           JSON.stringify({
             type: 'stream',
             content: result.response,
@@ -461,7 +500,8 @@ async function handleClientMessage(
         );
 
         // Send stream end
-        clientInfo.ws.send(
+        safeSend(
+          clientInfo.ws,
           JSON.stringify({
             type: 'stream_end',
             sessionId: result.sessionId,
@@ -473,7 +513,8 @@ async function handleClientMessage(
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         logger.error(`Message processing error for ${clientId}:`, errMsg);
-        clientInfo.ws.send(
+        safeSend(
+          clientInfo.ws,
           JSON.stringify({
             type: 'error',
             error: 'Failed to process message',

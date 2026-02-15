@@ -25,6 +25,21 @@ vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
   };
 });
 
+// Mock the PersistentCLIAdapter (used by default for claude backend)
+vi.mock('../../src/agent/persistent-cli-adapter.js', () => {
+  return {
+    PersistentCLIAdapter: vi.fn().mockImplementation(() => ({
+      prompt: vi.fn().mockResolvedValue({
+        response: 'Mock response',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        session_id: 'test-session',
+      }),
+      setSessionId: vi.fn(),
+      close: vi.fn(),
+    })),
+  };
+});
+
 // Mock the session pool
 vi.mock('../../src/agent/session-pool.js', () => {
   return {

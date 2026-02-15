@@ -7,8 +7,6 @@
 import { isDaemonRunning, getUptime } from '../utils/pid-manager.js';
 import { loadConfig, configExists, expandPath } from '../config/config-manager.js';
 import { OAuthManager } from '../../auth/index.js';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 /**
  * Execute status command
@@ -36,13 +34,8 @@ export async function statusCommand(): Promise<void> {
       const config = await loadConfig();
       const backend = config.agent.backend ?? 'claude';
       console.log(`Backend: ${backend}`);
-      if (backend === 'codex') {
-        const codexHome = expandPath(config.agent.codex_home ?? '~/.mama/.codex');
-        const authPath = join(codexHome, 'auth.json');
-        console.log(`Codex home: ${codexHome}`);
-        console.log(
-          `Codex auth: ${existsSync(authPath) ? 'Present ✓' : `Missing ✗ (${authPath})`}`
-        );
+      if (backend === 'codex-mcp') {
+        console.log('Codex MCP backend: Uses MCP protocol for Codex communication');
       } else {
         process.stdout.write('OAuth token: ');
         try {

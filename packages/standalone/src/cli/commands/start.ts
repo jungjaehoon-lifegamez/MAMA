@@ -397,8 +397,8 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
   const backend = config.agent.backend ?? 'claude';
   process.env.MAMA_BACKEND = backend;
 
-  if (backend === 'codex') {
-    console.log('✓ Codex CLI backend (OAuth handled by Codex login)');
+  if (backend === 'codex-mcp') {
+    console.log('✓ Codex-MCP backend (OAuth handled by Codex login)');
   } else if (!config.use_claude_cli) {
     process.stdout.write('Checking OAuth token... ');
     try {
@@ -495,12 +495,18 @@ async function startDaemon(): Promise<number> {
   const out = openSync(logFile, 'a');
 
   // Spawn daemon process directly
+  // Remove Claude Code env vars to allow nested Claude CLI spawning
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.CLAUDECODE;
+  delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
+  delete cleanEnv.CLAUDE_CODE_SSE_PORT;
+
   const child = spawn(process.execPath, [process.argv[1], 'daemon'], {
     detached: true,
     stdio: ['ignore', out, out],
     cwd: homedir(),
     env: {
-      ...process.env,
+      ...cleanEnv,
       MAMA_DAEMON: '1',
     },
   });
@@ -624,19 +630,10 @@ export async function runAgentLoop(
   const agentLoop = new AgentLoop(oauthManager, {
     backend,
     model: config.agent.model,
-    codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
-    codexCwd: config.agent.codex_cwd ? expandPath(config.agent.codex_cwd) : undefined,
-    codexSandbox: config.agent.codex_sandbox,
-    codexSkipGitRepoCheck: config.agent.codex_skip_git_repo_check,
-    codexProfile: config.agent.codex_profile,
-    codexEphemeral: config.agent.codex_ephemeral,
-    codexAddDirs: config.agent.codex_add_dirs,
-    codexConfigOverrides: config.agent.codex_config_overrides,
     timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
     toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord
-    usePersistentCLI: config.agent.use_persistent_cli ?? true, // 🚀 Fast mode (default: on)
     // SECURITY NOTE: dangerouslySkipPermissions=true is REQUIRED for headless daemon operation.
     // This is NOT a security violation because:
     // 1. MAMA runs as a background daemon with no TTY - interactive prompts are impossible
@@ -714,8 +711,8 @@ export async function runAgentLoop(
         agentLoop.setSessionKey(sessionKey);
       }
 
-      if (backend === 'codex' && options) {
-        // Override role-based model selection for Codex backend
+      if (backend === 'codex-mcp' && options) {
+        // Override role-based model selection for Codex-MCP backend
         options.model = config.agent.model;
       }
       const result = await agentLoop.run(prompt, options);
@@ -767,8 +764,8 @@ export async function runAgentLoop(
       }
 
       console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);
-      if (backend === 'codex' && options) {
-        // Override role-based model selection for Codex backend
+      if (backend === 'codex-mcp' && options) {
+        // Override role-based model selection for Codex-MCP backend
         options.model = config.agent.model;
       }
       const result = await agentLoop.runWithContent(content, options);
@@ -1018,14 +1015,6 @@ export async function runAgentLoop(
     backend,
     model: config.agent.model,
     requestTimeout: config.agent.timeout,
-    codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
-    codexCwd: config.agent.codex_cwd ? expandPath(config.agent.codex_cwd) : undefined,
-    codexSandbox: config.agent.codex_sandbox,
-    codexProfile: config.agent.codex_profile,
-    codexEphemeral: config.agent.codex_ephemeral,
-    codexAddDirs: config.agent.codex_add_dirs,
-    codexConfigOverrides: config.agent.codex_config_overrides,
-    codexSkipGitRepoCheck: config.agent.codex_skip_git_repo_check,
   } as const;
 
   // Initialize Discord gateway if enabled (before API server for reference)

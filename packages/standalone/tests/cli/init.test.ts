@@ -17,9 +17,18 @@ import {
   loadConfig,
 } from '../../src/cli/config/config-manager.js';
 
+/**
+ * Story ID: CLI-INIT-001
+ * Acceptance Criteria:
+ * - Creates config file in ~/.mama/config.yaml
+ * - Supports --force to overwrite existing config
+ * - Supports --skip-auth-check for testing
+ * - Supports --backend option (claude, codex-mcp)
+ */
 describe('mama init command', () => {
   let testHome: string;
   let originalHome: string | undefined;
+  let originalTier3: string | undefined;
   let consoleOutput: string[] = [];
   let consoleErrors: string[] = [];
 
@@ -31,7 +40,9 @@ describe('mama init command', () => {
     await mkdir(testHome, { recursive: true });
 
     originalHome = process.env.HOME;
+    originalTier3 = process.env.MAMA_FORCE_TIER_3;
     process.env.HOME = testHome;
+    process.env.MAMA_FORCE_TIER_3 = 'true';
 
     consoleOutput = [];
     consoleErrors = [];
@@ -57,6 +68,12 @@ describe('mama init command', () => {
       process.env.HOME = originalHome;
     } else {
       delete process.env.HOME;
+    }
+
+    if (originalTier3 !== undefined) {
+      process.env.MAMA_FORCE_TIER_3 = originalTier3;
+    } else {
+      delete process.env.MAMA_FORCE_TIER_3;
     }
 
     await rm(testHome, { recursive: true, force: true });
@@ -212,35 +229,14 @@ describe('mama init command', () => {
         exitSpy.mockRestore();
       }
     });
-
-    it('should fail when codex backend is requested without codex auth', async () => {
-      const claudeDir = join(testHome, '.claude');
-      await mkdir(claudeDir, { recursive: true });
-      await writeFile(join(claudeDir, '.credentials.json'), '{}');
-
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-        throw new Error('process.exit called');
-      });
-
-      try {
-        await initCommand({ backend: 'codex' });
-        expect.fail('Should have thrown');
-      } catch {
-        expect(exitSpy).toHaveBeenCalledWith(1);
-        expect(consoleErrors.some((e) => e.includes('Requested backend "codex"'))).toBe(true);
-      } finally {
-        exitSpy.mockRestore();
-      }
-    });
   });
 
   describe('backend selection', () => {
-    it('should apply codex backend when skipAuthCheck is enabled', async () => {
-      await initCommand({ skipAuthCheck: true, backend: 'codex' });
+    it('should apply codex-mcp backend when skipAuthCheck is enabled', async () => {
+      await initCommand({ skipAuthCheck: true, backend: 'codex-mcp' });
 
       const config = await loadConfig();
-      expect(config.agent.backend).toBe('codex');
-      expect(config.agent.codex_home).toBe('~/.mama/.codex');
+      expect(config.agent.backend).toBe('codex-mcp');
     });
   });
 
