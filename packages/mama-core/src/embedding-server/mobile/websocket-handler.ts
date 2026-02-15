@@ -202,6 +202,17 @@ type ExtendedWebSocketServer = WebSocketServer & {
 };
 
 /**
+ * Safe send helper - guards against closed socket
+ */
+function safeSend(ws: WebSocket, data: string): boolean {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(data);
+    return true;
+  }
+  return false;
+}
+
+/**
  * Create WebSocket handler with MessageRouter integration
  */
 export function createWebSocketHandler({
@@ -474,7 +485,8 @@ async function handleClientMessage(
         }
 
         // Send response as stream (for Chat tab compatibility)
-        clientInfo.ws.send(
+        safeSend(
+          clientInfo.ws,
           JSON.stringify({
             type: 'stream',
             content: result.response,
@@ -483,7 +495,8 @@ async function handleClientMessage(
         );
 
         // Send stream end
-        clientInfo.ws.send(
+        safeSend(
+          clientInfo.ws,
           JSON.stringify({
             type: 'stream_end',
             sessionId: result.sessionId,
@@ -495,7 +508,8 @@ async function handleClientMessage(
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         logger.error(`Message processing error for ${clientId}:`, errMsg);
-        clientInfo.ws.send(
+        safeSend(
+          clientInfo.ws,
           JSON.stringify({
             type: 'error',
             error: 'Failed to process message',
