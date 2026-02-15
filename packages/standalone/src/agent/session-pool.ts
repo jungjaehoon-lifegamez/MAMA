@@ -107,7 +107,6 @@ export class SessionPool {
     sessionId: string;
     isNew: boolean;
     busy: boolean;
-    queuePosition?: number;
   } {
     const existing = this.sessions.get(channelKey);
     const now = Date.now();

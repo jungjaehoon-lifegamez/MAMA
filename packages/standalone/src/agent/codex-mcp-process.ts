@@ -134,15 +134,31 @@ export class CodexMCPProcess extends EventEmitter {
     // MCP servers don't output anything until client sends first request
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // MCP Initialize
-    await this.sendRequest('initialize', {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'MAMA', version: '1.0.0' },
-    });
+    try {
+      // MCP Initialize
+      await this.sendRequest('initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'MAMA', version: '1.0.0' },
+      });
 
-    this.state = 'ready';
-    logger.info('Codex MCP server ready');
+      this.state = 'ready';
+      logger.info('Codex MCP server ready');
+    } catch (error) {
+      // Cleanup on initialization failure
+      logger.error('MCP initialization failed:', error);
+      this.state = 'dead';
+      this.threadId = null;
+      if (this.rl) {
+        this.rl.close();
+        this.rl = null;
+      }
+      if (this.process) {
+        this.process.kill();
+        this.process = null;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -234,7 +250,11 @@ export class CodexMCPProcess extends EventEmitter {
         session_id: this.threadId || '',
       };
     } finally {
-      this.state = 'ready';
+      // Only reset to ready if process is still alive (not crashed)
+      // Note: close handler may have set state to 'dead' asynchronously
+      if (this.process !== null && (this.state as string) !== 'dead') {
+        this.state = 'ready';
+      }
     }
   }
 
