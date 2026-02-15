@@ -177,6 +177,18 @@ export interface AgentConfig {
    * If not specified, all tools use Gateway mode (default)
    */
   tools?: ToolsConfig;
+  /** Codex home directory for configuration/cache */
+  codex_home?: string;
+  /** Codex working directory */
+  codex_cwd?: string;
+  /** Codex sandbox mode */
+  codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Skip git repo check for Codex */
+  codex_skip_git_repo_check?: boolean;
+  /** Ephemeral mode for Codex (no session persistence) */
+  codex_ephemeral?: boolean;
+  /** Use persistent CLI process (for Claude backend) */
+  use_persistent_cli?: boolean;
 }
 
 /**

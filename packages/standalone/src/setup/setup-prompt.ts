@@ -90,6 +90,31 @@ update_config("agent.model", "gpt-5.3-codex")   // for codex-mcp
 - If using \`codex-mcp\`, user must have Codex credentials in \`~/.mama/.codex/\`
 - Do NOT use \`backend: codex\` (legacy, broken) - always use \`codex-mcp\`
 
+### Security & Permission Settings
+
+Ask users about agent permission settings:
+
+**Agent Autonomy (dangerouslySkipPermissions)**
+
+This controls whether agents can execute tools (file writes, bash commands, git operations) without asking for permission.
+
+**Options:**
+- **true** (default): Agents run autonomously without approval prompts. Required for headless/daemon operation.
+- **false**: Agents ask for permission before executing each tool.
+
+⚠️ **Warning**: Setting this to \`true\` gives agents full system access. Only enable in trusted environments.
+
+To configure:
+\`\`\`
+update_config("multi_agent.dangerouslySkipPermissions", true)
+\`\`\`
+
+**IMPORTANT**: This setting also requires \`MAMA_TRUSTED_ENV=true\` environment variable.
+- For systemd service: Add \`Environment=MAMA_TRUSTED_ENV=true\` to the service file
+- For manual start: Run with \`MAMA_TRUSTED_ENV=true mama start\`
+
+If they want autonomous agents, save the config and remind them about the environment variable.
+
 ### Completion
 
 After setup is done:
