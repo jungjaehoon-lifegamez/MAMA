@@ -14,6 +14,14 @@ import { Type, type Static } from '@sinclair/typebox';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import path from 'node:path';
 import os from 'node:os';
+import {
+  truncateText,
+  isRecord,
+  getStringField,
+  getErrorMessage,
+  formatReasoning,
+  isRecentCheckpoint,
+} from './utils';
 
 // MAMA module path - resolve from workspace dependency
 const MAMA_MODULE_PATH = path.dirname(require.resolve('@jungjaehoon/mama-core/mama-api'));
@@ -92,6 +100,15 @@ let initialized = false;
 let mama: MAMAApi | null = null;
 let initialDbPath: string | null = null;
 
+// Compaction tracking flag (module-level for cross-hook communication)
+let compactionOccurred = false;
+
+// Session-level state for more useful auto-checkpoints
+let sessionStartedAt: string | null = null;
+let lastUserPrompt: string | null = null;
+let lastCompactionAt: string | null = null;
+let lastAutoCaptureCandidates: string[] = [];
+
 /**
  * Get MAMA API with null guard
  * @throws Error if MAMA is not initialized
@@ -101,27 +118,6 @@ function getMAMA(): MAMAApi {
     throw new Error('MAMA not initialized. Call initMAMA() first.');
   }
   return mama;
-}
-
-/**
- * Format reasoning with link extraction
- * Shows truncated reasoning + preserves builds_on/debates/synthesizes links
- */
-function formatReasoning(reasoning: string, maxLen: number = 80): string {
-  if (!reasoning) return '';
-
-  // Extract link patterns
-  const linkMatch = reasoning.match(/(builds_on|debates|synthesizes):\s*[\w\[\],\s_-]+/i);
-
-  // Truncate main reasoning
-  const truncated = reasoning.length > maxLen ? reasoning.substring(0, maxLen) + '...' : reasoning;
-
-  // Add link info if found and not already in truncated part
-  if (linkMatch && !truncated.includes(linkMatch[0])) {
-    return `${truncated}\n  🔗 ${linkMatch[0]}`;
-  }
-
-  return truncated;
 }
 
 /**
@@ -155,9 +151,10 @@ async function initMAMA(config?: PluginConfig): Promise<void> {
     initialized = true;
     initialDbPath = dbPath;
     console.log(`[MAMA Plugin] Initialized with direct module integration (db: ${dbPath})`);
-  } catch (err: any) {
-    console.error('[MAMA Plugin] Init failed:', err.message);
-    throw err;
+  } catch (err: unknown) {
+    const msg = getErrorMessage(err);
+    console.error('[MAMA Plugin] Init failed:', msg);
+    throw err instanceof Error ? err : new Error(msg);
   }
 }
 
@@ -183,13 +180,46 @@ const mamaPlugin = {
       'config' in api ? (api as { config?: PluginConfig }).config : undefined;
 
     // =====================================================
+    // Session Start: Initialize and load checkpoint
+    // =====================================================
+    api.on('session_start', async (_event: unknown) => {
+      try {
+        await initMAMA(config);
+        sessionStartedAt = new Date().toISOString();
+        lastUserPrompt = null;
+        lastCompactionAt = null;
+        lastAutoCaptureCandidates = [];
+
+        // 1. Load checkpoint
+        const checkpoint = await getMAMA().loadCheckpoint();
+
+        // 2. Load recent decisions
+        const recentDecisions = await getMAMA().list({ limit: 5 });
+
+        // 3. Console log (void hook - cannot return context)
+        if (checkpoint) {
+          console.log(`[MAMA] Session start: Loaded checkpoint from ${checkpoint.timestamp}`);
+        }
+        if (recentDecisions.length > 0) {
+          console.log(`[MAMA] Session start: ${recentDecisions.length} recent decisions available`);
+        }
+      } catch (err: unknown) {
+        console.error('[MAMA] Session start error:', getErrorMessage(err));
+      }
+    });
+
+    // =====================================================
     // Auto-recall: Semantic search based on user prompt
     // =====================================================
-    api.on('before_agent_start', async (event: any) => {
+    api.on('before_agent_start', async (event: unknown) => {
       try {
         await initMAMA(config);
 
-        const userPrompt = event.prompt || '';
+        let userPrompt = '';
+        if (isRecord(event)) {
+          userPrompt = getStringField(event, 'prompt') ?? '';
+        }
+        lastUserPrompt = userPrompt ? truncateText(userPrompt, 200) : null;
 
         const mamaApi = getMAMA();
 
@@ -199,8 +229,8 @@ const mamaPlugin = {
           try {
             const searchResult = await mamaApi.suggest(userPrompt, { limit: 3, threshold: 0.5 });
             semanticResults = searchResult?.results || [];
-          } catch (searchErr: any) {
-            console.error('[MAMA] Semantic search error:', searchErr.message);
+          } catch (searchErr: unknown) {
+            console.error('[MAMA] Semantic search error:', getErrorMessage(searchErr));
           }
         }
 
@@ -213,14 +243,22 @@ const mamaPlugin = {
           recentDecisions = await mamaApi.list({ limit: 3 });
         }
 
-        // 4. Inject context if available
+        // 4. Compaction note if context was recently compressed
+        let compactionNote = '';
+        if (compactionOccurred) {
+          compactionNote =
+            '\n**Note:** Context was recently compressed. Above memories help restore state.\n';
+          compactionOccurred = false;
+        }
+
+        // 5. Inject context if available
         if (checkpoint || semanticResults.length > 0 || recentDecisions.length > 0) {
           let content = '<relevant-memories>\n';
           content += '# MAMA Memory Context\n\n';
 
           if (semanticResults.length > 0) {
             content += '## Relevant Decisions (semantic match)\n\n';
-            semanticResults.forEach((r: any) => {
+            semanticResults.forEach((r) => {
               const pct = Math.round((r.similarity || 0) * 100);
               content += `- **${r.topic}** [${pct}%]: ${r.decision}`;
               if (r.outcome) content += ` (${r.outcome})`;
@@ -240,7 +278,7 @@ const mamaPlugin = {
 
           if (recentDecisions.length > 0) {
             content += '## Recent Decisions\n\n';
-            recentDecisions.forEach((d: any) => {
+            recentDecisions.forEach((d) => {
               content += `- **${d.topic}**: ${d.decision}`;
               if (d.outcome) content += ` (${d.outcome})`;
               content += '\n';
@@ -248,26 +286,37 @@ const mamaPlugin = {
             content += '\n';
           }
 
+          // Add compaction note if applicable
+          if (compactionNote) {
+            content += compactionNote;
+          }
+
           content += '</relevant-memories>';
 
           console.log(
-            `[MAMA] Auto-recall: ${semanticResults.length} semantic matches, ${recentDecisions.length} recent, checkpoint: ${!!checkpoint}`
+            `[MAMA] Auto-recall: ${semanticResults.length} semantic matches, ${recentDecisions.length} recent, checkpoint: ${!!checkpoint}${compactionNote ? ', post-compaction' : ''}`
           );
 
           return {
             prependContext: content,
           };
         }
-      } catch (err: any) {
-        console.error('[MAMA] Auto-recall error:', err.message);
+      } catch (err: unknown) {
+        console.error('[MAMA] Auto-recall error:', getErrorMessage(err));
       }
     });
 
     // =====================================================
     // Auto-capture: Auto-save decisions at agent end
     // =====================================================
-    api.on('agent_end', async (event: any) => {
-      if (!event.success || !event.messages || event.messages.length === 0) {
+    api.on('agent_end', async (event: unknown) => {
+      if (!isRecord(event)) {
+        return;
+      }
+
+      const success = event.success === true;
+      const messages = Array.isArray(event.messages) ? event.messages : [];
+      if (!success || messages.length === 0) {
         return;
       }
 
@@ -276,8 +325,8 @@ const mamaPlugin = {
 
         // Extract text from messages
         const texts: string[] = [];
-        for (const msg of event.messages) {
-          if (!msg || typeof msg !== 'object') continue;
+        for (const msg of messages) {
+          if (!isRecord(msg)) continue;
 
           const role = msg.role;
           if (role !== 'user' && role !== 'assistant') continue;
@@ -287,7 +336,8 @@ const mamaPlugin = {
             texts.push(content);
           } else if (Array.isArray(content)) {
             for (const block of content) {
-              if (block?.type === 'text' && typeof block.text === 'string') {
+              if (!isRecord(block)) continue;
+              if (block.type === 'text' && typeof block.text === 'string') {
                 texts.push(block.text);
               }
             }
@@ -312,12 +362,146 @@ const mamaPlugin = {
           if (!isDecision) continue;
 
           // Auto-save detected decision (logged only, not actually saved without explicit topic)
-          console.log(`[MAMA] Auto-capture candidate: ${text.substring(0, 50)}...`);
+          const candidate = truncateText(text, 160);
+          if (!lastAutoCaptureCandidates.includes(candidate)) {
+            lastAutoCaptureCandidates = [candidate, ...lastAutoCaptureCandidates].slice(0, 3);
+          }
+          console.log(`[MAMA] Auto-capture candidate: ${candidate}`);
           // Note: Actual save requires an explicit topic, so only logging for now
           // Future: Add topic extraction via LLM
         }
-      } catch (err: any) {
-        console.error('[MAMA] Auto-capture error:', err.message);
+      } catch (err: unknown) {
+        console.error('[MAMA] Auto-capture error:', getErrorMessage(err));
+      }
+    });
+
+    // =====================================================
+    // Session End: Auto-save checkpoint
+    // =====================================================
+    api.on('session_end', async (_event: unknown) => {
+      try {
+        await initMAMA(config);
+
+        // Check if recent checkpoint exists (avoid noisy auto-saves)
+        const existingCheckpoint = await getMAMA().loadCheckpoint();
+
+        if (existingCheckpoint && isRecentCheckpoint(existingCheckpoint.timestamp)) {
+          console.log('[MAMA] Session end: Skipping auto-save (recent checkpoint exists)');
+          return;
+        }
+
+        // Load session metrics for meaningful checkpoint
+        const endedAt = new Date().toISOString();
+        const recentDecisions = await getMAMA().list({ limit: 10 });
+        const decisionCount = recentDecisions.length;
+        const recentTopics = recentDecisions
+          .map((d) => d.topic)
+          .filter((t) => typeof t === 'string' && t.trim().length > 0)
+          .slice(0, 5);
+
+        const summaryParts: string[] = [`Session ended: ${endedAt}`];
+        if (sessionStartedAt) {
+          summaryParts.push(`Session started: ${sessionStartedAt}`);
+        }
+        if (lastUserPrompt) {
+          summaryParts.push(`Last user prompt: ${lastUserPrompt}`);
+        }
+        if (lastCompactionAt) {
+          summaryParts.push(`Last compaction: ${lastCompactionAt}`);
+        }
+        summaryParts.push(`Decisions recorded (recent): ${decisionCount}`);
+        if (recentTopics.length > 0) {
+          summaryParts.push(`Recent topics: ${recentTopics.join(', ')}`);
+        }
+
+        const nextStepsParts: string[] = [];
+        if (lastAutoCaptureCandidates.length > 0) {
+          nextStepsParts.push(
+            `Review auto-capture candidates:\n- ${lastAutoCaptureCandidates.join('\n- ')}`
+          );
+        }
+        if (decisionCount > 0) {
+          nextStepsParts.push(
+            `Review recent decisions (count: ${decisionCount}). Last topic: ${
+              recentDecisions[0]?.topic || 'unknown'
+            }`
+          );
+        } else {
+          nextStepsParts.push('No new decisions recorded in this session.');
+        }
+        nextStepsParts.push(
+          'On next session start: load checkpoint and continue from the last prompt.'
+        );
+
+        const summary = summaryParts.join('\n');
+        const nextSteps = nextStepsParts.join('\n\n');
+
+        const checkpointId = await getMAMA().saveCheckpoint(
+          summary,
+          [], // openFiles - session_end doesn't have file info
+          nextSteps
+        );
+
+        console.log(
+          `[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId}, decisions: ${decisionCount})`
+        );
+      } catch (err: unknown) {
+        console.error('[MAMA] Session end error:', getErrorMessage(err));
+      }
+    });
+
+    // =====================================================
+    // Before Compaction: Save checkpoint before context compression
+    // =====================================================
+    api.on('before_compaction', async (_event: unknown) => {
+      try {
+        await initMAMA(config);
+
+        // Save checkpoint before compaction
+        const now = new Date().toISOString();
+        lastCompactionAt = now;
+        const summary = `Pre-compaction checkpoint: ${now}. Context will be compressed.`;
+        const checkpointId = await getMAMA().saveCheckpoint(
+          summary,
+          [],
+          'Resume after compaction - check previous context'
+        );
+
+        // Set flag for post-compaction context enhancement
+        compactionOccurred = true;
+
+        console.log(`[MAMA] Before compaction: Saved checkpoint (id: ${checkpointId})`);
+      } catch (err: unknown) {
+        console.error('[MAMA] Before compaction error:', getErrorMessage(err));
+      }
+    });
+
+    // =====================================================
+    // After Compaction: Log state and prepare for context re-injection
+    // =====================================================
+    api.on('after_compaction', async (_event: unknown) => {
+      try {
+        await initMAMA(config);
+
+        // 1. Load checkpoint
+        const checkpoint = await getMAMA().loadCheckpoint();
+
+        // 2. Load recent decisions (for context recovery)
+        const recentDecisions = await getMAMA().list({ limit: 5 });
+
+        // 3. Log (void hook - cannot inject directly, before_agent_start handles it)
+        console.log('[MAMA] After compaction: Context compressed');
+        if (checkpoint) {
+          console.log(`[MAMA] Checkpoint available: ${checkpoint.summary?.substring(0, 50)}...`);
+        }
+        if (recentDecisions.length > 0) {
+          console.log(`[MAMA] ${recentDecisions.length} recent decisions ready for re-injection`);
+        }
+
+        // Note: compactionOccurred flag set in before_compaction
+        // before_agent_start will detect this and add context enhancement
+      } catch (err: unknown) {
+        console.error('[MAMA] After compaction error:', getErrorMessage(err));
       }
     });
 
@@ -381,7 +565,7 @@ const mamaPlugin = {
 
           // Format output
           let output = `Found ${result.results.length} related decisions:\n\n`;
-          result.results.forEach((r: any, idx: number) => {
+          result.results.forEach((r, idx) => {
             const pct = Math.round((r.similarity || 0) * 100);
             output += `**${idx + 1}. ${r.topic}** [${pct}% match]\n`;
             output += `   Decision: ${r.decision}\n`;
@@ -390,8 +574,8 @@ const mamaPlugin = {
           });
 
           return { content: [{ type: 'text', text: output }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          return { content: [{ type: 'text', text: `MAMA error: ${getErrorMessage(err)}` }] };
         }
       },
     });
@@ -519,8 +703,8 @@ const mamaPlugin = {
           }
 
           return { content: [{ type: 'text', text: msg }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          return { content: [{ type: 'text', text: `MAMA error: ${getErrorMessage(err)}` }] };
         }
       },
     });
@@ -554,7 +738,7 @@ Also returns recent decisions for context.`,
             let msg = 'No checkpoint found - fresh start.';
             if (recent?.length) {
               msg += '\n\nRecent decisions:\n';
-              recent.forEach((d: any) => {
+              recent.forEach((d) => {
                 msg += `- ${d.topic}: ${d.decision}\n`;
               });
             }
@@ -570,14 +754,14 @@ Also returns recent decisions for context.`,
 
           if (recent?.length) {
             msg += `**Recent Decisions:**\n`;
-            recent.forEach((d: any) => {
+            recent.forEach((d) => {
               msg += `- **${d.topic}**: ${d.decision} (${d.outcome || 'pending'})\n`;
             });
           }
 
           return { content: [{ type: 'text', text: msg }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          return { content: [{ type: 'text', text: `MAMA error: ${getErrorMessage(err)}` }] };
         }
       },
     });
@@ -632,8 +816,8 @@ Helps future sessions learn from experience.`,
           return {
             content: [{ type: 'text', text: `Decision ${decisionId} updated to ${outcome}` }],
           };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          return { content: [{ type: 'text', text: `MAMA error: ${getErrorMessage(err)}` }] };
         }
       },
     });

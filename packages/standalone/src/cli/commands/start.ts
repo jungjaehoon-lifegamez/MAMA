@@ -307,9 +307,9 @@ async function startEmbeddingServerIfAvailable(
       await embeddingServerModule.warmModel();
       console.log('✓ Embedding model preloaded');
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } catch (err: any) {
-    console.warn('[EmbeddingServer] Failed to start (optional):', err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[EmbeddingServer] Failed to start (optional):', message);
   }
 }
 
@@ -1015,6 +1015,8 @@ export async function runAgentLoop(
     backend,
     model: config.agent.model,
     requestTimeout: config.agent.timeout,
+    codexCwd: config.agent.codex_cwd,
+    codexSandbox: config.agent.codex_sandbox,
   } as const;
 
   // Initialize Discord gateway if enabled (before API server for reference)
@@ -1438,10 +1440,8 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   // Screenshot endpoint - take HTML screenshot and send to Discord
   apiServer.app.post('/api/screenshot', async (req, res) => {
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
+    const { spawn } = await import('child_process');
     const path = await import('path');
-    const execAsync = promisify(exec);
 
     try {
       const { channelId, htmlFile, caption } = req.body;
@@ -1491,14 +1491,47 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       console.log(`[Screenshot] Taking screenshot of: ${htmlPath}`);
 
-      // Run screenshot script
-      await execAsync(
-        `node ${workspacePath}/scripts/html-screenshot.mjs "${htmlPath}" "${outputPath}"`,
-        {
-          timeout: 30000,
-          cwd: workspacePath,
-        }
-      );
+      // SECURITY P0: never shell out. Use spawn with args to avoid injection.
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(
+          'node',
+          [`${workspacePath}/scripts/html-screenshot.mjs`, htmlPath, outputPath],
+          {
+            cwd: workspacePath,
+            stdio: 'ignore',
+          }
+        );
+
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          child.kill('SIGKILL');
+          reject(new Error('Screenshot script timed out after 30000ms'));
+        }, 30000);
+
+        child.on('error', (err) => {
+          clearTimeout(timeoutId);
+          if (settled) return;
+          settled = true;
+          reject(err);
+        });
+
+        child.on('exit', (code, signal) => {
+          clearTimeout(timeoutId);
+          if (settled) return;
+          settled = true;
+
+          if (code === 0) {
+            resolve();
+            return;
+          }
+
+          reject(
+            new Error(`Screenshot script failed: code=${code ?? 'null'} signal=${signal ?? 'null'}`)
+          );
+        });
+      });
 
       // Send to Discord
       console.log(`[Screenshot] Sending to Discord: ${outputPath}`);
