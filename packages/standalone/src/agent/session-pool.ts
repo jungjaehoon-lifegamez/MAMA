@@ -124,6 +124,9 @@ export class SessionPool {
         );
       } else if (existing.inUse) {
         // Session is currently in use - return busy immediately
+        // Still update lastActive and messageCount for queued messages
+        existing.lastActive = now;
+        existing.messageCount++;
         console.log(`[SessionPool] Session busy for ${channelKey}, will be queued`);
         return { sessionId: existing.sessionId, isNew: false, busy: true };
       } else {

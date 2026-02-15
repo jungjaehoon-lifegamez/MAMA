@@ -17,9 +17,18 @@ import {
   loadConfig,
 } from '../../src/cli/config/config-manager.js';
 
+/**
+ * Story ID: CLI-INIT-001
+ * Acceptance Criteria:
+ * - Creates config file in ~/.mama/config.yaml
+ * - Supports --force to overwrite existing config
+ * - Supports --skip-auth-check for testing
+ * - Supports --backend option (claude, codex-mcp)
+ */
 describe('mama init command', () => {
   let testHome: string;
   let originalHome: string | undefined;
+  let originalTier3: string | undefined;
   let consoleOutput: string[] = [];
   let consoleErrors: string[] = [];
 
@@ -31,7 +40,9 @@ describe('mama init command', () => {
     await mkdir(testHome, { recursive: true });
 
     originalHome = process.env.HOME;
+    originalTier3 = process.env.MAMA_FORCE_TIER_3;
     process.env.HOME = testHome;
+    process.env.MAMA_FORCE_TIER_3 = 'true';
 
     consoleOutput = [];
     consoleErrors = [];
@@ -57,6 +68,12 @@ describe('mama init command', () => {
       process.env.HOME = originalHome;
     } else {
       delete process.env.HOME;
+    }
+
+    if (originalTier3 !== undefined) {
+      process.env.MAMA_FORCE_TIER_3 = originalTier3;
+    } else {
+      delete process.env.MAMA_FORCE_TIER_3;
     }
 
     await rm(testHome, { recursive: true, force: true });

@@ -14,6 +14,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { SessionStore } from './session-store.js';
 import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type MamaApiClient } from './context-injector.js';
@@ -500,18 +501,18 @@ This protects your credentials from being exposed in chat logs.`;
     const channelHistory = getChannelHistory();
     if (channelHistory) {
       const now = Date.now();
-      // Record user message
+      // Record user message (use UUID to avoid collisions in concurrent requests)
       channelHistory.record(message.channelId, {
-        messageId: `user_${now}`,
+        messageId: `user_${randomUUID()}`,
         sender: message.userId,
         userId: message.userId,
         body: message.text,
         timestamp: now,
         isBot: false,
       });
-      // Record bot response
+      // 6. Record bot response
       channelHistory.record(message.channelId, {
-        messageId: `bot_${now}`,
+        messageId: `bot_${randomUUID()}`,
         sender: 'MAMA',
         userId: 'mama',
         body: response,

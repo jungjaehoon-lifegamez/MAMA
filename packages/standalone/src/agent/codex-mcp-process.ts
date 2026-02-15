@@ -130,8 +130,20 @@ export class CodexMCPProcess extends EventEmitter {
       this.emit('error', error);
     });
 
-    // Wait for process to start
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Wait for process to be ready (first stdout line or timeout)
+    const startupTimeoutMs = this.options.timeoutMs ?? 5000;
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        // Resolve on first stdout data (process is responding)
+        this.process?.stdout?.once('data', () => resolve());
+      }),
+      new Promise<void>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Codex MCP server startup timeout after ${startupTimeoutMs}ms`)),
+          startupTimeoutMs
+        )
+      ),
+    ]);
 
     // MCP Initialize
     await this.sendRequest('initialize', {
