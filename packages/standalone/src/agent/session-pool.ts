@@ -145,6 +145,21 @@ export class SessionPool {
   }
 
   /**
+   * Read-only check for session busy status
+   * Does NOT modify session state (no lock, no messageCount increment)
+   *
+   * @param channelKey - Channel identifier
+   * @returns Object with sessionId (if exists) and busy status
+   */
+  peekSession(channelKey: string): { sessionId?: string; busy: boolean } {
+    const existing = this.sessions.get(channelKey);
+    if (!existing) {
+      return { busy: false };
+    }
+    return { sessionId: existing.sessionId, busy: existing.inUse };
+  }
+
+  /**
    * Update token usage for a session
    * Called after each Claude CLI response
    *
@@ -155,17 +170,17 @@ export class SessionPool {
   updateTokens(
     channelKey: string,
     inputTokens: number,
-    backend?: 'claude' | 'codex' | 'codex-mcp'
+    backend?: 'claude' | 'codex-mcp'
   ): { totalTokens: number; nearThreshold: boolean } {
     const existing = this.sessions.get(channelKey);
     if (!existing) {
       return { totalTokens: 0, nearThreshold: false };
     }
 
-    // Codex resume sessions accumulate ~20-25K tokens per message
-    // After ~50 messages, context exceeds 200K (Claude max)
+    // Codex MCP resume sessions accumulate ~20-25K tokens per message
+    // After ~50 messages, context exceeds 200K (max)
     // Force reset to prevent degraded responses from overflowed context
-    if (backend === 'codex') {
+    if (backend === 'codex-mcp') {
       const MAX_CONTEXT_TOKENS = 200000;
       if (inputTokens > MAX_CONTEXT_TOKENS) {
         logger.warn(

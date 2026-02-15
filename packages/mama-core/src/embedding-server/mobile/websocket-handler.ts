@@ -448,13 +448,24 @@ async function handleClientMessage(
 
           result = await messageRouter.process(normalizedMessage, {
             onQueued: () => {
+              // Guard: check if socket is still open before sending
+              if (clientInfo.ws.readyState !== WebSocket.OPEN) {
+                return;
+              }
               // Notify client that message is queued (session busy)
-              clientInfo.ws.send(
-                JSON.stringify({
-                  type: 'queued',
-                  message: '⏳ 이전 요청 처리 중... 대기열에 추가되었습니다.',
-                })
-              );
+              try {
+                clientInfo.ws.send(
+                  JSON.stringify({
+                    type: 'queued',
+                    message: '⏳ 이전 요청 처리 중... 대기열에 추가되었습니다.',
+                  })
+                );
+              } catch (err) {
+                logger.warn(
+                  'Queued notification failed:',
+                  err instanceof Error ? err.message : String(err)
+                );
+              }
               logger.info(`Message queued for ${clientId} (session busy)`);
             },
           });

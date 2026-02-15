@@ -302,10 +302,12 @@ This protects your credentials from being exposed in chat logs.`;
       const maxWaitMs = 600000; // 10 minutes max wait
       const pollIntervalMs = 500;
       const waitStart = Date.now();
+      let lastLogTime = waitStart;
 
       while (Date.now() - waitStart < maxWaitMs) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-        const check = sessionPool.getSession(channelKey);
+        // Use read-only peek to avoid side effects (no lock increment)
+        const check = sessionPool.peekSession(channelKey);
         if (!check.busy) {
           console.log(
             `[MessageRouter] Session released for ${channelKey} after ${Math.round((Date.now() - waitStart) / 1000)}s`
@@ -313,11 +315,18 @@ This protects your credentials from being exposed in chat logs.`;
           break;
         }
         // Log every 30 seconds
-        if ((Date.now() - waitStart) % 30000 < pollIntervalMs) {
+        if (Date.now() - lastLogTime >= 30000) {
           console.log(
             `[MessageRouter] Still waiting for session ${channelKey} (${Math.round((Date.now() - waitStart) / 1000)}s)...`
           );
+          lastLogTime = Date.now();
         }
+      }
+
+      // Check if we timed out (session still busy)
+      const finalCheck = sessionPool.peekSession(channelKey);
+      if (finalCheck.busy) {
+        throw new Error(`Session for ${channelKey} timed out after ${maxWaitMs / 1000}s`);
       }
     }
 

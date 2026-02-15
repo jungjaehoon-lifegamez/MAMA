@@ -84,8 +84,8 @@ type SettingsPayload = {
 const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
   'codex-mcp': [
     'gpt-5.3-codex',
-    'gpt-5.2',
-    'gpt-5.1',
+    'gpt-5.2-codex',
+    'gpt-5.1-codex-max',
     'gpt-4.1',
     'gpt-4o',
     'gpt-4o-mini',

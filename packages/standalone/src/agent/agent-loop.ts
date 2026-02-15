@@ -10,7 +10,7 @@
  * - Loops until stop_reason is "end_turn" or max turns reached
  */
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, mkdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
 import { CodexMCPProcess } from './codex-mcp-process.js';
@@ -494,9 +494,14 @@ export class AgentLoop {
 
     if (this.backend === 'codex-mcp') {
       // Codex MCP mode: standard MCP protocol
+      const workspaceDir = join(homedir(), '.mama', 'workspace');
+      // Ensure workspace directory exists
+      if (!existsSync(workspaceDir)) {
+        mkdirSync(workspaceDir, { recursive: true });
+      }
       this.agent = new CodexMCPProcess({
         model: options.model,
-        cwd: join(homedir(), '.mama', 'workspace'),
+        cwd: workspaceDir,
         sandbox: 'workspace-write',
         systemPrompt: defaultSystemPrompt,
         compactPrompt:

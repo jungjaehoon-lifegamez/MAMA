@@ -30,9 +30,11 @@ jobs:
               - 'pnpm-lock.yaml'
             plugin:
               - 'packages/claude-code-plugin/**'
+              - 'packages/mama-core/**'
               - 'pnpm-lock.yaml'
             mcp_server:
               - 'packages/mcp-server/**'
+              - 'packages/mama-core/**'
               - 'pnpm-lock.yaml'
 
   # Shared setup (reusable)
@@ -181,4 +183,5 @@ jobs:
         with:
           version: 9
       - run: pnpm install
-      - run: pnpm lint || true
+      - run: pnpm lint
+        continue-on-error: true

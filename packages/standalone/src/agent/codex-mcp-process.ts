@@ -147,14 +147,31 @@ export class CodexMCPProcess extends EventEmitter {
   /**
    * Send a prompt and get response
    */
-  async prompt(content: string, callbacks?: PromptCallbacks): Promise<PromptResult> {
+  async prompt(
+    content: string,
+    callbacks?: PromptCallbacks,
+    options?: { model?: string; resumeSession?: boolean }
+  ): Promise<PromptResult> {
     // Ensure process is running
     if (this.state === 'dead') {
       await this.start();
     }
 
-    // Wait if busy
+    // Handle resumeSession option
+    if (options?.resumeSession === false) {
+      this.threadId = null;
+    }
+
+    // Override model if provided
+    const effectiveModel = options?.model || this.options.model;
+
+    // Wait if busy (with timeout)
+    const maxWaitMs = this.options.timeoutMs ?? 120000;
+    const waitStart = Date.now();
     while (this.state === 'busy') {
+      if (Date.now() - waitStart > maxWaitMs) {
+        throw new Error('Timed out waiting for previous prompt to complete');
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
@@ -169,8 +186,8 @@ export class CodexMCPProcess extends EventEmitter {
           prompt: content,
         };
 
-        if (this.options.model) {
-          args.model = this.options.model;
+        if (effectiveModel) {
+          args.model = effectiveModel;
         }
         if (this.options.cwd) {
           args.cwd = this.options.cwd;
@@ -262,6 +279,11 @@ export class CodexMCPProcess extends EventEmitter {
     }
     this.state = 'dead';
     this.threadId = null;
+    // Reject all pending requests and clear their timeouts
+    for (const [, pending] of this.pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('Process stopped'));
+    }
     this.pendingRequests.clear();
     logger.info('Process stopped');
   }
@@ -284,12 +306,12 @@ export class CodexMCPProcess extends EventEmitter {
 
     // Log full response structure for debugging
     const keys = Object.keys(response);
-    logger.error(`[RESPONSE_KEYS] ${keys.join(', ')}`);
+    logger.debug(`[RESPONSE_KEYS] ${keys.join(', ')}`);
 
     // Log token usage if available
     if (response._meta?.usage) {
       const u = response._meta.usage;
-      logger.error(
+      logger.debug(
         `[TOKENS] input: ${u.inputTokens}, cached: ${u.cachedTokens || 0}, output: ${u.outputTokens}`
       );
     }
