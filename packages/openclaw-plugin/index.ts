@@ -92,8 +92,26 @@ let initialized = false;
 let mama: MAMAApi | null = null;
 let initialDbPath: string | null = null;
 
-// Compaction tracking flag (module-level for cross-hook communication)
-let compactionOccurred = false;
+// Per-session compaction state (avoids cross-session state leakage)
+const sessionCompactionState = new Map<string, boolean>();
+
+// Hook context type (minimal local interface matching SDK)
+interface HookContext {
+  sessionKey?: string;
+}
+
+// Event parameter types for hooks (avoid `any`)
+interface SessionHookEvent {
+  prompt?: string;
+}
+
+interface AgentEndEvent {
+  success?: boolean;
+  messages?: Array<{
+    role: string;
+    content: string | Array<{ type: string; text?: string }>;
+  }>;
+}
 
 /**
  * Get MAMA API with null guard
@@ -104,6 +122,31 @@ function getMAMA(): MAMAApi {
     throw new Error('MAMA not initialized. Call initMAMA() first.');
   }
   return mama;
+}
+
+/**
+ * Get session key from context with fallback
+ */
+function getSessionKey(ctx?: HookContext): string {
+  return ctx?.sessionKey || 'default';
+}
+
+/**
+ * Wrapper for hook handlers to reduce boilerplate
+ * Handles try/catch, initMAMA, and getMAMA in one place
+ */
+async function withMAMA<T>(
+  config: PluginConfig | undefined,
+  handler: (api: MAMAApi) => Promise<T>
+): Promise<T | undefined> {
+  try {
+    await initMAMA(config);
+    return await handler(getMAMA());
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[MAMA] Hook error:', message);
+    return undefined;
+  }
 }
 
 /**
@@ -186,40 +229,26 @@ const mamaPlugin = {
       'config' in api ? (api as { config?: PluginConfig }).config : undefined;
 
     // =====================================================
-    // Session Start: Initialize and load checkpoint
+    // Session Start: Initialize MAMA
     // =====================================================
-    api.on('session_start', async (_event: any) => {
-      try {
-        await initMAMA(config);
+    api.on('session_start', async (_event: SessionHookEvent, ctx?: HookContext) => {
+      await withMAMA(config, async () => {
+        const sessionKey = getSessionKey(ctx);
+        // Initialize session state (clean slate)
+        sessionCompactionState.delete(sessionKey);
 
-        // 1. Load checkpoint
-        const checkpoint = await getMAMA().loadCheckpoint();
-
-        // 2. Load recent decisions
-        const recentDecisions = await getMAMA().list({ limit: 5 });
-
-        // 3. Console log (void hook - cannot return context)
-        if (checkpoint) {
-          console.log(`[MAMA] Session start: Loaded checkpoint from ${checkpoint.timestamp}`);
-        }
-        if (recentDecisions.length > 0) {
-          console.log(`[MAMA] Session start: ${recentDecisions.length} recent decisions available`);
-        }
-      } catch (err: any) {
-        console.error('[MAMA] Session start error:', err.message);
-      }
+        // Log session start (data loading deferred to before_agent_start)
+        console.log(`[MAMA] Session start: initialized (session: ${sessionKey})`);
+      });
     });
 
     // =====================================================
     // Auto-recall: Semantic search based on user prompt
     // =====================================================
-    api.on('before_agent_start', async (event: any) => {
-      try {
-        await initMAMA(config);
-
+    api.on('before_agent_start', async (event: SessionHookEvent, ctx?: HookContext) => {
+      return await withMAMA(config, async (mamaApi) => {
+        const sessionKey = getSessionKey(ctx);
         const userPrompt = event.prompt || '';
-
-        const mamaApi = getMAMA();
 
         // 1. Perform semantic search if user prompt exists
         let semanticResults: MAMADecision[] = [];
@@ -227,8 +256,9 @@ const mamaPlugin = {
           try {
             const searchResult = await mamaApi.suggest(userPrompt, { limit: 3, threshold: 0.5 });
             semanticResults = searchResult?.results || [];
-          } catch (searchErr: any) {
-            console.error('[MAMA] Semantic search error:', searchErr.message);
+          } catch (searchErr: unknown) {
+            const msg = searchErr instanceof Error ? searchErr.message : String(searchErr);
+            console.error('[MAMA] Semantic search error:', msg);
           }
         }
 
@@ -241,12 +271,12 @@ const mamaPlugin = {
           recentDecisions = await mamaApi.list({ limit: 3 });
         }
 
-        // 4. Compaction note if context was recently compressed
+        // 4. Compaction note if context was recently compressed (per-session)
         let compactionNote = '';
-        if (compactionOccurred) {
+        if (sessionCompactionState.get(sessionKey)) {
           compactionNote =
             '\n**Note:** Context was recently compressed. Above memories help restore state.\n';
-          compactionOccurred = false;
+          sessionCompactionState.delete(sessionKey); // Consume the flag
         }
 
         // 5. Inject context if available
@@ -256,7 +286,7 @@ const mamaPlugin = {
 
           if (semanticResults.length > 0) {
             content += '## Relevant Decisions (semantic match)\n\n';
-            semanticResults.forEach((r: any) => {
+            semanticResults.forEach((r) => {
               const pct = Math.round((r.similarity || 0) * 100);
               content += `- **${r.topic}** [${pct}%]: ${r.decision}`;
               if (r.outcome) content += ` (${r.outcome})`;
@@ -276,7 +306,7 @@ const mamaPlugin = {
 
           if (recentDecisions.length > 0) {
             content += '## Recent Decisions\n\n';
-            recentDecisions.forEach((d: any) => {
+            recentDecisions.forEach((d) => {
               content += `- **${d.topic}**: ${d.decision}`;
               if (d.outcome) content += ` (${d.outcome})`;
               content += '\n';
@@ -299,25 +329,23 @@ const mamaPlugin = {
             prependContext: content,
           };
         }
-      } catch (err: any) {
-        console.error('[MAMA] Auto-recall error:', err.message);
-      }
+
+        return undefined;
+      });
     });
 
     // =====================================================
     // Auto-capture: Auto-save decisions at agent end
     // =====================================================
-    api.on('agent_end', async (event: any) => {
+    api.on('agent_end', async (event: AgentEndEvent) => {
       if (!event.success || !event.messages || event.messages.length === 0) {
         return;
       }
 
-      try {
-        await initMAMA(config);
-
+      await withMAMA(config, async () => {
         // Extract text from messages
         const texts: string[] = [];
-        for (const msg of event.messages) {
+        for (const msg of event.messages!) {
           if (!msg || typeof msg !== 'object') continue;
 
           const role = msg.role;
@@ -357,83 +385,69 @@ const mamaPlugin = {
           // Note: Actual save requires an explicit topic, so only logging for now
           // Future: Add topic extraction via LLM
         }
-      } catch (err: any) {
-        console.error('[MAMA] Auto-capture error:', err.message);
-      }
+      });
     });
 
     // =====================================================
-    // Session End: Auto-save checkpoint
+    // Session End: Auto-save checkpoint and cleanup
     // =====================================================
-    api.on('session_end', async (_event: any) => {
-      try {
-        await initMAMA(config);
+    api.on('session_end', async (_event: SessionHookEvent, ctx?: HookContext) => {
+      await withMAMA(config, async (mamaApi) => {
+        const sessionKey = getSessionKey(ctx);
 
         // Auto-save checkpoint on session end
         const summary = `Session ended at ${new Date().toISOString()}`;
-        const checkpointId = await getMAMA().saveCheckpoint(
+        const checkpointId = await mamaApi.saveCheckpoint(
           summary,
           [], // openFiles - session_end doesn't have file info
           'Session auto-saved on end'
         );
 
-        console.log(`[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId})`);
-      } catch (err: any) {
-        console.error('[MAMA] Session end error:', err.message);
-      }
+        // Cleanup session state to avoid memory leaks
+        sessionCompactionState.delete(sessionKey);
+
+        console.log(
+          `[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId}), session: ${sessionKey}`
+        );
+      });
     });
 
     // =====================================================
     // Before Compaction: Save checkpoint before context compression
     // =====================================================
-    api.on('before_compaction', async (_event: any) => {
-      try {
-        await initMAMA(config);
+    api.on('before_compaction', async (_event: SessionHookEvent, ctx?: HookContext) => {
+      await withMAMA(config, async (mamaApi) => {
+        const sessionKey = getSessionKey(ctx);
 
         // Save checkpoint before compaction
         const summary = `Pre-compaction checkpoint at ${new Date().toISOString()}. Context will be compressed.`;
-        const checkpointId = await getMAMA().saveCheckpoint(
+        const checkpointId = await mamaApi.saveCheckpoint(
           summary,
           [],
           'Resume after compaction - check previous context'
         );
 
-        // Set flag for post-compaction context enhancement
-        compactionOccurred = true;
+        // Set flag for post-compaction context enhancement (per-session)
+        sessionCompactionState.set(sessionKey, true);
 
-        console.log(`[MAMA] Before compaction: Saved checkpoint (id: ${checkpointId})`);
-      } catch (err: any) {
-        console.error('[MAMA] Before compaction error:', err.message);
-      }
+        console.log(
+          `[MAMA] Before compaction: Saved checkpoint (id: ${checkpointId}), session: ${sessionKey}`
+        );
+      });
     });
 
     // =====================================================
-    // After Compaction: Log state and prepare for context re-injection
+    // After Compaction: Log state (context re-injection handled by before_agent_start)
     // =====================================================
-    api.on('after_compaction', async (_event: any) => {
-      try {
-        await initMAMA(config);
+    api.on('after_compaction', async (_event: SessionHookEvent, ctx?: HookContext) => {
+      await withMAMA(config, async () => {
+        const sessionKey = getSessionKey(ctx);
 
-        // 1. Load checkpoint
-        const checkpoint = await getMAMA().loadCheckpoint();
-
-        // 2. Load recent decisions (for context recovery)
-        const recentDecisions = await getMAMA().list({ limit: 5 });
-
-        // 3. Log (void hook - cannot inject directly, before_agent_start handles it)
-        console.log('[MAMA] After compaction: Context compressed');
-        if (checkpoint) {
-          console.log(`[MAMA] Checkpoint available: ${checkpoint.summary?.substring(0, 50)}...`);
-        }
-        if (recentDecisions.length > 0) {
-          console.log(`[MAMA] ${recentDecisions.length} recent decisions ready for re-injection`);
-        }
-
-        // Note: compactionOccurred flag set in before_compaction
+        // Log (void hook - cannot inject directly, before_agent_start handles it)
+        console.log(`[MAMA] After compaction: Context compressed, session: ${sessionKey}`);
+        // Note: sessionCompactionState flag set in before_compaction
         // before_agent_start will detect this and add context enhancement
-      } catch (err: any) {
-        console.error('[MAMA] After compaction error:', err.message);
-      }
+      });
     });
 
     // =====================================================
