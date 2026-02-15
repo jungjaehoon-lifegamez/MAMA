@@ -40,11 +40,14 @@ interface SessionEntry {
   inUse: boolean;
   /** Cumulative input tokens for this session */
   totalInputTokens: number;
+  /** Backend type for context threshold selection */
+  backend?: 'claude' | 'codex-mcp';
 }
 
 /**
  * Context window threshold (80% of 200K)
  * When exceeded, session will be reset on next request
+ * Note: Only applies to Claude CLI backend. Codex MCP handles its own compaction.
  */
 const CONTEXT_THRESHOLD_TOKENS = 160000;
 
@@ -95,62 +98,73 @@ export class SessionPool {
    * This allows session reuse for conversation continuity.
    *
    * Auto-resets session when context window reaches 80% (160K tokens).
+   * If session is in use, returns busy=true immediately (no waiting).
    *
    * @param channelKey - Channel identifier (format: "{source}:{channelId}")
-   * @returns Object with sessionId and isNew flag
+   * @returns Object with sessionId, isNew flag, and busy status
    */
-  getSession(channelKey: string): { sessionId: string; isNew: boolean } {
+  getSession(channelKey: string): {
+    sessionId: string;
+    isNew: boolean;
+    busy: boolean;
+  } {
     const existing = this.sessions.get(channelKey);
     const now = Date.now();
 
     // Check if existing session is still valid
     if (existing) {
       const isExpired = now - existing.lastActive > this.config.sessionTimeoutMs;
-      const isContextFull = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS;
+      // Codex MCP handles its own compaction - never reset session based on tokens
+      // Only Claude CLI backend uses token-based session reset
+      const isContextFull =
+        existing.backend !== 'codex-mcp' && existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS;
 
       if (isExpired) {
         this.sessions.delete(channelKey);
-        console.log(`[SessionPool] Session expired for ${channelKey}, creating new one`);
+        logger.info(`Session expired for ${channelKey}, creating new one`);
       } else if (isContextFull) {
         this.sessions.delete(channelKey);
-        console.log(
-          `[SessionPool] Context 80% full (${existing.totalInputTokens} tokens) for ${channelKey}, creating fresh session`
+        logger.info(
+          `Context 80% full (${existing.totalInputTokens} tokens) for ${channelKey}, creating fresh session`
         );
       } else if (existing.inUse) {
-        // Session is currently in use - DON'T delete it!
-        // Create a temporary unique session to avoid CLI lock conflict
-        // Use a unique key so it doesn't overwrite the existing session
-        const tempKey = `${channelKey}:temp:${randomUUID()}`;
-        const tempSessionId = randomUUID();
-        const entry: SessionEntry = {
-          sessionId: tempSessionId,
-          lastActive: now,
-          messageCount: 1,
-          createdAt: now,
-          inUse: true,
-          totalInputTokens: 0,
-        };
-        this.sessions.set(tempKey, entry);
-        console.log(
-          `[SessionPool] Session in use for ${channelKey}, using temp session: ${tempSessionId}`
-        );
-        return { sessionId: tempSessionId, isNew: true };
+        // Session is currently in use - return busy immediately
+        // Still update lastActive and messageCount for queued messages
+        existing.lastActive = now;
+        existing.messageCount++;
+        logger.debug(`Session busy for ${channelKey}, will be queued`);
+        return { sessionId: existing.sessionId, isNew: false, busy: true };
       } else {
         // Reuse existing session
         existing.lastActive = now;
         existing.messageCount++;
         existing.inUse = true; // Lock the session
         const usagePercent = Math.round((existing.totalInputTokens / 200000) * 100);
-        console.log(
-          `[SessionPool] Reusing session for ${channelKey}: ${existing.sessionId} (msg #${existing.messageCount}, ${usagePercent}% context)`
+        logger.debug(
+          `Reusing session for ${channelKey}: ${existing.sessionId} (msg #${existing.messageCount}, ${usagePercent}% context)`
         );
-        return { sessionId: existing.sessionId, isNew: false };
+        return { sessionId: existing.sessionId, isNew: false, busy: false };
       }
     }
 
     // Create new session
     const sessionId = this.createSession(channelKey);
-    return { sessionId, isNew: true };
+    return { sessionId, isNew: true, busy: false };
+  }
+
+  /**
+   * Read-only check for session busy status
+   * Does NOT modify session state (no lock, no messageCount increment)
+   *
+   * @param channelKey - Channel identifier
+   * @returns Object with sessionId (if exists) and busy status
+   */
+  peekSession(channelKey: string): { sessionId?: string; busy: boolean } {
+    const existing = this.sessions.get(channelKey);
+    if (!existing) {
+      return { busy: false };
+    }
+    return { sessionId: existing.sessionId, busy: existing.inUse };
   }
 
   /**
@@ -163,16 +177,38 @@ export class SessionPool {
    */
   updateTokens(
     channelKey: string,
-    inputTokens: number
+    inputTokens: number,
+    backend?: 'claude' | 'codex-mcp'
   ): { totalTokens: number; nearThreshold: boolean } {
     const existing = this.sessions.get(channelKey);
     if (!existing) {
       return { totalTokens: 0, nearThreshold: false };
     }
 
+    // Store backend for context threshold selection in getSession()
+    if (backend) {
+      existing.backend = backend;
+    }
+
+    // Codex MCP resume sessions accumulate ~20-25K tokens per message
+    // After ~50 messages, context exceeds 200K (max)
+    // Force reset to prevent degraded responses from overflowed context
+    if (backend === 'codex-mcp') {
+      const MAX_CONTEXT_TOKENS = 200000;
+      if (inputTokens > MAX_CONTEXT_TOKENS) {
+        logger.warn(
+          `[Codex] Session overflow: ${inputTokens} tokens > ${MAX_CONTEXT_TOKENS} max, forcing reset`
+        );
+        existing.totalInputTokens = CONTEXT_THRESHOLD_TOKENS;
+        return { totalTokens: existing.totalInputTokens, nearThreshold: true };
+      }
+    }
+
     // Use latest value, not cumulative - Claude API returns total context tokens per request
     existing.totalInputTokens = Math.max(existing.totalInputTokens, inputTokens);
-    const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS * 0.9; // 90% of threshold
+
+    // nearThreshold for monitoring (Codex MCP doesn't reset, but we track for UI display)
+    const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS * 0.9; // 90% of 160K
 
     if (nearThreshold) {
       logger.warn(
@@ -281,7 +317,9 @@ export class SessionPool {
    */
   hasActiveSession(channelKey: string): boolean {
     const existing = this.sessions.get(channelKey);
-    if (!existing) return false;
+    if (!existing) {
+      return false;
+    }
 
     const isExpired = Date.now() - existing.lastActive > this.config.sessionTimeoutMs;
     return !isExpired;
