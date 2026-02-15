@@ -131,7 +131,26 @@ export class AgentProcessPool {
       return { process: idleEntry.process, isNew: false };
     }
 
-    // 2. Create new process if under limit
+    // 2. Clean up zombie processes (released but not ready)
+    // This can happen when timeout aborts Promise.race but wrapper.prompt() continues
+    const zombieIndices: number[] = [];
+    for (let i = 0; i < pool.length; i++) {
+      const entry = pool[i];
+      if (!entry.busy && !entry.process.isReady()) {
+        console.warn(
+          `[AgentProcessPool] Cleaning up zombie process for agent ${agentId} during getAvailableProcess`
+        );
+        entry.process.stop();
+        zombieIndices.push(i);
+      }
+    }
+    // Remove zombies in reverse order to preserve indices
+    for (let i = zombieIndices.length - 1; i >= 0; i--) {
+      pool.splice(zombieIndices[i], 1);
+    }
+    this.pools.set(agentId, pool);
+
+    // 3. Create new process if under limit
     if (pool.length < maxSize) {
       const newProcess = await createProcess();
       const entry: PooledProcess = {
@@ -153,7 +172,7 @@ export class AgentProcessPool {
       return { process: newProcess, isNew: true };
     }
 
-    // 3. Pool full — all processes busy
+    // 4. Pool full — all processes busy
     throw new Error(
       `[AgentProcessPool] Pool full for agent ${agentId} (${maxSize}/${maxSize} busy)`
     );
@@ -174,12 +193,29 @@ export class AgentProcessPool {
       return;
     }
 
-    const entry = pool.find((p) => p.process === process);
-    if (!entry) {
+    const entryIndex = pool.findIndex((p) => p.process === process);
+    if (entryIndex === -1) {
       if (this.options.verbose) {
         console.warn(
           `[AgentProcessPool] Process not found in pool for agent ${agentId}, ignoring release`
         );
+      }
+      return;
+    }
+
+    const entry = pool[entryIndex];
+
+    // Zombie detection: process was released but internal state is still busy
+    // This happens when timeout aborts the Promise.race but wrapper.prompt() continues
+    if (!process.isReady()) {
+      console.warn(
+        `[AgentProcessPool] Zombie process detected for agent ${agentId} (released but not ready), killing`
+      );
+      process.stop();
+      pool.splice(entryIndex, 1);
+
+      if (pool.length === 0) {
+        this.pools.delete(agentId);
       }
       return;
     }
