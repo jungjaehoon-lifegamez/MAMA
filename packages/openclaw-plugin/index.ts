@@ -95,6 +95,17 @@ let initialDbPath: string | null = null;
 // Compaction tracking flag (module-level for cross-hook communication)
 let compactionOccurred = false;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object';
+}
+
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return String(err);
+}
+
 /**
  * Get MAMA API with null guard
  * @throws Error if MAMA is not initialized
@@ -206,7 +217,7 @@ const mamaPlugin = {
     // =====================================================
     // Session Start: Initialize and load checkpoint
     // =====================================================
-    api.on('session_start', async (_event: any) => {
+    api.on('session_start', async (_event: unknown) => {
       try {
         await initMAMA(config);
 
@@ -231,11 +242,17 @@ const mamaPlugin = {
     // =====================================================
     // Auto-recall: Semantic search based on user prompt
     // =====================================================
-    api.on('before_agent_start', async (event: any) => {
+    api.on('before_agent_start', async (event: unknown) => {
       try {
         await initMAMA(config);
 
-        const userPrompt = event.prompt || '';
+        const userPrompt = (() => {
+          if (!isRecord(event)) {
+            return '';
+          }
+          const prompt = event['prompt'];
+          return typeof prompt === 'string' ? prompt : '';
+        })();
 
         const mamaApi = getMAMA();
 
@@ -274,7 +291,7 @@ const mamaPlugin = {
 
           if (semanticResults.length > 0) {
             content += '## Relevant Decisions (semantic match)\n\n';
-            semanticResults.forEach((r: any) => {
+            semanticResults.forEach((r) => {
               const pct = Math.round((r.similarity || 0) * 100);
               content += `- **${r.topic}** [${pct}%]: ${r.decision}`;
               if (r.outcome) content += ` (${r.outcome})`;
@@ -294,7 +311,7 @@ const mamaPlugin = {
 
           if (recentDecisions.length > 0) {
             content += '## Recent Decisions\n\n';
-            recentDecisions.forEach((d: any) => {
+            recentDecisions.forEach((d) => {
               content += `- **${d.topic}**: ${d.decision}`;
               if (d.outcome) content += ` (${d.outcome})`;
               content += '\n';
@@ -325,8 +342,10 @@ const mamaPlugin = {
     // =====================================================
     // Auto-capture: Auto-save decisions at agent end
     // =====================================================
-    api.on('agent_end', async (event: any) => {
-      if (!event.success || !event.messages || event.messages.length === 0) {
+    api.on('agent_end', async (event: unknown) => {
+      const success = isRecord(event) ? event['success'] : undefined;
+      const messages = isRecord(event) ? event['messages'] : undefined;
+      if (success !== true || !Array.isArray(messages) || messages.length === 0) {
         return;
       }
 
@@ -335,19 +354,20 @@ const mamaPlugin = {
 
         // Extract text from messages
         const texts: string[] = [];
-        for (const msg of event.messages) {
-          if (!msg || typeof msg !== 'object') continue;
+        for (const msg of messages) {
+          if (!isRecord(msg)) continue;
 
-          const role = msg.role;
+          const role = msg['role'];
           if (role !== 'user' && role !== 'assistant') continue;
 
-          const content = msg.content;
+          const content = msg['content'];
           if (typeof content === 'string') {
             texts.push(content);
           } else if (Array.isArray(content)) {
             for (const block of content) {
-              if (block?.type === 'text' && typeof block.text === 'string') {
-                texts.push(block.text);
+              if (!isRecord(block)) continue;
+              if (block['type'] === 'text' && typeof block['text'] === 'string') {
+                texts.push(block['text']);
               }
             }
           }
@@ -383,7 +403,7 @@ const mamaPlugin = {
     // =====================================================
     // Session End: Auto-save checkpoint
     // =====================================================
-    api.on('session_end', async (_event: any) => {
+    api.on('session_end', async (_event: unknown) => {
       try {
         await initMAMA(config);
 
@@ -404,7 +424,7 @@ const mamaPlugin = {
     // =====================================================
     // Before Compaction: Save checkpoint before context compression
     // =====================================================
-    api.on('before_compaction', async (_event: any) => {
+    api.on('before_compaction', async (_event: unknown) => {
       try {
         await initMAMA(config);
 
@@ -428,7 +448,7 @@ const mamaPlugin = {
     // =====================================================
     // After Compaction: Log state and prepare for context re-injection
     // =====================================================
-    api.on('after_compaction', async (_event: any) => {
+    api.on('after_compaction', async (_event: unknown) => {
       try {
         await initMAMA(config);
 
@@ -514,7 +534,7 @@ const mamaPlugin = {
 
           // Format output
           let output = `Found ${result.results.length} related decisions:\n\n`;
-          result.results.forEach((r: any, idx: number) => {
+          result.results.forEach((r, idx: number) => {
             const pct = Math.round((r.similarity || 0) * 100);
             output += `**${idx + 1}. ${r.topic}** [${pct}% match]\n`;
             output += `   Decision: ${r.decision}\n`;
@@ -687,7 +707,7 @@ Also returns recent decisions for context.`,
             let msg = 'No checkpoint found - fresh start.';
             if (recent?.length) {
               msg += '\n\nRecent decisions:\n';
-              recent.forEach((d: any) => {
+              recent.forEach((d) => {
                 msg += `- ${d.topic}: ${d.decision}\n`;
               });
             }
@@ -703,7 +723,7 @@ Also returns recent decisions for context.`,
 
           if (recent?.length) {
             msg += `**Recent Decisions:**\n`;
-            recent.forEach((d: any) => {
+            recent.forEach((d) => {
               msg += `- **${d.topic}**: ${d.decision} (${d.outcome || 'pending'})\n`;
             });
           }
