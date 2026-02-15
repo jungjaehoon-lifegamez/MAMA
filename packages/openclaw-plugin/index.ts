@@ -89,6 +89,7 @@ type PluginConfig = Static<typeof pluginConfigSchema>;
 
 // Singleton state
 let initialized = false;
+let initPromise: Promise<void> | null = null;
 let mama: MAMAApi | null = null;
 let initialDbPath: string | null = null;
 
@@ -171,41 +172,57 @@ function formatReasoning(reasoning: string, maxLen: number = 80): string {
 }
 
 /**
- * Initialize MAMA (lazy, once)
+ * Initialize MAMA (lazy, once, concurrency-safe)
  */
 async function initMAMA(config?: PluginConfig): Promise<void> {
+  // Already initialized - fast path
+  if (initialized) {
+    return;
+  }
+
+  // Concurrent initialization in progress - wait for it
+  if (initPromise) {
+    return initPromise;
+  }
+
   // Set DB path from config or environment or default
   const dbPath =
     config?.dbPath || process.env.MAMA_DB_PATH || path.join(os.homedir(), '.claude/mama-memory.db');
 
-  // Warn if re-initialized with different config
-  if (initialized) {
-    if (initialDbPath && dbPath !== initialDbPath) {
-      console.warn(
-        `[MAMA Plugin] Warning: initMAMA called with different dbPath (${dbPath}) after initialization with (${initialDbPath}). Using original path.`
-      );
+  // Start initialization with concurrency guard
+  initPromise = (async () => {
+    // Double-check after acquiring the "lock"
+    if (initialized) {
+      if (initialDbPath && dbPath !== initialDbPath) {
+        console.warn(
+          `[MAMA Plugin] Warning: initMAMA called with different dbPath (${dbPath}) after initialization with (${initialDbPath}). Using original path.`
+        );
+      }
+      return;
     }
-    return;
-  }
 
-  process.env.MAMA_DB_PATH = dbPath;
+    process.env.MAMA_DB_PATH = dbPath;
 
-  try {
-    // Load mama-api (high-level API)
-    mama = require(path.join(MAMA_MODULE_PATH, 'mama-api.js'));
+    try {
+      // Load mama-api (high-level API)
+      mama = require(path.join(MAMA_MODULE_PATH, 'mama-api.js'));
 
-    // Initialize database via memory-store
-    const memoryStore = require(path.join(MAMA_MODULE_PATH, 'memory-store.js'));
-    await memoryStore.initDB();
+      // Initialize database via memory-store
+      const memoryStore = require(path.join(MAMA_MODULE_PATH, 'memory-store.js'));
+      await memoryStore.initDB();
 
-    initialized = true;
-    initialDbPath = dbPath;
-    console.log(`[MAMA Plugin] Initialized with direct module integration (db: ${dbPath})`);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[MAMA Plugin] Init failed:', message);
-    throw err;
-  }
+      initialized = true;
+      initialDbPath = dbPath;
+      console.log(`[MAMA Plugin] Initialized with direct module integration (db: ${dbPath})`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[MAMA Plugin] Init failed:', message);
+      initPromise = null; // Allow retry on failure
+      throw err;
+    }
+  })();
+
+  return initPromise;
 }
 
 /**
