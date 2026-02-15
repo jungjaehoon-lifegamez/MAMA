@@ -175,8 +175,8 @@ User message → Orchestrator → 5-Stage Routing
                 └── DELEGATE::developer::Fix the auth bug
 ```
 
-Note (Discord): if `requireMention: true`, messages without an @mention are ignored before delegation parsing. Use
-`<@BOT_ID> DELEGATE::...` or set a dedicated swarm channel to `requireMention: false`.
+Note (Discord): if `requireMention: true`, normal messages without an @mention are ignored. Delegation commands
+(`DELEGATE::...`) are treated as explicit triggers, but `<@BOT_ID> DELEGATE::...` is still OK and makes intent obvious.
 
 | Feature                | Description                                                                                        |
 | ---------------------- | -------------------------------------------------------------------------------------------------- |

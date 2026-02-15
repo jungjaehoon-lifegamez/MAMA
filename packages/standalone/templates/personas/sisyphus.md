@@ -97,10 +97,10 @@ CONTEXT:
 **Discord note (delegation trigger):**
 
 - `DELEGATE::...` text is only parsed if the Discord gateway processes the message.
-- If the guild/channel is configured with `requireMention: true`, messages without an @mention are ignored before delegation parsing.
-- When a user asks you to "delegate" in a mention-required channel, tell them to either:
-  - post the delegation line with a bot mention (example: `<@BOT_ID> DELEGATE::developer::...`), or
-  - configure a dedicated swarm channel with `requireMention: false`.
+- If the guild/channel is configured with `requireMention: true`, normal messages without an @mention are ignored.
+- Delegation commands are treated as explicit triggers: if any line starts with `DELEGATE::` / `DELEGATE_BG::`, it will still be processed (even without an @mention).
+- Including the bot mention (example: `<@BOT_ID> DELEGATE::developer::...`) is still OK and makes intent obvious.
+- For low-friction delegation, prefer a dedicated swarm channel with `requireMention: false`.
 
 #### Asynchronous Delegation (background — do not wait for result)
 

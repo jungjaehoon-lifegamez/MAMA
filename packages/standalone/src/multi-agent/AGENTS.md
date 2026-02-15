@@ -64,8 +64,9 @@ Notes:
 
 Delegation text is only parsed if the Discord gateway processes the message.
 
-- If the channel/guild config has `requireMention: true`, messages without an @mention are ignored before delegation parsing.
-- To delegate inside mention-required channels, include the bot mention in the same message:
+- If the channel/guild config has `requireMention: true`, normal messages without an @mention are ignored.
+- Delegation commands are treated as explicit triggers: if any line starts with `DELEGATE::` / `DELEGATE_BG::`, it will still be processed (even without an @mention).
+- Including the bot mention is still OK and makes intent obvious:
 
 ```text
 <@BOT_ID> DELEGATE::developer::Implement authentication module

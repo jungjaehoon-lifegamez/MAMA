@@ -69,8 +69,9 @@ DELEGATE::{agent_id}::{task description}
 **Discord Mention Requirements (Delegation Trigger):**
 
 - Delegation only works if the bot processes the message.
-- If Discord `requireMention: true` is configured at the guild/channel level, messages without an @mention are ignored (so `DELEGATE::...` text will not be parsed/routed).
-- In mention-required channels, include the bot mention in the same message:
+- If Discord `requireMention: true` is configured at the guild/channel level, normal messages without an @mention are ignored.
+- Delegation commands are treated as explicit triggers: if a line starts with `DELEGATE::` / `DELEGATE_BG::`, it will still be processed (even without an @mention).
+- Including the bot mention is still OK and makes intent obvious:
 
 ```text
 <@BOT_ID> DELEGATE::critic::WebMCP 문서 검증

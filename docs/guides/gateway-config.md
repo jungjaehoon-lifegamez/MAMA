@@ -594,9 +594,10 @@ gateways:
 If you rely on `DELEGATE::agent::task` messages (multi-agent swarm), remember:
 
 - Delegation is parsed only if the gateway processes the message.
-- With `requireMention: true`, messages without an @mention are ignored, so `DELEGATE::...` will not be routed.
+- With `requireMention: true`, normal messages without an @mention are ignored.
+- Delegation commands are treated as explicit triggers: if any line starts with `DELEGATE::` / `DELEGATE_BG::`, it will still be processed (even without an @mention).
 - Recommended: use a dedicated swarm/bot channel with `requireMention: false` so delegation can run without @mentions.
-- In mention-required channels, include the bot mention:
+- In mention-required channels, including the bot mention is still OK and makes intent obvious:
 
 ```text
 <@BOT_ID> DELEGATE::critic::WebMCP 문서 검증
