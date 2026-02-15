@@ -201,8 +201,9 @@ async function initMAMA(config?: PluginConfig): Promise<void> {
     initialized = true;
     initialDbPath = dbPath;
     console.log(`[MAMA Plugin] Initialized with direct module integration (db: ${dbPath})`);
-  } catch (err: any) {
-    console.error('[MAMA Plugin] Init failed:', err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[MAMA Plugin] Init failed:', message);
     throw err;
   }
 }
@@ -506,7 +507,7 @@ const mamaPlugin = {
 
           // Format output
           let output = `Found ${result.results.length} related decisions:\n\n`;
-          result.results.forEach((r: any, idx: number) => {
+          result.results.forEach((r, idx) => {
             const pct = Math.round((r.similarity || 0) * 100);
             output += `**${idx + 1}. ${r.topic}** [${pct}% match]\n`;
             output += `   Decision: ${r.decision}\n`;
@@ -515,8 +516,9 @@ const mamaPlugin = {
           });
 
           return { content: [{ type: 'text', text: output }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: 'text', text: `MAMA error: ${message}` }] };
         }
       },
     });
@@ -644,8 +646,9 @@ const mamaPlugin = {
           }
 
           return { content: [{ type: 'text', text: msg }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: 'text', text: `MAMA error: ${message}` }] };
         }
       },
     });
@@ -679,7 +682,7 @@ Also returns recent decisions for context.`,
             let msg = 'No checkpoint found - fresh start.';
             if (recent?.length) {
               msg += '\n\nRecent decisions:\n';
-              recent.forEach((d: any) => {
+              recent.forEach((d) => {
                 msg += `- ${d.topic}: ${d.decision}\n`;
               });
             }
@@ -695,14 +698,15 @@ Also returns recent decisions for context.`,
 
           if (recent?.length) {
             msg += `**Recent Decisions:**\n`;
-            recent.forEach((d: any) => {
+            recent.forEach((d) => {
               msg += `- **${d.topic}**: ${d.decision} (${d.outcome || 'pending'})\n`;
             });
           }
 
           return { content: [{ type: 'text', text: msg }] };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: 'text', text: `MAMA error: ${message}` }] };
         }
       },
     });
@@ -757,8 +761,9 @@ Helps future sessions learn from experience.`,
           return {
             content: [{ type: 'text', text: `Decision ${decisionId} updated to ${outcome}` }],
           };
-        } catch (err: any) {
-          return { content: [{ type: 'text', text: `MAMA error: ${err.message}` }] };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: 'text', text: `MAMA error: ${message}` }] };
         }
       },
     });
