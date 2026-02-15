@@ -589,6 +589,30 @@ gateways:
 
 **Solution:** Configure `requireMention` per channel/guild.
 
+#### Multi-Agent Delegation Note
+
+If you rely on `DELEGATE::agent::task` messages (multi-agent swarm), remember:
+
+- Delegation is parsed only if the gateway processes the message.
+- With `requireMention: true`, messages without an @mention are ignored, so `DELEGATE::...` will not be routed.
+- Recommended: use a dedicated swarm/bot channel with `requireMention: false` so delegation can run without @mentions.
+- In mention-required channels, include the bot mention:
+
+```text
+<@BOT_ID> DELEGATE::critic::WebMCP 문서 검증
+```
+
+Additional notes:
+
+- Use the internal `agent_id` (e.g. `developer`, `reviewer`, `pm`) in `DELEGATE::{agent_id}::...` and treat it as **case-sensitive**.
+- If you are running multiple bots (one token per agent) and want agents to @mention-delegate each other, enable multi-agent mention delegation:
+
+```yaml
+multi_agent:
+  mention_delegation: true
+  max_mention_depth: 3
+```
+
 **Behavior matrix:**
 
 | Context                 | requireMention: false | requireMention: true | Not configured |
