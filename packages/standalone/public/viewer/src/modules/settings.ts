@@ -21,6 +21,7 @@ import {
   type ApiRoleDefinition,
   type CronJob,
   type CronJobsResponse,
+  type EffortLevel,
   type McpServer,
   type McpServersResponse,
   type MultiAgentAgent,
@@ -31,7 +32,6 @@ import {
 const logger = new DebugLogger('Settings');
 
 type AgentBackend = 'claude' | 'codex-mcp';
-type EffortLevel = 'low' | 'medium' | 'high';
 type SettingsFilterValue = 'loading' | 'error' | 'success' | '';
 type SettingsPayloadToolConfig = {
   gateway: string[];
