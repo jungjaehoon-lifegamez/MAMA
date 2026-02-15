@@ -391,28 +391,19 @@ const mamaPlugin = {
     });
 
     // =====================================================
-    // Session End: Auto-save checkpoint and cleanup
+    // Session End: Cleanup session state (no auto-checkpoint to avoid spam)
     // =====================================================
     api.on('session_end', async (_event: SessionHookEvent, ctx?: HookContext) => {
-      await withMAMA(config, async (mamaApi) => {
+      await withMAMA(config, async () => {
         const sessionKey = getSessionKey(ctx);
 
-        // Auto-save checkpoint on session end
-        const summary = `Session ended at ${new Date().toISOString()}`;
-        const checkpointId = await mamaApi.saveCheckpoint(
-          summary,
-          [], // openFiles - session_end doesn't have file info
-          'Session auto-saved on end'
-        );
-
         // Cleanup session state to avoid memory leaks (only if sessionKey available)
+        // Note: Checkpoint saving removed to prevent low-value checkpoint spam on trivial sessions
         if (sessionKey) {
           sessionCompactionState.delete(sessionKey);
         }
 
-        console.log(
-          `[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId})${sessionKey ? `, session: ${sessionKey}` : ''}`
-        );
+        console.log(`[MAMA] Session end: cleanup${sessionKey ? ` (session: ${sessionKey})` : ''}`);
       });
     });
 
