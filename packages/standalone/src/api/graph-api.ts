@@ -1910,9 +1910,9 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
     }
     if (
       config.agent.backend &&
-      !['claude', 'codex'].includes(String(config.agent.backend).toLowerCase())
+      !['claude', 'codex-mcp'].includes(String(config.agent.backend).toLowerCase())
     ) {
-      errors.push('agent.backend must be "claude" or "codex"');
+      errors.push('agent.backend must be "claude" or "codex-mcp"');
     }
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
@@ -1920,8 +1920,8 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       if (backend === 'claude' && !isClaudeModel(model)) {
         errors.push('agent.model must be a Claude model when agent.backend is "claude"');
       }
-      if (backend === 'codex' && !isCodexModel(model)) {
-        errors.push('agent.model must be a Codex/OpenAI model when agent.backend is "codex"');
+      if (backend === 'codex-mcp' && !isCodexModel(model)) {
+        errors.push('agent.model must be a Codex/OpenAI model when agent.backend is "codex-mcp"');
       }
     }
   }
@@ -1950,8 +1950,8 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       const modelRaw = cfg.model;
       if (backendRaw !== undefined) {
         const backend = String(backendRaw).toLowerCase();
-        if (!['claude', 'codex'].includes(backend)) {
-          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex"`);
+        if (!['claude', 'codex-mcp'].includes(backend)) {
+          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex-mcp"`);
           continue;
         }
         if (typeof modelRaw === 'string' && modelRaw.trim()) {
@@ -1960,9 +1960,9 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
               `multi_agent.agents.${agentId}.model must be a Claude model when backend is "claude"`
             );
           }
-          if (backend === 'codex' && !isCodexModel(modelRaw)) {
+          if (backend === 'codex-mcp' && !isCodexModel(modelRaw)) {
             errors.push(
-              `multi_agent.agents.${agentId}.model must be a Codex/OpenAI model when backend is "codex"`
+              `multi_agent.agents.${agentId}.model must be a Codex/OpenAI model when backend is "codex-mcp"`
             );
           }
         }
@@ -2298,9 +2298,9 @@ async function handleMultiAgentUpdateAgentRequest(
     if (
       body.backend !== undefined &&
       (typeof body.backend !== 'string' ||
-        !['claude', 'codex'].includes(String(body.backend).toLowerCase()))
+        !['claude', 'codex-mcp'].includes(String(body.backend).toLowerCase()))
     ) {
-      validationErrors.push('backend must be "claude" or "codex"');
+      validationErrors.push('backend must be "claude" or "codex-mcp"');
     }
 
     const nextBackend = (
@@ -2313,8 +2313,8 @@ async function handleMultiAgentUpdateAgentRequest(
       if (nextBackend === 'claude' && !isClaudeModel(nextModel)) {
         validationErrors.push('model must be a Claude model when backend is "claude"');
       }
-      if (nextBackend === 'codex' && !isCodexModel(nextModel)) {
-        validationErrors.push('model must be a Codex/OpenAI model when backend is "codex"');
+      if (nextBackend === 'codex-mcp' && !isCodexModel(nextModel)) {
+        validationErrors.push('model must be a Codex/OpenAI model when backend is "codex-mcp"');
       }
     }
 

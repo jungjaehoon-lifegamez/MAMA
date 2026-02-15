@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
 import {
-  CodexCLIWrapper,
-  type CodexCLIWrapperOptions,
+  CodexMCPProcess,
+  type CodexMCPOptions,
   type PromptCallbacks as CodexPromptCallbacks,
-} from '../agent/codex-cli-wrapper.js';
+} from '../agent/codex-mcp-process.js';
 import type {
   PromptCallbacks as ClaudePromptCallbacks,
   PromptResult as ClaudePromptResult,
@@ -19,45 +19,40 @@ export interface AgentRuntimeProcess {
 export interface CodexRuntimeProcessOptions {
   model?: string;
   systemPrompt?: string;
-  codexHome?: string;
   cwd?: string;
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  requestTimeout?: number;
+  codexHome?: string;
+  // Legacy options (from old CLI approach - some may not be supported in MCP mode)
   profile?: string;
   ephemeral?: boolean;
   addDirs?: string[];
   configOverrides?: string[];
   skipGitRepoCheck?: boolean;
-  requestTimeout?: number;
 }
 
 /**
  * Session-persistent Codex wrapper with the same minimal contract used by
  * multi-agent runtime (sendMessage/isReady/stop + idle events).
+ *
+ * Uses CodexMCPProcess for persistent MCP communication.
  */
 export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimeProcess {
-  private wrapper: CodexCLIWrapper;
+  private wrapper: CodexMCPProcess;
   private state: 'idle' | 'busy' | 'dead' = 'idle';
-  private seeded = false;
   private stoppedDuringExecution = false;
-  private readonly systemPrompt?: string;
 
   constructor(options: CodexRuntimeProcessOptions) {
     super();
-    const wrapperOptions: CodexCLIWrapperOptions = {
+    const wrapperOptions: CodexMCPOptions = {
       model: options.model,
-      systemPrompt: undefined,
-      codexHome: options.codexHome,
+      systemPrompt: options.systemPrompt,
       cwd: options.cwd,
       sandbox: options.sandbox,
-      profile: options.profile,
-      ephemeral: options.ephemeral,
-      addDirs: options.addDirs,
-      configOverrides: options.configOverrides,
-      skipGitRepoCheck: options.skipGitRepoCheck,
+      compactPrompt: 'Summarize the conversation concisely, preserving key decisions and context.',
       timeoutMs: options.requestTimeout,
     };
-    this.wrapper = new CodexCLIWrapper(wrapperOptions);
-    this.systemPrompt = options.systemPrompt;
+    this.wrapper = new CodexMCPProcess(wrapperOptions);
   }
 
   async sendMessage(
@@ -73,28 +68,21 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
 
     this.state = 'busy';
     try {
-      const prompt =
-        !this.seeded && this.systemPrompt ? `${this.systemPrompt}\n\n${content}` : content;
       const codexCallbacks: CodexPromptCallbacks | undefined = callbacks
         ? {
             onDelta: callbacks.onDelta,
-            onToolUse: callbacks.onToolUse,
             onError: callbacks.onError,
           }
         : undefined;
 
-      const result = await this.wrapper.prompt(prompt, codexCallbacks, {
-        resumeSession: this.seeded,
-      });
-      this.seeded = true;
+      const result = await this.wrapper.prompt(content, codexCallbacks);
 
       const normalized: ClaudePromptResult = {
         response: result.response,
         usage: {
           input_tokens: result.usage.input_tokens,
           output_tokens: result.usage.output_tokens,
-          cache_creation_input_tokens: result.usage.cache_creation_input_tokens,
-          cache_read_input_tokens: result.usage.cache_read_input_tokens,
+          cache_read_input_tokens: result.usage.cached_input_tokens,
         },
         session_id: result.session_id || this.wrapper.getSessionId(),
         cost_usd: result.cost_usd,
@@ -120,6 +108,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
   stop(): void {
     this.stoppedDuringExecution = this.state === 'busy';
     this.state = 'dead';
+    this.wrapper.stop();
     this.emit('close', 0);
   }
 }

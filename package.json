@@ -24,10 +24,12 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "pnpm -r test",
-    "build": "pnpm -r build",
-    "clean": "pnpm -r clean",
-    "typecheck": "pnpm -r typecheck",
+    "test": "turbo run test",
+    "build": "turbo run build",
+    "clean": "turbo run clean",
+    "typecheck": "turbo run typecheck",
+    "test:affected": "turbo run test --filter='...[origin/main]'",
+    "build:affected": "turbo run build --filter='...[origin/main]'",
     "lint": "eslint packages/*/src packages/*/tests --ext .js,.mjs,.ts",
     "lint:fix": "eslint packages/*/src packages/*/tests --ext .js,.mjs,.ts --fix",
     "format": "prettier --write \"packages/*/{src,tests}/**/*.{js,mjs,ts,json,md}\"",
@@ -43,6 +45,7 @@
     "husky": "^9.0.0",
     "lint-staged": "^15.2.0",
     "prettier": "^3.2.0",
+    "turbo": "^2.8.8",
     "vitest": "^1.0.0"
   },
   "lint-staged": {
@@ -54,6 +57,7 @@
       "prettier --write"
     ]
   },
+  "packageManager": "pnpm@10.28.2",
   "engines": {
     "node": ">=22.0.0",
     "pnpm": ">=8.0.0"

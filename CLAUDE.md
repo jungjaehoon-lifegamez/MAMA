@@ -237,6 +237,27 @@ git tag vX.Y.Z && git push origin main --tags
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "Hotfix: description"
 ```
 
+## Decision Recording
+
+API 계약, 아키텍처 결정, 중요 구현 패턴 변경 시 **반드시 MAMA에 저장**:
+
+```bash
+/mama:decision topic="api_contract_name" decision="결정 내용" reasoning="이유"
+```
+
+이렇게 저장하면:
+
+- 나중에 관련 파일 읽을 때 hook으로 자동 표시됨
+- `/mama:search` 로 검색 가능
+- 결정 이력(evolution graph) 추적 가능
+
+**저장해야 할 것들:**
+
+- API endpoint 추가/변경
+- Config 스키마 변경
+- 중요 함수 시그니처 변경
+- 아키텍처 패턴 결정
+
 ## Important Constraints
 
 1. **Never rewrite working code** - Check mcp-server/src/mama/ first
@@ -246,6 +267,31 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "Hotfix: description"
 5. **Test before commit** - All tests must pass (`pnpm test`)
 6. **SQLite schema changes** - Require migration scripts
 7. **Embedding model** - Cannot change without breaking existing vectors
+
+## Multi-Agent API
+
+### Update Agent Config
+
+```bash
+# PUT /api/multi-agent/agents/:agentId
+curl -X PUT 'http://localhost:3847/api/multi-agent/agents/developer' \
+  -H "Content-Type: application/json" \
+  -d '{"backend": "claude", "model": "claude-opus-4-5-20251101"}'
+```
+
+**Body fields:**
+
+- `backend`: "claude" | "codex" | "codex-mcp"
+- `model`: Model ID (e.g., "claude-opus-4-5-20251101", "gpt-5.3-codex")
+- `tier`: 1-3 (tool permission level)
+- `enabled`: boolean
+- `can_delegate`: boolean
+
+**Notes:**
+
+- Settings UI에서 각 에이전트별 개별 저장 필요
+- Persona 파일의 하드코딩 모델명은 `buildSystemPrompt()`에서 동적 대체됨
+- Hot-reload: `updateConfig()` stops all process pools (processPool, codexProcessPool, agentProcessPool)
 
 ## Getting Help
 

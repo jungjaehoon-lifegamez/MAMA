@@ -94,7 +94,7 @@ export class ContextInjector {
     config: Pick<MessageRouterConfig, 'similarityThreshold' | 'maxDecisions'> = {}
   ) {
     this.mamaApi = mamaApi;
-    this.similarityThreshold = config.similarityThreshold ?? 0.7;
+    this.similarityThreshold = config.similarityThreshold ?? 0.8;
     this.maxDecisions = config.maxDecisions ?? 3;
   }
 
@@ -187,11 +187,14 @@ export class ContextInjector {
     });
 
     return `
-## Related decisions from your memory:
+## Prior Decisions (REQUIRES VERIFICATION):
+
+**WARNING**: These are retrieved from external storage, NOT from your current conversation context.
+Verify relevance before referencing - these may be from unrelated tasks or outdated sessions.
 
 ${sections.join('\n\n')}
 
-Consider these previous decisions when responding. Reference them if relevant.
+Only reference these if they are clearly relevant to the current task context.
 `;
   }
 
