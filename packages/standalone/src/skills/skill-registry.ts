@@ -169,6 +169,7 @@ export class SkillRegistry {
 
         const content = await readFile(join(SKILLS_BASE, entry.name), 'utf-8');
         const { name, description } = this.parseSkillHeader(content, id);
+        const stateKey = `mama/${id}`;
 
         skills.push({
           id,
@@ -176,7 +177,7 @@ export class SkillRegistry {
           description,
           source: 'mama',
           installed: true,
-          enabled: true,
+          enabled: state[stateKey]?.enabled !== false,
         });
       }
     } catch {
@@ -481,7 +482,9 @@ export class SkillRegistry {
     validateSkillName(name);
 
     const state = await loadState();
-    state[`${source}/${name}`] = { enabled };
+    const key = `${source}/${name}`;
+    // Preserve existing metadata (e.g., repoUrl) when toggling
+    state[key] = { ...state[key], enabled };
     await saveState(state);
   }
 

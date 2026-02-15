@@ -55,9 +55,8 @@ describe('ContextInjector', () => {
       const result = await injector.getRelevantContext('authentication');
 
       expect(result.hasContext).toBe(true);
-      expect(result.decisions).toHaveLength(2); // dec-1 and dec-2 (>= 0.7)
+      expect(result.decisions).toHaveLength(1); // only dec-1 (>= 0.8 default)
       expect(result.decisions[0].topic).toBe('auth_strategy');
-      expect(result.decisions[1].topic).toBe('database');
     });
 
     it('should respect maxDecisions config', async () => {
@@ -88,6 +87,17 @@ describe('ContextInjector', () => {
       expect(result.prompt).toContain('Use JWT for authentication');
       expect(result.prompt).toContain('success');
       expect(result.prompt).toContain('85%'); // Relevance percentage
+    });
+
+    it('should include verification warning in prompt', async () => {
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const injector = new ContextInjector(mamaApi);
+
+      const result = await injector.getRelevantContext('auth');
+
+      expect(result.prompt).toContain('REQUIRES VERIFICATION');
+      expect(result.prompt).toContain('WARNING');
+      expect(result.prompt).not.toContain('your memory');
     });
 
     it('should handle API errors gracefully', async () => {
@@ -146,8 +156,9 @@ describe('ContextInjector', () => {
       injector.setConfig({ maxDecisions: 3 });
       const result = await injector.getRelevantContext('test');
 
-      // 2 decisions are above threshold
-      expect(result.decisions.length).toBeLessThanOrEqual(2);
+      // Only 1 decision (0.85) is above default threshold (0.8)
+      // maxDecisions=3 allows up to 3, but threshold filters first
+      expect(result.decisions.length).toBeLessThanOrEqual(3);
     });
   });
 

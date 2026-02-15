@@ -143,29 +143,31 @@ export interface ToolsConfig {
 }
 
 /**
+ * Effort level for Claude Opus 4.6 adaptive thinking
+ * Controls how much thinking the model does before responding
+ * @see https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
+ */
+export type EffortLevel = 'low' | 'medium' | 'high';
+
+/**
  * Agent configuration
  */
 export interface AgentConfig {
-  /** Backend for agent execution (default: claude) */
-  backend?: 'claude' | 'codex';
-  /** Codex state/config home path (default: ~/.mama/.codex when backend=codex) */
-  codex_home?: string;
-  /** Codex working directory (default: ~/.mama/workspace) */
-  codex_cwd?: string;
-  /** Codex sandbox policy */
-  codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
-  /** Skip git repo guard for Codex CLI */
-  codex_skip_git_repo_check?: boolean;
-  /** Codex profile name from config.toml */
-  codex_profile?: string;
-  /** Run Codex in ephemeral mode */
-  codex_ephemeral?: boolean;
-  /** Additional writable directories for Codex */
-  codex_add_dirs?: string[];
-  /** Raw Codex config overrides passed as `-c key=value` */
-  codex_config_overrides?: string[];
+  /**
+   * Backend for agent execution
+   * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
+   * - 'codex-mcp': Codex via MCP protocol
+   * @default 'claude'
+   */
+  backend?: 'claude' | 'codex-mcp';
   /** Claude model to use */
   model: string;
+  /**
+   * Effort level for Opus 4.6 adaptive thinking
+   * Only applies when model is 'claude-opus-4-6'
+   * @default 'medium'
+   */
+  effort?: EffortLevel;
   /** Maximum conversation turns */
   max_turns: number;
   /** Request timeout in milliseconds */
@@ -175,13 +177,6 @@ export interface AgentConfig {
    * If not specified, all tools use Gateway mode (default)
    */
   tools?: ToolsConfig;
-  /**
-   * Use persistent CLI process for faster responses (experimental)
-   * When true, keeps Claude CLI process alive for multi-turn conversations
-   * Response time: ~2-3s instead of ~16-30s
-   * @default false
-   */
-  use_persistent_cli?: boolean;
 }
 
 /**
