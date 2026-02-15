@@ -201,7 +201,10 @@ export interface MultiAgentAgent {
     mcp_config?: string;
   };
   auto_respond_keywords?: string[];
-  tool_permissions?: string[];
+  tool_permissions?: {
+    allowed?: string[];
+    blocked?: string[];
+  };
   [key: string]: unknown;
 }
 
