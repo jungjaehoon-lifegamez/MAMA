@@ -193,7 +193,11 @@ export class CodexMCPProcess extends EventEmitter {
     this.state = 'busy';
 
     try {
-      let result: { threadId: string; content: string };
+      let result: {
+        threadId: string;
+        content: string;
+        usage?: { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
+      };
 
       if (!this.threadId) {
         // First message: use "codex" tool
@@ -217,18 +221,15 @@ export class CodexMCPProcess extends EventEmitter {
           args['compact-prompt'] = this.options.compactPrompt;
         }
 
-        result = (await this.callTool('codex', args)) as {
-          threadId: string;
-          content: string;
-        };
+        result = await this.callTool('codex', args);
         this.threadId = result.threadId;
         logger.info(`Thread started: ${this.threadId}`);
       } else {
         // Subsequent messages: use "codex-reply" tool
-        result = (await this.callTool('codex-reply', {
+        result = await this.callTool('codex-reply', {
           threadId: this.threadId,
           prompt: content,
-        })) as { threadId: string; content: string };
+        });
       }
 
       const response = result.content || '';
@@ -237,8 +238,9 @@ export class CodexMCPProcess extends EventEmitter {
       return {
         response,
         usage: {
-          input_tokens: 0, // MCP doesn't provide token usage in response
-          output_tokens: 0,
+          input_tokens: result.usage?.inputTokens ?? 0,
+          output_tokens: result.usage?.outputTokens ?? 0,
+          cached_input_tokens: result.usage?.cachedTokens ?? 0,
         },
         session_id: this.threadId || '',
       };
@@ -307,7 +309,14 @@ export class CodexMCPProcess extends EventEmitter {
   // Internal methods
   // ============================================================================
 
-  private async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  private async callTool(
+    name: string,
+    args: Record<string, unknown>
+  ): Promise<{
+    threadId: string;
+    content: string;
+    usage?: { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
+  }> {
     logger.debug(`[CALL] ${name}`);
 
     const response = (await this.sendRequest('tools/call', {
@@ -323,11 +332,11 @@ export class CodexMCPProcess extends EventEmitter {
     const keys = Object.keys(response);
     logger.debug(`[RESPONSE_KEYS] ${keys.join(', ')}`);
 
-    // Log token usage if available
-    if (response._meta?.usage) {
-      const u = response._meta.usage;
+    // Extract token usage if available
+    const usage = response._meta?.usage;
+    if (usage) {
       logger.debug(
-        `[TOKENS] input: ${u.inputTokens}, cached: ${u.cachedTokens || 0}, output: ${u.outputTokens}`
+        `[TOKENS] input: ${usage.inputTokens}, cached: ${usage.cachedTokens || 0}, output: ${usage.outputTokens}`
       );
     }
 
@@ -336,6 +345,7 @@ export class CodexMCPProcess extends EventEmitter {
       return {
         threadId: response.structuredContent.threadId,
         content: response.structuredContent.content || '',
+        usage,
       };
     }
 
@@ -344,14 +354,21 @@ export class CodexMCPProcess extends EventEmitter {
       const textContent = response.content.find((c) => c.type === 'text');
       if (textContent?.text) {
         try {
-          return JSON.parse(textContent.text);
+          const parsed = JSON.parse(textContent.text) as { threadId?: string; content?: string };
+          return {
+            threadId: parsed.threadId || this.threadId || '',
+            content: parsed.content || textContent.text,
+            usage,
+          };
         } catch {
-          return { content: textContent.text, threadId: this.threadId };
+          return { content: textContent.text, threadId: this.threadId || '', usage };
         }
       }
     }
 
-    return response;
+    // Defensive fallback for unexpected response format
+    logger.warn(`Unexpected callTool response format: ${JSON.stringify(response)}`);
+    return { threadId: this.threadId || '', content: '', usage };
   }
 
   private async sendRequest(method: string, params?: Record<string, unknown>): Promise<unknown> {
