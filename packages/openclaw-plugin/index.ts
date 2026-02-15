@@ -92,6 +92,9 @@ let initialized = false;
 let mama: MAMAApi | null = null;
 let initialDbPath: string | null = null;
 
+// Compaction tracking flag (module-level for cross-hook communication)
+let compactionOccurred = false;
+
 /**
  * Get MAMA API with null guard
  * @throws Error if MAMA is not initialized
@@ -111,7 +114,7 @@ function formatReasoning(reasoning: string, maxLen: number = 80): string {
   if (!reasoning) return '';
 
   // Extract link patterns
-  const linkMatch = reasoning.match(/(builds_on|debates|synthesizes):\s*[\w\[\],\s_-]+/i);
+  const linkMatch = reasoning.match(/(builds_on|debates|synthesizes):\s*[\w[\],\s_-]+/i);
 
   // Truncate main reasoning
   const truncated = reasoning.length > maxLen ? reasoning.substring(0, maxLen) + '...' : reasoning;
@@ -183,6 +186,31 @@ const mamaPlugin = {
       'config' in api ? (api as { config?: PluginConfig }).config : undefined;
 
     // =====================================================
+    // Session Start: Initialize and load checkpoint
+    // =====================================================
+    api.on('session_start', async (_event: any) => {
+      try {
+        await initMAMA(config);
+
+        // 1. Load checkpoint
+        const checkpoint = await getMAMA().loadCheckpoint();
+
+        // 2. Load recent decisions
+        const recentDecisions = await getMAMA().list({ limit: 5 });
+
+        // 3. Console log (void hook - cannot return context)
+        if (checkpoint) {
+          console.log(`[MAMA] Session start: Loaded checkpoint from ${checkpoint.timestamp}`);
+        }
+        if (recentDecisions.length > 0) {
+          console.log(`[MAMA] Session start: ${recentDecisions.length} recent decisions available`);
+        }
+      } catch (err: any) {
+        console.error('[MAMA] Session start error:', err.message);
+      }
+    });
+
+    // =====================================================
     // Auto-recall: Semantic search based on user prompt
     // =====================================================
     api.on('before_agent_start', async (event: any) => {
@@ -213,7 +241,15 @@ const mamaPlugin = {
           recentDecisions = await mamaApi.list({ limit: 3 });
         }
 
-        // 4. Inject context if available
+        // 4. Compaction note if context was recently compressed
+        let compactionNote = '';
+        if (compactionOccurred) {
+          compactionNote =
+            '\n**Note:** Context was recently compressed. Above memories help restore state.\n';
+          compactionOccurred = false;
+        }
+
+        // 5. Inject context if available
         if (checkpoint || semanticResults.length > 0 || recentDecisions.length > 0) {
           let content = '<relevant-memories>\n';
           content += '# MAMA Memory Context\n\n';
@@ -248,10 +284,15 @@ const mamaPlugin = {
             content += '\n';
           }
 
+          // Add compaction note if applicable
+          if (compactionNote) {
+            content += compactionNote;
+          }
+
           content += '</relevant-memories>';
 
           console.log(
-            `[MAMA] Auto-recall: ${semanticResults.length} semantic matches, ${recentDecisions.length} recent, checkpoint: ${!!checkpoint}`
+            `[MAMA] Auto-recall: ${semanticResults.length} semantic matches, ${recentDecisions.length} recent, checkpoint: ${!!checkpoint}${compactionNote ? ', post-compaction' : ''}`
           );
 
           return {
@@ -318,6 +359,80 @@ const mamaPlugin = {
         }
       } catch (err: any) {
         console.error('[MAMA] Auto-capture error:', err.message);
+      }
+    });
+
+    // =====================================================
+    // Session End: Auto-save checkpoint
+    // =====================================================
+    api.on('session_end', async (_event: any) => {
+      try {
+        await initMAMA(config);
+
+        // Auto-save checkpoint on session end
+        const summary = `Session ended at ${new Date().toISOString()}`;
+        const checkpointId = await getMAMA().saveCheckpoint(
+          summary,
+          [], // openFiles - session_end doesn't have file info
+          'Session auto-saved on end'
+        );
+
+        console.log(`[MAMA] Session end: Auto-saved checkpoint (id: ${checkpointId})`);
+      } catch (err: any) {
+        console.error('[MAMA] Session end error:', err.message);
+      }
+    });
+
+    // =====================================================
+    // Before Compaction: Save checkpoint before context compression
+    // =====================================================
+    api.on('before_compaction', async (_event: any) => {
+      try {
+        await initMAMA(config);
+
+        // Save checkpoint before compaction
+        const summary = `Pre-compaction checkpoint at ${new Date().toISOString()}. Context will be compressed.`;
+        const checkpointId = await getMAMA().saveCheckpoint(
+          summary,
+          [],
+          'Resume after compaction - check previous context'
+        );
+
+        // Set flag for post-compaction context enhancement
+        compactionOccurred = true;
+
+        console.log(`[MAMA] Before compaction: Saved checkpoint (id: ${checkpointId})`);
+      } catch (err: any) {
+        console.error('[MAMA] Before compaction error:', err.message);
+      }
+    });
+
+    // =====================================================
+    // After Compaction: Log state and prepare for context re-injection
+    // =====================================================
+    api.on('after_compaction', async (_event: any) => {
+      try {
+        await initMAMA(config);
+
+        // 1. Load checkpoint
+        const checkpoint = await getMAMA().loadCheckpoint();
+
+        // 2. Load recent decisions (for context recovery)
+        const recentDecisions = await getMAMA().list({ limit: 5 });
+
+        // 3. Log (void hook - cannot inject directly, before_agent_start handles it)
+        console.log('[MAMA] After compaction: Context compressed');
+        if (checkpoint) {
+          console.log(`[MAMA] Checkpoint available: ${checkpoint.summary?.substring(0, 50)}...`);
+        }
+        if (recentDecisions.length > 0) {
+          console.log(`[MAMA] ${recentDecisions.length} recent decisions ready for re-injection`);
+        }
+
+        // Note: compactionOccurred flag set in before_compaction
+        // before_agent_start will detect this and add context enhancement
+      } catch (err: any) {
+        console.error('[MAMA] After compaction error:', err.message);
       }
     });
 
