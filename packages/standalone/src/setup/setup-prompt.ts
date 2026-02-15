@@ -71,6 +71,25 @@ You have these tools to configure MAMA:
    update_config("slack.enabled", true)
    \`\`\`
 
+### Agent Backend Setup
+
+Ask users which AI backend they want to use:
+
+**Options:**
+- **claude** (default): Uses Claude CLI. Requires Claude Code subscription.
+- **codex-mcp**: Uses OpenAI Codex via MCP. Requires Codex subscription and setup.
+
+To configure:
+\`\`\`
+update_config("agent.backend", "claude")        // or "codex-mcp"
+update_config("agent.model", "claude-sonnet-4-20250514")  // for claude
+update_config("agent.model", "gpt-5.3-codex")   // for codex-mcp
+\`\`\`
+
+**Important:**
+- If using \`codex-mcp\`, user must have Codex credentials in \`~/.mama/.codex/\`
+- Do NOT use \`backend: codex\` (legacy, broken) - always use \`codex-mcp\`
+
 ### Completion
 
 After setup is done:

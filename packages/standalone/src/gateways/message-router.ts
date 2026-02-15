@@ -14,7 +14,9 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { SessionStore } from './session-store.js';
+import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type MamaApiClient } from './context-injector.js';
 import type {
   NormalizedMessage,
@@ -241,8 +243,14 @@ export class MessageRouter {
 
   /**
    * Process a normalized message and return response
+   * @param message - The normalized message to process
+   * @param processOptions - Optional callbacks for async notifications
+   * @param processOptions.onQueued - Called immediately if session is busy (message queued)
    */
-  async process(message: NormalizedMessage): Promise<ProcessingResult> {
+  async process(
+    message: NormalizedMessage,
+    processOptions?: { onQueued?: () => void }
+  ): Promise<ProcessingResult> {
     const startTime = Date.now();
 
     // Security: Block sensitive configuration requests from non-viewer sources
@@ -277,16 +285,61 @@ This protects your credentials from being exposed in chat logs.`;
       message.channelName
     );
 
-    // 2. Check if this is a new CLI session (need to inject history from DB)
+    // 2. Check if session is busy (another request in progress)
     const channelKey = buildChannelKey(message.source, message.channelId);
     const sessionPool = getSessionPool();
-    const { sessionId: cliSessionId, isNew: isNewCliSession } = sessionPool.getSession(channelKey);
+    const initialSession = sessionPool.getSession(channelKey);
+    let cliSessionId = initialSession.sessionId;
+    let isNewCliSession = initialSession.isNew;
+    const busy = initialSession.busy;
+
+    // Track lock ownership for proper cleanup in finally block
+    let acquiredLock = !busy; // If not busy, we acquired lock from initialSession
+
+    // If session is busy, notify caller immediately and wait for it to be released
+    if (busy) {
+      logger.debug(`Session busy for ${channelKey}, notifying client`);
+      processOptions?.onQueued?.();
+
+      // Wait for session to be released (poll with timeout)
+      const maxWaitMs = 600000; // 10 minutes max wait
+      const pollIntervalMs = 500;
+      const waitStart = Date.now();
+      let lastLogTime = waitStart;
+
+      while (Date.now() - waitStart < maxWaitMs) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        // Use read-only peek to avoid side effects (no lock increment)
+        const check = sessionPool.peekSession(channelKey);
+        if (!check.busy) {
+          logger.debug(
+            `Session released for ${channelKey} after ${Math.round((Date.now() - waitStart) / 1000)}s`
+          );
+          break;
+        }
+        // Log every 30 seconds
+        if (Date.now() - lastLogTime >= 30000) {
+          logger.debug(
+            `Still waiting for session ${channelKey} (${Math.round((Date.now() - waitStart) / 1000)}s)...`
+          );
+          lastLogTime = Date.now();
+        }
+      }
+
+      // Re-acquire session after wait (properly locks it this time)
+      const reacquired = sessionPool.getSession(channelKey);
+      if (reacquired.busy) {
+        // Still busy after timeout - we never acquired the lock
+        throw new Error(`Session for ${channelKey} timed out after ${maxWaitMs / 1000}s`);
+      }
+      cliSessionId = reacquired.sessionId;
+      isNewCliSession = reacquired.isNew;
+      acquiredLock = true; // Successfully acquired lock after wait
+    }
 
     // 3. Create AgentContext for role-aware execution
     const agentContext = this.createAgentContext(message, session.id);
-    console.log(
-      `[MessageRouter] Created context: ${agentContext.roleName}@${agentContext.platform}`
-    );
+    logger.debug(`Created context: ${agentContext.roleName}@${agentContext.platform}`);
 
     // 4. Get session startup context (like SessionStart hook)
     // Always inject to ensure Claude has context about checkpoint and recent decisions
@@ -424,9 +477,30 @@ This protects your credentials from being exposed in chat logs.`;
         const result = await this.agentLoop.run(message.text, options);
         response = result.response;
       }
+    } catch (error) {
+      // CLI timeout or resume failure - invalidate session to force fresh start next time
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const isCriticalError =
+        errorMsg.includes('timeout') ||
+        errorMsg.includes('resume') ||
+        errorMsg.includes('exited with code');
+
+      if (isCriticalError) {
+        logger.warn(`CLI error detected, invalidating session: ${errorMsg}`);
+        sessionPool.resetSession(channelKey);
+      }
+
+      // Normalize error to ensure proper Error object is thrown
+      if (error instanceof Error) {
+        throw error;
+      }
+      const normalizedError = new Error(String(error));
+      throw normalizedError;
     } finally {
-      // Release the session lock so subsequent requests can reuse it
-      sessionPool.releaseSession(channelKey);
+      // Only release the session lock if we actually acquired it
+      if (acquiredLock) {
+        sessionPool.releaseSession(channelKey);
+      }
     }
 
     // Post-process: auto-copy image paths to outbound for webchat rendering
@@ -434,7 +508,31 @@ This protects your credentials from being exposed in chat logs.`;
       response = await this.resolveMediaPaths(response);
     }
 
-    // 5. Update session context
+    // 5. Record to channel history (for all sources including viewer)
+    const channelHistory = getChannelHistory();
+    if (channelHistory) {
+      const now = Date.now();
+      // Record user message (use UUID to avoid collisions in concurrent requests)
+      channelHistory.record(message.channelId, {
+        messageId: `user_${randomUUID()}`,
+        sender: message.userId,
+        userId: message.userId,
+        body: message.text,
+        timestamp: now,
+        isBot: false,
+      });
+      // 6. Record bot response
+      channelHistory.record(message.channelId, {
+        messageId: `bot_${randomUUID()}`,
+        sender: 'MAMA',
+        userId: 'mama',
+        body: response,
+        timestamp: now + 1,
+        isBot: true,
+      });
+    }
+
+    // 6. Update session context
     this.sessionStore.updateSession(session.id, message.text, response);
 
     // 6. Return result

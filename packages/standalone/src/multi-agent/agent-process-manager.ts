@@ -35,6 +35,20 @@ function resolvePath(path: string): string {
 }
 
 /**
+ * Convert model ID to human-readable display name
+ */
+function getModelDisplayName(modelId: string): string {
+  const modelMap: Record<string, string> = {
+    'claude-opus-4-5-20251101': 'Claude Opus 4.5',
+    'claude-opus-4-6': 'Claude Opus 4.6',
+    'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
+    'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
+    'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+  };
+  return modelMap[modelId] || modelId;
+}
+
+/**
  * Agent Process Manager
  *
  * Features:
@@ -100,7 +114,21 @@ export class AgentProcessManager extends EventEmitter {
     // Clear persona cache to force reload
     this.personaCache.clear();
 
-    // Rebuild AgentProcessPool with new pool sizes
+    // Stop and clear ALL process pools so new processes pick up new model/config
+    // 1. Claude PersistentProcessPool
+    void this.processPool.stopAll();
+
+    // 2. Codex processes
+    for (const [key, proc] of this.codexProcessPool.entries()) {
+      try {
+        proc.stop();
+      } catch {
+        // Ignore errors during cleanup
+      }
+      this.codexProcessPool.delete(key);
+    }
+
+    // 3. Rebuild AgentProcessPool with new pool sizes
     this.agentProcessPool.stopAll();
     const agentPoolSizes: Record<string, number> = {};
     for (const [agentId, agentConfig] of Object.entries(config.agents)) {
@@ -115,7 +143,7 @@ export class AgentProcessManager extends EventEmitter {
     });
   }
 
-  private getAgentBackend(agentConfig: Omit<AgentPersonaConfig, 'id'>): 'claude' | 'codex' {
+  private getAgentBackend(agentConfig: Omit<AgentPersonaConfig, 'id'>): 'claude' | 'codex-mcp' {
     return agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
   }
 
@@ -205,7 +233,7 @@ export class AgentProcessManager extends EventEmitter {
       options.disallowedTools = permissions.blocked;
     }
 
-    if (agentBackend === 'codex') {
+    if (agentBackend === 'codex-mcp') {
       // Use AgentProcessPool for multi-process agents (pool_size > 1)
       if (poolSize > 1) {
         const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
@@ -269,14 +297,8 @@ export class AgentProcessManager extends EventEmitter {
     const process = new CodexRuntimeProcess({
       model: options.model || this.runtimeOptions.model,
       systemPrompt: options.systemPrompt,
-      codexHome: this.runtimeOptions.codexHome,
       cwd: this.runtimeOptions.codexCwd,
       sandbox: this.runtimeOptions.codexSandbox,
-      profile: this.runtimeOptions.codexProfile,
-      ephemeral: this.runtimeOptions.codexEphemeral ?? false,
-      addDirs: this.runtimeOptions.codexAddDirs,
-      configOverrides: this.runtimeOptions.codexConfigOverrides,
-      skipGitRepoCheck: this.runtimeOptions.codexSkipGitRepoCheck ?? true,
       requestTimeout: options.requestTimeout,
     });
     return process;
@@ -353,6 +375,17 @@ export class AgentProcessManager extends EventEmitter {
         resolvedPersona = resolvedPersona.replaceAll(pattern, replacement);
       }
     }
+
+    // Replace model placeholder with actual config value
+    // Supports both {{model}} placeholder and hardcoded model names
+    const actualModel = agentConfig.model || 'claude-sonnet-4-20250514';
+    const modelDisplayName = getModelDisplayName(actualModel);
+    resolvedPersona = resolvedPersona.replace(/\{\{model\}\}/gi, modelDisplayName);
+    // Also replace common hardcoded model patterns with actual model
+    resolvedPersona = resolvedPersona.replace(
+      /powered by \*\*[^*]+\*\* \([^)]+\)/gi,
+      `powered by **${modelDisplayName}** (${actualModel})`
+    );
 
     // Build permission prompt
     const permissionPrompt = this.permissionManager.buildPermissionPrompt(agent);
