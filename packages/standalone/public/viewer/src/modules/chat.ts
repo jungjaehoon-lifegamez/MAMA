@@ -66,12 +66,6 @@ type CheckpointRecord = {
   summary: string;
 };
 
-// Reserved for future use - attachment message handling
-type _ChatMessageWithAttachment = {
-  id?: string;
-  [key: string]: unknown;
-};
-
 /**
  * Chat Module Class
  */
