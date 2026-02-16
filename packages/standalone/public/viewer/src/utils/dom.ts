@@ -111,15 +111,11 @@ export function showToast(message: string, duration = 3000): void {
  * @param {HTMLElement} container - Container to scroll
  */
 export function scrollToBottom(container: HTMLElement): void {
-  // Use setTimeout to ensure DOM has updated before scrolling
-  const doScroll = () => {
-    container.scrollTop = container.scrollHeight;
-    if (container.scrollTo) {
-      container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
-    }
-  };
-  setTimeout(doScroll, 50);
-  requestAnimationFrame(doScroll);
+  // Use requestAnimationFrame to batch layout read/write and avoid forced reflow
+  requestAnimationFrame(() => {
+    const scrollHeight = container.scrollHeight; // Single read
+    container.scrollTop = scrollHeight; // Single write
+  });
 }
 
 /**
@@ -128,11 +124,17 @@ export function scrollToBottom(container: HTMLElement): void {
  * @param {number} maxRows - Maximum number of rows (default: 5)
  */
 export function autoResizeTextarea(textarea: HTMLTextAreaElement, maxRows = 5): void {
-  textarea.style.height = 'auto';
-  const computedLineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight);
-  const lineHeight =
-    Number.isFinite(computedLineHeight) && computedLineHeight > 0 ? computedLineHeight : 20;
-  const maxHeight = lineHeight * maxRows;
-  const newHeight = Math.min(textarea.scrollHeight, maxHeight);
-  textarea.style.height = newHeight + 'px';
+  // Use requestAnimationFrame to batch reads and writes, avoiding forced reflow
+  requestAnimationFrame(() => {
+    textarea.style.height = 'auto';
+    // Batch all reads together
+    const computedLineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight);
+    const scrollHeight = textarea.scrollHeight;
+    // Then do the write
+    const lineHeight =
+      Number.isFinite(computedLineHeight) && computedLineHeight > 0 ? computedLineHeight : 20;
+    const maxHeight = lineHeight * maxRows;
+    const newHeight = Math.min(scrollHeight, maxHeight);
+    textarea.style.height = newHeight + 'px';
+  });
 }
