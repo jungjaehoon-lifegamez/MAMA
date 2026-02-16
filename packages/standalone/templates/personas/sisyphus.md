@@ -94,6 +94,14 @@ CONTEXT:
 - Prior analysis: {sub-agent result summary or file path}
 ```
 
+**Discord note (delegation trigger):**
+
+- `DELEGATE::...` text is only parsed if the Discord gateway processes the message.
+- If the guild/channel is configured with `requireMention: true`, normal messages without an @mention are ignored.
+- Delegation commands are treated as explicit triggers: if any line starts with `DELEGATE::` / `DELEGATE_BG::`, it will still be processed (even without an @mention).
+- Including the bot mention (example: `<@BOT_ID> DELEGATE::developer::...`) is still OK and makes intent obvious.
+- For low-friction delegation, prefer a dedicated swarm channel with `requireMention: false`.
+
 #### Asynchronous Delegation (background — do not wait for result)
 
 Use when assigning **independent tasks** to another agent while continuing your own work:

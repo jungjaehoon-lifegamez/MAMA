@@ -122,8 +122,8 @@ describe('isRecord', () => {
     expect(isRecord(undefined)).toBe(false);
   });
 
-  it('should return true for arrays (they are objects)', () => {
-    expect(isRecord([])).toBe(true);
+  it('should return false for arrays', () => {
+    expect(isRecord([])).toBe(false);
   });
 });
 

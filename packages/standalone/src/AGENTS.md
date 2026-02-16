@@ -66,6 +66,20 @@ Message → 1. Free Chat → 2. Explicit Trigger → 3. Category Match → 4. Ke
 DELEGATE::{agent_id}::{task description}
 ```
 
+**Discord Mention Requirements (Delegation Trigger):**
+
+- Delegation only works if the bot processes the message.
+- If Discord `requireMention: true` is configured at the guild/channel level, normal messages without an @mention are ignored.
+- Delegation commands are treated as explicit triggers: if a line starts with `DELEGATE::` / `DELEGATE_BG::`, it will still be processed (even without an @mention).
+- Including the bot mention is still OK and makes intent obvious:
+
+```text
+<@BOT_ID> DELEGATE::critic::WebMCP 문서 검증
+```
+
+- Recommended: use a dedicated swarm/bot channel with `requireMention: false` so delegation can run without @mentions, and keep `requireMention: true` in public channels to avoid spam.
+- `agent_id` is **case-sensitive** and must match `multi_agent.agents` keys (e.g. `developer`, `reviewer`, `pm`).
+
 **Task Continuation Markers:**
 
 - **Complete:** `DONE`, `완료`, `TASK_COMPLETE`, `finished`
