@@ -704,7 +704,7 @@ export class DiscordGateway extends BaseGateway {
 
     // Treat delegation commands as explicit triggers, even in mention-required channels.
     // This avoids "DELEGATE doesn't work unless you @mention" confusion when requireMention=true.
-    const content = message.content.replace(/<@!?\d+>/g, '');
+    const content = this.cleanMessageContent(message.content);
     const isDelegationCommand = content
       .split(/\r?\n/)
       .some(
