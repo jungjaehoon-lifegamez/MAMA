@@ -16,13 +16,13 @@ Wave-based multi-agent orchestration for Discord/Slack/Telegram. Sequential 5-wa
 ```
 Wave 1: Initial Analysis (read-only, all tiers)
   ↓
-Wave 2: Planning (Tier 1 agent: Sisyphus)
+Wave 2: Planning (Tier 1 agent: sisyphus)
   ↓
-Wave 3: Implementation (Tier 2 agents: Developer, Coder)
+Wave 3: Implementation (Tier 2 agents: developer, coder)
   ↓
-Wave 4: Review (Tier 3 agents: Reviewer, QA)
+Wave 4: Review (Tier 3 agents: reviewer, qa)
   ↓
-Wave 5: Completion (Tier 1 agent: Sisyphus)
+Wave 5: Completion (Tier 1 agent: sisyphus)
 ```
 
 **Tier Access Control:**
@@ -35,25 +35,44 @@ Wave 5: Completion (Tier 1 agent: Sisyphus)
 
 ## KEY FILES
 
-| File                             | Purpose                                       |
-| -------------------------------- | --------------------------------------------- |
-| `swarm-manager.ts`               | Orchestrates wave progression and delegation  |
-| `swarm-task-runner.ts`           | Executes tasks within wave constraints        |
-| `wave-engine.ts`                 | Wave state machine and transitions            |
-| `swarm-anti-pattern-detector.ts` | Prevents delegation loops and tier violations |
-| `agent-personas.ts`              | Agent definitions (Sisyphus, Developer, etc.) |
+| File                                   | Purpose                                                         |
+| -------------------------------------- | --------------------------------------------------------------- |
+| `orchestrator.ts`                      | Routes messages to agents (explicit/category/keyword/default)   |
+| `delegation-manager.ts`                | Parses and executes `DELEGATE::...` requests                    |
+| `tool-permission-manager.ts`           | Tier/tool permission prompts and enforcement                    |
+| `types.ts`                             | Multi-agent config types (`agents`, `mention_delegation`, etc.) |
+| `swarm/swarm-manager.ts`               | Swarm session DB + progress tracking                            |
+| `swarm/swarm-task-runner.ts`           | Executes tasks within wave constraints                          |
+| `swarm/wave-engine.ts`                 | Wave state machine and transitions                              |
+| `swarm/swarm-anti-pattern-detector.ts` | Prevents delegation loops and tier violations                   |
 
 ---
 
 ## TASK DELEGATION PATTERN
 
-```typescript
-// Agent requests delegation via special syntax
-`DELEGATE::Developer::Implement authentication module`;
-
-// Swarm manager parses and routes to appropriate tier
-swarmManager.delegate('Developer', 'Implement authentication module', currentWave);
+```text
+DELEGATE::{agent_id}::{task description}
+DELEGATE_BG::{agent_id}::{task description}
 ```
+
+Notes:
+
+- `{agent_id}` is the internal agent id (e.g. `developer`, `reviewer`, `pm`) and is **case-sensitive**.
+- `{agent_id}` must match the key in `config.yaml` under `multi_agent.agents`.
+
+### Discord Mention Requirements (Delegation Trigger)
+
+Delegation text is only parsed if the Discord gateway processes the message.
+
+- If the channel/guild config has `requireMention: true`, normal messages without an @mention are ignored.
+- Delegation commands are treated as explicit triggers: if any line starts with `DELEGATE::` / `DELEGATE_BG::`, it will still be processed (even without an @mention).
+- Including the bot mention is still OK and makes intent obvious:
+
+```text
+<@BOT_ID> DELEGATE::developer::Implement authentication module
+```
+
+- Recommended: use a dedicated swarm/bot channel with `requireMention: false` so `DELEGATE::...` works without @mentions, and keep `requireMention: true` for public channels to avoid spam.
 
 **Anti-Pattern Detection:**
 

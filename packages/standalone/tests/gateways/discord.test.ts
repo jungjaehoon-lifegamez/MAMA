@@ -219,6 +219,54 @@ describe('DiscordGateway', () => {
       expect(handler2).not.toHaveBeenCalled();
     });
   });
+
+  describe('shouldRespond() - delegation trigger bypass', () => {
+    it('should respond to DELEGATE commands even when mention is required', () => {
+      gateway.setConfig({
+        guilds: {
+          '*': { requireMention: true },
+        },
+      });
+
+      const message = {
+        content: 'DELEGATE::developer::Do the thing',
+        guild: { id: 'g1' },
+        channel: { id: 'c1' },
+      } as any;
+
+      const shouldRespond = (gateway as any).shouldRespond.bind(gateway);
+      expect(shouldRespond(message, false, false)).toBe(true);
+    });
+
+    it('should respond to DELEGATE commands even with no guild config (mentions normally required)', () => {
+      // Default: no guild config set -> shouldRespond returns isMentioned for normal messages.
+      const message = {
+        content: 'DELEGATE_BG::reviewer::Review this',
+        guild: { id: 'g1' },
+        channel: { id: 'c1' },
+      } as any;
+
+      const shouldRespond = (gateway as any).shouldRespond.bind(gateway);
+      expect(shouldRespond(message, false, false)).toBe(true);
+    });
+
+    it('should not respond to normal messages when mention is required', () => {
+      gateway.setConfig({
+        guilds: {
+          '*': { requireMention: true },
+        },
+      });
+
+      const message = {
+        content: 'hello',
+        guild: { id: 'g1' },
+        channel: { id: 'c1' },
+      } as any;
+
+      const shouldRespond = (gateway as any).shouldRespond.bind(gateway);
+      expect(shouldRespond(message, false, false)).toBe(false);
+    });
+  });
 });
 
 describe('DiscordGateway Configuration', () => {
