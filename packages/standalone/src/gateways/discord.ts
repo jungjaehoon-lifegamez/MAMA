@@ -702,6 +702,17 @@ export class DiscordGateway extends BaseGateway {
     // Always respond to DMs
     if (isDM) return true;
 
+    // Treat delegation commands as explicit triggers, even in mention-required channels.
+    // This avoids "DELEGATE doesn't work unless you @mention" confusion when requireMention=true.
+    const content = this.cleanMessageContent(message.content);
+    const isDelegationCommand = content
+      .split(/\r?\n/)
+      .some(
+        (line) =>
+          line.trimStart().startsWith('DELEGATE::') || line.trimStart().startsWith('DELEGATE_BG::')
+      );
+    if (isDelegationCommand) return true;
+
     // For guild messages, check configuration
     const guildId = message.guild?.id;
     const channelId = message.channel.id;
