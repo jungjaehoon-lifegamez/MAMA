@@ -124,13 +124,11 @@ export function scrollToBottom(container: HTMLElement): void {
  * @param {number} maxRows - Maximum number of rows (default: 5)
  */
 export function autoResizeTextarea(textarea: HTMLTextAreaElement, maxRows = 5): void {
-  // Use requestAnimationFrame to batch reads and writes, avoiding forced reflow
+  // Use requestAnimationFrame to defer resize to the next frame, avoiding layout thrash from rapid input events
   requestAnimationFrame(() => {
-    textarea.style.height = 'auto';
-    // Batch all reads together
-    const computedLineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight);
+    textarea.style.height = 'auto'; // Reset height before measuring
+    const computedLineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight); // Forces reflow (unavoidable)
     const scrollHeight = textarea.scrollHeight;
-    // Then do the write
     const lineHeight =
       Number.isFinite(computedLineHeight) && computedLineHeight > 0 ? computedLineHeight : 20;
     const maxHeight = lineHeight * maxRows;
