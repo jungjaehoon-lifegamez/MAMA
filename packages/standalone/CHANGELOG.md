@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-02-16
+
+### Changed
+
+- **Dashboard performance**: Parallelized API calls using `Promise.allSettled()` for ~70% faster load time
+  - Previously 6 sequential API calls, now all run in parallel
+  - Removed redundant `loadMCPServers()` method
+
+### Fixed
+
+- **Viewer page freeze on load**: Added `defer` to external CDN scripts for non-blocking initial render
+  - vis-network, lucide, marked, dompurify now load asynchronously
+  - Tailwind CSS remains synchronous (required for config)
+
+- **Discord delegation bypass**: `DELEGATE::` commands now work without @mention when `requireMention: true`
+  - Fixes user confusion where delegation silently failed in mention-required channels
+  - Documented in README, gateway-config.md, and agent personas
+
 ### Added
 
 - **Agent git identity configuration**: Each multi-agent bot can now have its own git identity for commits

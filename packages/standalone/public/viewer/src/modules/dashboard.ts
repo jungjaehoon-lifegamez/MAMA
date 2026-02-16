@@ -177,72 +177,81 @@ export class DashboardModule {
 
   /**
    * Load dashboard status from API
+   * Uses Promise.allSettled for parallel loading to improve performance
    */
   async loadStatus(): Promise<void> {
     try {
-      this.data = await API.get<DashboardData>('/api/dashboard/status');
+      // Load all data in parallel for better performance
+      const [
+        dashboardResult,
+        multiAgentResult,
+        delegationsResult,
+        cronResult,
+        tokenResult,
+        mcpResult,
+      ] = await Promise.allSettled([
+        API.get<DashboardData>('/api/dashboard/status'),
+        API.get<MultiAgentDashboardStatus>('/api/multi-agent/status'),
+        API.get<DashboardDelegationsData>('/api/multi-agent/delegations?limit=10'),
+        API.getCronJobs(),
+        Promise.all([API.getTokenSummary(), API.getTokensByAgent()]),
+        API.get<McpServersResponse>('/api/mcp-servers'),
+      ]);
 
-      // Load multi-agent status (Sprint 3 F2)
-      try {
-        this.multiAgentData = await API.get<MultiAgentDashboardStatus>('/api/multi-agent/status');
-      } catch (e) {
-        logger.warn('[Dashboard] Multi-agent status unavailable:', e);
+      // Process dashboard status (required)
+      if (dashboardResult.status === 'fulfilled') {
+        this.data = dashboardResult.value;
+      } else {
+        throw dashboardResult.reason;
+      }
+
+      // Process multi-agent status
+      if (multiAgentResult.status === 'fulfilled') {
+        this.multiAgentData = multiAgentResult.value;
+      } else {
+        logger.warn('[Dashboard] Multi-agent status unavailable:', multiAgentResult.reason);
         this.multiAgentData = { enabled: false, agents: [] };
       }
 
-      // Load delegations (F4 endpoint)
-      try {
-        this.delegationsData = await API.get<DashboardDelegationsData>(
-          '/api/multi-agent/delegations?limit=10'
-        );
-      } catch (e) {
-        logger.warn('[Dashboard] Delegations unavailable:', e);
+      // Process delegations
+      if (delegationsResult.status === 'fulfilled') {
+        this.delegationsData = delegationsResult.value;
+      } else {
+        logger.warn('[Dashboard] Delegations unavailable:', delegationsResult.reason);
         this.delegationsData = { delegations: [], count: 0 };
       }
 
-      // Load cron jobs
-      try {
-        this.cronData = await API.getCronJobs();
-      } catch (e) {
-        logger.warn('[Dashboard] Cron data unavailable:', e);
+      // Process cron jobs
+      if (cronResult.status === 'fulfilled') {
+        this.cronData = cronResult.value;
+      } else {
+        logger.warn('[Dashboard] Cron data unavailable:', cronResult.reason);
         this.cronData = null;
       }
 
-      // Load token summary
-      try {
-        const [summary, byAgent] = await Promise.all([
-          API.getTokenSummary(),
-          API.getTokensByAgent(),
-        ]);
+      // Process token data
+      if (tokenResult.status === 'fulfilled') {
+        const [summary, byAgent] = tokenResult.value;
         this.tokenData = { summary, byAgent };
-      } catch (e) {
-        logger.warn('[Dashboard] Token data unavailable:', e);
+      } else {
+        logger.warn('[Dashboard] Token data unavailable:', tokenResult.reason);
         this.tokenData = null;
       }
 
-      // Load MCP servers
-      await this.loadMCPServers();
+      // Process MCP servers
+      if (mcpResult.status === 'fulfilled' && mcpResult.value && 'servers' in mcpResult.value) {
+        this.mcpServers = mcpResult.value.servers || [];
+        this.renderMCPServers();
+      } else {
+        logger.warn('[Dashboard] MCP servers unavailable');
+        this.mcpServers = [];
+      }
 
       this.render();
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       logger.error('[Dashboard] Load error:', error);
       this.setStatus(`Error: ${getErrorMessage(error)}`, 'error');
-    }
-  }
-
-  /**
-   * Load MCP servers from API
-   */
-  async loadMCPServers(): Promise<void> {
-    try {
-      const data = await API.get<McpServersResponse>('/api/mcp-servers');
-      if (data && 'servers' in data) {
-        this.mcpServers = data.servers || [];
-        this.renderMCPServers();
-      }
-    } catch (error) {
-      logger.error('Failed to load MCP servers:', error);
     }
   }
 
