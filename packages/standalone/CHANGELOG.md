@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agent git identity configuration**: Each multi-agent bot can now have its own git identity for commits
+  - New `git_identity` field in agent config: `{ name: string, email: string }`
+  - PR review workspaces automatically configure git user based on agent identity
+  - Prevents accidental GitHub account impersonation by using local-only email domains
+
+### Fixed
+
+- **Agent process pool exhaustion**: Fixed pool getting stuck at "2/2 busy" after timeouts
+  - Root cause: Timeout aborts `Promise.race()` but underlying `wrapper.prompt()` continues running
+  - Process marked `busy=false` in pool but `isReady()=false` in runtime → "zombie" state
+  - `releaseProcess()` now detects and kills zombie processes immediately
+  - `getAvailableProcess()` cleans up zombies before attempting new process creation
+
 ## [0.8.4] - 2026-02-14
 
 ### Fixed
