@@ -5,6 +5,25 @@
    ============================================================================ */
 
 /* ============================================================================
+   CRITICAL CSS - Prevent CLS before Tailwind loads
+   ============================================================================ */
+
+header {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+}
+
+main {
+  min-height: calc(100vh - 56px);
+}
+
+[data-tab] {
+  min-width: 80px;
+  min-height: 36px;
+}
+
+/* ============================================================================
    ANIMATIONS
    ============================================================================ */
 
@@ -68,6 +87,19 @@
   min-height: 320px;
   max-width: 96vw;
   max-height: 85vh;
+  /* GPU compositing for smooth toggle */
+  transform: translateZ(0);
+  will-change: opacity;
+}
+
+#chat-panel.chat-panel-closed {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#chat-panel.chat-panel-open {
+  opacity: 1;
+  pointer-events: auto;
 }
 .chat-panel-draggable {
   position: fixed !important;
@@ -461,6 +493,7 @@
 /* Tab visibility */
 .tab-content {
   display: none;
+  content-visibility: hidden;
 }
 .tab-content.active {
   display: flex;
@@ -468,6 +501,12 @@
   flex: 1;
   height: 100%;
   min-height: 0;
+  content-visibility: visible;
+}
+/* Memory tab needs visible content-visibility for checkpoint details elements */
+#tab-memory,
+#tab-memory.active {
+  content-visibility: visible;
 }
 
 /* Modal visibility */
@@ -634,8 +673,12 @@
   background: #FFCE00;
 }
 
-/* Firefox scrollbar */
-* {
+/* Firefox scrollbar - scoped to scrollable containers */
+body,
+.tab-content,
+#chat-messages,
+.overflow-y-auto,
+.overflow-auto {
   scrollbar-width: thin;
   scrollbar-color: #D4C4E0 transparent;
 }
