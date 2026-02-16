@@ -66,6 +66,12 @@ type CheckpointRecord = {
   summary: string;
 };
 
+// Reserved for future use - attachment message handling
+type _ChatMessageWithAttachment = {
+  id?: string;
+  [key: string]: unknown;
+};
+
 /**
  * Chat Module Class
  */
@@ -147,7 +153,10 @@ export class ChatModule {
   }
 
   async autoCheckpoint(): Promise<void> {
-    // Auto-checkpoint disabled - use /checkpoint command for manual saves
+    // DISABLED: Auto-checkpoint was saving raw conversation history to MAMA memory.
+    // Checkpoints should only be saved manually via /checkpoint command with proper summaries.
+    // The viewer chat uses localStorage for session persistence instead.
+    logger.info('Auto-checkpoint disabled (use /checkpoint for manual saves)');
     return;
   }
 
