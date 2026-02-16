@@ -66,12 +66,6 @@ type CheckpointRecord = {
   summary: string;
 };
 
-// Reserved for future use - attachment message handling
-type _ChatMessageWithAttachment = {
-  id?: string;
-  [key: string]: unknown;
-};
-
 /**
  * Chat Module Class
  */
@@ -104,6 +98,7 @@ export class ChatModule {
   history: ChatHistoryMessage[] = [];
   historyPrefix = 'mama_chat_history_';
   maxHistoryMessages = 50;
+  maxDomMessages = 100; // Limit DOM elements for performance
   historyExpiryMs = 24 * 60 * 60 * 1000;
   checkpointCooldown = false;
   COOLDOWN_MS = 60 * 1000;
@@ -1666,7 +1661,7 @@ export class ChatModule {
   }
 
   /**
-   * Restore chat history
+   * Restore chat history (optimized with DocumentFragment)
    */
   restoreHistory(sessionId: string): boolean {
     const history = this.loadHistory(sessionId);
@@ -1683,7 +1678,12 @@ export class ChatModule {
 
     this.removePlaceholder();
 
-    history.forEach((msg) => {
+    // Use DocumentFragment for batch DOM insertion
+    const fragment = document.createDocumentFragment();
+    // Limit to last N messages for DOM performance
+    const messagesToRender = history.slice(-this.maxDomMessages);
+
+    messagesToRender.forEach((msg) => {
       const msgEl = document.createElement('div');
       msgEl.className = `chat-message ${msg.role}`;
 
@@ -1715,9 +1715,10 @@ export class ChatModule {
         `;
       }
 
-      container.appendChild(msgEl);
+      fragment.appendChild(msgEl);
     });
 
+    container.appendChild(fragment);
     scrollToBottom(container);
     showToast('Previous conversation restored');
 
@@ -1725,7 +1726,7 @@ export class ChatModule {
   }
 
   /**
-   * Display history received from server
+   * Display history received from server (optimized with DocumentFragment)
    */
   displayHistory(messages: ChatHistoryMessage[]): void {
     const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
@@ -1740,9 +1741,14 @@ export class ChatModule {
     }
 
     container.innerHTML = '';
-    this.history = [];
+    this.history = messages;
 
-    messages.forEach((msg) => {
+    // Use DocumentFragment for batch DOM insertion
+    const fragment = document.createDocumentFragment();
+    // Limit to last N messages for DOM performance
+    const messagesToRender = messages.slice(-this.maxDomMessages);
+
+    messagesToRender.forEach((msg) => {
       const msgEl = document.createElement('div');
       msgEl.className = `chat-message ${msg.role}`;
 
@@ -1764,11 +1770,12 @@ export class ChatModule {
         `;
       }
 
-      container.appendChild(msgEl);
+      fragment.appendChild(msgEl);
     });
 
+    container.appendChild(fragment);
     scrollToBottom(container);
-    logger.info('Displayed', messages.length, 'history messages');
+    logger.info('Displayed', messagesToRender.length, 'history messages');
   }
 
   /**
@@ -2088,11 +2095,16 @@ export class ChatModule {
       return;
     }
 
-    const shouldOpen = forceState !== undefined ? forceState : panel.classList.contains('hidden');
+    const isClosed = panel.classList.contains('chat-panel-closed');
+    const shouldOpen = forceState !== undefined ? forceState : isClosed;
 
     if (shouldOpen) {
-      panel.classList.remove('hidden');
-      panel.classList.add('animate-slide-up');
+      // Lazy session init on first open
+      if (!this.ws) {
+        this.initSession();
+      }
+      panel.classList.remove('chat-panel-closed');
+      panel.classList.add('chat-panel-open', 'animate-slide-up');
       this.restorePanelState(panel);
       if (bubble) {
         bubble.classList.add('scale-0');
@@ -2109,8 +2121,8 @@ export class ChatModule {
         messages.scrollTop = messages.scrollHeight;
       }
     } else {
-      panel.classList.add('hidden');
-      panel.classList.remove('animate-slide-up');
+      panel.classList.add('chat-panel-closed');
+      panel.classList.remove('chat-panel-open', 'animate-slide-up');
       if (bubble) {
         bubble.classList.remove('scale-0');
       }
@@ -2166,7 +2178,7 @@ export class ChatModule {
    */
   isFloatingOpen(): boolean {
     const panel = getElementByIdOrNull<HTMLDivElement>('chat-panel');
-    return Boolean(panel && !panel.classList.contains('hidden'));
+    return Boolean(panel && panel.classList.contains('chat-panel-open'));
   }
 
   /**
