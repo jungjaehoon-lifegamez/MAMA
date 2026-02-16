@@ -18,17 +18,29 @@
     <link rel="icon" type="image/svg+xml" href="/viewer/icons/mama-icon.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/viewer/icons/icon-192.png" />
 
+    <!-- Preconnect to CDN origins -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" />
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+
+    <!-- Preload critical resources -->
+    <link rel="preload" href="https://cdn.tailwindcss.com" as="script" />
+    <link rel="preload" href="/viewer/viewer.css" as="style" />
+
+    <!-- Fonts with reduced weights -->
     <link
-      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Nunito:wght@400;600&display=swap"
       rel="stylesheet"
     />
 
-    <script src="https://unpkg.com/vis-network@9/dist/vis-network.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.5/purify.min.js"></script>
+    <!-- External libraries with defer -->
+    <script defer src="https://unpkg.com/vis-network@9/dist/vis-network.min.js"></script>
+    <script defer src="https://unpkg.com/lucide@0.460.0"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.5/purify.min.js"></script>
+    <!-- Tailwind must load synchronously -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -1002,7 +1014,7 @@
             <span id="chat-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
           </button>
 
-          <div id="chat-panel" class="hidden absolute bottom-[4.5rem] right-0 w-[400px] h-[560px] bg-white rounded-2xl shadow-float border border-mama-lavender-dark flex flex-col overflow-hidden">
+          <div id="chat-panel" class="chat-panel-closed absolute bottom-[4.5rem] right-0 w-[400px] h-[560px] bg-white rounded-2xl shadow-float border border-mama-lavender-dark flex flex-col overflow-hidden">
             <!-- Header -->
             <div id="chat-header" class="h-12 bg-mama-yellow/20 flex items-center px-4 border-b border-mama-lavender-dark shrink-0">
               <svg class="w-5 h-5 text-mama-black mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2059,9 +2071,8 @@
         document.documentElement.lang = userLang.split('-')[0];
 
         initTheme();
-        // Initialize floating chat (WebSocket + panel bindings)
+        // Initialize floating chat panel bindings (session init is lazy, on first open)
         chat.initFloating();
-        chat.initSession();
         // Default to dashboard tab
         switchTab('dashboard');
       });
