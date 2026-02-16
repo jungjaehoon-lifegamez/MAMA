@@ -17,7 +17,7 @@ export function truncateText(text: string, maxLen: number): string {
  * Type guard for Record objects
  */
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
