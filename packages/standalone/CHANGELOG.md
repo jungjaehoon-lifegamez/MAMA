@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-02-16
+
 ### Added
 
 - **Agent git identity configuration**: Each multi-agent bot can now have its own git identity for commits
@@ -21,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Process marked `busy=false` in pool but `isReady()=false` in runtime → "zombie" state
   - `releaseProcess()` now detects and kills zombie processes immediately
   - `getAvailableProcess()` cleans up zombies before attempting new process creation
+
+### Performance
+
+- **Viewer chat panel optimization**: Significant performance improvements for chat panel
+  - Lazy WebSocket session initialization (defer until panel open)
+  - DocumentFragment batch DOM insertion for chat history
+  - DOM message limit (100 messages max) to prevent slowdown
+  - requestAnimationFrame batching for scroll/resize operations
+  - content-visibility CSS for inactive tabs (memory tab exempted for checkpoints)
+  - GPU compositing for chat panel animations
+  - CDN preconnect hints and resource preload
+  - Reduced font weights (8→4) and pinned lucide version
+  - Scoped scrollbar CSS to prevent global style overhead
 
 ## [0.8.4] - 2026-02-14
 
