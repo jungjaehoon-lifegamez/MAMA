@@ -189,6 +189,7 @@ const mamaPlugin = {
         lastUserPrompt = null;
         lastCompactionAt = null;
         lastAutoCaptureCandidates = [];
+        compactionOccurred = false;
 
         // 1. Load checkpoint
         const checkpoint = await getMAMA().loadCheckpoint();

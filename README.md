@@ -175,6 +175,9 @@ User message → Orchestrator → 5-Stage Routing
                 └── DELEGATE::developer::Fix the auth bug
 ```
 
+Note (Discord): if `requireMention: true`, normal messages without an @mention are ignored. Delegation commands
+(`DELEGATE::...`) are treated as explicit triggers, but `<@BOT_ID> DELEGATE::...` is still OK and makes intent obvious.
+
 | Feature                | Description                                                                                        |
 | ---------------------- | -------------------------------------------------------------------------------------------------- |
 | **3-Tier Permissions** | Tier 1: all tools + delegation. Tier 2: advisory (read-only). Tier 3: scoped execution (read-only) |
@@ -323,7 +326,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 | [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.9.0   | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.6   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.4   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.13   | Claude Code plugin                           | Claude Marketplace |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.13  | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.5.0   | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
