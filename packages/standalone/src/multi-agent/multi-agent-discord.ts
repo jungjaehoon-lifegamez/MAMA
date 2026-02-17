@@ -946,6 +946,43 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       // Claude CLI handles built-in tools (Read, Bash, Glob) internally via native tool_use.
       // Gateway tools (discord_send, mama_*) are requested via text-based tool_call blocks.
       // discord_send is routed through the agent's own bot (not the main LEAD bot).
+      // Check for workflow plan BEFORE executing tool calls (priority)
+      const workflowResult = await this.tryExecuteWorkflow(
+        result.response,
+        context.channelId,
+        'discord',
+        (event) => {
+          if (!this.discordClient) return;
+          let msg = '';
+          const modelTag = event.agentModel ? ` [${event.agentModel}]` : '';
+          if (event.type === 'step-started') {
+            msg = `  ${event.agentDisplayName}${modelTag} 시작...`;
+          } else if (event.type === 'step-completed') {
+            const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
+            msg = `${event.agentDisplayName}${modelTag} (${sec}s) 완료`;
+          } else if (event.type === 'step-failed') {
+            msg = `${event.agentDisplayName}${modelTag} ❌ 실패: ${event.error?.substring(0, 100)}`;
+          }
+          if (msg) {
+            this.sendChannelNotification(context.channelId, msg).catch(() => {});
+          }
+        }
+      );
+
+      if (workflowResult) {
+        const display = workflowResult.directMessage
+          ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
+          : workflowResult.result;
+        const formattedResponse = this.formatAgentResponse(agent, display);
+        return {
+          agentId,
+          agent,
+          content: formattedResponse,
+          rawContent: display,
+          duration: result.duration_ms,
+        };
+      }
+
       const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
 
       // Detect API error responses — skip mention resolution and delegation to prevent error loops

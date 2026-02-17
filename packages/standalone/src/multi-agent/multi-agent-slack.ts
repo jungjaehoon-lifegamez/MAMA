@@ -660,6 +660,45 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         clearTimeout(timeoutHandle!);
       }
 
+      // Check for workflow plan BEFORE executing tool calls (priority)
+      const workflowResult = await this.tryExecuteWorkflow(
+        result.response,
+        context.channelId,
+        'slack',
+        (event) => {
+          if (!this.mainWebClient) return;
+          let msg = '';
+          const modelTag = event.agentModel ? ` [${event.agentModel}]` : '';
+          if (event.type === 'step-started') {
+            msg = `  ${event.agentDisplayName}${modelTag} 시작...`;
+          } else if (event.type === 'step-completed') {
+            const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
+            msg = `${event.agentDisplayName}${modelTag} (${sec}s) 완료`;
+          } else if (event.type === 'step-failed') {
+            msg = `${event.agentDisplayName}${modelTag} ❌ 실패: ${event.error?.substring(0, 100)}`;
+          }
+          if (msg) {
+            this.mainWebClient!.chat.postMessage({ channel: context.channelId, text: msg }).catch(
+              () => {}
+            );
+          }
+        }
+      );
+
+      if (workflowResult) {
+        const display = workflowResult.directMessage
+          ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
+          : workflowResult.result;
+        const formattedResponse = this.formatAgentResponse(agent, display);
+        return {
+          agentId,
+          agent,
+          content: formattedResponse,
+          rawContent: display,
+          duration: result.duration_ms,
+        };
+      }
+
       // Execute text-based gateway tool calls (```tool_call blocks in response)
       const cleanedResponse = await this.executeTextToolCalls(result.response);
 
