@@ -1,3 +1,8 @@
+import { loadConfig } from '../cli/config/config-manager.js';
+
+// Default model for image analysis (vision-capable)
+const DEFAULT_IMAGE_MODEL = 'claude-sonnet-4-5-20250929';
+
 // Define proper types
 interface ClaudeResponse {
   content: Array<{ text: string }>;
@@ -61,8 +66,15 @@ export class ImageAnalyzer {
     // Sanitize user prompt to prevent injection
     const safePrompt = sanitizeUserPrompt(userPrompt);
 
+    // Get model from config, fallback to default
+    // Only use Claude models (ImageAnalyzer uses Claude API directly)
+    const config = await loadConfig();
+    const configModel = config.agent?.model || '';
+    const isClaudeModel = configModel.startsWith('claude-');
+    const model = isClaudeModel ? configModel : DEFAULT_IMAGE_MODEL;
+
     const response = await client.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model,
       max_tokens: 4000,
       messages: [
         {

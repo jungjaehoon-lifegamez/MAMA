@@ -186,6 +186,24 @@ Note (Discord): if `requireMention: true`, normal messages without an @mention a
 | **Task Delegation**    | `DELEGATE::{agent}::{task}` with depth-1 safety                                                    |
 | **Task Continuation**  | Auto-resume incomplete responses (Korean/English)                                                  |
 | **UltraWork Mode**     | Autonomous sessions: delegation + continuation loop                                                |
+| **Dynamic Workflows**  | Conductor generates workflow DAGs — ephemeral agents spawned per request with any backend/model    |
+
+**Dynamic Workflow Orchestration** — Instead of pre-defining every agent in config, Conductor analyzes
+the user's request and dynamically creates a team of ephemeral agents with custom roles, backends, and
+models. Steps execute in parallel where possible, with results flowing between stages via template
+interpolation (`{{step.result}}`).
+
+```text
+User: "프로젝트를 분석해줘. 3단계로 나눠서."
+
+🎼 Conductor → workflow_plan JSON 생성
+  ┌─────────────────┐   ┌─────────────────┐
+  │ 📁 Analyst      │   │ 🔍 Reviewer     │
+  │ [claude-sonnet]  │──▶│ [codex]         │──▶ 📋 Synthesizer
+  │ 구조 분석        │   │ 코드 품질 검토    │    종합 리포트
+  └─────────────────┘   └─────────────────┘
+       Level 0               Level 1            Level 2
+```
 
 [Setup Guide →](packages/standalone/README.md#multi-agent-swarm) | [Architecture →](docs/architecture-mama-swarm-2026-02-06.md)
 
