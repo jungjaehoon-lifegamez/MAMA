@@ -27,6 +27,8 @@ import { createSafeLogger } from '../utils/log-sanitizer.js';
 import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
 import type { GatewayToolInput } from '../agent/types.js';
 import type { AgentRuntimeProcess } from './runtime-process.js';
+import { WorkflowEngine, type StepExecutor } from './workflow-engine.js';
+import type { WorkflowProgressEvent, EphemeralAgentDef } from './workflow-types.js';
 
 /** Default timeout for agent responses (15 minutes -- must accommodate sub-agent spawns) */
 export const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -92,6 +94,7 @@ export abstract class MultiAgentHandlerBase {
   protected delegationManager: DelegationManager;
   protected workTracker: WorkTracker;
   protected gatewayToolExecutor: GatewayToolExecutor | null = null;
+  protected workflowEngine: WorkflowEngine | null = null;
 
   /** Whether multi-bot mode is initialized */
   protected multiBotInitialized = false;
@@ -132,6 +135,11 @@ export abstract class MultiAgentHandlerBase {
     const agentConfigs = Object.entries(config.agents).map(([id, cfg]) => ({ id, ...cfg }));
     this.delegationManager = new DelegationManager(agentConfigs);
     this.workTracker = new WorkTracker();
+
+    // Initialize workflow engine if enabled
+    if (config.workflow?.enabled) {
+      this.workflowEngine = new WorkflowEngine(config.workflow);
+    }
 
     this.backgroundTaskManager = new BackgroundTaskManager(
       async (agentId: string, prompt: string): Promise<string> => {
@@ -482,6 +490,96 @@ export abstract class MultiAgentHandlerBase {
       lines.push(`- ${emoji} **${agent.display_name}**: ${state}${queueInfo}`);
     }
     return lines.join('\n');
+  }
+
+  /**
+   * Get workflow engine instance
+   */
+  getWorkflowEngine(): WorkflowEngine | null {
+    return this.workflowEngine;
+  }
+
+  /**
+   * Check if a Conductor response contains a workflow plan and execute it.
+   * Returns the workflow result or null if no plan was found.
+   */
+  async tryExecuteWorkflow(
+    conductorResponse: string,
+    channelId: string,
+    source: 'discord' | 'slack',
+    onProgress?: (event: WorkflowProgressEvent) => void
+  ): Promise<{ result: string; directMessage: string } | null> {
+    if (!this.workflowEngine?.isEnabled()) return null;
+
+    const plan = this.workflowEngine.parseWorkflowPlan(conductorResponse);
+    if (!plan) return null;
+
+    const validationError = this.workflowEngine.validatePlan(plan);
+    if (validationError) {
+      this.logger.warn(`[Workflow] Plan validation failed: ${validationError}`);
+      return null;
+    }
+
+    // Extract non-plan content as Conductor's direct message
+    const directMessage = this.workflowEngine.extractNonPlanContent(conductorResponse);
+
+    // Register progress listener
+    const progressHandler = onProgress
+      ? (event: WorkflowProgressEvent) => onProgress(event)
+      : undefined;
+    if (progressHandler) {
+      this.workflowEngine.on('progress', progressHandler);
+    }
+
+    // Collect ephemeral agent IDs for cleanup
+    const ephemeralAgentIds = plan.steps.map((s) => s.agent.id);
+
+    try {
+      // Register all ephemeral agents
+      for (const step of plan.steps) {
+        this.processManager.registerEphemeralAgent(step.agent);
+      }
+
+      // Build step executor
+      const executeStep: StepExecutor = async (
+        agent: EphemeralAgentDef,
+        prompt: string,
+        timeoutMs: number
+      ): Promise<string> => {
+        let process: AgentRuntimeProcess | null = null;
+        try {
+          process = await this.processManager.getProcess(source, channelId, agent.id);
+          const result = await Promise.race([
+            process.sendMessage(prompt),
+            new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error(`Step timeout (${timeoutMs}ms)`)), timeoutMs);
+            }),
+          ]);
+          const cleaned = await this.executeTextToolCalls(result.response);
+          return cleaned;
+        } finally {
+          if (process) {
+            this.processManager.releaseProcess(agent.id, process);
+          }
+        }
+      };
+
+      const { result } = await this.workflowEngine.execute(plan, executeStep);
+      return { result, directMessage };
+    } finally {
+      // Cleanup: unregister ephemeral agents and remove progress listener
+      this.processManager.unregisterEphemeralAgents(ephemeralAgentIds);
+      if (progressHandler) {
+        this.workflowEngine.off('progress', progressHandler);
+      }
+    }
+  }
+
+  /**
+   * Format ephemeral agent response with workflow prefix
+   */
+  protected formatEphemeralAgentResponse(agentDisplayName: string, content: string): string {
+    return `${this.formatBold(agentDisplayName)}: ${content}`;
   }
 
   /**

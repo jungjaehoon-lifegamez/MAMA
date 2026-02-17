@@ -83,7 +83,7 @@ export interface AgentPersonaConfig {
    * - 'codex-mcp': Codex via MCP protocol
    * If not specified, uses global runtime backend.
    */
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex-mcp' | 'gemini';
 
   /**
    * Maximum turns for this agent
@@ -289,6 +289,13 @@ export interface MultiAgentConfig {
    * If not set, all delegation is allowed (backward compatible)
    */
   delegation_rules?: DelegationRule[];
+
+  /**
+   * Dynamic workflow orchestration configuration
+   * When enabled, Conductor can generate workflow_plan blocks
+   * that spawn ephemeral agents to execute multi-step tasks.
+   */
+  workflow?: import('./workflow-types.js').WorkflowConfig;
 }
 
 /**
@@ -301,7 +308,7 @@ export interface MultiAgentRuntimeOptions {
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex-mcp': Codex via MCP protocol
    */
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex-mcp' | 'gemini';
   model?: string;
   /** Timeout in milliseconds for each agent process request */
   requestTimeout?: number;

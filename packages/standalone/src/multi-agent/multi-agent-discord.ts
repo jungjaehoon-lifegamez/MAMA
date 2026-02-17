@@ -948,6 +948,43 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       // discord_send is routed through the agent's own bot (not the main LEAD bot).
       const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
 
+      // Check for workflow plan in Conductor's response
+      const workflowResult = await this.tryExecuteWorkflow(
+        cleanedResponse,
+        context.channelId,
+        'discord',
+        (event) => {
+          if (!this.discordClient) return;
+          let msg = '';
+          const modelTag = event.agentModel ? ` [${event.agentModel}]` : '';
+          if (event.type === 'step-started') {
+            msg = `  ${event.agentDisplayName}${modelTag} 시작...`;
+          } else if (event.type === 'step-completed') {
+            const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
+            msg = `${event.agentDisplayName}${modelTag} (${sec}s) 완료`;
+          } else if (event.type === 'step-failed') {
+            msg = `${event.agentDisplayName}${modelTag} ❌ 실패: ${event.error?.substring(0, 100)}`;
+          }
+          if (msg) {
+            this.sendChannelNotification(context.channelId, msg).catch(() => {});
+          }
+        }
+      );
+
+      if (workflowResult) {
+        const display = workflowResult.directMessage
+          ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
+          : workflowResult.result;
+        const formattedResponse = this.formatAgentResponse(agent, display);
+        return {
+          agentId,
+          agent,
+          content: formattedResponse,
+          rawContent: display,
+          duration: result.duration_ms,
+        };
+      }
+
       // Detect API error responses — skip mention resolution and delegation to prevent error loops
       const isErrorResponse = /API Error:\s*\d{3}\b/.test(cleanedResponse);
       const resolvedResponse = isErrorResponse
