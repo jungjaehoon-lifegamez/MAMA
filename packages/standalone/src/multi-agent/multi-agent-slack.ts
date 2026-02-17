@@ -660,12 +660,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         clearTimeout(timeoutHandle!);
       }
 
-      // Execute text-based gateway tool calls (```tool_call blocks in response)
-      const cleanedResponse = await this.executeTextToolCalls(result.response);
-
-      // Check for workflow plan in Conductor's response
+      // Check for workflow plan BEFORE executing tool calls (priority)
       const workflowResult = await this.tryExecuteWorkflow(
-        cleanedResponse,
+        result.response,
         context.channelId,
         'slack',
         (event) => {
@@ -701,6 +698,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           duration: result.duration_ms,
         };
       }
+
+      // Execute text-based gateway tool calls (```tool_call blocks in response)
+      const cleanedResponse = await this.executeTextToolCalls(result.response);
 
       const bgDelegation = this.delegationManager.parseDelegation(agentId, cleanedResponse);
       if (bgDelegation && bgDelegation.background) {

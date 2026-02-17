@@ -509,10 +509,30 @@ export abstract class MultiAgentHandlerBase {
     source: 'discord' | 'slack',
     onProgress?: (event: WorkflowProgressEvent) => void
   ): Promise<{ result: string; directMessage: string } | null> {
-    if (!this.workflowEngine?.isEnabled()) return null;
+    if (!this.workflowEngine?.isEnabled()) {
+      this.logger.info('[Workflow] Engine not enabled, skipping');
+      return null;
+    }
 
     const plan = this.workflowEngine.parseWorkflowPlan(conductorResponse);
-    if (!plan) return null;
+    if (!plan) {
+      const hasBlock = /```workflow_plan/i.test(conductorResponse);
+      if (hasBlock) {
+        this.logger.warn('[Workflow] Found workflow_plan block but failed to parse it');
+        this.logger.warn(
+          '[Workflow] Response snippet:',
+          conductorResponse.substring(
+            conductorResponse.indexOf('```workflow_plan'),
+            conductorResponse.indexOf('```workflow_plan') + 500
+          )
+        );
+      }
+      return null;
+    }
+
+    this.logger.info(
+      `[Workflow] Parsed plan: "${plan.name}" with ${plan.steps.length} steps: ${plan.steps.map((s) => `${s.id}(${s.agent.backend}/${s.agent.model})`).join(', ')}`
+    );
 
     const validationError = this.workflowEngine.validatePlan(plan);
     if (validationError) {

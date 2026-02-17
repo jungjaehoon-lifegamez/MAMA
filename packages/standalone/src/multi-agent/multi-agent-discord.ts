@@ -946,11 +946,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       // Claude CLI handles built-in tools (Read, Bash, Glob) internally via native tool_use.
       // Gateway tools (discord_send, mama_*) are requested via text-based tool_call blocks.
       // discord_send is routed through the agent's own bot (not the main LEAD bot).
-      const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
-
-      // Check for workflow plan in Conductor's response
+      // Check for workflow plan BEFORE executing tool calls (priority)
       const workflowResult = await this.tryExecuteWorkflow(
-        cleanedResponse,
+        result.response,
         context.channelId,
         'discord',
         (event) => {
@@ -984,6 +982,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           duration: result.duration_ms,
         };
       }
+
+      const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
 
       // Detect API error responses — skip mention resolution and delegation to prevent error loops
       const isErrorResponse = /API Error:\s*\d{3}\b/.test(cleanedResponse);
