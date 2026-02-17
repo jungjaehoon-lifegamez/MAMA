@@ -143,7 +143,9 @@ export class AgentProcessManager extends EventEmitter {
     });
   }
 
-  private getAgentBackend(agentConfig: Omit<AgentPersonaConfig, 'id'>): 'claude' | 'codex-mcp' {
+  private getAgentBackend(
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): 'claude' | 'codex-mcp' | 'gemini' {
     return agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
   }
 
@@ -639,6 +641,45 @@ Respond to messages in a helpful and professional manner.
     }
 
     return states;
+  }
+
+  /**
+   * Register an ephemeral agent definition (for workflow orchestration).
+   * The agent is added to config.agents so getProcess() can find it.
+   */
+  registerEphemeralAgent(agentDef: {
+    id: string;
+    display_name: string;
+    backend: string;
+    model: string;
+    system_prompt: string;
+    tier?: 1 | 2 | 3;
+    tool_permissions?: { allowed?: string[]; blocked?: string[] };
+  }): void {
+    this.config.agents[agentDef.id] = {
+      name: agentDef.display_name,
+      display_name: agentDef.display_name,
+      trigger_prefix: '', // ephemeral agents have no trigger
+      persona_file: '', // inline system prompt, no file
+      backend: agentDef.backend as 'claude' | 'codex-mcp' | 'gemini',
+      model: agentDef.model,
+      tier: agentDef.tier ?? 1,
+      tool_permissions: agentDef.tool_permissions,
+      enabled: true,
+    };
+    // Cache the inline system prompt directly
+    this.personaCache.set(agentDef.id, agentDef.system_prompt);
+  }
+
+  /**
+   * Unregister ephemeral agents and clean up their processes.
+   */
+  unregisterEphemeralAgents(agentIds: string[]): void {
+    for (const agentId of agentIds) {
+      this.stopAgentProcesses(agentId);
+      this.personaCache.delete(agentId);
+      delete this.config.agents[agentId];
+    }
   }
 
   /**
