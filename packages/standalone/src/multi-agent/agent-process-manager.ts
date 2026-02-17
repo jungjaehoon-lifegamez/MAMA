@@ -23,6 +23,7 @@ import type { AgentPersonaConfig, MultiAgentConfig, MultiAgentRuntimeOptions } f
 import { ToolPermissionManager } from './tool-permission-manager.js';
 import { AgentProcessPool } from './agent-process-pool.js';
 import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
+import type { EphemeralAgentDef } from './workflow-types.js';
 
 /**
  * Resolve path with ~ expansion
@@ -110,9 +111,14 @@ export class AgentProcessManager extends EventEmitter {
    * Update configuration (for hot reload)
    */
   updateConfig(config: MultiAgentConfig): void {
+    // Clear persona cache to force reload, but skip ephemeral agents
+    for (const agentId of this.personaCache.keys()) {
+      const isEphemeral = this.config.agents[agentId]?.persona_file === '';
+      if (!isEphemeral) {
+        this.personaCache.delete(agentId);
+      }
+    }
     this.config = config;
-    // Clear persona cache to force reload
-    this.personaCache.clear();
 
     // Stop and clear ALL process pools so new processes pick up new model/config
     // 1. Claude PersistentProcessPool
@@ -647,15 +653,7 @@ Respond to messages in a helpful and professional manner.
    * Register an ephemeral agent definition (for workflow orchestration).
    * The agent is added to config.agents so getProcess() can find it.
    */
-  registerEphemeralAgent(agentDef: {
-    id: string;
-    display_name: string;
-    backend: string;
-    model: string;
-    system_prompt: string;
-    tier?: 1 | 2 | 3;
-    tool_permissions?: { allowed?: string[]; blocked?: string[] };
-  }): void {
+  registerEphemeralAgent(agentDef: EphemeralAgentDef): void {
     this.config.agents[agentDef.id] = {
       name: agentDef.display_name,
       display_name: agentDef.display_name,

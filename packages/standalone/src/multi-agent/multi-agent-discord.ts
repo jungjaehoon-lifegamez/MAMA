@@ -947,12 +947,15 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       // Gateway tools (discord_send, mama_*) are requested via text-based tool_call blocks.
       // discord_send is routed through the agent's own bot (not the main LEAD bot).
       // Check for workflow plan BEFORE executing tool calls (priority)
+      const workflowStart = Date.now();
       const workflowResult = await this.tryExecuteWorkflow(
         result.response,
         context.channelId,
         'discord',
         (event) => {
-          if (!this.discordClient) return;
+          if (!this.discordClient) {
+            return;
+          }
           let msg = '';
           const modelTag = event.agentModel ? ` [${event.agentModel}]` : '';
           if (event.type === 'step-started') {
@@ -974,12 +977,13 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
         const formattedResponse = this.formatAgentResponse(agent, display);
+        const totalDuration = Date.now() - workflowStart + (result.duration_ms ?? 0);
         return {
           agentId,
           agent,
           content: formattedResponse,
           rawContent: display,
-          duration: result.duration_ms,
+          duration: totalDuration,
         };
       }
 

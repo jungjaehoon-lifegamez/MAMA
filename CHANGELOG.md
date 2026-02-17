@@ -19,6 +19,10 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - **Slack null message crash**: Fixed `Cannot read properties of undefined (reading 'replace')` in cleanMessageContent
+- **Workflow timer leak**: Clear timeout after Promise.race settles in workflow step execution
+- **Workflow duration measurement**: Capture full workflow execution time, not just Conductor response time
+- **Workflow validation**: Add `display_name` validation and NPE guard in topologicalSort
+- **Code style**: Add braces to single-line control statements, use DebugLogger instead of console.log
 
 ## [0.9.0] - 2026-02-15
 
