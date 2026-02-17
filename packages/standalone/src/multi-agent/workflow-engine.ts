@@ -22,6 +22,20 @@ const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_MAX_EPHEMERAL = 5;
 const DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000; // 10 minutes
 
+export class StepExecutionError extends Error {
+  duration_ms: number;
+  stepId: string;
+  agentId: string;
+
+  constructor(message: string, stepId: string, agentId: string, duration_ms: number) {
+    super(message);
+    this.name = 'StepExecutionError';
+    this.stepId = stepId;
+    this.agentId = agentId;
+    this.duration_ms = duration_ms;
+  }
+}
+
 export type StepExecutor = (
   agent: EphemeralAgentDef,
   prompt: string,
@@ -62,6 +76,7 @@ export class WorkflowEngine extends EventEmitter {
         if (!step.id || !step.agent || !step.prompt) return null;
         if (
           !step.agent.id ||
+          !step.agent.display_name ||
           !step.agent.backend ||
           !step.agent.model ||
           !step.agent.system_prompt
@@ -141,6 +156,9 @@ export class WorkflowEngine extends EventEmitter {
     for (const step of steps) {
       if (step.depends_on) {
         for (const dep of step.depends_on) {
+          if (!adjacency.has(dep)) {
+            throw new Error(`Step "${step.id}" depends on unknown step "${dep}"`);
+          }
           adjacency.get(dep)!.push(step.id);
           inDegree.set(step.id, (inDegree.get(step.id) ?? 0) + 1);
         }
@@ -246,13 +264,15 @@ export class WorkflowEngine extends EventEmitter {
             stepResults.set(step.id, levelResult.value);
             execution.steps.push(levelResult.value);
           } else {
+            const reason = levelResult.reason;
+            const duration_ms = reason instanceof StepExecutionError ? reason.duration_ms : 0;
             const failedResult: StepResult = {
               stepId: step.id,
               agentId: step.agent.id,
               result: '',
-              duration_ms: 0,
+              duration_ms,
               status: 'failed',
-              error: levelResult.reason?.message || String(levelResult.reason),
+              error: reason?.message || String(reason),
             };
             stepResults.set(step.id, failedResult);
             execution.steps.push(failedResult);
@@ -390,7 +410,7 @@ export class WorkflowEngine extends EventEmitter {
         };
       }
 
-      throw error;
+      throw new StepExecutionError(errorMsg, step.id, step.agent.id, duration_ms);
     }
   }
 
