@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Dynamic Workflow Orchestration**: Conductor dynamically generates multi-step workflow DAGs from user requests
+  - Ephemeral agents are spawned on-demand with custom system prompts, backends, and models
+  - DAG-based execution with topological sort, parallel execution per level, and result interpolation
+  - No pre-defined agents needed — Conductor designs the team for each request
+  - Progress messages in Slack/Discord show agent name, model, and duration per step
+  - Automatic cleanup of ephemeral agent processes after workflow completion
+  - 30 unit tests for workflow engine (parsing, validation, cycle detection, execution)
+- **Image type detection**: Discord gateway detects actual image media type from magic bytes
+- **Configurable image analysis model**: ImageAnalyzer reads model from config instead of hardcoded value
+
+### Fixed
+
+- **Slack null message crash**: Fixed `Cannot read properties of undefined (reading 'replace')` in cleanMessageContent
+
 ## [0.9.0] - 2026-02-15
 
 ### Added
