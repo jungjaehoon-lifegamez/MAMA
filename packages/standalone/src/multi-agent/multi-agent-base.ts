@@ -519,12 +519,10 @@ export abstract class MultiAgentHandlerBase {
       const hasBlock = /```workflow_plan/i.test(conductorResponse);
       if (hasBlock) {
         this.logger.warn('[Workflow] Found workflow_plan block but failed to parse it');
+        const blockIdx = conductorResponse.search(/```workflow_plan/i);
         this.logger.warn(
           '[Workflow] Response snippet:',
-          conductorResponse.substring(
-            conductorResponse.indexOf('```workflow_plan'),
-            conductorResponse.indexOf('```workflow_plan') + 500
-          )
+          conductorResponse.substring(Math.max(0, blockIdx), Math.max(0, blockIdx) + 500)
         );
       }
       return null;
@@ -543,18 +541,20 @@ export abstract class MultiAgentHandlerBase {
     // Extract non-plan content as Conductor's direct message
     const directMessage = this.workflowEngine.extractNonPlanContent(conductorResponse);
 
+    // Collect ephemeral agent IDs for cleanup
+    const ephemeralAgentIds = plan.steps.map((s) => s.agent.id);
+
     // Register progress listener
     const progressHandler = onProgress
       ? (event: WorkflowProgressEvent) => onProgress(event)
       : undefined;
-    if (progressHandler) {
-      this.workflowEngine.on('progress', progressHandler);
-    }
-
-    // Collect ephemeral agent IDs for cleanup
-    const ephemeralAgentIds = plan.steps.map((s) => s.agent.id);
 
     try {
+      // Register progress listener inside try block to ensure cleanup in finally
+      if (progressHandler) {
+        this.workflowEngine.on('progress', progressHandler);
+      }
+
       // Register all ephemeral agents
       for (const step of plan.steps) {
         this.processManager.registerEphemeralAgent(step.agent);
@@ -567,17 +567,23 @@ export abstract class MultiAgentHandlerBase {
         timeoutMs: number
       ): Promise<string> => {
         let process: AgentRuntimeProcess | null = null;
+        let timer: NodeJS.Timeout | undefined;
         try {
           process = await this.processManager.getProcess(source, channelId, agent.id);
           const result = await Promise.race([
             process.sendMessage(prompt),
             new Promise<never>((_, reject) => {
-              setTimeout(() => reject(new Error(`Step timeout (${timeoutMs}ms)`)), timeoutMs);
+              timer = setTimeout(
+                () => reject(new Error(`Step timeout (${timeoutMs}ms)`)),
+                timeoutMs
+              );
             }),
           ]);
+          if (timer) clearTimeout(timer);
           const cleaned = await this.executeTextToolCalls(result.response);
           return cleaned;
         } finally {
+          if (timer) clearTimeout(timer);
           if (process) {
             this.processManager.releaseProcess(agent.id, process);
           }
