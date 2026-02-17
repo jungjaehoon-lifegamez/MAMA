@@ -509,7 +509,9 @@ export class SlackGateway extends BaseGateway {
   }
 
   protected override cleanMessageContent(content: string): string {
-    if (!content) return '';
+    if (!content) {
+      return '';
+    }
     return content
       .replace(/<@[UW]\w+>/g, '')
       .replace(/<@[UW]\w+\|[^>]+>/g, '')

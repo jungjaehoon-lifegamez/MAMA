@@ -1157,7 +1157,9 @@ export class DiscordGateway extends BaseGateway {
    * Detect actual image media type from magic bytes
    */
   private detectImageType(buffer: Buffer): string | null {
-    if (buffer.length < 12) return null;
+    if (buffer.length < 12) {
+      return null;
+    }
 
     // JPEG: FF D8 FF
     if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
@@ -1241,7 +1243,7 @@ export class DiscordGateway extends BaseGateway {
             }
           }
 
-          console.log(
+          discordLogger.info(
             `[Discord] Image type: declared=${attachment.contentType}, detected=${detectedType}, using=${mediaType}`
           );
 
