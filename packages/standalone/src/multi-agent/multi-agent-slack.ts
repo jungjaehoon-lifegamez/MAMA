@@ -469,7 +469,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       return false;
     }
 
-    if (!this.mainWebClient) return false;
+    if (!this.mainWebClient) {
+      return false;
+    }
 
     const contentLower = content.toLowerCase();
 
@@ -666,7 +668,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         context.channelId,
         'slack',
         (event) => {
-          if (!this.mainWebClient) return;
+          if (!this.mainWebClient) {
+            return;
+          }
           let msg = '';
           const modelTag = event.agentModel ? ` [${event.agentModel}]` : '';
           if (event.type === 'step-started') {
@@ -1157,7 +1161,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
    * Poll agent states and report to Slack if any are busy
    */
   private async pollAndReport(): Promise<void> {
-    if (!this.mainWebClient || !this.heartbeatChannelId) return;
+    if (!this.mainWebClient || !this.heartbeatChannelId) {
+      return;
+    }
 
     const agentStates = this.processManager.getAgentStates();
     const prSessions = this.isPrReviewPollingEnabled()
