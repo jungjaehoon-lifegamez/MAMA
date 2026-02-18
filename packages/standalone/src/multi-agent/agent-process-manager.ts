@@ -343,7 +343,7 @@ export class AgentProcessManager extends EventEmitter {
     const process = new CodexRuntimeProcess({
       model: options.model || this.runtimeOptions.model,
       systemPrompt: options.systemPrompt,
-      cwd: this.runtimeOptions.codexCwd,
+      cwd: this.runtimeOptions.codexCwd ? resolvePath(this.runtimeOptions.codexCwd) : undefined,
       sandbox: this.runtimeOptions.codexSandbox,
       requestTimeout: options.requestTimeout,
     });
