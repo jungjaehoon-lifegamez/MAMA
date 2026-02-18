@@ -149,10 +149,11 @@ export class SettingsModule {
 
   private buildEffortOptions(model: string, selectedEffort: EffortLevel): string {
     return this.getEffortLevelsForModel(model)
-      .map(
-        (effort) =>
-          `<option value="${effort}" ${selectedEffort === effort ? 'selected' : ''}>${effort}${effort === 'max' ? ' (Opus)' : ''}</option>`
-      )
+      .map((effort) => {
+        const selected = selectedEffort === effort ? ' selected' : '';
+        const label = effort === 'max' ? `${effort} (Opus)` : effort;
+        return `<option value="${effort}"${selected}>${label}</option>`;
+      })
       .join('');
   }
 

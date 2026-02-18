@@ -302,6 +302,8 @@ describe('AgentProcessManager env vars by tier', () => {
     });
   });
 
+  // Story: BMAD-SEL-001 — BMAD prompt block injection selection logic
+  // AC: Conductor/planning agents get BMAD block; non-planning agents do not
   describe('BMAD prompt injection selector', () => {
     const selectBmadInjection = (
       agentId: string,

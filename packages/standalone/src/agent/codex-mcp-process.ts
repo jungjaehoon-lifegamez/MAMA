@@ -16,7 +16,7 @@ import { EventEmitter } from 'events';
 import * as readline from 'readline';
 import { accessSync, constants } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { delimiter, join } from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as {
@@ -103,7 +103,13 @@ export class CodexMCPProcess extends EventEmitter {
     }
 
     this.state = 'starting';
-    const command = this.resolveCodexCommand();
+    let command: string;
+    try {
+      command = this.resolveCodexCommand();
+    } catch (error) {
+      this.state = 'dead';
+      throw error;
+    }
     logger.info(`Starting Codex MCP server with command: ${command}`);
 
     try {
@@ -560,7 +566,7 @@ export class CodexMCPProcess extends EventEmitter {
     }
 
     const pathEntries = pathValue
-      .split(':')
+      .split(delimiter)
       .map((value) => value.trim())
       .filter(Boolean);
     for (const dir of pathEntries) {
@@ -599,7 +605,7 @@ export class CodexMCPProcess extends EventEmitter {
       message.includes('process closed with code') ||
       message.includes('mcp initialize timeout') ||
       message.includes('connection closed') ||
-      message.includes('ECONNRESET')
+      message.includes('econnreset')
     );
   }
 

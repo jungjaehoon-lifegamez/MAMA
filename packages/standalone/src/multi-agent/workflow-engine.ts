@@ -182,7 +182,9 @@ export class WorkflowEngine extends EventEmitter {
     }
 
     const jsonCandidate = this.extractFirstJsonObject(trimmed);
-    if (!jsonCandidate) return null;
+    if (!jsonCandidate) {
+      return null;
+    }
 
     try {
       return JSON.parse(jsonCandidate) as WorkflowPlan;
