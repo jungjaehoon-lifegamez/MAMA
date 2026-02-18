@@ -5,7 +5,7 @@
  */
 
 import { spawn, exec } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import Database from 'better-sqlite3';
 import express from 'express';
@@ -351,6 +351,80 @@ function shouldAutoOpenBrowser(): boolean {
   return process.env.MAMA_NO_AUTO_OPEN_BROWSER !== '1';
 }
 
+function isExecutable(target: string): boolean {
+  try {
+    accessSync(target, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findExecutableInPath(commandName: string): string | null {
+  const pathValue = process.env.PATH || '';
+  if (!pathValue) {
+    return null;
+  }
+
+  const pathEntries = pathValue
+    .split(':')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const dir of pathEntries) {
+    const candidate = join(dir, commandName);
+    if (isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveCodexCommandForStartup(): string {
+  const candidates = [process.env.MAMA_CODEX_COMMAND, process.env.CODEX_COMMAND];
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const trimmed = candidate.trim();
+    if (trimmed && isExecutable(trimmed)) {
+      return trimmed;
+    }
+  }
+
+  const fromPath = findExecutableInPath('codex');
+  if (fromPath) {
+    return fromPath;
+  }
+
+  throw new Error(
+    'Codex command not found. Set MAMA_CODEX_COMMAND or CODEX_COMMAND to an executable path, ' +
+      'or install codex and ensure PATH includes the binary.'
+  );
+}
+
+function hasCodexBackendConfigured(config: Awaited<ReturnType<typeof loadConfig>>): boolean {
+  if ((config.agent?.backend ?? 'claude') === 'codex-mcp') {
+    return true;
+  }
+
+  const agents = config.multi_agent?.agents;
+  if (!agents || typeof agents !== 'object') {
+    return false;
+  }
+
+  for (const raw of Object.values(agents)) {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const agentBackend = (raw as { backend?: string }).backend;
+      if (agentBackend === 'codex-mcp') {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 /**
  * Options for start command
  */
@@ -531,6 +605,15 @@ export async function runAgentLoop(
   config: Awaited<ReturnType<typeof loadConfig>>,
   options: { osAgentMode?: boolean } = {}
 ): Promise<void> {
+  const startupBackend = config.agent.backend ?? 'claude';
+  const usesCodexBackend = startupBackend === 'codex-mcp' || hasCodexBackendConfigured(config);
+
+  if (usesCodexBackend) {
+    const codexCommand = resolveCodexCommandForStartup();
+    process.env.MAMA_CODEX_COMMAND = codexCommand;
+    console.log(`✓ Codex CLI backend (command: ${codexCommand})`);
+  }
+
   // Claude CLI is always used (Pi Agent removed for ToS compliance)
   console.log('✓ Claude CLI mode (ToS compliance)');
 
@@ -624,11 +707,11 @@ export async function runAgentLoop(
     }
   }
 
-  const backend = config.agent.backend ?? 'claude';
+  const runtimeBackend = config.agent.backend ?? 'claude';
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
   const agentLoop = new AgentLoop(oauthManager, {
-    backend,
+    backend: runtimeBackend,
     model: config.agent.model,
     timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
@@ -711,7 +794,7 @@ export async function runAgentLoop(
         agentLoop.setSessionKey(sessionKey);
       }
 
-      if (backend === 'codex-mcp' && options) {
+      if (runtimeBackend === 'codex-mcp' && options) {
         // Override role-based model selection for Codex-MCP backend
         options.model = config.agent.model;
       }
@@ -764,7 +847,7 @@ export async function runAgentLoop(
       }
 
       console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);
-      if (backend === 'codex-mcp' && options) {
+      if (runtimeBackend === 'codex-mcp' && options) {
         // Override role-based model selection for Codex-MCP backend
         options.model = config.agent.model;
       }
@@ -1012,10 +1095,11 @@ export async function runAgentLoop(
 
   const gatewayMultiAgentConfig = config.multi_agent;
   const gatewayMultiAgentRuntime = {
-    backend,
+    backend: runtimeBackend,
     model: config.agent.model,
     effort: config.agent.effort,
     requestTimeout: config.agent.timeout,
+    codexCommand: process.env.MAMA_CODEX_COMMAND || process.env.CODEX_COMMAND,
     codexCwd: config.agent.codex_cwd,
     codexSandbox: config.agent.codex_sandbox,
   };

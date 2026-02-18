@@ -632,13 +632,41 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         };
 
         this.messageQueue.enqueue(agentId, queuedMessage);
+        const queueSize = this.messageQueue.getQueueSize(agentId);
+        const queueText =
+          queueSize > 0
+            ? `⚠️ ${agent.display_name}이(가) 현재 작업 중입니다. ${queueSize}개의 메시지가 대기열에 있습니다.`
+            : `⚠️ ${agent.display_name}이(가) 현재 작업 중입니다. 요청이 대기열에 등록되었습니다.`;
 
         // Trigger immediate drain if process is idle or reaped
         this.tryDrainNow(agentId, 'slack', context.channelId).catch(() => {});
 
-        return null;
+        return {
+          agentId,
+          agent,
+          content: this.formatAgentResponse(agent, queueText),
+          rawContent: queueText,
+          duration: 0,
+        };
       }
-      return null;
+
+      const fallbackMessage =
+        errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('timeout')
+          ? `⚠️ ${agent.display_name} 응답이 시간 초과되어 처리 결과를 못 받았습니다. 잠시 후 다시 시도해 주세요.`
+          : `⚠️ ${agent.display_name} 처리 중 오류가 발생했습니다: ${errMsg}`;
+
+      const fallbackRaw =
+        errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('timeout')
+          ? 'Response timed out'
+          : `Error: ${errMsg}`;
+
+      return {
+        agentId,
+        agent,
+        content: this.formatAgentResponse(agent, fallbackMessage),
+        rawContent: fallbackRaw,
+        duration: 0,
+      };
     } finally {
       if (process) {
         this.processManager.releaseProcess(agentId, process);

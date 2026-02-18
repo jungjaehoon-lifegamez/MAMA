@@ -19,7 +19,7 @@ import type {
 } from './workflow-types.js';
 
 const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const DEFAULT_MAX_EPHEMERAL = 5;
+const DEFAULT_MAX_EPHEMERAL = 20;
 const DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000; // 10 minutes
 
 export class StepExecutionError extends Error {
@@ -62,44 +62,185 @@ export class WorkflowEngine extends EventEmitter {
    * Returns null if no valid plan is found.
    */
   parseWorkflowPlan(response: string): WorkflowPlan | null {
-    const match = response.match(/```workflow_plan\s*\n([\s\S]*?)\n```/);
-    if (!match) return null;
+    const candidates = this.extractWorkflowPlanCandidates(response);
+    if (candidates.length === 0) {
+      return null;
+    }
 
-    try {
-      const plan = JSON.parse(match[1].trim()) as WorkflowPlan;
-      const isNonEmptyString = (value: unknown): value is string =>
-        typeof value === 'string' && value.trim().length > 0;
+    const isNonEmptyString = (value: unknown): value is string =>
+      typeof value === 'string' && value.trim().length > 0;
 
-      if (!isNonEmptyString(plan.name) || !Array.isArray(plan.steps) || plan.steps.length === 0) {
+    for (const block of candidates) {
+      try {
+        const content = this.stripWorkflowFence(block);
+        const plan = this.parseWorkflowPlanContent(content);
+        if (!plan) {
+          continue;
+        }
+
+        if (!isNonEmptyString(plan.name) || !Array.isArray(plan.steps) || plan.steps.length === 0) {
+          continue;
+        }
+
+        const hasValidDependsOn = (deps: unknown): deps is string[] =>
+          deps === undefined || (Array.isArray(deps) && deps.every((d) => isNonEmptyString(d)));
+
+        // Validate each step has required fields
+        let isValid = true;
+        for (const step of plan.steps) {
+          if (!isNonEmptyString(step.id) || !step.agent || !isNonEmptyString(step.prompt)) {
+            isValid = false;
+            break;
+          }
+          if (!hasValidDependsOn(step.depends_on)) {
+            isValid = false;
+            break;
+          }
+          if (
+            !isNonEmptyString(step.agent.id) ||
+            !isNonEmptyString(step.agent.display_name) ||
+            !isNonEmptyString(step.agent.backend) ||
+            !isNonEmptyString(step.agent.model) ||
+            !isNonEmptyString(step.agent.system_prompt)
+          ) {
+            isValid = false;
+            break;
+          }
+        }
+        if (!isValid) {
+          continue;
+        }
+
+        return plan;
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  private extractWorkflowPlanBlock(response: string): string | null {
+    const openMatch = response.match(/```workflow_plan\b[^\n]*\n?/i);
+    if (!openMatch || openMatch.index === undefined) {
+      return null;
+    }
+
+    const openIndex = openMatch.index;
+    const closeIndex = response.indexOf('```', openIndex + openMatch[0].length);
+    return closeIndex === -1
+      ? response.slice(openIndex)
+      : response.slice(openIndex, closeIndex + 3);
+  }
+
+  private extractWorkflowPlanCandidates(response: string): string[] {
+    const candidates = new Set<string>();
+    const blockMatches = response.matchAll(/```workflow_plan\b[^\n]*\n?[\s\S]*?(?:```|$)/gi);
+    for (const match of blockMatches) {
+      if (match[0]) {
+        candidates.add(match[0].trim());
+      }
+    }
+
+    const plainMatch = this.extractFirstJsonObject(response);
+    if (plainMatch) {
+      candidates.add(plainMatch);
+    }
+
+    if (response.toLowerCase().includes('workflow_plan') && candidates.size === 0) {
+      const body = response.replace(/```workflow_plan[\s\S]*/i, '').trim();
+      if (body) {
+        candidates.add(body);
+      }
+    }
+
+    return [...candidates];
+  }
+
+  private stripWorkflowFence(block: string): string {
+    let withoutHeader = block.replace(/^```workflow_plan\b[^\n]*\n?/i, '');
+    withoutHeader = withoutHeader.replace(/^\n*```json\s*\n?/i, '');
+    withoutHeader = withoutHeader.replace(/\n*```\s*$/i, '');
+    return withoutHeader.trim();
+  }
+
+  private parseWorkflowPlanContent(content: string): WorkflowPlan | null {
+    const trimmed = content.trim();
+    if (!trimmed) return null;
+
+    const directParse = (): WorkflowPlan | null => {
+      try {
+        return JSON.parse(trimmed) as WorkflowPlan;
+      } catch {
         return null;
       }
+    };
 
-      // Validate each step has required fields
-      for (const step of plan.steps) {
-        if (!isNonEmptyString(step.id) || !step.agent || !isNonEmptyString(step.prompt))
-          return null;
-        if (
-          !isNonEmptyString(step.agent.id) ||
-          !isNonEmptyString(step.agent.display_name) ||
-          !isNonEmptyString(step.agent.backend) ||
-          !isNonEmptyString(step.agent.model) ||
-          !isNonEmptyString(step.agent.system_prompt)
-        ) {
-          return null;
-        }
-      }
+    const parsedDirect = directParse();
+    if (parsedDirect) {
+      return parsedDirect;
+    }
 
-      return plan;
+    const jsonCandidate = this.extractFirstJsonObject(trimmed);
+    if (!jsonCandidate) return null;
+
+    try {
+      return JSON.parse(jsonCandidate) as WorkflowPlan;
     } catch {
       return null;
     }
+  }
+
+  private extractFirstJsonObject(text: string): string | null {
+    let inString = false;
+    let escaped = false;
+    let braces = 0;
+    let start = -1;
+
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+
+      if (ch === '"' && !escaped) {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) {
+        escaped = ch === '\\' && !escaped;
+        continue;
+      }
+
+      if (ch === '{') {
+        if (start === -1) {
+          start = i;
+        }
+        braces += 1;
+      } else if (ch === '}') {
+        if (start === -1) {
+          return null;
+        }
+        braces -= 1;
+        if (braces === 0) {
+          return text.slice(start, i + 1);
+        }
+      }
+
+      escaped = false;
+    }
+
+    return null;
   }
 
   /**
    * Extract text content outside the workflow_plan block (for display as Conductor's direct message).
    */
   extractNonPlanContent(response: string): string {
-    return response.replace(/```workflow_plan\s*\n[\s\S]*?\n```/, '').trim();
+    const block = this.extractWorkflowPlanBlock(response);
+    if (!block) {
+      return response.trim();
+    }
+
+    return response.replace(block, '').trim();
   }
 
   /**

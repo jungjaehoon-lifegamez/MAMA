@@ -345,6 +345,7 @@ export class AgentProcessManager extends EventEmitter {
       systemPrompt: options.systemPrompt,
       cwd: this.runtimeOptions.codexCwd ? resolvePath(this.runtimeOptions.codexCwd) : undefined,
       sandbox: this.runtimeOptions.codexSandbox,
+      command: this.runtimeOptions.codexCommand,
       requestTimeout: options.requestTimeout,
     });
     return process;

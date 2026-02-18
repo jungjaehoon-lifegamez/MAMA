@@ -326,6 +326,8 @@ export interface MultiAgentRuntimeOptions {
   requestTimeout?: number;
   /** Codex working directory (for codex-mcp backend) */
   codexCwd?: string;
+  /** Explicit Codex binary/command path (for codex-mcp backend) */
+  codexCommand?: string;
   /** Codex sandbox mode (for codex-mcp backend) */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
 }
