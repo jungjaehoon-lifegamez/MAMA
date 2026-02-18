@@ -14,6 +14,9 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import * as readline from 'readline';
+import { accessSync, constants } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as {
@@ -25,6 +28,8 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('CodexMCP');
+const DEFAULT_REQUEST_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_INITIALIZE_TIMEOUT_MS = 60 * 1000;
 
 export interface CodexMCPOptions {
   model?: string;
@@ -33,6 +38,7 @@ export interface CodexMCPOptions {
   systemPrompt?: string;
   compactPrompt?: string;
   timeoutMs?: number;
+  command?: string;
 }
 
 export interface PromptCallbacks {
@@ -69,6 +75,7 @@ interface JsonRpcResponse {
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  method: string;
   timeout: NodeJS.Timeout;
 }
 
@@ -96,12 +103,27 @@ export class CodexMCPProcess extends EventEmitter {
     }
 
     this.state = 'starting';
-    logger.info('Starting Codex MCP server');
+    const command = this.resolveCodexCommand();
+    logger.info(`Starting Codex MCP server with command: ${command}`);
 
-    this.process = spawn('codex', ['mcp-server'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: this.options.cwd,
-    });
+    try {
+      this.process = spawn(command, ['mcp-server'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: this.options.cwd,
+      });
+    } catch (error) {
+      const startError = error instanceof Error ? error : new Error(String(error));
+      logger.error('Failed to start Codex MCP process:', startError);
+      this.state = 'dead';
+      this.process = null;
+      throw startError;
+    }
+
+    if (!this.process) {
+      const startError = new Error(`Failed to create Codex MCP process with command: ${command}`);
+      this.state = 'dead';
+      throw startError;
+    }
 
     // Set up readline for JSON parsing
     this.rl = readline.createInterface({
@@ -120,9 +142,7 @@ export class CodexMCPProcess extends EventEmitter {
 
     this.process.on('close', (code) => {
       logger.info(`Process closed with code ${code}`);
-      this.state = 'dead';
-      this.process = null;
-      this.threadId = null;
+      this.shutdown(new Error(`Process closed with code ${code ?? 'unknown'}`), false);
     });
 
     // Wait for process to either start successfully or fail with spawn error
@@ -139,19 +159,29 @@ export class CodexMCPProcess extends EventEmitter {
         this.process?.removeListener('error', onSpawnError);
         this.process?.on('error', (error) => {
           logger.error('Process error:', error);
-          this.emit('error', error);
+          if (this.listenerCount('error') > 0) {
+            this.emit('error', error);
+          }
+          this.shutdown(error instanceof Error ? error : new Error(String(error)), true);
         });
         resolve();
       }, 200);
     });
 
     try {
-      // MCP Initialize
-      await this.sendRequest('initialize', {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'MAMA', version: '1.0.0' },
-      });
+      // MCP Initialize (bounded timeout to avoid dead startup)
+      await Promise.race([
+        this.sendRequest('initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'MAMA', version: '1.0.0' },
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`MCP initialize timeout after ${DEFAULT_INITIALIZE_TIMEOUT_MS}ms`));
+          }, DEFAULT_INITIALIZE_TIMEOUT_MS);
+        }),
+      ]);
 
       this.state = 'ready';
       logger.info('Codex MCP server ready');
@@ -234,12 +264,12 @@ export class CodexMCPProcess extends EventEmitter {
           args['compact-prompt'] = this.options.compactPrompt;
         }
 
-        result = await this.callTool('codex', args);
+        result = await this.callToolWithRetry('codex', args);
         this.threadId = result.threadId;
         logger.info(`Thread started: ${this.threadId}`);
       } else {
         // Subsequent messages: use "codex-reply" tool
-        result = await this.callTool('codex-reply', {
+        result = await this.callToolWithRetry('codex-reply', {
           threadId: this.threadId,
           prompt: content,
         });
@@ -308,23 +338,7 @@ export class CodexMCPProcess extends EventEmitter {
   }
 
   private cleanup(reason = 'Process terminated'): void {
-    // Reject pending requests first so callers are unblocked immediately.
-    for (const [, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error(reason));
-    }
-    this.pendingRequests.clear();
-
-    if (this.rl) {
-      this.rl.close();
-      this.rl = null;
-    }
-    if (this.process) {
-      this.process.kill();
-      this.process = null;
-    }
-    this.state = 'dead';
-    this.threadId = null;
+    this.shutdown(new Error(reason), true);
   }
 
   // ============================================================================
@@ -339,8 +353,6 @@ export class CodexMCPProcess extends EventEmitter {
     content: string;
     usage?: { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
   }> {
-    logger.debug(`[CALL] ${name}`);
-
     const response = (await this.sendRequest('tools/call', {
       name,
       arguments: args,
@@ -393,6 +405,37 @@ export class CodexMCPProcess extends EventEmitter {
     return { threadId: this.threadId || '', content: '', usage };
   }
 
+  private async callToolWithRetry(
+    name: string,
+    args: Record<string, unknown>
+  ): Promise<{
+    threadId: string;
+    content: string;
+    usage?: { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
+  }> {
+    let attempt = 0;
+    while (attempt < 2) {
+      attempt += 1;
+      try {
+        logger.debug(`[CALL] ${name} (attempt=${attempt})`);
+        return await this.callTool(name, args);
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        if (attempt >= 2 || !this.isRetryableToolError(err)) {
+          logger.error(`Call failed: ${name} (attempt=${attempt})`, err);
+          throw err;
+        }
+
+        logger.warn(`Retrying ${name} after recoverable tool error: ${err.message}`);
+        this.threadId = null;
+        this.cleanup();
+        await this.start();
+      }
+    }
+
+    throw new Error(`Tool call failed after ${attempt} attempts: ${name}`);
+  }
+
   private async sendRequest(method: string, params?: Record<string, unknown>): Promise<unknown> {
     if (!this.process?.stdin) {
       throw new Error('Process not running');
@@ -407,17 +450,28 @@ export class CodexMCPProcess extends EventEmitter {
     };
 
     return new Promise((resolve, reject) => {
-      const timeoutMs = this.options.timeoutMs ?? 120000;
+      const timeoutMs = this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const timeout = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        reject(new Error(`Request timeout: ${method}`));
+        const timeoutError = new Error(
+          `Request timeout: ${method} (id=${id}, timeoutMs=${timeoutMs})`
+        );
+        this.failPendingRequest(id, timeoutError);
+        this.shutdown(timeoutError, true);
       }, timeoutMs);
 
-      this.pendingRequests.set(id, { resolve, reject, timeout });
+      this.pendingRequests.set(id, { resolve, reject, method, timeout });
 
       const line = JSON.stringify(request) + '\n';
-      this.process!.stdin!.write(line);
-      logger.debug(`Sent: ${method} (id=${id})`);
+      try {
+        this.process!.stdin!.write(line);
+        logger.debug(`Sent: ${method} (id=${id})`);
+      } catch (error) {
+        const requestError = error instanceof Error ? error : new Error(String(error));
+        logger.error('Failed to write MCP request:', requestError);
+        this.failPendingRequest(id, requestError);
+        this.shutdown(requestError, true);
+        reject(requestError);
+      }
     });
   }
 
@@ -443,5 +497,127 @@ export class CodexMCPProcess extends EventEmitter {
     } catch {
       logger.warn('Failed to parse line:', line.substring(0, 100));
     }
+  }
+
+  private resolveCodexCommand(): string {
+    const configured = [
+      this.options.command,
+      process.env.MAMA_CODEX_COMMAND,
+      process.env.CODEX_COMMAND,
+    ];
+
+    for (const candidate of configured) {
+      if (!candidate) {
+        continue;
+      }
+      const trimmed = candidate.trim();
+      if (!trimmed) {
+        continue;
+      }
+      if (this.isExecutable(trimmed)) {
+        return trimmed;
+      }
+    }
+
+    const fromPath = this.findExecutableInPath('codex');
+    if (fromPath) {
+      return fromPath;
+    }
+
+    const home = homedir();
+    const fallbackCandidates = [
+      join(home, '.local', 'bin', 'codex'),
+      join(home, 'bin', 'codex'),
+      '/usr/local/bin/codex',
+      '/usr/bin/codex',
+      '/opt/homebrew/bin/codex',
+      '/bin/codex',
+    ];
+    for (const candidate of fallbackCandidates) {
+      if (this.isExecutable(candidate)) {
+        return candidate;
+      }
+    }
+
+    throw new Error(
+      'Codex command not found. Set MAMA_CODEX_COMMAND or CODEX_COMMAND to an executable path, or install codex in PATH.'
+    );
+  }
+
+  private isExecutable(target: string): boolean {
+    try {
+      accessSync(target, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private findExecutableInPath(commandName: string): string | null {
+    const pathValue = process.env.PATH || '';
+    if (!pathValue) {
+      return null;
+    }
+
+    const pathEntries = pathValue
+      .split(':')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    for (const dir of pathEntries) {
+      const candidate = join(dir, commandName);
+      if (this.isExecutable(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private failPendingRequest(id: number, error: Error): void {
+    const pending = this.pendingRequests.get(id);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timeout);
+    this.pendingRequests.delete(id);
+    pending.reject(error);
+  }
+
+  private clearPendingRequests(error: Error): void {
+    for (const [, pending] of this.pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(`${error.message} (${pending.method})`));
+    }
+    this.pendingRequests.clear();
+  }
+
+  private isRetryableToolError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('request timeout') ||
+      message.includes('process is not running') ||
+      message.includes('process closed with code') ||
+      message.includes('mcp initialize timeout') ||
+      message.includes('connection closed') ||
+      message.includes('ECONNRESET')
+    );
+  }
+
+  private shutdown(error: Error, shouldKillProcess: boolean): void {
+    if (this.state === 'dead' && this.pendingRequests.size === 0 && !shouldKillProcess) {
+      return;
+    }
+
+    this.state = 'dead';
+    this.clearPendingRequests(error);
+    if (shouldKillProcess && this.process) {
+      this.process.kill();
+    }
+    if (this.rl) {
+      this.rl.close();
+      this.rl = null;
+    }
+    this.process = null;
+    this.threadId = null;
   }
 }
