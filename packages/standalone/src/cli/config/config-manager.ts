@@ -298,6 +298,7 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
   return {
     enabled: false,
     free_chat: true,
+    default_agent: 'conductor',
     agents: {
       conductor: {
         name: 'Conductor',
@@ -371,16 +372,20 @@ export async function provisionDefaults(): Promise<void> {
   // In dist: dist/cli/config/config-manager.js → ../../../templates/personas
   const templatesDir = resolve(__dirname, '../../../templates/personas');
 
-  // 1. Provision personas directory with builtin templates
+  // 1. Provision personas directory with builtin templates (file-level: copies missing files only)
   if (!existsSync(personasDir)) {
     mkdirSync(personasDir, { recursive: true });
-    if (existsSync(templatesDir)) {
-      for (const file of readdirSync(templatesDir)) {
-        if (file.endsWith('.md')) {
-          copyFileSync(join(templatesDir, file), join(personasDir, file));
-        }
+  }
+  if (existsSync(templatesDir)) {
+    const copied: string[] = [];
+    for (const file of readdirSync(templatesDir)) {
+      if (file.endsWith('.md') && !existsSync(join(personasDir, file))) {
+        copyFileSync(join(templatesDir, file), join(personasDir, file));
+        copied.push(file);
       }
-      console.log('✓ Default persona templates installed');
+    }
+    if (copied.length > 0) {
+      console.log(`✓ Persona templates installed: ${copied.join(', ')}`);
     }
   }
 
