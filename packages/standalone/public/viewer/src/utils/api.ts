@@ -124,7 +124,7 @@ export interface ApiAgentToolsConfig {
   [key: string]: unknown;
 }
 
-export type EffortLevel = 'low' | 'medium' | 'high';
+export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
 
 export interface ApiAgentConfig {
   backend?: 'claude' | 'codex-mcp';

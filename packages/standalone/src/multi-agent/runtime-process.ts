@@ -13,6 +13,7 @@ export interface AgentRuntimeProcess {
   sendMessage(content: string, callbacks?: ClaudePromptCallbacks): Promise<ClaudePromptResult>;
   isReady(): boolean;
   stop(): void;
+  getSessionId?(): string;
   on(event: 'idle' | 'close' | 'error', listener: (...args: unknown[]) => void): this;
 }
 
@@ -110,5 +111,9 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     this.state = 'dead';
     this.wrapper.stop();
     this.emit('close', 0);
+  }
+
+  getSessionId(): string {
+    return this.wrapper.getSessionId();
   }
 }

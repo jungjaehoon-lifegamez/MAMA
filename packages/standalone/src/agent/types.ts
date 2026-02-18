@@ -496,7 +496,7 @@ export interface SetPermissionsInput {
 export interface SetModelInput {
   /** Role to update (e.g., 'os_agent', 'chat_bot'). If not specified, updates global agent model */
   role?: string;
-  /** Model name to use (e.g., 'claude-opus-4-20250514', 'claude-sonnet-4-20250514') */
+  /** Model name to use (e.g., 'claude-opus-4-6', 'claude-sonnet-4-6') */
   model: string;
   /** Optional max turns for this role */
   maxTurns?: number;
@@ -732,7 +732,7 @@ export interface AgentLoopOptions {
   maxTokens?: number;
   /** Request timeout in milliseconds (mapped to Codex CLI `timeoutMs`) */
   timeoutMs?: number;
-  /** Claude model to use (default: claude-sonnet-4-20250514) */
+  /** Claude model to use (must be provided via config) */
   model?: string;
   /** Callback for each turn */
   onTurn?: (turn: TurnInfo) => void;

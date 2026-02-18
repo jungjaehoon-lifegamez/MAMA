@@ -88,7 +88,7 @@ export interface RolesConfig {
 export const DEFAULT_ROLES: RolesConfig = {
   definitions: {
     os_agent: {
-      model: 'claude-sonnet-4-20250514', // Full-featured model for OS control
+      model: 'claude-sonnet-4-6', // Full-featured model for OS control
       maxTurns: 20,
       allowedTools: ['*'],
       allowedPaths: ['~/**'],
@@ -96,7 +96,7 @@ export const DEFAULT_ROLES: RolesConfig = {
       sensitiveAccess: true,
     },
     chat_bot: {
-      model: 'claude-sonnet-4-20250514', // Balanced model for chat
+      model: 'claude-sonnet-4-6', // Balanced model for chat
       maxTurns: 10,
       allowedTools: ['mama_*', 'Read', 'discord_send', 'translate_image'],
       blockedTools: ['Bash', 'Write', 'save_integration_token'],
@@ -147,7 +147,7 @@ export interface ToolsConfig {
  * Controls how much thinking the model does before responding
  * @see https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
  */
-export type EffortLevel = 'low' | 'medium' | 'high';
+export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
 
 /**
  * Agent configuration
@@ -511,7 +511,7 @@ export const DEFAULT_CONFIG: MAMAConfig = {
   version: 1,
   agent: {
     backend: 'claude',
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     max_turns: 10,
     timeout: 300000, // 5 minutes
     tools: {
