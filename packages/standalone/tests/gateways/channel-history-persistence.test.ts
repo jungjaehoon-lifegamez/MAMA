@@ -259,8 +259,8 @@ describe('ChannelHistory - SQLite Persistence', () => {
       const entries: HistoryEntry[] = [
         {
           messageId: 'msg-1',
-          sender: 'Sisyphus',
-          userId: 'sisyphus',
+          sender: 'Conductor',
+          userId: 'conductor',
           body: 'src/api/graph-api.js에 status 엔드포인트 구현해줘',
           timestamp: Date.now(),
         },
@@ -274,8 +274,8 @@ describe('ChannelHistory - SQLite Persistence', () => {
         },
         {
           messageId: 'msg-3',
-          sender: 'Sisyphus',
-          userId: 'sisyphus',
+          sender: 'Conductor',
+          userId: 'conductor',
           body: '코드 리뷰 부탁',
           timestamp: Date.now() + 2000,
         },
@@ -302,7 +302,7 @@ describe('ChannelHistory - SQLite Persistence', () => {
 
       // Simulate daemon crash (in-memory lost)
       const formatted1 = history.formatForContext('channel-123');
-      expect(formatted1).toContain('Sisyphus');
+      expect(formatted1).toContain('Conductor');
       expect(formatted1).toContain('DevBot');
 
       history.destroy();
@@ -316,7 +316,7 @@ describe('ChannelHistory - SQLite Persistence', () => {
 
       const formatted2 = history2.formatForContext('channel-123');
       expect(formatted2).toContain('[Chat messages since your last reply - for context]');
-      expect(formatted2).toContain('Sisyphus:');
+      expect(formatted2).toContain('Conductor:');
       expect(formatted2).toContain('DevBot:');
       expect(formatted2).toContain('Reviewer:');
       expect(formatted2).toContain('커밋해줘');

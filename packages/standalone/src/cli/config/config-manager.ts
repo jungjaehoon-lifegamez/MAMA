@@ -284,11 +284,11 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
     enabled: false,
     free_chat: true,
     agents: {
-      sisyphus: {
-        name: 'Sisyphus',
-        display_name: '🏔️ Sisyphus',
-        trigger_prefix: '!sisyphus',
-        persona_file: '~/.mama/personas/sisyphus.md',
+      conductor: {
+        name: 'Conductor',
+        display_name: '🎯 Conductor',
+        trigger_prefix: '!conductor',
+        persona_file: '~/.mama/personas/conductor.md',
         tier: 1,
         can_delegate: true,
       },
@@ -311,6 +311,20 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         persona_file: '~/.mama/personas/reviewer.md',
         tier: 3,
       },
+      architect: {
+        name: 'Architect',
+        display_name: '🏛️ Architect',
+        trigger_prefix: '!arch',
+        persona_file: '~/.mama/personas/architect.md',
+        tier: 2,
+      },
+      pm: {
+        name: 'PM',
+        display_name: '📋 PM',
+        trigger_prefix: '!pm',
+        persona_file: '~/.mama/personas/pm.md',
+        tier: 2,
+      },
     },
     loop_prevention: {
       max_chain_length: 5,
@@ -318,6 +332,9 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
       chain_window_ms: 60000,
     },
     workflow: {
+      enabled: true,
+    },
+    council: {
       enabled: true,
     },
   };

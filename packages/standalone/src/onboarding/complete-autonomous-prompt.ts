@@ -824,11 +824,11 @@ After setting up messaging platforms (or if they skipped), introduce the agent t
 > "By the way — I don't have to work alone!
 > MAMA comes with a built-in team of AI agents:
 >
-> 🏔️ **Sisyphus** — The Architect. Plans, delegates, never codes directly.
+> 🏔️ **Conductor** — The Architect. Plans, delegates, never codes directly.
 > 🔧 **DevBot** — The Builder. Receives tasks, implements, validates.
 > 📝 **Reviewer** — The Guardian. Reviews code quality, approves or rejects.
 >
-> They work together like a dev team — Sisyphus breaks down tasks,
+> They work together like a dev team — Conductor breaks down tasks,
 > DevBot implements, Reviewer checks quality, and they loop until it's right.
 >
 > Right now the team is on standby. Want me to activate them?"
@@ -838,7 +838,7 @@ After setting up messaging platforms (or if they skipped), introduce the agent t
 2. Explain:
    > "Team activated! 🎉
    > The team will be active on [Discord/Slack] after restart.
-   > You can trigger them with !sisyphus, !dev, !review, or just let them
+   > You can trigger them with !conductor, !dev, !review, or just let them
    > auto-detect based on what you're talking about."
 
 3. Ask if they want to customize agent names/personalities
@@ -976,7 +976,7 @@ Wrap it up with celebration!
 > I'm creating your quick-start guide now..."
 
 If "Agent team on standby":
-> "Remember, your agent team (Sisyphus, DevBot, Reviewer) is ready whenever you need them.
+> "Remember, your agent team (Conductor, DevBot, Reviewer) is ready whenever you need them.
 > Just ask me 'activate agent team' anytime!"
 
 Call \`complete_onboarding\` with \`confirmed: true\`

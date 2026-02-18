@@ -16,13 +16,13 @@ Wave-based multi-agent orchestration for Discord/Slack/Telegram. Sequential 5-wa
 ```
 Wave 1: Initial Analysis (read-only, all tiers)
   ↓
-Wave 2: Planning (Tier 1 agent: sisyphus)
+Wave 2: Planning (Tier 1 agent: conductor)
   ↓
 Wave 3: Implementation (Tier 2 agents: developer, coder)
   ↓
 Wave 4: Review (Tier 3 agents: reviewer, qa)
   ↓
-Wave 5: Completion (Tier 1 agent: sisyphus)
+Wave 5: Completion (Tier 1 agent: conductor)
 ```
 
 **Tier Access Control:**
@@ -79,3 +79,51 @@ Delegation text is only parsed if the Discord gateway processes the message.
 - Blocks delegation loops (A→B→A)
 - Enforces tier boundaries (Tier 3 cannot delegate to Tier 1)
 - Prevents wave regression (Wave 4 cannot return to Wave 2)
+
+---
+
+## ULTRAWORK 3-PHASE LOOP (Ralph Loop)
+
+Autonomous multi-step sessions using structured Plan→Build→Retrospective phases.
+
+```text
+Phase 1: PLANNING
+  └─ Conductor creates implementation plan
+  └─ Optional Council discussion (council_plan block)
+  └─ Plan persisted → plan.md
+
+Phase 2: BUILDING
+  └─ Conductor delegates tasks from plan (DELEGATE::)
+  └─ Each step → progress.json
+  └─ Council escalation on failures
+  └─ BUILD_COMPLETE marker → next phase
+
+Phase 3: RETROSPECTIVE
+  └─ Reviews completed work against plan
+  └─ Council discussion for quality review
+  └─ RETRO_COMPLETE → session ends
+  └─ RETRO_INCOMPLETE → Phase 2 re-entry (max 1 retry)
+```
+
+**Key Files:**
+
+| File                 | Purpose                             |
+| -------------------- | ----------------------------------- |
+| `ultrawork.ts`       | Session loop, 3-phase orchestration |
+| `ultrawork-state.ts` | File-based state persistence (CRUD) |
+
+**State Directory:** `~/.mama/workspace/ultrawork/{session_id}/`
+
+| File               | Content                             |
+| ------------------ | ----------------------------------- |
+| `session.json`     | id, task, phase, agents, timestamps |
+| `plan.md`          | Planning phase output               |
+| `progress.json`    | Array of step records               |
+| `retrospective.md` | Retrospective phase output          |
+
+**Config (`multi_agent.ultrawork`):**
+
+- `phased_loop: true` — enables 3-phase loop (false = legacy freeform)
+- `persist_state: true` — enables file-based state persistence
+- `max_steps: 20` — safety limit
+- `max_duration: 1800000` — 30 min timeout

@@ -505,7 +505,7 @@ When an agent's response appears incomplete, MAMA auto-retries:
 - **Max retries:** Configurable (default: 3)
 - Supports Korean and English patterns
 
-### UltraWork Mode
+### UltraWork Mode (Ralph Loop 3-Phase)
 
 Trigger autonomous multi-step sessions:
 
@@ -513,16 +513,50 @@ Trigger autonomous multi-step sessions:
 User: "Build the auth system ultrawork"
 ```
 
-**How it works:**
+**3-Phase Loop:**
 
-1. Lead agent (Tier 1) analyzes the task and creates a plan
-2. Delegates specialized subtasks to Tier 2/3 agents
-3. Collects results, continues until done or limits reached
-4. Safety: max steps (20) and max duration (30 min)
+```text
+Phase 1: Planning
+  → Lead agent creates implementation plan
+  → Optional Council discussion for plan review
+  → Plan persisted to disk (plan.md)
+
+Phase 2: Building
+  → Executes plan via DELEGATE:: delegation
+  → Each step recorded to progress.json
+  → Council escalation on failures
+
+Phase 3: Retrospective
+  → Reviews completed work against plan
+  → Council discussion for quality check
+  → RETRO_COMPLETE → session ends
+  → RETRO_INCOMPLETE → re-enters Phase 2 (max 1 retry)
+```
+
+**State persistence** (`~/.mama/workspace/ultrawork/{session_id}/`):
+
+| File               | Purpose                    |
+| ------------------ | -------------------------- |
+| `session.json`     | Session metadata and phase |
+| `plan.md`          | Phase 1 output             |
+| `progress.json`    | Completed step records     |
+| `retrospective.md` | Phase 3 output             |
+
+**Config:**
+
+```yaml
+multi_agent:
+  ultrawork:
+    enabled: true
+    phased_loop: true # false = legacy freeform loop
+    persist_state: true # file-based state persistence
+    max_steps: 20
+    max_duration: 1800000 # 30 min
+```
 
 **Trigger keywords:** `ultrawork`, `울트라워크`, `deep work`, `autonomous`, `자율 작업`
 
-Session progress is reported in Discord in real-time.
+Session progress is reported in Discord/Slack in real-time.
 
 ### Persona Files
 

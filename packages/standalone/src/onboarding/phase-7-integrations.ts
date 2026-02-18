@@ -117,7 +117,7 @@ const ROLE_EXAMPLES: Record<string, string> = {
   "multi_agent": {
     "enabled": true,
     "agents": {
-      "sisyphus": { "name": "Sisyphus", "tier": 1, "enabled": true },
+      "conductor": { "name": "Conductor", "tier": 1, "enabled": true },
       "devbot": { "name": "DevBot", "tier": 1, "can_delegate": true, "enabled": true, "tool_permissions": {"allowed":["*"],"blocked":[]} },
       "reviewer": { "name": "Reviewer", "tier": 3, "enabled": true }
     }

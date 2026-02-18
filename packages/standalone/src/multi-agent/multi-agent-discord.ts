@@ -322,7 +322,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       const botUserIdMap = this.multiBotManager.getBotUserIdMap();
 
       // Include LEAD (default agent) which uses the main bot token
-      // Without this, @Sisyphus in other agents' personas won't resolve to <@userId>
+      // Without this, @Conductor in other agents' personas won't resolve to <@userId>
       const defaultAgentId = this.config.default_agent;
       if (defaultAgentId && !botUserIdMap.has(defaultAgentId)) {
         const mainBotUserId = this.multiBotManager.getMainBotUserId();
@@ -811,6 +811,42 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         };
       }
 
+      // Check for council plan (after workflow, before tool calls)
+      const councilResult = await this.tryExecuteCouncil(
+        result.response,
+        context.channelId,
+        'discord',
+        (event) => {
+          if (!this.discordClient) return;
+          let msg = '';
+          if (event.type === 'council-round-started') {
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} 시작...`;
+          } else if (event.type === 'council-round-completed') {
+            const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) 완료`;
+          } else if (event.type === 'council-round-failed') {
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ 실패: ${event.error?.substring(0, 100)}`;
+          }
+          if (msg) {
+            this.sendChannelNotification(context.channelId, msg).catch(() => {});
+          }
+        }
+      );
+
+      if (councilResult) {
+        const display = councilResult.directMessage
+          ? `${councilResult.directMessage}\n\n${councilResult.result}`
+          : councilResult.result;
+        const formattedResponse = this.formatAgentResponse(agent, display);
+        return {
+          agentId,
+          agent,
+          content: formattedResponse,
+          rawContent: display,
+          duration: Date.now() - workflowStart + (result.duration_ms ?? 0),
+        };
+      }
+
       const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
 
       // Detect API error responses — skip mention resolution and delegation to prevent error loops
@@ -1159,7 +1195,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       }
     }
 
-    // Post-send: Auto-review trigger for default agent (Armed Sisyphus) self-implementations
+    // Post-send: Auto-review trigger for default agent (Armed Conductor) self-implementations
     const defaultAgentId = this.config.default_agent;
     if (defaultAgentId) {
       const selfImplemented = responses.find(
@@ -1177,7 +1213,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   }
 
   /**
-   * Detect if the default agent (Sisyphus) performed direct code edits.
+   * Detect if the default agent (Conductor) performed direct code edits.
    * Checks for Claude CLI tool-use markers that indicate Edit/Write operations.
    */
   private detectSelfImplementation(rawContent: string): boolean {
@@ -1197,7 +1233,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   }
 
   /**
-   * Check git diff size after Sisyphus self-implementation.
+   * Check git diff size after Conductor self-implementation.
    * If diff exceeds thresholds, auto-trigger Reviewer for quality gate.
    *
    * Thresholds (PAIR mode auto-escalation):
@@ -1246,7 +1282,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
       if (filesChanged > MAX_FILES || totalLines > MAX_LINES) {
         logger.info(
-          `[AutoReview] Sisyphus self-implementation exceeded thresholds: ${filesChanged} files, ${totalLines} lines -> auto-triggering Reviewer`
+          `[AutoReview] Conductor self-implementation exceeded thresholds: ${filesChanged} files, ${totalLines} lines -> auto-triggering Reviewer`
         );
 
         // Find reviewer agent using shared helper
@@ -1259,7 +1295,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         }
       } else {
         logger.info(
-          `[AutoReview] Sisyphus self-implementation within thresholds: ${filesChanged} files, ${totalLines} lines -- no auto-review needed`
+          `[AutoReview] Conductor self-implementation within thresholds: ${filesChanged} files, ${totalLines} lines -- no auto-review needed`
         );
       }
     } catch {
@@ -1544,7 +1580,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
   /**
    * Resolve @Name mentions in LLM response text to <@userId> Discord format.
-   * LLMs generate plain text like "@LEAD", "@Sisyphus", "@DevBot" which won't
+   * LLMs generate plain text like "@LEAD", "@Conductor", "@DevBot" which won't
    * trigger Discord mentions or routeResponseMentions detection.
    */
   private resolveResponseMentions(text: string): string {

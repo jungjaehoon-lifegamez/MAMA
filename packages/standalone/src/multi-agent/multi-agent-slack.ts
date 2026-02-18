@@ -108,7 +108,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       const userId = match[1];
       const agentId = this.multiBotManager.resolveAgentIdFromUserId(userId);
       if (agentId) {
-        // Resolve 'main' to the actual agent ID (e.g., 'sisyphus')
+        // Resolve 'main' to the actual agent ID (e.g., 'conductor')
         const resolvedId =
           agentId === 'main' ? (this.multiBotManager.getMainBotAgentId() ?? agentId) : agentId;
         agentIds.push(resolvedId);
@@ -461,6 +461,44 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         const display = workflowResult.directMessage
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
+        const formattedResponse = this.formatAgentResponse(agent, display);
+        return {
+          agentId,
+          agent,
+          content: formattedResponse,
+          rawContent: display,
+          duration: result.duration_ms,
+        };
+      }
+
+      // Check for council plan (after workflow, before tool calls)
+      const councilResult = await this.tryExecuteCouncil(
+        result.response,
+        context.channelId,
+        'slack',
+        (event) => {
+          if (!this.mainWebClient) return;
+          let msg = '';
+          if (event.type === 'council-round-started') {
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} 시작...`;
+          } else if (event.type === 'council-round-completed') {
+            const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) 완료`;
+          } else if (event.type === 'council-round-failed') {
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ 실패: ${event.error?.substring(0, 100)}`;
+          }
+          if (msg) {
+            this.mainWebClient!.chat.postMessage({ channel: context.channelId, text: msg }).catch(
+              () => {}
+            );
+          }
+        }
+      );
+
+      if (councilResult) {
+        const display = councilResult.directMessage
+          ? `${councilResult.directMessage}\n\n${councilResult.result}`
+          : councilResult.result;
         const formattedResponse = this.formatAgentResponse(agent, display);
         return {
           agentId,

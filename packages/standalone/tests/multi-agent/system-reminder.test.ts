@@ -12,7 +12,7 @@ function makeReminder(overrides: Partial<SystemReminder> = {}): SystemReminder {
     taskId: overrides.taskId ?? 'bg_abc12345',
     description: overrides.description ?? 'Implement auth module',
     agentId: overrides.agentId ?? 'developer',
-    requestedBy: overrides.requestedBy ?? 'sisyphus',
+    requestedBy: overrides.requestedBy ?? 'conductor',
     channelId: overrides.channelId ?? 'ch-1',
     duration: overrides.duration,
     error: overrides.error,
