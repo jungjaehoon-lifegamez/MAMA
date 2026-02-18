@@ -125,14 +125,25 @@ export class CodexMCPProcess extends EventEmitter {
       this.threadId = null;
     });
 
-    this.process.on('error', (error) => {
-      logger.error('Process error:', error);
-      this.emit('error', error);
-    });
+    // Wait for process to either start successfully or fail with spawn error
+    await new Promise<void>((resolve, reject) => {
+      const onSpawnError = (error: Error): void => {
+        logger.error('Process spawn error:', error);
+        this.state = 'dead';
+        reject(error);
+      };
+      this.process!.on('error', onSpawnError);
 
-    // Give process a moment to start, then send initialize request
-    // MCP servers don't output anything until client sends first request
-    await new Promise((resolve) => setTimeout(resolve, 100));
+      // Give process a moment to start; if no error fires, it spawned OK
+      setTimeout(() => {
+        this.process?.removeListener('error', onSpawnError);
+        this.process?.on('error', (error) => {
+          logger.error('Process error:', error);
+          this.emit('error', error);
+        });
+        resolve();
+      }, 200);
+    });
 
     try {
       // MCP Initialize
@@ -169,9 +180,16 @@ export class CodexMCPProcess extends EventEmitter {
     callbacks?: PromptCallbacks,
     options?: { model?: string; resumeSession?: boolean }
   ): Promise<PromptResult> {
-    // Ensure process is running
+    // Ensure process is running (retry once on failure)
     if (this.state === 'dead') {
-      await this.start();
+      try {
+        await this.start();
+      } catch (err) {
+        logger.warn('First start attempt failed, retrying in 1s:', err);
+        this.cleanup();
+        await new Promise((r) => setTimeout(r, 1000));
+        await this.start();
+      }
     }
 
     // Handle resumeSession option
@@ -312,6 +330,20 @@ export class CodexMCPProcess extends EventEmitter {
     }
     this.pendingRequests.clear();
     logger.info('Process stopped');
+  }
+
+  private cleanup(): void {
+    if (this.rl) {
+      this.rl.close();
+      this.rl = null;
+    }
+    if (this.process) {
+      this.process.kill();
+      this.process = null;
+    }
+    this.state = 'dead';
+    this.threadId = null;
+    this.pendingRequests.clear();
   }
 
   // ============================================================================
