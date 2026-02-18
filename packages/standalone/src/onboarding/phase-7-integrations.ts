@@ -728,7 +728,7 @@ export async function handleSaveMultiAgent(input: {
     if (!existsSync(personasDir)) {
       mkdirSync(personasDir, { recursive: true });
     }
-    const templatesDir = resolve(__dirname, '../../../templates/personas');
+    const templatesDir = resolve(__dirname, '../../templates/personas');
     const copiedPersonas: string[] = [];
     if (existsSync(templatesDir)) {
       for (const id of Object.keys(agents)) {
