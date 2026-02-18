@@ -15,7 +15,7 @@
 
 
 # ============================================================================
-# 1. Sisyphus - Architect / Lead (Tier 1)
+# 1. Conductor - Architect / Lead (Tier 1)
 # ============================================================================
 # Role: Project architect, planner, coordinator
 # Tier: 1 (full access, can delegate to other agents)
@@ -26,11 +26,11 @@ _metadata:
   major_version: 2
   minor_version: 1
 display_information:
-  name: "Sisyphus"
+  name: "Conductor"
   description: "MAMA Architect Agent - plans, designs, and coordinates work across agents"
   background_color: "#4A154B"
   long_description: |
-    Sisyphus is the lead architect agent in the MAMA multi-agent system.
+    Conductor is the lead architect agent in the MAMA multi-agent system.
     As a Tier 1 agent, it has full tool access and can delegate tasks to
     other specialized agents (DevBot, Reviewer) via @mentions.
 
@@ -45,7 +45,7 @@ features:
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   bot_user:
-    display_name: "Sisyphus"
+    display_name: "Conductor"
     always_online: true
 oauth_config:
   scopes:
@@ -80,7 +80,7 @@ settings:
 # ============================================================================
 # Role: Code implementation, bug fixing, feature development
 # Tier: 2 (read/analyze only - no write/edit/bash in multi-agent mode)
-# Receives delegated tasks from Sisyphus via @mention
+# Receives delegated tasks from Conductor via @mention
 
 ---
 _metadata:
@@ -93,7 +93,7 @@ display_information:
   long_description: |
     DevBot is the developer agent in the MAMA multi-agent system.
     As a Tier 2 agent, it specializes in code implementation and analysis.
-    It receives delegated tasks from the lead agent (Sisyphus) and
+    It receives delegated tasks from the lead agent (Conductor) and
     responds with implementation details, code reviews, and technical analysis.
 
     Capabilities:
@@ -112,7 +112,7 @@ features:
 oauth_config:
   scopes:
     bot:
-      - app_mentions:read     # Receive @mentions (delegation from Sisyphus)
+      - app_mentions:read     # Receive @mentions (delegation from Conductor)
       - channels:history      # Read channel context
       - channels:read         # List channels
       - chat:write            # Send responses
@@ -142,7 +142,7 @@ settings:
 # ============================================================================
 # Role: Code review, quality assurance, feedback
 # Tier: 3 (read/analyze only - strictly read-only tools)
-# Receives delegated review tasks from Sisyphus via @mention
+# Receives delegated review tasks from Conductor via @mention
 
 ---
 _metadata:
@@ -156,7 +156,7 @@ display_information:
     Reviewer is the code review agent in the MAMA multi-agent system.
     As a Tier 3 agent, it operates in strict read-only mode, focusing on
     code analysis and quality feedback without making direct changes.
-    It receives review tasks from the lead agent (Sisyphus).
+    It receives review tasks from the lead agent (Conductor).
 
     Capabilities:
     - Code quality review and analysis
@@ -174,7 +174,7 @@ features:
 oauth_config:
   scopes:
     bot:
-      - app_mentions:read     # Receive @mentions (delegation from Sisyphus)
+      - app_mentions:read     # Receive @mentions (delegation from Conductor)
       - channels:history      # Read channel context for review
       - channels:read         # List channels
       - chat:write            # Send review feedback
@@ -208,18 +208,18 @@ settings:
 # ```yaml
 # slack:
 #   enabled: true
-#   bot_token: "xoxb-SISYPHUS-BOT-TOKEN"   # Main bot = Sisyphus (Tier 1)
-#   app_token: "xapp-SISYPHUS-APP-TOKEN"
+#   bot_token: "xoxb-CONDUCTOR-BOT-TOKEN"   # Main bot = Conductor (Tier 1)
+#   app_token: "xapp-CONDUCTOR-APP-TOKEN"
 #
 # multi_agent:
 #   enabled: true
 #   mention_delegation: true
 #   max_mention_depth: 3
 #   agents:
-#     sisyphus:
+#     conductor:
 #       # ... existing config ...
-#       slack_bot_token: "xoxb-SISYPHUS-BOT-TOKEN"
-#       slack_app_token: "xapp-SISYPHUS-APP-TOKEN"
+#       slack_bot_token: "xoxb-CONDUCTOR-BOT-TOKEN"
+#       slack_app_token: "xapp-CONDUCTOR-APP-TOKEN"
 #     developer:
 #       # ... existing config ...
 #       slack_bot_token: "xoxb-DEVBOT-BOT-TOKEN"
@@ -231,15 +231,15 @@ settings:
 # ```
 #
 # All 3 bots must be invited to the same Slack channels:
-#   /invite @Sisyphus
+#   /invite @Conductor
 #   /invite @DevBot
 #   /invite @Reviewer
 #
 # Delegation flow example:
-#   User: "@Sisyphus 이 PR 리뷰하고 버그 수정해줘"
-#   Sisyphus: "리뷰를 먼저 진행하겠습니다. @Reviewer 이 PR의 코드 품질을 검토해주세요"
-#   Reviewer: "검토 완료. 3가지 이슈 발견... @Sisyphus 결과 보고드립니다"
-#   Sisyphus: "버그 수정을 위임합니다. @DevBot 다음 3가지 이슈를 수정해주세요: ..."
+#   User: "@Conductor 이 PR 리뷰하고 버그 수정해줘"
+#   Conductor: "리뷰를 먼저 진행하겠습니다. @Reviewer 이 PR의 코드 품질을 검토해주세요"
+#   Reviewer: "검토 완료. 3가지 이슈 발견... @Conductor 결과 보고드립니다"
+#   Conductor: "버그 수정을 위임합니다. @DevBot 다음 3가지 이슈를 수정해주세요: ..."
 #   DevBot: "수정 완료. PR #42에 커밋했습니다."
 #
 # ============================================================================

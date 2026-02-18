@@ -822,14 +822,28 @@ After setting up messaging platforms (or if they skipped), introduce the agent t
 **Transition:**
 
 > "By the way — I don't have to work alone!
-> MAMA comes with a built-in team of AI agents:
+> MAMA comes with a built-in **multi-agent system** with 4 coordination modes:
 >
-> 🏔️ **Sisyphus** — The Architect. Plans, delegates, never codes directly.
-> 🔧 **DevBot** — The Builder. Receives tasks, implements, validates.
-> 📝 **Reviewer** — The Guardian. Reviews code quality, approves or rejects.
+> **The Default Team:**
+> 🎯 **Conductor** — Orchestrator. Plans, delegates, coordinates the team.
+> 🔧 **Developer** — Builder. Implements tasks, writes code, runs tests.
+> 📝 **Reviewer** — Guardian. Reviews code quality, catches issues.
+> 🏛️ **Architect** — Designer. System design, architecture decisions.
+> 📋 **PM** — Planner. Requirements, priorities, project tracking.
 >
-> They work together like a dev team — Sisyphus breaks down tasks,
-> DevBot implements, Reviewer checks quality, and they loop until it's right.
+> **4 Coordination Modes:**
+>
+> 1. **Delegation** — Conductor assigns a single task to one agent
+>    _Example: '!dev fix the login bug' → Developer handles it_
+>
+> 2. **Dynamic Workflows** — Multi-step tasks run as parallel DAG pipelines
+>    _Example: 'Build auth system' → Conductor creates workflow_plan → Developer + Reviewer execute in parallel stages_
+>
+> 3. **Council Discussion** — Architecture decisions get multi-round debate
+>    _Example: 'Should we use SQL or NoSQL?' → Conductor opens council_plan → Architect + Developer + PM debate and vote_
+>
+> 4. **UltraWork** — Autonomous deep-work sessions with Plan→Build→Retrospective loop
+>    _Example: 'Refactor the payment module' → Developer enters UltraWork → iterates until done_
 >
 > Right now the team is on standby. Want me to activate them?"
 
@@ -838,8 +852,11 @@ After setting up messaging platforms (or if they skipped), introduce the agent t
 2. Explain:
    > "Team activated! 🎉
    > The team will be active on [Discord/Slack] after restart.
-   > You can trigger them with !sisyphus, !dev, !review, or just let them
-   > auto-detect based on what you're talking about."
+   > You can trigger them with !conductor, !dev, !review, or just let them
+   > auto-detect based on what you're talking about.
+   >
+   > The Conductor will automatically choose the right coordination mode:
+   > simple tasks → delegation, complex tasks → workflows, decisions → council."
 
 3. Ask if they want to customize agent names/personalities
 
@@ -849,7 +866,7 @@ After setting up messaging platforms (or if they skipped), introduce the agent t
 
 **If user wants to customize:**
 - Guide through name/emoji changes
-- Write updated persona files via Write tool
+- Write updated persona files via Write tool (stored in ~/.mama/personas/)
 - Update config.yaml accordingly
 
 ---
@@ -976,7 +993,7 @@ Wrap it up with celebration!
 > I'm creating your quick-start guide now..."
 
 If "Agent team on standby":
-> "Remember, your agent team (Sisyphus, DevBot, Reviewer) is ready whenever you need them.
+> "Remember, your agent team (Conductor, Developer, Reviewer, Architect, PM) is ready whenever you need them.
 > Just ask me 'activate agent team' anytime!"
 
 Call \`complete_onboarding\` with \`confirmed: true\`

@@ -204,7 +204,7 @@ User message → Orchestrator → 5-Stage Routing
                                 │
                 ┌───────────────┼───────────────┐
                 ▼               ▼               ▼
-         🏔️ Sisyphus      🔧 Developer     📝 Reviewer
+         🎯 Conductor      🔧 Developer     📝 Reviewer
           (Tier 1)          (Tier 2)         (Tier 3)
         Full tools        Read-only         Read-only
         Can delegate      Implements        Reviews
@@ -231,16 +231,27 @@ User message → Orchestrator → 5-Stage Routing
 
 Each phase uses Claude CLI to guide users through setup with natural conversation.
 
-### **UltraWork Mode (Autonomous Sessions)**
+### **UltraWork Mode (Ralph Loop 3-Phase)**
 
 ```text
 Trigger: "Build the auth system ultrawork"
-→ Lead agent analyzes task
-→ Delegates to specialized agents
-→ Collects results, continues until done
-→ Safety: max steps (20) + max duration (30 min)
+
+Phase 1: Planning
+  → Lead agent creates plan (+ optional Council review)
+  → Persisted: plan.md
+
+Phase 2: Building
+  → Delegates tasks from plan via DELEGATE::
+  → Each step recorded to progress.json
+  → Council escalation on failure
+
+Phase 3: Retrospective
+  → Reviews work against plan (+ Council quality check)
+  → RETRO_COMPLETE → done | RETRO_INCOMPLETE → Phase 2 retry
 ```
 
+**Config:** `phased_loop: true` (default), `persist_state: true` (default)
+**State dir:** `~/.mama/workspace/ultrawork/{session_id}/`
 **Trigger keywords:** `ultrawork`, `울트라워크`, `deep work`, `autonomous`, `자율 작업`
 
 ---

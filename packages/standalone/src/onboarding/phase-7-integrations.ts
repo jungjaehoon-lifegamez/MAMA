@@ -1,5 +1,7 @@
+import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { ToolDefinition } from '../agent/types.js';
-import { loadConfig, saveConfig } from '../cli/config/config-manager.js';
+import { loadConfig, saveConfig, expandPath } from '../cli/config/config-manager.js';
 
 export interface IntegrationOptions {
   discord?: {
@@ -117,7 +119,7 @@ const ROLE_EXAMPLES: Record<string, string> = {
   "multi_agent": {
     "enabled": true,
     "agents": {
-      "sisyphus": { "name": "Sisyphus", "tier": 1, "enabled": true },
+      "conductor": { "name": "Conductor", "tier": 1, "enabled": true },
       "devbot": { "name": "DevBot", "tier": 1, "can_delegate": true, "enabled": true, "tool_permissions": {"allowed":["*"],"blocked":[]} },
       "reviewer": { "name": "Reviewer", "tier": 3, "enabled": true }
     }
@@ -701,7 +703,7 @@ export async function handleSaveMultiAgent(input: {
           name: agent.name,
           display_name: agent.name,
           tier: agent.tier as 1 | 2 | 3,
-          model: agent.model || 'claude-sonnet-4-20250514',
+          model: agent.model || 'claude-sonnet-4-5-20250929',
           enabled: agent.enabled,
           trigger_prefix: `!${id.toLowerCase()}`,
           persona_file: `~/.mama/personas/${id}.md`,
@@ -721,10 +723,30 @@ export async function handleSaveMultiAgent(input: {
 
     await saveConfig(config);
 
+    // Provision persona files for configured agents
+    const personasDir = expandPath('~/.mama/personas');
+    if (!existsSync(personasDir)) {
+      mkdirSync(personasDir, { recursive: true });
+    }
+    const templatesDir = resolve(__dirname, '../../templates/personas');
+    const copiedPersonas: string[] = [];
+    if (existsSync(templatesDir)) {
+      for (const id of Object.keys(agents)) {
+        const personaFile = join(personasDir, `${id}.md`);
+        const templateFile = join(templatesDir, `${id}.md`);
+        if (!existsSync(personaFile) && existsSync(templateFile)) {
+          copyFileSync(templateFile, personaFile);
+          copiedPersonas.push(`${id}.md`);
+        }
+      }
+    }
+
+    const personaMsg =
+      copiedPersonas.length > 0 ? ` Persona files created: ${copiedPersonas.join(', ')}.` : '';
+
     return {
       success: true,
-      message:
-        'Multi-agent configuration saved successfully! Edit config.yaml to customize agent personas.',
+      message: `Multi-agent configuration saved successfully!${personaMsg} Edit config.yaml to customize agent personas.`,
     };
   } catch (error) {
     return {

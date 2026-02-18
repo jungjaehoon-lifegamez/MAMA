@@ -309,16 +309,6 @@ export class SlackGateway extends BaseGateway {
     // Ignore other bot messages (not part of our multi-agent system)
     if (event.bot_id) return;
 
-    // Check for PR review polling commands (start/stop) — before shouldRespond
-    // so "PR 중지" works without requiring bot mention
-    if (this.multiAgentHandler?.isEnabled()) {
-      const prContent = this.cleanMessageContent(event.text);
-      if (prContent.trim()) {
-        const handled = await this.multiAgentHandler.handlePRCommand(event.channel, prContent);
-        if (handled) return;
-      }
-    }
-
     const isDM = event.channel_type === 'im';
 
     // Check if we should respond to this message

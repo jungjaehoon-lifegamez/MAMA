@@ -109,11 +109,11 @@ describe('SharedContextManager', () => {
     });
 
     it('should truncate long messages', () => {
-      const longMessage = 'A'.repeat(1000);
+      const longMessage = 'A'.repeat(2500);
       manager.recordHumanMessage('channel1', 'Alice', longMessage);
 
       const context = manager.buildContextForAgent('channel1', 'developer', 5);
-      expect(context.length).toBeLessThan(1000);
+      expect(context.length).toBeLessThan(2500);
       expect(context).toContain('...');
     });
   });

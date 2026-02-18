@@ -14,8 +14,8 @@
 MAMA is a **24/7 autonomous AI agent** that lives on your machine. It connects to Discord, Slack, and Telegram — runs scheduled tasks, monitors markets, reviews PRs, and remembers every decision you've ever made together.
 
 ```text
-You: "매시간 당근마켓에서 맥미니 M4 찾아서 알려줘"
-MAMA: ✅ Cron registered (0 * * * *) — skill matched: 당근마켓 모니터링
+You: "Check Craigslist for Mac Mini M4 every hour and notify me"
+MAMA: ✅ Cron registered (0 * * * *) — skill matched: marketplace-monitor
       → Fetches listings → Filters by price → Reports to Discord
       → Repeats every hour. You go to sleep.
 ```
@@ -33,49 +33,13 @@ MAMA: ✅ Cron registered (0 * * * *) — skill matched: 당근마켓 모니터�
 
 ## How It Actually Works
 
-**1. You install a skill** (just a markdown file in `~/.mama/skills/`):
+**1. You install a skill** — just a `.md` file in `~/.mama/skills/`. Write instructions in natural language, the agent follows them. Or ask the agent to install from the built-in catalog, Cowork plugins, MCP servers, or any GitHub repo.
 
-```markdown
-# 당근마켓 모니터링
+**2. You talk naturally** — the agent matches skills by keywords and follows instructions exactly.
 
-keywords: [당근, 중고, 매물]
+**3. You schedule it** — cron jobs run your prompts on a timer, visible in the dashboard and settings.
 
-## 지시사항
-
-1. fetch 도구로 당근마켓 검색 URL에 접속
-2. JSON-LD에서 매물 파싱
-3. 가격/지역 필터링 후 보고
-```
-
-**2. Or just ask the agent** — you don't install anything manually. Tell the agent what you need, and it handles the rest:
-
-```text
-You: "당근마켓 모니터링 스킬 설치해줘"
-MAMA: ✅ Installed danggeun-monitor from catalog
-
-You: "Cowork에서 task management 플러그인 찾아서 설치해"
-MAMA: ✅ Installed task-planner from anthropics/knowledge-work-plugins
-
-You: "https://github.com/user/custom-skill 이거 설치해"
-MAMA: ✅ Installed custom-skill from GitHub
-```
-
-The agent can browse and install from all sources:
-
-| Source                                                                     | What                                       | How                                         |
-| -------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------- |
-| **MAMA Skills**                                                            | Built-in `.md` skill templates             | Pre-installed via `mama init`, or ask agent |
-| **[Cowork Plugins](https://github.com/anthropics/knowledge-work-plugins)** | Anthropic's official plugin catalog        | Agent browses catalog and installs          |
-| **MCP Servers**                                                            | External tool integrations (DB, API, etc.) | Auto-merged from plugin `.mcp.json`         |
-| **GitHub Repos**                                                           | Any public repo with skill files           | Give the agent a URL                        |
-
-You can also browse and install from the **Viewer UI → Skills tab**, but talking to the agent is faster.
-
-**3. You talk naturally** — the agent matches skills by keywords and follows instructions exactly.
-
-**4. You schedule it** — cron jobs run your prompts on a timer, visible in the dashboard and settings.
-
-**5. Decisions persist** — every choice is saved with reasoning. Next session, the agent remembers _why_, not just _what_.
+**4. Decisions persist** — every choice is saved with reasoning. Next session, the agent remembers _why_, not just _what_.
 
 ```text
 Session 1: "Use JWT with refresh tokens"
@@ -95,7 +59,7 @@ Choose the right package for your use case:
 **→ Discord/Slack/Telegram bot with 24/7 agent loop**
 **→ Installable skill system** — drop a `.md` file, agent follows it
 **→ Built-in cron scheduler** — manage from dashboard or settings UI
-**→ Multi-Agent Swarm** — tiered permissions, delegation, UltraWork mode
+**→ Multi-Agent System** — delegation, workflows, council, UltraWork
 
 **Use:** [MAMA OS](packages/standalone/README.md)
 
@@ -154,55 +118,64 @@ In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/techno
 - [Claude Code CLI](https://claude.ai/claude-code), or
 - Codex CLI (`npm install -g @openai/codex && codex login`)
 
-#### Multi-Agent Swarm
+#### Multi-Agent System
 
 > Built independently, announced the same day as Anthropic's [Agent Teams](https://docs.anthropic.com/en/docs/claude-code/agent-teams).
 > Same vision — coordinated AI agents — but for **chat platforms**, not just CLI.
 
-Multiple specialized AI agents collaborate in Discord, each with their own persona,
-tier-based permissions, and the ability to delegate tasks to each other.
+Multiple specialized AI agents collaborate across Discord, Slack, and Telegram.
+A **Conductor** agent orchestrates work through four coordination modes:
 
 ```text
-User message → Orchestrator → 5-Stage Routing
+User message → Orchestrator → Routing
                                 │
                 ┌───────────────┼───────────────┐
                 ▼               ▼               ▼
-         🏔️ Sisyphus      🔧 Developer     📝 Reviewer
+         🎼 Conductor     🔧 Developer     📝 Reviewer
           (Tier 1)          (Tier 2)         (Tier 3)
-        Full tools        Read-only         Read-only
-        Can delegate      Implements        Reviews
-                │
-                └── DELEGATE::developer::Fix the auth bug
+        Orchestrates      Implements        Reviews
+        Delegates         Code changes      Quality checks
 ```
 
-Note (Discord): if `requireMention: true`, normal messages without an @mention are ignored. Delegation commands
-(`DELEGATE::...`) are treated as explicit triggers, but `<@BOT_ID> DELEGATE::...` is still OK and makes intent obvious.
+**Coordination Modes:**
 
-| Feature                | Description                                                                                        |
-| ---------------------- | -------------------------------------------------------------------------------------------------- |
-| **3-Tier Permissions** | Tier 1: all tools + delegation. Tier 2: advisory (read-only). Tier 3: scoped execution (read-only) |
-| **5-Stage Routing**    | free_chat → explicit_trigger → category_match → keyword_match → default_agent                      |
-| **Category Router**    | Korean/English regex patterns for auto-routing                                                     |
-| **Task Delegation**    | `DELEGATE::{agent}::{task}` with depth-1 safety                                                    |
-| **Task Continuation**  | Auto-resume incomplete responses (Korean/English)                                                  |
-| **UltraWork Mode**     | Autonomous sessions: delegation + continuation loop                                                |
-| **Dynamic Workflows**  | Conductor generates workflow DAGs — ephemeral agents spawned per request with any backend/model    |
+| Mode                  | How it works                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| **Delegation**        | Conductor assigns tasks via `DELEGATE::{agent}::{task}` with depth-1 safety         |
+| **Dynamic Workflows** | Conductor generates DAG of ephemeral agents — any backend/model, parallel execution |
+| **Council**           | Named agents discuss a topic in multi-round structured debate                       |
+| **UltraWork**         | 3-Phase autonomous sessions: Plan→Build→Retrospective with file-based state         |
 
-**Dynamic Workflow Orchestration** — Instead of pre-defining every agent in config, Conductor analyzes
-the user's request and dynamically creates a team of ephemeral agents with custom roles, backends, and
-models. Steps execute in parallel where possible, with results flowing between stages via template
-interpolation (`{{step.result}}`).
+**Core Features:**
+
+| Feature                | Description                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| **3-Tier Permissions** | Tier 1: full tools + delegation. Tier 2: read-only advisory. Tier 3: scoped execution |
+| **5-Stage Routing**    | free_chat → explicit_trigger → category_match → keyword_match → default_agent         |
+| **Task Continuation**  | Auto-resume incomplete agent responses                                                |
+| **Mixed Backends**     | Claude and Codex agents in the same conversation                                      |
+
+**Dynamic Workflow Example:**
 
 ```text
-User: "프로젝트를 분석해줘. 3단계로 나눠서."
+User: "Analyze the project in 3 stages"
 
-🎼 Conductor → workflow_plan JSON 생성
+Conductor → workflow_plan JSON
   ┌─────────────────┐   ┌─────────────────┐
-  │ 📁 Analyst      │   │ 🔍 Reviewer     │
-  │ [claude-sonnet]  │──▶│ [codex]         │──▶ 📋 Synthesizer
-  │ 구조 분석        │   │ 코드 품질 검토    │    종합 리포트
+  │ Analyst          │   │ Reviewer         │
+  │ [claude-sonnet]  │──▶│ [codex]         │──▶ Synthesizer
+  │ Structure scan   │   │ Code quality     │    Final report
   └─────────────────┘   └─────────────────┘
        Level 0               Level 1            Level 2
+```
+
+**UltraWork 3-Phase (Ralph Loop):**
+
+```text
+Phase 1: Planning  → Conductor creates plan (+ Council review)
+Phase 2: Building  → Delegates tasks, records progress to disk
+Phase 3: Retrospective → Reviews results (+ Council quality check)
+         └─ RETRO_INCOMPLETE → re-enters Phase 2
 ```
 
 [Setup Guide →](packages/standalone/README.md#multi-agent-swarm) | [Architecture →](docs/architecture-mama-swarm-2026-02-06.md)
@@ -359,7 +332,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 **🧠 Decision Memory** - Every choice is saved with reasoning. Cross-session, cross-language. Claude remembers _why_, not just _what_. [Learn more →](docs/explanation/decision-graph.md)
 
-**🤝 Multi-Agent Swarm** - Specialized agents collaborate in Discord with tiered permissions, delegation chains, and autonomous UltraWork sessions. [Learn more →](packages/standalone/README.md#multi-agent-swarm)
+**🤝 Multi-Agent System** - Conductor orchestrates specialized agents across Discord/Slack/Telegram via delegation, dynamic workflows, council debates, and UltraWork autonomous sessions. [Learn more →](packages/standalone/README.md#multi-agent-swarm)
 
 **🤖 24/7 Agent** - Always-on daemon with Discord, Slack, Telegram gateways. Web dashboard at `localhost:3847`. [Learn more →](packages/standalone/README.md)
 

@@ -1520,7 +1520,7 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
             default_agent: config.multi_agent.default_agent || null,
             mention_delegation: config.multi_agent.mention_delegation || false,
             max_mention_depth: config.multi_agent.max_mention_depth || 3,
-            pr_review_poller: config.multi_agent.pr_review_poller || { enabled: false },
+            workflow: config.multi_agent.workflow || { enabled: true },
           }
         : undefined,
     };

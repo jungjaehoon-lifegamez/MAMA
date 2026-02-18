@@ -13,7 +13,7 @@ function makeSubmitOpts(
     description: overrides.description ?? 'Test task',
     prompt: overrides.prompt ?? 'Do the thing',
     agentId: overrides.agentId ?? 'developer',
-    requestedBy: overrides.requestedBy ?? 'sisyphus',
+    requestedBy: overrides.requestedBy ?? 'conductor',
     channelId: overrides.channelId ?? 'ch-1',
     source: overrides.source ?? 'discord',
   };
