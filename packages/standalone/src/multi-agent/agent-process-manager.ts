@@ -422,11 +422,18 @@ export class AgentProcessManager extends EventEmitter {
       }
     }
 
-    // Replace model placeholder with actual config value
-    // Supports both {{model}} placeholder and hardcoded model names
+    // Replace model placeholders with actual config values
     const actualModel = agentConfig.model || this.runtimeOptions.model || 'unknown';
     const modelDisplayName = getModelDisplayName(actualModel);
     resolvedPersona = resolvedPersona.replace(/\{\{model\}\}/gi, modelDisplayName);
+    resolvedPersona = resolvedPersona.replace(/\{\{model_id\}\}/gi, actualModel);
+
+    // Resolve backend-specific model IDs for workflow plan templates
+    const claudeModelId = this.resolveModelForBackend('claude');
+    const codexModelId = this.resolveModelForBackend('codex-mcp');
+    resolvedPersona = resolvedPersona.replace(/\{\{claude_model_id\}\}/gi, claudeModelId);
+    resolvedPersona = resolvedPersona.replace(/\{\{codex_model_id\}\}/gi, codexModelId);
+
     // Also replace common hardcoded model patterns with actual model
     resolvedPersona = resolvedPersona.replace(
       /powered by \*\*[^*]+\*\* \([^)]+\)/gi,
@@ -529,6 +536,24 @@ ${this.buildSkillsPrompt()}
   }
 
   /**
+   * Resolve the preferred model ID for a given backend from config.
+   * Scans registered agents to find the first model matching the backend.
+   * Falls back to runtimeOptions.model for claude, 'unknown' otherwise.
+   */
+  private resolveModelForBackend(backend: string): string {
+    for (const [, cfg] of Object.entries(this.config.agents)) {
+      const agentBackend = this.getAgentBackend(cfg);
+      if (agentBackend === backend && cfg.model) {
+        return cfg.model;
+      }
+    }
+    if (backend === 'claude') {
+      return this.runtimeOptions.model || 'claude-sonnet-4-6';
+    }
+    return 'unknown';
+  }
+
+  /**
    * Build installed skills prompt section
    */
   private buildSkillsPrompt(): string {
@@ -559,7 +584,6 @@ ${skillBlocks.join('\n\n---\n\n')}
       return '';
     }
   }
-
 
   /**
    * Build default persona when file is missing
