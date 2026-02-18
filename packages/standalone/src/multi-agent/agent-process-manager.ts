@@ -437,6 +437,9 @@ export class AgentProcessManager extends EventEmitter {
       );
     }
 
+    const includeBmadBlock = this.shouldInjectBmadBlock(agentId, agentConfig);
+    const bmadBlock = includeBmadBlock ? await this.buildBmadBlock() : '';
+
     return `# Agent Identity
 
 You are **${agentConfig.display_name}** (ID: ${agentId}).
@@ -450,7 +453,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${resolvedPersona}
 
-${agentId === 'conductor' ? await this.buildBmadBlock() : ''}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
+${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
 
 To use gateway tools, output a JSON block in your response:
 
@@ -474,6 +477,30 @@ ${this.buildSkillsPrompt()}
 - Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
 - Your trigger prefix is: ${agentConfig.trigger_prefix}
 `;
+  }
+
+  private shouldInjectBmadBlock(
+    agentId: string,
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): boolean {
+    const hasPlanningFlag =
+      typeof agentConfig.is_planning_agent === 'boolean' ||
+      typeof agentConfig.isPlanningAgent === 'boolean';
+    if (agentConfig.is_planning_agent === true || agentConfig.isPlanningAgent === true) {
+      return true;
+    }
+
+    const hasTierSignal = typeof agentConfig.tier === 'number';
+    if (agentConfig.tier === 1 && agentConfig.can_delegate === true) {
+      return true;
+    }
+
+    // Backward compatibility: older configs may only identify Conductor by agent ID.
+    if (!hasPlanningFlag && !hasTierSignal) {
+      return agentId.toLowerCase() === 'conductor';
+    }
+
+    return false;
   }
 
   /**

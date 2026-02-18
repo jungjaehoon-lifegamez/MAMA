@@ -19,6 +19,13 @@ process.env.MAMA_FORCE_TIER_3 = 'true';
 
 describe('bmad-templates', () => {
   let tempDir: string;
+  const getLocalDateString = (): string => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'bmad-test-'));
@@ -100,20 +107,26 @@ describe('bmad-templates', () => {
   describe('buildOutputPath', () => {
     it('should build correct path with date', () => {
       const path = buildOutputPath('docs', 'prd', 'My Project');
-      const date = new Date().toISOString().slice(0, 10);
+      const date = getLocalDateString();
       expect(path).toBe(join('docs', `prd-my-project-${date}.md`));
     });
 
     it('should handle spaces in project name', () => {
       const path = buildOutputPath('output', 'architecture', 'MAMA OS');
-      const date = new Date().toISOString().slice(0, 10);
+      const date = getLocalDateString();
       expect(path).toBe(join('output', `architecture-mama-os-${date}.md`));
     });
 
     it('should handle spaces in type', () => {
       const path = buildOutputPath('docs', 'sprint plan', 'app');
-      const date = new Date().toISOString().slice(0, 10);
+      const date = getLocalDateString();
       expect(path).toBe(join('docs', `sprint-plan-app-${date}.md`));
+    });
+
+    it('should sanitize traversal and special characters', () => {
+      const path = buildOutputPath('docs', '../sprint plan', '../../My Project');
+      const date = getLocalDateString();
+      expect(path).toBe(join('docs', 'sprint-plan-my-project-' + date + '.md'));
     });
   });
 

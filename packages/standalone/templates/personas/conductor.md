@@ -65,11 +65,14 @@ Automatically use PLAN mode (which outputs a `workflow_plan`) when the request m
 
 **BMAD Init Check**: If `bmad/config.yaml` doesn't exist, DELEGATE init first: `DELEGATE::developer::Initialize BMAD config: create bmad/config.yaml with project_name, project_level, output_folder`
 
+**Output Path Resolution**: Before creating the main PLAN steps, add a `compute_output_path` step that reads `bmad/config.yaml` and returns a concrete path string (`{output_folder}/{type}-{project_name}-{YYYY-MM-DD}.md`).
+Use `{{compute_output_path.result}}` in final write prompts. Never use unresolved placeholders like `{{output_path}}`.
+
 **Template Injection**: Each step's `system_prompt` should include BMAD template content (if available) for the relevant document type.
 
 **Document Output**: The final step in every PLAN workflow must:
 
-1. Write the document to `{output_folder}/{type}-{project_name}-{YYYY-MM-DD}.md`
+1. Write the document to `{{compute_output_path.result}}`
 2. Update `docs/bmad-workflow-status.yaml` with the workflow result path
 
 ### Step 2: Select Execution Mode (only for code changes)
@@ -288,41 +291,45 @@ When PLAN mode is selected, generate a `workflow_plan` using one of these templa
 
 ### Brainstorm (parallel perspectives → synthesis)
 
-Steps: `[perspective-tech ∥ perspective-product]` → `synthesize` (writes doc)
+Steps: `[perspective-tech ∥ perspective-product ∥ compute_output_path]` → `synthesize` (writes doc)
 
-- `perspective-tech`: system_prompt = "You are a technical expert. Analyze from engineering feasibility, scalability, and implementation complexity perspectives."
-- `perspective-product`: system_prompt = "You are a product strategist. Analyze from user value, market fit, and business impact perspectives."
-- `synthesize`: depends_on both → "Synthesize all perspectives into a structured brainstorm document. Write the result to `{{output_path}}`."
+- `perspective-tech`: prompt = "You are a technical expert. Analyze '{{user_request}}' from engineering feasibility, scalability, and implementation complexity perspectives."
+- `perspective-product`: prompt = "You are a product strategist. Analyze '{{user_request}}' from user value, market fit, and business impact perspectives."
+- `compute_output_path`: "Read bmad/config.yaml and return output path for brainstorm document."
+- `synthesize`: depends_on perspective-tech, perspective-product, compute_output_path → "Synthesize all perspectives into a structured brainstorm document. Write the result to `{{compute_output_path.result}}`."
 
 ### PRD (sequential research → requirements → write)
 
-Steps: `research` → `requirements` → `write-doc`
+Steps: `research` + `compute_output_path` → `requirements` → `write-doc`
 
 - `research`: "Research the problem space, competitors, and user needs for: {{user_request}}"
+- `compute_output_path`: "Read bmad/config.yaml and return output path for prd document."
 - `requirements`: depends_on research → "Based on research, define functional/non-functional requirements in PRD format."
-- `write-doc`: depends_on requirements → "Write the final PRD document to `{{output_path}}`. Include: Overview, Goals, User Stories, Requirements, Success Metrics."
+- `write-doc`: depends_on requirements, compute_output_path → "Write the final PRD document to `{{compute_output_path.result}}`. Include: Overview, Goals, User Stories, Requirements, Success Metrics."
 
 ### Architecture (analyze → design → review → write)
 
-Steps: `analyze` → `design` → `review` (optional) → `write-doc`
+Steps: `analyze` + `compute_output_path` → `design` → `review` (optional) → `write-doc`
 
 - `analyze`: "Analyze current system and constraints for: {{user_request}}"
+- `compute_output_path`: "Read bmad/config.yaml and return output path for architecture document."
 - `design`: depends_on analyze → "Design the architecture: components, data flow, tech stack, APIs."
 - `review`: depends_on design, optional=true → "Review the architecture for scalability, security, and maintainability risks."
-- `write-doc`: depends_on design, review → "Write the architecture document to `{{output_path}}`."
+- `write-doc`: depends_on design, compute_output_path → "Write the architecture document to `{{compute_output_path.result}}`. If review feedback is available, incorporate it: {{review.result}}"
 
 ### Sprint Planning (epic breakdown → write)
 
-Steps: `epic-breakdown` → `write-sprint`
+Steps: `epic-breakdown` + `compute_output_path` → `write-sprint`
 
 - `epic-breakdown`: "Break down into epics and user stories with acceptance criteria: {{user_request}}"
-- `write-sprint`: depends_on epic-breakdown → "Write sprint plan to `{{output_path}}`. Create `docs/sprint-status.yaml` with story status tracking."
+- `compute_output_path`: "Read bmad/config.yaml and return output path for sprint-plan document."
+- `write-sprint`: depends_on epic-breakdown, compute_output_path → "Write sprint plan to `{{compute_output_path.result}}`. Create `docs/sprint-status.yaml` with story status tracking."
 
 ### Document Output Convention
 
 Every PLAN workflow's final step (`write-doc` or `write-sprint`) must:
 
-1. Use the Write tool to save to `{output_folder}/{type}-{project_name}-{YYYY-MM-DD}.md`
+1. Use the Write tool to save to `{{compute_output_path.result}}`
 2. Use the Edit tool to update `docs/bmad-workflow-status.yaml` with the new document path
 
 ## Mode Escalation (automatic)

@@ -121,6 +121,18 @@ export interface AgentPersonaConfig {
   can_delegate?: boolean;
 
   /**
+   * Marks this agent as the planning orchestrator (BMAD context injection target)
+   * @default false
+   */
+  is_planning_agent?: boolean;
+
+  /**
+   * CamelCase alias for is_planning_agent
+   * @default false
+   */
+  isPlanningAgent?: boolean;
+
+  /**
    * Enable automatic task continuation when response is incomplete
    * @default false
    */
