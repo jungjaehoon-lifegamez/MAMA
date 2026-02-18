@@ -236,9 +236,9 @@ describe('ToolPermissionManager', () => {
   describe('buildDelegationPrompt', () => {
     const allAgents: AgentPersonaConfig[] = [
       makeAgent({
-        id: 'sisyphus',
-        name: 'Sisyphus',
-        display_name: '🏔️ Sisyphus',
+        id: 'conductor',
+        name: 'Conductor',
+        display_name: '🎯 Conductor',
         tier: 1,
         can_delegate: true,
       }),
@@ -254,7 +254,7 @@ describe('ToolPermissionManager', () => {
       expect(prompt).toContain('Developer');
       expect(prompt).toContain('Reviewer');
       // Should not include self
-      expect(prompt).not.toContain('🏔️ Sisyphus** (ID: sisyphus');
+      expect(prompt).not.toContain('🎯 Conductor** (ID: conductor');
     });
 
     it('should return empty for agent without can_delegate', () => {

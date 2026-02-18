@@ -111,13 +111,8 @@ export class AgentProcessManager extends EventEmitter {
    * Update configuration (for hot reload)
    */
   updateConfig(config: MultiAgentConfig): void {
-    // Clear persona cache to force reload, but skip ephemeral agents
-    for (const agentId of this.personaCache.keys()) {
-      const isEphemeral = this.config.agents[agentId]?.persona_file === '';
-      if (!isEphemeral) {
-        this.personaCache.delete(agentId);
-      }
-    }
+    // Clear persona cache to force reload, but keep inline ephemeral prompts
+    this.clearPersonaCache(true);
     this.config = config;
 
     // Stop and clear ALL process pools so new processes pick up new model/config
@@ -161,7 +156,7 @@ export class AgentProcessManager extends EventEmitter {
    */
   setBotUserIdMap(map: Map<string, string>): void {
     this.botUserIdMap = map;
-    this.personaCache.clear();
+    this.clearPersonaCache(true);
   }
 
   /**
@@ -170,7 +165,24 @@ export class AgentProcessManager extends EventEmitter {
    */
   setMentionDelegation(enabled: boolean): void {
     this.mentionDelegationEnabled = enabled;
-    this.personaCache.clear();
+    this.clearPersonaCache(true);
+  }
+
+  private isEphemeralAgent(agentId: string): boolean {
+    return this.config.agents[agentId]?.persona_file === '';
+  }
+
+  private clearPersonaCache(preserveEphemeral = false): void {
+    if (!preserveEphemeral) {
+      this.personaCache.clear();
+      return;
+    }
+
+    for (const agentId of this.personaCache.keys()) {
+      if (!this.isEphemeralAgent(agentId)) {
+        this.personaCache.delete(agentId);
+      }
+    }
   }
 
   /**
@@ -672,8 +684,8 @@ Respond to messages in a helpful and professional manner.
   /**
    * Unregister ephemeral agents and clean up their processes.
    */
-  unregisterEphemeralAgents(agentIds: string[]): void {
-    for (const agentId of agentIds) {
+  unregisterEphemeralAgents(agentDefs: EphemeralAgentDef[]): void {
+    for (const { id: agentId } of agentDefs) {
       this.stopAgentProcesses(agentId);
       this.personaCache.delete(agentId);
       delete this.config.agents[agentId];
@@ -693,7 +705,7 @@ Respond to messages in a helpful and professional manner.
    * Reload all personas
    */
   reloadAllPersonas(): void {
-    this.personaCache.clear();
+    this.clearPersonaCache(true);
     this.processPool.stopAll();
     for (const process of this.codexProcessPool.values()) {
       process.stop();
