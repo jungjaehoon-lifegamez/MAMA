@@ -379,8 +379,8 @@ export async function provisionDefaults(): Promise<void> {
   const personasDir = join(mamaHome, 'personas');
 
   // Resolve templates dir relative to this file's compiled location
-  // In dist: dist/cli/config/config-manager.js → ../../templates/personas
-  const templatesDir = resolve(__dirname, '../../templates/personas');
+  // In dist: dist/cli/config/config-manager.js → ../../../templates/personas
+  const templatesDir = resolve(__dirname, '../../../templates/personas');
 
   // 1. Provision personas directory with builtin templates (file-level: copies missing files only)
   if (!existsSync(personasDir)) {
