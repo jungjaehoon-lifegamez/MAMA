@@ -325,7 +325,9 @@ export class CouncilEngine extends EventEmitter {
     // Group by round
     for (let round = 1; round <= plan.rounds; round++) {
       const roundResults = execution.rounds.filter((r) => r.round === round);
-      if (roundResults.length === 0) continue;
+      if (roundResults.length === 0) {
+        continue;
+      }
 
       parts.push(`### Round ${round}`);
       for (const r of roundResults) {

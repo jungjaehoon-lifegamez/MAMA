@@ -1145,7 +1145,7 @@ Continue with the next step of the overall task. When everything is done, respon
   }
 
   private isRetroComplete(response: string): boolean {
-    return /RETRO_COMPLETE/i.test(response);
+    return /\bRETRO_COMPLETE\b/i.test(response);
   }
 
   // ============================================================================
