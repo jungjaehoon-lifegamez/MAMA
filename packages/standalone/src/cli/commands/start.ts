@@ -367,7 +367,7 @@ function findExecutableInPath(commandName: string): string | null {
   }
 
   const pathEntries = pathValue
-    .split(':')
+    .split(path.delimiter)
     .map((value) => value.trim())
     .filter(Boolean);
   for (const dir of pathEntries) {
