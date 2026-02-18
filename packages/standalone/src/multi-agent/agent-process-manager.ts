@@ -24,6 +24,7 @@ import { ToolPermissionManager } from './tool-permission-manager.js';
 import { AgentProcessPool } from './agent-process-pool.js';
 import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
 import type { EphemeralAgentDef } from './workflow-types.js';
+import { buildBmadPromptBlock } from './bmad-templates.js';
 
 /**
  * Resolve path with ~ expansion
@@ -351,7 +352,7 @@ export class AgentProcessManager extends EventEmitter {
 
     try {
       const personaContent = await readFile(personaPath, 'utf-8');
-      const systemPrompt = this.buildSystemPrompt(agentId, agentConfig, personaContent);
+      const systemPrompt = await this.buildSystemPrompt(agentId, agentConfig, personaContent);
       this.personaCache.set(agentId, systemPrompt);
       return systemPrompt;
     } catch (error) {
@@ -365,11 +366,11 @@ export class AgentProcessManager extends EventEmitter {
   /**
    * Build system prompt with persona content
    */
-  private buildSystemPrompt(
+  private async buildSystemPrompt(
     agentId: string,
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
     personaContent: string
-  ): string {
+  ): Promise<string> {
     const agent: AgentPersonaConfig = { id: agentId, ...agentConfig };
 
     // Replace @mentions in persona with platform-specific <@userId>
@@ -449,7 +450,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${resolvedPersona}
 
-${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
+${agentId === 'conductor' ? await this.buildBmadBlock() : ''}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
 
 To use gateway tools, output a JSON block in your response:
 
@@ -492,6 +493,18 @@ When a user message contains [INSTALLED PLUGIN COMMAND] you MUST:
 
 ${skillBlocks.join('\n\n---\n\n')}
 `;
+  }
+
+  /**
+   * Build BMAD planning context block for Conductor's system prompt.
+   * Returns empty string if BMAD is not relevant.
+   */
+  private async buildBmadBlock(): Promise<string> {
+    try {
+      return await buildBmadPromptBlock(process.cwd());
+    } catch {
+      return '';
+    }
   }
 
   /**
