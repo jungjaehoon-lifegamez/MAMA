@@ -68,6 +68,15 @@ export interface DiscordGatewayInterface {
 }
 
 /**
+ * Slack gateway interface for sending messages and files
+ */
+export interface SlackGatewayInterface {
+  sendMessage(channelId: string, message: string): Promise<void>;
+  sendFile(channelId: string, filePath: string, caption?: string): Promise<void>;
+  sendImage(channelId: string, imagePath: string, caption?: string): Promise<void>;
+}
+
+/**
  * Valid MAMA gateway tools
  * These tools are executed by GatewayToolExecutor
  * Includes MAMA tools (mama_search, mama_save, mama_update, mama_load_checkpoint)
@@ -82,6 +91,7 @@ const VALID_TOOLS: GatewayToolName[] = [
   'Write',
   'Bash',
   'discord_send',
+  'slack_send',
   'browser_navigate',
   'browser_screenshot',
   'browser_click',
@@ -142,6 +152,7 @@ export class GatewayToolExecutor {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private sessionStore?: any;
   private discordGateway: DiscordGatewayInterface | null = null;
+  private slackGateway: SlackGatewayInterface | null = null;
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
@@ -179,6 +190,10 @@ export class GatewayToolExecutor {
 
   setDiscordGateway(gateway: DiscordGatewayInterface): void {
     this.discordGateway = gateway;
+  }
+
+  setSlackGateway(gateway: SlackGatewayInterface): void {
+    this.slackGateway = gateway;
   }
 
   /**
@@ -310,6 +325,10 @@ export class GatewayToolExecutor {
         case 'discord_send':
           return await this.executeDiscordSend(
             input as { channel_id: string; message?: string; image_path?: string }
+          );
+        case 'slack_send':
+          return await this.executeSlackSend(
+            input as { channel_id: string; message?: string; file_path?: string }
           );
         // Browser tools
         case 'browser_navigate':
@@ -770,6 +789,39 @@ export class GatewayToolExecutor {
       return { success: true };
     } catch (err) {
       return { success: false, error: `Failed to send to Discord: ${err}` };
+    }
+  }
+
+  /**
+   * Execute slack_send tool - Send message/file to Slack channel
+   */
+  private async executeSlackSend(input: {
+    channel_id: string;
+    message?: string;
+    file_path?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    const { channel_id, message, file_path } = input;
+
+    if (!channel_id) {
+      return { success: false, error: 'channel_id is required' };
+    }
+
+    if (!this.slackGateway) {
+      return { success: false, error: 'Slack gateway not configured' };
+    }
+
+    try {
+      if (file_path) {
+        await this.slackGateway.sendFile(channel_id, file_path, message);
+      } else if (message) {
+        await this.slackGateway.sendMessage(channel_id, message);
+      } else {
+        return { success: false, error: 'Either message or file_path is required' };
+      }
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: `Failed to send to Slack: ${err}` };
     }
   }
 

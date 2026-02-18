@@ -198,18 +198,14 @@ export class SlackGateway extends BaseGateway {
    * Handle incoming Slack message
    */
   private async handleMessage(event: SlackMessageEvent, isMention: boolean): Promise<void> {
-    // Dedup: Slack fires both app_mention and message events for the same @mention.
-    // app_mention (isMention=true) always processes and marks the key.
-    // message (isMention=false) skips if already handled by app_mention.
+    // Dedup: Slack Socket Mode may redeliver events, and app_mention + message
+    // fire for the same @mention. Mark every processed event to prevent duplicates.
     if (!event.bot_id) {
       const dedupKey = event.ts;
-      if (isMention) {
-        // app_mention: always process, mark as handled
-        this.processedMessages.set(dedupKey, Date.now());
-      } else if (this.processedMessages.has(dedupKey)) {
-        // message event: skip if app_mention already handled it
+      if (this.processedMessages.has(dedupKey)) {
         return;
       }
+      this.processedMessages.set(dedupKey, Date.now());
       // Periodic cleanup
       if (this.processedMessages.size > 100) {
         const now = Date.now();
