@@ -575,13 +575,14 @@ ${skillBlocks.join('\n\n---\n\n')}
 
   /**
    * Build BMAD planning context block for Conductor's system prompt.
-   * Returns empty string if BMAD is not relevant.
+   * Returns an explicit marker on failure for easier diagnosis.
    */
   private async buildBmadBlock(): Promise<string> {
     try {
       return await buildBmadPromptBlock(process.cwd());
-    } catch {
-      return '';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return `[BMAD_LOAD_ERROR: ${message}]`;
     }
   }
 

@@ -17,7 +17,13 @@ import {
 
 process.env.MAMA_FORCE_TIER_3 = 'true';
 
-describe('bmad-templates', () => {
+describe('Story BMAD-001: BMAD template loading and context', () => {
+  // Acceptance Criteria:
+  // - AC1: Project config loading handles existing/missing files.
+  // - AC2: Template loading covers bundled, external, and invalid names.
+  // - AC3: Template listing includes bundled defaults.
+  // - AC4: Output path generation sanitizes unsafe segments.
+  // - AC5: Initialization and context builders return expected defaults.
   let tempDir: string;
   const getLocalDateString = (): string => {
     const now = new Date();
@@ -35,7 +41,7 @@ describe('bmad-templates', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe('loadBmadProjectConfig', () => {
+  describe('AC1: loadBmadProjectConfig', () => {
     it('should return parsed project config', async () => {
       mkdirSync(join(tempDir, 'bmad'), { recursive: true });
       writeFileSync(
@@ -55,7 +61,7 @@ describe('bmad-templates', () => {
     });
   });
 
-  describe('loadBmadTemplate', () => {
+  describe('AC2: loadBmadTemplate', () => {
     it('should return template for prd (builtin or external)', async () => {
       const template = await loadBmadTemplate('prd');
       expect(template).not.toBeNull();
@@ -93,7 +99,7 @@ describe('bmad-templates', () => {
     });
   });
 
-  describe('listAvailableTemplates', () => {
+  describe('AC3: listAvailableTemplates', () => {
     it('should include bundled template names', async () => {
       const names = await listAvailableTemplates();
       expect(names).toContain('prd');
@@ -104,7 +110,7 @@ describe('bmad-templates', () => {
     });
   });
 
-  describe('buildOutputPath', () => {
+  describe('AC4: buildOutputPath', () => {
     it('should build correct path with date', () => {
       const path = buildOutputPath('docs', 'prd', 'My Project');
       const date = getLocalDateString();
@@ -130,7 +136,7 @@ describe('bmad-templates', () => {
     });
   });
 
-  describe('isBmadInitialized', () => {
+  describe('AC5: isBmadInitialized', () => {
     it('should return true when config exists', async () => {
       mkdirSync(join(tempDir, 'bmad'), { recursive: true });
       writeFileSync(join(tempDir, 'bmad', 'config.yaml'), 'project_name: test\n');
@@ -143,7 +149,7 @@ describe('bmad-templates', () => {
     });
   });
 
-  describe('buildBmadContext', () => {
+  describe('AC6: buildBmadContext', () => {
     it('should return project config when exists', async () => {
       mkdirSync(join(tempDir, 'bmad'), { recursive: true });
       writeFileSync(

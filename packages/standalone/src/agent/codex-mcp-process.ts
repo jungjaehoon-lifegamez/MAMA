@@ -156,18 +156,8 @@ export class CodexMCPProcess extends EventEmitter {
       this.state = 'ready';
       logger.info('Codex MCP server ready');
     } catch (error) {
-      // Cleanup on initialization failure
       logger.error('MCP initialization failed:', error);
-      this.state = 'dead';
-      this.threadId = null;
-      if (this.rl) {
-        this.rl.close();
-        this.rl = null;
-      }
-      if (this.process) {
-        this.process.kill();
-        this.process = null;
-      }
+      this.cleanup('MCP initialization failed');
       throw error;
     }
   }
@@ -186,7 +176,7 @@ export class CodexMCPProcess extends EventEmitter {
         await this.start();
       } catch (err) {
         logger.warn('First start attempt failed, retrying in 1s:', err);
-        this.cleanup();
+        this.cleanup('Process restart after failed start');
         await new Promise((r) => setTimeout(r, 1000));
         await this.start();
       }
@@ -313,26 +303,18 @@ export class CodexMCPProcess extends EventEmitter {
    * Stop the process
    */
   stop(): void {
-    if (this.process) {
-      this.process.kill();
-      this.process = null;
-    }
-    if (this.rl) {
-      this.rl.close();
-      this.rl = null;
-    }
-    this.state = 'dead';
-    this.threadId = null;
-    // Reject all pending requests and clear their timeouts
-    for (const [, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error('Process stopped'));
-    }
-    this.pendingRequests.clear();
+    this.cleanup('Process stopped');
     logger.info('Process stopped');
   }
 
-  private cleanup(): void {
+  private cleanup(reason = 'Process terminated'): void {
+    // Reject pending requests first so callers are unblocked immediately.
+    for (const [, pending] of this.pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(reason));
+    }
+    this.pendingRequests.clear();
+
     if (this.rl) {
       this.rl.close();
       this.rl = null;
@@ -343,7 +325,6 @@ export class CodexMCPProcess extends EventEmitter {
     }
     this.state = 'dead';
     this.threadId = null;
-    this.pendingRequests.clear();
   }
 
   // ============================================================================

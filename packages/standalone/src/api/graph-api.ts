@@ -72,6 +72,9 @@ const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
 const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
+const isOpus46Model = (model: string): boolean =>
+  /^claude-opus-4-6(?:$|-)/i.test(model) || model.toLowerCase() === 'claude-opus-4-latest';
+const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
 
 // Allowed directories for persona files (security: prevent arbitrary file read)
 const ALLOWED_PERSONA_DIRS = [
@@ -2318,6 +2321,26 @@ async function handleMultiAgentUpdateAgentRequest(
         validationErrors.push('model must be a Codex/OpenAI model when backend is "codex-mcp"');
       }
     }
+    if (body.effort !== undefined) {
+      if (typeof body.effort !== 'string') {
+        validationErrors.push('effort must be one of: low, medium, high, max');
+      } else {
+        const normalizedEffort = body.effort.toLowerCase();
+        if (!VALID_EFFORT_LEVELS.has(normalizedEffort)) {
+          validationErrors.push('effort must be one of: low, medium, high, max');
+        } else {
+          if (nextBackend !== 'claude') {
+            validationErrors.push('effort is only supported when backend is "claude"');
+          }
+          if (
+            normalizedEffort === 'max' &&
+            (typeof nextModel !== 'string' || !isOpus46Model(nextModel))
+          ) {
+            validationErrors.push('effort "max" is only supported for claude-opus-4-6 models');
+          }
+        }
+      }
+    }
 
     if (validationErrors.length > 0) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2367,7 +2390,9 @@ async function handleMultiAgentUpdateAgentRequest(
       updatedAgent.auto_respond_keywords = body.auto_respond_keywords;
     if (body.cooldown_ms !== undefined) updatedAgent.cooldown_ms = body.cooldown_ms;
     if (body.can_delegate !== undefined) updatedAgent.can_delegate = body.can_delegate;
-    if (body.effort !== undefined) updatedAgent.effort = body.effort;
+    if (body.effort !== undefined) {
+      updatedAgent.effort = String(body.effort).toLowerCase();
+    }
     if (body.tool_permissions !== undefined) updatedAgent.tool_permissions = body.tool_permissions;
 
     const isMaskedToken = (token: unknown): boolean => {

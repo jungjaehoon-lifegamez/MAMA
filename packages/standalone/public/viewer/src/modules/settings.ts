@@ -109,6 +109,9 @@ const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
   ],
 };
 
+const EFFORT_SUPPORTED_MODELS = new Set<string>(['claude-opus-4-6', 'claude-sonnet-4-6']);
+const MAX_EFFORT_MODELS = new Set<string>(['claude-opus-4-6']);
+
 /**
  * Settings Module Class
  */
@@ -121,6 +124,57 @@ export class SettingsModule {
   delegatedListenersInitialized = false;
 
   constructor() {}
+
+  private supportsEffortModel(model: string): boolean {
+    return EFFORT_SUPPORTED_MODELS.has(model);
+  }
+
+  private supportsMaxEffortModel(model: string): boolean {
+    return MAX_EFFORT_MODELS.has(model);
+  }
+
+  private normalizeEffortForModel(model: string, effort: EffortLevel): EffortLevel {
+    if (effort === 'max' && !this.supportsMaxEffortModel(model)) {
+      return 'high';
+    }
+    return effort;
+  }
+
+  private getEffortLevelsForModel(model: string): EffortLevel[] {
+    if (this.supportsMaxEffortModel(model)) {
+      return ['low', 'medium', 'high', 'max'];
+    }
+    return ['low', 'medium', 'high'];
+  }
+
+  private buildEffortOptions(model: string, selectedEffort: EffortLevel): string {
+    return this.getEffortLevelsForModel(model)
+      .map(
+        (effort) =>
+          `<option value="${effort}" ${selectedEffort === effort ? 'selected' : ''}>${effort}${effort === 'max' ? ' (Opus)' : ''}</option>`
+      )
+      .join('');
+  }
+
+  private refreshAgentEffortControls(agentId: string, model: string): void {
+    const effortContainer = getElementByIdOrNull<HTMLElement>(`agent-effort-container-${agentId}`);
+    if (!effortContainer) {
+      return;
+    }
+
+    const supportsEffort = this.supportsEffortModel(model);
+    effortContainer.style.display = supportsEffort ? 'block' : 'none';
+
+    const effortSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-effort-${agentId}`);
+    if (!effortSelect) {
+      return;
+    }
+
+    const currentEffort = (effortSelect.value || 'medium') as EffortLevel;
+    const normalizedEffort = this.normalizeEffortForModel(model, currentEffort);
+    effortSelect.innerHTML = this.buildEffortOptions(model, normalizedEffort);
+    effortSelect.value = normalizedEffort;
+  }
 
   /**
    * Parse and validate required integer input.
@@ -699,6 +753,11 @@ export class SettingsModule {
     const model = this.getSelectValue('settings-agent-model');
     const effort = (this.getSelectValue('settings-agent-effort') || 'medium') as EffortLevel;
     const useClaudeCli = backend === 'claude';
+    const resolvedModel =
+      model || (backend === 'codex-mcp' ? 'gpt-5.2-codex' : 'claude-sonnet-4-6');
+    const normalizedEffort = this.supportsEffortModel(resolvedModel)
+      ? this.normalizeEffortForModel(resolvedModel, effort)
+      : undefined;
 
     // Get token values - if empty and original was masked, keep original
     const discordToken = this.getTokenValue('settings-discord-token', this.config?.discord?.token);
@@ -747,9 +806,9 @@ export class SettingsModule {
       use_claude_cli: useClaudeCli,
       agent: {
         backend,
-        model: model || (backend === 'codex-mcp' ? 'gpt-5.2-codex' : 'claude-sonnet-4-6'),
-        // Effort for Claude 4.6 models (adaptive thinking). 'max' only on Opus.
-        effort: model === 'claude-opus-4-6' || model === 'claude-sonnet-4-6' ? effort : undefined,
+        model: resolvedModel,
+        // Effort for Claude 4.6 models (adaptive thinking). 'max' is Opus-only.
+        effort: normalizedEffort,
         max_turns: this.parseIntegerInput('settings-agent-max-turns', 1, 100, 10),
         timeout: this.parseIntegerInput('settings-agent-timeout', 1, 600, 300) * 1000,
         tools: this.collectToolModeData(),
@@ -821,16 +880,25 @@ export class SettingsModule {
 
   /**
    * Show/hide effort level dropdown based on model selection
-   * Effort level only applies to Claude Opus 4.6 which supports adaptive thinking
+   * Effort applies to Claude 4.6 models, with 'max' reserved for Opus.
    */
   updateEffortVisibility(model: string): void {
     const effortContainer = getElementByIdOrNull<HTMLElement>('settings-effort-container');
     if (!effortContainer) {
       return;
     }
-    // Show effort for Claude 4.6 models (adaptive thinking)
-    const supportsEffort = model === 'claude-opus-4-6' || model === 'claude-sonnet-4-6';
+    const supportsEffort = this.supportsEffortModel(model);
     effortContainer.style.display = supportsEffort ? 'block' : 'none';
+
+    const effortSelect = getElementByIdOrNull<HTMLSelectElement>('settings-agent-effort');
+    if (!effortSelect) {
+      return;
+    }
+
+    const currentEffort = (effortSelect.value || 'medium') as EffortLevel;
+    const normalizedEffort = this.normalizeEffortForModel(model, currentEffort);
+    effortSelect.innerHTML = this.buildEffortOptions(model, normalizedEffort);
+    effortSelect.value = normalizedEffort;
   }
 
   getNormalizedModelForBackend(backend: AgentBackend, model: string): string {
@@ -1072,16 +1140,13 @@ export class SettingsModule {
           )
           .join('');
 
-        // Effort level (Claude 4.6 models only)
-        const agentEffort = (agent as any).effort || '';
-        const supportsAgentEffort =
-          normalizedModel === 'claude-opus-4-6' || normalizedModel === 'claude-sonnet-4-6';
-        const effortOptions = ['low', 'medium', 'high', 'max']
-          .map(
-            (e) =>
-              `<option value="${e}" ${agentEffort === e ? 'selected' : ''}>${e}${e === 'max' ? ' (Opus)' : ''}</option>`
-          )
-          .join('');
+        // Effort level (Claude 4.6 models only, max on Opus).
+        const supportsAgentEffort = this.supportsEffortModel(normalizedModel);
+        const selectedAgentEffort = this.normalizeEffortForModel(
+          normalizedModel,
+          (agent.effort || 'medium') as EffortLevel
+        );
+        const effortOptions = this.buildEffortOptions(normalizedModel, selectedAgentEffort);
 
         // Permission flags
         const canDelegate = agent.can_delegate ?? false;
@@ -1174,22 +1239,17 @@ export class SettingsModule {
       )
       .join('');
 
-    // Update effort visibility for this agent card
-    const effortContainer = getElementByIdOrNull<HTMLElement>(`agent-effort-container-${agentId}`);
-    if (effortContainer) {
-      const showEffort = normalized === 'claude-opus-4-6' || normalized === 'claude-sonnet-4-6';
-      effortContainer.style.display = showEffort ? 'block' : 'none';
-    }
+    this.refreshAgentEffortControls(agentId, normalized);
   }
 
   onAgentModelChange(agentId: string): void {
     const modelSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-model-${agentId}`);
-    const effortContainer = getElementByIdOrNull<HTMLElement>(`agent-effort-container-${agentId}`);
-    if (!modelSelect || !effortContainer) return;
+    if (!modelSelect) {
+      return;
+    }
 
     const model = modelSelect.value || '';
-    const showEffort = model === 'claude-opus-4-6' || model === 'claude-sonnet-4-6';
-    effortContainer.style.display = showEffort ? 'block' : 'none';
+    this.refreshAgentEffortControls(agentId, model);
   }
 
   async saveAgentConfig(agentId: string): Promise<void> {
@@ -1210,8 +1270,11 @@ export class SettingsModule {
 
       // Effort level
       const effortSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-effort-${agentId}`);
-      const supportsEffort = model === 'claude-opus-4-6' || model === 'claude-sonnet-4-6';
-      const effort = supportsEffort && effortSelect ? effortSelect.value : undefined;
+      const supportsEffort = this.supportsEffortModel(model);
+      const effort: EffortLevel | undefined =
+        supportsEffort && effortSelect
+          ? this.normalizeEffortForModel(model, effortSelect.value as EffortLevel)
+          : undefined;
 
       // Build tool_permissions based on checkbox
       const tool_permissions = hasAllTools
