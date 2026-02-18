@@ -1092,6 +1092,24 @@ export async function runAgentLoop(
 
       await slackGateway.start();
       gateways.push(slackGateway);
+
+      // Wire Slack gateway tool executor
+      const slackGatewayInterface = {
+        sendMessage: async (channelId: string, message: string) =>
+          slackGateway!.sendMessage(channelId, message),
+        sendFile: async (channelId: string, filePath: string, caption?: string) =>
+          slackGateway!.sendFile(channelId, filePath, caption),
+        sendImage: async (channelId: string, imagePath: string, caption?: string) =>
+          slackGateway!.sendImage(channelId, imagePath, caption),
+      };
+      toolExecutor.setSlackGateway(slackGatewayInterface);
+
+      const multiAgentSlack = slackGateway.getMultiAgentHandler();
+      if (multiAgentSlack) {
+        multiAgentSlack.setGatewayToolExecutor(toolExecutor);
+        console.log('[start] ✓ Gateway tool executor wired to Slack multi-agent handler');
+      }
+
       console.log('✓ Slack connected');
     } catch (error) {
       console.error(

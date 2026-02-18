@@ -585,7 +585,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     // Inject agent availability status, active work, and channel context (Phase 2 + 3)
     const agentStatus = this.buildAgentStatusSection(agentId);
     const workSection = this.workTracker.buildWorkSection(agentId);
-    const channelInfo = `## Current Channel\nDiscord channel_id: ${context.channelId}`;
+    const channelInfo = `## Current Channel\nPlatform: Discord\nchannel_id: ${context.channelId}\nUse **discord_send** to send messages/files to this channel.`;
     const dynamicContextRaw = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
     const dynamicContext =
       dynamicContextRaw.length > MAX_DYNAMIC_CONTEXT_CHARS

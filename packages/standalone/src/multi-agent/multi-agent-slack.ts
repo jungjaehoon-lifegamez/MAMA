@@ -19,6 +19,7 @@ import type { AgentRuntimeProcess } from './runtime-process.js';
 import type { QueuedMessage } from './agent-message-queue.js';
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
+import { getChannelHistory } from '../gateways/channel-history.js';
 import {
   MultiAgentHandlerBase,
   AGENT_TIMEOUT_MS,
@@ -59,6 +60,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
   /** Interval handle for periodic cleanup */
   private mentionCleanupInterval?: ReturnType<typeof setInterval>;
+
+  /** Tracks which agent:channel combos have received history injection (new session only) */
+  private historyInjected = new Set<string>();
 
   constructor(
     config: MultiAgentConfig,
@@ -381,12 +385,25 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     const agentContext = this.sharedContext.buildContextForAgent(context.channelId, agentId, 5);
 
     // Build full prompt with context.
-    // NOTE: Do NOT inject historyContext into persistent processes -- the CLI process
-    // already retains conversation memory across turns. Injecting historyContext causes
-    // duplicate messages in Claude's context, making old messages appear "just conversed"
-    // and creating cross-agent context confusion.
-    // Only inject agentContext (other agents' messages) for inter-agent awareness.
     let fullPrompt = cleanMessage;
+
+    // Inject channel history on first message per session only.
+    // After restart the CLI process has no memory, so we need to seed it.
+    const sessionKey = `${agentId}:${context.channelId}`;
+    if (!this.historyInjected.has(sessionKey)) {
+      const channelHistory = getChannelHistory();
+      const displayName = agent.display_name || agentId;
+      const historyContext = channelHistory.formatForContext(
+        context.channelId,
+        context.messageId,
+        displayName
+      );
+      if (historyContext) {
+        fullPrompt = `${historyContext}\n\n${fullPrompt}`;
+      }
+      this.historyInjected.add(sessionKey);
+    }
+
     if (agentContext) {
       fullPrompt = `${agentContext}\n\n${fullPrompt}`;
     }
@@ -394,7 +411,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     // Inject agent availability status and active work (Phase 2 + 3)
     const agentStatus = this.buildAgentStatusSection(agentId);
     const workSection = this.workTracker.buildWorkSection(agentId);
-    const dynamicContext = [agentStatus, workSection].filter(Boolean).join('\n');
+    const channelInfo = `## Current Channel\nPlatform: Slack\nchannel_id: ${context.channelId}\nUse **slack_send** to send messages/files to this channel.`;
+    const dynamicContext = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
     if (dynamicContext) {
       fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
     }

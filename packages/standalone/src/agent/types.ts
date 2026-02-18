@@ -596,6 +596,7 @@ export type GatewayToolName =
   | 'Write'
   | 'Bash'
   | 'discord_send'
+  | 'slack_send'
   | 'translate_image'
   | 'save_integration_token'
   | 'browser_navigate'
