@@ -308,10 +308,7 @@ describe('AgentProcessManager env vars by tier', () => {
       agentConfig: Omit<AgentPersonaConfig, 'id'>
     ): boolean => {
       const selector = manager as unknown as {
-        shouldInjectBmadBlock: (
-          id: string,
-          config: Omit<AgentPersonaConfig, 'id'>
-        ) => boolean;
+        shouldInjectBmadBlock: (id: string, config: Omit<AgentPersonaConfig, 'id'>) => boolean;
       };
       return selector.shouldInjectBmadBlock(agentId, agentConfig);
     };
@@ -328,6 +325,15 @@ describe('AgentProcessManager env vars by tier', () => {
     it('should disable BMAD when explicit planning flag is false', () => {
       const config = makeConfig({
         conductor: { tier: 1, can_delegate: true, is_planning_agent: false },
+      });
+      manager = new AgentProcessManager(config);
+
+      expect(selectBmadInjection('conductor', config.agents.conductor)).toBe(false);
+    });
+
+    it('should disable BMAD when explicit camelCase planning flag is false', () => {
+      const config = makeConfig({
+        conductor: { tier: 1, can_delegate: true, isPlanningAgent: false },
       });
       manager = new AgentProcessManager(config);
 
