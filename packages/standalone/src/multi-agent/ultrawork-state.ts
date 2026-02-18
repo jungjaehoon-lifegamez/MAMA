@@ -75,16 +75,14 @@ export class UltraWorkStateManager {
     const next = new Promise<void>((res) => {
       release = res;
     });
-    this.sessionLocks.set(
-      sessionId,
-      prev.then(() => next)
-    );
+    const chained = prev.then(() => next);
+    this.sessionLocks.set(sessionId, chained);
     await prev;
     try {
       return await fn();
     } finally {
       release();
-      if (this.sessionLocks.get(sessionId) === prev.then(() => next)) {
+      if (this.sessionLocks.get(sessionId) === chained) {
         this.sessionLocks.delete(sessionId);
       }
     }
@@ -185,11 +183,8 @@ export class UltraWorkStateManager {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    try {
-      await fs.rm(this.sessionDir(sessionId), { recursive: true, force: true });
-    } catch {
-      // Ignore if already deleted
-    }
+    // force: true already suppresses ENOENT, so no need to catch
+    await fs.rm(this.sessionDir(sessionId), { recursive: true, force: true });
   }
 
   async listSessions(): Promise<string[]> {

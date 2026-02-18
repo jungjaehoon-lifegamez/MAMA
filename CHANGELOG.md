@@ -16,6 +16,21 @@ All notable changes to this project will be documented in this file.
   - Config: `persist_state` (default: true), `phased_loop` (default: true)
   - Backward compatible: `phased_loop: false` preserves legacy freeform behavior
   - 24 new tests (8 phased loop + 16 state manager)
+- **Council Engine**: Multi-round structured debates among named agents
+  - Conductor outputs `council_plan` JSON block to initiate Council discussion
+  - Configurable rounds (1-5), agent list, synthesis toggle
+  - Progress updates in Slack/Discord per round
+
+### Changed
+
+- **Conductor persona**: Lead orchestrator renamed from Sisyphus to Conductor
+  - Auto-migration: `sisyphus` config entries automatically converted to `conductor`
+  - Updated metaphor from "roll the boulder" to orchestra/conductor theme
+
+### Removed
+
+- **PR Poller**: Removed ~1,200 lines of legacy PR polling code
+  - Replaced by event-driven GitHub webhook integration
 
 ## [0.9.2] - 2026-02-17
 

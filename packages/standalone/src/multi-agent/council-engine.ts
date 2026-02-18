@@ -54,7 +54,9 @@ export class CouncilEngine extends EventEmitter {
    */
   parseCouncilPlan(response: string): CouncilPlan | null {
     const match = response.match(/```council_plan\s*\n([\s\S]*?)\n```/);
-    if (!match) return null;
+    if (!match) {
+      return null;
+    }
 
     try {
       const plan = JSON.parse(match[1].trim()) as CouncilPlan;
@@ -147,10 +149,14 @@ export class CouncilEngine extends EventEmitter {
 
     try {
       for (let round = 1; round <= plan.rounds; round++) {
-        if (executionState.cancelled) break;
+        if (executionState.cancelled) {
+          break;
+        }
 
         for (const agentId of plan.agents) {
-          if (executionState.cancelled) break;
+          if (executionState.cancelled) {
+            break;
+          }
 
           const displayName = agentDisplayNames.get(agentId) ?? agentId;
 

@@ -2,6 +2,9 @@
  * Tests for UltraWorkManager
  */
 
+// Skip embeddings in tests for faster execution
+process.env.MAMA_FORCE_TIER_3 = 'true';
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { UltraWorkManager } from '../../src/multi-agent/ultrawork.js';
 import { UltraWorkStateManager } from '../../src/multi-agent/ultrawork-state.js';

@@ -476,8 +476,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         result.response,
         context.channelId,
         'slack',
-        (event) => {
-          if (!this.mainWebClient) return;
+        async (event) => {
+          if (!this.mainWebClient) {
+            return;
+          }
           let msg = '';
           if (event.type === 'council-round-started') {
             msg = `🗣️ ${event.agentDisplayName} Round ${event.round} 시작...`;
@@ -488,9 +490,11 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
             msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ 실패: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
-            this.mainWebClient!.chat.postMessage({ channel: context.channelId, text: msg }).catch(
-              () => {}
-            );
+            try {
+              await this.mainWebClient.chat.postMessage({ channel: context.channelId, text: msg });
+            } catch (err) {
+              this.logger?.warn('[MultiAgentSlack] Failed to post council progress:', err);
+            }
           }
         }
       );
@@ -512,42 +516,68 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       // Execute text-based gateway tool calls (```tool_call blocks in response)
       const cleanedResponse = await this.executeTextToolCalls(result.response);
 
-      const bgDelegation = this.delegationManager.parseDelegation(agentId, cleanedResponse);
-      if (bgDelegation && bgDelegation.background) {
+      // Parse all delegation commands (both sync and background)
+      const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
+      let displayResponse = cleanedResponse;
+
+      // Handle background delegations
+      const bgDelegations = delegations.filter((d) => d.background);
+      if (bgDelegations.length > 0) {
+        let submittedCount = 0;
+        for (const delegation of bgDelegations) {
+          const check = this.delegationManager.isDelegationAllowed(
+            delegation.fromAgentId,
+            delegation.toAgentId
+          );
+          if (check.allowed) {
+            this.backgroundTaskManager.submit({
+              description: delegation.task.substring(0, 200),
+              prompt: delegation.task,
+              agentId: delegation.toAgentId,
+              requestedBy: agentId,
+              channelId: context.channelId,
+              source: 'slack',
+            });
+            this.logger.log(
+              `[MultiAgentSlack] Background delegation: ${agentId} -> ${delegation.toAgentId} (async)`
+            );
+            submittedCount++;
+          }
+        }
+        if (submittedCount > 0) {
+          displayResponse =
+            bgDelegations[0].originalContent || `🔄 ${submittedCount} background task(s) delegated`;
+        }
+      }
+
+      // Handle synchronous delegations via message queue
+      const syncDelegations = delegations.filter((d) => !d.background);
+      for (const delegation of syncDelegations) {
         const check = this.delegationManager.isDelegationAllowed(
-          bgDelegation.fromAgentId,
-          bgDelegation.toAgentId
+          delegation.fromAgentId,
+          delegation.toAgentId
         );
         if (check.allowed) {
-          const toAgent = this.orchestrator.getAgent(bgDelegation.toAgentId);
-          this.backgroundTaskManager.submit({
-            description: bgDelegation.task.substring(0, 200),
-            prompt: bgDelegation.task,
-            agentId: bgDelegation.toAgentId,
-            requestedBy: agentId,
+          this.messageQueue.enqueue(delegation.toAgentId, {
+            prompt: delegation.task,
             channelId: context.channelId,
             source: 'slack',
+            enqueuedAt: Date.now(),
+            context,
           });
           this.logger.log(
-            `[MultiAgentSlack] Background delegation: ${agentId} -> ${bgDelegation.toAgentId} (async)`
+            `[MultiAgentSlack] Sync delegation (queued): ${agentId} -> ${delegation.toAgentId}`
           );
-
-          const displayResponse =
-            bgDelegation.originalContent ||
-            `🔄 Background task submitted to *${toAgent?.display_name ?? bgDelegation.toAgentId}*`;
-          const formattedResponse = this.formatAgentResponse(agent, displayResponse);
-          return {
-            agentId,
-            agent,
-            content: formattedResponse,
-            rawContent: displayResponse,
-            duration: result.duration_ms,
-          };
+          this.tryDrainNow(delegation.toAgentId, 'slack', context.channelId).catch(() => {});
+        } else {
+          this.logger.log(
+            `[MultiAgentSlack] Sync delegation denied: ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
+          );
         }
       }
 
       // Format response with agent prefix
-      const formattedResponse = this.formatAgentResponse(agent, cleanedResponse);
+      const formattedResponse = this.formatAgentResponse(agent, displayResponse);
 
       return {
         agentId,
