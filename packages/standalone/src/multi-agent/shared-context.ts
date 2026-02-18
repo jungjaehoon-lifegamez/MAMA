@@ -54,8 +54,8 @@ export class SharedContextManager {
   private readonly maxAge: number;
 
   constructor(options: { maxMessages?: number; maxAgeMs?: number } = {}) {
-    this.maxMessages = options.maxMessages || 20;
-    this.maxAge = options.maxAgeMs || 10 * 60 * 1000; // 10 minutes
+    this.maxMessages = options.maxMessages || 50;
+    this.maxAge = options.maxAgeMs || 30 * 60 * 1000; // 30 minutes
   }
 
   /**
@@ -183,7 +183,7 @@ export class SharedContextManager {
    * Build context string for agent prompt injection
    * Excludes messages from the requesting agent to avoid self-reference
    */
-  buildContextForAgent(channelId: string, excludeAgentId: string, maxMessages = 5): string {
+  buildContextForAgent(channelId: string, excludeAgentId: string, maxMessages = 10): string {
     const messages = this.getRecentMessages(channelId, maxMessages + 1);
 
     // Filter out the agent's own messages
@@ -198,7 +198,7 @@ export class SharedContextManager {
 
     const lines = relevantMessages.map((msg) => {
       const prefix = msg.isHuman ? '👤' : '🤖';
-      return `${prefix} **${msg.displayName}**: ${this.truncate(msg.content, 800)}`;
+      return `${prefix} **${msg.displayName}**: ${this.truncate(msg.content, 2000)}`;
     });
 
     return `## Recent Conversation Context\n${lines.join('\n')}`;

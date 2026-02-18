@@ -10,7 +10,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 
-import type { MAMAConfig, MultiAgentConfig } from './types.js';
+import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
 
 /**
@@ -186,8 +186,33 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
 function normalizeLegacyMultiAgentConfig(
   multiAgentConfig?: MultiAgentConfig
 ): MultiAgentConfig | undefined {
-  if (!multiAgentConfig?.agents?.developer) {
+  if (!multiAgentConfig?.agents) {
     return multiAgentConfig;
+  }
+
+  // Migrate sisyphus → conductor (renamed in v0.9.0)
+  const agentEntries = multiAgentConfig.agents as Record<string, Omit<AgentPersonaConfig, 'id'>>;
+  if (agentEntries['sisyphus'] && !agentEntries['conductor']) {
+    const { sisyphus: sisyphusEntry, ...rest } = agentEntries;
+    const migratedAgents = {
+      ...rest,
+      conductor: {
+        ...sisyphusEntry,
+        name: 'Conductor',
+        display_name: '🎯 Conductor',
+        trigger_prefix: '!conductor',
+        persona_file: '~/.mama/personas/conductor.md',
+        tier: 1,
+        can_delegate: true,
+      },
+    };
+    const migratedDefaultAgent =
+      multiAgentConfig.default_agent === 'sisyphus' ? 'conductor' : multiAgentConfig.default_agent;
+    multiAgentConfig = {
+      ...multiAgentConfig,
+      default_agent: migratedDefaultAgent,
+      agents: migratedAgents as typeof multiAgentConfig.agents,
+    };
   }
 
   const developer = multiAgentConfig.agents.developer;
@@ -283,12 +308,13 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
   return {
     enabled: false,
     free_chat: true,
+    default_agent: 'conductor',
     agents: {
-      sisyphus: {
-        name: 'Sisyphus',
-        display_name: '🏔️ Sisyphus',
-        trigger_prefix: '!sisyphus',
-        persona_file: '~/.mama/personas/sisyphus.md',
+      conductor: {
+        name: 'Conductor',
+        display_name: '🎯 Conductor',
+        trigger_prefix: '!conductor',
+        persona_file: '~/.mama/personas/conductor.md',
         tier: 1,
         can_delegate: true,
       },
@@ -311,14 +337,31 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         persona_file: '~/.mama/personas/reviewer.md',
         tier: 3,
       },
+      architect: {
+        name: 'Architect',
+        display_name: '🏛️ Architect',
+        trigger_prefix: '!arch',
+        persona_file: '~/.mama/personas/architect.md',
+        tier: 2,
+      },
+      pm: {
+        name: 'PM',
+        display_name: '📋 PM',
+        trigger_prefix: '!pm',
+        persona_file: '~/.mama/personas/pm.md',
+        tier: 2,
+      },
     },
     loop_prevention: {
       max_chain_length: 5,
       global_cooldown_ms: 1000,
       chain_window_ms: 60000,
     },
-    pr_review_poller: {
-      enabled: false,
+    workflow: {
+      enabled: true,
+    },
+    council: {
+      enabled: true,
     },
   };
 }
@@ -339,16 +382,20 @@ export async function provisionDefaults(): Promise<void> {
   // In dist: dist/cli/config/config-manager.js → ../../../templates/personas
   const templatesDir = resolve(__dirname, '../../../templates/personas');
 
-  // 1. Provision personas directory with builtin templates
+  // 1. Provision personas directory with builtin templates (file-level: copies missing files only)
   if (!existsSync(personasDir)) {
     mkdirSync(personasDir, { recursive: true });
-    if (existsSync(templatesDir)) {
-      for (const file of readdirSync(templatesDir)) {
-        if (file.endsWith('.md')) {
-          copyFileSync(join(templatesDir, file), join(personasDir, file));
-        }
+  }
+  if (existsSync(templatesDir)) {
+    const copied: string[] = [];
+    for (const file of readdirSync(templatesDir)) {
+      if (file.endsWith('.md') && !existsSync(join(personasDir, file))) {
+        copyFileSync(join(templatesDir, file), join(personasDir, file));
+        copied.push(file);
       }
-      console.log('✓ Default persona templates installed');
+    }
+    if (copied.length > 0) {
+      console.log(`✓ Persona templates installed: ${copied.join(', ')}`);
     }
   }
 

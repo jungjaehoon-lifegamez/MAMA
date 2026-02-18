@@ -233,7 +233,7 @@ You can help the user configure and manage the agent team at any time:
 
 - "에이전트 팀 설정해줘" → Walk through team activation
 - "새 에이전트 추가해줘" → Create persona file + config entry
-- "시시포스 성격 바꿔줘" → Modify sisyphus.md persona
+- "Conductor 성격 바꿔줘" → Modify conductor.md persona
 - "에이전트 팀 비활성화" → Set multi_agent.enabled = false
 - "set up agent team" → Walk through team activation
 - "add a new agent" → Create persona file + config entry

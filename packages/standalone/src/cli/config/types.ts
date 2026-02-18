@@ -417,6 +417,10 @@ export interface MultiAgentConfig {
     trigger_keywords?: string[];
     max_duration?: number;
     max_steps?: number;
+    /** Enable file-based state persistence (Ralph Loop pattern) @default true */
+    persist_state?: boolean;
+    /** Enable 3-phase structured loop (plan->build->retrospective) @default true */
+    phased_loop?: boolean;
   };
   /** Task continuation configuration */
   task_continuation?: {
@@ -435,14 +439,22 @@ export interface MultiAgentConfig {
   dangerouslySkipPermissions?: boolean;
   /** Enable @mention-based delegation between agents @default false */
   mention_delegation?: boolean;
-  /** PR review polling configuration @default false */
-  pr_review_poller?: {
-    enabled: boolean;
-  };
   /** Maximum depth of @mention delegation chains @default 3 */
   max_mention_depth?: number;
   /** Explicit delegation rules controlling which agents can delegate to which */
   delegation_rules?: Array<{ from: string; to: string[] }>;
+  /** Dynamic workflow orchestration @default enabled */
+  workflow?: {
+    enabled: boolean;
+    max_ephemeral_agents?: number;
+    max_duration_ms?: number;
+  };
+  /** Council mode — multi-round discussions among named agents @default enabled */
+  council?: {
+    enabled: boolean;
+    max_rounds?: number;
+    max_duration_ms?: number;
+  };
 }
 
 /**

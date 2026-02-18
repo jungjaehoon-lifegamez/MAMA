@@ -94,6 +94,23 @@ describe('WorkflowEngine', () => {
         '\n```';
       expect(engine.parseWorkflowPlan(response)).toBeNull();
     });
+
+    it('should return null for blank agent display_name', () => {
+      const response =
+        '```workflow_plan\n' +
+        JSON.stringify({
+          name: 'bad',
+          steps: [
+            {
+              id: 's1',
+              agent: makeAgent({ display_name: '   ' }),
+              prompt: 'x',
+            },
+          ],
+        }) +
+        '\n```';
+      expect(engine.parseWorkflowPlan(response)).toBeNull();
+    });
   });
 
   describe('extractNonPlanContent', () => {
@@ -189,6 +206,11 @@ describe('WorkflowEngine', () => {
       const steps = [makeStep({ id: 'x' }), makeStep({ id: 'y' }), makeStep({ id: 'z' })];
       const sorted = engine.topologicalSort(steps);
       expect(sorted).toHaveLength(3);
+    });
+
+    it('should return null for invalid dependency references', () => {
+      const steps = [makeStep({ id: 'a', depends_on: ['missing'] })];
+      expect(engine.topologicalSort(steps)).toBeNull();
     });
   });
 
@@ -353,6 +375,27 @@ describe('WorkflowEngine', () => {
       const { result } = await engine.execute(plan, executor);
 
       expect(result).toBe('Summary: Found X');
+    });
+
+    it('should preserve duration_ms on rejected step promises', async () => {
+      const plan = makePlan();
+      const injectedFailure = { message: 'Injected failure', duration_ms: 321 };
+      const executeStepSpy = vi
+        .spyOn(
+          engine as unknown as { executeStep: (...args: unknown[]) => Promise<unknown> },
+          'executeStep'
+        )
+        .mockRejectedValue(injectedFailure);
+      const executor = vi.fn();
+
+      const { execution } = await engine.execute(plan, executor);
+
+      expect(execution.status).toBe('failed');
+      expect(execution.steps).toHaveLength(1);
+      expect(execution.steps[0].duration_ms).toBe(321);
+      expect(execution.steps[0].error).toBe('Injected failure');
+
+      executeStepSpy.mockRestore();
     });
   });
 

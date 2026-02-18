@@ -64,7 +64,7 @@ applies_to: [invalid: yaml: {broken
   it('should map snake_case applies_to fields to camelCase (agent_id → agentId)', () => {
     const markdown = `---
 applies_to:
-  agent_id: [sisyphus]
+  agent_id: [conductor]
   channel: [general]
   keywords: [deploy]
 ---
@@ -72,7 +72,7 @@ Content here
 `;
     const result = parseFrontmatter(markdown);
     expect(result.appliesTo).not.toBeNull();
-    expect(result.appliesTo!.agentId).toEqual(['sisyphus']);
+    expect(result.appliesTo!.agentId).toEqual(['conductor']);
     expect(result.appliesTo!.channel).toEqual(['general']);
     expect(result.appliesTo!.keywords).toEqual(['deploy']);
   });
