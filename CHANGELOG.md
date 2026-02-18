@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-02-18
+
 ### Added
 
 - **UltraWork 3-Phase Loop (Ralph Loop)**: Restructured UltraWork from freeform loop to Plan→Build→Retrospective
@@ -20,12 +22,26 @@ All notable changes to this project will be documented in this file.
   - Conductor outputs `council_plan` JSON block to initiate Council discussion
   - Configurable rounds (1-5), agent list, synthesis toggle
   - Progress updates in Slack/Discord per round
+- **Onboarding multi-agent sync**: Phase 7b introduces all 5 agents + 4 coordination modes
+  - Quick-start guide includes Multi-Agent System section
+  - `handleSaveMultiAgent` auto-provisions persona files from templates
+  - `provisionDefaults` copies missing persona files without overwriting existing ones
 
 ### Changed
 
 - **Conductor persona**: Lead orchestrator renamed from Sisyphus to Conductor
   - Auto-migration: `sisyphus` config entries automatically converted to `conductor`
+  - `default_agent: conductor` added to default multi-agent config
   - Updated metaphor from "roll the boulder" to orchestra/conductor theme
+- Default agent model updated to `claude-sonnet-4-5-20250929`
+
+### Fixed
+
+- **Security**: Path traversal protection in UltraWork session IDs
+- **Race condition**: TOCTOU fix in UltraWork state read-modify-write
+- **Memory leak**: Lock cleanup comparison fix in UltraWorkStateManager
+- **Retrospective validation**: isRetroComplete regex word boundary added
+- **Workflow progress**: `completedSteps !== null` → `!== undefined` (Discord/Slack)
 
 ### Removed
 
