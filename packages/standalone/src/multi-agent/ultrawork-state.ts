@@ -38,13 +38,56 @@ export interface UltraWorkStepRecord {
 
 export class UltraWorkStateManager {
   private baseDir: string;
+  private sessionLocks = new Map<string, Promise<void>>();
 
   constructor(baseDir?: string) {
     this.baseDir = baseDir ?? path.join(os.homedir(), '.mama', 'workspace', 'ultrawork');
   }
 
+  /**
+   * Validates sessionId to prevent path traversal attacks.
+   * Only allows alphanumeric, hyphen, and underscore characters.
+   */
+  private validateSessionId(sessionId: string): void {
+    if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+      throw new Error(`Invalid sessionId: "${sessionId}" — must match /^[A-Za-z0-9_-]+$/`);
+    }
+    // Double-check with path resolution
+    const resolved = path.resolve(this.baseDir, sessionId);
+    const base = path.resolve(this.baseDir);
+    if (!resolved.startsWith(base + path.sep)) {
+      throw new Error(`Invalid sessionId: "${sessionId}" — path traversal detected`);
+    }
+  }
+
   private sessionDir(sessionId: string): string {
+    this.validateSessionId(sessionId);
     return path.join(this.baseDir, sessionId);
+  }
+
+  /**
+   * Executes a function with an exclusive lock on the given sessionId.
+   * Prevents TOCTOU race conditions on read-modify-write operations.
+   */
+  private async withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sessionLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((res) => {
+      release = res;
+    });
+    this.sessionLocks.set(
+      sessionId,
+      prev.then(() => next)
+    );
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.sessionLocks.get(sessionId) === prev.then(() => next)) {
+        this.sessionLocks.delete(sessionId);
+      }
+    }
   }
 
   async createSession(sessionId: string, task: string, agents: string[]): Promise<void> {
@@ -71,22 +114,29 @@ export class UltraWorkStateManager {
         'utf-8'
       );
       return JSON.parse(data) as UltraWorkSessionState;
-    } catch {
-      return null;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null;
+      }
+      throw err;
     }
   }
 
   async updatePhase(sessionId: string, phase: UltraWorkPhase): Promise<void> {
-    const state = await this.loadSession(sessionId);
-    if (!state) return;
+    return this.withSessionLock(sessionId, async () => {
+      const state = await this.loadSession(sessionId);
+      if (!state) {
+        return;
+      }
 
-    state.phase = phase;
-    state.updatedAt = Date.now();
+      state.phase = phase;
+      state.updatedAt = Date.now();
 
-    await fs.writeFile(
-      path.join(this.sessionDir(sessionId), 'session.json'),
-      JSON.stringify(state, null, 2)
-    );
+      await fs.writeFile(
+        path.join(this.sessionDir(sessionId), 'session.json'),
+        JSON.stringify(state, null, 2)
+      );
+    });
   }
 
   async savePlan(sessionId: string, plan: string): Promise<void> {
@@ -96,18 +146,23 @@ export class UltraWorkStateManager {
   async loadPlan(sessionId: string): Promise<string | null> {
     try {
       return await fs.readFile(path.join(this.sessionDir(sessionId), 'plan.md'), 'utf-8');
-    } catch {
-      return null;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null;
+      }
+      throw err;
     }
   }
 
   async recordStep(sessionId: string, step: UltraWorkStepRecord): Promise<void> {
-    const steps = await this.loadProgress(sessionId);
-    steps.push(step);
-    await fs.writeFile(
-      path.join(this.sessionDir(sessionId), 'progress.json'),
-      JSON.stringify(steps, null, 2)
-    );
+    return this.withSessionLock(sessionId, async () => {
+      const steps = await this.loadProgress(sessionId);
+      steps.push(step);
+      await fs.writeFile(
+        path.join(this.sessionDir(sessionId), 'progress.json'),
+        JSON.stringify(steps, null, 2)
+      );
+    });
   }
 
   async loadProgress(sessionId: string): Promise<UltraWorkStepRecord[]> {
@@ -117,8 +172,11 @@ export class UltraWorkStateManager {
         'utf-8'
       );
       return JSON.parse(data) as UltraWorkStepRecord[];
-    } catch {
-      return [];
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return [];
+      }
+      throw err;
     }
   }
 
@@ -138,8 +196,11 @@ export class UltraWorkStateManager {
     try {
       const entries = await fs.readdir(this.baseDir, { withFileTypes: true });
       return entries.filter((e) => e.isDirectory()).map((e) => e.name);
-    } catch {
-      return [];
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return [];
+      }
+      throw err;
     }
   }
 }

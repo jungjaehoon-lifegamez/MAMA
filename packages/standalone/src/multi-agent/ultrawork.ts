@@ -753,7 +753,9 @@ export class UltraWorkManager {
     if (!complete && this.shouldContinue(session)) {
       // Incomplete → re-enter Build phase (max 1 retry)
       await notifyCallback(`Retrospective found incomplete items. Re-entering Build phase...`);
-      if (this.stateManager) await this.stateManager.updatePhase(session.id, 'building');
+      if (this.stateManager) {
+        await this.stateManager.updatePhase(session.id, 'building');
+      }
       await this.runBuildingPhase(
         session,
         plan,
@@ -762,10 +764,47 @@ export class UltraWorkManager {
         notifyCallback,
         responseInterceptor
       );
+
+      // Re-run retrospective after retry Build phase
+      if (!this.shouldContinue(session)) {
+        // Session cancelled or limits exceeded
+        session.active = false;
+        this.sessions.delete(session.channelId);
+        await notifyCallback(`**UltraWork Session Ended** — limits exceeded or cancelled`);
+        return;
+      }
+
+      if (this.stateManager) {
+        await this.stateManager.updatePhase(session.id, 'retrospective');
+      }
+      const retryRetro = await this.runRetrospectivePhase(
+        session,
+        agents,
+        executeCallback,
+        notifyCallback,
+        responseInterceptor
+      );
+
+      if (!retryRetro.complete) {
+        // Still incomplete after retry — end session with warning
+        if (this.stateManager) {
+          await this.stateManager.updatePhase(session.id, 'completed');
+        }
+        session.active = false;
+        this.sessions.delete(session.channelId);
+        await notifyCallback(
+          `**UltraWork Session Complete** (${session.id}) — with incomplete items\n` +
+            `Phases: Plan -> Build -> Retro -> Build (retry) -> Retro\n` +
+            `Steps: ${session.currentStep} | Duration: ${Math.round((Date.now() - session.startTime) / 1000)}s`
+        );
+        return;
+      }
     }
 
     // Complete
-    if (this.stateManager) await this.stateManager.updatePhase(session.id, 'completed');
+    if (this.stateManager) {
+      await this.stateManager.updatePhase(session.id, 'completed');
+    }
     session.active = false;
     this.sessions.delete(session.channelId);
     await notifyCallback(
