@@ -1014,10 +1014,11 @@ export async function runAgentLoop(
   const gatewayMultiAgentRuntime = {
     backend,
     model: config.agent.model,
+    effort: config.agent.effort,
     requestTimeout: config.agent.timeout,
     codexCwd: config.agent.codex_cwd,
     codexSandbox: config.agent.codex_sandbox,
-  } as const;
+  };
 
   // Initialize Discord gateway if enabled (before API server for reference)
   let discordGateway: DiscordGateway | null = null;

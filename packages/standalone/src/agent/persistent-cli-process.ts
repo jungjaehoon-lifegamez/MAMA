@@ -77,6 +77,8 @@ export interface PersistentProcessOptions {
   channelKey?: string;
   /** Agent ID for token usage tracking */
   agentId?: string;
+  /** Effort level for Claude 4.6 adaptive thinking */
+  effort?: 'low' | 'medium' | 'high' | 'max';
 }
 
 export interface ToolUseBlock {
@@ -294,6 +296,10 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
     if (this.options.useGatewayTools) {
       persistentLogger.info('Gateway Tools mode enabled');
+    }
+
+    if (this.options.effort) {
+      args.push('--thinking-effort', this.options.effort);
     }
 
     if (this.options.dangerouslySkipPermissions) {

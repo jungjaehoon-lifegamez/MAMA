@@ -1228,7 +1228,7 @@ async function handleDashboardStatusRequest(
     };
 
     const agent = {
-      model: config.agent?.model || 'claude-sonnet-4-20250514',
+      model: config.agent?.model || 'unknown',
       maxTurns: config.agent?.max_turns ?? 10,
       timeout: config.agent?.timeout ?? 300000,
       tools: config.agent?.tools || { gateway: ['*'], mcp: [] },
@@ -1484,14 +1484,14 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
       roles: config.roles || {
         definitions: {
           os_agent: {
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-6',
             maxTurns: 20,
             allowedTools: ['*'],
             systemControl: true,
             sensitiveAccess: true,
           },
           chat_bot: {
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-6',
             maxTurns: 10,
             allowedTools: ['mama_*', 'Read', 'discord_send'],
             blockedTools: ['Bash', 'Write'],
@@ -2119,7 +2119,7 @@ async function handleMultiAgentStatusRequest(
           id,
           name: (agentConfig.name as string) || id,
           tier: (agentConfig.tier as number) || 1,
-          model: (agentConfig.model as string) || config.agent?.model || 'claude-sonnet-4-20250514',
+          model: (agentConfig.model as string) || config.agent?.model || 'unknown',
           status,
           lastActivity: null,
         });
@@ -2183,6 +2183,7 @@ async function handleMultiAgentAgentsRequest(
           auto_respond_keywords: agentConfig.auto_respond_keywords || [],
           cooldown_ms: agentConfig.cooldown_ms || 5000,
           can_delegate: agentConfig.can_delegate || false,
+          effort: agentConfig.effort || null,
           tool_permissions: agentConfig.tool_permissions || null,
         });
       }
@@ -2366,6 +2367,7 @@ async function handleMultiAgentUpdateAgentRequest(
       updatedAgent.auto_respond_keywords = body.auto_respond_keywords;
     if (body.cooldown_ms !== undefined) updatedAgent.cooldown_ms = body.cooldown_ms;
     if (body.can_delegate !== undefined) updatedAgent.can_delegate = body.can_delegate;
+    if (body.effort !== undefined) updatedAgent.effort = body.effort;
     if (body.tool_permissions !== undefined) updatedAgent.tool_permissions = body.tool_permissions;
 
     const isMaskedToken = (token: unknown): boolean => {

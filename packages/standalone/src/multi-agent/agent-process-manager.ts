@@ -41,11 +41,32 @@ function resolvePath(path: string): string {
  */
 function getModelDisplayName(modelId: string): string {
   const modelMap: Record<string, string> = {
-    'claude-opus-4-5-20251101': 'Claude Opus 4.5',
+    // Claude 4.6
     'claude-opus-4-6': 'Claude Opus 4.6',
+    'claude-opus-4-6-20260210': 'Claude Opus 4.6',
+    'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+    'claude-sonnet-4-6-20260217': 'Claude Sonnet 4.6',
+    // Claude 4.5
+    'claude-opus-4-5-20251101': 'Claude Opus 4.5',
     'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
-    'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
     'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+    // Claude 4.0
+    'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
+    'claude-opus-4-20250514': 'Claude 4 Opus',
+    // Aliases
+    'claude-opus-4-latest': 'Claude Opus 4 (latest)',
+    'claude-sonnet-4-latest': 'Claude Sonnet 4 (latest)',
+    // OpenAI / Codex
+    'gpt-5.3-codex': 'GPT-5.3 Codex',
+    'gpt-5-codex': 'GPT-5 Codex',
+    'gpt-4.1': 'GPT-4.1',
+    'gpt-4.1-mini': 'GPT-4.1 Mini',
+    'gpt-4.1-nano': 'GPT-4.1 Nano',
+    o3: 'OpenAI o3',
+    'o4-mini': 'OpenAI o4-mini',
+    // Google
+    'gemini-2.5-pro': 'Gemini 2.5 Pro',
+    'gemini-2.5-flash': 'Gemini 2.5 Flash',
   };
   return modelMap[modelId] || modelId;
 }
@@ -234,6 +255,10 @@ export class AgentProcessManager extends EventEmitter {
     if (agentConfig?.model) {
       options.model = agentConfig.model;
     }
+    const effort = agentConfig?.effort || this.runtimeOptions.effort;
+    if (effort) {
+      options.effort = effort;
+    }
 
     if (tier >= 2) {
       options.env = { MAMA_DISABLE_HOOKS: 'true' };
@@ -399,7 +424,7 @@ export class AgentProcessManager extends EventEmitter {
 
     // Replace model placeholder with actual config value
     // Supports both {{model}} placeholder and hardcoded model names
-    const actualModel = agentConfig.model || 'claude-sonnet-4-20250514';
+    const actualModel = agentConfig.model || this.runtimeOptions.model || 'unknown';
     const modelDisplayName = getModelDisplayName(actualModel);
     resolvedPersona = resolvedPersona.replace(/\{\{model\}\}/gi, modelDisplayName);
     // Also replace common hardcoded model patterns with actual model
@@ -534,6 +559,7 @@ ${skillBlocks.join('\n\n---\n\n')}
       return '';
     }
   }
+
 
   /**
    * Build default persona when file is missing

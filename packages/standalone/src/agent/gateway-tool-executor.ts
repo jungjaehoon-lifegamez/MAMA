@@ -1238,7 +1238,7 @@ export class GatewayToolExecutor {
    *
    * Usage:
    * - Set role-specific model: { role: 'chat_bot', model: 'claude-3-haiku-20240307' }
-   * - Set global model: { model: 'claude-sonnet-4-20250514' }
+   * - Set global model: { model: 'claude-sonnet-4-6' }
    */
   private async executeSetModel(
     input: SetModelInput
@@ -1267,7 +1267,7 @@ export class GatewayToolExecutor {
     if (!isValidModel) {
       return {
         success: false,
-        error: `Invalid model name format: ${model}. Expected Claude model format (e.g., claude-sonnet-4-20250514, claude-opus-4-latest)`,
+        error: `Invalid model name format: ${model}. Expected Claude model format (e.g., claude-sonnet-4-6, claude-opus-4-latest)`,
       };
     }
 
@@ -1320,7 +1320,7 @@ export class GatewayToolExecutor {
       // No role specified - update global agent config
       if (!config.agent) {
         config.agent = {
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_turns: 10,
           timeout: 300000,
         };

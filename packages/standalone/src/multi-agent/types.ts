@@ -78,6 +78,13 @@ export interface AgentPersonaConfig {
   model?: string;
 
   /**
+   * Effort level for Claude 4.6 adaptive thinking
+   * 'max' is only available on Opus 4.6
+   * If not specified, uses the global agent.effort setting
+   */
+  effort?: 'low' | 'medium' | 'high' | 'max';
+
+  /**
    * Runtime backend for this agent.
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex-mcp': Codex via MCP protocol
@@ -313,6 +320,8 @@ export interface MultiAgentRuntimeOptions {
    */
   backend?: 'claude' | 'codex-mcp' | 'gemini';
   model?: string;
+  /** Effort level for Claude 4.6 adaptive thinking */
+  effort?: 'low' | 'medium' | 'high' | 'max';
   /** Timeout in milliseconds for each agent process request */
   requestTimeout?: number;
   /** Codex working directory (for codex-mcp backend) */
