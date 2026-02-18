@@ -1,5 +1,16 @@
 /**
  * Tests for CouncilEngine
+ *
+ * Story: COUNCIL-001 - Multi-Agent Council Discussions
+ * Description: Enable structured multi-round debates among named agents
+ *
+ * Acceptance Criteria:
+ * - AC1: Parse council_plan JSON blocks from agent responses
+ * - AC2: Validate plans (rounds, agents, required fields)
+ * - AC3: Execute multi-round discussions with sequential agent turns
+ * - AC4: Handle agent failures gracefully without stopping council
+ * - AC5: Support cancellation and timeout
+ * - AC6: Emit progress events for UI updates
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -41,6 +52,9 @@ describe('CouncilEngine', () => {
     engine = new CouncilEngine(defaultConfig);
   });
 
+  // ===========================================================================
+  // AC1: Parse council_plan JSON blocks from agent responses
+  // ===========================================================================
   describe('isEnabled', () => {
     it('returns true when enabled', () => {
       expect(engine.isEnabled()).toBe(true);
@@ -52,7 +66,7 @@ describe('CouncilEngine', () => {
     });
   });
 
-  describe('parseCouncilPlan', () => {
+  describe('parseCouncilPlan (AC1)', () => {
     it('parses valid council_plan block', () => {
       const response = `Let me organize a discussion.
 
@@ -137,7 +151,10 @@ After text.`;
     });
   });
 
-  describe('validatePlan', () => {
+  // ===========================================================================
+  // AC2: Validate plans (rounds, agents, required fields)
+  // ===========================================================================
+  describe('validatePlan (AC2)', () => {
     const availableAgents = ['artisan', 'critic', 'conductor'];
 
     it('returns null for valid plan', () => {
@@ -169,7 +186,10 @@ After text.`;
     });
   });
 
-  describe('buildRoundPrompt', () => {
+  // ===========================================================================
+  // AC3: Execute multi-round discussions with sequential agent turns
+  // ===========================================================================
+  describe('buildRoundPrompt (AC3)', () => {
     it('builds first round prompt with no previous results', () => {
       const prompt = engine.buildRoundPrompt('DB choice', [], 1, 'artisan', '🎨 Artisan');
       expect(prompt).toContain('Council Discussion: DB choice');
@@ -232,7 +252,7 @@ After text.`;
     });
   });
 
-  describe('execute', () => {
+  describe('execute (AC3)', () => {
     it('executes 2 rounds × 2 agents = 4 results', async () => {
       const executor = vi.fn().mockResolvedValue('Agent response');
 
@@ -257,6 +277,27 @@ After text.`;
       expect(result).toContain('Round 2');
     });
 
+    it('passes accumulated history to subsequent prompts', async () => {
+      const prompts: string[] = [];
+      const executor = vi.fn().mockImplementation(async (_id: string, prompt: string) => {
+        prompts.push(prompt);
+        return `Response from call ${prompts.length}`;
+      });
+
+      await engine.execute(makePlan({ rounds: 1 }), executor, agentDisplayNames);
+
+      // First agent: no previous responses
+      expect(prompts[0]).not.toContain('Previous Responses');
+      // Second agent: should see first agent's response
+      expect(prompts[1]).toContain('Previous Responses');
+      expect(prompts[1]).toContain('Response from call 1');
+    });
+  });
+
+  // ===========================================================================
+  // AC4: Handle agent failures gracefully without stopping council
+  // ===========================================================================
+  describe('execute - failure handling (AC4)', () => {
     it('continues when an agent fails', async () => {
       let callCount = 0;
       const executor = vi.fn().mockImplementation(async () => {
@@ -291,41 +332,12 @@ After text.`;
       expect(execution.rounds[0].status).toBe('timeout');
       expect(execution.rounds[1].status).toBe('timeout');
     });
+  });
 
-    it('emits progress events for each round', async () => {
-      const executor = vi.fn().mockResolvedValue('Response');
-      const events: CouncilProgressEvent[] = [];
-      engine.on('progress', (e: CouncilProgressEvent) => events.push(e));
-
-      await engine.execute(makePlan({ rounds: 1 }), executor, agentDisplayNames);
-
-      const types = events.map((e) => e.type);
-      expect(types).toContain('council-round-started');
-      expect(types).toContain('council-round-completed');
-      expect(types).toContain('council-completed');
-
-      // 2 agents × 1 round = 2 started + 2 completed + 1 council-completed = 5
-      expect(events.filter((e) => e.type === 'council-round-started')).toHaveLength(2);
-      expect(events.filter((e) => e.type === 'council-round-completed')).toHaveLength(2);
-      expect(events.filter((e) => e.type === 'council-completed')).toHaveLength(1);
-    });
-
-    it('passes accumulated history to subsequent prompts', async () => {
-      const prompts: string[] = [];
-      const executor = vi.fn().mockImplementation(async (_id: string, prompt: string) => {
-        prompts.push(prompt);
-        return `Response from call ${prompts.length}`;
-      });
-
-      await engine.execute(makePlan({ rounds: 1 }), executor, agentDisplayNames);
-
-      // First agent: no previous responses
-      expect(prompts[0]).not.toContain('Previous Responses');
-      // Second agent: should see first agent's response
-      expect(prompts[1]).toContain('Previous Responses');
-      expect(prompts[1]).toContain('Response from call 1');
-    });
-
+  // ===========================================================================
+  // AC5: Support cancellation and timeout
+  // ===========================================================================
+  describe('execute - cancellation (AC5)', () => {
     it('handles cancellation via global timeout', async () => {
       const shortConfig: CouncilConfig = {
         enabled: true,
@@ -349,7 +361,7 @@ After text.`;
     });
   });
 
-  describe('cancel', () => {
+  describe('cancel (AC5)', () => {
     it('cancels running execution', async () => {
       let executionId = '';
       const executor = vi.fn().mockImplementation(async () => {
@@ -375,6 +387,29 @@ After text.`;
 
     it('returns false for unknown execution', () => {
       expect(engine.cancel('nonexistent')).toBe(false);
+    });
+  });
+
+  // ===========================================================================
+  // AC6: Emit progress events for UI updates
+  // ===========================================================================
+  describe('execute - progress events (AC6)', () => {
+    it('emits progress events for each round', async () => {
+      const executor = vi.fn().mockResolvedValue('Response');
+      const events: CouncilProgressEvent[] = [];
+      engine.on('progress', (e: CouncilProgressEvent) => events.push(e));
+
+      await engine.execute(makePlan({ rounds: 1 }), executor, agentDisplayNames);
+
+      const types = events.map((e) => e.type);
+      expect(types).toContain('council-round-started');
+      expect(types).toContain('council-round-completed');
+      expect(types).toContain('council-completed');
+
+      // 2 agents × 1 round = 2 started + 2 completed + 1 council-completed = 5
+      expect(events.filter((e) => e.type === 'council-round-started')).toHaveLength(2);
+      expect(events.filter((e) => e.type === 'council-round-completed')).toHaveLength(2);
+      expect(events.filter((e) => e.type === 'council-completed')).toHaveLength(1);
     });
   });
 
