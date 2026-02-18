@@ -22,6 +22,7 @@ import { createSafeLogger } from '../utils/log-sanitizer.js';
  */
 interface SlackMessageEvent {
   type: string;
+  subtype?: string;
   channel: string;
   user: string;
   text: string;
@@ -198,6 +199,11 @@ export class SlackGateway extends BaseGateway {
    * Handle incoming Slack message
    */
   private async handleMessage(event: SlackMessageEvent, isMention: boolean): Promise<void> {
+    // Skip non-standard message subtypes (edits, deletes, unfurls, etc.)
+    if (event.subtype) {
+      return;
+    }
+
     // Dedup: Slack Socket Mode may redeliver events, and app_mention + message
     // fire for the same @mention. Mark every processed event to prevent duplicates.
     if (!event.bot_id) {
