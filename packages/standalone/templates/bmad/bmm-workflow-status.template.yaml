@@ -4,7 +4,7 @@
 
 project_name: "{{PROJECT_NAME}}"
 project_type: "{{PROJECT_TYPE}}"
-project_level: {{PROJECT_LEVEL}}
+project_level: "{{PROJECT_LEVEL}}"
 communication_language: "English"
 output_language: "English"
 last_updated: "{{TIMESTAMP}}"

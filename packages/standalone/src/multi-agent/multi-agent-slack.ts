@@ -61,8 +61,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   /** Interval handle for periodic cleanup */
   private mentionCleanupInterval?: ReturnType<typeof setInterval>;
 
-  /** Tracks which agent:channel combos have received history injection (new session only) */
-  private historyInjected = new Set<string>();
+  /** Tracks the process used for history seeding per agent:channel */
+  private historySeedProcess = new Map<string, AgentRuntimeProcess>();
 
   constructor(
     config: MultiAgentConfig,
@@ -128,6 +128,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       clearInterval(this.mentionCleanupInterval);
       this.mentionCleanupInterval = undefined;
     }
+    this.historySeedProcess.clear();
     await this.multiBotManager.stopAll();
   }
 
@@ -387,40 +388,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     // Build full prompt with context.
     let fullPrompt = cleanMessage;
 
-    // Inject channel history on first message per session only.
-    // After restart the CLI process has no memory, so we need to seed it.
-    const sessionKey = `${agentId}:${context.channelId}`;
-    if (!this.historyInjected.has(sessionKey)) {
-      const channelHistory = getChannelHistory();
-      const displayName = agent.display_name || agentId;
-      const historyContext = channelHistory.formatForContext(
-        context.channelId,
-        context.messageId,
-        displayName
-      );
-      if (historyContext) {
-        fullPrompt = `${historyContext}\n\n${fullPrompt}`;
-      }
-      this.historyInjected.add(sessionKey);
-    }
-
-    if (agentContext) {
-      fullPrompt = `${agentContext}\n\n${fullPrompt}`;
-    }
-
-    // Inject agent availability status and active work (Phase 2 + 3)
-    const agentStatus = this.buildAgentStatusSection(agentId);
-    const workSection = this.workTracker.buildWorkSection(agentId);
-    const channelInfo = `## Current Channel\nPlatform: Slack\nchannel_id: ${context.channelId}\nUse **slack_send** to send messages/files to this channel.`;
-    const dynamicContext = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
-    if (dynamicContext) {
-      fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
-    }
-
-    this.logger.log(
-      `[MultiAgentSlack] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`
-    );
-
     // Track work start (completed in finally block)
     this.workTracker.startWork(agentId, context.channelId, cleanMessage);
 
@@ -429,6 +396,41 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     try {
       // Get or create process for this agent in this channel
       process = await this.processManager.getProcess('slack', context.channelId, agentId);
+
+      // Inject channel history when process is new/replaced for this agent:channel.
+      // After process restart the CLI has no prior memory, so history must be re-seeded.
+      const sessionKey = `${agentId}:${context.channelId}`;
+      const needsHistorySeed = this.historySeedProcess.get(sessionKey) !== process;
+      if (needsHistorySeed) {
+        const channelHistory = getChannelHistory();
+        const displayName = agent.display_name || agentId;
+        const historyContext = channelHistory.formatForContext(
+          context.channelId,
+          context.messageId,
+          displayName
+        );
+        if (historyContext) {
+          fullPrompt = `${historyContext}\n\n${fullPrompt}`;
+        }
+        this.historySeedProcess.set(sessionKey, process);
+      }
+
+      if (agentContext) {
+        fullPrompt = `${agentContext}\n\n${fullPrompt}`;
+      }
+
+      // Inject agent availability status and active work (Phase 2 + 3)
+      const agentStatus = this.buildAgentStatusSection(agentId);
+      const workSection = this.workTracker.buildWorkSection(agentId);
+      const channelInfo = `## Current Channel\nPlatform: Slack\nchannel_id: ${context.channelId}\nUse **slack_send** to send messages/files to this channel.`;
+      const dynamicContext = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
+      if (dynamicContext) {
+        fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
+      }
+
+      this.logger.log(
+        `[MultiAgentSlack] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`
+      );
 
       // Send message and get response (with timeout, properly cleaned up)
       let timeoutHandle: ReturnType<typeof setTimeout>;
