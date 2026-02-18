@@ -252,6 +252,8 @@ export class WorkflowEngine extends EventEmitter {
 
     const stepResults = new Map<string, StepResult>();
     const levels = this.buildExecutionLevels(plan.steps);
+    const totalSteps = plan.steps.length;
+    const completedCounter = { count: 0 };
 
     // Global timeout
     const globalTimeout = setTimeout(() => {
@@ -264,7 +266,15 @@ export class WorkflowEngine extends EventEmitter {
 
         const levelResults = await Promise.allSettled(
           level.map((step) =>
-            this.executeStep(step, stepResults, executeStep, executionId, executionState)
+            this.executeStep(
+              step,
+              stepResults,
+              executeStep,
+              executionId,
+              executionState,
+              totalSteps,
+              completedCounter
+            )
           )
         );
 
@@ -353,7 +363,9 @@ export class WorkflowEngine extends EventEmitter {
     previousResults: Map<string, StepResult>,
     executeStep: StepExecutor,
     executionId: string,
-    executionState: { cancelled: boolean }
+    executionState: { cancelled: boolean },
+    totalSteps?: number,
+    completedCounter?: { count: number }
   ): Promise<StepResult> {
     if (executionState.cancelled) {
       return {
@@ -372,6 +384,8 @@ export class WorkflowEngine extends EventEmitter {
       agentDisplayName: step.agent.display_name,
       agentBackend: step.agent.backend,
       agentModel: step.agent.model,
+      completedSteps: completedCounter?.count,
+      totalSteps,
     });
 
     // Interpolate previous step results into prompt
@@ -383,6 +397,7 @@ export class WorkflowEngine extends EventEmitter {
       const result = await executeStep(step.agent, resolvedPrompt, timeout);
       const duration_ms = Date.now() - start;
 
+      if (completedCounter) completedCounter.count++;
       this.emitProgress({
         type: 'step-completed',
         executionId,
@@ -392,6 +407,8 @@ export class WorkflowEngine extends EventEmitter {
         agentModel: step.agent.model,
         result: result.substring(0, 500),
         duration_ms,
+        completedSteps: completedCounter?.count,
+        totalSteps,
       });
 
       return {
@@ -405,6 +422,7 @@ export class WorkflowEngine extends EventEmitter {
       const duration_ms = Date.now() - start;
       const errorMsg = error instanceof Error ? error.message : String(error);
 
+      if (completedCounter) completedCounter.count++;
       this.emitProgress({
         type: 'step-failed',
         executionId,
@@ -414,6 +432,8 @@ export class WorkflowEngine extends EventEmitter {
         agentModel: step.agent.model,
         error: errorMsg,
         duration_ms,
+        completedSteps: completedCounter?.count,
+        totalSteps,
       });
 
       if (step.optional) {

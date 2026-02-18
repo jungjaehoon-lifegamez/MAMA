@@ -112,6 +112,10 @@ export interface WorkflowProgressEvent {
   duration_ms?: number;
   /** Summary of all step results (for workflow-completed) */
   summary?: string;
+  /** Steps completed so far */
+  completedSteps?: number;
+  /** Total steps in workflow */
+  totalSteps?: number;
 }
 
 // ============================================================================

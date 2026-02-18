@@ -441,13 +441,20 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           }
           let msg = '';
           const modelTag = event.agentModel ? ` [${event.agentModel}]` : '';
+          const progress =
+            event.totalSteps && event.completedSteps !== null
+              ? ` [${event.completedSteps}/${event.totalSteps}]`
+              : '';
           if (event.type === 'step-started') {
-            msg = `  ${event.agentDisplayName}${modelTag} 시작...`;
+            msg = `  ${event.agentDisplayName}${modelTag}${progress} 시작...`;
           } else if (event.type === 'step-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
-            msg = `${event.agentDisplayName}${modelTag} (${sec}s) 완료`;
+            const pct = event.totalSteps
+              ? ` (${Math.round((event.completedSteps! / event.totalSteps) * 100)}%)`
+              : '';
+            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} 완료`;
           } else if (event.type === 'step-failed') {
-            msg = `${event.agentDisplayName}${modelTag} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ 실패: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             this.mainWebClient!.chat.postMessage({ channel: context.channelId, text: msg }).catch(

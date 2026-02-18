@@ -30,7 +30,6 @@ All notable changes to this project will be documented in this file.
 ### Removed
 
 - **PR Poller**: Removed ~1,200 lines of legacy PR polling code
-  - Replaced by event-driven GitHub webhook integration
 
 ## [0.9.2] - 2026-02-17
 
