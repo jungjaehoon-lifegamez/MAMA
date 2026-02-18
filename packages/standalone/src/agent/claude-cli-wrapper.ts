@@ -37,6 +37,21 @@ const { DebugLogger } = debugLogger as {
 };
 
 const logger = new DebugLogger('ClaudeCLI');
+
+function supportsThinkingEffortModel(model: string | undefined): boolean {
+  return model === 'claude-opus-4-6' || model === 'claude-sonnet-4-6';
+}
+
+function normalizeThinkingEffort(
+  model: string | undefined,
+  effort: 'low' | 'medium' | 'high' | 'max'
+): 'low' | 'medium' | 'high' | 'max' {
+  if (effort === 'max' && model !== 'claude-opus-4-6') {
+    return 'high';
+  }
+  return effort;
+}
+
 export interface ClaudeCLIWrapperOptions {
   model?: string;
   /**
@@ -162,10 +177,11 @@ export class ClaudeCLIWrapper {
         args.push('--model', model);
       }
 
-      // Add effort level for Claude 4.6 adaptive thinking
-      if (this.options.effort && (model === 'claude-opus-4-6' || model === 'claude-sonnet-4-6')) {
-        args.push('--thinking-effort', this.options.effort);
-        logger.debug('Effort level:', this.options.effort);
+      // Add effort level for Claude 4.6 adaptive thinking.
+      if (this.options.effort && supportsThinkingEffortModel(model)) {
+        const effort = normalizeThinkingEffort(model, this.options.effort);
+        args.push('--thinking-effort', effort);
+        logger.debug('Effort level:', effort);
       }
 
       // Always inject system prompt (contains DB history for memory)
