@@ -204,7 +204,7 @@ The system parses the DAG, executes steps in topological order with parallel exe
         "id": "researcher-1",
         "display_name": "Researcher",
         "backend": "claude",
-        "model": "claude-sonnet-4-5-20250929",
+        "model": "{{claude_model_id}}",
         "system_prompt": "You are a technical researcher."
       },
       "prompt": "Research best practices for X."
@@ -215,7 +215,7 @@ The system parses the DAG, executes steps in topological order with parallel exe
         "id": "coder-1",
         "display_name": "Coder",
         "backend": "codex-mcp",
-        "model": "gpt-5.3-codex",
+        "model": "{{codex_model_id}}",
         "system_prompt": "You are a developer."
       },
       "prompt": "Implement X based on: {{research.result}}",

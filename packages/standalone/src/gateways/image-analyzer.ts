@@ -1,7 +1,7 @@
 import { loadConfig } from '../cli/config/config-manager.js';
 
 // Default model for image analysis (vision-capable)
-const DEFAULT_IMAGE_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_IMAGE_MODEL = 'claude-sonnet-4-6';
 
 // Define proper types
 interface ClaudeResponse {
