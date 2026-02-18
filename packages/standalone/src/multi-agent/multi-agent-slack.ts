@@ -17,11 +17,6 @@ import type { PersistentProcessOptions } from '../agent/persistent-cli-process.j
 import { splitForSlack } from '../gateways/message-splitter.js';
 import type { AgentRuntimeProcess } from './runtime-process.js';
 import type { QueuedMessage } from './agent-message-queue.js';
-import {
-  PRReviewPoller,
-  type PRPollerBatchDigest,
-  type PRPollerBatchItem,
-} from './pr-review-poller.js';
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import {
@@ -61,9 +56,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
   /** Heartbeat polling interval handle */
   private heartbeatInterval?: ReturnType<typeof setInterval>;
-
-  /** PR poller summaries by channel for LEAD wake-up context. */
-  private prPollerSummaries = new Map<string, PRPollerBatchItem[]>();
 
   /** Interval handle for periodic cleanup */
   private mentionCleanupInterval?: ReturnType<typeof setInterval>;
@@ -244,159 +236,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         `[MultiAgentSlack] Mention delegation enabled with ${botUserIdMap.size} bot IDs`
       );
     }
-
-    // Configure PR poller wiring (if enabled)
-    this.configurePrPoller();
-  }
-
-  /**
-   * Configure PR Review Poller callbacks.
-   * Extracted so it can be called from both initializeMultiBots() and updateConfig()
-   * to enable hot-reload of PR poller.
-   */
-  private configurePrPoller(): void {
-    if (!this.isPrReviewPollingEnabled()) {
-      return;
-    }
-
-    if (this.config.mention_delegation) {
-      const botUserIdMap = this.multiBotManager.getBotUserIdMap();
-      const orchestratorId = this.config.default_agent || 'sisyphus';
-      const orchestratorUserId = botUserIdMap.get(orchestratorId);
-      if (orchestratorUserId) {
-        this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
-      }
-    }
-
-    // PR Review Poller: wake up LEAD with compact summaries from new review items.
-    this.prReviewPoller.setMessageSender(async () => {});
-    this.prReviewPoller.setOnBatchItem(
-      async (channelId: string, summary: string, item: PRPollerBatchItem) => {
-        const compact = this.compactPrReviewBatchSummary(summary);
-        const bucket = this.prPollerSummaries.get(channelId) ?? [];
-        if (!compact || bucket.some((candidate) => candidate.id === item.id)) {
-          return;
-        }
-        const merged = { ...item, summary: compact };
-        this.prPollerSummaries.set(channelId, [...bucket, merged].slice(-12));
-      }
-    );
-    this.prReviewPoller.setOnBatchComplete(
-      async (channelId: string, digest?: PRPollerBatchDigest) => {
-        const items =
-          (digest?.items && digest.items.length > 0
-            ? digest.items
-            : this.prPollerSummaries.get(channelId)) ?? [];
-        const count = items.length;
-        if (count === 0) {
-          return;
-        }
-        const actionableItems = digest?.newItems ?? items.filter((item) => !item.isReminder);
-        if (actionableItems.length === 0) {
-          this.prPollerSummaries.delete(channelId);
-          return;
-        }
-        const reminderCount = (digest?.reminderItems ?? items.filter((item) => item.isReminder))
-          .length;
-        this.prPollerSummaries.delete(channelId);
-
-        const sessions = this.prReviewPoller.getSessionDetails();
-        const session = sessions.find((s) => s.channelId === channelId);
-        if (!session) {
-          return;
-        }
-
-        const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
-        const summaryLines = items
-          .map(
-            (item: PRPollerBatchItem, idx: number) =>
-              `- ${idx + 1}. [${item.severity}] ${item.summary}`
-          )
-          .join('\n');
-        const promptSummary = `\n${summaryLines}`;
-        const reminderSuffix = reminderCount > 0 ? `\n🔔 Reminders: ${reminderCount} item(s).` : '';
-
-        if (this.mainWebClient) {
-          await this.mainWebClient.chat.postMessage({
-            channel: channelId,
-            text: `📊 PR ${prLabel} — ${count} new review item(s)\n\n${promptSummary}${reminderSuffix}`,
-          });
-        }
-
-        this.orchestrator.resetChain(channelId);
-        const defaultAgentId = this.config.default_agent || 'sisyphus';
-
-        const basePrompt =
-          `📊 PR Review follow-up (${count} new item(s))\n` +
-          `Target: ${prLabel}\n` +
-          `Workspace: \`${session.workspaceDir}\`\n` +
-          `Items:\n${promptSummary}${reminderSuffix}`;
-
-        this.messageQueue.enqueue(defaultAgentId, {
-          prompt: `${basePrompt}\n\nClassify severity, implement fixable items, and coordinate with Dev/Reviewer.`,
-          channelId,
-          source: 'slack',
-          enqueuedAt: Date.now(),
-          context: { channelId, userId: 'pr-poller' },
-        });
-        this.logger.info(`[MultiAgentSlack] PR Poller -> LEAD wake-up (${count} items)`);
-        this.tryDrainNow(defaultAgentId, 'slack', channelId).catch(() => {});
-
-        const helperAgents = this.resolvePrReviewAssistants(defaultAgentId);
-        for (const helperAgentId of helperAgents) {
-          const helperPrompt =
-            helperAgentId === 'developer'
-              ? `${basePrompt}\n\nImplement available fixes in the workspace and request Reviewer verification when changes are made.`
-              : `${basePrompt}\n\nInspect the comments for correctness issues and provide reviewer guidance.`;
-
-          this.messageQueue.enqueue(helperAgentId, {
-            prompt: helperPrompt,
-            channelId,
-            source: 'slack',
-            enqueuedAt: Date.now(),
-            context: { channelId, userId: 'pr-poller' },
-          });
-          this.logger.info(
-            `[MultiAgentSlack] PR Poller -> ${helperAgentId} wake-up (${count} items)`
-          );
-          this.tryDrainNow(helperAgentId, 'slack', channelId).catch(() => {});
-        }
-      }
-    );
-    this.logger.log('[MultiAgentSlack] PR Poller summaries now feed LEAD wake-up');
-  }
-
-  /**
-   * Keep PR poller summaries short and remove duplicates.
-   */
-  private compactPrReviewBatchSummary(summary: string): string {
-    const compact = summary.replace(/[\r\n]+/g, ' ').trim();
-    const max = 230;
-    if (!compact) {
-      return '';
-    }
-    return compact.length > max ? `${compact.slice(0, max)}…` : compact;
-  }
-
-  /**
-   * Resolve helper agents for PR review workflow in addition to default lead.
-   */
-  private resolvePrReviewAssistants(defaultAgentId: string): string[] {
-    const candidateIds = ['developer', 'reviewer', 'dev', 'lead'];
-    const helperAgents: string[] = [];
-
-    for (const id of candidateIds) {
-      const cfg = this.config.agents[id];
-      if (!cfg || id === defaultAgentId) {
-        continue;
-      }
-      if (cfg.enabled === false) {
-        continue;
-      }
-      helperAgents.push(id);
-    }
-
-    return [...new Set(helperAgents)];
   }
 
   /**
@@ -411,13 +250,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         await client.chat.postMessage({ channel: channelId, text: chunk });
       }
     }, 'slack');
-
-    // Only set PR poller sender if not already configured (e.g., by reviewer bot)
-    if (this.isPrReviewPollingEnabled() && !this.prReviewPoller.hasMessageSender?.()) {
-      this.prReviewPoller.setMessageSender(async (channelId: string, text: string) => {
-        await client.chat.postMessage({ channel: channelId, text });
-      });
-    }
   }
 
   /**
@@ -448,70 +280,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     this.config = config;
     this.orchestrator.updateConfig(config);
     this.processManager.updateConfig(config);
-    if (this.isPrReviewPollingEnabled()) {
-      // Re-wire PR poller callbacks on hot-reload enable
-      this.configurePrPoller();
-    } else {
-      this.prReviewPoller.stopAll();
-      this.prPollerSummaries.clear();
-    }
-  }
-
-  /**
-   * Handle PR review polling commands from human messages.
-   * Returns true if the message was a PR command (consumed), false otherwise.
-   *
-   * Start: message contains a GitHub PR URL (auto-detect)
-   * Stop: message contains "pr stop", "stop polling"
-   */
-  async handlePRCommand(channelId: string, content: string): Promise<boolean> {
-    if (!this.isPrReviewPollingEnabled()) {
-      return false;
-    }
-
-    if (!this.mainWebClient) {
-      return false;
-    }
-
-    const contentLower = content.toLowerCase();
-
-    // Stop commands
-    const stopPatterns = ['pr 중지', 'pr stop', '폴링 중지', 'stop polling', 'pr 종료', 'stop pr'];
-    if (stopPatterns.some((p) => contentLower.includes(p))) {
-      const sessions = this.prReviewPoller.getActiveSessions();
-      if (sessions.length === 0) {
-        await this.mainWebClient.chat.postMessage({
-          channel: channelId,
-          text: '📭 No active PR polling sessions.',
-        });
-      } else {
-        this.prReviewPoller.stopAll();
-        await this.mainWebClient.chat.postMessage({
-          channel: channelId,
-          text: `⏹️ PR review polling stopped: ${sessions.join(', ')}`,
-        });
-      }
-      return true;
-    }
-
-    // Start: detect PR URL in message
-    const prUrls = PRReviewPoller.extractPRUrls(content);
-    if (prUrls.length > 0) {
-      for (const prUrl of prUrls) {
-        const started = await this.prReviewPoller.startPolling(prUrl, channelId);
-        if (started) {
-          const parsed = this.prReviewPoller.parsePRUrl(prUrl);
-          const key = parsed ? `${parsed.owner}/${parsed.repo}#${parsed.prNumber}` : prUrl;
-          await this.mainWebClient.chat.postMessage({
-            channel: channelId,
-            text: `👀 *PR Review Poller started* -- ${key}\nPolling for new review comments every 60 seconds. Type "PR stop" to stop.`,
-          });
-        }
-      }
-      return true;
-    }
-
-    return false;
   }
 
   /**
@@ -1055,7 +823,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       const mentionedAgentIds = this.extractMentionedAgentIds(response.rawContent).filter(
         (id) => id !== response.agentId
       );
-      if (mentionedAgentIds.length === 0) continue;
+      if (mentionedAgentIds.length === 0) {
+        continue;
+      }
 
       // Hard gate: block malformed delegations from can_delegate agents
       const senderAgent = this.orchestrator.getAgent(response.agentId);
@@ -1166,11 +936,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     }
 
     const agentStates = this.processManager.getAgentStates();
-    const prSessions = this.isPrReviewPollingEnabled()
-      ? this.prReviewPoller.getActiveSessions()
-      : [];
 
-    // Check if any agent is busy or PR polling is active
+    // Check if any agent is busy
     let hasBusy = false;
     for (const state of agentStates.values()) {
       if (state === 'busy' || state === 'starting') {
@@ -1179,8 +946,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       }
     }
 
-    // Silent when no agents are busy AND no PR polling active
-    if (!hasBusy && prSessions.length === 0) return;
+    // Silent when no agents are busy
+    if (!hasBusy) return;
 
     // Build status line
     const agentConfigs = this.config.agents;
@@ -1198,12 +965,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       parts.push(entry);
     }
 
-    let statusLine = `⏱️ *Agent Status* | ${parts.join(' | ')}`;
-
-    // Append PR polling info
-    if (prSessions.length > 0) {
-      statusLine += ` | 👀 PR: ${prSessions.join(', ')}`;
-    }
+    const statusLine = `⏱️ *Agent Status* | ${parts.join(' | ')}`;
 
     try {
       await this.mainWebClient.chat.postMessage({
@@ -1213,10 +975,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     } catch (err) {
       this.logger.error('[Heartbeat] Failed to post status:', err);
     }
-  }
-
-  private isPrReviewPollingEnabled(): boolean {
-    return this.config.pr_review_poller?.enabled === true;
   }
 
   /**

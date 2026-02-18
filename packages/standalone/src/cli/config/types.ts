@@ -435,14 +435,16 @@ export interface MultiAgentConfig {
   dangerouslySkipPermissions?: boolean;
   /** Enable @mention-based delegation between agents @default false */
   mention_delegation?: boolean;
-  /** PR review polling configuration @default false */
-  pr_review_poller?: {
-    enabled: boolean;
-  };
   /** Maximum depth of @mention delegation chains @default 3 */
   max_mention_depth?: number;
   /** Explicit delegation rules controlling which agents can delegate to which */
   delegation_rules?: Array<{ from: string; to: string[] }>;
+  /** Dynamic workflow orchestration @default enabled */
+  workflow?: {
+    enabled: boolean;
+    max_ephemeral_agents?: number;
+    max_duration_ms?: number;
+  };
 }
 
 /**
