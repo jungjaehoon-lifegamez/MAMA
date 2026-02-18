@@ -317,8 +317,8 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
       global_cooldown_ms: 1000,
       chain_window_ms: 60000,
     },
-    pr_review_poller: {
-      enabled: false,
+    workflow: {
+      enabled: true,
     },
   };
 }

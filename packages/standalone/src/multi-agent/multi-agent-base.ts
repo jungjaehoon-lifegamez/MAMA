@@ -21,7 +21,6 @@ import { AgentMessageQueue } from './agent-message-queue.js';
 import { BackgroundTaskManager, type BackgroundTask } from './background-task-manager.js';
 import { SystemReminderService } from './system-reminder.js';
 import { DelegationManager } from './delegation-manager.js';
-import { PRReviewPoller } from './pr-review-poller.js';
 import { WorkTracker } from './work-tracker.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
@@ -88,13 +87,12 @@ export abstract class MultiAgentHandlerBase {
   protected processManager: AgentProcessManager;
   protected sharedContext: SharedContextManager;
   protected messageQueue: AgentMessageQueue;
-  protected prReviewPoller: PRReviewPoller;
   protected backgroundTaskManager: BackgroundTaskManager;
   protected systemReminder: SystemReminderService;
   protected delegationManager: DelegationManager;
   protected workTracker: WorkTracker;
   protected gatewayToolExecutor: GatewayToolExecutor | null = null;
-  protected workflowEngine: WorkflowEngine | null = null;
+  protected workflowEngine: WorkflowEngine;
 
   /** Whether multi-bot mode is initialized */
   protected multiBotInitialized = false;
@@ -130,16 +128,13 @@ export abstract class MultiAgentHandlerBase {
     this.processManager = new AgentProcessManager(config, processOptions, runtimeOptions);
     this.sharedContext = getSharedContextManager();
     this.messageQueue = new AgentMessageQueue();
-    this.prReviewPoller = new PRReviewPoller();
 
     const agentConfigs = Object.entries(config.agents).map(([id, cfg]) => ({ id, ...cfg }));
     this.delegationManager = new DelegationManager(agentConfigs);
     this.workTracker = new WorkTracker();
 
-    // Initialize workflow engine if enabled
-    if (config.workflow?.enabled) {
-      this.workflowEngine = new WorkflowEngine(config.workflow);
-    }
+    // Always initialize workflow engine (enabled by default)
+    this.workflowEngine = new WorkflowEngine(config.workflow ?? { enabled: true });
 
     this.backgroundTaskManager = new BackgroundTaskManager(
       async (agentId: string, prompt: string): Promise<string> => {
@@ -384,13 +379,6 @@ export abstract class MultiAgentHandlerBase {
   }
 
   /**
-   * Get PR Review Poller instance
-   */
-  getPRReviewPoller(): PRReviewPoller {
-    return this.prReviewPoller;
-  }
-
-  /**
    * Get work tracker instance
    */
   getWorkTracker(): WorkTracker {
@@ -495,7 +483,7 @@ export abstract class MultiAgentHandlerBase {
   /**
    * Get workflow engine instance
    */
-  getWorkflowEngine(): WorkflowEngine | null {
+  getWorkflowEngine(): WorkflowEngine {
     return this.workflowEngine;
   }
 
@@ -516,10 +504,10 @@ export abstract class MultiAgentHandlerBase {
 
     const plan = this.workflowEngine.parseWorkflowPlan(conductorResponse);
     if (!plan) {
-      const hasBlock = /```workflow_plan/i.test(conductorResponse);
-      if (hasBlock) {
+      const workflowPlanFence = '```workflow_plan';
+      const blockIdx = conductorResponse.toLowerCase().indexOf(workflowPlanFence);
+      if (blockIdx !== -1) {
         this.logger.warn('[Workflow] Found workflow_plan block but failed to parse it');
-        const blockIdx = conductorResponse.search(/```workflow_plan/i);
         this.logger.warn(
           '[Workflow] Response snippet:',
           conductorResponse.substring(Math.max(0, blockIdx), Math.max(0, blockIdx) + 500)
@@ -541,16 +529,15 @@ export abstract class MultiAgentHandlerBase {
     // Extract non-plan content as Conductor's direct message
     const directMessage = this.workflowEngine.extractNonPlanContent(conductorResponse);
 
-    // Collect ephemeral agent IDs for cleanup
-    const ephemeralAgentIds = plan.steps.map((s) => s.agent.id);
-
-    // Register progress listener
-    const progressHandler = onProgress
-      ? (event: WorkflowProgressEvent) => onProgress(event)
-      : undefined;
+    // Collect ephemeral agent definitions for cleanup
+    const ephemeralAgents = plan.steps.map((s) => s.agent);
+    let progressHandler: ((event: WorkflowProgressEvent) => void) | undefined;
 
     try {
-      // Register progress listener inside try block to ensure cleanup in finally
+      progressHandler = onProgress
+        ? (event: WorkflowProgressEvent) => onProgress(event)
+        : undefined;
+
       if (progressHandler) {
         this.workflowEngine.on('progress', progressHandler);
       }
@@ -568,6 +555,12 @@ export abstract class MultiAgentHandlerBase {
       ): Promise<string> => {
         let process: AgentRuntimeProcess | null = null;
         let timer: NodeJS.Timeout | undefined;
+        const clearStepTimeout = (): void => {
+          if (timer) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+        };
         try {
           process = await this.processManager.getProcess(source, channelId, agent.id);
           const result = await Promise.race([
@@ -579,11 +572,11 @@ export abstract class MultiAgentHandlerBase {
               );
             }),
           ]);
-          if (timer) clearTimeout(timer);
+          clearStepTimeout();
           const cleaned = await this.executeTextToolCalls(result.response);
           return cleaned;
         } finally {
-          if (timer) clearTimeout(timer);
+          clearStepTimeout();
           if (process) {
             this.processManager.releaseProcess(agent.id, process);
           }
@@ -594,7 +587,7 @@ export abstract class MultiAgentHandlerBase {
       return { result, directMessage };
     } finally {
       // Cleanup: unregister ephemeral agents and remove progress listener
-      this.processManager.unregisterEphemeralAgents(ephemeralAgentIds);
+      this.processManager.unregisterEphemeralAgents(ephemeralAgents);
       if (progressHandler) {
         this.workflowEngine.off('progress', progressHandler);
       }
@@ -621,7 +614,6 @@ export abstract class MultiAgentHandlerBase {
   async stopAll(): Promise<void> {
     this.backgroundTaskManager.destroy();
     this.processManager.stopAll();
-    this.prReviewPoller.stopAll();
     await this.platformCleanup();
   }
 }

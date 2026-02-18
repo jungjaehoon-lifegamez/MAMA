@@ -67,19 +67,23 @@ export class WorkflowEngine extends EventEmitter {
 
     try {
       const plan = JSON.parse(match[1].trim()) as WorkflowPlan;
-      if (!plan.name || !Array.isArray(plan.steps) || plan.steps.length === 0) {
+      const isNonEmptyString = (value: unknown): value is string =>
+        typeof value === 'string' && value.trim().length > 0;
+
+      if (!isNonEmptyString(plan.name) || !Array.isArray(plan.steps) || plan.steps.length === 0) {
         return null;
       }
 
       // Validate each step has required fields
       for (const step of plan.steps) {
-        if (!step.id || !step.agent || !step.prompt) return null;
+        if (!isNonEmptyString(step.id) || !step.agent || !isNonEmptyString(step.prompt))
+          return null;
         if (
-          !step.agent.id ||
-          !step.agent.display_name ||
-          !step.agent.backend ||
-          !step.agent.model ||
-          !step.agent.system_prompt
+          !isNonEmptyString(step.agent.id) ||
+          !isNonEmptyString(step.agent.display_name) ||
+          !isNonEmptyString(step.agent.backend) ||
+          !isNonEmptyString(step.agent.model) ||
+          !isNonEmptyString(step.agent.system_prompt)
         ) {
           return null;
         }
@@ -156,10 +160,14 @@ export class WorkflowEngine extends EventEmitter {
     for (const step of steps) {
       if (step.depends_on) {
         for (const dep of step.depends_on) {
-          if (!adjacency.has(dep)) {
-            throw new Error(`Step "${step.id}" depends on unknown step "${dep}"`);
+          if (typeof dep !== 'string') {
+            return null;
           }
-          adjacency.get(dep)!.push(step.id);
+          const dependents = adjacency.get(dep);
+          if (!dependents) {
+            return null;
+          }
+          dependents.push(step.id);
           inDegree.set(step.id, (inDegree.get(step.id) ?? 0) + 1);
         }
       }
@@ -173,7 +181,11 @@ export class WorkflowEngine extends EventEmitter {
     const sorted: WorkflowStep[] = [];
     while (queue.length > 0) {
       const id = queue.shift()!;
-      sorted.push(stepMap.get(id)!);
+      const currentStep = stepMap.get(id);
+      if (!currentStep) {
+        return null;
+      }
+      sorted.push(currentStep);
       for (const neighbor of adjacency.get(id) ?? []) {
         const newDegree = (inDegree.get(neighbor) ?? 1) - 1;
         inDegree.set(neighbor, newDegree);
@@ -265,7 +277,12 @@ export class WorkflowEngine extends EventEmitter {
             execution.steps.push(levelResult.value);
           } else {
             const reason = levelResult.reason;
-            const duration_ms = reason instanceof StepExecutionError ? reason.duration_ms : 0;
+            const duration_ms =
+              reason instanceof StepExecutionError
+                ? reason.duration_ms
+                : typeof reason?.duration_ms === 'number'
+                  ? reason.duration_ms
+                  : 0;
             const failedResult: StepResult = {
               stepId: step.id,
               agentId: step.agent.id,

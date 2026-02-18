@@ -21,8 +21,6 @@ import { validateDelegationFormat, isDelegationAttempt } from './delegation-form
 import { getChannelHistory } from '../gateways/channel-history.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
-import { PRReviewPoller } from './pr-review-poller.js';
-import type { PRPollerBatchItem, PRPollerBatchDigest } from './pr-review-poller.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -99,19 +97,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   /** Cleanup interval handle for periodic tasks */
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-  /** PR poller summaries per channel for LEAD wake-up */
-  private prPollerSummaries = new Map<string, PRPollerBatchItem[]>();
-
-  /** Tracks channels where APPROVE+commit was processed (prevents congratulation loops) */
-  private approveProcessedChannels = new Map<string, number>();
-
-  /** APPROVE cooldown period -- blocks agent-to-agent routing after commit (30 seconds) */
-  private static readonly APPROVE_COOLDOWN_MS = 30 * 1000;
-
   /** Cleanup interval period (1 minute) */
   private static readonly CLEANUP_INTERVAL_MS = 60_000;
-  /** PR review chain override (allows LEAD → DEV → REVIEWER → LEAD) */
-  private static readonly PR_REVIEW_MAX_CHAIN = 6;
 
   constructor(
     config: MultiAgentConfig,
@@ -126,7 +113,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     this.cleanupInterval = setInterval(() => {
       this.messageQueue.clearExpired();
       this.cleanupProcessedMentions();
-      this.cleanupApproveChannels();
     }, MultiAgentDiscordHandler.CLEANUP_INTERVAL_MS);
 
     // Setup idle event listeners for all agents (F7)
@@ -213,18 +199,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       if (this.processedMentions.has(dedupKey)) return;
       this.processedMentions.set(dedupKey, Date.now());
 
-      // Block agent-to-LEAD mentions during post-APPROVE cooldown
-      // Only blocks mentions targeting the default (LEAD) agent -- not other agents like DEV
-      const approveCooldown = this.approveProcessedChannels.get(message.channel.id);
-      if (
-        message.author.bot &&
-        approveCooldown &&
-        Date.now() - approveCooldown < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS &&
-        agentId === this.config.default_agent
-      ) {
-        return;
-      }
-
       const cleanContent = message.content.replace(/<@!?\d+>/g, '').trim();
       if (!cleanContent) return;
 
@@ -237,7 +211,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       // Chain depth check for mention_delegation
       if (isFromAgent && senderAgentId && senderAgentId !== 'main') {
         const chainState = this.orchestrator.getChainState(message.channel.id);
-        const maxDepth = this.getEffectiveMaxMentionDepth(message.channel.id);
+        const maxDepth = this.getEffectiveMaxMentionDepth();
 
         if (chainState.blocked) {
           logger.info(
@@ -360,17 +334,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       this.processManager.setBotUserIdMap(botUserIdMap);
       this.processManager.setMentionDelegation(true);
       logger.info(`[MultiAgent] Mention delegation enabled with ${botUserIdMap.size} bot IDs`);
-
-      if (this.isPrReviewPollingEnabled()) {
-        // PR Review Poller: target LEAD directly.
-        // LEAD analyzes → delegates to DevBot → DevBot fixes → Reviewer reviews after.
-        const orchestratorId = defaultAgentId || 'sisyphus';
-        const orchestratorUserId = botUserIdMap.get(orchestratorId);
-        if (orchestratorUserId) {
-          this.prReviewPoller.setTargetAgentUserId(orchestratorUserId);
-          logger.info(`[MultiAgent] PR Poller target: ${orchestratorId} (LEAD)`);
-        }
-      }
     }
   }
 
@@ -408,130 +371,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         }
       }
     }, 'discord');
-
-    if (this.isPrReviewPollingEnabled()) {
-      // Capture compact batch summaries so LEAD receives actionable context.
-      this.prReviewPoller.setMessageSender(async () => {});
-      this.prReviewPoller.setOnBatchItem(
-        async (channelId: string, summary: string, item: PRPollerBatchItem) => {
-          const bucket = this.prPollerSummaries.get(channelId) ?? [];
-          const compact = this.compactPrReviewBatchSummary(summary);
-          if (!compact || bucket.some((candidate) => candidate.id === item.id)) {
-            return;
-          }
-          const merged = {
-            ...item,
-            summary: compact,
-          };
-          // Keep bounded for prompt size and avoid repeats within one poll batch.
-          this.prPollerSummaries.set(channelId, [...bucket, merged].slice(-12));
-        }
-      );
-
-      // After poll cycle: post count to channel and wake up PR workflow agents.
-      this.prReviewPoller.setOnBatchComplete(
-        async (channelId: string, digest?: PRPollerBatchDigest) => {
-          const items =
-            (digest?.items && digest.items.length > 0
-              ? digest.items
-              : this.prPollerSummaries.get(channelId)) ?? [];
-          if (items.length === 0) {
-            return;
-          }
-          const actionItems = digest?.newItems ?? items.filter((item) => !item.isReminder);
-          const reminderItems = digest?.reminderItems ?? items.filter((item) => item.isReminder);
-          const allActionable = actionItems.length > 0;
-          const count = items.length;
-          if (!allActionable) {
-            this.prPollerSummaries.delete(channelId);
-            return;
-          }
-          const compactItems = items.map(
-            (item: PRPollerBatchItem, idx: number) =>
-              `- ${idx + 1}. [${item.severity}] ${item.summary}`
-          );
-          const summaryLines = compactItems.join('\n');
-
-          const sessions = this.prReviewPoller.getSessionDetails();
-          const session = sessions.find((s) => s.channelId === channelId);
-          if (!session) {
-            // Clean up stale summary to prevent memory leak
-            this.prPollerSummaries.delete(channelId);
-            return;
-          }
-
-          const prLabel = `${session.owner}/${session.repo}#${session.prNumber}`;
-          const promptSummary = `\n${summaryLines}`;
-          const reminderSummary =
-            reminderItems.length > 0 ? `\n🔔 Reminders only: ${reminderItems.length} item(s).` : '';
-
-          this.prPollerSummaries.delete(channelId);
-
-          // Post summary to channel (visible to humans)
-          const channel = await client.channels.fetch(channelId);
-          if (channel && 'send' in (channel as Record<string, unknown>)) {
-            const content = `📊 PR ${prLabel} — ${count} new review item(s)\n\n${promptSummary}${reminderSummary}`;
-            const chunks = splitForDiscord(content);
-            for (const chunk of chunks) {
-              await (channel as { send: (opts: { content: string }) => Promise<Message> }).send({
-                content: chunk,
-              });
-            }
-          }
-
-          // Wake up LEAD with compact PR summary + workspace path.
-          this.orchestrator.resetChain(channelId);
-          const defaultAgentId = this.config.default_agent || 'sisyphus';
-          const workspace = `\`${session.workspaceDir}\``;
-          const workflowPrompt = `📊 PR Review follow-up (${count} new item(s))`;
-          const taskContext = `Target: ${prLabel}\nWorkspace: ${workspace}\n`;
-          const itemsContext = `Items:\n${summaryLines}`;
-          const basePrompt = `${workflowPrompt}\n${taskContext}${itemsContext}${reminderSummary}`;
-
-          this.messageQueue.enqueue(defaultAgentId, {
-            prompt: `${basePrompt}\n\nClassify severity, implement fixable items, and coordinate with Dev/Reviewer.`,
-            channelId,
-            source: 'discord',
-            enqueuedAt: Date.now(),
-            context: { channelId, userId: 'pr-poller' },
-          });
-          logger.info(`[MultiAgent] PR Poller -> LEAD wake-up (${count} items)`);
-          this.tryDrainNow(defaultAgentId, 'discord', channelId).catch(() => {});
-
-          // Wake implementation/review agents in parallel so review loop can proceed autonomously.
-          const helperAgents = this.resolvePrReviewAssistants(defaultAgentId);
-          for (const helperAgentId of helperAgents) {
-            const helperPrompt =
-              helperAgentId === 'developer'
-                ? `${basePrompt}\n\nImplement available fixes in the workspace and request Reviewer verification when changes are made.`
-                : `${basePrompt}\n\nInspect the comments for correctness issues and provide reviewer guidance.`;
-
-            this.messageQueue.enqueue(helperAgentId, {
-              prompt: helperPrompt,
-              channelId,
-              source: 'discord',
-              enqueuedAt: Date.now(),
-              context: { channelId, userId: 'pr-poller' },
-            });
-            logger.info(`[MultiAgent] PR Poller -> ${helperAgentId} wake-up (${count} items)`);
-            this.tryDrainNow(helperAgentId, 'discord', channelId).catch(() => {});
-          }
-        }
-      );
-      logger.info('[MultiAgent] PR Review Poller message sender configured for Discord');
-    }
-  }
-
-  /**
-   * Keep PR poller summaries short and remove duplicates.
-   */
-  private compactPrReviewBatchSummary(summary: string): string {
-    const compact = summary.replace(/[\r\n]+/g, ' ').trim();
-    const max = 230;
-    if (!compact) {
-      return '';
-    }
-    return compact.length > max ? `${compact.slice(0, max)}…` : compact;
   }
 
   /**
@@ -549,10 +388,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     this.orchestrator.updateConfig(config);
     this.processManager.updateConfig(config);
     this.multiBotManager.updateConfig(config);
-    if (!this.isPrReviewPollingEnabled()) {
-      this.prReviewPoller.stopAll();
-      this.prPollerSummaries.clear();
-    }
   }
 
   /**
@@ -569,7 +404,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     // Build message context
     const context = this.buildMessageContext(message, cleanContent);
-    this.updateChainOverrideForChannel(context.channelId);
 
     // Record human message to shared context
     if (!context.isBot) {
@@ -579,11 +413,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         cleanContent,
         message.id
       );
-
-      if (this.isPrReviewPollingEnabled()) {
-        // Auto-detect PR URLs in user messages and start polling
-        this.detectAndPollPRUrls(cleanContent, context.channelId, message);
-      }
     }
 
     // Select responding agents
@@ -637,11 +466,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     if (responses.length === 0) {
       return null;
-    }
-
-    // Auto-detect PR URLs in agent responses and start polling
-    for (const resp of responses) {
-      this.detectAndPollPRUrls(resp.rawContent, context.channelId, message);
     }
 
     return {
@@ -1002,7 +826,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         let submittedCount = 0;
         const submittedAgents: string[] = [];
         for (const delegation of bgDelegations) {
-          if (!delegation.background) continue;
+          if (!delegation.background) {
+            continue;
+          }
           const check = this.delegationManager.isDelegationAllowed(
             delegation.fromAgentId,
             delegation.toAgentId
@@ -1149,7 +975,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     if (delegations.length > 0 && hasBackground) {
       let submittedCount = 0;
       for (const delegation of delegations) {
-        if (!delegation.background) continue;
+        if (!delegation.background) {
+          continue;
+        }
         const check = this.delegationManager.isDelegationAllowed(
           delegation.fromAgentId,
           delegation.toAgentId
@@ -1503,47 +1331,12 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         `[MultiAgent] Auto-routing mentions from ${response.agentId}: -> ${mentionedAgentIds.join(', ')}`
       );
 
-      const defaultAgentId = this.config.default_agent;
-      const hasApproveSignal =
-        /\b(APPROVE[DS]?|LGTM)\b/i.test(response.rawContent) &&
-        !/\b(not?\s+approve|don'?t\s+approve|cannot\s+approve|rejected)\b/i.test(
-          response.rawContent
-        );
-      const isReviewerApproveToLead =
-        this.isReviewerAgent(response.agentId) &&
-        mentionedAgentIds.includes(defaultAgentId || '') &&
-        hasApproveSignal;
-
-      if (isReviewerApproveToLead) {
-        // Dedup: skip if APPROVE already processed for this channel
-        const lastApprove = this.approveProcessedChannels.get(originalMessage.channel.id);
-        if (
-          lastApprove &&
-          Date.now() - lastApprove < MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS
-        ) {
-          logger.info(
-            `[MultiAgent] APPROVE already processed for ${originalMessage.channel.id}, skipping`
-          );
-          continue;
-        }
-      }
-
       // Route to all mentioned agents in parallel
       await Promise.all(
         mentionedAgentIds.map((targetAgentId) =>
-          this.handleDelegatedMention(
-            targetAgentId,
-            originalMessage,
-            response,
-            isReviewerApproveToLead ? 'REVIEWER_APPROVED' : null
-          )
+          this.handleDelegatedMention(targetAgentId, originalMessage, response)
         )
       );
-
-      // Set APPROVE cooldown AFTER routing to LEAD (so LEAD gets the first one)
-      if (isReviewerApproveToLead) {
-        this.approveProcessedChannels.set(originalMessage.channel.id, Date.now());
-      }
     }
   }
 
@@ -1553,8 +1346,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   private async handleDelegatedMention(
     targetAgentId: string,
     originalMessage: Message,
-    sourceResponse: AgentResponse,
-    reviewerSignal?: string | null
+    sourceResponse: AgentResponse
   ): Promise<void> {
     // Dedup: prevent double processing
     const dedupKey = `${targetAgentId}:${sourceResponse.messageId || originalMessage.id}`;
@@ -1614,17 +1406,10 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       timestamp: Date.now(),
     });
 
-    let delegationContent = sourceResponse.rawContent
+    const delegationContent = sourceResponse.rawContent
       .replace(/<@!?\d+>/g, '')
       .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
       .trim();
-
-    if (reviewerSignal === 'REVIEWER_APPROVED' && targetAgentId === this.config.default_agent) {
-      delegationContent +=
-        '\n\n🔔 [SYSTEM] Reviewer has APPROVED the changes.\n' +
-        'Review the changes yourself, then commit and push when you are satisfied.\n' +
-        'Use your judgement on the commit message and which files to include.';
-    }
 
     try {
       const response = await this.processAgentResponse(
@@ -1811,144 +1596,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     return resolved;
   }
 
-  private cleanupApproveChannels(): void {
-    const now = Date.now();
-    for (const [channelId, ts] of this.approveProcessedChannels) {
-      if (now - ts > MultiAgentDiscordHandler.APPROVE_COOLDOWN_MS) {
-        this.approveProcessedChannels.delete(channelId);
-      }
-    }
-  }
-
-  /**
-   * Detect PR URLs in text and auto-start polling.
-   * Sends a notification to the channel when polling starts.
-   */
-  private detectAndPollPRUrls(text: string, channelId: string, message: Message): void {
-    if (!this.isPrReviewPollingEnabled()) return;
-    const prUrls = PRReviewPoller.extractPRUrls(text);
-    if (prUrls.length === 0) return;
-
-    for (const prUrl of prUrls) {
-      this.prReviewPoller
-        .startPolling(prUrl, channelId)
-        .then((started) => {
-          const parsed = this.prReviewPoller.parsePRUrl(prUrl);
-          const key = parsed ? `${parsed.owner}/${parsed.repo}#${parsed.prNumber}` : prUrl;
-
-          if (started) {
-            this.updateChainOverrideForChannel(channelId);
-            if ('send' in message.channel) {
-              (message.channel as { send: (opts: { content: string }) => Promise<unknown> })
-                .send({
-                  content: `👀 **PR Review Poller Started** -- ${key}\nDetecting new review comments every 60 seconds.`,
-                })
-                .catch((err) => {
-                  console.warn(
-                    `[MultiAgent] Failed to send PR polling start message to Discord channel ${channelId}:`,
-                    err?.message || err
-                  );
-                });
-            }
-            logger.info(
-              `[MultiAgent] PR Poller started for ${key} in Discord channel ${channelId}`
-            );
-          } else {
-            if ('send' in message.channel) {
-              (message.channel as { send: (opts: { content: string }) => Promise<unknown> })
-                .send({
-                  content: `ℹ️ PR Review Poller is already active for ${key}.`,
-                })
-                .catch((err) => {
-                  console.warn(
-                    `[MultiAgent] Failed to send PR polling already-running message to Discord channel ${channelId}:`,
-                    err?.message || err
-                  );
-                });
-            }
-          }
-        })
-        .catch((err) => {
-          console.error(`[MultiAgent] Failed to start PR polling:`, err);
-          if ('send' in message.channel) {
-            (message.channel as { send: (opts: { content: string }) => Promise<unknown> })
-              .send({
-                content: `⚠️ Failed to start PR Review Poller for ${prUrl}: ${String(err)}`,
-              })
-              .catch((sendErr) => {
-                console.warn(
-                  `[MultiAgent] Failed to send PR polling error message to Discord channel ${channelId}:`,
-                  sendErr?.message || sendErr
-                );
-              });
-          }
-        });
-    }
-  }
-
-  /**
-   * Resolve helper agents for PR review workflow in addition to default lead.
-   */
-  private resolvePrReviewAssistants(defaultAgentId: string): string[] {
-    const candidateIds = ['developer', 'reviewer', 'dev', 'lead'];
-    const helperAgents: string[] = [];
-
-    for (const id of candidateIds) {
-      const cfg = this.config.agents[id];
-      if (!cfg || id === defaultAgentId) {
-        continue;
-      }
-      if (cfg.enabled === false) {
-        continue;
-      }
-      helperAgents.push(id);
-    }
-
-    return [...new Set(helperAgents)];
-  }
-
-  /**
-   * Update chain/mention depth overrides when PR review polling is active.
-   */
-  private updateChainOverrideForChannel(channelId: string): void {
-    if (this.isPrReviewActive(channelId)) {
-      this.orchestrator.setChannelChainLimit(
-        channelId,
-        MultiAgentDiscordHandler.PR_REVIEW_MAX_CHAIN
-      );
-    } else {
-      this.orchestrator.clearChannelChainLimit(channelId);
-    }
-  }
-
-  private getEffectiveMaxMentionDepth(channelId: string): number {
-    if (this.isPrReviewActive(channelId)) {
-      return MultiAgentDiscordHandler.PR_REVIEW_MAX_CHAIN;
-    }
+  private getEffectiveMaxMentionDepth(): number {
     return this.config.max_mention_depth ?? 3;
-  }
-
-  private isPrReviewActive(channelId: string): boolean {
-    if (!this.isPrReviewPollingEnabled()) {
-      return false;
-    }
-    return this.prReviewPoller
-      .getSessionDetails()
-      .some((session) => session.channelId === channelId);
-  }
-
-  private isPrReviewPollingEnabled(): boolean {
-    return this.config.pr_review_poller?.enabled === true;
-  }
-
-  /**
-   * Check if an agent ID is the reviewer agent
-   */
-  private isReviewerAgent(agentId: string): boolean {
-    return (
-      agentId.toLowerCase().includes('review') ||
-      this.config.agents[agentId]?.name?.toLowerCase().includes('review') === true
-    );
   }
 
   /**
