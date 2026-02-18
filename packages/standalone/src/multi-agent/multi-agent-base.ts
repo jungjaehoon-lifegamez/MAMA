@@ -27,7 +27,12 @@ import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
 import type { GatewayToolInput } from '../agent/types.js';
 import type { AgentRuntimeProcess } from './runtime-process.js';
 import { WorkflowEngine, type StepExecutor } from './workflow-engine.js';
-import type { WorkflowProgressEvent, EphemeralAgentDef } from './workflow-types.js';
+import { CouncilEngine } from './council-engine.js';
+import type {
+  WorkflowProgressEvent,
+  CouncilProgressEvent,
+  EphemeralAgentDef,
+} from './workflow-types.js';
 
 /** Default timeout for agent responses (15 minutes -- must accommodate sub-agent spawns) */
 export const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -93,6 +98,7 @@ export abstract class MultiAgentHandlerBase {
   protected workTracker: WorkTracker;
   protected gatewayToolExecutor: GatewayToolExecutor | null = null;
   protected workflowEngine: WorkflowEngine;
+  protected councilEngine: CouncilEngine;
 
   /** Whether multi-bot mode is initialized */
   protected multiBotInitialized = false;
@@ -135,6 +141,7 @@ export abstract class MultiAgentHandlerBase {
 
     // Always initialize workflow engine (enabled by default)
     this.workflowEngine = new WorkflowEngine(config.workflow ?? { enabled: true });
+    this.councilEngine = new CouncilEngine(config.council ?? { enabled: true });
 
     this.backgroundTaskManager = new BackgroundTaskManager(
       async (agentId: string, prompt: string): Promise<string> => {
@@ -590,6 +597,126 @@ export abstract class MultiAgentHandlerBase {
       this.processManager.unregisterEphemeralAgents(ephemeralAgents);
       if (progressHandler) {
         this.workflowEngine.off('progress', progressHandler);
+      }
+    }
+  }
+
+  /**
+   * Get council engine instance
+   */
+  getCouncilEngine(): CouncilEngine {
+    return this.councilEngine;
+  }
+
+  /**
+   * Check if a Conductor response contains a council_plan and execute it.
+   * Returns the council result or null if no plan was found.
+   */
+  async tryExecuteCouncil(
+    conductorResponse: string,
+    channelId: string,
+    source: 'discord' | 'slack',
+    onProgress?: (event: CouncilProgressEvent) => void
+  ): Promise<{ result: string; directMessage: string } | null> {
+    if (!this.councilEngine?.isEnabled()) {
+      return null;
+    }
+
+    const plan = this.councilEngine.parseCouncilPlan(conductorResponse);
+    if (!plan) {
+      return null;
+    }
+
+    const enabledAgents = this.orchestrator.getEnabledAgents();
+    const availableIds = enabledAgents.map((a) => a.id);
+
+    const validationError = this.councilEngine.validatePlan(plan, availableIds);
+    if (validationError) {
+      this.logger.warn(`[Council] Plan validation failed: ${validationError}`);
+      return null;
+    }
+
+    this.logger.info(
+      `[Council] Parsed plan: "${plan.name}" topic="${plan.topic}" agents=[${plan.agents.join(',')}] rounds=${plan.rounds}`
+    );
+
+    const directMessage = this.councilEngine.extractNonPlanContent(conductorResponse);
+
+    // Build agent display name map
+    const agentDisplayNames = new Map<string, string>();
+    for (const agent of enabledAgents) {
+      agentDisplayNames.set(agent.id, agent.display_name);
+    }
+
+    let progressHandler: ((event: CouncilProgressEvent) => void) | undefined;
+
+    try {
+      progressHandler = onProgress ? (event: CouncilProgressEvent) => onProgress(event) : undefined;
+
+      if (progressHandler) {
+        this.councilEngine.on('progress', progressHandler);
+      }
+
+      // Build step executor using existing named agents
+      const executeStep = async (
+        agentId: string,
+        prompt: string,
+        timeoutMs: number
+      ): Promise<string> => {
+        let process: AgentRuntimeProcess | null = null;
+        let timer: NodeJS.Timeout | undefined;
+        const clearStepTimeout = (): void => {
+          if (timer) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+        };
+        try {
+          process = await this.processManager.getProcess(source, channelId, agentId);
+          const result = await Promise.race([
+            process.sendMessage(prompt),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error(`Council agent timeout (${timeoutMs}ms)`)),
+                timeoutMs
+              );
+            }),
+          ]);
+          clearStepTimeout();
+          const cleaned = await this.executeTextToolCalls(result.response);
+          return cleaned;
+        } finally {
+          clearStepTimeout();
+          if (process) {
+            this.processManager.releaseProcess(agentId, process);
+          }
+        }
+      };
+
+      const { result, execution } = await this.councilEngine.execute(
+        plan,
+        executeStep,
+        agentDisplayNames
+      );
+
+      // Record council round results into SharedContext for future agent reference
+      for (const round of execution.rounds) {
+        if (round.status === 'success' && round.response) {
+          const agent = enabledAgents.find((a) => a.id === round.agentId);
+          if (agent) {
+            this.sharedContext.recordAgentMessage(
+              channelId,
+              agent,
+              `[Council: ${plan.name}] ${round.response}`
+            );
+          }
+        }
+      }
+
+      return { result, directMessage };
+    } finally {
+      if (progressHandler) {
+        this.councilEngine.off('progress', progressHandler);
       }
     }
   }

@@ -113,3 +113,81 @@ export interface WorkflowProgressEvent {
   /** Summary of all step results (for workflow-completed) */
   summary?: string;
 }
+
+// ============================================================================
+// Council Mode Types
+// ============================================================================
+
+/**
+ * Conductor가 생성하는 council 토론 계획
+ */
+export interface CouncilPlan {
+  name: string;
+  /** 토론 주제 */
+  topic: string;
+  /** 기존 named agent IDs */
+  agents: string[];
+  /** 라운드 수 (1-5) */
+  rounds: number;
+  /** Conductor가 최종 합성할지 여부 @default true */
+  synthesis?: boolean;
+  /** 전체 타임아웃 (ms) */
+  timeout_ms?: number;
+}
+
+/**
+ * Council 라운드별 결과
+ */
+export interface CouncilRoundResult {
+  round: number;
+  agentId: string;
+  agentDisplayName: string;
+  response: string;
+  duration_ms: number;
+  status: 'success' | 'failed' | 'timeout' | 'skipped';
+  error?: string;
+}
+
+/**
+ * Council 실행 상태
+ */
+export interface CouncilExecution {
+  id: string;
+  planName: string;
+  topic: string;
+  startedAt: number;
+  completedAt?: number;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  rounds: CouncilRoundResult[];
+}
+
+/**
+ * Council 설정 (MultiAgentConfig.council)
+ */
+export interface CouncilConfig {
+  /** Enable council mode */
+  enabled: boolean;
+  /** Max rounds per council @default 5 */
+  max_rounds?: number;
+  /** Max total council duration in ms @default 600000 (10 min) */
+  max_duration_ms?: number;
+}
+
+/**
+ * Council 진행 이벤트
+ */
+export interface CouncilProgressEvent {
+  type:
+    | 'council-round-started'
+    | 'council-round-completed'
+    | 'council-round-failed'
+    | 'council-completed';
+  executionId: string;
+  round?: number;
+  agentId?: string;
+  agentDisplayName?: string;
+  response?: string;
+  error?: string;
+  duration_ms?: number;
+  summary?: string;
+}

@@ -2,9 +2,13 @@
  * Tests for UltraWorkManager
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { UltraWorkManager } from '../../src/multi-agent/ultrawork.js';
+import { UltraWorkStateManager } from '../../src/multi-agent/ultrawork-state.js';
 import type { AgentPersonaConfig, UltraWorkConfig } from '../../src/multi-agent/types.js';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
 
 function makeAgent(overrides: Partial<AgentPersonaConfig> = {}): AgentPersonaConfig {
   return {
@@ -38,13 +42,15 @@ describe('UltraWorkManager', () => {
     enabled: true,
     max_steps: 5,
     max_duration: 60000, // 1 min for tests
+    phased_loop: false, // Legacy freeform for existing tests
+    persist_state: false,
   };
 
   const agents: AgentPersonaConfig[] = [
     makeAgent({
-      id: 'sisyphus',
-      name: 'Sisyphus',
-      display_name: '🏔️ Sisyphus',
+      id: 'conductor',
+      name: 'Conductor',
+      display_name: '🎯 Conductor',
       tier: 1,
       can_delegate: true,
     }),
@@ -96,7 +102,7 @@ describe('UltraWorkManager', () => {
     });
   });
 
-  describe('startSession', () => {
+  describe('startSession (freeform)', () => {
     it('should start a session and run to completion', async () => {
       let callCount = 0;
       const executeCallback = vi.fn().mockImplementation(async () => {
@@ -110,7 +116,7 @@ describe('UltraWorkManager', () => {
 
       const session = await manager.startSession(
         'ch1',
-        'sisyphus',
+        'conductor',
         'Build the login page',
         agents,
         executeCallback,
@@ -121,7 +127,7 @@ describe('UltraWorkManager', () => {
       await waitForSessionComplete(session);
 
       expect(session.channelId).toBe('ch1');
-      expect(session.leadAgentId).toBe('sisyphus');
+      expect(session.leadAgentId).toBe('conductor');
       expect(session.task).toBe('Build the login page');
       expect(session.active).toBe(false); // Completed
       expect(session.steps.length).toBeGreaterThanOrEqual(1);
@@ -150,7 +156,7 @@ describe('UltraWorkManager', () => {
 
       const session = await manager.startSession(
         'ch1',
-        'sisyphus',
+        'conductor',
         'Build a full-stack app',
         agents,
         executeCallback,
@@ -175,7 +181,7 @@ describe('UltraWorkManager', () => {
 
       const session = await manager.startSession(
         'ch1',
-        'sisyphus',
+        'conductor',
         'Infinite task',
         agents,
         executeCallback,
@@ -235,7 +241,7 @@ describe('UltraWorkManager', () => {
 
       const session = await manager.startSession(
         'ch1',
-        'sisyphus',
+        'conductor',
         'Crashy task',
         agents,
         executeCallback,
@@ -259,7 +265,7 @@ describe('UltraWorkManager', () => {
 
       const session1 = await manager.startSession(
         'ch1',
-        'sisyphus',
+        'conductor',
         'Task 1',
         agents,
         executeCallback,
@@ -269,7 +275,7 @@ describe('UltraWorkManager', () => {
 
       const session2 = await manager.startSession(
         'ch1',
-        'sisyphus',
+        'conductor',
         'Task 2',
         agents,
         executeCallback,
@@ -285,7 +291,7 @@ describe('UltraWorkManager', () => {
       const session = {
         id: 'test',
         channelId: 'ch1',
-        leadAgentId: 'sisyphus',
+        leadAgentId: 'conductor',
         task: 'test',
         currentStep: 0,
         maxSteps: 10,
@@ -301,7 +307,7 @@ describe('UltraWorkManager', () => {
       const session = {
         id: 'test',
         channelId: 'ch1',
-        leadAgentId: 'sisyphus',
+        leadAgentId: 'conductor',
         task: 'test',
         currentStep: 10,
         maxSteps: 10,
@@ -317,7 +323,7 @@ describe('UltraWorkManager', () => {
       const session = {
         id: 'test',
         channelId: 'ch1',
-        leadAgentId: 'sisyphus',
+        leadAgentId: 'conductor',
         task: 'test',
         currentStep: 0,
         maxSteps: 10,
@@ -333,7 +339,7 @@ describe('UltraWorkManager', () => {
       const session = {
         id: 'test',
         channelId: 'ch1',
-        leadAgentId: 'sisyphus',
+        leadAgentId: 'conductor',
         task: 'test',
         currentStep: 3,
         maxSteps: 10,
@@ -348,7 +354,6 @@ describe('UltraWorkManager', () => {
 
   describe('stopSession', () => {
     it('should stop and return an active session', async () => {
-      // Start a long-running session
       let resolve: () => void;
       const blocker = new Promise<void>((r) => {
         resolve = r;
@@ -359,27 +364,22 @@ describe('UltraWorkManager', () => {
       });
       const notifyCallback = vi.fn().mockResolvedValue(undefined);
 
-      // Start session in background (will block on first step)
       const sessionPromise = manager.startSession(
         'ch1',
-        'sisyphus',
+        'conductor',
         'Long task',
         agents,
         executeCallback,
         notifyCallback
       );
 
-      // Give the session a moment to start
       await new Promise((r) => setTimeout(r, 10));
 
-      // Stop it
       const _stopped = manager.stopSession('ch1');
 
-      // Unblock so the promise can resolve
       resolve!();
       await sessionPromise;
 
-      // The session should have been stopped
       expect(manager.getSession('ch1')).toBeNull();
     });
 
@@ -407,6 +407,335 @@ describe('UltraWorkManager', () => {
     it('should update configuration', () => {
       manager.updateConfig({ enabled: false });
       expect(manager.isEnabled()).toBe(false);
+    });
+  });
+
+  // ==========================================================================
+  // 3-Phase (Ralph Loop) Tests
+  // ==========================================================================
+
+  describe('Phased Loop (Ralph Loop)', () => {
+    let phasedManager: UltraWorkManager;
+    let tempDir: string;
+
+    beforeEach(async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ultrawork-phased-'));
+      const phasedConfig: UltraWorkConfig = {
+        enabled: true,
+        max_steps: 20,
+        max_duration: 60000,
+        phased_loop: true,
+        persist_state: false, // Don't use default homedir
+      };
+      phasedManager = new UltraWorkManager(phasedConfig);
+      // Inject temp state manager
+      phasedManager.setStateManager(new UltraWorkStateManager(tempDir));
+    });
+
+    afterEach(async () => {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    });
+
+    it('should run 3 phases: plan -> build -> retro', async () => {
+      let callCount = 0;
+      const executeCallback = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // Phase 1: Planning response
+          return {
+            response:
+              '## Implementation Plan\n### Task 1: Build API\n- Assigned to: developer\nPLAN_COMPLETE',
+            duration: 100,
+          };
+        }
+        if (callCount === 2) {
+          // Phase 2: Building response
+          return { response: 'All tasks executed. BUILD_COMPLETE', duration: 200 };
+        }
+        if (callCount === 3) {
+          // Phase 3: Retrospective response
+          return { response: 'All tasks completed successfully. RETRO_COMPLETE', duration: 100 };
+        }
+        return { response: 'DONE', duration: 50 };
+      });
+      const notifyCallback = vi.fn().mockResolvedValue(undefined);
+
+      const session = await phasedManager.startSession(
+        'ch1',
+        'conductor',
+        'Build login feature',
+        agents,
+        executeCallback,
+        notifyCallback
+      );
+
+      await waitForSessionComplete(session);
+
+      expect(session.active).toBe(false);
+
+      // Should have planning step
+      const planStep = session.steps.find((s) => s.action === 'planning');
+      expect(planStep).toBeDefined();
+
+      // Should have direct_work step (building phase)
+      const buildStep = session.steps.find((s) => s.action === 'direct_work');
+      expect(buildStep).toBeDefined();
+
+      // Should have retrospective step
+      const retroStep = session.steps.find((s) => s.action === 'retrospective');
+      expect(retroStep).toBeDefined();
+
+      // Notify should include phase messages
+      const notifyCalls = notifyCallback.mock.calls.map((c: unknown[]) => c[0] as string);
+      expect(notifyCalls.some((msg) => msg.includes('Phase 1: Planning'))).toBe(true);
+      expect(notifyCalls.some((msg) => msg.includes('Phase 2: Building'))).toBe(true);
+      expect(notifyCalls.some((msg) => msg.includes('Phase 3: Retrospective'))).toBe(true);
+      expect(notifyCalls.some((msg) => msg.includes('Session Complete'))).toBe(true);
+    });
+
+    it('should persist plan to disk when state manager is set', async () => {
+      let callCount = 0;
+      const executeCallback = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return { response: 'My plan content\nPLAN_COMPLETE', duration: 100 };
+        }
+        if (callCount === 2) {
+          return { response: 'BUILD_COMPLETE', duration: 100 };
+        }
+        return { response: 'RETRO_COMPLETE', duration: 100 };
+      });
+      const notifyCallback = vi.fn().mockResolvedValue(undefined);
+
+      const session = await phasedManager.startSession(
+        'ch1',
+        'conductor',
+        'Test persist',
+        agents,
+        executeCallback,
+        notifyCallback
+      );
+
+      await waitForSessionComplete(session);
+
+      // Check plan was persisted
+      const sm = phasedManager.getStateManager()!;
+      const plan = await sm.loadPlan(session.id);
+      expect(plan).toContain('My plan content');
+    });
+
+    it('should re-enter build phase when retro is incomplete', async () => {
+      let callCount = 0;
+      const executeCallback = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // Planning
+          return { response: 'Plan ready. PLAN_COMPLETE', duration: 100 };
+        }
+        if (callCount === 2) {
+          // First build
+          return { response: 'Partial build. BUILD_COMPLETE', duration: 100 };
+        }
+        if (callCount === 3) {
+          // Retrospective — incomplete
+          return {
+            response: 'Missing test coverage. RETRO_INCOMPLETE\n- Need unit tests',
+            duration: 100,
+          };
+        }
+        if (callCount === 4) {
+          // Second build (re-entered)
+          return { response: 'Tests added. BUILD_COMPLETE', duration: 100 };
+        }
+        // After re-entry, session completes (no second retro in current implementation)
+        return { response: 'DONE', duration: 50 };
+      });
+      const notifyCallback = vi.fn().mockResolvedValue(undefined);
+
+      const session = await phasedManager.startSession(
+        'ch1',
+        'conductor',
+        'Build with retro loop',
+        agents,
+        executeCallback,
+        notifyCallback
+      );
+
+      await waitForSessionComplete(session);
+
+      expect(session.active).toBe(false);
+
+      // Should have re-entered build phase
+      const notifyCalls = notifyCallback.mock.calls.map((c: unknown[]) => c[0] as string);
+      const buildPhaseNotices = notifyCalls.filter((msg) => msg.includes('Phase 2: Building'));
+      expect(buildPhaseNotices.length).toBe(2); // Initial + re-entry
+
+      expect(notifyCalls.some((msg) => msg.includes('Re-entering Build phase'))).toBe(true);
+    });
+
+    it('should use freeform loop when phased_loop=false', async () => {
+      const freeformManager = new UltraWorkManager({
+        enabled: true,
+        max_steps: 5,
+        max_duration: 60000,
+        phased_loop: false,
+        persist_state: false,
+      });
+
+      const executeCallback = vi.fn().mockResolvedValue({
+        response: 'All done. DONE',
+        duration: 50,
+      });
+      const notifyCallback = vi.fn().mockResolvedValue(undefined);
+
+      const session = await freeformManager.startSession(
+        'ch1',
+        'conductor',
+        'Simple task',
+        agents,
+        executeCallback,
+        notifyCallback
+      );
+
+      await waitForSessionComplete(session);
+
+      expect(session.active).toBe(false);
+
+      // Should NOT have phase notifications (freeform mode)
+      const notifyCalls = notifyCallback.mock.calls.map((c: unknown[]) => c[0] as string);
+      expect(notifyCalls.some((msg) => msg.includes('Phase 1: Planning'))).toBe(false);
+    });
+
+    it('should handle council interceptor during planning phase', async () => {
+      let callCount = 0;
+      const executeCallback = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // Planning with council_plan block
+          return {
+            response: 'Let me consult the team.\n```council_plan\n{"name":"review"}\n```',
+            duration: 100,
+          };
+        }
+        if (callCount === 2) {
+          // Synthesis after council
+          return { response: '## Final Plan\nTask 1: Build API\nPLAN_COMPLETE', duration: 100 };
+        }
+        if (callCount === 3) {
+          return { response: 'BUILD_COMPLETE', duration: 100 };
+        }
+        return { response: 'RETRO_COMPLETE', duration: 100 };
+      });
+      const notifyCallback = vi.fn().mockResolvedValue(undefined);
+
+      const responseInterceptor = vi.fn().mockImplementation(async (response: string) => {
+        if (response.includes('council_plan')) {
+          return { result: 'Council result: team agrees on approach', type: 'council' };
+        }
+        return null;
+      });
+
+      const session = await phasedManager.startSession(
+        'ch1',
+        'conductor',
+        'Complex task',
+        agents,
+        executeCallback,
+        notifyCallback,
+        responseInterceptor
+      );
+
+      await waitForSessionComplete(session);
+
+      expect(session.active).toBe(false);
+      expect(responseInterceptor).toHaveBeenCalled();
+
+      // Should have council_execution step
+      const councilStep = session.steps.find((s) => s.action === 'council_execution');
+      expect(councilStep).toBeDefined();
+
+      // Should have plan_synthesis step
+      const synthesisStep = session.steps.find((s) => s.action === 'plan_synthesis');
+      expect(synthesisStep).toBeDefined();
+    });
+
+    it('should persist session phase transitions', async () => {
+      let callCount = 0;
+      const executeCallback = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) return { response: 'PLAN_COMPLETE', duration: 100 };
+        if (callCount === 2) return { response: 'BUILD_COMPLETE', duration: 100 };
+        return { response: 'RETRO_COMPLETE', duration: 100 };
+      });
+      const notifyCallback = vi.fn().mockResolvedValue(undefined);
+
+      const session = await phasedManager.startSession(
+        'ch1',
+        'conductor',
+        'Phase tracking test',
+        agents,
+        executeCallback,
+        notifyCallback
+      );
+
+      await waitForSessionComplete(session);
+
+      // After completion, session state should be 'completed'
+      const sm = phasedManager.getStateManager()!;
+      const state = await sm.loadSession(session.id);
+      expect(state).not.toBeNull();
+      expect(state!.phase).toBe('completed');
+    });
+
+    it('should persist retrospective to disk', async () => {
+      let callCount = 0;
+      const executeCallback = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) return { response: 'PLAN_COMPLETE', duration: 100 };
+        if (callCount === 2) return { response: 'BUILD_COMPLETE', duration: 100 };
+        return { response: 'All good. Lessons: use TDD next time. RETRO_COMPLETE', duration: 100 };
+      });
+      const notifyCallback = vi.fn().mockResolvedValue(undefined);
+
+      const session = await phasedManager.startSession(
+        'ch1',
+        'conductor',
+        'Retro persist test',
+        agents,
+        executeCallback,
+        notifyCallback
+      );
+
+      await waitForSessionComplete(session);
+
+      const retroFile = path.join(tempDir, session.id, 'retrospective.md');
+      const content = await fs.readFile(retroFile, 'utf-8');
+      expect(content).toContain('Lessons: use TDD');
+    });
+
+    it('should include mode label in start notification', async () => {
+      let callCount = 0;
+      const executeCallback = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) return { response: 'PLAN_COMPLETE', duration: 100 };
+        if (callCount === 2) return { response: 'BUILD_COMPLETE', duration: 100 };
+        return { response: 'RETRO_COMPLETE', duration: 100 };
+      });
+      const notifyCallback = vi.fn().mockResolvedValue(undefined);
+
+      const session = await phasedManager.startSession(
+        'ch1',
+        'conductor',
+        'Mode test',
+        agents,
+        executeCallback,
+        notifyCallback
+      );
+
+      await waitForSessionComplete(session);
+
+      const startNotify = notifyCallback.mock.calls[0][0] as string;
+      expect(startNotify).toContain('Phased (Plan->Build->Retro)');
     });
   });
 });

@@ -201,6 +201,7 @@ export interface MultiAgentConfig {
    * Free chat mode - all agents respond to every human message
    * regardless of keyword matching or explicit triggers
    * @default false
+   * @deprecated Use council_plan for multi-agent discussions instead
    */
   free_chat?: boolean;
 
@@ -279,6 +280,13 @@ export interface MultiAgentConfig {
    * that spawn ephemeral agents to execute multi-step tasks.
    */
   workflow?: import('./workflow-types.js').WorkflowConfig;
+
+  /**
+   * Council mode configuration
+   * When enabled, Conductor can generate council_plan blocks
+   * to initiate multi-round discussions among existing named agents.
+   */
+  council?: import('./workflow-types.js').CouncilConfig;
 }
 
 /**
@@ -338,6 +346,10 @@ export interface UltraWorkConfig {
   max_duration?: number;
   /** Maximum autonomous steps @default 20 */
   max_steps?: number;
+  /** Enable file-based state persistence (Ralph Loop pattern) @default true */
+  persist_state?: boolean;
+  /** Enable 3-phase structured loop (plan->build->retrospective) @default true */
+  phased_loop?: boolean;
 }
 
 /**

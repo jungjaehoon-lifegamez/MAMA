@@ -21,9 +21,9 @@ describe('DelegationManager', () => {
   let manager: DelegationManager;
   const agents: AgentPersonaConfig[] = [
     makeAgent({
-      id: 'sisyphus',
-      name: 'Sisyphus',
-      display_name: '🏔️ Sisyphus',
+      id: 'conductor',
+      name: 'Conductor',
+      display_name: '🎯 Conductor',
       tier: 1,
       can_delegate: true,
     }),
@@ -39,17 +39,17 @@ describe('DelegationManager', () => {
   describe('parseDelegation', () => {
     it('should parse valid DELEGATE pattern', () => {
       const response = 'Let me delegate this. DELEGATE::developer::Implement the login feature';
-      const result = manager.parseDelegation('sisyphus', response);
+      const result = manager.parseDelegation('conductor', response);
 
       expect(result).not.toBeNull();
-      expect(result!.fromAgentId).toBe('sisyphus');
+      expect(result!.fromAgentId).toBe('conductor');
       expect(result!.toAgentId).toBe('developer');
       expect(result!.task).toBe('Implement the login feature');
     });
 
     it('should extract original content without DELEGATE pattern', () => {
       const response = 'I will handle the planning. DELEGATE::developer::Build the API';
-      const result = manager.parseDelegation('sisyphus', response);
+      const result = manager.parseDelegation('conductor', response);
 
       expect(result).not.toBeNull();
       expect(result!.originalContent).toBe('I will handle the planning.');
@@ -57,14 +57,14 @@ describe('DelegationManager', () => {
 
     it('should return null when no DELEGATE pattern exists', () => {
       const response = 'Here is my regular response without any delegation.';
-      const result = manager.parseDelegation('sisyphus', response);
+      const result = manager.parseDelegation('conductor', response);
       expect(result).toBeNull();
     });
 
     it('should handle multiline task descriptions', () => {
       const response =
         'DELEGATE::reviewer::Review this code:\n- Check error handling\n- Verify types';
-      const result = manager.parseDelegation('sisyphus', response);
+      const result = manager.parseDelegation('conductor', response);
 
       expect(result).not.toBeNull();
       expect(result!.task).toContain('Check error handling');
@@ -73,13 +73,13 @@ describe('DelegationManager', () => {
 
     it('should trim whitespace from task', () => {
       const response = 'DELEGATE::developer::  Some task with spaces  ';
-      const result = manager.parseDelegation('sisyphus', response);
+      const result = manager.parseDelegation('conductor', response);
       expect(result!.task).toBe('Some task with spaces');
     });
 
     it('should parse agent IDs with hyphens', () => {
       const response = 'DELEGATE::my-custom-agent::Build the feature';
-      const result = manager.parseDelegation('sisyphus', response);
+      const result = manager.parseDelegation('conductor', response);
 
       expect(result).not.toBeNull();
       expect(result!.toAgentId).toBe('my-custom-agent');
@@ -89,7 +89,7 @@ describe('DelegationManager', () => {
 
   describe('isDelegationAllowed', () => {
     it('should allow Tier 1 with can_delegate to delegate', () => {
-      const result = manager.isDelegationAllowed('sisyphus', 'developer');
+      const result = manager.isDelegationAllowed('conductor', 'developer');
       expect(result.allowed).toBe(true);
     });
 
@@ -100,19 +100,19 @@ describe('DelegationManager', () => {
     });
 
     it('should reject self-delegation', () => {
-      const result = manager.isDelegationAllowed('sisyphus', 'sisyphus');
+      const result = manager.isDelegationAllowed('conductor', 'conductor');
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('self');
     });
 
     it('should reject delegation to disabled agent', () => {
-      const result = manager.isDelegationAllowed('sisyphus', 'disabled');
+      const result = manager.isDelegationAllowed('conductor', 'disabled');
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('disabled');
     });
 
     it('should reject delegation to unknown agent', () => {
-      const result = manager.isDelegationAllowed('sisyphus', 'nonexistent');
+      const result = manager.isDelegationAllowed('conductor', 'nonexistent');
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('Unknown target');
     });
@@ -133,7 +133,7 @@ describe('DelegationManager', () => {
       const notifyCallback = vi.fn().mockResolvedValue(undefined);
 
       const request = {
-        fromAgentId: 'sisyphus',
+        fromAgentId: 'conductor',
         toAgentId: 'developer',
         task: 'Implement login',
         originalContent: 'Delegating this task.',
@@ -155,7 +155,7 @@ describe('DelegationManager', () => {
       });
 
       const request = {
-        fromAgentId: 'sisyphus',
+        fromAgentId: 'conductor',
         toAgentId: 'developer',
         task: 'Build the API',
         originalContent: '',
@@ -165,7 +165,7 @@ describe('DelegationManager', () => {
 
       const calledPrompt = executeCallback.mock.calls[0][1];
       expect(calledPrompt).toContain('Delegated Task');
-      expect(calledPrompt).toContain('Sisyphus');
+      expect(calledPrompt).toContain('Conductor');
       expect(calledPrompt).toContain('Build the API');
       expect(calledPrompt).toContain('Do NOT delegate');
     });
@@ -191,7 +191,7 @@ describe('DelegationManager', () => {
       const executeCallback = vi.fn().mockRejectedValue(new Error('Process crashed'));
 
       const request = {
-        fromAgentId: 'sisyphus',
+        fromAgentId: 'conductor',
         toAgentId: 'developer',
         task: 'Do something',
         originalContent: '',
@@ -210,7 +210,7 @@ describe('DelegationManager', () => {
       });
 
       const request = {
-        fromAgentId: 'sisyphus',
+        fromAgentId: 'conductor',
         toAgentId: 'developer',
         task: 'Build it',
         originalContent: '',
@@ -221,10 +221,10 @@ describe('DelegationManager', () => {
     });
 
     it('should prevent circular delegation', async () => {
-      // Simulate sisyphus -> developer delegation is active
+      // Simulate conductor -> developer delegation is active
       const executeCallback = vi.fn().mockImplementation(async () => {
         // While this delegation is active, try reverse delegation
-        const reverseCheck = manager.isDelegationAllowed('developer', 'sisyphus');
+        const reverseCheck = manager.isDelegationAllowed('developer', 'conductor');
         expect(reverseCheck.allowed).toBe(false);
         expect(reverseCheck.reason).toContain('Reverse delegation');
 
@@ -232,7 +232,7 @@ describe('DelegationManager', () => {
       });
 
       const request = {
-        fromAgentId: 'sisyphus',
+        fromAgentId: 'conductor',
         toAgentId: 'developer',
         task: 'Build it',
         originalContent: '',
@@ -248,7 +248,7 @@ describe('DelegationManager', () => {
       });
 
       const request = {
-        fromAgentId: 'sisyphus',
+        fromAgentId: 'conductor',
         toAgentId: 'developer',
         task: 'Build it',
         originalContent: '',
@@ -263,7 +263,7 @@ describe('DelegationManager', () => {
       const executeCallback = vi.fn().mockRejectedValue(new Error('crash'));
 
       const request = {
-        fromAgentId: 'sisyphus',
+        fromAgentId: 'conductor',
         toAgentId: 'developer',
         task: 'Build it',
         originalContent: '',
@@ -284,7 +284,7 @@ describe('DelegationManager', () => {
       manager.updateAgents(newAgents);
 
       // Old agents should not be found
-      const old = manager.isDelegationAllowed('sisyphus', 'developer');
+      const old = manager.isDelegationAllowed('conductor', 'developer');
       expect(old.allowed).toBe(false);
 
       // New agents should work

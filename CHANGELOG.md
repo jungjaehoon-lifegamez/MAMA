@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **UltraWork 3-Phase Loop (Ralph Loop)**: Restructured UltraWork from freeform loop to Plan→Build→Retrospective
+  - Phase 1 (Planning): Lead agent creates implementation plan, optionally runs Council discussion
+  - Phase 2 (Building): Executes plan via delegation loop, records each step to disk
+  - Phase 3 (Retrospective): Reviews completed work, Council discussion for quality check
+  - RETRO_INCOMPLETE triggers Build phase re-entry (max 1 retry)
+  - File-based state persistence: `~/.mama/workspace/ultrawork/{session_id}/`
+  - New `UltraWorkStateManager` class for session/plan/progress/retrospective CRUD
+  - Config: `persist_state` (default: true), `phased_loop` (default: true)
+  - Backward compatible: `phased_loop: false` preserves legacy freeform behavior
+  - 24 new tests (8 phased loop + 16 state manager)
+
 ## [0.9.2] - 2026-02-17
 
 ### Added

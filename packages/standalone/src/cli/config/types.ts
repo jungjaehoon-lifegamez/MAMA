@@ -417,6 +417,10 @@ export interface MultiAgentConfig {
     trigger_keywords?: string[];
     max_duration?: number;
     max_steps?: number;
+    /** Enable file-based state persistence (Ralph Loop pattern) @default true */
+    persist_state?: boolean;
+    /** Enable 3-phase structured loop (plan->build->retrospective) @default true */
+    phased_loop?: boolean;
   };
   /** Task continuation configuration */
   task_continuation?: {
@@ -443,6 +447,12 @@ export interface MultiAgentConfig {
   workflow?: {
     enabled: boolean;
     max_ephemeral_agents?: number;
+    max_duration_ms?: number;
+  };
+  /** Council mode — multi-round discussions among named agents @default enabled */
+  council?: {
+    enabled: boolean;
+    max_rounds?: number;
     max_duration_ms?: number;
   };
 }

@@ -142,7 +142,7 @@ const LOG_PREFIX = '[BackgroundTaskManager]';
  *   description: 'Analyze auth module',
  *   prompt: 'Review the auth module for security issues',
  *   agentId: 'reviewer',
- *   requestedBy: 'sisyphus',
+ *   requestedBy: 'conductor',
  *   channelId: '123456789',
  *   source: 'discord',
  * });
@@ -190,7 +190,7 @@ export class BackgroundTaskManager extends EventEmitter {
    *   description: 'Fix auth bug',
    *   prompt: 'Find and fix the JWT validation bug in auth.ts',
    *   agentId: 'developer',
-   *   requestedBy: 'sisyphus',
+   *   requestedBy: 'conductor',
    *   channelId: '999888777',
    *   source: 'discord',
    * });

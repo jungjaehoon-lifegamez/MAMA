@@ -55,9 +55,9 @@ function makeAgent(overrides: Partial<AgentPersonaConfig> = {}): AgentPersonaCon
 
 const AGENTS: AgentPersonaConfig[] = [
   makeAgent({
-    id: 'sisyphus',
-    name: 'Sisyphus',
-    display_name: '🏔️ Sisyphus',
+    id: 'conductor',
+    name: 'Conductor',
+    display_name: '🎯 Conductor',
     trigger_prefix: '!sis',
     tier: 1,
     can_delegate: true,
@@ -98,7 +98,7 @@ const CATEGORIES: CategoryConfig[] = [
   {
     name: 'architecture',
     patterns: ['아키텍처', 'architecture\\s+design'],
-    agent_ids: ['sisyphus'],
+    agent_ids: ['conductor'],
     priority: 15,
   },
 ];
@@ -175,7 +175,7 @@ describe('E2E: Category Routing Pipeline', () => {
     );
 
     expect(result.reason).toBe('category_match');
-    expect(result.selectedAgents).toContain('sisyphus');
+    expect(result.selectedAgents).toContain('conductor');
   });
 
   it('should still honor explicit triggers over category', () => {
@@ -193,7 +193,7 @@ describe('E2E: Category Routing Pipeline', () => {
 });
 
 // ============================================================================
-// E2E: Delegation Chain (Sisyphus → Developer → Reviewer)
+// E2E: Delegation Chain (Conductor → Developer → Reviewer)
 // ============================================================================
 
 describe('E2E: Delegation Chain', () => {
@@ -207,9 +207,9 @@ describe('E2E: Delegation Chain', () => {
     });
     const notifyCallback = vi.fn().mockResolvedValue(undefined);
 
-    // Sisyphus delegates to developer
+    // Conductor delegates to developer
     const request = delegationManager.parseDelegation(
-      'sisyphus',
+      'conductor',
       'I need help. DELEGATE::developer::Build the authentication module'
     );
 
@@ -241,13 +241,13 @@ describe('E2E: Delegation Chain', () => {
 
     const executeCallback = vi.fn().mockImplementation(async () => {
       // During execution, verify reverse delegation is blocked
-      const reverseCheck = delegationManager.isDelegationAllowed('developer', 'sisyphus');
+      const reverseCheck = delegationManager.isDelegationAllowed('developer', 'conductor');
       expect(reverseCheck.allowed).toBe(false);
       return { response: 'Done', duration_ms: 100 };
     });
 
     const request = {
-      fromAgentId: 'sisyphus',
+      fromAgentId: 'conductor',
       toAgentId: 'developer',
       task: 'Test task',
       originalContent: '',
@@ -269,7 +269,7 @@ describe('E2E: Task Continuation + Delegation', () => {
     });
 
     // Step 1: Incomplete response
-    const r1 = enforcer.analyzeResponse('sisyphus', 'ch1', "I'll continue with the next part");
+    const r1 = enforcer.analyzeResponse('conductor', 'ch1', "I'll continue with the next part");
     expect(r1.isComplete).toBe(false);
     expect(r1.attempt).toBe(1);
 
@@ -278,7 +278,7 @@ describe('E2E: Task Continuation + Delegation', () => {
     expect(prompt).toContain('Continue from where you left off');
 
     // Step 3: Agent completes
-    const r2 = enforcer.analyzeResponse('sisyphus', 'ch1', 'All tasks DONE.');
+    const r2 = enforcer.analyzeResponse('conductor', 'ch1', 'All tasks DONE.');
     expect(r2.isComplete).toBe(true);
     expect(enforcer.getAttemptCount('ch1')).toBe(0);
   });
@@ -289,8 +289,8 @@ describe('E2E: Task Continuation + Delegation', () => {
       max_retries: 2,
     });
 
-    enforcer.analyzeResponse('sisyphus', 'ch1', "I'll continue next");
-    const r2 = enforcer.analyzeResponse('sisyphus', 'ch1', '계속하겠습니다');
+    enforcer.analyzeResponse('conductor', 'ch1', "I'll continue next");
+    const r2 = enforcer.analyzeResponse('conductor', 'ch1', '계속하겠습니다');
 
     expect(r2.maxRetriesReached).toBe(true);
     expect(r2.attempt).toBe(2);
@@ -351,7 +351,7 @@ describe('E2E: UltraWork Session', () => {
 
     const session = await manager.startSession(
       'ch1',
-      'sisyphus',
+      'conductor',
       'Build and review login feature',
       AGENTS,
       executeCallback,
@@ -386,7 +386,7 @@ describe('E2E: UltraWork Session', () => {
 
     const session = await manager.startSession(
       'ch1',
-      'sisyphus',
+      'conductor',
       'Long running task',
       AGENTS,
       executeCallback,
@@ -508,7 +508,7 @@ describe('Edge Cases', () => {
 
     const session = await manager.startSession(
       'ch1',
-      'sisyphus',
+      'conductor',
       'Edge case task',
       AGENTS,
       executeCallback,
@@ -575,7 +575,7 @@ describe('Edge Cases', () => {
     const delegationManager = new DelegationManager(AGENTS);
     const response =
       'DELEGATE::developer::Build API with endpoints: /users, /posts?limit=10&offset=0';
-    const request = delegationManager.parseDelegation('sisyphus', response);
+    const request = delegationManager.parseDelegation('conductor', response);
 
     expect(request).not.toBeNull();
     expect(request!.task).toContain('/users');
