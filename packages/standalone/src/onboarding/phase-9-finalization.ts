@@ -134,6 +134,39 @@ Pick up where you left off:
 mama_load_checkpoint()
 \`\`\`
 
+## 🤖 Multi-Agent System
+
+MAMA includes a built-in multi-agent team with 4 coordination modes:
+
+| Mode | When | How |
+|------|------|-----|
+| **Delegation** | Simple single task | Conductor assigns to one agent |
+| **Dynamic Workflows** | Multi-step tasks | Parallel DAG pipeline (\`workflow_plan\`) |
+| **Council Discussion** | Architecture decisions | Multi-round debate (\`council_plan\`) |
+| **UltraWork** | Deep autonomous work | Plan→Build→Retrospective loop |
+
+### Activate Multi-Agent
+
+In \`~/.mama/config.yaml\`:
+
+\`\`\`yaml
+multi_agent:
+  enabled: true
+  default_agent: conductor
+\`\`\`
+
+### Customize Personas
+
+Agent persona files are in \`~/.mama/personas/\`:
+
+- \`conductor.md\` — Orchestrator behavior
+- \`developer.md\` — Builder behavior
+- \`reviewer.md\` — Code review style
+- \`architect.md\` — System design approach
+- \`pm.md\` — Project management style
+
+Edit these files to customize agent personalities and capabilities.
+
 ## 🔧 Customization
 
 ### Update Your Profile

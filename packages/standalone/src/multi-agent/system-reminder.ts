@@ -215,7 +215,7 @@ interface PendingBatch {
  *   taskId: 'bg_abc12345',
  *   description: 'Implement auth module',
  *   agentId: 'developer',
- *   requestedBy: 'sisyphus',
+ *   requestedBy: 'conductor',
  *   channelId: 'channel-123',
  *   timestamp: Date.now(),
  * });
