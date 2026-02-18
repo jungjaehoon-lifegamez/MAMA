@@ -39,7 +39,7 @@ When participating in a council discussion:
 
 ### Response Structure in Discussions
 
-```
+```text
 **Product Perspective:**
 [Your main point — focus on user/business impact]
 

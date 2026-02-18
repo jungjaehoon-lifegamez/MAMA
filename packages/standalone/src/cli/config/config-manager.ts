@@ -10,7 +10,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 
-import type { MAMAConfig, MultiAgentConfig } from './types.js';
+import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
 
 /**
@@ -186,8 +186,23 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
 function normalizeLegacyMultiAgentConfig(
   multiAgentConfig?: MultiAgentConfig
 ): MultiAgentConfig | undefined {
-  if (!multiAgentConfig?.agents?.developer) {
+  if (!multiAgentConfig?.agents) {
     return multiAgentConfig;
+  }
+
+  // Migrate sisyphus → conductor (renamed in v0.9.0)
+  const agents = multiAgentConfig.agents as Record<string, Omit<AgentPersonaConfig, 'id'>>;
+  if (agents['sisyphus'] && !agents['conductor']) {
+    const sisyphus = agents['sisyphus'];
+    delete agents['sisyphus'];
+    agents['conductor'] = {
+      ...sisyphus,
+      display_name: '🎯 Conductor',
+      trigger_prefix: '!conductor',
+      persona_file: '~/.mama/personas/conductor.md',
+      tier: 1,
+      can_delegate: true,
+    };
   }
 
   const developer = multiAgentConfig.agents.developer;

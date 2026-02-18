@@ -710,7 +710,9 @@ export class UltraWorkManager {
     responseInterceptor?: ResponseInterceptor
   ): Promise<void> {
     // Phase 1: Planning + Council
-    if (this.stateManager) await this.stateManager.updatePhase(session.id, 'planning');
+    if (this.stateManager) {
+      await this.stateManager.updatePhase(session.id, 'planning');
+    }
     const plan = await this.runPlanningPhase(
       session,
       agents,
@@ -725,7 +727,9 @@ export class UltraWorkManager {
     }
 
     // Phase 2: Building
-    if (this.stateManager) await this.stateManager.updatePhase(session.id, 'building');
+    if (this.stateManager) {
+      await this.stateManager.updatePhase(session.id, 'building');
+    }
     await this.runBuildingPhase(
       session,
       plan,
@@ -741,7 +745,9 @@ export class UltraWorkManager {
     }
 
     // Phase 3: Retrospective + Council
-    if (this.stateManager) await this.stateManager.updatePhase(session.id, 'retrospective');
+    if (this.stateManager) {
+      await this.stateManager.updatePhase(session.id, 'retrospective');
+    }
     const { complete } = await this.runRetrospectivePhase(
       session,
       agents,
@@ -1135,7 +1141,7 @@ Continue with the next step of the overall task. When everything is done, respon
   // ============================================================================
 
   private isBuildComplete(response: string): boolean {
-    return /BUILD_COMPLETE|DONE/i.test(response);
+    return /\bBUILD_COMPLETE\b/i.test(response);
   }
 
   private isRetroComplete(response: string): boolean {
