@@ -191,17 +191,27 @@ function normalizeLegacyMultiAgentConfig(
   }
 
   // Migrate sisyphus → conductor (renamed in v0.9.0)
-  const agents = multiAgentConfig.agents as Record<string, Omit<AgentPersonaConfig, 'id'>>;
-  if (agents['sisyphus'] && !agents['conductor']) {
-    const sisyphus = agents['sisyphus'];
-    delete agents['sisyphus'];
-    agents['conductor'] = {
-      ...sisyphus,
-      display_name: '🎯 Conductor',
-      trigger_prefix: '!conductor',
-      persona_file: '~/.mama/personas/conductor.md',
-      tier: 1,
-      can_delegate: true,
+  const agentEntries = multiAgentConfig.agents as Record<string, Omit<AgentPersonaConfig, 'id'>>;
+  if (agentEntries['sisyphus'] && !agentEntries['conductor']) {
+    const { sisyphus: sisyphusEntry, ...rest } = agentEntries;
+    const migratedAgents = {
+      ...rest,
+      conductor: {
+        ...sisyphusEntry,
+        name: 'Conductor',
+        display_name: '🎯 Conductor',
+        trigger_prefix: '!conductor',
+        persona_file: '~/.mama/personas/conductor.md',
+        tier: 1,
+        can_delegate: true,
+      },
+    };
+    const migratedDefaultAgent =
+      multiAgentConfig.default_agent === 'sisyphus' ? 'conductor' : multiAgentConfig.default_agent;
+    multiAgentConfig = {
+      ...multiAgentConfig,
+      default_agent: migratedDefaultAgent,
+      agents: migratedAgents as typeof multiAgentConfig.agents,
     };
   }
 
@@ -369,8 +379,8 @@ export async function provisionDefaults(): Promise<void> {
   const personasDir = join(mamaHome, 'personas');
 
   // Resolve templates dir relative to this file's compiled location
-  // In dist: dist/cli/config/config-manager.js → ../../../templates/personas
-  const templatesDir = resolve(__dirname, '../../../templates/personas');
+  // In dist: dist/cli/config/config-manager.js → ../../templates/personas
+  const templatesDir = resolve(__dirname, '../../templates/personas');
 
   // 1. Provision personas directory with builtin templates (file-level: copies missing files only)
   if (!existsSync(personasDir)) {

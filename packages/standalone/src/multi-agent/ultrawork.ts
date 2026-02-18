@@ -640,6 +640,7 @@ export class UltraWorkManager {
 
   private async runRetrospectivePhase(
     session: UltraWorkSession,
+    planFromPhase1: string,
     _agents: AgentPersonaConfig[],
     executeCallback: DelegationExecuteCallback,
     notifyCallback: DelegationNotifyCallback,
@@ -650,7 +651,9 @@ export class UltraWorkManager {
     const steps = this.stateManager
       ? await this.stateManager.loadProgress(session.id)
       : session.steps;
-    const plan = this.stateManager ? ((await this.stateManager.loadPlan(session.id)) ?? '') : '';
+    const plan = this.stateManager
+      ? ((await this.stateManager.loadPlan(session.id)) ?? planFromPhase1)
+      : planFromPhase1;
 
     session.currentStep++;
     const retroPrompt = this.buildRetrospectivePrompt(plan, steps);
@@ -750,6 +753,7 @@ export class UltraWorkManager {
     }
     const { complete } = await this.runRetrospectivePhase(
       session,
+      plan,
       agents,
       executeCallback,
       notifyCallback,
@@ -785,6 +789,7 @@ export class UltraWorkManager {
       }
       const retryRetro = await this.runRetrospectivePhase(
         session,
+        plan,
         agents,
         executeCallback,
         notifyCallback,
@@ -1156,8 +1161,14 @@ Continue with the next step of the overall task. When everything is done, respon
     session: UltraWorkSession,
     notifyCallback: DelegationNotifyCallback
   ): Promise<void> {
-    const reason =
-      session.currentStep >= session.maxSteps ? 'max steps reached' : 'max duration reached';
+    let reason: string;
+    if (!session.active) {
+      reason = 'cancelled';
+    } else if (session.currentStep >= session.maxSteps) {
+      reason = 'max steps reached';
+    } else {
+      reason = 'max duration reached';
+    }
 
     session.active = false;
     this.sessions.delete(session.channelId);
