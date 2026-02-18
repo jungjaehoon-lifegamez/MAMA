@@ -515,6 +515,11 @@ ${this.buildSkillsPrompt()}
     agentId: string,
     agentConfig: Omit<AgentPersonaConfig, 'id'>
   ): boolean {
+    // Explicit opt-out always wins.
+    if (agentConfig.is_planning_agent === false || agentConfig.isPlanningAgent === false) {
+      return false;
+    }
+
     const hasPlanningFlag =
       typeof agentConfig.is_planning_agent === 'boolean' ||
       typeof agentConfig.isPlanningAgent === 'boolean';
