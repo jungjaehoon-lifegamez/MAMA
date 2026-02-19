@@ -371,6 +371,13 @@ export abstract class MultiAgentHandlerBase {
   }
 
   /**
+   * Get delegation manager for API access
+   */
+  getDelegationManager(): DelegationManager {
+    return this.delegationManager;
+  }
+
+  /**
    * Get shared context manager
    */
   getSharedContext(): SharedContextManager {

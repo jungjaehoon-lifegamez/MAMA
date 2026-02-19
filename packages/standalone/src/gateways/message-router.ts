@@ -427,6 +427,17 @@ This protects your credentials from being exposed in chat logs.`;
 
     let response: string;
 
+    // Skill on-demand injection: prepend matched skill content to user message
+    // (not system prompt — PersistentCLI can't update system prompt after creation)
+    const skillPrefix = enhanced.skillContent
+      ? `<system-reminder>\n${enhanced.skillContent}\n</system-reminder>\n\n`
+      : '';
+    if (enhanced.skillContent) {
+      logger.info(
+        `[SkillMatch] Injecting skill into user message: ${enhanced.skillContent.length} chars`
+      );
+    }
+
     try {
       // Use multimodal content if available (OpenClaw-style)
       if (
@@ -467,9 +478,12 @@ This protects your credentials from being exposed in chat logs.`;
           }
         }
 
-        // Add text content
-        if (messageText) {
-          contentBlocks.push({ type: 'text', text: messageText });
+        // Add text content (with skill context if matched)
+        const effectiveMessageText = skillPrefix
+          ? `${skillPrefix}${messageText || ''}`
+          : messageText;
+        if (effectiveMessageText) {
+          contentBlocks.push({ type: 'text', text: effectiveMessageText });
         }
 
         // Pre-analyze images via shared ImageAnalyzer
@@ -492,7 +506,8 @@ This protects your credentials from being exposed in chat logs.`;
         const result = await this.agentLoop.runWithContent(contentBlocks, options);
         response = result.response;
       } else {
-        const result = await this.agentLoop.run(message.text, options);
+        const effectiveText = skillPrefix ? `${skillPrefix}${message.text}` : message.text;
+        const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
       }
     } catch (error) {
@@ -733,6 +748,10 @@ The ONLY way to display an image is the bare outbound path in your response text
       prompt += `\n${enhanced.keywordInstructions}\n`;
     }
 
+    // NOTE: skillContent is injected into user message (not system prompt)
+    // because PersistentCLI sessions can't update system prompt after creation.
+    // See process() method for user-message injection.
+
     // Include gateway tools directly in system prompt (priority 1 protection)
     // so they don't get truncated by PromptSizeMonitor as a separate layer
     const gatewayTools = getGatewayToolsPrompt();
@@ -751,12 +770,12 @@ The ONLY way to display an image is the bare outbound path in your response text
   private buildMinimalResumePrompt(injectedContext: string, agentContext?: AgentContext): string {
     let prompt = '';
 
-    // Only include per-message related decisions (if any)
     if (injectedContext) {
       prompt += injectedContext;
     }
 
-    // Brief reminder of role (in case CLI context was partially lost)
+    // NOTE: skillContent is injected into user message, not here.
+
     if (agentContext) {
       prompt += `\n[Role: ${agentContext.roleName}@${agentContext.platform}]\n`;
     }

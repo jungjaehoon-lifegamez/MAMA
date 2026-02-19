@@ -26,6 +26,8 @@ import {
   type AgentResponse,
   type MultiAgentResponse,
 } from './multi-agent-base.js';
+import { PromptEnhancer } from '../agent/prompt-enhancer.js';
+import type { RuleContext } from '../agent/yaml-frontmatter.js';
 
 export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
 
@@ -64,6 +66,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   /** Tracks the process used for history seeding per agent:channel */
   private historySeedProcess = new Map<string, AgentRuntimeProcess>();
 
+  private promptEnhancer: PromptEnhancer;
+
   constructor(
     config: MultiAgentConfig,
     processOptions: Partial<PersistentProcessOptions> = {},
@@ -71,6 +75,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   ) {
     super(config, processOptions, runtimeOptions);
     this.multiBotManager = new SlackMultiBotManager(config);
+    this.promptEnhancer = new PromptEnhancer();
 
     // Start periodic cleanup of processed mentions (every 60 seconds)
     this.mentionCleanupInterval = setInterval(() => {
@@ -385,8 +390,34 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     // Build context for this agent
     const agentContext = this.sharedContext.buildContextForAgent(context.channelId, agentId, 5);
 
+    // Enhance with skill detection + keyword instructions
+    const workspacePath = globalThis.process?.env?.HOME || '/tmp';
+    const ruleContext: RuleContext = {
+      agentId,
+      tier: agent.tier,
+      channelId: context.channelId,
+    };
+    const enhanced = this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
+
     // Build full prompt with context.
     let fullPrompt = cleanMessage;
+
+    // Inject matched skill content into user message
+    if (enhanced.skillContent) {
+      fullPrompt = `<system-reminder>\n${enhanced.skillContent}\n</system-reminder>\n\n${fullPrompt}`;
+      this.logger.log(
+        `[SkillMatch] Injecting skill into Slack agent ${agentId}: ${enhanced.skillContent.length} chars`
+      );
+    }
+    if (enhanced.keywordInstructions) {
+      fullPrompt = `${enhanced.keywordInstructions}\n\n${fullPrompt}`;
+      this.logger.log(
+        `[PromptEnhancer] Keyword detected for Slack agent ${agentId}: ${enhanced.keywordInstructions.length} chars`
+      );
+    }
+    if (enhanced.rulesContent) {
+      fullPrompt = `## Project Rules\n${enhanced.rulesContent}\n\n${fullPrompt}`;
+    }
 
     // Track work start (completed in finally block)
     this.workTracker.startWork(agentId, context.channelId, cleanMessage);

@@ -179,27 +179,69 @@ function collectMarkdownFiles(dir: string, prefix = ''): Array<{ path: string; c
   return results;
 }
 
+// ─── Skill On-Demand Injection ───────────────────────────────────────────────
+
 /**
- * Load installed & enabled skills from ~/.mama/skills/
- * Returns skill content blocks for system prompt injection.
- * Reads all .md files recursively (commands/, skills/, etc.)
+ * Parse YAML frontmatter from skill .md file
  */
-export function loadInstalledSkills(
-  verbose = false,
-  options: { onlyCommands?: boolean } = {}
-): string[] {
+function parseSkillFrontmatter(content: string): {
+  name: string;
+  description: string;
+  keywords: string[];
+} {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return { name: '', description: '', keywords: [] };
+  const block = match[1];
+  const name = (block.match(/^name:\s*(.+)$/m)?.[1] ?? '').trim();
+  const description = (block.match(/^description:\s*(.+)$/m)?.[1] ?? '').trim();
+  const kwBlock = block.match(/^keywords:\n((?:[ \t]+-[ \t]*.+\n?)+)/m);
+  const keywords = kwBlock
+    ? kwBlock[1]
+        .trim()
+        .split('\n')
+        .map((l) => l.replace(/^[ \t]*-[ \t]*/, '').trim())
+        .filter((k) => k.length > 0)
+    : [];
+  return { name, description, keywords };
+}
+
+/**
+ * Find the main .md file for a directory skill (for frontmatter parsing)
+ */
+function findMainSkillFile(skillDir: string, skillName: string): string | null {
+  for (const name of [`${skillName}.md`, 'skill.md', 'index.md']) {
+    const p = join(skillDir, name);
+    if (existsSync(p)) return p;
+  }
+  try {
+    const entries = readdirSync(skillDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.isFile() && e.name.endsWith('.md') && !EXCLUDED_SKILL_FILES.has(e.name)) {
+        return join(skillDir, e.name);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
+ * Build skill catalog (one line per enabled skill) for system prompt.
+ * Format: "- [source/skillId] keywords: kw1, kw2 | description"
+ */
+function buildSkillCatalog(verbose = false): string[] {
   const skillsBase = join(homedir(), '.mama', 'skills');
   const stateFile = join(skillsBase, 'state.json');
-  const blocks: string[] = [];
+  const catalog: string[] = [];
 
-  // Load state (enabled/disabled tracking)
   let state: Record<string, { enabled: boolean }> = {};
   try {
     if (existsSync(stateFile)) {
       state = JSON.parse(readFileSync(stateFile, 'utf-8'));
     }
   } catch {
-    // No state file
+    /* no state file */
   }
 
   const sources = ['mama', 'cowork', 'external'];
@@ -212,66 +254,101 @@ export function loadInstalledSkills(
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         const stateKey = `${source}/${entry.name}`;
-
-        // Skip disabled skills
         if (state[stateKey]?.enabled === false) continue;
 
         const skillDir = join(sourceDir, entry.name);
-        let mdFiles = collectMarkdownFiles(skillDir);
-        if (options.onlyCommands) {
-          mdFiles = mdFiles.filter((f) => f.path.startsWith('commands/'));
-        }
+        const mainFile = findMainSkillFile(skillDir, entry.name);
+        if (!mainFile) continue;
 
-        if (mdFiles.length > 0) {
-          const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
-          blocks.push(`# [Skill: ${source}/${entry.name}]\n\n${parts.join('\n\n---\n\n')}`);
-          if (verbose)
-            console.log(
-              `[AgentLoop] Loaded skill: ${source}/${entry.name} (${mdFiles.length} files)`
-            );
+        try {
+          const content = readFileSync(mainFile, 'utf-8');
+          const fm = parseSkillFrontmatter(content);
+          const description = fm.description || '';
+          const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : entry.name;
+          catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
+          if (verbose) console.log(`[AgentLoop] Skill catalog: ${stateKey}`);
+        } catch {
+          /* skip unreadable */
         }
       }
     } catch {
-      // Directory read failed
+      /* directory read failed */
     }
   }
 
-  // Also load flat .md skill files from ~/.mama/skills/ root
+  // Flat .md files at root
   try {
     const rootEntries = readdirSync(skillsBase, { withFileTypes: true });
     for (const entry of rootEntries) {
-      if (!entry.isFile() || !entry.name.endsWith('.md')) {
-        continue;
-      }
-      if (EXCLUDED_SKILL_FILES.has(entry.name)) {
-        continue;
-      }
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
+
       const id = entry.name.replace(/\.md$/, '');
       const stateKey = `mama/${id}`;
+      if (state[stateKey]?.enabled === false) continue;
+      if (catalog.some((l) => l.includes(`[${stateKey}]`))) continue;
 
-      // Skip disabled skills (check state like subdirectory skills)
-      if (state[stateKey]?.enabled === false) {
-        continue;
+      try {
+        const content = readFileSync(join(skillsBase, entry.name), 'utf-8');
+        const fm = parseSkillFrontmatter(content);
+        const description = fm.description || '';
+        const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : id;
+        catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
+        if (verbose) console.log(`[AgentLoop] Skill catalog (flat): ${stateKey}`);
+      } catch {
+        /* skip */
       }
-
-      // Skip if already loaded from subdirectory
-      if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) {
-        continue;
-      }
-
-      const fullPath = join(skillsBase, entry.name);
-      let content = readFileSync(fullPath, 'utf-8');
-      if (content.length > MAX_SKILL_FILE_CHARS) {
-        content = content.slice(0, MAX_SKILL_FILE_CHARS) + '\n\n[... truncated]';
-      }
-      blocks.push(`# [Skill: mama/${id}]\n\n${content}`);
-      if (verbose) console.log(`[AgentLoop] Loaded root skill: ${id}`);
     }
   } catch {
-    // Root directory read failed
+    /* root directory read failed */
   }
 
-  return blocks;
+  return catalog;
+}
+
+/**
+ * Load full skill content on-demand for per-message injection.
+ * @param skillId - Skill identifier like "mama/playground"
+ */
+export function loadSkillContent(skillId: string): string | null {
+  const skillsBase = join(homedir(), '.mama', 'skills');
+
+  // Try directory skill first
+  const skillDir = join(skillsBase, skillId);
+  if (existsSync(skillDir)) {
+    const mdFiles = collectMarkdownFiles(skillDir);
+    if (mdFiles.length > 0) {
+      const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
+      return `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
+    }
+  }
+
+  // Try flat .md file: "mama/playground" → skills/playground.md
+  const idParts = skillId.split('/');
+  if (idParts.length >= 2) {
+    const flatPath = join(skillsBase, `${idParts[idParts.length - 1]}.md`);
+    if (existsSync(flatPath)) {
+      try {
+        return readFileSync(flatPath, 'utf-8');
+      } catch {
+        /* skip */
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Load installed & enabled skills from ~/.mama/skills/
+ * Returns skill catalog lines for system prompt injection (on-demand mode).
+ * Full skill content is injected per-message via detectSkillMatch() in PromptEnhancer.
+ */
+export function loadInstalledSkills(
+  verbose = false,
+  _options: { onlyCommands?: boolean } = {}
+): string[] {
+  return buildSkillCatalog(verbose);
 }
 
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
@@ -305,25 +382,19 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
     }
   }
 
-  // Load installed & enabled skills (HIGH PRIORITY — before CLAUDE.md)
-  const skillBlocks = loadInstalledSkills(verbose);
-  if (skillBlocks.length > 0) {
+  // Load skill catalog (on-demand mode — full content injected per-message by PromptEnhancer)
+  const skillCatalog = loadInstalledSkills(verbose);
+  if (skillCatalog.length > 0) {
     const skillDirective = [
-      '# Installed Skills (PRIORITY)',
+      '# Installed Skills',
       '',
-      '**IMPORTANT:** The following skills/plugins are installed by the user.',
-      'When a user request matches a skill by keywords or description, you MUST:',
-      '1. Find the matching skill section below (check "keywords" in frontmatter or skill name)',
-      '2. Follow its "지시사항" / instructions EXACTLY as written — do NOT improvise alternatives',
-      '3. Use the tools available to you (fetch, Bash, etc.) as the skill directs',
-      '4. DO NOT create separate scripts or files unless the skill explicitly instructs it',
-      '5. For [INSTALLED PLUGIN COMMAND] messages, find matching "commands/{name}.md"',
-      '6. DO NOT use the Skill tool — these are NOT system skills',
+      'To invoke a skill, include its keywords in your message.',
+      'The full skill instructions will be injected automatically when matched.',
       '',
-      skillBlocks.join('\n\n---\n\n'),
+      ...skillCatalog,
     ].join('\n');
     layers.push(skillDirective);
-    if (verbose) console.log(`[AgentLoop] Injected ${skillBlocks.length} installed skills`);
+    if (verbose) console.log(`[AgentLoop] Skill catalog: ${skillCatalog.length} skills`);
   }
 
   // Add context prompt if AgentContext is provided (role awareness)
@@ -476,7 +547,7 @@ export class AgentLoop {
         const p = join(mamaHome, file);
         if (existsSync(p)) personaParts.push(readFileSync(p, 'utf-8'));
       }
-      const skillBlocks = loadInstalledSkills();
+      const skillCatalog = loadInstalledSkills();
       const onboardingPath = join(mamaHome, 'ONBOARDING.md');
       const onboardingContent = existsSync(onboardingPath)
         ? readFileSync(onboardingPath, 'utf-8')
@@ -493,11 +564,17 @@ export class AgentLoop {
               } as PromptLayer,
             ]
           : []),
-        ...(skillBlocks.length > 0
+        ...(skillCatalog.length > 0
           ? [
               {
                 name: 'skills',
-                content: skillBlocks.join('\n\n---\n\n'),
+                content: [
+                  '# Installed Skills',
+                  '',
+                  'To invoke a skill, include its keywords in your message.',
+                  '',
+                  ...skillCatalog,
+                ].join('\n'),
                 priority: 3,
               } as PromptLayer,
             ]

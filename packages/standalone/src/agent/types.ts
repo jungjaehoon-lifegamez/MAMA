@@ -623,7 +623,9 @@ export type GatewayToolName =
   // PR Review tools
   | 'pr_review_threads'
   // Playground tools
-  | 'playground_create';
+  | 'playground_create'
+  // Webchat tools
+  | 'webchat_send';
 
 // ============================================================================
 // MCP Tool Output Types

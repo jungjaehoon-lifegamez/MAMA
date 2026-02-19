@@ -136,6 +136,35 @@ export const PlaygroundModule = {
     }
   },
 
+  /**
+   * Open Skill Lab playground and optionally send skill data for editing
+   */
+  openSkillLab(skillData?: { id: string; name: string; content: string }): void {
+    const slug = 'skill-lab-playground';
+    this.openPlayground(slug, 'Skill Lab');
+
+    if (skillData) {
+      const iframe = document.getElementById('playground-iframe') as HTMLIFrameElement | null;
+      if (!iframe) return;
+      // Wait for iframe to load before sending skill:load
+      iframe.addEventListener(
+        'load',
+        () => {
+          iframe.contentWindow?.postMessage(
+            {
+              type: 'skill:load',
+              id: skillData.id,
+              name: skillData.name,
+              content: skillData.content,
+            },
+            '*'
+          );
+        },
+        { once: true }
+      );
+    }
+  },
+
   escapeHtml(str: string): string {
     const div = document.createElement('div');
     div.textContent = str;

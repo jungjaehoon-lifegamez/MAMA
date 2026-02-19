@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
+import { homedir } from 'node:os';
 import { ContentDeduplicator } from './content-dedup.js';
 import { parseFrontmatter, matchesContext } from './yaml-frontmatter.js';
 import type { RuleContext } from './yaml-frontmatter.js';
@@ -15,7 +16,21 @@ export interface EnhancedPromptContext {
   keywordInstructions: string;
   agentsContent: string;
   rulesContent: string;
+  skillContent?: string;
 }
+
+const SKILL_EXCLUDED_FILES = new Set([
+  'CONNECTORS.md',
+  'connectors.md',
+  'LICENSE.md',
+  'license.md',
+  'CHANGELOG.md',
+  'changelog.md',
+  'CONTRIBUTING.md',
+  'contributing.md',
+  'README.md',
+  'readme.md',
+]);
 
 interface CacheEntry {
   content: string;
@@ -581,7 +596,170 @@ export class PromptEnhancer {
       keywordInstructions: this.detectKeywords(userMessage),
       agentsContent: this.discoverAgentsMd(workspacePath),
       rulesContent: this.discoverRules(workspacePath, ruleContext),
+      skillContent: this.detectSkillMatch(userMessage) ?? undefined,
     };
+  }
+
+  /**
+   * Detect if user message matches an installed skill by keywords.
+   * Returns full skill content for per-message injection, or null if no match.
+   */
+  detectSkillMatch(userMessage: string): string | null {
+    if (!userMessage) return null;
+
+    const skillsBase = join(homedir(), '.mama', 'skills');
+    const stateFile = join(skillsBase, 'state.json');
+
+    let state: Record<string, { enabled: boolean }> = {};
+    try {
+      if (existsSync(stateFile)) {
+        state = JSON.parse(readFileSync(stateFile, 'utf-8'));
+      }
+    } catch {
+      return null;
+    }
+
+    const lower = userMessage.toLowerCase();
+
+    // Check directory skills
+    for (const source of ['mama', 'cowork', 'external']) {
+      const sourceDir = join(skillsBase, source);
+      if (!existsSync(sourceDir)) continue;
+
+      let entries;
+      try {
+        entries = readdirSync(sourceDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const stateKey = `${source}/${entry.name}`;
+        if (state[stateKey]?.enabled === false) continue;
+
+        const skillDir = join(sourceDir, entry.name);
+        const mainFile = this._findMainSkillFile(skillDir, entry.name);
+        if (!mainFile) continue;
+
+        let fileContent;
+        try {
+          fileContent = readFileSync(mainFile, 'utf-8');
+        } catch {
+          continue;
+        }
+
+        const fm = this._parseSkillFrontmatter(fileContent);
+        if (!fm.keywords.some((kw) => lower.includes(kw.toLowerCase()))) continue;
+
+        console.log(`[PromptEnhancer] Skill matched: ${stateKey}`);
+        return this._loadDirSkillContent(skillDir, stateKey);
+      }
+    }
+
+    // Check flat .md files at root
+    let rootEntries;
+    try {
+      rootEntries = readdirSync(skillsBase, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+
+    for (const entry of rootEntries) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      if (SKILL_EXCLUDED_FILES.has(entry.name)) continue;
+
+      const id = entry.name.replace(/\.md$/, '');
+      const stateKey = `mama/${id}`;
+      if (state[stateKey]?.enabled === false) continue;
+
+      let content;
+      try {
+        content = readFileSync(join(skillsBase, entry.name), 'utf-8');
+      } catch {
+        continue;
+      }
+
+      const fm = this._parseSkillFrontmatter(content);
+      if (!fm.keywords.some((kw) => lower.includes(kw.toLowerCase()))) continue;
+
+      console.log(`[PromptEnhancer] Skill matched (flat): ${stateKey}`);
+      return content;
+    }
+
+    return null;
+  }
+
+  private _parseSkillFrontmatter(content: string): {
+    name: string;
+    description: string;
+    keywords: string[];
+  } {
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) return { name: '', description: '', keywords: [] };
+    const block = match[1];
+    const name = (block.match(/^name:\s*(.+)$/m)?.[1] ?? '').trim();
+    const description = (block.match(/^description:\s*(.+)$/m)?.[1] ?? '').trim();
+    const kwBlock = block.match(/^keywords:\n((?:[ \t]+-[ \t]*.+\n?)+)/m);
+    const keywords = kwBlock
+      ? kwBlock[1]
+          .trim()
+          .split('\n')
+          .map((l) => l.replace(/^[ \t]*-[ \t]*/, '').trim())
+          .filter((k) => k.length > 0)
+      : [];
+    return { name, description, keywords };
+  }
+
+  private _findMainSkillFile(skillDir: string, skillName: string): string | null {
+    for (const name of [`${skillName}.md`, 'skill.md', 'index.md']) {
+      const p = join(skillDir, name);
+      if (existsSync(p)) return p;
+    }
+    try {
+      const entries = readdirSync(skillDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isFile() && e.name.endsWith('.md') && !SKILL_EXCLUDED_FILES.has(e.name)) {
+          return join(skillDir, e.name);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  private _loadDirSkillContent(skillDir: string, skillId: string): string | null {
+    const mdFiles: Array<{ path: string; content: string }> = [];
+
+    const collect = (dir: string, prefix = '') => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const fullPath = join(dir, e.name);
+        const relPath = prefix ? `${prefix}/${e.name}` : e.name;
+        if (e.isDirectory()) {
+          collect(fullPath, relPath);
+        } else if (e.isFile() && e.name.endsWith('.md') && !SKILL_EXCLUDED_FILES.has(e.name)) {
+          try {
+            mdFiles.push({ path: relPath, content: readFileSync(fullPath, 'utf-8') });
+          } catch {
+            /* skip */
+          }
+        }
+      }
+    };
+
+    collect(skillDir);
+    if (mdFiles.length === 0) return null;
+
+    const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
+    return `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
   }
 
   private findProjectRoot(startPath: string): string | null {

@@ -12,6 +12,8 @@
 
 /* eslint-env browser */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import {
   escapeHtml,
   escapeAttr,
@@ -79,7 +81,7 @@ export class ChatModule {
   sessionId: string | null = null;
   reconnectAttempts = 0;
   maxReconnectDelay = 30000;
-  speechRecognition: SpeechRecognition | null = null;
+  speechRecognition: any = null;
   isRecording = false;
   silenceTimeout: ReturnType<typeof setTimeout> | null = null;
   silenceDelay = 2500;
@@ -102,6 +104,7 @@ export class ChatModule {
   historyExpiryMs = 24 * 60 * 60 * 1000;
   checkpointCooldown = false;
   COOLDOWN_MS = 60 * 1000;
+  playgroundAwaitingResponse = false;
   idleTimer: ReturnType<typeof setTimeout> | null = null;
   IDLE_TIMEOUT = 5 * 60 * 1000;
   _onDragMouseMove: ((event: MouseEvent) => void) | null = null;
@@ -257,7 +260,7 @@ export class ChatModule {
       this.updateStatus('connected');
       this.enableInput(true);
 
-      this.ws.send(
+      this.ws!.send(
         JSON.stringify({
           type: 'attach',
           sessionId: sessionId,
@@ -358,7 +361,7 @@ export class ChatModule {
         break;
 
       case 'typing':
-        this.showTypingIndicator(data.elapsed);
+        this.showTypingIndicator(data.elapsed ?? 0);
         break;
 
       case 'pong':
@@ -568,7 +571,7 @@ export class ChatModule {
     }
 
     // Switch to Memory tab and open form with text
-    window.switchTab('memory');
+    (window as any).switchTab('memory');
     this.memoryModule.showSaveFormWithText(text);
     this.addSystemMessage(`💾 Opening save form with: "${text.substring(0, 50)}..."`);
   }
@@ -588,7 +591,7 @@ export class ChatModule {
     }
 
     // Switch to Memory tab and execute search
-    window.switchTab('memory');
+    (window as any).switchTab('memory');
     this.memoryModule.searchWithQuery(query);
     this.addSystemMessage(`🔍 Searching for: "${query}"`);
   }
@@ -842,7 +845,7 @@ export class ChatModule {
       const groupEl = document.createElement('div');
       groupEl.className = 'tool-status-group';
       groupEl.style.cssText =
-        'padding:4px 12px;margin:2px 0;font-size:0.85em;color:#aaa;line-height:1.6;white-space:nowrap;overflow-x:auto;';
+        'padding:4px 12px;margin:2px 0;font-size:0.85em;color:#aaa;line-height:1.8;white-space:normal;word-wrap:break-word;';
       container.appendChild(groupEl);
       this.toolStatusGroup = groupEl;
       this.toolStatusCompleted = [];
@@ -919,7 +922,7 @@ export class ChatModule {
           this.currentStreamText += this.streamBuffer;
           this.streamBuffer = '';
 
-          const contentEl = this.currentStreamEl.querySelector('.message-content');
+          const contentEl = this.currentStreamEl?.querySelector('.message-content');
           if (contentEl) {
             contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
           }
@@ -941,7 +944,7 @@ export class ChatModule {
     if (this.streamBuffer && this.currentStreamEl) {
       this.currentStreamText += this.streamBuffer;
       const contentEl = this.currentStreamEl.querySelector('.message-content');
-      contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
+      if (contentEl) contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
     }
 
     if (this.currentStreamText) {
@@ -951,6 +954,9 @@ export class ChatModule {
       if (this.ttsEnabled) {
         this.speak(this.currentStreamText);
       }
+
+      // Relay response to playground iframe if open
+      this.relayToPlayground(this.currentStreamText);
     }
 
     // Show unread badge if floating panel is closed
@@ -964,6 +970,27 @@ export class ChatModule {
     }
     this.rafPending = false;
     this.enableSend(true);
+  }
+
+  /**
+   * Relay assistant response to playground iframe (if open)
+   */
+  relayToPlayground(content: string): void {
+    if (!this.playgroundAwaitingResponse) return;
+
+    const iframe = document.getElementById('playground-iframe') as HTMLIFrameElement | null;
+    if (!iframe || !iframe.contentWindow) return;
+    const viewer = document.getElementById('playground-viewer');
+    if (!viewer || viewer.classList.contains('hidden')) return;
+
+    this.playgroundAwaitingResponse = false;
+
+    try {
+      iframe.contentWindow.postMessage({ type: 'playground:response', content }, '*');
+      logger.info('Relayed response to playground iframe');
+    } catch (e) {
+      logger.error('Failed to relay to playground:', e);
+    }
   }
 
   /**
@@ -1106,7 +1133,12 @@ export class ChatModule {
   handleInputKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      this.send();
+      // Use sendChatMessage which handles file attachments
+      if (typeof (window as any).sendChatMessage === 'function') {
+        (window as any).sendChatMessage();
+      } else {
+        this.send();
+      }
     }
   }
 
@@ -1248,7 +1280,8 @@ export class ChatModule {
    * Initialize speech recognition
    */
   initSpeechRecognition(): void {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       logger.warn('SpeechRecognition not supported');
@@ -1265,7 +1298,7 @@ export class ChatModule {
     this.speechRecognition.interimResults = true;
     this.speechRecognition.maxAlternatives = 3; // Get multiple recognition candidates for better accuracy
 
-    this.speechRecognition.onresult = (event: SpeechRecognitionEvent) => {
+    this.speechRecognition.onresult = (event: any) => {
       const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
       if (!input) {
         return;
@@ -1325,7 +1358,7 @@ export class ChatModule {
       autoResizeTextarea(input);
 
       // Reset silence timer on each result
-      clearTimeout(this.silenceTimeout);
+      if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
       this.silenceTimeout = setTimeout(() => {
         if (this.isRecording) {
           logger.info('Silence detected, stopping...');
@@ -1339,7 +1372,7 @@ export class ChatModule {
       this.stopVoice();
     };
 
-    this.speechRecognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+    this.speechRecognition.onerror = (event: any) => {
       logger.error('Error:', event.error);
       this.stopVoice();
 
@@ -1429,7 +1462,7 @@ export class ChatModule {
       return;
     }
 
-    clearTimeout(this.silenceTimeout);
+    if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
 
     try {
       this.speechRecognition.stop();
@@ -1832,7 +1865,7 @@ export class ChatModule {
       keys.forEach((key) => {
         if (key.startsWith(this.historyPrefix)) {
           try {
-            const data = JSON.parse(localStorage.getItem(key));
+            const data = JSON.parse(localStorage.getItem(key) ?? 'null');
             if (data && data.savedAt && now - data.savedAt > this.historyExpiryMs) {
               localStorage.removeItem(key);
               logger.info('Cleaned up expired history:', key);
@@ -2237,7 +2270,7 @@ export class ChatModule {
 
     // Clean up timers
     if (this.silenceTimeout) {
-      clearTimeout(this.silenceTimeout);
+      if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
       this.silenceTimeout = null;
     }
     if (this.idleTimer) {
