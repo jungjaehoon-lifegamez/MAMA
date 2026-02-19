@@ -85,6 +85,8 @@ export interface AgentLoopOptions {
   resumeSession?: boolean;
   /** CLI session ID from session pool (prevents double-locking) */
   cliSessionId?: string;
+  /** Streaming callbacks for real-time progress events */
+  streamCallbacks?: import('../agent/types.js').StreamCallbacks;
 }
 
 /**
@@ -249,7 +251,10 @@ export class MessageRouter {
    */
   async process(
     message: NormalizedMessage,
-    processOptions?: { onQueued?: () => void }
+    processOptions?: {
+      onQueued?: () => void;
+      onStream?: import('../agent/types.js').StreamCallbacks;
+    }
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
 
@@ -373,8 +378,20 @@ This protects your credentials from being exposed in chat logs.`;
     );
 
     // 7. Run agent loop (with session info for lane-based concurrency)
-    // Use role-specific model if configured, otherwise use global model
     const roleModel = agentContext.role.model;
+    if (!roleModel) {
+      throw new Error(
+        `No model configured for role "${agentContext.roleName}".\n\n` +
+          'To fix this, set model in config.yaml:\n' +
+          '  Claude: claude login → roles.definitions.' +
+          agentContext.roleName +
+          '.model: claude-sonnet-4-6\n' +
+          '  Codex:  codex login → roles.definitions.' +
+          agentContext.roleName +
+          '.model: gpt-5.3-codex\n\n' +
+          'Or run: mama init --reconfigure'
+      );
+    }
     const roleMaxTurns = agentContext.role.maxTurns;
 
     // Determine if we should resume an existing CLI session
@@ -399,6 +416,7 @@ This protects your credentials from being exposed in chat logs.`;
       agentContext,
       resumeSession: shouldResume, // Use --resume flag for continuing sessions
       cliSessionId, // Pass CLI session ID to avoid double-locking
+      streamCallbacks: processOptions?.onStream,
     };
 
     if (shouldResume) {

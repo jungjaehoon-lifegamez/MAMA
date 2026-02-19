@@ -65,6 +65,10 @@ Use cron expressions: `0 * * * *` (hourly), `*/30 * * * *` (every 30min), `0 9 *
 
 When a user asks to schedule/monitor something periodically, ALWAYS use this API — do NOT create external scripts or system crontab entries.
 
+## Playground
+
+- **playground_create**(name, html, description?) — Create an interactive HTML playground. The HTML is saved to `~/.mama/workspace/playgrounds/{slug}.html` and viewable in the Viewer Playground tab or at `/playgrounds/{slug}.html`. Returns `{ url, slug }`.
+
 ## Browser (Playwright)
 
 - **browser_navigate**(url) — Open URL in headless browser. Returns title and final URL.

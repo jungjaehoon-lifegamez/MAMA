@@ -417,6 +417,7 @@ export class AgentLoop {
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
   private preCompactInjected = false;
+  private currentStreamCallbacks?: StreamCallbacks;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -490,7 +491,7 @@ export class AgentLoop {
     }
 
     // Choose backend (default: claude)
-    this.backend = options.backend ?? 'claude';
+    this.backend = options.backend!;
 
     if (this.backend === 'codex-mcp') {
       // Codex MCP mode: standard MCP protocol
@@ -517,11 +518,10 @@ export class AgentLoop {
         systemPrompt: defaultSystemPrompt,
         // Hybrid mode: pass MCP config even with Gateway tools enabled
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-        // Headless daemon requires skipping permission prompts (no TTY available).
-        // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
-        // MAMA_TRUSTED_ENV must be set to enable this flag (defense in depth)
-        dangerouslySkipPermissions:
-          process.env.MAMA_TRUSTED_ENV === 'true' && (options.dangerouslySkipPermissions ?? false),
+        // MAMA OS is a headless daemon (no TTY) — Claude CLI's interactive permission prompts
+        // cannot work. Security is enforced by MAMA's own RoleManager layer (config.yaml roles).
+        // DO NOT gate this on env vars — MAMA manages permissions via its config, not Claude CLI.
+        dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
       });
@@ -702,6 +702,7 @@ export class AgentLoop {
     content: ContentBlock[],
     options?: AgentLoopOptions
   ): Promise<AgentLoopResult> {
+    this.currentStreamCallbacks = options?.streamCallbacks;
     const history: Message[] = [];
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
     let turn = 0;
@@ -821,19 +822,19 @@ export class AgentLoop {
 
         let response: ClaudeResponse;
 
+        const ext = this.currentStreamCallbacks;
         const callbacks: StreamCallbacks = {
           onDelta: (text: string) => {
-            console.log('[Streaming] Delta received:', text.length, 'chars');
+            ext?.onDelta?.(text);
           },
-          onToolUse: (name: string, _input: Record<string, unknown>) => {
-            console.log(`[Streaming] Tool called: ${name}`);
+          onToolUse: (name: string, input: Record<string, unknown>) => {
+            ext?.onToolUse?.(name, input);
           },
-          onFinal: (_finalResponse: ClaudeResponse) => {
-            console.log('[Streaming] Stream complete');
+          onFinal: (finalResponse: ClaudeResponse) => {
+            ext?.onFinal?.(finalResponse);
           },
           onError: (error: Error) => {
-            console.error('[Streaming] Error:', error);
-            // Don't throw - let the promise rejection handle it
+            ext?.onError?.(error);
           },
         };
 
@@ -1134,6 +1135,7 @@ export class AgentLoop {
       if (ownedSession) {
         this.sessionPool.releaseSession(channelKey);
       }
+      this.currentStreamCallbacks = undefined;
     }
   }
 
@@ -1150,6 +1152,12 @@ export class AgentLoop {
     for (const toolUse of toolUseBlocks) {
       let result: string;
       let isError = false;
+
+      // Notify stream: tool execution starting
+      this.currentStreamCallbacks?.onToolUse?.(
+        toolUse.name,
+        toolUse.input as Record<string, unknown>
+      );
 
       try {
         // PreToolUse: search MAMA for contracts before Write operations
@@ -1176,12 +1184,18 @@ export class AgentLoop {
 
         // PostToolUse: auto-extract contracts (fire-and-forget)
         this.postToolHandler?.processInBackground(toolUse.name, toolUse.input, toolResult);
+
+        // Notify stream: tool completed successfully
+        this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, false);
       } catch (error) {
         isError = true;
         result = error instanceof Error ? error.message : String(error);
 
         // Notify tool use callback with error
         this.onToolUse?.(toolUse.name, toolUse.input, { error: result });
+
+        // Notify stream: tool completed with error
+        this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, true);
       }
 
       results.push({

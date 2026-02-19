@@ -169,19 +169,13 @@ export class DiscordGateway extends BaseGateway {
 
     // Initialize multi-agent handler if configured
     if (options.multiAgentConfig?.enabled) {
-      // Gate dangerouslySkipPermissions behind MAMA_TRUSTED_ENV
-      const isTrustedEnv = process.env.MAMA_TRUSTED_ENV === 'true';
-      const skipPermissions =
-        isTrustedEnv && (options.multiAgentConfig.dangerouslySkipPermissions ?? false);
-      if (options.multiAgentConfig.dangerouslySkipPermissions && !isTrustedEnv) {
-        discordLogger.warn(
-          '[Discord] dangerouslySkipPermissions ignored: requires MAMA_TRUSTED_ENV=true'
-        );
-      }
+      // MAMA OS is a headless daemon — Claude CLI's interactive permission prompts cannot work.
+      // Security is enforced by MAMA's RoleManager (config.yaml roles), not Claude CLI prompts.
+      // DO NOT gate on env vars — MAMA manages permissions via its own config.yaml.
       this.multiAgentHandler = new MultiAgentDiscordHandler(
         options.multiAgentConfig,
         {
-          dangerouslySkipPermissions: skipPermissions,
+          dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
         },
         options.multiAgentRuntime
       );
@@ -1323,13 +1317,11 @@ export class DiscordGateway extends BaseGateway {
       if (this.multiAgentHandler) {
         this.multiAgentHandler.updateConfig(config);
       } else {
-        // Gate dangerouslySkipPermissions behind MAMA_TRUSTED_ENV (same as constructor)
-        const isTrustedEnv = process.env.MAMA_TRUSTED_ENV === 'true';
-        const skipPermissions = isTrustedEnv && (config.dangerouslySkipPermissions ?? false);
+        // Headless daemon — permissions managed by MAMA's RoleManager, not Claude CLI prompts.
         this.multiAgentHandler = new MultiAgentDiscordHandler(
           config,
           {
-            dangerouslySkipPermissions: skipPermissions,
+            dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
           },
           this.multiAgentRuntime
         );

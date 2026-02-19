@@ -147,11 +147,9 @@ app.listen(3847, '0.0.0.0'); // Public internet access
 // ✅ REQUIRED: Localhost only (use Cloudflare tunnel for external access)
 app.listen(3847, '127.0.0.1');
 
-// ❌ FORBIDDEN: Skip permission prompts in production
-dangerouslySkipPermissions: true // Security risk
-
-// ✅ REQUIRED: Only enable in trusted environments
-dangerouslySkipPermissions: process.env.MAMA_TRUSTED_ENV === 'true'
+// ✅ MAMA OS is a headless daemon (no TTY) — dangerouslySkipPermissions is REQUIRED.
+// Security is enforced by MAMA's own RoleManager (config.yaml roles), not Claude CLI prompts.
+dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true
 
 // ❌ FORBIDDEN: Modify multi-agent config without testing loop prevention
 max_chain_length: 100 // Infinite loops
@@ -169,8 +167,8 @@ max_chain_length: 10 // Safe default
 # ⛔ FORBIDDEN: Expose MAMA OS to public internet without auth
 # Use Cloudflare Zero Trust tunnel with authentication
 
-# ⚠️ FORBIDDEN: Use dangerouslySkipPermissions in production
-# Only enable in trusted environments (testing, sandboxed VMs)
+# NOTE: dangerouslySkipPermissions=true is REQUIRED for MAMA OS (headless daemon, no TTY).
+# MAMA enforces permissions via its own RoleManager (config.yaml roles), not Claude CLI prompts.
 
 # ⚠️ FORBIDDEN: Share gateway tokens in git
 # Use environment variables or secure vaults

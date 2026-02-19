@@ -88,8 +88,22 @@ function extractUserId(req: IncomingMessage): string {
 /**
  * Message router interface
  */
+interface StreamCallbacks {
+  onDelta?: (text: string) => void;
+  onToolUse?: (toolName: string, input: Record<string, unknown>) => void;
+  onToolComplete?: (toolName: string, toolUseId: string, isError: boolean) => void;
+  onFinal?: (response: unknown) => void;
+  onError?: (error: Error) => void;
+}
+
 interface MessageRouter {
-  process(message: NormalizedMessage, options?: { onQueued?: () => void }): Promise<RouterResult>;
+  process(
+    message: NormalizedMessage,
+    options?: {
+      onQueued?: () => void;
+      onStream?: StreamCallbacks;
+    }
+  ): Promise<RouterResult>;
 }
 
 /**
@@ -381,6 +395,8 @@ async function handleClientMessage(
         }, 10000); // Every 10 seconds
 
         let result: RouterResult;
+        let deltasSent = false;
+        let toolIndex = 0;
         try {
           // Build contentBlocks from attachments (files are pre-compressed by upload-handler)
           let contentBlocks: ContentBlock[] | undefined = undefined;
@@ -484,22 +500,43 @@ async function handleClientMessage(
               }
               logger.info(`Message queued for ${clientId} (session busy)`);
             },
+            onStream: {
+              onDelta: (text: string) => {
+                deltasSent = true;
+                safeSend(clientInfo.ws, JSON.stringify({ type: 'stream', content: text }));
+              },
+              onToolUse: (tool: string, input: Record<string, unknown>) => {
+                const idx = toolIndex++;
+                safeSend(
+                  clientInfo.ws,
+                  JSON.stringify({ type: 'tool_use', tool, index: idx, input })
+                );
+              },
+              onToolComplete: (tool: string, _toolUseId: string, isError: boolean) => {
+                safeSend(
+                  clientInfo.ws,
+                  JSON.stringify({ type: 'tool_complete', tool, index: toolIndex - 1, isError })
+                );
+              },
+            },
           });
         } finally {
           clearInterval(keepAliveInterval);
         }
 
-        // Send response as stream (for Chat tab compatibility)
-        safeSend(
-          clientInfo.ws,
-          JSON.stringify({
-            type: 'stream',
-            content: result.response,
-            sessionId: result.sessionId,
-          })
-        );
+        // Only send full response if no deltas were streamed (Codex fallback)
+        if (!deltasSent) {
+          safeSend(
+            clientInfo.ws,
+            JSON.stringify({
+              type: 'stream',
+              content: result.response,
+              sessionId: result.sessionId,
+            })
+          );
+        }
 
-        // Send stream end
+        // Always send stream end
         safeSend(
           clientInfo.ws,
           JSON.stringify({

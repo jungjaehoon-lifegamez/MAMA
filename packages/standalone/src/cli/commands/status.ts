@@ -32,7 +32,7 @@ export async function statusCommand(): Promise<void> {
   if (configExists()) {
     try {
       const config = await loadConfig();
-      const backend = config.agent.backend ?? 'claude';
+      const backend = config.agent.backend;
       console.log(`Backend: ${backend}`);
       if (backend === 'codex-mcp') {
         console.log('Codex MCP backend: Uses MCP protocol for Codex communication');
