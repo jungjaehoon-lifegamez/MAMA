@@ -503,7 +503,7 @@ export abstract class MultiAgentHandlerBase {
     channelId: string,
     source: 'discord' | 'slack',
     onProgress?: (event: WorkflowProgressEvent) => void
-  ): Promise<{ result: string; directMessage: string } | null> {
+  ): Promise<{ result: string; directMessage: string; failed?: string } | null> {
     if (!this.workflowEngine?.isEnabled()) {
       this.logger.info('[Workflow] Engine not enabled, skipping');
       return null;
@@ -523,6 +523,8 @@ export abstract class MultiAgentHandlerBase {
       return null;
     }
 
+    const directMessage = this.workflowEngine.extractNonPlanContent(conductorResponse);
+
     this.logger.info(
       `[Workflow] Parsed plan: "${plan.name}" with ${plan.steps.length} steps: ${plan.steps.map((s) => `${s.id}(${s.agent.backend}/${s.agent.model})`).join(', ')}`
     );
@@ -530,11 +532,8 @@ export abstract class MultiAgentHandlerBase {
     const validationError = this.workflowEngine.validatePlan(plan);
     if (validationError) {
       this.logger.warn(`[Workflow] Plan validation failed: ${validationError}`);
-      return null;
+      return { result: '', directMessage, failed: validationError };
     }
-
-    // Extract non-plan content as Conductor's direct message
-    const directMessage = this.workflowEngine.extractNonPlanContent(conductorResponse);
 
     // Collect ephemeral agent definitions for cleanup
     const ephemeralAgents = plan.steps.map((s) => s.agent);
@@ -592,6 +591,10 @@ export abstract class MultiAgentHandlerBase {
 
       const { result } = await this.workflowEngine.execute(plan, executeStep);
       return { result, directMessage };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`[Workflow] Execution failed: ${errMsg}`);
+      return { result: '', directMessage, failed: errMsg };
     } finally {
       // Cleanup: unregister ephemeral agents and remove progress listener
       this.processManager.unregisterEphemeralAgents(ephemeralAgents);
