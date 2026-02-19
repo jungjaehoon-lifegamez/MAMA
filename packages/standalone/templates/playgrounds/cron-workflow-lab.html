@@ -1,0 +1,1574 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cron Workflow Lab</title>
+<style>
+:root{
+  --bg:#0f1117;--panel:#1a1d27;--surface:#222633;--line:#2d3348;
+  --text:#e2e8f0;--muted:#7a8ba8;--dim:#4a5568;
+  --accent:#6366f1;--accent-soft:rgba(99,102,241,.12);--accent-glow:rgba(99,102,241,.3);
+  --ok:#22c55e;--ok-soft:rgba(34,197,94,.12);
+  --warn:#f59e0b;--warn-soft:rgba(245,158,11,.12);
+  --danger:#ef4444;--danger-soft:rgba(239,68,68,.12);
+  --trigger:#f59e0b;--prompt:#6366f1;--condition:#ec4899;--action:#22c55e;
+  --radius:10px;--shadow:0 4px 24px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Pretendard','Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
+
+.app{display:grid;grid-template-columns:280px 1fr;grid-template-rows:1fr auto;height:100vh}
+
+/* ── Sidebar ── */
+.sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;grid-row:1/3}
+.sidebar-header{padding:16px 18px;border-bottom:1px solid var(--line)}
+.sidebar-header h1{font-size:17px;font-weight:800;display:flex;align-items:center;gap:8px}
+.sidebar-header p{font-size:11px;color:var(--muted);margin-top:4px}
+
+.sidebar-section{padding:12px 14px;border-bottom:1px solid var(--line)}
+.sidebar-section h3{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px;font-weight:700}
+
+/* Existing jobs */
+.job-list{flex:1;overflow-y:auto;padding:4px 8px}
+.job-card{padding:10px 12px;border-radius:8px;cursor:pointer;transition:all .15s;margin-bottom:4px;border:1px solid transparent}
+.job-card:hover{background:var(--surface);border-color:var(--line)}
+.job-card.active{background:var(--accent-soft);border-color:var(--accent)}
+.job-card .jname{font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px}
+.job-card .jmeta{font-size:11px;color:var(--muted);margin-top:3px;font-family:monospace}
+.badge{display:inline-block;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700}
+.badge-on{background:var(--ok-soft);color:var(--ok)}
+.badge-off{background:var(--danger-soft);color:var(--danger)}
+
+.sidebar-status{padding:10px 16px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-ok{background:var(--ok)}.dot-err{background:var(--danger)}
+
+/* ── Canvas ── */
+.canvas-area{position:relative;overflow:hidden;background:var(--bg)}
+.canvas-grid{position:absolute;inset:0;background-image:radial-gradient(circle,var(--line) .8px,transparent .8px);background-size:24px 24px;opacity:.4}
+#canvas{position:absolute;inset:0;width:100%;height:100%}
+
+/* Toolbar */
+.toolbar{position:absolute;top:14px;left:14px;display:flex;gap:6px;z-index:10}
+.tbtn{padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--text);transition:all .15s;display:flex;align-items:center;gap:5px}
+.tbtn:hover{border-color:var(--accent);color:var(--accent)}
+.tbtn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* Template panel */
+.template-panel{position:absolute;top:52px;left:14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px;z-index:10;width:240px;box-shadow:var(--shadow);display:none}
+.template-panel.show{display:block}
+.template-item{padding:8px 10px;border-radius:6px;cursor:pointer;font-size:12px;transition:background .12s;display:flex;align-items:center;gap:8px}
+.template-item:hover{background:var(--surface)}
+.template-item .ticon{font-size:16px}
+.template-item .tlabel{font-weight:600}
+.template-item .tdesc{font-size:10px;color:var(--muted);margin-top:2px}
+
+/* Node styles (rendered on SVG) */
+.node-group{cursor:grab}
+.node-group:active{cursor:grabbing}
+.node-body{rx:10;ry:10;stroke-width:2;filter:drop-shadow(0 2px 8px rgba(0,0,0,.3))}
+.node-port{cursor:crosshair;transition:r .1s}
+.node-port:hover{r:7}
+
+/* ── Detail Panel ── */
+.detail-panel{position:absolute;top:14px;right:14px;width:300px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);z-index:10;display:none;max-height:calc(100vh - 120px);overflow-y:auto}
+.detail-panel.show{display:block}
+.dp-header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.dp-header h3{font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px}
+.dp-close{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px}
+.dp-close:hover{color:var(--text)}
+.dp-body{padding:14px 16px}
+.dp-field{margin-bottom:12px}
+.dp-label{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;display:block;text-transform:uppercase;letter-spacing:.05em}
+.dp-input{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:13px;color:var(--text);outline:none;font-family:inherit}
+.dp-input:focus{border-color:var(--accent)}
+textarea.dp-input{resize:vertical;min-height:70px;line-height:1.5}
+select.dp-input{appearance:none;cursor:pointer}
+.dp-actions{padding:10px 16px;border-top:1px solid var(--line);display:flex;gap:8px}
+
+/* ── Bottom Bar ── */
+.bottom-bar{grid-column:2;background:var(--panel);border-top:1px solid var(--line);padding:12px 18px;display:flex;align-items:center;gap:12px}
+.prompt-preview{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--muted);line-height:1.5;max-height:80px;overflow-y:auto;font-family:monospace;white-space:pre-wrap}
+.btn{padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:none;transition:all .15s;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#5558e6}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn-send{background:var(--ok);color:#fff;font-size:14px;padding:10px 24px}.btn-send:hover{opacity:.9}
+
+/* ── Toast ── */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--accent);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;transform:translateY(60px);opacity:0;transition:all .3s;z-index:999}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.error{background:var(--danger)}.toast.success{background:var(--ok)}
+
+/* ── Workflow name bar ── */
+.wf-name-bar{position:absolute;top:56px;left:50%;transform:translateX(-50%);z-index:10;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 6px}
+.wf-name-input{background:transparent;border:none;color:var(--text);font-size:14px;font-weight:700;text-align:center;outline:none;width:200px;font-family:inherit}
+.wf-name-input::placeholder{color:var(--dim)}
+.wf-status{font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px}
+.wf-status-draft{background:var(--warn-soft);color:var(--warn)}
+.wf-status-deployed{background:var(--ok-soft);color:var(--ok)}
+.wf-status-paused{background:var(--surface);color:var(--muted)}
+
+/* ── Connection hint ── */
+.connecting-hint{position:absolute;bottom:80px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;z-index:10;display:none}
+
+/* ── Verification method (condition nodes) ── */
+.verify-method-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}
+.verify-method-btn{padding:8px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-align:center;transition:all .15s}
+.verify-method-btn:hover{border-color:var(--accent);color:var(--text)}
+.verify-method-btn.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.verify-script{font-family:'JetBrains Mono',monospace;font-size:11px;background:#0d0f14;border:1px solid var(--line);border-radius:6px;padding:8px 10px;color:#a5d6ff;min-height:60px;resize:vertical;width:100%;outline:none;line-height:1.6}
+.verify-script:focus{border-color:var(--accent)}
+.verify-hint{font-size:10px;color:var(--dim);margin-top:4px;line-height:1.4}
+.verify-expect{display:flex;gap:6px;align-items:center;margin-top:6px}
+.verify-expect label{font-size:10px;color:var(--muted);white-space:nowrap}
+.verify-expect input{flex:1;font-size:11px;background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:4px 8px;color:var(--text);outline:none;font-family:monospace}
+
+/* ── Agent feedback overlay ── */
+.agent-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:50;display:none;align-items:center;justify-content:center}
+.agent-overlay.show{display:flex}
+.agent-card{background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:20px 24px;max-width:460px;width:90%;box-shadow:0 8px 32px rgba(99,102,241,.2);animation:slideUp .3s ease}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.agent-card h3{font-size:15px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.agent-card p{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:12px}
+.agent-card .node-preview{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:12px;max-height:200px;overflow-y:auto;font-size:11px;line-height:1.6}
+.agent-card .actions{display:flex;gap:8px;justify-content:flex-end}
+
+/* ── Agent receive indicator ── */
+.agent-indicator{position:absolute;top:56px;right:14px;z-index:10;display:none;align-items:center;gap:6px;padding:6px 12px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;font-size:11px;color:var(--accent);font-weight:600;animation:pulse 2s infinite}
+.agent-indicator.show{display:flex}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+
+/* ── Zoom indicator ── */
+.zoom-indicator{position:absolute;bottom:92px;right:14px;z-index:10;padding:4px 10px;background:var(--panel);border:1px solid var(--line);border-radius:6px;font-size:10px;color:var(--muted);font-family:monospace;pointer-events:none}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h1>⚡ Cron Workflow</h1>
+      <p>View Jobs · Design Workflows · Send to Chat</p>
+    </div>
+
+    <div style="padding:10px 14px">
+      <div class="tbtn" onclick="newWorkflow()" style="width:100%;justify-content:center;background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700">＋ New Workflow</div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>📐 My Workflows</h3>
+    </div>
+    <div class="job-list" id="workflowList"></div>
+
+    <div class="sidebar-section">
+      <h3>📋 Deployed Cron Jobs</h3>
+    </div>
+    <div class="job-list" id="jobList">
+      <div style="padding:20px;text-align:center;color:var(--muted);font-size:12px">Loading...</div>
+    </div>
+
+    <div class="sidebar-status" id="sidebarStatus">
+      <span class="dot dot-err"></span> Checking connection...
+    </div>
+  </div>
+
+  <!-- Canvas -->
+  <div class="canvas-area">
+    <div class="canvas-grid"></div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="tbtn" onclick="toggleTemplates()" id="btnTemplate">📋 Scenarios</div>
+      <div class="tbtn" onclick="addNode('trigger')">⏰ Trigger</div>
+      <div class="tbtn" onclick="addNode('prompt')">🤖 Prompt</div>
+      <div class="tbtn" onclick="addNode('condition')">🔀 Condition</div>
+      <div class="tbtn" onclick="addNode('action')">📤 Action</div>
+      <div class="tbtn" onclick="requestDecompose()" style="background:var(--accent-soft);border-color:var(--accent);color:var(--accent)">🤖 Decompose</div>
+      <div class="tbtn" onclick="zoomIn()" title="Zoom in">🔍+</div>
+      <div class="tbtn" onclick="zoomOut()" title="Zoom out">🔍−</div>
+      <div class="tbtn" onclick="fitAll()" title="Fit all">⊞</div>
+      <div class="tbtn" onclick="clearCanvas()">🗑️</div>
+    </div>
+
+    <!-- Templates -->
+    <div class="template-panel" id="templatePanel">
+      <div class="template-item" onclick="loadTemplate('news')">
+        <span class="ticon">📰</span>
+        <div><div class="tlabel">News Monitoring</div><div class="tdesc">Daily morning keyword news search → summarize → notify</div></div>
+      </div>
+      <div class="template-item" onclick="loadTemplate('report')">
+        <span class="ticon">📊</span>
+        <div><div class="tlabel">Daily Report</div><div class="tdesc">Daily evening log analysis → generate report → send</div></div>
+      </div>
+      <div class="template-item" onclick="loadTemplate('health')">
+        <span class="ticon">💓</span>
+        <div><div class="tlabel">Service Health Check</div><div class="tdesc">Every 30 min URL check → alert on failure</div></div>
+      </div>
+      <div class="template-item" onclick="loadTemplate('cleanup')">
+        <span class="ticon">🧹</span>
+        <div><div class="tlabel">Cleanup Task</div><div class="tdesc">Weekly old file cleanup → report results</div></div>
+      </div>
+      <div class="template-item" onclick="loadTemplate('channel-monitor')">
+        <span class="ticon">📡</span>
+        <div><div class="tlabel">Channel Monitoring</div><div class="tdesc">Slack/Chatwork monitoring → Discord relay + daily Trello comparison</div></div>
+      </div>
+      <div class="template-item" onclick="loadTemplate('custom')">
+        <span class="ticon">✨</span>
+        <div><div class="tlabel">Blank Canvas</div><div class="tdesc">Build from scratch</div></div>
+      </div>
+    </div>
+
+    <!-- Workflow Name Bar -->
+    <div class="wf-name-bar">
+      <input class="wf-name-input" id="wfName" placeholder="Enter workflow name" oninput="onWfNameChange()">
+      <span class="wf-status wf-status-draft" id="wfStatus">draft</span>
+    </div>
+
+    <!-- SVG Canvas -->
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+
+    <!-- Detail Panel -->
+    <div class="detail-panel" id="detailPanel">
+      <div class="dp-header">
+        <h3 id="dpTitle">Node Settings</h3>
+        <button class="dp-close" onclick="closeDetail()">&times;</button>
+      </div>
+      <div class="dp-body" id="dpBody"></div>
+      <div class="dp-actions">
+        <button class="btn btn-primary" onclick="saveNodeDetail()" style="flex:1">Apply</button>
+        <button class="btn btn-ghost" onclick="deleteSelectedNode()" style="color:var(--danger)">Delete</button>
+      </div>
+    </div>
+
+    <!-- Connection hint -->
+    <div class="connecting-hint" id="connectHint">🔗 Click the input port (left ●) of the target node</div>
+
+    <!-- Zoom indicator -->
+    <div class="zoom-indicator" id="zoomIndicator">100%</div>
+
+    <!-- Agent receive indicator -->
+    <div class="agent-indicator" id="agentIndicator">🤖 Receiving agent response...</div>
+
+    <!-- Agent feedback overlay -->
+    <div class="agent-overlay" id="agentOverlay">
+      <div class="agent-card">
+        <h3>🤖 Agent Suggestion</h3>
+        <p id="agentMessage">The workflow has been analyzed.</p>
+        <div class="node-preview" id="agentPreview"></div>
+        <div class="actions">
+          <button class="btn btn-ghost" onclick="rejectAgent()">Dismiss</button>
+          <button class="btn btn-ghost" onclick="editAgent()">Edit & Apply</button>
+          <button class="btn btn-primary" onclick="acceptAgent()">Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Bar -->
+  <div class="bottom-bar">
+    <div class="prompt-preview" id="promptPreview">Build a workflow and the request will be generated here...</div>
+    <button class="btn btn-ghost" onclick="copyPrompt()">📋 Copy</button>
+    <button class="btn btn-ghost" onclick="testRun()">🧪 Test Run</button>
+    <button class="btn btn-send" onclick="deployToChat()">🚀 Deploy</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── State ───
+const state = {
+  // Current workflow
+  wfId: null,
+  wfName: '',
+  wfStatus: 'draft', // draft | deployed | paused
+  nodes: [],
+  connections: [],
+  // Multi-workflow store
+  workflows: [], // [{id, name, status, nodes, connections, nextId, updatedAt}]
+  existingJobs: [],
+  // UI state
+  selectedNode: null,
+  dragging: null,
+  dragOffset: {x:0,y:0},
+  connecting: null,
+  nextId: 1,
+  panOffset: {x:0, y:0},
+  // Zoom & pan
+  zoom: 1,
+  viewX: 0, viewY: 0,
+  panning: false, panStart: null
+};
+
+const NODE_W = 180, NODE_H = 64;
+const COLORS = {trigger:'#f59e0b',prompt:'#6366f1',condition:'#ec4899',action:'#22c55e'};
+const ICONS = {trigger:'⏰',prompt:'🤖',condition:'🔀',action:'📤'};
+const LABELS = {trigger:'Trigger',prompt:'Prompt',condition:'Condition',action:'Action'};
+
+const CRON_PRESETS = {
+  '* * * * *': 'Every minute',
+  '*/5 * * * *': 'Every 5 minutes',
+  '*/30 * * * *': 'Every 30 minutes',
+  '0 * * * *': 'Every hour',
+  '0 */2 * * *': 'Every 2 hours',
+  '0 9 * * *': 'Daily at 09:00',
+  '0 18 * * *': 'Daily at 18:00',
+  '0 9 * * 1-5': 'Weekdays at 09:00',
+  '0 0 * * 0': 'Every Sunday',
+  '0 0 1 * *': '1st of every month'
+};
+
+// ─── Canvas SVG ───
+const svg = document.getElementById('canvas');
+const ns = 'http://www.w3.org/2000/svg';
+
+function el(tag, attrs={}) {
+  const e = document.createElementNS(ns, tag);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+
+function updateViewBox() {
+  const rect = svg.getBoundingClientRect();
+  const w = rect.width / state.zoom;
+  const h = rect.height / state.zoom;
+  svg.setAttribute('viewBox', `${state.viewX} ${state.viewY} ${w} ${h}`);
+  const zi = document.getElementById('zoomIndicator');
+  if (zi) zi.textContent = Math.round(state.zoom * 100) + '%';
+}
+
+function svgPoint(clientX, clientY) {
+  const rect = svg.getBoundingClientRect();
+  return {
+    x: state.viewX + (clientX - rect.left) / state.zoom,
+    y: state.viewY + (clientY - rect.top) / state.zoom
+  };
+}
+
+function render() {
+  svg.innerHTML = '';
+  updateViewBox();
+
+  // Defs
+  const defs = el('defs');
+  for (const [type, color] of Object.entries(COLORS)) {
+    const g = el('linearGradient', {id:`grad-${type}`, x1:'0', y1:'0', x2:'0', y2:'1'});
+    g.appendChild(el('stop', {offset:'0%', 'stop-color': color, 'stop-opacity':'0.15'}));
+    g.appendChild(el('stop', {offset:'100%', 'stop-color': color, 'stop-opacity':'0.05'}));
+    defs.appendChild(g);
+  }
+  // Arrow marker
+  const marker = el('marker', {id:'arrow', viewBox:'0 0 10 10', refX:'8', refY:'5', markerWidth:'8', markerHeight:'8', orient:'auto-start-reverse'});
+  marker.appendChild(el('path', {d:'M 0 0 L 10 5 L 0 10 z', fill: 'var(--accent)'}));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  // Connections
+  for (const conn of state.connections) {
+    const from = state.nodes.find(n => n.id === conn.from);
+    const to = state.nodes.find(n => n.id === conn.to);
+    if (!from || !to) continue;
+    const x1 = from.x + NODE_W, y1 = from.y + NODE_H/2;
+    const x2 = to.x, y2 = to.y + NODE_H/2;
+    const mx = (x1+x2)/2;
+    const path = el('path', {
+      d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`,
+      stroke: COLORS[from.type] || 'var(--accent)',
+      'stroke-width': '2',
+      fill: 'none',
+      'stroke-opacity': '0.6',
+      'marker-end': 'url(#arrow)'
+    });
+    // Click to delete connection
+    const hitPath = el('path', {
+      d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`,
+      stroke: 'transparent', 'stroke-width': '12', fill: 'none', cursor: 'pointer'
+    });
+    hitPath.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.connections = state.connections.filter(c => c !== conn);
+      render();
+      updatePrompt();
+    });
+    svg.appendChild(path);
+    svg.appendChild(hitPath);
+
+    // Label on connection
+    if (conn.label) {
+      const lx = mx, ly = (y1+y2)/2 - 10;
+      const t = el('text', {x:lx, y:ly, fill:'var(--muted)', 'font-size':'10', 'text-anchor':'middle', 'font-family':'inherit'});
+      t.textContent = conn.label;
+      svg.appendChild(t);
+    }
+  }
+
+  // Temp connection line
+  if (state.connecting && state._tempMouse) {
+    const from = state.nodes.find(n => n.id === state.connecting.fromId);
+    if (from) {
+      const x1 = from.x + NODE_W, y1 = from.y + NODE_H/2;
+      const path = el('path', {
+        d: `M${x1},${y1} L${state._tempMouse.x},${state._tempMouse.y}`,
+        stroke: COLORS[from.type], 'stroke-width': '2', fill: 'none', 'stroke-dasharray': '6,4', 'stroke-opacity': '0.6'
+      });
+      svg.appendChild(path);
+    }
+  }
+
+  // Nodes
+  for (const node of state.nodes) {
+    const g = el('g', {transform: `translate(${node.x},${node.y})`, class: 'node-group'});
+    const color = COLORS[node.type];
+    const isSelected = state.selectedNode === node.id;
+
+    // Body
+    const body = el('rect', {
+      width: NODE_W, height: NODE_H,
+      fill: `url(#grad-${node.type})`,
+      stroke: isSelected ? color : 'var(--line)',
+      'stroke-width': isSelected ? 2.5 : 1.5,
+      rx: 10, ry: 10,
+      class: 'node-body'
+    });
+    g.appendChild(body);
+
+    // Color accent bar
+    g.appendChild(el('rect', {x:0, y:0, width:4, height:NODE_H, fill:color, rx:2}));
+
+    // Icon + label
+    const icon = el('text', {x:16, y:26, fill:color, 'font-size':'14'});
+    icon.textContent = ICONS[node.type];
+    g.appendChild(icon);
+
+    const label = el('text', {x:34, y:26, fill:'var(--text)', 'font-size':'12', 'font-weight':'700', 'font-family':'inherit'});
+    label.textContent = node.label || LABELS[node.type];
+    g.appendChild(label);
+
+    // Subtitle
+    const sub = el('text', {x:16, y:46, fill:'var(--muted)', 'font-size':'10', 'font-family':'inherit'});
+    sub.textContent = getNodeSubtitle(node);
+    g.appendChild(sub);
+
+    // Input port (left) — except for trigger
+    if (node.type !== 'trigger') {
+      const ip = el('circle', {cx:0, cy:NODE_H/2, r:5, fill:'var(--bg)', stroke:color, 'stroke-width':2, class:'node-port'});
+      ip.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+      ip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.connecting) {
+          finishConnection(node.id);
+        }
+      });
+      g.appendChild(ip);
+    }
+
+    // Output port (right)
+    const op = el('circle', {cx:NODE_W, cy:NODE_H/2, r:5, fill:color, stroke:color, 'stroke-width':2, class:'node-port'});
+    op.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      startConnection(node.id);
+    });
+    g.appendChild(op);
+
+    // Drag
+    g.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('node-port')) return;
+      state.dragging = node.id;
+      const pt = svgPoint(e.clientX, e.clientY);
+      state.dragOffset = {x: pt.x - node.x, y: pt.y - node.y};
+      e.preventDefault();
+    });
+
+    // Click to select
+    g.addEventListener('click', (e) => {
+      if (e.target.classList.contains('node-port')) return;
+      selectNode(node.id);
+    });
+
+    svg.appendChild(g);
+  }
+
+  updatePrompt();
+}
+
+function getNodeSubtitle(node) {
+  switch (node.type) {
+    case 'trigger': return node.config.schedule || node.config.description || (node.config.cron ? cronToHuman(node.config.cron) : 'Specify when to run');
+    case 'prompt': return node.config.prompt ? truncate(node.config.prompt, 24) : 'Prompt required';
+    case 'condition': {
+      const methods = {bash:'🖥',http:'🌐',string:'🔍',custom:'📝'};
+      const m = methods[node.config.verifyMethod] || '🔀';
+      return node.config.condition ? `${m} ${truncate(node.config.condition,20)}` : 'Condition required';
+    }
+    case 'action': return node.config.actionType || 'Action required';
+    default: return '';
+  }
+}
+
+function truncate(s, n) { return s.length > n ? s.slice(0, n) + '...' : s; }
+
+// ─── Node Operations ───
+function addNode(type, x, y, config) {
+  const area = svg.getBoundingClientRect();
+  const node = {
+    id: 'n' + (state.nextId++),
+    type,
+    label: LABELS[type],
+    x: x || 100 + Math.random() * (area.width - 300),
+    y: y || 80 + Math.random() * (area.height - 200),
+    config: config || getDefaultConfig(type)
+  };
+  state.nodes.push(node);
+  render();
+  selectNode(node.id);
+  return node;
+}
+
+function getDefaultConfig(type) {
+  switch(type) {
+    case 'trigger': return {cron:'', description:'', schedule:''};
+    case 'prompt': return {prompt:'', model:'default'};
+    case 'condition': return {condition:'', trueLabel:'Pass', falseLabel:'Fail', verifyMethod:'bash', verifyScript:'', verifyExpect:'exit 0'};
+    case 'action': return {actionType:'discord', target:'', message:''};
+    default: return {};
+  }
+}
+
+function deleteSelectedNode() {
+  if (!state.selectedNode) return;
+  state.nodes = state.nodes.filter(n => n.id !== state.selectedNode);
+  state.connections = state.connections.filter(c => c.from !== state.selectedNode && c.to !== state.selectedNode);
+  state.selectedNode = null;
+  closeDetail();
+  render();
+}
+
+function clearCanvas() {
+  if (state.nodes.length === 0) return;
+  state.nodes = [];
+  state.connections = [];
+  state.selectedNode = null;
+  closeDetail();
+  render();
+  toast('Canvas cleared');
+}
+
+// ─── Connections ───
+function startConnection(fromId) {
+  state.connecting = {fromId};
+  document.getElementById('connectHint').style.display = 'block';
+  svg.style.cursor = 'crosshair';
+}
+
+function finishConnection(toId) {
+  if (!state.connecting) return;
+  const {fromId} = state.connecting;
+  if (fromId === toId) { cancelConnection(); return; }
+  const exists = state.connections.some(c => c.from === fromId && c.to === toId);
+  if (!exists) {
+    state.connections.push({from: fromId, to: toId, label:''});
+  }
+  cancelConnection();
+  render();
+}
+
+function cancelConnection() {
+  state.connecting = null;
+  state._tempMouse = null;
+  document.getElementById('connectHint').style.display = 'none';
+  svg.style.cursor = '';
+  render();
+}
+
+// ─── Selection / Detail ───
+function selectNode(id) {
+  state.selectedNode = id;
+  const node = state.nodes.find(n => n.id === id);
+  if (!node) return;
+  showDetail(node);
+  render();
+}
+
+function showDetail(node) {
+  const panel = document.getElementById('detailPanel');
+  const title = document.getElementById('dpTitle');
+  const body = document.getElementById('dpBody');
+
+  title.innerHTML = `${ICONS[node.type]} ${node.label}`;
+  let html = `<div class="dp-field"><label class="dp-label">Name</label><input class="dp-input" id="nd-label" value="${esc(node.label)}"></div>`;
+
+  switch(node.type) {
+    case 'trigger':
+      html += `
+        <div class="dp-field"><label class="dp-label">📝 When should it run?</label><textarea class="dp-input" id="nd-schedule" rows="2" placeholder="e.g. Every hour from 9 AM to 7 PM daily\ne.g. Weekdays at 10 AM\ne.g. Every Monday morning">${esc(node.config.schedule||'')}</textarea><div style="font-size:10px;color:var(--muted);margin-top:4px">Describe in natural language and the OS agent will convert it to a cron expression</div></div>
+        <div class="dp-field"><label class="dp-label">Quick Select</label><div style="display:flex;flex-wrap:wrap;gap:4px">${
+          [['Daily at 9 AM','Daily at 9 AM'],['Daily at 6 PM','Daily at 6 PM'],['Weekdays at 9 AM','Weekdays at 9 AM'],['Every 30 minutes','Every 30 minutes'],['Every hour','Every hour'],['Every Monday','Every Monday morning'],['1st of month','1st of every month at midnight']].map(([val,label]) =>
+            `<span style="padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;background:var(--surface);color:var(--muted);border:1px solid var(--line);transition:all .15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--line)';this.style.color='var(--muted)'" onclick="document.getElementById('nd-schedule').value='${val}'">${label}</span>`
+          ).join('')
+        }</div></div>
+        <details style="margin-top:8px"><summary style="font-size:11px;color:var(--dim);cursor:pointer">Advanced: Enter cron expression directly</summary><div class="dp-field" style="margin-top:8px"><input class="dp-input" id="nd-cron" value="${esc(node.config.cron)}" placeholder="0 9-19 * * *" style="font-family:monospace;font-size:12px"></div></details>`;
+      break;
+    case 'prompt':
+      html += `
+        <div class="dp-field"><label class="dp-label">Prompt</label><textarea class="dp-input" id="nd-prompt" rows="4" placeholder="Task for the agent...">${esc(node.config.prompt)}</textarea></div>`;
+      break;
+    case 'condition':
+      const vm = node.config.verifyMethod || 'bash';
+      const verifyHints = {
+        bash: 'Exit code 0 = success. e.g. curl -sf https://example.com',
+        http: '判断 by HTTP status code. e.g. GET https://example.com → 200',
+        string: 'Check if output contains a specific string. e.g. Output contains "OK"',
+        custom: 'Free-form script. exit 0 = true, exit 1 = false'
+      };
+      const verifyPlaceholders = {
+        bash: 'curl -sf https://example.com/health',
+        http: 'https://example.com/api/status',
+        string: 'String to find in previous step output',
+        custom: '#!/bin/bash\nresult=$(curl -s https://api.example.com)\nif echo "$result" | jq -e ".status == \\"ok\\"" > /dev/null; then\n  exit 0\nelse\n  exit 1\nfi'
+      };
+      html += `
+        <div class="dp-field"><label class="dp-label">Condition Description</label><input class="dp-input" id="nd-condition" value="${esc(node.config.condition)}" placeholder="e.g. Check if the service response is healthy"></div>
+        <div class="dp-field"><label class="dp-label">🔬 Verification Method</label>
+          <div class="verify-method-grid">
+            <div class="verify-method-btn ${vm==='bash'?'active':''}" onclick="setVerifyMethod('bash')">🖥 Bash<br><span style="font-size:9px;font-weight:400">exit code</span></div>
+            <div class="verify-method-btn ${vm==='http'?'active':''}" onclick="setVerifyMethod('http')">🌐 HTTP<br><span style="font-size:9px;font-weight:400">status code</span></div>
+            <div class="verify-method-btn ${vm==='string'?'active':''}" onclick="setVerifyMethod('string')">🔍 String<br><span style="font-size:9px;font-weight:400">contains</span></div>
+            <div class="verify-method-btn ${vm==='custom'?'active':''}" onclick="setVerifyMethod('custom')">📝 Custom<br><span style="font-size:9px;font-weight:400">script</span></div>
+          </div>
+        </div>
+        <div class="dp-field"><label class="dp-label">Verification Script</label><textarea class="verify-script" id="nd-verify-script" rows="3" placeholder="${esc(verifyPlaceholders[vm])}">${esc(node.config.verifyScript||'')}</textarea><div class="verify-hint" id="nd-verify-hint">${verifyHints[vm]}</div></div>
+        <div class="dp-field"><label class="dp-label">Expected Result</label><input class="dp-input" id="nd-verify-expect" value="${esc(node.config.verifyExpect||'exit 0')}" placeholder="exit 0" style="font-family:monospace;font-size:11px"></div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <div class="dp-field" style="flex:1"><label class="dp-label">True Label</label><input class="dp-input" id="nd-true" value="${esc(node.config.trueLabel)}"></div>
+          <div class="dp-field" style="flex:1"><label class="dp-label">False Label</label><input class="dp-input" id="nd-false" value="${esc(node.config.falseLabel)}"></div>
+        </div>`;
+      break;
+    case 'action':
+      html += `
+        <div class="dp-field"><label class="dp-label">Action Type</label>
+          <select class="dp-input" id="nd-actiontype">
+            <option value="discord" ${node.config.actionType==='discord'?'selected':''}>Send to Discord</option>
+            <option value="slack" ${node.config.actionType==='slack'?'selected':''}>Send to Slack</option>
+            <option value="file" ${node.config.actionType==='file'?'selected':''}>Save to File</option>
+            <option value="api" ${node.config.actionType==='api'?'selected':''}>API Call</option>
+            <option value="email" ${node.config.actionType==='email'?'selected':''}>Email</option>
+          </select>
+        </div>
+        <div class="dp-field"><label class="dp-label">Target</label><input class="dp-input" id="nd-target" value="${esc(node.config.target)}" placeholder="Channel ID, URL, etc."></div>
+        <div class="dp-field"><label class="dp-label">Message Template</label><textarea class="dp-input" id="nd-message" rows="3" placeholder="Content to send...">${esc(node.config.message||'')}</textarea></div>`;
+      break;
+  }
+  body.innerHTML = html;
+  panel.classList.add('show');
+}
+
+function saveNodeDetail() {
+  const node = state.nodes.find(n => n.id === state.selectedNode);
+  if (!node) return;
+  node.label = document.getElementById('nd-label')?.value || node.label;
+
+  switch(node.type) {
+    case 'trigger':
+      node.config.schedule = document.getElementById('nd-schedule')?.value || '';
+      node.config.cron = document.getElementById('nd-cron')?.value || '';
+      break;
+    case 'prompt':
+      node.config.prompt = document.getElementById('nd-prompt')?.value || '';
+      break;
+    case 'condition':
+      node.config.condition = document.getElementById('nd-condition')?.value || '';
+      node.config.trueLabel = document.getElementById('nd-true')?.value || 'True';
+      node.config.falseLabel = document.getElementById('nd-false')?.value || 'False';
+      node.config.verifyScript = document.getElementById('nd-verify-script')?.value || '';
+      node.config.verifyExpect = document.getElementById('nd-verify-expect')?.value || 'exit 0';
+      break;
+    case 'action':
+      node.config.actionType = document.getElementById('nd-actiontype')?.value || 'discord';
+      node.config.target = document.getElementById('nd-target')?.value || '';
+      node.config.message = document.getElementById('nd-message')?.value || '';
+      break;
+  }
+  render();
+  toast('Node settings saved', 'success');
+}
+
+function closeDetail() {
+  document.getElementById('detailPanel').classList.remove('show');
+}
+
+function esc(s) { return (s||'').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+// ─── Templates ───
+function toggleTemplates() {
+  document.getElementById('templatePanel').classList.toggle('show');
+}
+
+function loadTemplate(name) {
+  state.nodes = [];
+  state.connections = [];
+  state.selectedNode = null;
+  closeDetail();
+
+  const cx = 80, cy = 120, gap = 220;
+
+  switch(name) {
+    case 'news': {
+      const t = addNodeAt('trigger', cx, cy, {schedule:'Daily at 9 AM', cron:''});
+      const p = addNodeAt('prompt', cx+gap, cy, {prompt:'Search today\'s top news and summarize in 3 lines'});
+      const a = addNodeAt('action', cx+gap*2, cy, {actionType:'discord', target:'', message:'📰 Today\'s News Summary'});
+      state.connections.push({from:t.id, to:p.id}, {from:p.id, to:a.id});
+      break;
+    }
+    case 'report': {
+      const t = addNodeAt('trigger', cx, cy, {schedule:'Weekdays at 6 PM', cron:''});
+      const p = addNodeAt('prompt', cx+gap, cy, {prompt:'Analyze today\'s logs and write a daily report'});
+      const a = addNodeAt('action', cx+gap*2, cy, {actionType:'file', target:'~/.mama/workspace/reports/', message:'Daily Report'});
+      state.connections.push({from:t.id, to:p.id}, {from:p.id, to:a.id});
+      break;
+    }
+    case 'health': {
+      const t = addNodeAt('trigger', cx, cy, {schedule:'Every 30 minutes', cron:''});
+      const p = addNodeAt('prompt', cx+gap, cy, {prompt:'Access https://example.com and verify the response'});
+      const c = addNodeAt('condition', cx+gap*2, cy, {condition:'On response failure', trueLabel:'Healthy', falseLabel:'Down'});
+      const a = addNodeAt('action', cx+gap*3, cy+60, {actionType:'discord', target:'', message:'⚠️ Service outage detected!'});
+      state.connections.push({from:t.id, to:p.id}, {from:p.id, to:c.id}, {from:c.id, to:a.id, label:'Down'});
+      break;
+    }
+    case 'cleanup': {
+      const t = addNodeAt('trigger', cx, cy, {schedule:'Every Sunday at 3 AM', cron:''});
+      const p = addNodeAt('prompt', cx+gap, cy, {prompt:'Clean up temp files and logs older than 7 days'});
+      const a = addNodeAt('action', cx+gap*2, cy, {actionType:'discord', target:'', message:'🧹 Cleanup complete report'});
+      state.connections.push({from:t.id, to:p.id}, {from:p.id, to:a.id});
+      break;
+    }
+    case 'channel-monitor': {
+      // ── Flow A: Poll every 5 min for new messages ──
+      const t1 = addNodeAt('trigger', 60, 80, {schedule:'Every 5 minutes', cron:'*/5 * * * *'});
+      t1.label = '5-min Polling';
+
+      const p1 = addNodeAt('prompt', 280, 40, {prompt:'Check 5 Slack channels (#project-a, #project-b, #project-c, #design, #general) for new messages since last check. Summarize new message count and content per channel.'});
+      p1.label = 'Check Slack 5ch';
+
+      const p2 = addNodeAt('prompt', 280, 150, {prompt:'Check 3 Chatwork rooms (Dev Team, Design Team, Admin) for new messages since last check. Summarize new message count and content per room.'});
+      p2.label = 'Check Chatwork 3ch';
+
+      const c1 = addNodeAt('condition', 540, 40, {
+        condition:'New messages in Slack?',
+        verifyMethod:'string', verifyScript:'new message', verifyExpect:'contains',
+        trueLabel:'Has messages', falseLabel:'None'
+      });
+      c1.label = 'Slack new?';
+
+      const c2 = addNodeAt('condition', 540, 150, {
+        condition:'New messages in Chatwork?',
+        verifyMethod:'string', verifyScript:'new message', verifyExpect:'contains',
+        trueLabel:'Has messages', falseLabel:'None'
+      });
+      c2.label = 'CW new?';
+
+      const a1 = addNodeAt('action', 780, 40, {actionType:'discord', target:'#slack-feed', message:'📨 Slack new messages:\n{per-channel summary}'});
+      a1.label = 'Discord: Slack';
+
+      const a2 = addNodeAt('action', 780, 150, {actionType:'discord', target:'#chatwork-feed', message:'📨 Chatwork new messages:\n{per-room summary}'});
+      a2.label = 'Discord: CW';
+
+      // ── Flow B: Daily summary at 8:30 ──
+      const t2 = addNodeAt('trigger', 60, 320, {schedule:'Daily at 8:30 AM', cron:'30 8 * * *'});
+      t2.label = 'Daily 8:30';
+
+      const p3 = addNodeAt('prompt', 280, 300, {prompt:'Compile all messages from yesterday to today across 5 Slack channels + 3 Chatwork rooms.\n\nFor each channel:\n- Key discussion summary (3 lines)\n- Decisions made\n- Action items (assignee, deadline)\n- New tasks mentioned'});
+      p3.label = 'Compile All Messages';
+
+      const p4 = addNodeAt('prompt', 540, 300, {prompt:'Compare the compiled action items and new tasks with the Trello board.\n\nOutput format:\n📋 In Progress: [card name] - [assignee] - [deadline]\n✅ Completed: [card name] - [completion date]\n🆕 New Tasks (not on Trello): [task name] - [source channel]\n🔥 High Priority: [with reason]'});
+      p4.label = 'Trello Compare';
+
+      const c3 = addNodeAt('condition', 540, 420, {
+        condition:'Any new tasks not registered on Trello?',
+        verifyMethod:'string', verifyScript:'🆕 New Tasks', verifyExpect:'contains',
+        trueLabel:'Unregistered found', falseLabel:'All registered'
+      });
+      c3.label = 'Unregistered?';
+
+      const a3 = addNodeAt('action', 780, 300, {actionType:'discord', target:'#daily-report', message:'📊 Daily Channel Report + Trello Status'});
+      a3.label = 'Discord: Report';
+
+      const a4 = addNodeAt('action', 780, 420, {actionType:'api', target:'Trello API', message:'Auto-create cards in Trello Inbox list for unregistered tasks'});
+      a4.label = 'Create Trello Cards';
+
+      // Connections - Flow A
+      state.connections.push(
+        {from:t1.id, to:p1.id, label:''},
+        {from:t1.id, to:p2.id, label:''},
+        {from:p1.id, to:c1.id, label:''},
+        {from:p2.id, to:c2.id, label:''},
+        {from:c1.id, to:a1.id, label:'Yes'},
+        {from:c2.id, to:a2.id, label:'Yes'}
+      );
+      // Connections - Flow B
+      state.connections.push(
+        {from:t2.id, to:p3.id, label:''},
+        {from:p3.id, to:p4.id, label:''},
+        {from:p4.id, to:a3.id, label:''},
+        {from:p4.id, to:c3.id, label:''},
+        {from:c3.id, to:a4.id, label:'Yes'}
+      );
+
+      state.wfName = 'Slack/CW Monitoring + Daily Trello Report';
+      document.getElementById('wfName').value = state.wfName;
+      break;
+    }
+    case 'custom':
+      break;
+  }
+  document.getElementById('templatePanel').classList.remove('show');
+  render();
+  toast(name === 'custom' ? 'Blank canvas ready' : 'Scenario loaded', 'success');
+}
+
+function addNodeAt(type, x, y, config) {
+  const node = {
+    id: 'n' + (state.nextId++),
+    type, label: LABELS[type],
+    x, y, config: {...getDefaultConfig(type), ...config}
+  };
+  state.nodes.push(node);
+  return node;
+}
+
+// ─── Prompt Generation ───
+function updatePrompt() {
+  const preview = document.getElementById('promptPreview');
+  if (state.nodes.length === 0) {
+    preview.textContent = 'Build a workflow and the request will be generated here...';
+    return;
+  }
+  preview.textContent = generatePrompt();
+}
+
+function generatePrompt() {
+  const triggers = state.nodes.filter(n => n.type === 'trigger');
+  const prompts = state.nodes.filter(n => n.type === 'prompt');
+  const conditions = state.nodes.filter(n => n.type === 'condition');
+  const actions = state.nodes.filter(n => n.type === 'action');
+
+  let lines = [];
+  const name = state.wfName || 'Unnamed Workflow';
+  lines.push(`Please register the following cron workflow:\n\nWorkflow Name: "${name}"`);
+
+  // Build flow from connections
+  const roots = triggers.length > 0 ? triggers : state.nodes.filter(n => !state.connections.some(c => c.to === n.id));
+
+  for (const root of roots) {
+    const chain = buildChain(root.id);
+    lines.push(describeChain(chain));
+  }
+
+  // Orphan nodes
+  const mentioned = new Set();
+  state.connections.forEach(c => { mentioned.add(c.from); mentioned.add(c.to); });
+  const orphans = state.nodes.filter(n => !mentioned.has(n.id) && !roots.includes(n));
+  for (const o of orphans) {
+    lines.push(`\n[Unconnected] ${ICONS[o.type]} ${o.label}: ${getNodeSubtitle(o)}`);
+  }
+
+  // Existing jobs context
+  if (state.existingJobs.length > 0) {
+    lines.push('\n---\nExisting registered jobs for reference:');
+    for (const j of state.existingJobs) {
+      lines.push(`- "${j.name}" (${j.cron_expr}) ${j.enabled ? 'Active' : 'Inactive'}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function buildChain(startId) {
+  const chain = [];
+  const visited = new Set();
+  let current = startId;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const node = state.nodes.find(n => n.id === current);
+    if (node) chain.push(node);
+    const next = state.connections.find(c => c.from === current);
+    current = next ? next.to : null;
+  }
+  return chain;
+}
+
+function describeChain(chain) {
+  if (chain.length === 0) return '';
+  let parts = [];
+  for (const node of chain) {
+    switch(node.type) {
+      case 'trigger':
+        const sched = node.config.schedule || node.config.description || (node.config.cron ? cronToHuman(node.config.cron) : '(not set)');
+        parts.push(`[Schedule] ${sched}${node.config.cron ? ' (cron: '+node.config.cron+')' : ''}`);
+        break;
+      case 'prompt':
+        parts.push(`[Task] ${node.config.prompt || '(not set)'}`);
+        break;
+      case 'condition': {
+        let condStr = `[Condition] ${node.config.condition || '(not set)'}`;
+        const vm = node.config.verifyMethod || 'bash';
+        const vmLabels = {bash:'Bash exit code',http:'HTTP status',string:'String contains check',custom:'Custom script'};
+        condStr += `\n  Verification: ${vmLabels[vm]}`;
+        if (node.config.verifyScript) condStr += `\n  Script: ${node.config.verifyScript}`;
+        if (node.config.verifyExpect) condStr += `\n  Expected: ${node.config.verifyExpect}`;
+        parts.push(condStr);
+        break;
+      }
+      case 'action':
+        const types = {discord:'Send to Discord',slack:'Send to Slack',file:'Save to File',api:'API Call',email:'Email'};
+        parts.push(`[Action] ${types[node.config.actionType]||node.config.actionType}${node.config.target ? ' → '+node.config.target : ''}${node.config.message ? ': '+node.config.message : ''}`);
+        break;
+    }
+  }
+  return parts.join('\n→ ');
+}
+
+// ─── Cron Utils ───
+function cronToHuman(expr) {
+  const map = {
+    '* * * * *':'Every minute','*/5 * * * *':'Every 5 minutes','*/10 * * * *':'Every 10 minutes',
+    '*/15 * * * *':'Every 15 minutes','*/30 * * * *':'Every 30 minutes','0 * * * *':'Every hour',
+    '0 */2 * * *':'Every 2 hours','0 */6 * * *':'Every 6 hours',
+    '0 9 * * *':'Daily at 09:00','0 18 * * *':'Daily at 18:00','0 0 * * *':'Daily at midnight',
+    '0 9 * * 1-5':'Weekdays at 09:00','0 18 * * 1-5':'Weekdays at 18:00',
+    '0 0 * * 0':'Every Sunday','0 0 * * 1':'Every Monday',
+    '0 3 * * 0':'Every Sunday at 03:00','0 0 1 * *':'1st of every month',
+  };
+  return map[expr] || expr;
+}
+
+// ─── Mouse Events ───
+svg.addEventListener('mousemove', (e) => {
+  const pt = svgPoint(e.clientX, e.clientY);
+
+  if (state.panning) {
+    const dx = (e.clientX - state.panStart.cx) / state.zoom;
+    const dy = (e.clientY - state.panStart.cy) / state.zoom;
+    state.viewX = state.panStart.vx - dx;
+    state.viewY = state.panStart.vy - dy;
+    updateViewBox();
+    return;
+  }
+  if (state.dragging) {
+    const node = state.nodes.find(n => n.id === state.dragging);
+    if (node) {
+      node.x = pt.x - state.dragOffset.x;
+      node.y = pt.y - state.dragOffset.y;
+      render();
+    }
+  }
+  if (state.connecting) {
+    state._tempMouse = {x: pt.x, y: pt.y};
+    render();
+  }
+});
+
+svg.addEventListener('mouseup', () => {
+  state.dragging = null;
+  state.panning = false;
+  state.panStart = null;
+});
+
+svg.addEventListener('mousedown', (e) => {
+  if (e.target === svg || e.target.closest('.canvas-grid')) {
+    // Middle button or shift+left = pan
+    if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+      state.panning = true;
+      state.panStart = {cx: e.clientX, cy: e.clientY, vx: state.viewX, vy: state.viewY};
+      e.preventDefault();
+      return;
+    }
+    // Left click on empty = pan (no shift needed)
+    if (e.button === 0 && e.target === svg) {
+      state.panning = true;
+      state.panStart = {cx: e.clientX, cy: e.clientY, vx: state.viewX, vy: state.viewY};
+    }
+  }
+});
+
+svg.addEventListener('click', (e) => {
+  if (e.target === svg) {
+    if (state.connecting) cancelConnection();
+    state.selectedNode = null;
+    closeDetail();
+    render();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (state.connecting) cancelConnection();
+    state.selectedNode = null;
+    closeDetail();
+    render();
+  }
+  if (e.key === 'Delete' && state.selectedNode && !document.querySelector('.dp-input:focus')) {
+    deleteSelectedNode();
+  }
+});
+
+// ─── Zoom ───
+function zoomIn() { setZoom(state.zoom * 1.3); }
+function zoomOut() { setZoom(state.zoom / 1.3); }
+
+function setZoom(z, cx, cy) {
+  const oldZ = state.zoom;
+  state.zoom = Math.max(0.15, Math.min(3, z));
+  // Zoom toward cursor position
+  if (cx != null && cy != null) {
+    const rect = svg.getBoundingClientRect();
+    const svxBefore = state.viewX + (cx - rect.left) / oldZ;
+    const svyBefore = state.viewY + (cy - rect.top) / oldZ;
+    const svxAfter = state.viewX + (cx - rect.left) / state.zoom;
+    const svyAfter = state.viewY + (cy - rect.top) / state.zoom;
+    state.viewX += svxBefore - svxAfter;
+    state.viewY += svyBefore - svyAfter;
+  }
+  updateViewBox();
+  render();
+}
+
+function fitAll() {
+  if (state.nodes.length === 0) { state.zoom = 1; state.viewX = 0; state.viewY = 0; updateViewBox(); return; }
+  const pad = 60;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of state.nodes) {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + NODE_W);
+    maxY = Math.max(maxY, n.y + NODE_H);
+  }
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const rect = svg.getBoundingClientRect();
+  const scaleX = rect.width / (maxX - minX);
+  const scaleY = rect.height / (maxY - minY);
+  state.zoom = Math.min(scaleX, scaleY, 2);
+  state.viewX = minX;
+  state.viewY = minY;
+  updateViewBox();
+  render();
+}
+
+svg.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  setZoom(state.zoom * factor, e.clientX, e.clientY);
+}, {passive: false});
+
+// ─── Actions ───
+function copyPrompt() {
+  const text = generatePrompt();
+  navigator.clipboard.writeText(text).then(() => toast('Copied!', 'success'));
+}
+
+// sendToChat replaced by testRun() and deployToChat() below
+
+// ─── Load Existing Jobs ───
+async function loadJobs() {
+  try {
+    const r = await fetch('/api/cron');
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    state.existingJobs = data.jobs || [];
+    renderJobList();
+    document.getElementById('sidebarStatus').innerHTML = '<span class="dot dot-ok"></span> API connected · ' + state.existingJobs.length + ' jobs';
+  } catch(e) {
+    document.getElementById('sidebarStatus').innerHTML = '<span class="dot dot-err"></span> API connection failed';
+    document.getElementById('jobList').innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">API connection failed<br>Check if the cron API is running</div>';
+  }
+}
+
+function renderJobList() {
+  const list = document.getElementById('jobList');
+  if (state.existingJobs.length === 0) {
+    list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">No registered jobs</div>';
+    return;
+  }
+  list.innerHTML = state.existingJobs.map(j => `
+    <div class="job-card" onclick="importJob('${j.id}')">
+      <div class="jname">${j.name} <span class="badge ${j.enabled?'badge-on':'badge-off'}">${j.enabled?'ON':'OFF'}</span></div>
+      <div class="jmeta">${j.cron_expr} · ${cronToHuman(j.cron_expr)}</div>
+    </div>
+  `).join('');
+}
+
+function importJob(jobId) {
+  const job = state.existingJobs.find(j => j.id === jobId);
+  if (!job) return;
+  // Import as nodes on canvas
+  const area = svg.getBoundingClientRect();
+  const cx = 100, cy = 100 + state.nodes.length * 90;
+  const t = addNodeAt('trigger', cx, cy, {schedule: cronToHuman(job.cron_expr) || job.name, cron: job.cron_expr});
+  const p = addNodeAt('prompt', cx + 220, cy, {prompt: job.prompt});
+  state.connections.push({from: t.id, to: p.id});
+  render();
+  toast(`"${job.name}" imported`, 'success');
+}
+
+// ─── Toast ───
+function toast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.className = 'toast', 2500);
+}
+
+// ─── Persistence (localStorage, multi-workflow) ───
+const STORAGE_KEY = 'cron-workflow-lab-v2';
+
+function saveAllWorkflows() {
+  // Save current workflow into workflows list
+  if (state.wfId) {
+    const idx = state.workflows.findIndex(w => w.id === state.wfId);
+    const wfData = {
+      id: state.wfId,
+      name: state.wfName || 'Unnamed Workflow',
+      status: state.wfStatus,
+      nodes: state.nodes,
+      connections: state.connections,
+      nextId: state.nextId,
+      updatedAt: Date.now()
+    };
+    if (idx >= 0) state.workflows[idx] = wfData;
+    else state.workflows.push(wfData);
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      workflows: state.workflows,
+      activeWfId: state.wfId
+    }));
+  } catch(e) {}
+  renderWorkflowList();
+}
+
+function loadAllWorkflows() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      // Migrate from v1
+      const v1 = localStorage.getItem('cron-workflow-lab-state');
+      if (v1) {
+        const d = JSON.parse(v1);
+        if (d.nodes && d.nodes.length > 0) {
+          const wf = {id:'wf_migrated', name:'(Migrated)', status:'draft', nodes:d.nodes, connections:d.connections||[], nextId:d.nextId||1, updatedAt:Date.now()};
+          state.workflows = [wf];
+          switchToWorkflow(wf.id);
+          localStorage.removeItem('cron-workflow-lab-state');
+          return true;
+        }
+      }
+      return false;
+    }
+    const data = JSON.parse(raw);
+    state.workflows = data.workflows || [];
+    if (data.activeWfId && state.workflows.some(w => w.id === data.activeWfId)) {
+      switchToWorkflow(data.activeWfId);
+      return true;
+    } else if (state.workflows.length > 0) {
+      switchToWorkflow(state.workflows[0].id);
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+function switchToWorkflow(wfId) {
+  // Save current first
+  if (state.wfId && state.wfId !== wfId) saveCurrentToList();
+  const wf = state.workflows.find(w => w.id === wfId);
+  if (!wf) return;
+  state.wfId = wf.id;
+  state.wfName = wf.name;
+  state.wfStatus = wf.status;
+  state.nodes = wf.nodes || [];
+  state.connections = wf.connections || [];
+  state.nextId = wf.nextId || 1;
+  state.selectedNode = null;
+  closeDetail();
+  document.getElementById('wfName').value = state.wfName;
+  updateStatusBadge();
+  render();
+  renderWorkflowList();
+}
+
+function saveCurrentToList() {
+  if (!state.wfId) return;
+  const idx = state.workflows.findIndex(w => w.id === state.wfId);
+  const wfData = {id:state.wfId, name:state.wfName||'Unnamed', status:state.wfStatus, nodes:state.nodes, connections:state.connections, nextId:state.nextId, updatedAt:Date.now()};
+  if (idx >= 0) state.workflows[idx] = wfData;
+  else state.workflows.push(wfData);
+}
+
+function onWfNameChange() {
+  state.wfName = document.getElementById('wfName').value;
+  saveAllWorkflows();
+}
+
+function updateStatusBadge() {
+  const el = document.getElementById('wfStatus');
+  el.textContent = state.wfStatus;
+  el.className = 'wf-status wf-status-' + state.wfStatus;
+}
+
+function renderWorkflowList() {
+  const list = document.getElementById('workflowList');
+  if (state.workflows.length === 0) {
+    list.innerHTML = '<div style="padding:12px;text-align:center;color:var(--dim);font-size:11px">No workflows</div>';
+    return;
+  }
+  const sorted = [...state.workflows].sort((a,b) => (b.updatedAt||0) - (a.updatedAt||0));
+  list.innerHTML = sorted.map(w => {
+    const active = w.id === state.wfId;
+    const statusMap = {draft:['📝','badge-off','draft'], deployed:['✅','badge-on','deployed'], paused:['⏸','','paused']};
+    const [icon, cls, label] = statusMap[w.status] || statusMap.draft;
+    const nodeCount = (w.nodes||[]).length;
+    return `<div class="job-card${active?' active':''}" onclick="switchToWorkflow('${w.id}')">
+      <div class="jname">${icon} ${esc(w.name||'Unnamed')} <span class="badge ${cls}" style="font-size:9px">${label}</span></div>
+      <div class="jmeta">${nodeCount} nodes · ${timeAgo(w.updatedAt)}</div>
+      ${!active ? '<span style="position:absolute;right:8px;top:8px;font-size:11px;color:var(--dim);cursor:pointer" onclick="event.stopPropagation();deleteWorkflow(\''+w.id+'\')">×</span>' : ''}
+    </div>`;
+  }).join('');
+}
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - ts;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff/3600000) + 'h ago';
+  return Math.floor(diff/86400000) + 'd ago';
+}
+
+function deleteWorkflow(wfId) {
+  if (!confirm('Delete this workflow?')) return;
+  state.workflows = state.workflows.filter(w => w.id !== wfId);
+  if (state.wfId === wfId) {
+    if (state.workflows.length > 0) switchToWorkflow(state.workflows[0].id);
+    else resetToEmpty();
+  }
+  saveAllWorkflows();
+}
+
+function resetToEmpty() {
+  state.wfId = null;
+  state.wfName = '';
+  state.wfStatus = 'draft';
+  state.nodes = [];
+  state.connections = [];
+  state.nextId = 1;
+  state.selectedNode = null;
+  document.getElementById('wfName').value = '';
+  updateStatusBadge();
+  closeDetail();
+  render();
+}
+
+// Auto-save on every render
+(function patchRender() {
+  const orig = window.render;
+  window.render = function() { orig(); saveAllWorkflows(); };
+})();
+
+// ─── New Workflow ───
+function newWorkflow() {
+  // Save current first
+  if (state.wfId) saveCurrentToList();
+  const id = 'wf_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  state.wfId = id;
+  state.wfName = '';
+  state.wfStatus = 'draft';
+  state.nodes = [];
+  state.connections = [];
+  state.selectedNode = null;
+  state.nextId = 1;
+  document.getElementById('wfName').value = '';
+  updateStatusBadge();
+  closeDetail();
+  render();
+  // Focus name input
+  document.getElementById('wfName').focus();
+  toggleTemplates();
+  toast('New workflow — please name it');
+}
+
+// ─── Test Run / Deploy ───
+function testRun() {
+  const name = state.wfName || 'Unnamed Workflow';
+  if (state.nodes.length === 0) { toast('Add nodes first', 'error'); return; }
+  const prompt = 'Run the following workflow once as a test (do not register a cron, execute immediately):\n\n' + `Workflow: "${name}"\n` + generatePrompt();
+  try {
+    window.parent.postMessage({type:'playground:sendToChat', message: prompt}, '*');
+    toast('Test run request sent!', 'success');
+  } catch(e) {
+    navigator.clipboard.writeText(prompt);
+    toast('Copied to clipboard', 'error');
+  }
+}
+
+function deployToChat() {
+  const name = state.wfName;
+  if (!name || !name.trim()) { toast('Enter a workflow name first', 'error'); document.getElementById('wfName').focus(); return; }
+  if (state.nodes.length === 0) { toast('Add nodes first', 'error'); return; }
+  const prompt = generatePrompt();
+  try {
+    window.parent.postMessage({type:'playground:sendToChat', message: prompt}, '*');
+    state.wfStatus = 'deployed';
+    updateStatusBadge();
+    saveAllWorkflows();
+    toast(`"${name}" deploy request sent!`, 'success');
+  } catch(e) {
+    navigator.clipboard.writeText(prompt);
+    toast('Copied to clipboard', 'error');
+  }
+}
+
+// ─── Verify Method Selector ───
+function setVerifyMethod(method) {
+  const node = state.nodes.find(n => n.id === state.selectedNode);
+  if (!node || node.type !== 'condition') return;
+  node.config.verifyMethod = method;
+  showDetail(node);
+}
+
+// ─── Agent Decomposition Protocol ───
+// JSON format the agent sends back:
+// {
+//   type: 'workflow:inject',
+//   action: 'addNodes' | 'replaceAll' | 'suggest',
+//   message: 'human-readable explanation',
+//   workflow: { name?, nodes: [{type,label,config,x?,y?}], connections: [{fromIdx,toIdx,label?}] }
+// }
+
+let _pendingAgentData = null;
+
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (!d || typeof d !== 'object') return;
+
+  // Handle workflow injection from OS agent
+  if (d.type === 'workflow:inject') {
+    handleAgentInject(d);
+    return;
+  }
+  // Legacy: simple node add
+  if (d.type === 'workflow:addNode') {
+    const n = d.node;
+    if (n && n.type && COLORS[n.type]) {
+      addNode(n.type, n.x, n.y, n.config);
+      toast('Agent added a node', 'success');
+    }
+    return;
+  }
+});
+
+function handleAgentInject(data) {
+  const indicator = document.getElementById('agentIndicator');
+  indicator.classList.remove('show');
+
+  if (!data.workflow || !data.workflow.nodes || data.workflow.nodes.length === 0) {
+    toast('No nodes in agent response', 'error');
+    return;
+  }
+
+  _pendingAgentData = data;
+
+  // Show preview overlay
+  const overlay = document.getElementById('agentOverlay');
+  const msg = document.getElementById('agentMessage');
+  const preview = document.getElementById('agentPreview');
+
+  msg.textContent = data.message || 'The workflow has been analyzed.';
+
+  // Render preview of proposed nodes
+  const wf = data.workflow;
+  let previewHtml = '';
+  if (wf.name) previewHtml += `<div style="font-weight:700;margin-bottom:6px">📋 ${esc(wf.name)}</div>`;
+  previewHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
+  for (let i = 0; i < wf.nodes.length; i++) {
+    const n = wf.nodes[i];
+    const color = COLORS[n.type] || 'var(--muted)';
+    const icon = ICONS[n.type] || '❓';
+    previewHtml += `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:4px;border-left:3px solid ${color}">`;
+    previewHtml += `<span>${icon}</span>`;
+    previewHtml += `<div><span style="font-weight:600">${esc(n.label || LABELS[n.type] || n.type)}</span>`;
+    if (n.config) {
+      const sub = n.config.schedule || n.config.prompt || n.config.condition || n.config.actionType || '';
+      if (sub) previewHtml += `<div style="font-size:10px;color:var(--muted)">${esc(truncate(sub, 50))}</div>`;
+    }
+    previewHtml += '</div></div>';
+    if (i < wf.nodes.length - 1) previewHtml += '<div style="text-align:center;color:var(--dim);font-size:10px">↓</div>';
+  }
+  previewHtml += '</div>';
+
+  // Show edge cases if present
+  if (data.edgeCases && data.edgeCases.length > 0) {
+    previewHtml += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">';
+    previewHtml += '<div style="font-size:10px;font-weight:700;color:var(--warn);margin-bottom:4px">⚠️ Edge cases considered:</div>';
+    for (const ec of data.edgeCases) {
+      previewHtml += `<div style="font-size:10px;color:var(--muted);padding-left:8px">• ${esc(ec)}</div>`;
+    }
+    previewHtml += '</div>';
+  }
+
+  preview.innerHTML = previewHtml;
+  overlay.classList.add('show');
+}
+
+function acceptAgent() {
+  if (!_pendingAgentData) return;
+  const data = _pendingAgentData;
+  const wf = data.workflow;
+
+  if (data.action === 'replaceAll') {
+    state.nodes = [];
+    state.connections = [];
+    state.nextId = 1;
+  }
+
+  if (wf.name && !state.wfName) {
+    state.wfName = wf.name;
+    document.getElementById('wfName').value = wf.name;
+  }
+
+  // Add nodes with layout
+  const newNodes = [];
+  const startX = 100, startY = 120, gapX = 220, gapY = 100;
+  for (let i = 0; i < wf.nodes.length; i++) {
+    const spec = wf.nodes[i];
+    const x = spec.x != null ? spec.x : startX + (i % 4) * gapX;
+    const y = spec.y != null ? spec.y : startY + Math.floor(i / 4) * gapY;
+    const config = {...getDefaultConfig(spec.type), ...(spec.config || {})};
+    const node = addNodeAt(spec.type, x, y, config);
+    if (spec.label) node.label = spec.label;
+    newNodes.push(node);
+  }
+
+  // Add connections
+  if (wf.connections) {
+    for (const conn of wf.connections) {
+      const from = newNodes[conn.fromIdx];
+      const to = newNodes[conn.toIdx];
+      if (from && to) {
+        state.connections.push({from: from.id, to: to.id, label: conn.label || ''});
+      }
+    }
+  }
+
+  closeAgentOverlay();
+  render();
+  toast(`${newNodes.length} nodes added`, 'success');
+}
+
+function rejectAgent() {
+  _pendingAgentData = null;
+  closeAgentOverlay();
+  toast('Agent suggestion dismissed');
+}
+
+function editAgent() {
+  // Apply nodes but open detail for first node
+  acceptAgent();
+  if (state.nodes.length > 0) {
+    selectNode(state.nodes[state.nodes.length - 1].id);
+  }
+}
+
+function closeAgentOverlay() {
+  document.getElementById('agentOverlay').classList.remove('show');
+  _pendingAgentData = null;
+}
+
+// ─── Decompose Request ───
+function requestDecompose() {
+  const indicator = document.getElementById('agentIndicator');
+
+  // If canvas has nodes, send them as context for refinement
+  let prompt;
+  if (state.nodes.length > 0) {
+    const currentJson = exportWorkflowJson();
+    prompt = `Analyze and improve the following cron workflow. Add missing edge cases, error handling, and conditional branches, then return a structured JSON.\n\nCurrent workflow:\n${JSON.stringify(currentJson, null, 2)}\n\n` + DECOMPOSE_INSTRUCTION;
+  } else if (state.wfName) {
+    prompt = `Design a "${state.wfName}" workflow. Infer the intent from the name and decompose it into structured JSON nodes.\n\n` + DECOMPOSE_INSTRUCTION;
+  } else {
+    prompt = `The user wants to create a cron workflow. Ask what they need, and once answered, decompose it into structured nodes as JSON.\n\n` + DECOMPOSE_INSTRUCTION;
+  }
+
+  try {
+    window.parent.postMessage({type:'playground:sendToChat', message: prompt}, '*');
+    indicator.classList.add('show');
+    toast('Decompose request sent to agent', 'success');
+    // Auto-hide indicator after 30s
+    setTimeout(() => indicator.classList.remove('show'), 30000);
+  } catch(e) {
+    navigator.clipboard.writeText(prompt);
+    toast('Copied to clipboard — paste into Chat', 'error');
+  }
+}
+
+const DECOMPOSE_INSTRUCTION = `When responding, you MUST include a code block in the following JSON format (the playground will parse it):
+
+\`\`\`workflow-json
+{
+  "type": "workflow:inject",
+  "action": "replaceAll",
+  "message": "Analysis result explanation",
+  "edgeCases": ["Edge case 1", "Edge case 2"],
+  "workflow": {
+    "name": "Workflow name",
+    "nodes": [
+      {"type": "trigger", "label": "Name", "config": {"schedule": "Natural language schedule"}},
+      {"type": "prompt", "label": "Name", "config": {"prompt": "Task description"}},
+      {"type": "condition", "label": "Name", "config": {"condition": "Condition description", "verifyMethod": "bash|http|string|custom", "verifyScript": "Verification script", "verifyExpect": "Expected value"}},
+      {"type": "action", "label": "Name", "config": {"actionType": "discord|slack|file|api|email", "target": "Target", "message": "Content"}}
+    ],
+    "connections": [
+      {"fromIdx": 0, "toIdx": 1},
+      {"fromIdx": 1, "toIdx": 2, "label": ""}
+    ]
+  }
+}
+\`\`\`
+
+Condition nodes MUST include a deterministic verification method (verifyMethod):
+- bash: Run a command and judge by exit code (0 = true)
+- http: Call a URL and judge by HTTP status (200 = true)
+- string: Check if previous output contains a specific string
+- custom: Complete bash script
+
+You MUST list edge cases (edgeCases). Include things the user may have overlooked.`;
+
+function exportWorkflowJson() {
+  const nodeMap = {};
+  state.nodes.forEach((n, i) => { nodeMap[n.id] = i; });
+  return {
+    name: state.wfName || '',
+    nodes: state.nodes.map(n => ({type:n.type, label:n.label, config:n.config})),
+    connections: state.connections.map(c => ({
+      fromIdx: nodeMap[c.from] ?? 0,
+      toIdx: nodeMap[c.to] ?? 0,
+      label: c.label || ''
+    }))
+  };
+}
+
+// ─── Init ───
+const restored = loadAllWorkflows();
+loadJobs();
+if (!restored) {
+  newWorkflow();
+  loadTemplate('channel-monitor');
+  setTimeout(fitAll, 100);
+} else {
+  render();
+  renderWorkflowList();
+  toast('Previous work restored', 'success');
+}
+</script>
+</body>
+</html>

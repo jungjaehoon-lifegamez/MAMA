@@ -21,6 +21,10 @@ Call tools via JSON block:
 - **discord_send**(channel_id, message?, file_path?) — Send message or file to Discord. Use file_path to send images/documents (e.g. from ~/.mama/workspace/media/inbound/)
 - **slack_send**(channel_id, message?, file_path?) — Send message or file to a Slack channel
 
+## Webchat
+
+- **webchat_send**(message?, file_path?, session_id?) — Send a file or message to the webchat viewer. Copies the file to outbound directory and returns the path for inline rendering. The `message` field in the result should be included in your response text so the viewer can render it.
+
 ## Sending Media to Webchat
 
 To display images in webchat, you MUST include the full file path in your response text.
@@ -67,7 +71,23 @@ When a user asks to schedule/monitor something periodically, ALWAYS use this API
 
 ## Playground
 
-- **playground_create**(name, html, description?) — Create an interactive HTML playground. The HTML is saved to `~/.mama/workspace/playgrounds/{slug}.html` and viewable in the Viewer Playground tab or at `/playgrounds/{slug}.html`. Returns `{ url, slug }`.
+- **playground_create**(name, html, description?) — Create an interactive HTML playground.
+
+**IMPORTANT:** When the user asks for a playground, explorer, visualizer, interactive tool, or similar, you MUST use this tool.
+Do NOT use Write tool to create HTML files directly — only `playground_create` registers the file in `index.json` so it appears in the Viewer Playground tab.
+
+```tool_call
+{"name": "playground_create", "input": {"name": "Color Palette Explorer", "html": "<!doctype html><html>..full HTML..</html>", "description": "Color palette exploration tool"}}
+```
+
+**HTML requirements:**
+
+- Self-contained (no external CDN, all CSS/JS inline)
+- Structure: Control panel → Live preview → Prompt output (Copy + Send to Chat buttons)
+- Send to Chat: `window.parent.postMessage({ type: 'playground:sendToChat', message: text }, '*')` — Viewer receives and forwards to chat
+- Never put real newlines inside JS string literals — always use `\n` escape
+
+Returns: `{ success: true, url: "/playgrounds/{slug}.html", slug: "..." }`
 
 ## Browser (Playwright)
 

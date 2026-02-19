@@ -11,7 +11,7 @@
  * - Path-based tools (Read, Write) also check path permissions
  */
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, copyFileSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
@@ -115,6 +115,8 @@ const VALID_TOOLS: GatewayToolName[] = [
   'pr_review_threads',
   // Playground tools
   'playground_create',
+  // Webchat tools
+  'webchat_send',
 ];
 
 /**
@@ -378,6 +380,11 @@ export class GatewayToolExecutor {
         case 'playground_create':
           return await this.executePlaygroundCreate(
             input as { name: string; html: string; description?: string }
+          );
+        // Webchat tools
+        case 'webchat_send':
+          return await this.executeWebchatSend(
+            input as { session_id?: string; message?: string; file_path?: string }
           );
       }
 
@@ -1737,6 +1744,64 @@ export class GatewayToolExecutor {
       return { success: true, url: `/playgrounds/${slug}.html`, slug };
     } catch (err) {
       return { success: false, error: `Failed to create playground: ${err}` };
+    }
+  }
+
+  // ============================================================================
+  // Webchat Tools
+  // ============================================================================
+
+  /**
+   * Execute webchat_send tool — Send message/file to webchat viewer
+   * Copies file to outbound directory and returns the path for viewer rendering
+   */
+  private async executeWebchatSend(input: {
+    session_id?: string;
+    message?: string;
+    file_path?: string;
+  }): Promise<{ success: boolean; message?: string; outbound_path?: string; error?: string }> {
+    const { message, file_path } = input;
+
+    if (!message && !file_path) {
+      return { success: false, error: 'Either message or file_path is required' };
+    }
+
+    try {
+      const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
+      mkdirSync(outboundDir, { recursive: true });
+
+      if (file_path) {
+        // Expand ~ to home directory
+        const expandedPath = file_path.startsWith('~/')
+          ? join(homedir(), file_path.slice(2))
+          : file_path;
+
+        if (!existsSync(expandedPath)) {
+          return { success: false, error: `File not found: ${expandedPath}` };
+        }
+
+        // Copy file to outbound directory with timestamp prefix
+        const basename = expandedPath.split('/').pop() || 'file';
+        const outName = `${Date.now()}_${basename}`;
+        const outPath = join(outboundDir, outName);
+        copyFileSync(expandedPath, outPath);
+
+        const viewerPath = `~/.mama/workspace/media/outbound/${outName}`;
+
+        return {
+          success: true,
+          message: `${message || 'File ready for download.'}\n\nCRITICAL: Include this EXACT path on its own line in your next response so the viewer renders it as a download link:\n${viewerPath}`,
+          outbound_path: viewerPath,
+        };
+      }
+
+      // Text-only message
+      return {
+        success: true,
+        message: message!,
+      };
+    } catch (err) {
+      return { success: false, error: `Failed to send to webchat: ${err}` };
     }
   }
 

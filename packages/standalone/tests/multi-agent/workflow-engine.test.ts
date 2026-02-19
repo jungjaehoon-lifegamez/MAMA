@@ -69,6 +69,42 @@ describe('WorkflowEngine', () => {
       expect(engine.parseWorkflowPlan('Just a regular response')).toBeNull();
     });
 
+    it('should parse raw JSON workflow plan', () => {
+      const plan = makePlan();
+      const response = JSON.stringify(plan);
+      const result = engine.parseWorkflowPlan(response);
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('Test Workflow');
+      expect(result!.steps).toHaveLength(1);
+    });
+
+    it('should parse CRLF workflow_plan block', () => {
+      const plan = makePlan();
+      const response = `Let me parse this\r\n\`\`\`workflow_plan\r\n${JSON.stringify(plan)}\r\n\`\`\`\r\nDone`;
+      const result = engine.parseWorkflowPlan(response);
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('Test Workflow');
+      expect(result!.steps).toHaveLength(1);
+    });
+
+    it('should parse workflow_plan block with json fenced body', () => {
+      const plan = makePlan();
+      const response = `Context\r\n\`\`\`workflow_plan\r\n\`\`\`json\r\n${JSON.stringify(plan)}\r\n\`\`\`\r\n`;
+      const result = engine.parseWorkflowPlan(response);
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('Test Workflow');
+      expect(result!.steps).toHaveLength(1);
+    });
+
+    it('should parse workflow_plan with json fenced body even when earlier JSON exists', () => {
+      const plan = makePlan();
+      const response = `{"meta":"noise"}\r\n\`\`\`workflow_plan\r\n\`\`\`json\r\n${JSON.stringify(plan)}\r\n\`\`\`\r\n`;
+      const result = engine.parseWorkflowPlan(response);
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('Test Workflow');
+      expect(result!.steps).toHaveLength(1);
+    });
+
     it('should return null for invalid JSON', () => {
       const response = '```workflow_plan\n{invalid json}\n```';
       expect(engine.parseWorkflowPlan(response)).toBeNull();
@@ -116,7 +152,7 @@ describe('WorkflowEngine', () => {
   describe('extractNonPlanContent', () => {
     it('should extract text outside the plan block', () => {
       const response = 'Hello!\n\n```workflow_plan\n{"name":"x","steps":[]}\n```\n\nGoodbye!';
-      expect(engine.extractNonPlanContent(response)).toBe('Hello!\n\n\n\nGoodbye!');
+      expect(engine.extractNonPlanContent(response)).toBe('Hello!\n\n\nGoodbye!');
     });
 
     it('should return full text when no plan block', () => {

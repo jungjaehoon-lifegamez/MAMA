@@ -278,6 +278,19 @@ Phase 3: Retrospective
 
 10. **Multi-Agent Free Chat:** When `free_chat: true`, all agents respond to every message. Use with caution (can cause spam).
 
+11. **AI 동작 안정화 규칙 (운영 반영):**
+
+- `수정` 요청 시, `수정 → (요청된 범위 빌드/테스트/실행)` 순으로 처리한다.
+- 변경 결과를 추상적으로 요약하기 전에 먼저 파일 변경 근거(경로)와 실행 명령/결과를 제시한다.
+- “완료”는 요청한 검증 항목이 실제 통과했을 때만 선언한다.
+
+11. **파서/실행 파이프라인 수정 반영 (2026-02-19):**
+
+- `src/multi-agent/workflow-engine.ts`에서 `workflow_plan` 파서를 CRLF/raw JSON/```json 블록에 대해 강건하게 개선.
+- 기본 스텝 타임아웃을 10분으로 상향.
+- `src/api/graph-api.ts`의 결정 저장은 `mama.save(...)` 사용.
+- `tests/multi-agent/workflow-engine.test.ts`로 파서 회귀 케이스를 보강.
+
 ---
 
 ## RELATED DOCS

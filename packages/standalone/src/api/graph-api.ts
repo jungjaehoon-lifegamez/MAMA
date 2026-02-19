@@ -658,7 +658,7 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
 
     await initDB();
 
-    const result = await mama.saveDecision({
+    const result = await mama.save({
       topic: body.topic,
       decision: body.decision,
       reasoning: body.reasoning,
@@ -2105,8 +2105,11 @@ async function handleMultiAgentStatusRequest(
       tier: number;
       model: string;
       status: string;
-      lastActivity: null;
+      lastActivity: string | null;
+      ephemeral?: boolean;
     }> = [];
+    const seenAgentIds = new Set<string>();
+
     if (multiAgentConfig.enabled && multiAgentConfig.agents) {
       for (const [id, agentConfig] of Object.entries(multiAgentConfig.agents) as Array<
         [string, Record<string, unknown>]
@@ -2124,18 +2127,42 @@ async function handleMultiAgentStatusRequest(
           tier: (agentConfig.tier as number) || 1,
           model: (agentConfig.model as string) || config.agent?.model || 'unknown',
           status,
-          lastActivity: null,
+          lastActivity: status === 'busy' ? new Date().toISOString() : null,
         });
+        seenAgentIds.add(id);
       }
     }
+
+    // Include ephemeral agents from process pool (not in config but active)
+    if (agentStatesMap) {
+      for (const [id, processState] of agentStatesMap) {
+        if (!seenAgentIds.has(id)) {
+          agents.push({
+            id,
+            name: id.charAt(0).toUpperCase() + id.slice(1),
+            tier: 2,
+            model: 'unknown',
+            status: processState,
+            lastActivity: processState === 'busy' ? new Date().toISOString() : null,
+            ephemeral: true,
+          });
+        }
+      }
+    }
+
+    // Count active chains (agents currently busy)
+    const busyCount = agents.filter((a) => a.status === 'busy').length;
+
+    // Get recent delegations from DelegationManager history
+    const recentDelegations = options.getRecentDelegations ? options.getRecentDelegations(20) : [];
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         enabled: multiAgentConfig.enabled || false,
         agents,
-        recentDelegations: [],
-        activeChains: 0,
+        recentDelegations,
+        activeChains: busyCount,
       })
     );
   } catch (error: unknown) {

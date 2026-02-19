@@ -648,4 +648,16 @@ export class API {
   static async installSkillFromUrl(url: string): Promise<JsonRecord> {
     return this.post('/api/skills/install-url', { url });
   }
+
+  static async createSkill(name: string, content: string, source = 'mama'): Promise<JsonRecord> {
+    return this.post('/api/skills', { name, content, source });
+  }
+
+  static async updateSkillContent(
+    name: string,
+    content: string,
+    source = 'mama'
+  ): Promise<JsonRecord> {
+    return this.put(`/api/skills/${encodeURIComponent(name)}/content`, { content, source });
+  }
 }

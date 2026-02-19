@@ -11,6 +11,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  copyFileSync,
   writeFileSync,
   unlinkSync,
 } from 'node:fs';
@@ -358,6 +360,36 @@ function isOnboardingComplete(): boolean {
   return existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
 }
 
+/**
+ * Sync built-in skills from templates to user's skills directory.
+ * Only copies files that don't already exist (never overwrites user modifications).
+ */
+function syncBuiltinSkills(): void {
+  const skillsDir = join(homedir(), '.mama', 'skills');
+  const templatesDir = join(__dirname, '..', '..', '..', 'templates', 'skills');
+
+  if (!existsSync(templatesDir)) return;
+
+  mkdirSync(skillsDir, { recursive: true });
+
+  try {
+    const entries = readdirSync(templatesDir);
+    let synced = 0;
+    for (const file of entries) {
+      if (!file.endsWith('.md')) continue;
+      const dest = join(skillsDir, file);
+      if (existsSync(dest)) continue;
+      copyFileSync(join(templatesDir, file), dest);
+      synced++;
+    }
+    if (synced > 0) {
+      console.log(`✓ Synced ${synced} built-in skill(s)`);
+    }
+  } catch {
+    // Non-blocking: skills are optional
+  }
+}
+
 function shouldAutoOpenBrowser(): boolean {
   return process.env.MAMA_NO_AUTO_OPEN_BROWSER !== '1';
 }
@@ -486,20 +518,6 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
 
   if (backend === 'codex-mcp') {
     console.log('✓ Codex-MCP backend (OAuth handled by Codex login)');
-  } else if (!config.use_claude_cli) {
-    process.stdout.write('Checking OAuth token... ');
-    try {
-      const oauthManager = new OAuthManager();
-      await oauthManager.getToken();
-      console.log('✓');
-    } catch (error) {
-      console.log('❌');
-      console.error(
-        `\nOAuth token error: ${error instanceof Error ? error.message : String(error)}`
-      );
-      console.error('Please log in again to Claude Code.\n');
-      process.exit(1);
-    }
   } else {
     console.log('✓ Claude CLI mode (OAuth token not needed)');
   }
@@ -684,6 +702,10 @@ export async function runAgentLoop(
   let autoRecallUsed = false;
 
   const mamaHome = join(homedir(), '.mama');
+
+  // Sync built-in skills on every start (non-destructive — skips existing files)
+  syncBuiltinSkills();
+
   const personaComplete =
     existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
 
@@ -1040,6 +1062,8 @@ export async function runAgentLoop(
     getAgentStates?: () => Map<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     getSwarmTasks?: (limit?: number) => Array<any>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    getRecentDelegations?: (limit?: number) => Array<any>;
     applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
     restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   } = {};
@@ -1151,7 +1175,7 @@ export async function runAgentLoop(
         sendFile: async (channelId: string, filePath: string, caption?: string) =>
           discordGateway!.sendFile(channelId, filePath, caption),
         sendImage: async (channelId: string, imagePath: string, caption?: string) =>
-          discordGateway!.sendImage(channelId, imagePath, caption),
+          discordGateway!.sendFile(channelId, imagePath, caption),
       };
 
       agentLoop.setDiscordGateway(gatewayInterface);
@@ -1198,7 +1222,7 @@ export async function runAgentLoop(
         sendFile: async (channelId: string, filePath: string, caption?: string) =>
           slackGateway!.sendFile(channelId, filePath, caption),
         sendImage: async (channelId: string, imagePath: string, caption?: string) =>
-          slackGateway!.sendImage(channelId, imagePath, caption),
+          slackGateway!.sendFile(channelId, imagePath, caption),
       };
       toolExecutor.setSlackGateway(slackGatewayInterface);
 
@@ -1224,10 +1248,38 @@ export async function runAgentLoop(
     const multiAgentHandler = discordHandler || slackHandler;
 
     if (multiAgentHandler) {
-      // getAgentStates: real-time process states
+      // getAgentStates: merge real-time process states from ALL gateways
       graphHandlerOptions.getAgentStates = () => {
         try {
-          return multiAgentHandler.getProcessManager().getAgentStates();
+          const merged = new Map<string, string>();
+          const priority: Record<string, number> = {
+            busy: 3,
+            starting: 2,
+            idle: 1,
+            dead: 0,
+            online: -1,
+          };
+
+          // Collect from Discord
+          if (discordHandler) {
+            for (const [id, state] of discordHandler.getProcessManager().getAgentStates()) {
+              const existing = merged.get(id);
+              if (!existing || (priority[state] ?? 0) > (priority[existing] ?? 0)) {
+                merged.set(id, state);
+              }
+            }
+          }
+          // Collect from Slack
+          if (slackHandler) {
+            for (const [id, state] of slackHandler.getProcessManager().getAgentStates()) {
+              const existing = merged.get(id);
+              if (!existing || (priority[state] ?? 0) > (priority[existing] ?? 0)) {
+                merged.set(id, state);
+              }
+            }
+          }
+
+          return merged;
         } catch (err) {
           console.error('[GraphAPI] Failed to get agent states:', err);
           return new Map();
@@ -1251,6 +1303,16 @@ export async function runAgentLoop(
           return stmt.all(limit) as Array<any>;
         } catch (err) {
           console.error('[GraphAPI] Failed to fetch swarm tasks:', err);
+          return [];
+        }
+      };
+
+      // getRecentDelegations: in-memory delegation history from DelegationManager
+      graphHandlerOptions.getRecentDelegations = (limit = 20) => {
+        try {
+          return multiAgentHandler.getDelegationManager().getRecentDelegations(limit);
+        } catch (err) {
+          console.error('[GraphAPI] Failed to fetch recent delegations:', err);
           return [];
         }
       };
@@ -1651,7 +1713,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       // Send to Discord
       console.log(`[Screenshot] Sending to Discord: ${outputPath}`);
-      await discordGateway.sendImage(channelId, outputPath, caption);
+      await discordGateway.sendFile(channelId, outputPath, caption);
 
       console.log('[Screenshot] Complete');
       res.json({ success: true, screenshot: outputPath });
@@ -1737,7 +1799,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       }
 
       console.log(`[Discord Image] Sending: ${resolvedImagePath}`);
-      await discordGateway.sendImage(channelId, resolvedImagePath, caption);
+      await discordGateway.sendFile(channelId, resolvedImagePath, caption);
 
       console.log('[Discord Image] Complete');
       res.json({ success: true });
@@ -1794,6 +1856,53 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   // Playground static serving + API
   const playgroundsDir = path.join(homedir(), '.mama', 'workspace', 'playgrounds');
   mkdirSync(playgroundsDir, { recursive: true });
+
+  // Seed built-in playgrounds from templates
+  try {
+    const pgTemplatesDir = path.join(process.cwd(), 'templates', 'playgrounds');
+    if (existsSync(pgTemplatesDir)) {
+      const pgEntries = readdirSync(pgTemplatesDir);
+      let pgSynced = 0;
+      const indexPath = path.join(playgroundsDir, 'index.json');
+      let index: Array<{ name: string; slug: string; description: string; created_at: string }> =
+        [];
+      try {
+        if (existsSync(indexPath)) {
+          index = JSON.parse(readFileSync(indexPath, 'utf-8'));
+        }
+      } catch {
+        /* empty */
+      }
+      const existingSlugs = new Set(index.map((e) => e.slug));
+
+      for (const file of pgEntries) {
+        if (!file.endsWith('.html')) continue;
+        const dest = path.join(playgroundsDir, file);
+        if (existsSync(dest)) continue;
+        copyFileSync(path.join(pgTemplatesDir, file), dest);
+        pgSynced++;
+
+        const slug = file.replace('.html', '');
+        if (!existingSlugs.has(slug)) {
+          const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+          index.push({
+            name,
+            slug,
+            description: `Built-in ${name}`,
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      if (pgSynced > 0) {
+        writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+        console.log(`✓ Seeded ${pgSynced} built-in playground(s)`);
+      }
+    }
+  } catch {
+    // Non-blocking
+  }
+
   apiServer.app.use('/playgrounds', express.static(playgroundsDir));
 
   apiServer.app.get('/api/playgrounds', (_req, res) => {
@@ -1833,6 +1942,48 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     }
   });
   console.log('✓ Playground API available at /api/playgrounds');
+
+  // Workspace skill file read API
+  const skillsWorkDir = path.join(homedir(), '.mama', 'workspace', 'skills');
+  apiServer.app.get('/api/workspace/skills', (_req, res) => {
+    try {
+      if (!existsSync(skillsWorkDir)) {
+        res.json({ skills: [] });
+        return;
+      }
+      const dirs = readdirSync(skillsWorkDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => {
+          const mdPath = path.join(skillsWorkDir, d.name, 'SKILL.md');
+          const exists = existsSync(mdPath);
+          return { id: d.name, path: mdPath, exists };
+        })
+        .filter((s) => s.exists);
+      res.json({ skills: dirs });
+    } catch {
+      res.json({ skills: [] });
+    }
+  });
+
+  apiServer.app.get('/api/workspace/skills/:name/content', (req, res) => {
+    const name = req.params.name as string;
+    if (!name || /[^a-zA-Z0-9_-]/.test(name)) {
+      res.status(400).json({ error: 'Invalid skill name' });
+      return;
+    }
+    const mdPath = path.join(skillsWorkDir, name, 'SKILL.md');
+    try {
+      if (!existsSync(mdPath)) {
+        res.status(404).json({ error: 'Skill not found' });
+        return;
+      }
+      const content = readFileSync(mdPath, 'utf-8');
+      res.json({ content });
+    } catch (err) {
+      res.status(500).json({ error: `Failed to read: ${err}` });
+    }
+  });
+  console.log('✓ Workspace Skills API available at /api/workspace/skills');
 
   // Serve setup page at /setup route
   apiServer.app.get('/setup', (_req, res) => {

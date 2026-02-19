@@ -52,6 +52,22 @@ export interface DelegationResult {
 }
 
 /**
+ * Recorded delegation history entry
+ */
+export interface DelegationHistoryEntry {
+  id: string;
+  fromAgentId: string;
+  toAgentId: string;
+  task: string;
+  background: boolean;
+  status: 'active' | 'completed' | 'failed';
+  startedAt: string;
+  completedAt: string | null;
+  duration: number | null;
+  error: string | null;
+}
+
+/**
  * Callback to send a message to a channel (for notifications)
  */
 export type DelegationNotifyCallback = (message: string) => Promise<void>;
@@ -77,6 +93,11 @@ export class DelegationManager {
 
   /** Active delegations for circular prevention: Set<fromId:toId> */
   private activeDelegations: Set<string> = new Set();
+
+  /** In-memory ring buffer of delegation history (max 100 entries) */
+  private history: DelegationHistoryEntry[] = [];
+  private historyMaxSize = 100;
+  private historyCounter = 0;
 
   constructor(agents: AgentPersonaConfig[], permissionManager?: ToolPermissionManager) {
     this.permissionManager = permissionManager ?? new ToolPermissionManager();
@@ -209,6 +230,21 @@ export class DelegationManager {
     const delegationKey = `${fromAgentId}:${toAgentId}`;
     this.activeDelegations.add(delegationKey);
 
+    // Record history entry
+    const historyEntry: DelegationHistoryEntry = {
+      id: `del_${++this.historyCounter}_${Date.now()}`,
+      fromAgentId,
+      toAgentId,
+      task: task.substring(0, 500),
+      background: request.background,
+      status: 'active',
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      duration: null,
+      error: null,
+    };
+    this.addHistoryEntry(historyEntry);
+
     try {
       // Notify channel about delegation
       const fromAgent = this.agents.get(fromAgentId);
@@ -226,6 +262,11 @@ export class DelegationManager {
       // Execute the delegated task
       const result = await executeCallback(toAgentId, delegationPrompt);
 
+      // Update history
+      historyEntry.status = 'completed';
+      historyEntry.completedAt = new Date().toISOString();
+      historyEntry.duration = result.duration_ms;
+
       return {
         success: true,
         agentLoopResult: result, // Store the full result
@@ -234,6 +275,12 @@ export class DelegationManager {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Update history with failure
+      historyEntry.status = 'failed';
+      historyEntry.completedAt = new Date().toISOString();
+      historyEntry.error = errorMessage;
+
       return {
         success: false,
         error: `Delegation failed: ${errorMessage}`,
@@ -255,6 +302,23 @@ export class DelegationManager {
    */
   getActiveDelegationCount(): number {
     return this.activeDelegations.size;
+  }
+
+  /**
+   * Get recent delegation history.
+   */
+  getRecentDelegations(limit = 20): DelegationHistoryEntry[] {
+    return this.history.slice(-limit).reverse();
+  }
+
+  /**
+   * Add entry to ring buffer, evict oldest if full.
+   */
+  private addHistoryEntry(entry: DelegationHistoryEntry): void {
+    if (this.history.length >= this.historyMaxSize) {
+      this.history.shift();
+    }
+    this.history.push(entry);
   }
 
   /**

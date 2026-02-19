@@ -41,9 +41,23 @@ export interface CheckpointData {
 
 // === Handler Options ===
 
+export interface DelegationHistoryEntry {
+  id: string;
+  fromAgentId: string;
+  toAgentId: string;
+  task: string;
+  background: boolean;
+  status: 'active' | 'completed' | 'failed';
+  startedAt: string;
+  completedAt: string | null;
+  duration: number | null;
+  error: string | null;
+}
+
 export interface GraphHandlerOptions {
   getAgentStates?: () => Map<string, string>;
   getSwarmTasks?: (limit: number) => SwarmTask[];
+  getRecentDelegations?: (limit: number) => DelegationHistoryEntry[];
   applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
   restartMultiAgentAgent?: (agentId: string) => Promise<void>;
 }

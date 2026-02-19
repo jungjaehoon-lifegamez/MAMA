@@ -198,6 +198,22 @@
               </svg>
               <span class="hidden sm:inline">Dashboard</span>
             </button>
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="playground" onclick="window.switchTab && window.switchTab('playground')">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              <span class="hidden sm:inline">Playground</span>
+            </button>
             <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="skills" onclick="window.switchTab && window.switchTab('skills')">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -253,26 +269,22 @@
               </svg>
               <span class="hidden sm:inline">Settings</span>
             </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="playground" onclick="window.switchTab && window.switchTab('playground')">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-              <span class="hidden sm:inline">Playground</span>
-            </button>
           </nav>
 
           <!-- Header Actions -->
           <div class="flex items-center gap-2">
+            <button
+              id="context-help-btn"
+              class="p-2 rounded-full hover:bg-mama-lavender-light transition-colors"
+              onclick="askContextHelp()"
+              title="Ask agent about this tab"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </button>
             <button
               class="p-2 rounded-full hover:bg-mama-lavender-light transition-colors"
               onclick="showTunnelSetup()"
@@ -1129,7 +1141,7 @@
                 </button>
               </div>
               <div class="flex items-center gap-1">
-                <input type="file" id="chat-file-input" class="hidden" accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx" onchange="handleFileSelect(event)" />
+                <input type="file" id="chat-file-input" class="hidden" accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.md,.json,.html,.htm,.xml,.zip,.gz,.ppt,.pptx" onchange="handleFileSelect(event)" />
                 <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach file">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -2087,9 +2099,15 @@
           // Allowed MIME types and extensions (match file input accept attribute)
           const allowedTypes = ['image/', 'application/pdf', 'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'text/plain', 'text/csv', 'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
-          const allowedExts = ['.pdf', '.doc', '.docx', '.txt', '.csv', '.xls', '.xlsx'];
+            'text/plain', 'text/csv', 'text/markdown', 'text/html', 'text/xml',
+            'application/json', 'application/xml',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-powerpoint',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/zip', 'application/gzip'];
+          const allowedExts = ['.pdf', '.doc', '.docx', '.txt', '.csv', '.xls', '.xlsx',
+            '.md', '.json', '.html', '.htm', '.xml', '.zip', '.gz', '.ppt', '.pptx'];
           const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
 
           const isAllowed = allowedTypes.some(t => file.type.startsWith(t)) || allowedExts.includes(ext);
@@ -2099,7 +2117,7 @@
             document.getElementById('chat-file-input').files = dt.files;
             handleFileSelect({ target: { files: [file] } });
           } else {
-            chat.addSystemMessage('Unsupported file type. Allowed: images, PDF, DOC, TXT, CSV, XLS', 'error');
+            chat.addSystemMessage('Unsupported file type. Allowed: images, PDF, DOC, TXT, CSV, XLS, PPT, MD, JSON, HTML, ZIP', 'error');
           }
         });
       }
@@ -2123,9 +2141,22 @@
 
       // Listen for postMessage from playground iframes
       window.addEventListener('message', (event) => {
-        if (!event.data || event.data.type !== 'playground:sendToChat') return;
+        if (!event.data) return;
+
+        // skill:deployed — refresh Skills Tab list
+        if (event.data.type === 'skill:deployed') {
+          if (skills && skills.loadSkills) {
+            skills.loadSkills().then(() => skills.render());
+          }
+          return;
+        }
+
+        if (event.data.type !== 'playground:sendToChat') return;
         const message = event.data.message;
         if (!message || typeof message !== 'string') return;
+
+        // Mark that next response should be relayed back to playground
+        chat.playgroundAwaitingResponse = true;
 
         // Open floating chat if closed
         const panel = document.getElementById('floating-chat-panel');
@@ -2155,6 +2186,75 @@
         }
         console.log('[MAMA] Resources cleaned up');
       });
+
+      // Context-aware help: ? button sends tab-specific prompt to chat
+      const TAB_HELP_PROMPTS = {
+        dashboard: `The user clicked the help button on the MAMA OS Dashboard tab.
+Please explain what this tab shows:
+- Gateway connection status (Discord, Slack, Telegram, Chatwork)
+- MCP server status
+- Multi-Agent swarm overview
+- Token usage and cost tracking
+- Scheduled jobs (Cron) status
+Explain what each section means and what actions the user can take. Be friendly and concise.`,
+
+        skills: `The user clicked the help button on the Skills tab.
+Please explain this tab's features:
+- Installed: List of installed skills (toggle enable/disable, edit, remove)
+- Available: Skills from the Cowork marketplace that can be installed
+- Install from GitHub URL for external plugins
+- [+ New Skill] button to create skills in Skill Lab
+- [Edit] button to modify existing skills in Skill Lab
+Explain what skills are and how they enhance the agent's capabilities. Be friendly and concise.`,
+
+        memory: `The user clicked the help button on the Memory tab.
+Please explain this tab's features:
+- Decision Graph: Visual graph showing relationships between decisions (click nodes for details)
+- Checkpoints: Session checkpoint list (resume previous work)
+- Stats bar: Total decisions, weekly activity, outcome distribution
+- Search: Find past decisions by keyword
+- Save new decisions: Record insights with the + button
+Be friendly and concise.`,
+
+        settings: `The user clicked the help button on the Settings tab.
+Please explain what can be configured here:
+- Gateways: Discord, Slack, Telegram, Chatwork bot connections
+- Agent: Backend model, max turns, timeout, and other agent settings
+- Multi-Agent: Per-agent model, backend, tier, and delegation settings
+- Cron: Create, edit, and run scheduled jobs
+- Token Budget: Set daily token limits and alerts
+Be friendly and concise.`,
+
+        playground: `The user clicked the help button on the Playground tab.
+Please explain this tab's features:
+- Lists interactive HTML playgrounds created by agents
+- Click any playground to run it in an iframe
+- Built-in playgrounds:
+  - Skill Lab: Create and edit skills with presets, LLM-assisted SKILL.md generation, and one-click deploy to Skills tab
+  - Cron Workflow Lab: Visual workflow builder for scheduled tasks
+  - Wave Visualizer: Multi-agent wave delegation simulator with live monitoring
+Be friendly and concise.`
+      };
+
+      window.askContextHelp = function() {
+        const currentTab = STATE.currentTab || 'dashboard';
+        const prompt = TAB_HELP_PROMPTS[currentTab];
+        if (!prompt) return;
+
+        // Open floating chat if closed
+        const panel = document.getElementById('floating-chat-panel');
+        if (panel && panel.classList.contains('hidden')) {
+          const toggle = document.getElementById('floating-chat-toggle');
+          if (toggle) toggle.click();
+        }
+
+        // Set input and send
+        const input = document.getElementById('chat-input');
+        if (input && chat) {
+          input.value = prompt;
+          setTimeout(() => chat.send(), 150);
+        }
+      };
 
       // Register Service Worker for PWA
       if ('serviceWorker' in navigator) {

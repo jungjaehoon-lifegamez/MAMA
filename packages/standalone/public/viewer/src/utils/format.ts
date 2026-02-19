@@ -227,7 +227,7 @@ export function formatAssistantMessage(text: string | null | undefined): string 
   // Then: handle bare media paths not already inside HTML tags
   // Safari-compatible: use capture group instead of lookbehind
   formatted = formatted.replace(
-    /(^|[^"'])(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^\s<"']+\.(png|jpg|jpeg|gif|webp|svg|pdf))/gi,
+    /(^|[^"'])(?:~\/\.mama\/workspace\/media\/(?:outbound|inbound)\/|\/home\/[^/]+\/\.mama\/workspace\/media\/(?:outbound|inbound)\/)([^\s<"']+\.(png|jpe?g|gif|webp|svg|pdf|docx|doc|txt|csv|xlsx|xls|pptx|ppt|md|json|html|htm|xml|zip|gz))/gi,
     (_, prefix, filename) => prefix + buildMediaHtml(filename)
   );
 

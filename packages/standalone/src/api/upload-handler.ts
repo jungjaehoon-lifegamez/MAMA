@@ -24,6 +24,22 @@ const ALLOWED_MIME = new Set([
   'image/webp',
   'image/svg+xml',
   'application/pdf',
+  // Document types
+  'text/plain',
+  'text/csv',
+  'text/markdown',
+  'text/html',
+  'text/xml',
+  'application/json',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/xml',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/zip',
+  'application/gzip',
 ]);
 
 // Ensure directories exist
@@ -49,6 +65,22 @@ const EXT_TO_MIME: Record<string, string> = {
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.pdf': 'application/pdf',
+  // Document types
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.md': 'text/markdown',
+  '.html': 'text/html',
+  '.htm': 'text/html',
+  '.xml': 'text/xml',
+  '.json': 'application/json',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.zip': 'application/zip',
+  '.gz': 'application/gzip',
 };
 
 const upload = multer({
@@ -124,7 +156,32 @@ const MIME_MAP: Record<string, string> = {
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.pdf': 'application/pdf',
+  // Document types
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.md': 'text/markdown',
+  '.html': 'text/html',
+  '.htm': 'text/html',
+  '.xml': 'text/xml',
+  '.json': 'application/json',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.zip': 'application/zip',
+  '.gz': 'application/gzip',
 };
+
+/**
+ * Encode Content-Disposition header for safe Unicode filenames (RFC 5987)
+ */
+function encodeContentDisposition(filename: string): string {
+  const asciiName = filename.replace(/[^\x20-\x7E]/g, '_');
+  const encodedName = encodeURIComponent(filename).replace(/'/g, '%27');
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
+}
 
 function findMediaFile(safeName: string): string | null {
   for (const dir of [OUTBOUND_DIR, INBOUND_DIR]) {
@@ -242,10 +299,11 @@ export function createUploadRouter(): Router {
     const stat = fs.statSync(fullPath);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', stat.size);
-    // SVG can contain scripts — force download to prevent Stored XSS
-    // Check both extension and content type to catch mismatched files
-    if (ext === '.svg' || contentType === 'image/svg+xml') {
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    // SVG/HTML/XML can contain scripts — force download to prevent Stored XSS
+    const dangerousExts = ['.svg', '.html', '.htm', '.xml'];
+    const dangerousTypes = ['image/svg+xml', 'text/html', 'text/xml', 'application/xml'];
+    if (dangerousExts.includes(ext) || dangerousTypes.includes(contentType)) {
+      res.setHeader('Content-Disposition', encodeContentDisposition(safeName));
     }
     fs.createReadStream(fullPath).pipe(res);
   });
@@ -262,7 +320,7 @@ export function createUploadRouter(): Router {
     }
 
     const stat = fs.statSync(fullPath);
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.setHeader('Content-Disposition', encodeContentDisposition(safeName));
     res.setHeader('Content-Length', stat.size);
     fs.createReadStream(fullPath).pipe(res);
   });
