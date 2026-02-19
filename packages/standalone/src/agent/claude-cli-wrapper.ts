@@ -37,14 +37,32 @@ const { DebugLogger } = debugLogger as {
 };
 
 const logger = new DebugLogger('ClaudeCLI');
+
+function supportsThinkingEffortModel(model: string | undefined): boolean {
+  if (!model) {
+    return false;
+  }
+  return model.startsWith('claude-opus-4-6') || model.startsWith('claude-sonnet-4-6');
+}
+
+function normalizeThinkingEffort(
+  model: string | undefined,
+  effort: 'low' | 'medium' | 'high' | 'max'
+): 'low' | 'medium' | 'high' | 'max' {
+  if (effort === 'max' && !model?.startsWith('claude-opus-4-6')) {
+    return 'high';
+  }
+  return effort;
+}
+
 export interface ClaudeCLIWrapperOptions {
   model?: string;
   /**
-   * Effort level for Claude Opus 4.6 adaptive thinking
-   * Only applies when model is 'claude-opus-4-6'
-   * @default 'medium'
+   * Effort level for Claude 4.6 adaptive thinking
+   * Applies to claude-opus-4-6 and claude-sonnet-4-6
+   * 'max' is only available on Opus 4.6
    */
-  effort?: 'low' | 'medium' | 'high';
+  effort?: 'low' | 'medium' | 'high' | 'max';
   sessionId?: string;
   systemPrompt?: string;
   mcpConfigPath?: string;
@@ -162,11 +180,11 @@ export class ClaudeCLIWrapper {
         args.push('--model', model);
       }
 
-      // Add effort level for Opus 4.6 adaptive thinking
-      // Maps to Claude CLI's thinking effort parameter
-      if (this.options.effort && model === 'claude-opus-4-6') {
-        args.push('--thinking-effort', this.options.effort);
-        logger.debug('Effort level:', this.options.effort);
+      // Add effort level for Claude 4.6 adaptive thinking.
+      if (this.options.effort && supportsThinkingEffortModel(model)) {
+        const effort = normalizeThinkingEffort(model, this.options.effort);
+        args.push('--effort', effort);
+        logger.debug('Effort level:', effort);
       }
 
       // Always inject system prompt (contains DB history for memory)

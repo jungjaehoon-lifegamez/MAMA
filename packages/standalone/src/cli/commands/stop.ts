@@ -16,6 +16,15 @@ export async function stopCommand(): Promise<void> {
   // Check if running
   const runningInfo = await isDaemonRunning();
   if (!runningInfo) {
+    // PID file missing — but a daemon process may still be holding the port.
+    // Attempt port-based cleanup before giving up.
+    console.log('⚠️  PID file not found. Checking for orphaned processes...');
+    const cleaned = await killProcessesOnPorts([3847, 3849]);
+    const orphans = await killAllMamaDaemons();
+    if (cleaned || orphans) {
+      console.log('✓ Orphaned MAMA processes cleaned up.\n');
+      process.exit(0);
+    }
     console.log('⚠️  MAMA is not running.\n');
     process.exit(1);
   }
@@ -137,8 +146,10 @@ async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
 
 /**
  * Kill processes occupying specified ports (cleanup for zombie MAMA processes)
+ * @returns true if any processes were killed
  */
-export async function killProcessesOnPorts(ports: number[]): Promise<void> {
+export async function killProcessesOnPorts(ports: number[]): Promise<boolean> {
+  let killed = false;
   for (const port of ports) {
     try {
       const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
@@ -157,6 +168,7 @@ export async function killProcessesOnPorts(ports: number[]): Promise<void> {
       }
 
       if (pids.length > 0) {
+        killed = true;
         await sleep(1000);
         for (const pid of pids) {
           if (isProcessRunning(pid)) {
@@ -173,6 +185,45 @@ export async function killProcessesOnPorts(ports: number[]): Promise<void> {
       /* lsof not available or no processes */
     }
   }
+  return killed;
+}
+
+/**
+ * Kill orphaned `mama daemon` processes that have no PID file tracking them.
+ * @returns true if any processes were killed
+ */
+export async function killAllMamaDaemons(): Promise<boolean> {
+  const processes = listProcesses();
+  const targets = processes.filter((p) => {
+    if (p.pid === process.pid) return false;
+    return p.command.includes('mama daemon');
+  });
+
+  if (targets.length === 0) return false;
+
+  console.log(`Found ${targets.length} orphaned daemon process(es)...`);
+
+  for (const proc of targets) {
+    try {
+      process.kill(proc.pid, 'SIGTERM');
+    } catch {
+      // ignore
+    }
+  }
+
+  await sleep(2000);
+
+  for (const proc of targets) {
+    if (isProcessRunning(proc.pid)) {
+      try {
+        process.kill(proc.pid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return true;
 }
 
 function listProcesses(): Array<{ pid: number; command: string }> {
