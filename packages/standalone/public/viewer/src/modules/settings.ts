@@ -1183,7 +1183,12 @@ export class SettingsModule {
                 <span>Delegate</span>
               </label>
               <label class="flex items-center gap-0.5 cursor-pointer">
-                <input type="checkbox" id="agent-alltools-${escapeAttr(agentId)}" class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400" ${hasAllTools ? 'checked' : ''}>
+                <input
+                  type="checkbox"
+                  id="agent-alltools-${escapeAttr(agentId)}"
+                  class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400"
+                  ${hasAllTools ? 'checked' : ''}
+                >
                 <span>All Tools</span>
               </label>
             </div>

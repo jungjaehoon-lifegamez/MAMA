@@ -166,7 +166,9 @@ export class WorkflowEngine extends EventEmitter {
 
   private parseWorkflowPlanContent(content: string): WorkflowPlan | null {
     const trimmed = content.trim();
-    if (!trimmed) return null;
+    if (!trimmed) {
+      return null;
+    }
 
     const directParse = (): WorkflowPlan | null => {
       try {
@@ -318,7 +320,9 @@ export class WorkflowEngine extends EventEmitter {
 
     const queue: string[] = [];
     for (const [id, degree] of inDegree) {
-      if (degree === 0) queue.push(id);
+      if (degree === 0) {
+        queue.push(id);
+      }
     }
 
     const sorted: WorkflowStep[] = [];
@@ -332,7 +336,9 @@ export class WorkflowEngine extends EventEmitter {
       for (const neighbor of adjacency.get(id) ?? []) {
         const newDegree = (inDegree.get(neighbor) ?? 1) - 1;
         inDegree.set(neighbor, newDegree);
-        if (newDegree === 0) queue.push(neighbor);
+        if (newDegree === 0) {
+          queue.push(neighbor);
+        }
       }
     }
 
@@ -344,7 +350,9 @@ export class WorkflowEngine extends EventEmitter {
    */
   buildExecutionLevels(steps: WorkflowStep[]): WorkflowStep[][] {
     const sorted = this.topologicalSort(steps);
-    if (!sorted) return [];
+    if (!sorted) {
+      return [];
+    }
 
     const levelMap = new Map<string, number>();
 
@@ -353,7 +361,9 @@ export class WorkflowEngine extends EventEmitter {
       if (step.depends_on) {
         for (const dep of step.depends_on) {
           const depLevel = levelMap.get(dep) ?? 0;
-          if (depLevel > maxDepLevel) maxDepLevel = depLevel;
+          if (depLevel > maxDepLevel) {
+            maxDepLevel = depLevel;
+          }
         }
       }
       levelMap.set(step.id, maxDepLevel + 1);
@@ -405,7 +415,9 @@ export class WorkflowEngine extends EventEmitter {
 
     try {
       for (const level of levels) {
-        if (executionState.cancelled) break;
+        if (executionState.cancelled) {
+          break;
+        }
 
         const levelResults = await Promise.allSettled(
           level.map((step) =>
@@ -454,7 +466,9 @@ export class WorkflowEngine extends EventEmitter {
           }
         }
 
-        if (execution.status === 'failed') break;
+        if (execution.status === 'failed') {
+          break;
+        }
       }
 
       if (executionState.cancelled && execution.status === 'running') {
@@ -540,7 +554,9 @@ export class WorkflowEngine extends EventEmitter {
       const result = await executeStep(step.agent, resolvedPrompt, timeout);
       const duration_ms = Date.now() - start;
 
-      if (completedCounter) completedCounter.count++;
+      if (completedCounter) {
+        completedCounter.count++;
+      }
       this.emitProgress({
         type: 'step-completed',
         executionId,
@@ -565,7 +581,9 @@ export class WorkflowEngine extends EventEmitter {
       const duration_ms = Date.now() - start;
       const errorMsg = error instanceof Error ? error.message : String(error);
 
-      if (completedCounter) completedCounter.count++;
+      if (completedCounter) {
+        completedCounter.count++;
+      }
       this.emitProgress({
         type: 'step-failed',
         executionId,
