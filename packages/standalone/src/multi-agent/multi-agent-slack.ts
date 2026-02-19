@@ -486,6 +486,24 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       );
 
       if (workflowResult) {
+        if (workflowResult.failed) {
+          // Workflow plan parsed but execution failed — feed error back to Conductor
+          this.logger.warn(
+            `[MultiAgentSlack] Workflow failed: ${workflowResult.failed}, sending feedback to conductor`
+          );
+          const feedback = `[SYSTEM] Your workflow_plan failed to execute.\nReason: ${workflowResult.failed}\nPlease adjust and retry, or respond without a workflow_plan.`;
+          const retryResult = await process!.sendMessage(feedback);
+          const cleanedRetry = await this.executeTextToolCalls(retryResult.response);
+          const formattedResponse = this.formatAgentResponse(agent, cleanedRetry);
+          return {
+            agentId,
+            agent,
+            content: formattedResponse,
+            rawContent: cleanedRetry,
+            duration: result.duration_ms,
+          };
+        }
+
         const display = workflowResult.directMessage
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;

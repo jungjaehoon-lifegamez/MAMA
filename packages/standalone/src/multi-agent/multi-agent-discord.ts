@@ -805,6 +805,23 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       );
 
       if (workflowResult) {
+        if (workflowResult.failed) {
+          this.logger.warn(
+            `[MultiAgentDiscord] Workflow failed: ${workflowResult.failed}, sending feedback to conductor`
+          );
+          const feedback = `[SYSTEM] Your workflow_plan failed to execute.\nReason: ${workflowResult.failed}\nPlease adjust and retry, or respond without a workflow_plan.`;
+          const retryResult = await agentProcess!.sendMessage(feedback);
+          const cleanedRetry = await this.executeAgentToolCalls(agentId, retryResult.response);
+          const formattedResponse = this.formatAgentResponse(agent, cleanedRetry);
+          return {
+            agentId,
+            agent,
+            content: formattedResponse,
+            rawContent: cleanedRetry,
+            duration: Date.now() - workflowStart + (result.duration_ms ?? 0),
+          };
+        }
+
         const display = workflowResult.directMessage
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
