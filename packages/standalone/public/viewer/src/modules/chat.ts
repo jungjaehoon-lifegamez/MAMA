@@ -114,6 +114,15 @@ export class ChatModule {
   _onResizeTouchEnd: (() => void) | null = null;
   _onEscapeKey: ((event: KeyboardEvent) => void) | null = null;
 
+  /** Active tool-status group element (single line, in-place updates) */
+  private toolStatusGroup: HTMLDivElement | null = null;
+  /** Completed tool names in current group */
+  private toolStatusCompleted: string[] = [];
+  /** Currently running tool name */
+  private toolStatusCurrentName: string | null = null;
+  /** Current tool detail string (for rendering) */
+  private toolStatusCurrentDetail = '';
+
   constructor(
     memoryModule: {
       showRelatedForMessage: (message: string) => void;
@@ -313,6 +322,7 @@ export class ChatModule {
       case 'stream_end':
         this.hideTypingIndicator();
         this.finalizeStreamMessage();
+        this.resetToolStatusGroup();
         break;
 
       case 'error':
@@ -753,17 +763,10 @@ export class ChatModule {
   }
 
   /**
-   * Add tool usage card
+   * Get tool icon by name
    */
-  addToolCard(toolName: string, toolId: string, input: ChatToolInput | null): void {
-    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
-    if (!container) {
-      return;
-    }
-    this.removePlaceholder();
-
-    // Tool icon mapping
-    const iconMap = {
+  private getToolIcon(toolName: string): string {
+    const iconMap: Record<string, string> = {
       Read: '📄',
       Write: '✏️',
       Bash: '💻',
@@ -774,74 +777,101 @@ export class ChatModule {
       WebFetch: '🌐',
       WebSearch: '🔎',
     };
-    const icon = iconMap[toolName] || '🔧';
+    return iconMap[toolName] || '🔧';
+  }
 
-    // Extract file path for Read tool
-    let detail = '';
+  /**
+   * Get short detail label for a tool invocation
+   */
+  private getToolDetail(toolName: string, input: ChatToolInput | null): string {
     if (toolName === 'Read' && input?.file_path) {
-      const fileName = input.file_path.split('/').pop();
-      detail = `<div class="tool-detail">${escapeHtml(fileName)}</div>`;
-    } else if (toolName === 'Bash' && input?.command) {
-      const command = String(input.command);
-      detail = `<div class="tool-detail">${escapeHtml(command.substring(0, 50))}${
-        command.length > 50 ? '...' : ''
-      }</div>`;
+      return `(${escapeHtml(input.file_path.split('/').pop())})`;
+    }
+    if (toolName === 'Bash' && input?.command) {
+      const cmd = String(input.command);
+      return `(${escapeHtml(cmd.substring(0, 40))}${cmd.length > 40 ? '…' : ''})`;
+    }
+    return '';
+  }
+
+  /**
+   * Render the tool-status group HTML in-place
+   */
+  private renderToolStatusGroup(): void {
+    if (!this.toolStatusGroup) return;
+
+    const parts: string[] = [];
+
+    // Completed tools: ✓ icon name
+    for (const name of this.toolStatusCompleted) {
+      parts.push(
+        `<span style="color:#4caf50">✓</span> ${this.getToolIcon(name)} ${escapeHtml(name)}`
+      );
     }
 
-    const cardEl = document.createElement('div');
-    cardEl.className = 'tool-card loading';
-    cardEl.dataset.collapsed = 'true';
-    cardEl.dataset.toolId = toolId;
-    cardEl.innerHTML = `
-      <div class="tool-header" data-tool-toggle="true">
-        <span class="tool-icon">${icon}</span>
-        <span class="tool-name">${escapeHtml(toolName)}</span>
-        <span class="tool-spinner">⏳</span>
-      </div>
-      ${detail}
-    `;
-
-    // Bind click handler safely (avoid inline onclick with string interpolation)
-    const header = cardEl.querySelector('.tool-header');
-    if (header) {
-      header.addEventListener('click', () => this.toggleToolCard(toolId));
+    // Current running tool: ⏳ icon name(detail)
+    if (this.toolStatusCurrentName) {
+      parts.push(
+        `<span class="tool-status-spinner">⏳</span> ${this.getToolIcon(this.toolStatusCurrentName)} <b>${escapeHtml(this.toolStatusCurrentName)}</b>${this.toolStatusCurrentDetail}`
+      );
     }
 
-    container.appendChild(cardEl);
+    this.toolStatusGroup.innerHTML = parts.join(' &nbsp; ');
+  }
+
+  /**
+   * Reset tool status group (call when assistant turn ends)
+   */
+  private resetToolStatusGroup(): void {
+    this.toolStatusGroup = null;
+    this.toolStatusCompleted = [];
+    this.toolStatusCurrentName = null;
+    this.toolStatusCurrentDetail = '';
+  }
+
+  /**
+   * Add tool usage — single in-place status line
+   */
+  addToolCard(toolName: string, _toolId: string, input: ChatToolInput | null): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) return;
+    this.removePlaceholder();
+
+    // Create group element on first tool call
+    if (!this.toolStatusGroup) {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'tool-status-group';
+      groupEl.style.cssText =
+        'padding:4px 12px;margin:2px 0;font-size:0.85em;color:#aaa;line-height:1.6;white-space:nowrap;overflow-x:auto;';
+      container.appendChild(groupEl);
+      this.toolStatusGroup = groupEl;
+      this.toolStatusCompleted = [];
+    }
+
+    // Move previous current tool to completed
+    if (this.toolStatusCurrentName) {
+      this.toolStatusCompleted.push(this.toolStatusCurrentName);
+    }
+
+    // Set new current tool
+    this.toolStatusCurrentName = toolName;
+    this.toolStatusCurrentDetail = this.getToolDetail(toolName, input);
+
+    this.renderToolStatusGroup();
     scrollToBottom(container);
   }
 
   /**
-   * Complete tool card (mark as finished)
+   * Complete tool card (mark current as finished)
    */
   completeToolCard(_index: number): void {
-    // Find the most recent loading tool card
-    const loadingCards = document.querySelectorAll('.tool-card.loading');
-    if (loadingCards.length > 0) {
-      const lastCard = loadingCards[loadingCards.length - 1];
-      lastCard.classList.remove('loading');
-      lastCard.classList.add('completed');
+    if (!this.toolStatusCurrentName) return;
 
-      // Replace spinner with checkmark
-      const spinner = lastCard.querySelector('.tool-spinner');
-      if (spinner) {
-        spinner.textContent = '✓';
-        spinner.classList.add('checkmark');
-      }
-    }
-  }
+    this.toolStatusCompleted.push(this.toolStatusCurrentName);
+    this.toolStatusCurrentName = null;
+    this.toolStatusCurrentDetail = '';
 
-  /**
-   * Toggle tool card collapsed/expanded state
-   */
-  toggleToolCard(toolId: string): void {
-    const card = document.querySelector(`.tool-card[data-tool-id="${CSS.escape(toolId)}"]`);
-    if (!card) {
-      return;
-    }
-    const toolCard = card as HTMLElement;
-    const isCollapsed = toolCard.dataset.collapsed === 'true';
-    toolCard.dataset.collapsed = isCollapsed ? 'false' : 'true';
+    this.renderToolStatusGroup();
   }
 
   /**
