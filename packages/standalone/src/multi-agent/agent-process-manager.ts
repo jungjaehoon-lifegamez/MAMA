@@ -448,7 +448,7 @@ export class AgentProcessManager extends EventEmitter {
     let delegationPrompt = '';
     let reportBackPrompt = '';
     const allAgents = Object.entries(this.config.agents)
-      .filter(([, cfg]) => cfg.enabled !== false)
+      .filter(([id, cfg]) => cfg.enabled !== false && id !== agentId) // Exclude self
       .map(([id, cfg]) => ({ id, ...cfg }));
 
     if (this.permissionManager.canDelegate(agent)) {
@@ -529,7 +529,12 @@ ${this.buildSkillsPrompt()}
     }
 
     const hasTierSignal = typeof agentConfig.tier === 'number';
-    if (agentConfig.tier === 1 && agentConfig.can_delegate === true) {
+    if (
+      agentConfig.tier === 1 &&
+      agentConfig.can_delegate === true &&
+      agentConfig.is_planning_agent !== false &&
+      agentConfig.isPlanningAgent !== false
+    ) {
       return true;
     }
 
@@ -588,6 +593,7 @@ ${skillBlocks.join('\n\n---\n\n')}
       return await buildBmadPromptBlock(process.cwd());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error('[AgentProcessManager] BMAD prompt block generation failed:', message);
       return `[BMAD_LOAD_ERROR: ${message}]`;
     }
   }

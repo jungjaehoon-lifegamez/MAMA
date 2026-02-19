@@ -315,7 +315,7 @@ Steps: `analyze` + `compute_output_path` → `design` → `review` (optional) �
 - `compute_output_path`: "Read bmad/config.yaml and return output path for architecture document."
 - `design`: depends_on analyze → "Design the architecture: components, data flow, tech stack, APIs."
 - `review`: depends_on design, optional=true → "Review the architecture for scalability, security, and maintainability risks."
-- `write-doc`: depends_on design, compute_output_path → "Write the architecture document to `{{compute_output_path.result}}`. If review feedback is available, incorporate it: {{review.result}}"
+- `write-doc`: depends_on design, compute_output_path → "Write the architecture document to `{{compute_output_path.result}}`. Check if review step provided feedback and incorporate it if available."
 
 ### Sprint Planning (epic breakdown → write)
 
