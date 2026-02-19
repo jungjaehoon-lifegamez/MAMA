@@ -456,39 +456,85 @@ export class AgentLoop {
       logger.debug('⚙️ Gateway-only mode');
     }
 
-    // Build system prompt
-    const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
-    // Only include Gateway Tools prompt if using Gateway mode
-    const gatewayToolsPrompt = useGatewayMode ? getGatewayToolsPrompt() : '';
-    let defaultSystemPrompt = gatewayToolsPrompt
-      ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
-      : basePrompt;
-
-    // Monitor and enforce prompt size limits
+    // Build system prompt with layered truncation support
     const monitor = new PromptSizeMonitor();
-    const promptLayers: PromptLayer[] = [
-      { name: 'base', content: basePrompt, priority: 1 },
-      ...(gatewayToolsPrompt
-        ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
-        : []),
-    ];
+    let promptLayers: PromptLayer[];
+
+    if (options.systemPrompt) {
+      // Custom system prompt (e.g., multi-agent): treat as a single critical layer
+      promptLayers = [{ name: 'custom', content: options.systemPrompt, priority: 1 }];
+    } else {
+      // Composed prompt: build layers with individual priorities for graceful truncation
+      // Priority 1 (never cut): CLAUDE.md base instructions
+      // Priority 2 (cut if extreme): personas (SOUL, IDENTITY, USER) + gateway tools
+      // Priority 3 (cut first): context prompt + skills + onboarding
+      const mamaHome = join(homedir(), '.mama');
+      const claudeMd = loadSystemPrompt();
+      const personaFiles = ['SOUL.md', 'IDENTITY.md', 'USER.md'];
+      const personaParts: string[] = [];
+      for (const file of personaFiles) {
+        const p = join(mamaHome, file);
+        if (existsSync(p)) personaParts.push(readFileSync(p, 'utf-8'));
+      }
+      const skillBlocks = loadInstalledSkills();
+      const onboardingPath = join(mamaHome, 'ONBOARDING.md');
+      const onboardingContent = existsSync(onboardingPath)
+        ? readFileSync(onboardingPath, 'utf-8')
+        : '';
+
+      promptLayers = [
+        { name: 'claudeMd', content: claudeMd, priority: 1 },
+        ...(personaParts.length > 0
+          ? [
+              {
+                name: 'personas',
+                content: personaParts.join('\n\n---\n\n'),
+                priority: 2,
+              } as PromptLayer,
+            ]
+          : []),
+        ...(skillBlocks.length > 0
+          ? [
+              {
+                name: 'skills',
+                content: skillBlocks.join('\n\n---\n\n'),
+                priority: 3,
+              } as PromptLayer,
+            ]
+          : []),
+        ...(onboardingContent
+          ? [{ name: 'onboarding', content: onboardingContent, priority: 4 } as PromptLayer]
+          : []),
+      ];
+    }
+
+    if (useGatewayMode) {
+      const gatewayToolsPrompt = getGatewayToolsPrompt();
+      if (gatewayToolsPrompt) {
+        promptLayers.push({ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 });
+      }
+    }
+
     const checkResult = monitor.check(promptLayers);
     if (checkResult.warning) {
       logger.warn(checkResult.warning);
     }
-    // Actually enforce truncation if over budget
+    // Enforce truncation if over budget (priority > 1 layers trimmed first)
     if (!checkResult.withinBudget) {
       const { layers: trimmedLayers, result: enforceResult } = monitor.enforce(promptLayers);
       if (enforceResult.truncatedLayers.length > 0) {
         logger.warn(`Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`);
       }
-      const trimmedBase = trimmedLayers.find((l) => l.name === 'base')?.content || basePrompt;
-      const trimmedTools = trimmedLayers.find((l) => l.name === 'gatewayTools')?.content || '';
-      defaultSystemPrompt = trimmedTools ? `${trimmedBase}\n\n---\n\n${trimmedTools}` : trimmedBase;
+      promptLayers = trimmedLayers;
       logger.debug(
-        `System prompt truncated: ${checkResult.totalChars} → ${defaultSystemPrompt.length} chars`
+        `System prompt truncated: ${checkResult.totalChars} → ${enforceResult.totalChars} chars`
       );
     }
+
+    const defaultSystemPrompt = promptLayers
+      .filter((l) => l.content.length > 0)
+      .map((l) => l.content)
+      .join('\n\n---\n\n');
 
     // Choose backend (default: claude)
     this.backend = options.backend!;
@@ -524,6 +570,8 @@ export class AgentLoop {
         dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
+        // Pass configured timeout (default in PersistentCLI: 120s — too short for complex tasks)
+        requestTimeout: options.timeoutMs,
       });
       this.agent = this.persistentCLI;
       logger.debug('🚀 Claude PersistentCLI mode enabled - faster responses');
