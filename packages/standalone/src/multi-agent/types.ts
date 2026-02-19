@@ -78,6 +78,13 @@ export interface AgentPersonaConfig {
   model?: string;
 
   /**
+   * Effort level for Claude 4.6 adaptive thinking
+   * 'max' is only available on Opus 4.6
+   * If not specified, uses the global agent.effort setting
+   */
+  effort?: 'low' | 'medium' | 'high' | 'max';
+
+  /**
    * Runtime backend for this agent.
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex-mcp': Codex via MCP protocol
@@ -119,6 +126,18 @@ export interface AgentPersonaConfig {
    * @default false
    */
   can_delegate?: boolean;
+
+  /**
+   * Marks this agent as the planning orchestrator (BMAD context injection target)
+   * @default false
+   */
+  is_planning_agent?: boolean;
+
+  /**
+   * CamelCase alias for is_planning_agent
+   * @default false
+   */
+  isPlanningAgent?: boolean;
 
   /**
    * Enable automatic task continuation when response is incomplete
@@ -301,10 +320,14 @@ export interface MultiAgentRuntimeOptions {
    */
   backend?: 'claude' | 'codex-mcp' | 'gemini';
   model?: string;
+  /** Effort level for Claude 4.6 adaptive thinking */
+  effort?: 'low' | 'medium' | 'high' | 'max';
   /** Timeout in milliseconds for each agent process request */
   requestTimeout?: number;
   /** Codex working directory (for codex-mcp backend) */
   codexCwd?: string;
+  /** Explicit Codex binary/command path (for codex-mcp backend) */
+  codexCommand?: string;
   /** Codex sandbox mode (for codex-mcp backend) */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
 }
