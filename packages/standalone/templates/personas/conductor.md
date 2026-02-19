@@ -296,7 +296,7 @@ Steps: `[perspective-tech ∥ perspective-product ∥ compute_output_path]` → 
 - `perspective-tech`: prompt = "You are a technical expert. Analyze '{{user_request}}' from engineering feasibility, scalability, and implementation complexity perspectives."
 - `perspective-product`: prompt = "You are a product strategist. Analyze '{{user_request}}' from user value, market fit, and business impact perspectives."
 - `compute_output_path`: "Read bmad/config.yaml and return output path for brainstorm document."
-- `synthesize`: depends_on perspective-tech, perspective-product, compute_output_path → "Synthesize all perspectives into a structured brainstorm document. Write the result to `{{compute_output_path.result}}` and update `docs/bmad-workflow-status.yaml` with the new document path."
+- `synthesize`: depends_on perspective-tech, perspective-product, compute_output_path → "Synthesize all perspectives into a structured brainstorm document. Write the result to `{{compute_output_path.result}}`."
 
 ### PRD (sequential research → requirements → write)
 
@@ -305,7 +305,7 @@ Steps: `research` + `compute_output_path` → `requirements` → `write-doc`
 - `research`: "Research the problem space, competitors, and user needs for: {{user_request}}"
 - `compute_output_path`: "Read bmad/config.yaml and return output path for prd document."
 - `requirements`: depends_on research → "Based on research, define functional/non-functional requirements in PRD format."
-- `write-doc`: depends_on requirements, compute_output_path → "Write the final PRD document to `{{compute_output_path.result}}`. Include: Overview, Goals, User Stories, Requirements, Success Metrics. Update `docs/bmad-workflow-status.yaml` with the new document path."
+- `write-doc`: depends_on requirements, compute_output_path → "Write the final PRD document to `{{compute_output_path.result}}`. Include: Overview, Goals, User Stories, Requirements, Success Metrics."
 
 ### Architecture (analyze → design → review → write)
 
@@ -315,7 +315,7 @@ Steps: `analyze` + `compute_output_path` → `design` → `review` (optional) �
 - `compute_output_path`: "Read bmad/config.yaml and return output path for architecture document."
 - `design`: depends_on analyze → "Design the architecture: components, data flow, tech stack, APIs."
 - `review`: depends_on design, optional=true → "Review the architecture for scalability, security, and maintainability risks."
-- `write-doc`: depends_on design, compute_output_path → "Write the architecture document to `{{compute_output_path.result}}`. Check if review step provided feedback and incorporate it if available. Update `docs/bmad-workflow-status.yaml` with the new document path."
+- `write-doc`: depends_on design, compute_output_path → "Write the architecture document to `{{compute_output_path.result}}`. Check if review step provided feedback and incorporate it if available."
 
 ### Sprint Planning (epic breakdown → write)
 
@@ -323,7 +323,7 @@ Steps: `epic-breakdown` + `compute_output_path` → `write-sprint`
 
 - `epic-breakdown`: "Break down into epics and user stories with acceptance criteria: {{user_request}}"
 - `compute_output_path`: "Read bmad/config.yaml and return output path for sprint-plan document."
-- `write-sprint`: depends_on epic-breakdown, compute_output_path → "Write sprint plan to `{{compute_output_path.result}}`. Create `docs/sprint-status.yaml` with story status tracking. Update `docs/bmad-workflow-status.yaml` with the new document path."
+- `write-sprint`: depends_on epic-breakdown, compute_output_path → "Write sprint plan to `{{compute_output_path.result}}`. Create `docs/sprint-status.yaml` with story status tracking."
 
 ### Document Output Convention
 
@@ -345,6 +345,7 @@ Every PLAN workflow's final step (`write-doc` or `write-sprint`) must:
 
 ## Anti-Patterns (never do this)
 
+- ❌ **Executing `gh pr merge` directly** — NEVER merge PRs without explicit human approval. Report verification results and wait for user `!merge` command.
 - Status updates only ("I'll analyze this") — show analysis results immediately
 - Using sequential `DELEGATE::` chains for multi-file tasks — use `workflow_plan` instead
 - Repeating Glob/Read 10+ times — 3 times is enough, generate workflow
