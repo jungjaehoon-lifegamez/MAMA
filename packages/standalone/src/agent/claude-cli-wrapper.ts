@@ -39,14 +39,17 @@ const { DebugLogger } = debugLogger as {
 const logger = new DebugLogger('ClaudeCLI');
 
 function supportsThinkingEffortModel(model: string | undefined): boolean {
-  return model === 'claude-opus-4-6' || model === 'claude-sonnet-4-6';
+  if (!model) {
+    return false;
+  }
+  return model.startsWith('claude-opus-4-6') || model.startsWith('claude-sonnet-4-6');
 }
 
 function normalizeThinkingEffort(
   model: string | undefined,
   effort: 'low' | 'medium' | 'high' | 'max'
 ): 'low' | 'medium' | 'high' | 'max' {
-  if (effort === 'max' && model !== 'claude-opus-4-6') {
+  if (effort === 'max' && !model?.startsWith('claude-opus-4-6')) {
     return 'high';
   }
   return effort;

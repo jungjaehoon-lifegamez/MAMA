@@ -149,6 +149,8 @@ describe('Story BMAD-001: BMAD template loading and context', () => {
     });
   });
 
+  // Story: BMAD-001 - BMAD template loading
+  // AC: When no config exists, defaults are returned
   describe('AC6: buildBmadContext', () => {
     it('should return project config when exists', async () => {
       mkdirSync(join(tempDir, 'bmad'), { recursive: true });

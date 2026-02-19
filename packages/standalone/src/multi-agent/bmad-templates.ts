@@ -201,7 +201,6 @@ export async function buildBmadPromptBlock(projectRoot?: string): Promise<string
 
 async function loadYamlFile<T>(filePath: string): Promise<T | null> {
   try {
-    await access(filePath);
     const content = await readFile(filePath, 'utf-8');
     const parsed = yaml.load(content) as T;
     return parsed ?? null;
@@ -219,12 +218,15 @@ function getLocalDateString(): string {
 }
 
 function sanitizeFileSegment(value: string, fallback: string): string {
+  // Prevent path traversal: strip any /, .., and non-alphanumeric chars (except -_)
   const sanitized = value
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/(^-+)|(-+$)/g, '');
+    .replace(/\.\./g, '') // Remove ..
+    .replace(/\//g, '') // Remove /
+    .replace(/[^a-z0-9_-]+/g, '-') // Replace invalid chars with -
+    .replace(/-+/g, '-') // Collapse multiple dashes
+    .replace(/(^-+)|(-+$)/g, ''); // Trim leading/trailing dashes
   return sanitized || fallback;
 }
 
@@ -244,7 +246,6 @@ function resolveCurrentDir(): string {
 
 async function tryReadFile(filePath: string): Promise<string | null> {
   try {
-    await access(filePath);
     return await readFile(filePath, 'utf-8');
   } catch {
     return null;
