@@ -703,7 +703,7 @@ export async function handleSaveMultiAgent(input: {
           name: agent.name,
           display_name: agent.name,
           tier: agent.tier as 1 | 2 | 3,
-          model: agent.model || 'claude-sonnet-4-5-20250929',
+          model: agent.model || 'claude-sonnet-4-6',
           enabled: agent.enabled,
           trigger_prefix: `!${id.toLowerCase()}`,
           persona_file: `~/.mama/personas/${id}.md`,

@@ -13,6 +13,7 @@ export interface AgentRuntimeProcess {
   sendMessage(content: string, callbacks?: ClaudePromptCallbacks): Promise<ClaudePromptResult>;
   isReady(): boolean;
   stop(): void;
+  getSessionId?(): string;
   on(event: 'idle' | 'close' | 'error', listener: (...args: unknown[]) => void): this;
 }
 
@@ -23,6 +24,7 @@ export interface CodexRuntimeProcessOptions {
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   requestTimeout?: number;
   codexHome?: string;
+  command?: string;
   // Legacy options (from old CLI approach - some may not be supported in MCP mode)
   profile?: string;
   ephemeral?: boolean;
@@ -49,6 +51,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       systemPrompt: options.systemPrompt,
       cwd: options.cwd,
       sandbox: options.sandbox,
+      command: options.command,
       compactPrompt: 'Summarize the conversation concisely, preserving key decisions and context.',
       timeoutMs: options.requestTimeout,
     };
@@ -110,5 +113,9 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     this.state = 'dead';
     this.wrapper.stop();
     this.emit('close', 0);
+  }
+
+  getSessionId(): string {
+    return this.wrapper.getSessionId();
   }
 }

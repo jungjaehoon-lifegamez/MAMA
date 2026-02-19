@@ -19,7 +19,7 @@ import { AgentError } from './types.js';
 /**
  * Default configuration
  */
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+// Model must be provided via config - no hardcoded default
 const DEFAULT_MAX_TOKENS = 4096;
 
 /**
@@ -107,7 +107,7 @@ export class ClaudeClient {
     } = {}
   ): Promise<ClaudeResponse> {
     const client = await this.getClient();
-    const model = options.model ?? DEFAULT_MODEL;
+    const model = options.model || ClaudeClient.getDefaultModel();
     const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 
     console.log(
@@ -277,7 +277,7 @@ export class ClaudeClient {
    * Get the default model name
    */
   static getDefaultModel(): string {
-    return DEFAULT_MODEL;
+    return 'claude-sonnet-4-6';
   }
 
   /**

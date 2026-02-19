@@ -585,7 +585,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     // Inject agent availability status, active work, and channel context (Phase 2 + 3)
     const agentStatus = this.buildAgentStatusSection(agentId);
     const workSection = this.workTracker.buildWorkSection(agentId);
-    const channelInfo = `## Current Channel\nDiscord channel_id: ${context.channelId}`;
+    const channelInfo = `## Current Channel\nPlatform: Discord\nchannel_id: ${context.channelId}\nUse **discord_send** to send messages/files to this channel.`;
     const dynamicContextRaw = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
     const dynamicContext =
       dynamicContextRaw.length > MAX_DYNAMIC_CONTEXT_CHARS
@@ -805,6 +805,23 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       );
 
       if (workflowResult) {
+        if (workflowResult.failed) {
+          this.logger.warn(
+            `[MultiAgentDiscord] Workflow failed: ${workflowResult.failed}, sending feedback to conductor`
+          );
+          const feedback = `[SYSTEM] Your workflow_plan failed to execute.\nReason: ${workflowResult.failed}\nPlease adjust and retry, or respond without a workflow_plan.`;
+          const retryResult = await agentProcess!.sendMessage(feedback);
+          const cleanedRetry = await this.executeAgentToolCalls(agentId, retryResult.response);
+          const formattedResponse = this.formatAgentResponse(agent, cleanedRetry);
+          return {
+            agentId,
+            agent,
+            content: formattedResponse,
+            rawContent: cleanedRetry,
+            duration: Date.now() - workflowStart + (result.duration_ms ?? 0),
+          };
+        }
+
         const display = workflowResult.directMessage
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
@@ -855,7 +872,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         };
       }
 
-      const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
+      // Strip any workflow/council plan JSON that wasn't executed
+      let responseForProcessing = result.response;
+      if (this.workflowEngine?.isEnabled()) {
+        responseForProcessing = this.workflowEngine.extractNonPlanContent(responseForProcessing);
+      }
+      if (this.councilEngine) {
+        responseForProcessing = this.councilEngine.extractNonPlanContent(responseForProcessing);
+      }
+
+      const cleanedResponse = await this.executeAgentToolCalls(agentId, responseForProcessing);
 
       // Detect API error responses — skip mention resolution and delegation to prevent error loops
       const isErrorResponse = /API Error:\s*\d{3}\b/.test(cleanedResponse);

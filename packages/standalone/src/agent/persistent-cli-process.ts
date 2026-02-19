@@ -42,6 +42,23 @@ const { DebugLogger } = debugLogger as {
 const persistentLogger = new DebugLogger('PersistentCLI');
 const poolLogger = new DebugLogger('ProcessPool');
 
+function supportsThinkingEffortModel(model: string | undefined): boolean {
+  if (!model) {
+    return false;
+  }
+  return model.startsWith('claude-opus-4-6') || model.startsWith('claude-sonnet-4-6');
+}
+
+function normalizeThinkingEffort(
+  model: string | undefined,
+  effort: 'low' | 'medium' | 'high' | 'max'
+): 'low' | 'medium' | 'high' | 'max' {
+  if (effort === 'max' && !model?.startsWith('claude-opus-4-6')) {
+    return 'high';
+  }
+  return effort;
+}
+
 /**
  * Regex to strip lone Unicode surrogates that cause API 400 errors.
  * Matches high surrogates not followed by a low surrogate, and
@@ -77,6 +94,8 @@ export interface PersistentProcessOptions {
   channelKey?: string;
   /** Agent ID for token usage tracking */
   agentId?: string;
+  /** Effort level for Claude 4.6 adaptive thinking */
+  effort?: 'low' | 'medium' | 'high' | 'max';
 }
 
 export interface ToolUseBlock {
@@ -294,6 +313,10 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
     if (this.options.useGatewayTools) {
       persistentLogger.info('Gateway Tools mode enabled');
+    }
+
+    if (this.options.effort && supportsThinkingEffortModel(this.options.model)) {
+      args.push('--effort', normalizeThinkingEffort(this.options.model, this.options.effort));
     }
 
     if (this.options.dangerouslySkipPermissions) {

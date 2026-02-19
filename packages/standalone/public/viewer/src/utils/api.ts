@@ -124,7 +124,7 @@ export interface ApiAgentToolsConfig {
   [key: string]: unknown;
 }
 
-export type EffortLevel = 'low' | 'medium' | 'high';
+export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
 
 export interface ApiAgentConfig {
   backend?: 'claude' | 'codex-mcp';
@@ -184,6 +184,7 @@ export interface MultiAgentAgent {
   tier?: number;
   status?: string;
   model?: string;
+  effort?: EffortLevel;
   backend?: 'claude' | 'codex-mcp';
   bot_token?: string;
   slack_bot_token?: string | null;

@@ -9,6 +9,7 @@
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import type {
+  AgentBackend,
   WorkflowPlan,
   WorkflowStep,
   WorkflowConfig,
@@ -19,7 +20,7 @@ import type {
 } from './workflow-types.js';
 
 const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const DEFAULT_MAX_EPHEMERAL = 5;
+const DEFAULT_MAX_EPHEMERAL = 20;
 const DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000; // 10 minutes
 
 export class StepExecutionError extends Error {
@@ -62,44 +63,204 @@ export class WorkflowEngine extends EventEmitter {
    * Returns null if no valid plan is found.
    */
   parseWorkflowPlan(response: string): WorkflowPlan | null {
-    const match = response.match(/```workflow_plan\s*\n([\s\S]*?)\n```/);
-    if (!match) return null;
+    const candidates = this.extractWorkflowPlanCandidates(response);
+    if (candidates.length === 0) {
+      return null;
+    }
 
-    try {
-      const plan = JSON.parse(match[1].trim()) as WorkflowPlan;
-      const isNonEmptyString = (value: unknown): value is string =>
-        typeof value === 'string' && value.trim().length > 0;
+    const isNonEmptyString = (value: unknown): value is string =>
+      typeof value === 'string' && value.trim().length > 0;
 
-      if (!isNonEmptyString(plan.name) || !Array.isArray(plan.steps) || plan.steps.length === 0) {
+    for (const block of candidates) {
+      try {
+        const content = this.stripWorkflowFence(block);
+        const plan = this.parseWorkflowPlanContent(content);
+        if (!plan) {
+          continue;
+        }
+
+        if (!isNonEmptyString(plan.name) || !Array.isArray(plan.steps) || plan.steps.length === 0) {
+          continue;
+        }
+
+        const hasValidDependsOn = (deps: unknown): deps is string[] =>
+          deps === undefined || (Array.isArray(deps) && deps.every((d) => isNonEmptyString(d)));
+
+        // Validate each step has required fields
+        let isValid = true;
+        for (const step of plan.steps) {
+          if (!isNonEmptyString(step.id) || !step.agent || !isNonEmptyString(step.prompt)) {
+            isValid = false;
+            break;
+          }
+          if (!hasValidDependsOn(step.depends_on)) {
+            isValid = false;
+            break;
+          }
+          if (
+            !isNonEmptyString(step.agent.id) ||
+            !isNonEmptyString(step.agent.display_name) ||
+            !isNonEmptyString(step.agent.backend) ||
+            !isNonEmptyString(step.agent.model) ||
+            !isNonEmptyString(step.agent.system_prompt)
+          ) {
+            isValid = false;
+            break;
+          }
+        }
+        if (!isValid) {
+          continue;
+        }
+
+        return plan;
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  private extractWorkflowPlanBlock(response: string): string | null {
+    const openMatch = response.match(/```workflow_plan\b[^\n]*\n?/i);
+    if (!openMatch || openMatch.index === undefined) {
+      return null;
+    }
+
+    const openIndex = openMatch.index;
+    const closeIndex = response.indexOf('```', openIndex + openMatch[0].length);
+    return closeIndex === -1
+      ? response.slice(openIndex)
+      : response.slice(openIndex, closeIndex + 3);
+  }
+
+  private extractWorkflowPlanCandidates(response: string): string[] {
+    const candidates = new Set<string>();
+    const blockMatches = response.matchAll(/```workflow_plan\b[^\n]*\n?[\s\S]*?(?:```|$)/gi);
+    for (const match of blockMatches) {
+      if (match[0]) {
+        candidates.add(match[0].trim());
+      }
+    }
+
+    const plainMatch = this.extractFirstJsonObject(response);
+    if (plainMatch) {
+      candidates.add(plainMatch);
+    }
+
+    if (response.toLowerCase().includes('workflow_plan') && candidates.size === 0) {
+      const body = response.replace(/```workflow_plan[\s\S]*/i, '').trim();
+      if (body) {
+        candidates.add(body);
+      }
+    }
+
+    return [...candidates];
+  }
+
+  private stripWorkflowFence(block: string): string {
+    let withoutHeader = block.replace(/^```workflow_plan\b[^\n]*\n?/i, '');
+    withoutHeader = withoutHeader.replace(/^\n*```json\s*\n?/i, '');
+    withoutHeader = withoutHeader.replace(/\n*```\s*$/i, '');
+    return withoutHeader.trim();
+  }
+
+  private parseWorkflowPlanContent(content: string): WorkflowPlan | null {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const directParse = (): WorkflowPlan | null => {
+      try {
+        return JSON.parse(trimmed) as WorkflowPlan;
+      } catch {
         return null;
       }
+    };
 
-      // Validate each step has required fields
-      for (const step of plan.steps) {
-        if (!isNonEmptyString(step.id) || !step.agent || !isNonEmptyString(step.prompt))
-          return null;
-        if (
-          !isNonEmptyString(step.agent.id) ||
-          !isNonEmptyString(step.agent.display_name) ||
-          !isNonEmptyString(step.agent.backend) ||
-          !isNonEmptyString(step.agent.model) ||
-          !isNonEmptyString(step.agent.system_prompt)
-        ) {
-          return null;
-        }
-      }
+    const parsedDirect = directParse();
+    if (parsedDirect) {
+      return parsedDirect;
+    }
 
-      return plan;
+    const jsonCandidate = this.extractFirstJsonObject(trimmed);
+    if (!jsonCandidate) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(jsonCandidate) as WorkflowPlan;
     } catch {
       return null;
     }
+  }
+
+  private extractFirstJsonObject(text: string): string | null {
+    let inString = false;
+    let escaped = false;
+    let braces = 0;
+    let start = -1;
+
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+
+      if (ch === '"' && !escaped) {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) {
+        escaped = ch === '\\' && !escaped;
+        continue;
+      }
+
+      if (ch === '{') {
+        if (start === -1) {
+          start = i;
+        }
+        braces += 1;
+      } else if (ch === '}') {
+        if (start === -1) {
+          return null;
+        }
+        braces -= 1;
+        if (braces === 0) {
+          return text.slice(start, i + 1);
+        }
+      }
+
+      escaped = false;
+    }
+
+    return null;
   }
 
   /**
    * Extract text content outside the workflow_plan block (for display as Conductor's direct message).
    */
   extractNonPlanContent(response: string): string {
-    return response.replace(/```workflow_plan\s*\n[\s\S]*?\n```/, '').trim();
+    // 1) Fenced ```workflow_plan block
+    const block = this.extractWorkflowPlanBlock(response);
+    if (block) {
+      return response.replace(block, '').trim();
+    }
+
+    // 2) Unfenced JSON plan — parseWorkflowPlan can parse these,
+    //    so we must strip them too to avoid raw JSON in Slack.
+    const jsonObj = this.extractFirstJsonObject(response);
+    if (jsonObj) {
+      try {
+        const parsed = JSON.parse(jsonObj);
+        if (parsed && parsed.name && Array.isArray(parsed.steps)) {
+          return response.replace(jsonObj, '').trim();
+        }
+      } catch {
+        // not valid JSON, keep response as-is
+      }
+    }
+
+    return response.trim();
   }
 
   /**
@@ -175,7 +336,9 @@ export class WorkflowEngine extends EventEmitter {
 
     const queue: string[] = [];
     for (const [id, degree] of inDegree) {
-      if (degree === 0) queue.push(id);
+      if (degree === 0) {
+        queue.push(id);
+      }
     }
 
     const sorted: WorkflowStep[] = [];
@@ -189,7 +352,9 @@ export class WorkflowEngine extends EventEmitter {
       for (const neighbor of adjacency.get(id) ?? []) {
         const newDegree = (inDegree.get(neighbor) ?? 1) - 1;
         inDegree.set(neighbor, newDegree);
-        if (newDegree === 0) queue.push(neighbor);
+        if (newDegree === 0) {
+          queue.push(neighbor);
+        }
       }
     }
 
@@ -201,7 +366,9 @@ export class WorkflowEngine extends EventEmitter {
    */
   buildExecutionLevels(steps: WorkflowStep[]): WorkflowStep[][] {
     const sorted = this.topologicalSort(steps);
-    if (!sorted) return [];
+    if (!sorted) {
+      return [];
+    }
 
     const levelMap = new Map<string, number>();
 
@@ -210,7 +377,9 @@ export class WorkflowEngine extends EventEmitter {
       if (step.depends_on) {
         for (const dep of step.depends_on) {
           const depLevel = levelMap.get(dep) ?? 0;
-          if (depLevel > maxDepLevel) maxDepLevel = depLevel;
+          if (depLevel > maxDepLevel) {
+            maxDepLevel = depLevel;
+          }
         }
       }
       levelMap.set(step.id, maxDepLevel + 1);
@@ -251,6 +420,11 @@ export class WorkflowEngine extends EventEmitter {
     };
 
     const stepResults = new Map<string, StepResult>();
+
+    if (this.config.backend_balancing !== false) {
+      this.balanceBackends(plan.steps);
+    }
+
     const levels = this.buildExecutionLevels(plan.steps);
     const totalSteps = plan.steps.length;
     const completedCounter = { count: 0 };
@@ -262,19 +436,20 @@ export class WorkflowEngine extends EventEmitter {
 
     try {
       for (const level of levels) {
-        if (executionState.cancelled) break;
+        if (executionState.cancelled) {
+          break;
+        }
 
-        const levelResults = await Promise.allSettled(
-          level.map((step) =>
-            this.executeStep(
-              step,
-              stepResults,
-              executeStep,
-              executionId,
-              executionState,
-              totalSteps,
-              completedCounter
-            )
+        const maxConcurrent = this.config.max_concurrent_steps ?? 3;
+        const levelResults = await this.runWithConcurrencyLimit(level, maxConcurrent, (step) =>
+          this.executeStep(
+            step,
+            stepResults,
+            executeStep,
+            executionId,
+            executionState,
+            totalSteps,
+            completedCounter
           )
         );
 
@@ -311,7 +486,9 @@ export class WorkflowEngine extends EventEmitter {
           }
         }
 
-        if (execution.status === 'failed') break;
+        if (execution.status === 'failed') {
+          break;
+        }
       }
 
       if (executionState.cancelled && execution.status === 'running') {
@@ -397,7 +574,9 @@ export class WorkflowEngine extends EventEmitter {
       const result = await executeStep(step.agent, resolvedPrompt, timeout);
       const duration_ms = Date.now() - start;
 
-      if (completedCounter) completedCounter.count++;
+      if (completedCounter) {
+        completedCounter.count++;
+      }
       this.emitProgress({
         type: 'step-completed',
         executionId,
@@ -422,7 +601,9 @@ export class WorkflowEngine extends EventEmitter {
       const duration_ms = Date.now() - start;
       const errorMsg = error instanceof Error ? error.message : String(error);
 
-      if (completedCounter) completedCounter.count++;
+      if (completedCounter) {
+        completedCounter.count++;
+      }
       this.emitProgress({
         type: 'step-failed',
         executionId,
@@ -498,6 +679,40 @@ export class WorkflowEngine extends EventEmitter {
     const totalSec = Math.round(totalMs / 1000);
 
     return `## Workflow: ${plan.name} (${totalSec}s)\n\n${parts.join('\n\n')}`;
+  }
+
+  private async runWithConcurrencyLimit<T>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<StepResult>
+  ): Promise<PromiseSettledResult<StepResult>[]> {
+    const results: PromiseSettledResult<StepResult>[] = new Array(items.length);
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (nextIndex < items.length) {
+        const i = nextIndex++;
+        try {
+          results[i] = { status: 'fulfilled', value: await fn(items[i]) };
+        } catch (e) {
+          results[i] = { status: 'rejected', reason: e };
+        }
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
+
+  private balanceBackends(steps: WorkflowStep[]): void {
+    const backends: AgentBackend[] = ['claude', 'codex-mcp'];
+    let idx = 0;
+    for (const step of steps) {
+      if (step.agent.backend === 'codex-mcp') continue;
+      step.agent.backend = backends[idx % backends.length];
+      if (step.agent.backend === 'codex-mcp') {
+        step.agent.model = 'codex';
+      }
+      idx++;
+    }
   }
 
   private emitProgress(event: WorkflowProgressEvent): void {
