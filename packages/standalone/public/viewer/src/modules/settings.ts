@@ -1102,7 +1102,7 @@ export class SettingsModule {
       return;
     }
 
-    const agents = (this.multiAgentData?.agents || []) as MultiAgentAgent[];
+    const agents = this.multiAgentData?.agents || [];
 
     if (agents.length === 0) {
       container.innerHTML = `
@@ -1123,8 +1123,7 @@ export class SettingsModule {
     const agentCards = agents
       .map((agent: MultiAgentAgent) => {
         const tierColor = tierColors[agent.tier || 1] || tierColors[1];
-        const backend =
-          ((agent.backend || this.config?.agent?.backend || 'claude') as AgentBackend) || 'claude';
+        const backend = (agent.backend || this.config?.agent?.backend || 'claude') as AgentBackend;
         const normalizedModel = this.getNormalizedModelForBackend(backend, agent.model || '');
         const agentId = agent.id || '';
         const backendOptions = ['codex-mcp', 'claude']
