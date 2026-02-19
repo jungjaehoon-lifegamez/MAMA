@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-02-19
+
+### Added
+
+- **BMAD Workflow Integration**: Conductor PLAN mode generates BMAD-compliant workflow DAGs
+  - Brainstorm, PRD, Architecture, Sprint Planning flows via `workflow_plan`
+  - BMAD template engine with project-level awareness and output path computation
+  - `is_planning_agent` flag for opt-in/opt-out BMAD injection per agent
+- **Workflow Concurrency Limit**: Semaphore-based `max_concurrent_steps` (default 3) prevents rate limit hits
+- **Backend Round-Robin Balancing**: Automatic claude ↔ codex-mcp load distribution across workflow steps
+  - `backend_balancing` config option (default true)
+- **Workflow Failure Feedback**: Conductor receives `[SYSTEM]` error message when plan validation or execution fails, enabling plan adjustment
+- **Slack `slack_send` Gateway Tool**: Agents can send messages/files to Slack channels directly
+- **Effort Level Support**: Claude 4.6 adaptive thinking effort (`--effort` flag) for Conductor and agents
+- **Zombie Daemon Cleanup**: `killAllMamaDaemons()` kills orphaned daemon processes on start/stop
+
+### Changed
+
+- **Conductor Merge Policy**: Conductor no longer auto-merges PRs — must report verification results and await human `!merge` approval
+- Hardcoded model IDs replaced with dynamic config resolution
+- `--thinking-effort` CLI flag renamed to `--effort`
+- `max_ephemeral_agents` default raised to 20
+
+### Fixed
+
+- **Raw JSON Leak**: Workflow plan JSON no longer leaks to Slack/Discord when plan execution fails
+  - `extractNonPlanContent` now strips unfenced JSON plans
+  - Fallback path in Slack/Discord handlers strips plan JSON before display
+- **Codex MCP**: Spawn error fast detection + retry on failure; tilde expansion in `codexCwd`
+- **BMAD Opt-Out**: Explicit `is_planning_agent: false` now correctly suppresses BMAD injection
+- **Disabled Agent Skip**: `hasCodexBackendConfigured` skips disabled agents
+- **YAML Error Handling**: `loadYamlFile`/`tryReadFile` throw on non-ENOENT errors instead of silent null
+- **Slack Ghost Responses**: Message subtype events filtered to prevent duplicate responses
+- **Settings UI**: Removed redundant `as any` casts in agent rendering
+
 ## [0.9.3] - 2026-02-18
 
 ### Added
