@@ -316,10 +316,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
 
     if (this.options.effort && supportsThinkingEffortModel(this.options.model)) {
-      args.push(
-        '--thinking-effort',
-        normalizeThinkingEffort(this.options.model, this.options.effort)
-      );
+      args.push('--effort', normalizeThinkingEffort(this.options.model, this.options.effort));
     }
 
     if (this.options.dangerouslySkipPermissions) {

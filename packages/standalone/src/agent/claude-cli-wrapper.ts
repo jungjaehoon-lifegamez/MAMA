@@ -183,7 +183,7 @@ export class ClaudeCLIWrapper {
       // Add effort level for Claude 4.6 adaptive thinking.
       if (this.options.effort && supportsThinkingEffortModel(model)) {
         const effort = normalizeThinkingEffort(model, this.options.effort);
-        args.push('--thinking-effort', effort);
+        args.push('--effort', effort);
         logger.debug('Effort level:', effort);
       }
 

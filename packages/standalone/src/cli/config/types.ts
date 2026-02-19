@@ -448,6 +448,8 @@ export interface MultiAgentConfig {
     enabled: boolean;
     max_ephemeral_agents?: number;
     max_duration_ms?: number;
+    max_concurrent_steps?: number;
+    backend_balancing?: boolean;
   };
   /** Council mode — multi-round discussions among named agents @default enabled */
   council?: {

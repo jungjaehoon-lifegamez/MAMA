@@ -9,6 +9,7 @@
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import type {
+  AgentBackend,
   WorkflowPlan,
   WorkflowStep,
   WorkflowConfig,
@@ -239,12 +240,27 @@ export class WorkflowEngine extends EventEmitter {
    * Extract text content outside the workflow_plan block (for display as Conductor's direct message).
    */
   extractNonPlanContent(response: string): string {
+    // 1) Fenced ```workflow_plan block
     const block = this.extractWorkflowPlanBlock(response);
-    if (!block) {
-      return response.trim();
+    if (block) {
+      return response.replace(block, '').trim();
     }
 
-    return response.replace(block, '').trim();
+    // 2) Unfenced JSON plan — parseWorkflowPlan can parse these,
+    //    so we must strip them too to avoid raw JSON in Slack.
+    const jsonObj = this.extractFirstJsonObject(response);
+    if (jsonObj) {
+      try {
+        const parsed = JSON.parse(jsonObj);
+        if (parsed && parsed.name && Array.isArray(parsed.steps)) {
+          return response.replace(jsonObj, '').trim();
+        }
+      } catch {
+        // not valid JSON, keep response as-is
+      }
+    }
+
+    return response.trim();
   }
 
   /**
@@ -404,6 +420,11 @@ export class WorkflowEngine extends EventEmitter {
     };
 
     const stepResults = new Map<string, StepResult>();
+
+    if (this.config.backend_balancing !== false) {
+      this.balanceBackends(plan.steps);
+    }
+
     const levels = this.buildExecutionLevels(plan.steps);
     const totalSteps = plan.steps.length;
     const completedCounter = { count: 0 };
@@ -419,17 +440,16 @@ export class WorkflowEngine extends EventEmitter {
           break;
         }
 
-        const levelResults = await Promise.allSettled(
-          level.map((step) =>
-            this.executeStep(
-              step,
-              stepResults,
-              executeStep,
-              executionId,
-              executionState,
-              totalSteps,
-              completedCounter
-            )
+        const maxConcurrent = this.config.max_concurrent_steps ?? 3;
+        const levelResults = await this.runWithConcurrencyLimit(level, maxConcurrent, (step) =>
+          this.executeStep(
+            step,
+            stepResults,
+            executeStep,
+            executionId,
+            executionState,
+            totalSteps,
+            completedCounter
           )
         );
 
@@ -659,6 +679,40 @@ export class WorkflowEngine extends EventEmitter {
     const totalSec = Math.round(totalMs / 1000);
 
     return `## Workflow: ${plan.name} (${totalSec}s)\n\n${parts.join('\n\n')}`;
+  }
+
+  private async runWithConcurrencyLimit<T>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<StepResult>
+  ): Promise<PromiseSettledResult<StepResult>[]> {
+    const results: PromiseSettledResult<StepResult>[] = new Array(items.length);
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (nextIndex < items.length) {
+        const i = nextIndex++;
+        try {
+          results[i] = { status: 'fulfilled', value: await fn(items[i]) };
+        } catch (e) {
+          results[i] = { status: 'rejected', reason: e };
+        }
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
+
+  private balanceBackends(steps: WorkflowStep[]): void {
+    const backends: AgentBackend[] = ['claude', 'codex-mcp'];
+    let idx = 0;
+    for (const step of steps) {
+      if (step.agent.backend === 'codex-mcp') continue;
+      step.agent.backend = backends[idx % backends.length];
+      if (step.agent.backend === 'codex-mcp') {
+        step.agent.model = 'codex';
+      }
+      idx++;
+    }
   }
 
   private emitProgress(event: WorkflowProgressEvent): void {
