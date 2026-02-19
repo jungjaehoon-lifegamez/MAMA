@@ -855,7 +855,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         };
       }
 
-      const cleanedResponse = await this.executeAgentToolCalls(agentId, result.response);
+      // Strip any workflow/council plan JSON that wasn't executed
+      let responseForProcessing = result.response;
+      if (this.workflowEngine?.isEnabled()) {
+        responseForProcessing = this.workflowEngine.extractNonPlanContent(responseForProcessing);
+      }
+      if (this.councilEngine) {
+        responseForProcessing = this.councilEngine.extractNonPlanContent(responseForProcessing);
+      }
+
+      const cleanedResponse = await this.executeAgentToolCalls(agentId, responseForProcessing);
 
       // Detect API error responses — skip mention resolution and delegation to prevent error loops
       const isErrorResponse = /API Error:\s*\d{3}\b/.test(cleanedResponse);

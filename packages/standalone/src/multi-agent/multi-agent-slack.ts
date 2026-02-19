@@ -541,8 +541,18 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         };
       }
 
+      // Strip any workflow/council plan JSON that wasn't executed
+      // (prevents raw JSON from leaking to Slack when plan execution is skipped)
+      let responseForProcessing = result.response;
+      if (this.workflowEngine?.isEnabled()) {
+        responseForProcessing = this.workflowEngine.extractNonPlanContent(responseForProcessing);
+      }
+      if (this.councilEngine) {
+        responseForProcessing = this.councilEngine.extractNonPlanContent(responseForProcessing);
+      }
+
       // Execute text-based gateway tool calls (```tool_call blocks in response)
-      const cleanedResponse = await this.executeTextToolCalls(result.response);
+      const cleanedResponse = await this.executeTextToolCalls(responseForProcessing);
 
       // Parse all delegation commands (both sync and background)
       const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
