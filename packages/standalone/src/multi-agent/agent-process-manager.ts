@@ -24,6 +24,7 @@ import { ToolPermissionManager } from './tool-permission-manager.js';
 import { AgentProcessPool } from './agent-process-pool.js';
 import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
 import type { EphemeralAgentDef } from './workflow-types.js';
+import { buildBmadPromptBlock } from './bmad-templates.js';
 
 /**
  * Resolve path with ~ expansion
@@ -40,11 +41,32 @@ function resolvePath(path: string): string {
  */
 function getModelDisplayName(modelId: string): string {
   const modelMap: Record<string, string> = {
-    'claude-opus-4-5-20251101': 'Claude Opus 4.5',
+    // Claude 4.6
     'claude-opus-4-6': 'Claude Opus 4.6',
+    'claude-opus-4-6-20260210': 'Claude Opus 4.6',
+    'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+    'claude-sonnet-4-6-20260217': 'Claude Sonnet 4.6',
+    // Claude 4.5
+    'claude-opus-4-5-20251101': 'Claude Opus 4.5',
     'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
-    'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
     'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+    // Claude 4.0
+    'claude-sonnet-4-20250514': 'Claude 4 Sonnet',
+    'claude-opus-4-20250514': 'Claude 4 Opus',
+    // Aliases
+    'claude-opus-4-latest': 'Claude Opus 4 (latest)',
+    'claude-sonnet-4-latest': 'Claude Sonnet 4 (latest)',
+    // OpenAI / Codex
+    'gpt-5.3-codex': 'GPT-5.3 Codex',
+    'gpt-5-codex': 'GPT-5 Codex',
+    'gpt-4.1': 'GPT-4.1',
+    'gpt-4.1-mini': 'GPT-4.1 Mini',
+    'gpt-4.1-nano': 'GPT-4.1 Nano',
+    o3: 'OpenAI o3',
+    'o4-mini': 'OpenAI o4-mini',
+    // Google
+    'gemini-2.5-pro': 'Gemini 2.5 Pro',
+    'gemini-2.5-flash': 'Gemini 2.5 Flash',
   };
   return modelMap[modelId] || modelId;
 }
@@ -233,6 +255,10 @@ export class AgentProcessManager extends EventEmitter {
     if (agentConfig?.model) {
       options.model = agentConfig.model;
     }
+    const effort = agentConfig?.effort || this.runtimeOptions.effort;
+    if (effort) {
+      options.effort = effort;
+    }
 
     if (tier >= 2) {
       options.env = { MAMA_DISABLE_HOOKS: 'true' };
@@ -317,8 +343,9 @@ export class AgentProcessManager extends EventEmitter {
     const process = new CodexRuntimeProcess({
       model: options.model || this.runtimeOptions.model,
       systemPrompt: options.systemPrompt,
-      cwd: this.runtimeOptions.codexCwd,
+      cwd: this.runtimeOptions.codexCwd ? resolvePath(this.runtimeOptions.codexCwd) : undefined,
       sandbox: this.runtimeOptions.codexSandbox,
+      command: this.runtimeOptions.codexCommand,
       requestTimeout: options.requestTimeout,
     });
     return process;
@@ -351,7 +378,7 @@ export class AgentProcessManager extends EventEmitter {
 
     try {
       const personaContent = await readFile(personaPath, 'utf-8');
-      const systemPrompt = this.buildSystemPrompt(agentId, agentConfig, personaContent);
+      const systemPrompt = await this.buildSystemPrompt(agentId, agentConfig, personaContent);
       this.personaCache.set(agentId, systemPrompt);
       return systemPrompt;
     } catch (error) {
@@ -365,11 +392,11 @@ export class AgentProcessManager extends EventEmitter {
   /**
    * Build system prompt with persona content
    */
-  private buildSystemPrompt(
+  private async buildSystemPrompt(
     agentId: string,
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
     personaContent: string
-  ): string {
+  ): Promise<string> {
     const agent: AgentPersonaConfig = { id: agentId, ...agentConfig };
 
     // Replace @mentions in persona with platform-specific <@userId>
@@ -396,11 +423,18 @@ export class AgentProcessManager extends EventEmitter {
       }
     }
 
-    // Replace model placeholder with actual config value
-    // Supports both {{model}} placeholder and hardcoded model names
-    const actualModel = agentConfig.model || 'claude-sonnet-4-20250514';
+    // Replace model placeholders with actual config values
+    const actualModel = agentConfig.model || this.runtimeOptions.model || 'unknown';
     const modelDisplayName = getModelDisplayName(actualModel);
     resolvedPersona = resolvedPersona.replace(/\{\{model\}\}/gi, modelDisplayName);
+    resolvedPersona = resolvedPersona.replace(/\{\{model_id\}\}/gi, actualModel);
+
+    // Resolve backend-specific model IDs for workflow plan templates
+    const claudeModelId = this.resolveModelForBackend('claude');
+    const codexModelId = this.resolveModelForBackend('codex-mcp');
+    resolvedPersona = resolvedPersona.replace(/\{\{claude_model_id\}\}/gi, claudeModelId);
+    resolvedPersona = resolvedPersona.replace(/\{\{codex_model_id\}\}/gi, codexModelId);
+
     // Also replace common hardcoded model patterns with actual model
     resolvedPersona = resolvedPersona.replace(
       /powered by \*\*[^*]+\*\* \([^)]+\)/gi,
@@ -414,7 +448,7 @@ export class AgentProcessManager extends EventEmitter {
     let delegationPrompt = '';
     let reportBackPrompt = '';
     const allAgents = Object.entries(this.config.agents)
-      .filter(([, cfg]) => cfg.enabled !== false)
+      .filter(([id, cfg]) => cfg.enabled !== false && id !== agentId) // Exclude self
       .map(([id, cfg]) => ({ id, ...cfg }));
 
     if (this.permissionManager.canDelegate(agent)) {
@@ -436,6 +470,9 @@ export class AgentProcessManager extends EventEmitter {
       );
     }
 
+    const includeBmadBlock = this.shouldInjectBmadBlock(agentId, agentConfig);
+    const bmadBlock = includeBmadBlock ? await this.buildBmadBlock() : '';
+
     return `# Agent Identity
 
 You are **${agentConfig.display_name}** (ID: ${agentId}).
@@ -449,7 +486,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${resolvedPersona}
 
-${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
+${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
 
 To use gateway tools, output a JSON block in your response:
 
@@ -459,6 +496,7 @@ To use gateway tools, output a JSON block in your response:
 
 Available tools:
 - **discord_send**(channel_id, message?, file_path?) — Send message or file to a Discord channel
+- **slack_send**(channel_id, message?, file_path?) — Send message or file to a Slack channel
 - **mama_search**(query?, type?, limit?) — Search decisions in MAMA memory
 - **mama_save**(type, topic?, decision?, reasoning?, summary?, next_steps?) — Save decision or checkpoint
 - **pr_review_threads**(pr_url) — Fetch unresolved PR review threads (grouped by file, with line/body/author). Use this to autonomously analyze PR feedback.
@@ -472,6 +510,58 @@ ${this.buildSkillsPrompt()}
 - Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
 - Your trigger prefix is: ${agentConfig.trigger_prefix}
 `;
+  }
+
+  private shouldInjectBmadBlock(
+    agentId: string,
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): boolean {
+    // Explicit opt-out always wins.
+    if (agentConfig.is_planning_agent === false || agentConfig.isPlanningAgent === false) {
+      return false;
+    }
+
+    const hasPlanningFlag =
+      typeof agentConfig.is_planning_agent === 'boolean' ||
+      typeof agentConfig.isPlanningAgent === 'boolean';
+    if (agentConfig.is_planning_agent === true || agentConfig.isPlanningAgent === true) {
+      return true;
+    }
+
+    const hasTierSignal = typeof agentConfig.tier === 'number';
+    if (
+      agentConfig.tier === 1 &&
+      agentConfig.can_delegate === true &&
+      agentConfig.is_planning_agent !== false &&
+      agentConfig.isPlanningAgent !== false
+    ) {
+      return true;
+    }
+
+    // Backward compatibility: older configs may only identify Conductor by agent ID.
+    if (!hasPlanningFlag && !hasTierSignal) {
+      return agentId.toLowerCase() === 'conductor';
+    }
+
+    return false;
+  }
+
+  /**
+   * Resolve the preferred model ID for a given backend from config.
+   * Scans registered agents to find the first model matching the backend.
+   * Falls back to runtimeOptions.model for claude, 'unknown' otherwise.
+   */
+  private resolveModelForBackend(backend: string): string {
+    for (const [, cfg] of Object.entries(this.config.agents)) {
+      const agentBackend = this.getAgentBackend(cfg);
+      if (agentBackend === backend && cfg.model) {
+        return cfg.model;
+      }
+    }
+    if (backend === 'claude') {
+      return this.runtimeOptions.model || 'claude-sonnet-4-6';
+    }
+    return 'unknown';
   }
 
   /**
@@ -492,6 +582,21 @@ When a user message contains [INSTALLED PLUGIN COMMAND] you MUST:
 
 ${skillBlocks.join('\n\n---\n\n')}
 `;
+  }
+
+  /**
+   * Build BMAD planning context block for Conductor's system prompt.
+   * Returns an explicit marker on failure for easier diagnosis.
+   */
+  private async buildBmadBlock(): Promise<string> {
+    try {
+      return await buildBmadPromptBlock(process.cwd());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[AgentProcessManager] BMAD prompt block generation failed, using fallback:', message);
+      console.error('[AgentProcessManager] BMAD prompt block generation failed:', message);
+      return `[BMAD_LOAD_ERROR: ${message}]`;
+    }
   }
 
   /**

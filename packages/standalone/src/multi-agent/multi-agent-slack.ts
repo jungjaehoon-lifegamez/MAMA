@@ -19,6 +19,7 @@ import type { AgentRuntimeProcess } from './runtime-process.js';
 import type { QueuedMessage } from './agent-message-queue.js';
 import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
+import { getChannelHistory } from '../gateways/channel-history.js';
 import {
   MultiAgentHandlerBase,
   AGENT_TIMEOUT_MS,
@@ -59,6 +60,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
   /** Interval handle for periodic cleanup */
   private mentionCleanupInterval?: ReturnType<typeof setInterval>;
+
+  /** Tracks the process used for history seeding per agent:channel */
+  private historySeedProcess = new Map<string, AgentRuntimeProcess>();
 
   constructor(
     config: MultiAgentConfig,
@@ -124,6 +128,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       clearInterval(this.mentionCleanupInterval);
       this.mentionCleanupInterval = undefined;
     }
+    this.historySeedProcess.clear();
     await this.multiBotManager.stopAll();
   }
 
@@ -381,27 +386,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     const agentContext = this.sharedContext.buildContextForAgent(context.channelId, agentId, 5);
 
     // Build full prompt with context.
-    // NOTE: Do NOT inject historyContext into persistent processes -- the CLI process
-    // already retains conversation memory across turns. Injecting historyContext causes
-    // duplicate messages in Claude's context, making old messages appear "just conversed"
-    // and creating cross-agent context confusion.
-    // Only inject agentContext (other agents' messages) for inter-agent awareness.
     let fullPrompt = cleanMessage;
-    if (agentContext) {
-      fullPrompt = `${agentContext}\n\n${fullPrompt}`;
-    }
-
-    // Inject agent availability status and active work (Phase 2 + 3)
-    const agentStatus = this.buildAgentStatusSection(agentId);
-    const workSection = this.workTracker.buildWorkSection(agentId);
-    const dynamicContext = [agentStatus, workSection].filter(Boolean).join('\n');
-    if (dynamicContext) {
-      fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
-    }
-
-    this.logger.log(
-      `[MultiAgentSlack] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`
-    );
 
     // Track work start (completed in finally block)
     this.workTracker.startWork(agentId, context.channelId, cleanMessage);
@@ -411,6 +396,41 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     try {
       // Get or create process for this agent in this channel
       process = await this.processManager.getProcess('slack', context.channelId, agentId);
+
+      // Inject channel history when process is new/replaced for this agent:channel.
+      // After process restart the CLI has no prior memory, so history must be re-seeded.
+      const sessionKey = `${agentId}:${context.channelId}`;
+      const needsHistorySeed = this.historySeedProcess.get(sessionKey) !== process;
+      if (needsHistorySeed) {
+        const channelHistory = getChannelHistory();
+        const displayName = agent.display_name || agentId;
+        const historyContext = channelHistory.formatForContext(
+          context.channelId,
+          context.messageId,
+          displayName
+        );
+        if (historyContext) {
+          fullPrompt = `${historyContext}\n\n${fullPrompt}`;
+        }
+        this.historySeedProcess.set(sessionKey, process);
+      }
+
+      if (agentContext) {
+        fullPrompt = `${agentContext}\n\n${fullPrompt}`;
+      }
+
+      // Inject agent availability status and active work (Phase 2 + 3)
+      const agentStatus = this.buildAgentStatusSection(agentId);
+      const workSection = this.workTracker.buildWorkSection(agentId);
+      const channelInfo = `## Current Channel\nPlatform: Slack\nchannel_id: ${context.channelId}\nUse **slack_send** to send messages/files to this channel.`;
+      const dynamicContext = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
+      if (dynamicContext) {
+        fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
+      }
+
+      this.logger.log(
+        `[MultiAgentSlack] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`
+      );
 
       // Send message and get response (with timeout, properly cleaned up)
       let timeoutHandle: ReturnType<typeof setTimeout>;
@@ -466,6 +486,24 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       );
 
       if (workflowResult) {
+        if (workflowResult.failed) {
+          // Workflow plan parsed but execution failed — feed error back to Conductor
+          this.logger.warn(
+            `[MultiAgentSlack] Workflow failed: ${workflowResult.failed}, sending feedback to conductor`
+          );
+          const feedback = `[SYSTEM] Your workflow_plan failed to execute.\nReason: ${workflowResult.failed}\nPlease adjust and retry, or respond without a workflow_plan.`;
+          const retryResult = await process!.sendMessage(feedback);
+          const cleanedRetry = await this.executeTextToolCalls(retryResult.response);
+          const formattedResponse = this.formatAgentResponse(agent, cleanedRetry);
+          return {
+            agentId,
+            agent,
+            content: formattedResponse,
+            rawContent: cleanedRetry,
+            duration: result.duration_ms,
+          };
+        }
+
         const display = workflowResult.directMessage
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
@@ -521,8 +559,18 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         };
       }
 
+      // Strip any workflow/council plan JSON that wasn't executed
+      // (prevents raw JSON from leaking to Slack when plan execution is skipped)
+      let responseForProcessing = result.response;
+      if (this.workflowEngine?.isEnabled()) {
+        responseForProcessing = this.workflowEngine.extractNonPlanContent(responseForProcessing);
+      }
+      if (this.councilEngine) {
+        responseForProcessing = this.councilEngine.extractNonPlanContent(responseForProcessing);
+      }
+
       // Execute text-based gateway tool calls (```tool_call blocks in response)
-      const cleanedResponse = await this.executeTextToolCalls(result.response);
+      const cleanedResponse = await this.executeTextToolCalls(responseForProcessing);
 
       // Parse all delegation commands (both sync and background)
       const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
@@ -612,13 +660,41 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         };
 
         this.messageQueue.enqueue(agentId, queuedMessage);
+        const queueSize = this.messageQueue.getQueueSize(agentId);
+        const queueText =
+          queueSize > 0
+            ? `⚠️ ${agent.display_name}이(가) 현재 작업 중입니다. ${queueSize}개의 메시지가 대기열에 있습니다.`
+            : `⚠️ ${agent.display_name}이(가) 현재 작업 중입니다. 요청이 대기열에 등록되었습니다.`;
 
         // Trigger immediate drain if process is idle or reaped
         this.tryDrainNow(agentId, 'slack', context.channelId).catch(() => {});
 
-        return null;
+        return {
+          agentId,
+          agent,
+          content: this.formatAgentResponse(agent, queueText),
+          rawContent: queueText,
+          duration: 0,
+        };
       }
-      return null;
+
+      const fallbackMessage =
+        errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('timeout')
+          ? `⚠️ ${agent.display_name} 응답이 시간 초과되어 처리 결과를 못 받았습니다. 잠시 후 다시 시도해 주세요.`
+          : `⚠️ ${agent.display_name} 처리 중 오류가 발생했습니다: ${errMsg}`;
+
+      const fallbackRaw =
+        errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('timeout')
+          ? 'Response timed out'
+          : `Error: ${errMsg}`;
+
+      return {
+        agentId,
+        agent,
+        content: this.formatAgentResponse(agent, fallbackMessage),
+        rawContent: fallbackRaw,
+        duration: 0,
+      };
     } finally {
       if (process) {
         this.processManager.releaseProcess(agentId, process);
