@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { ChildProcess } from 'child_process';
-import type { MultiAgentConfig } from '../../src/multi-agent/types.js';
+import type { AgentPersonaConfig, MultiAgentConfig } from '../../src/multi-agent/types.js';
 
 // Track all spawn calls
 let spawnCalls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = [];
@@ -99,6 +99,9 @@ function makeConfig(
       tier?: 1 | 2 | 3;
       pool_size?: number;
       model?: string;
+      can_delegate?: boolean;
+      is_planning_agent?: boolean;
+      isPlanningAgent?: boolean;
     }
   >
 ): MultiAgentConfig {
@@ -113,6 +116,9 @@ function makeConfig(
       tier: opts.tier ?? 1,
       pool_size: opts.pool_size ?? 1,
       model: opts.model,
+      can_delegate: opts.can_delegate,
+      is_planning_agent: opts.is_planning_agent,
+      isPlanningAgent: opts.isPlanningAgent,
       auto_respond_keywords: [],
     };
   }
@@ -293,6 +299,56 @@ describe('AgentProcessManager env vars by tier', () => {
       expect(env!['PATH']).toBeDefined();
       // Plus agent-specific env
       expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
+    });
+  });
+
+  // Story: BMAD-SEL-001 — BMAD prompt block injection selection logic
+  // AC: Conductor/planning agents get BMAD block; non-planning agents do not
+  describe('BMAD prompt injection selector', () => {
+    const selectBmadInjection = (
+      agentId: string,
+      agentConfig: Omit<AgentPersonaConfig, 'id'>
+    ): boolean => {
+      const selector = manager as unknown as {
+        shouldInjectBmadBlock: (id: string, config: Omit<AgentPersonaConfig, 'id'>) => boolean;
+      };
+      return selector.shouldInjectBmadBlock(agentId, agentConfig);
+    };
+
+    it('should enable BMAD when is_planning_agent is true', () => {
+      const config = makeConfig({
+        planner: { tier: 2, is_planning_agent: true },
+      });
+      manager = new AgentProcessManager(config);
+
+      expect(selectBmadInjection('planner', config.agents.planner)).toBe(true);
+    });
+
+    it('should disable BMAD when explicit planning flag is false', () => {
+      const config = makeConfig({
+        conductor: { tier: 1, can_delegate: true, is_planning_agent: false },
+      });
+      manager = new AgentProcessManager(config);
+
+      expect(selectBmadInjection('conductor', config.agents.conductor)).toBe(false);
+    });
+
+    it('should disable BMAD when explicit camelCase planning flag is false', () => {
+      const config = makeConfig({
+        conductor: { tier: 1, can_delegate: true, isPlanningAgent: false },
+      });
+      manager = new AgentProcessManager(config);
+
+      expect(selectBmadInjection('conductor', config.agents.conductor)).toBe(false);
+    });
+
+    it('should enable BMAD for tier 1 delegator', () => {
+      const config = makeConfig({
+        lead: { tier: 1, can_delegate: true },
+      });
+      manager = new AgentProcessManager(config);
+
+      expect(selectBmadInjection('lead', config.agents.lead)).toBe(true);
     });
   });
 });

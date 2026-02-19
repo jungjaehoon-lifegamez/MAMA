@@ -66,10 +66,14 @@ export interface WorkflowPlan {
 export interface WorkflowConfig {
   /** Enable dynamic workflow orchestration */
   enabled: boolean;
-  /** Max ephemeral agents per workflow @default 5 */
+  /** Max ephemeral agents per workflow @default 20 */
   max_ephemeral_agents?: number;
   /** Max total workflow duration in ms @default 600000 (10 min) */
   max_duration_ms?: number;
+  /** Max concurrent steps per execution level @default 3 */
+  max_concurrent_steps?: number;
+  /** Round-robin backend balancing (claude ↔ codex-mcp) @default true */
+  backend_balancing?: boolean;
 }
 
 /**

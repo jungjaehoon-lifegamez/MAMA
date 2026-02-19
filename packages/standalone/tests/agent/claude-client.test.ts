@@ -39,7 +39,7 @@ describe('ClaudeClient', () => {
     type: 'message',
     role: 'assistant',
     content: [{ type: 'text', text: 'Hello!' }],
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     stop_reason: 'end_turn',
     stop_sequence: null,
     usage: { input_tokens: 10, output_tokens: 5 },
@@ -173,7 +173,7 @@ describe('ClaudeClient', () => {
 
       expect(Anthropic.prototype.messages.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
         })
       );
     });
@@ -294,7 +294,7 @@ describe('ClaudeClient', () => {
         type: 'message',
         role: 'assistant',
         content: [{ type: 'text', text: 'Response text' }],
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         stop_reason: 'end_turn',
         stop_sequence: null,
         usage: { input_tokens: 10, output_tokens: 20 },
@@ -320,7 +320,7 @@ describe('ClaudeClient', () => {
             input: { topic: 'test' },
           },
         ],
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         stop_reason: 'tool_use',
         stop_sequence: null,
         usage: { input_tokens: 10, output_tokens: 15 },
@@ -402,7 +402,7 @@ describe('ClaudeClient', () => {
 
   describe('static methods', () => {
     it('should return default model', () => {
-      expect(ClaudeClient.getDefaultModel()).toBe('claude-sonnet-4-20250514');
+      expect(ClaudeClient.getDefaultModel()).toBe('claude-sonnet-4-6');
     });
 
     it('should return default max tokens', () => {

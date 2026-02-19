@@ -82,7 +82,7 @@ Ask users which AI backend they want to use:
 To configure:
 \`\`\`
 update_config("agent.backend", "claude")        // or "codex-mcp"
-update_config("agent.model", "claude-sonnet-4-20250514")  // for claude
+update_config("agent.model", "claude-sonnet-4-6")  // for claude
 update_config("agent.model", "gpt-5.3-codex")   // for codex-mcp
 \`\`\`
 

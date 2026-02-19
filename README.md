@@ -474,6 +474,9 @@ We provide `@jungjaehoon/openclaw-mama` plugin for users who prefer the OpenClaw
 **Multi-Agent Architecture:**
 The Multi-Agent Swarm system was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode), a multi-agent orchestration framework for AI coding assistants. While MAMA's swarm shares the vision of coordinated AI agents with tiered permissions, it was built specifically for **chat platforms** (Discord, Slack, Telegram) rather than CLI environments, enabling collaborative agent teams accessible from anywhere.
 
+**Planning Workflows:**
+MAMA's Conductor agent integrates workflow templates from [BMAD-METHOD](https://github.com/bmadcode/BMAD-METHOD) (MIT License, Copyright BMad Code, LLC). The BMAD Method provides structured planning artifacts (product briefs, PRDs, tech specs, architecture docs) that the Conductor uses to orchestrate multi-step project planning. "BMad", "BMad Method", and "BMAD-METHOD" are trademarks of BMad Code, LLC; MAMA is not affiliated with or endorsed by BMad Code, LLC.
+
 ---
 
 ## 🔗 Links

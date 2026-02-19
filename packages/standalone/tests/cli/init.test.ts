@@ -156,7 +156,7 @@ describe('mama init command', () => {
       await initCommand();
 
       const config = await loadConfig();
-      expect(config.agent.model).toBe('claude-sonnet-4-20250514');
+      expect(config.agent.model).toBe('claude-sonnet-4-6');
       expect(config.agent.max_turns).toBe(10);
       expect(config.agent.timeout).toBe(300000);
       expect(config.logging.level).toBe('info');
@@ -262,7 +262,7 @@ describe('mama init command', () => {
       await initCommand({ force: true });
 
       const config = await loadConfig();
-      expect(config.agent.model).toBe('claude-sonnet-4-20250514');
+      expect(config.agent.model).toBe('claude-sonnet-4-6');
       expect(config.agent.max_turns).toBe(10);
       expect(config.logging.level).toBe('info');
     });

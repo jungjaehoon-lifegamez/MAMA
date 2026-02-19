@@ -11,24 +11,27 @@
  * https://platform.claude.com/docs/en/about-claude/models/overview
  */
 const MODEL_NAMES: Record<string, string> = {
-  // Latest models
+  // Claude 4.6
   'claude-opus-4-6': 'Claude Opus 4.6',
+  'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+  // Claude 4.5
+  'claude-opus-4-5-20251101': 'Claude Opus 4.5',
   'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
   'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
-  // Legacy models
-  'claude-opus-4-5-20251101': 'Claude Opus 4.5',
+  // Claude 4.0
   'claude-sonnet-4-20250514': 'Claude Sonnet 4',
   'claude-opus-4-20250514': 'Claude Opus 4',
+  // Legacy
   'claude-3-7-sonnet-20250219': 'Claude Sonnet 3.7',
   'claude-3-haiku-20240307': 'Claude Haiku 3',
-  // GPT models
+  // GPT / Codex
   'gpt-5.3-codex': 'GPT-5.3 Codex',
-  'gpt-5.2': 'GPT-5.2',
-  'gpt-5.1': 'GPT-5.1',
+  'gpt-5.2-codex': 'GPT-5.2 Codex',
+  'gpt-5.1-codex-max': 'GPT-5.1 Codex Max',
   'gpt-4.1': 'GPT-4.1',
   'gpt-4o': 'GPT-4o',
   'gpt-4o-mini': 'GPT-4o Mini',
-  'o1': 'o1',
+  o1: 'o1',
   'o1-mini': 'o1 Mini',
   'o3-mini': 'o3 Mini',
 };
