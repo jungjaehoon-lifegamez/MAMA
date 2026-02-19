@@ -204,13 +204,8 @@ async function loadYamlFile<T>(filePath: string): Promise<T | null> {
     const content = await readFile(filePath, 'utf-8');
     const parsed = yaml.load(content) as T;
     return parsed ?? null;
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err?.code === 'ENOENT') {
-      return null;
-    }
-    const message = err?.message ?? (error instanceof Error ? error.message : String(error));
-    throw new Error(`Failed to load BMAD config: ${filePath}: ${message}`);
+  } catch {
+    return null;
   }
 }
 
@@ -252,12 +247,7 @@ function resolveCurrentDir(): string {
 async function tryReadFile(filePath: string): Promise<string | null> {
   try {
     return await readFile(filePath, 'utf-8');
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err?.code === 'ENOENT') {
-      return null;
-    }
-    const message = err?.message ?? (error instanceof Error ? error.message : String(error));
-    throw new Error(`Failed to read BMAD template: ${filePath}: ${message}`);
+  } catch {
+    return null;
   }
 }

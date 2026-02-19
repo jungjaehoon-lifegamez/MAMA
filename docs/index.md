@@ -140,5 +140,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.8.0 - Webchat Media, TTS/STT, Multi-Agent Swarm, Gateway Integrations
-**Last Updated:** 2026-02-12
+**Status:** MAMA OS v0.9.4 - BMAD Workflows, Workflow Concurrency, Backend Balancing, Council Engine
+**Last Updated:** 2026-02-19

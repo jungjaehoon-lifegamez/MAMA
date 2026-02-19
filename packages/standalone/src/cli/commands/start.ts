@@ -415,10 +415,6 @@ function hasCodexBackendConfigured(config: Awaited<ReturnType<typeof loadConfig>
 
   for (const raw of Object.values(agents)) {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      const enabled = (raw as { enabled?: boolean }).enabled;
-      if (enabled === false) {
-        continue;
-      }
       const agentBackend = (raw as { backend?: string }).backend;
       if (agentBackend === 'codex-mcp') {
         return true;

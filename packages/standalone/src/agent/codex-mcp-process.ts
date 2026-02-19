@@ -102,8 +102,14 @@ export class CodexMCPProcess extends EventEmitter {
       return;
     }
 
-    const command = this.resolveCodexCommand();
     this.state = 'starting';
+    let command: string;
+    try {
+      command = this.resolveCodexCommand();
+    } catch (error) {
+      this.state = 'dead';
+      throw error;
+    }
     logger.info(`Starting Codex MCP server with command: ${command}`);
 
     try {
