@@ -593,6 +593,7 @@ ${skillBlocks.join('\n\n---\n\n')}
       return await buildBmadPromptBlock(process.cwd());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.warn('[AgentProcessManager] BMAD prompt block generation failed, using fallback:', message);
       console.error('[AgentProcessManager] BMAD prompt block generation failed:', message);
       return `[BMAD_LOAD_ERROR: ${message}]`;
     }
