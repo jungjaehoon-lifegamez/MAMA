@@ -113,6 +113,8 @@ const VALID_TOOLS: GatewayToolName[] = [
   'os_stop_bot',
   // PR Review tools
   'pr_review_threads',
+  // Playground tools
+  'playground_create',
 ];
 
 /**
@@ -371,6 +373,11 @@ export class GatewayToolExecutor {
         case 'pr_review_threads':
           return await this.executePrReviewThreads(
             input as { pr_url?: string; owner?: string; repo?: string; pr_number?: number }
+          );
+        // Playground tools
+        case 'playground_create':
+          return await this.executePlaygroundCreate(
+            input as { name: string; html: string; description?: string }
           );
       }
 
@@ -1320,6 +1327,7 @@ export class GatewayToolExecutor {
       // No role specified - update global agent config
       if (!config.agent) {
         config.agent = {
+          backend: 'claude',
           model: 'claude-sonnet-4-6',
           max_turns: 10,
           timeout: 300000,
@@ -1657,6 +1665,78 @@ export class GatewayToolExecutor {
       return { success: true, threads: unresolved, summary: summaryLines.join('\n') };
     } catch (err) {
       return { success: false, error: `Failed to fetch PR threads: ${err}` };
+    }
+  }
+
+  // ============================================================================
+  // Playground Tools
+  // ============================================================================
+
+  private async executePlaygroundCreate(input: {
+    name: string;
+    html: string;
+    description?: string;
+  }): Promise<{ success: boolean; url?: string; slug?: string; error?: string }> {
+    const { name, html, description } = input;
+
+    if (!name || !html) {
+      return { success: false, error: 'name and html are required' };
+    }
+
+    // Generate slug from name (kebab-case, sanitized)
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 64);
+
+    if (!slug) {
+      return { success: false, error: 'Invalid name: cannot generate slug' };
+    }
+
+    const playgroundsDir = join(homedir(), '.mama', 'workspace', 'playgrounds');
+    const htmlPath = join(playgroundsDir, `${slug}.html`);
+    const indexPath = join(playgroundsDir, 'index.json');
+
+    try {
+      mkdirSync(playgroundsDir, { recursive: true });
+
+      // Save HTML file
+      writeFileSync(htmlPath, html, 'utf-8');
+
+      // Update index.json
+      let index: Array<{
+        name: string;
+        slug: string;
+        description?: string;
+        created_at: string;
+      }> = [];
+      if (existsSync(indexPath)) {
+        try {
+          index = JSON.parse(readFileSync(indexPath, 'utf-8'));
+        } catch {
+          index = [];
+        }
+      }
+
+      // Remove existing entry with same slug
+      index = index.filter((entry) => entry.slug !== slug);
+
+      // Add new entry
+      index.push({
+        name,
+        slug,
+        description,
+        created_at: new Date().toISOString(),
+      });
+
+      writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+
+      return { success: true, url: `/playgrounds/${slug}.html`, slug };
+    } catch (err) {
+      return { success: false, error: `Failed to create playground: ${err}` };
     }
   }
 
