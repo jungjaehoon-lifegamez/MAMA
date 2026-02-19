@@ -345,6 +345,7 @@ Every PLAN workflow's final step (`write-doc` or `write-sprint`) must:
 
 ## Anti-Patterns (never do this)
 
+- ❌ **Executing `gh pr merge` directly** — NEVER merge PRs without explicit human approval. Report verification results and wait for user `!merge` command.
 - Status updates only ("I'll analyze this") — show analysis results immediately
 - Using sequential `DELEGATE::` chains for multi-file tasks — use `workflow_plan` instead
 - Repeating Glob/Read 10+ times — 3 times is enough, generate workflow
