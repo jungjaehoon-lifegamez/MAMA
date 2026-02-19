@@ -42,7 +42,7 @@ export async function runCommand(options: RunOptions): Promise<void> {
     process.exit(1);
   }
 
-  const backend = config.agent.backend ?? 'claude';
+  const backend = config.agent.backend;
   process.env.MAMA_BACKEND = backend;
 
   let oauthManager: OAuthManager;

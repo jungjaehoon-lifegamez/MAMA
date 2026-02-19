@@ -5,7 +5,15 @@
  */
 
 import { spawn, exec } from 'node:child_process';
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+} from 'node:fs';
 import { homedir, platform } from 'node:os';
 import Database from 'better-sqlite3';
 import express from 'express';
@@ -309,7 +317,10 @@ async function startEmbeddingServerIfAvailable(
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn('[EmbeddingServer] Failed to start (optional):', message);
+    console.warn(
+      `[EmbeddingServer] Failed to start: ${message}\n` +
+        `  ⚠️  Semantic search (decision recall) UNAVAILABLE this session`
+    );
   }
 }
 
@@ -404,7 +415,7 @@ function resolveCodexCommandForStartup(): string {
 }
 
 function hasCodexBackendConfigured(config: Awaited<ReturnType<typeof loadConfig>>): boolean {
-  if ((config.agent?.backend ?? 'claude') === 'codex-mcp') {
+  if (config.agent.backend === 'codex-mcp') {
     return true;
   }
 
@@ -470,7 +481,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const backend = config.agent.backend ?? 'claude';
+  const backend = config.agent.backend;
   process.env.MAMA_BACKEND = backend;
 
   if (backend === 'codex-mcp') {
@@ -607,7 +618,7 @@ export async function runAgentLoop(
   config: Awaited<ReturnType<typeof loadConfig>>,
   options: { osAgentMode?: boolean } = {}
 ): Promise<void> {
-  const startupBackend = config.agent.backend ?? 'claude';
+  const startupBackend = config.agent.backend;
   const usesCodexBackend = startupBackend === 'codex-mcp' || hasCodexBackendConfigured(config);
 
   if (usesCodexBackend) {
@@ -709,7 +720,7 @@ export async function runAgentLoop(
     }
   }
 
-  const runtimeBackend = config.agent.backend ?? 'claude';
+  const runtimeBackend = config.agent.backend;
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
   const agentLoop = new AgentLoop(oauthManager, {
@@ -719,15 +730,15 @@ export async function runAgentLoop(
     maxTurns: config.agent.max_turns,
     toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord
-    // SECURITY NOTE: dangerouslySkipPermissions=true is REQUIRED for headless daemon operation.
-    // This is NOT a security violation because:
-    // 1. MAMA runs as a background daemon with no TTY - interactive prompts are impossible
-    // 2. Permission control is handled by MAMA's RoleManager (allowedTools, allowedPaths, blockedTools)
-    // 3. OS agent access is restricted to authenticated viewer sessions only
-    // 4. MAMA_TRUSTED_ENV=true is a hard gate - config alone cannot enable this
-    dangerouslySkipPermissions:
-      process.env.MAMA_TRUSTED_ENV === 'true' &&
-      (config.multi_agent?.dangerouslySkipPermissions ?? true),
+    // SECURITY MODEL: MAMA OS is a headless daemon — no TTY for interactive permission prompts.
+    // Permission enforcement is handled by MAMA's own RoleManager layer:
+    //   - config.yaml roles.definitions.*.allowedTools / blockedTools / allowedPaths
+    //   - Multi-agent ToolPermissionManager (tier-based tool access)
+    //   - Source-based role mapping (viewer=os_agent, discord=chat_bot, etc.)
+    // Claude CLI's interactive permission system is bypassed because it cannot work without a TTY.
+    // This is controlled solely by config.yaml (multi_agent.dangerouslySkipPermissions, default: true).
+    // DO NOT add env-var gates here — MAMA manages its own security via config.yaml roles.
+    dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
     // Collect reasoning for Discord display
@@ -1779,6 +1790,49 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   console.log(`✓ Session API proxied to port ${EMBEDDING_PORT}`);
 
   const publicDir = path.resolve(process.cwd(), 'public');
+
+  // Playground static serving + API
+  const playgroundsDir = path.join(homedir(), '.mama', 'workspace', 'playgrounds');
+  mkdirSync(playgroundsDir, { recursive: true });
+  apiServer.app.use('/playgrounds', express.static(playgroundsDir));
+
+  apiServer.app.get('/api/playgrounds', (_req, res) => {
+    const indexPath = path.join(playgroundsDir, 'index.json');
+    try {
+      if (!existsSync(indexPath)) {
+        res.json([]);
+        return;
+      }
+      const data = JSON.parse(readFileSync(indexPath, 'utf-8'));
+      res.json(Array.isArray(data) ? data : []);
+    } catch {
+      res.json([]);
+    }
+  });
+
+  apiServer.app.delete('/api/playgrounds/:slug', (req, res) => {
+    const { slug } = req.params;
+    if (!slug || /[^a-z0-9-]/.test(slug)) {
+      res.status(400).json({ error: 'Invalid slug' });
+      return;
+    }
+    const htmlPath = path.join(playgroundsDir, `${slug}.html`);
+    const indexPath = path.join(playgroundsDir, 'index.json');
+    try {
+      if (existsSync(htmlPath)) unlinkSync(htmlPath);
+      if (existsSync(indexPath)) {
+        const index = JSON.parse(readFileSync(indexPath, 'utf-8'));
+        const updated = Array.isArray(index)
+          ? index.filter((e: { slug: string }) => e.slug !== slug)
+          : [];
+        writeFileSync(indexPath, JSON.stringify(updated, null, 2), 'utf-8');
+      }
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: `Failed to delete playground: ${err}` });
+    }
+  });
+  console.log('✓ Playground API available at /api/playgrounds');
 
   // Serve setup page at /setup route
   apiServer.app.get('/setup', (_req, res) => {

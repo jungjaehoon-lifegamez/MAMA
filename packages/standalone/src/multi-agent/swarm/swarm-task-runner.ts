@@ -221,6 +221,9 @@ export class SwarmTaskRunner extends EventEmitter {
 
     // Claim the task before execution
     const agentId = task.category || 'developer';
+    if (!task.category) {
+      console.warn(`[SwarmTaskRunner] Task ${task.id} has no category. Defaulting to 'developer'`);
+    }
     const claimed = claimTask(db, task.id, agentId);
     if (!claimed) {
       throw new Error(`Task ${taskId} could not be claimed (current status: ${task.status})`);
@@ -328,6 +331,11 @@ export class SwarmTaskRunner extends EventEmitter {
 
       // Determine agent ID from category
       const agentId = task.category || 'developer';
+      if (!task.category) {
+        console.warn(
+          `[SwarmTaskRunner] Task ${task.id} has no category. Defaulting to 'developer'`
+        );
+      }
 
       // Try to claim the task
       const claimed = claimTask(db, task.id, agentId);
@@ -385,6 +393,9 @@ export class SwarmTaskRunner extends EventEmitter {
 
     // Determine agent ID from category or use default
     const agentId = task.category || 'developer';
+    if (!task.category) {
+      console.warn(`[SwarmTaskRunner] Task ${task.id} has no category. Defaulting to 'developer'`);
+    }
 
     let process: AgentRuntimeProcess | undefined; // Declare in outer scope for catch block access
 

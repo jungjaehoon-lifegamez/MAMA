@@ -253,6 +253,22 @@
               </svg>
               <span class="hidden sm:inline">Settings</span>
             </button>
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="playground" onclick="window.switchTab && window.switchTab('playground')">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              <span class="hidden sm:inline">Playground</span>
+            </button>
           </nav>
 
           <!-- Header Actions -->
@@ -1004,6 +1020,29 @@
           </div>
         </div>
 
+        <!-- Playground Tab -->
+        <div class="tab-content" id="tab-playground">
+          <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full overflow-y-auto">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-lg font-bold text-mama-black">Playgrounds</h2>
+              <button id="playground-refresh-btn" class="px-3 py-1.5 text-xs rounded-lg bg-mama-lavender-light text-mama-black font-medium hover:bg-mama-lavender-dark">
+                Refresh
+              </button>
+            </div>
+            <div id="playground-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+              <div class="text-gray-500 text-sm col-span-full text-center py-8">No playgrounds yet. Ask an agent to create one!</div>
+            </div>
+            <div id="playground-viewer" class="flex-1 hidden">
+              <div class="flex items-center gap-2 mb-2">
+                <button id="playground-back-btn" class="px-3 py-1.5 text-xs rounded-lg bg-gray-200 text-gray-700 font-medium hover:bg-gray-300">Back</button>
+                <span id="playground-viewer-title" class="font-semibold text-mama-black"></span>
+                <a id="playground-open-new" href="#" target="_blank" class="ml-auto text-xs text-indigo-600 hover:underline">Open in new tab</a>
+              </div>
+              <iframe id="playground-iframe" class="w-full border border-mama-lavender-dark rounded-lg bg-white" style="height: calc(100vh - 200px);" sandbox="allow-scripts allow-same-origin allow-forms allow-modals"></iframe>
+            </div>
+          </div>
+        </div>
+
         <!-- Floating Chat (global, visible on all tabs) -->
         <div id="floating-chat" class="fixed bottom-6 right-6 z-50">
           <button id="chat-bubble"
@@ -1294,6 +1333,7 @@
       import { DashboardModule } from '/viewer/js/modules/dashboard.js';
       import { SettingsModule } from '/viewer/js/modules/settings.js';
       import { SkillsModule } from '/viewer/js/modules/skills.js';
+      import { PlaygroundModule } from '/viewer/js/modules/playground.js';
       import { API } from '/viewer/js/utils/api.js';
 
       const memory = new MemoryModule();
@@ -1302,6 +1342,7 @@
       const dashboard = new DashboardModule();
       const settings = new SettingsModule();
       const skills = SkillsModule;
+      const playground = PlaygroundModule;
 
       // Expose modules globally for debugging and onclick handlers
       window.chatModule = chat;
@@ -1367,6 +1408,8 @@
               if (loadingEl) loadingEl.innerHTML = '<span class="text-red-500">Failed to load graph data</span>';
             }
           }
+        } else if (tabName === 'playground') {
+          playground.init();
         }
       }
 
@@ -2076,6 +2119,28 @@
         chat.initFloating();
         // Default to dashboard tab
         switchTab('dashboard');
+      });
+
+      // Listen for postMessage from playground iframes
+      window.addEventListener('message', (event) => {
+        if (!event.data || event.data.type !== 'playground:sendToChat') return;
+        const message = event.data.message;
+        if (!message || typeof message !== 'string') return;
+
+        // Open floating chat if closed
+        const panel = document.getElementById('floating-chat-panel');
+        if (panel && panel.classList.contains('hidden')) {
+          const toggle = document.getElementById('floating-chat-toggle');
+          if (toggle) toggle.click();
+        }
+
+        // Set input and send
+        const input = document.getElementById('chat-input');
+        if (input && chat) {
+          input.value = message;
+          // Small delay to ensure chat panel is visible and WS is ready
+          setTimeout(() => chat.send(), 150);
+        }
       });
 
       // Cleanup resources on page unload

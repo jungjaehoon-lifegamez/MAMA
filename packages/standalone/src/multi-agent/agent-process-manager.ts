@@ -167,9 +167,17 @@ export class AgentProcessManager extends EventEmitter {
   }
 
   private getAgentBackend(
-    agentConfig: Omit<AgentPersonaConfig, 'id'>
+    agentConfig: Omit<AgentPersonaConfig, 'id'>,
+    agentId?: string
   ): 'claude' | 'codex-mcp' | 'gemini' {
-    return agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
+    const backend = agentConfig.backend ?? this.runtimeOptions.backend;
+    if (!backend) {
+      throw new Error(
+        `No backend configured for agent${agentId ? ` '${agentId}'` : ''}. ` +
+          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex-mcp'`
+      );
+    }
+    return backend;
   }
 
   /**
@@ -242,7 +250,7 @@ export class AgentProcessManager extends EventEmitter {
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     const agentConfig = this.config.agents[agentId];
     const poolSize = agentConfig?.pool_size ?? 1;
-    const agentBackend = this.getAgentBackend(agentConfig);
+    const agentBackend = this.getAgentBackend(agentConfig, agentId);
     const systemPrompt = await this.loadPersona(agentId);
     const tier = agentConfig?.tier ?? 1;
     const options: Partial<PersistentProcessOptions> = {
@@ -382,10 +390,11 @@ export class AgentProcessManager extends EventEmitter {
       this.personaCache.set(agentId, systemPrompt);
       return systemPrompt;
     } catch (error) {
-      console.error(`[AgentProcessManager] Failed to load persona: ${personaPath}`, error);
-      const defaultPersona = this.buildDefaultPersona(agentId, agentConfig);
-      this.personaCache.set(agentId, defaultPersona);
-      return defaultPersona;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Failed to load persona for '${agentId}': ${personaPath}. ` +
+          `Error: ${message}. Fix: check file permissions or run 'mama init'`
+      );
     }
   }
 
@@ -424,7 +433,13 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     // Replace model placeholders with actual config values
-    const actualModel = agentConfig.model || this.runtimeOptions.model || 'unknown';
+    const actualModel = agentConfig.model || this.runtimeOptions.model;
+    if (!actualModel) {
+      throw new Error(
+        `No model configured for agent '${agentId}'. ` +
+          `Set 'model' in agent config or global agent.model`
+      );
+    }
     const modelDisplayName = getModelDisplayName(actualModel);
     resolvedPersona = resolvedPersona.replace(/\{\{model\}\}/gi, modelDisplayName);
     resolvedPersona = resolvedPersona.replace(/\{\{model_id\}\}/gi, actualModel);
@@ -559,7 +574,10 @@ ${this.buildSkillsPrompt()}
       }
     }
     if (backend === 'claude') {
-      return this.runtimeOptions.model || 'claude-sonnet-4-6';
+      if (!this.runtimeOptions.model) {
+        throw new Error(`No model configured for claude backend. Set agent.model in config.yaml`);
+      }
+      return this.runtimeOptions.model;
     }
     return 'unknown';
   }
@@ -593,7 +611,10 @@ ${skillBlocks.join('\n\n---\n\n')}
       return await buildBmadPromptBlock(process.cwd());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn('[AgentProcessManager] BMAD prompt block generation failed, using fallback:', message);
+      console.warn(
+        '[AgentProcessManager] BMAD prompt block generation failed, using fallback:',
+        message
+      );
       console.error('[AgentProcessManager] BMAD prompt block generation failed:', message);
       return `[BMAD_LOAD_ERROR: ${message}]`;
     }

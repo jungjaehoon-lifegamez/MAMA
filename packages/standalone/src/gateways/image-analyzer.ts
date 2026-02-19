@@ -71,6 +71,12 @@ export class ImageAnalyzer {
     const config = await loadConfig();
     const configModel = config.agent?.model || '';
     const isClaudeModel = configModel.startsWith('claude-');
+    if (!isClaudeModel && configModel) {
+      console.warn(
+        `[ImageAnalyzer] config model '${configModel}' is not Claude. ` +
+          `Image analysis using fallback: ${DEFAULT_IMAGE_MODEL}`
+      );
+    }
     const model = isClaudeModel ? configModel : DEFAULT_IMAGE_MODEL;
 
     const response = await client.messages.create({
