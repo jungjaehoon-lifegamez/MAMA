@@ -234,8 +234,8 @@ Built-in web interface for managing MAMA and chatting with your configured backe
 **🧪 Playground Tab**
 
 - **Skill Lab** — Step-by-step skill creation, modification, and verification
-- **Cron Workflow Lab** — Visual cron-scheduled workflow designer
-- **Wave Visualizer** — Audio waveform playground for voice skill development
+- **Cron Workflow Lab** — Node-based DAG editor for cron workflows (trigger → prompt → condition → action)
+- **Wave Visualizer** — Multi-Agent task execution flow visualizer (Simulation + Live modes)
 - Bidirectional sync with Skills Tab (select skill → opens in Skill Lab)
 - "Open in new tab" for full-screen editing
 
