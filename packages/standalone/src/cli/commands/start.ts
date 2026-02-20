@@ -1875,8 +1875,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   try {
     mkdirSync(playgroundsDir, { recursive: true });
   } catch (err) {
-    startLogger.warn(`Failed to create playgrounds directory: ${err}`);
-    return;
+    startLogger.warn(
+      `Failed to create playgrounds dir, skipping seeding: ${err instanceof Error ? err.message : String(err)}`
+    );
+    // DO NOT return — continue with the rest of runAgentLoop
   }
 
   // Seed built-in playgrounds from templates
@@ -1992,8 +1994,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       }
       res.json({ success: true });
     } catch (err) {
-      const safeMsg =
-        err instanceof Error ? err.message.replace(/\/home\/[^/]+/g, '~') : 'Unknown error';
+      const safeMsg = (err instanceof Error ? err.message : String(err))
+        .replace(/\/home\/[^/]+/g, '~') // Linux
+        .replace(/\/Users\/[^/]+/g, '~') // macOS
+        .replace(/C:\\Users\\[^\\]+/gi, '~'); // Windows
       res.status(500).json({ error: `Failed to delete playground: ${safeMsg}` });
     }
   });

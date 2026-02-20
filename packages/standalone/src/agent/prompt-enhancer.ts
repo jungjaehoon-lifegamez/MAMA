@@ -12,6 +12,17 @@ import { homedir } from 'node:os';
 import { ContentDeduplicator } from './content-dedup.js';
 import { parseFrontmatter, matchesContext } from './yaml-frontmatter.js';
 import type { RuleContext } from './yaml-frontmatter.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('PromptEnhancer');
 
 export interface EnhancedPromptContext {
   keywordInstructions: string;
@@ -459,9 +470,7 @@ export class PromptEnhancer {
     for (const detector of sorted) {
       for (const pattern of detector.patterns) {
         if (pattern.test(cleanText)) {
-          console.log(
-            `[PromptEnhancer] Keyword detected: ${detector.type} (priority=${detector.priority})`
-          );
+          logger.info(`Keyword detected: ${detector.type} (priority=${detector.priority})`);
           return detector.message;
         }
       }
@@ -511,8 +520,10 @@ export class PromptEnhancer {
         currentDir = dirname(currentDir);
         depth++;
       }
-    } catch {
-      // Silently handle filesystem errors
+    } catch (err) {
+      logger.warn(
+        `Failed to discover AGENTS.md: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
 
     const entries = dedup.getEntries();
@@ -552,8 +563,10 @@ export class PromptEnhancer {
             }
           }
         }
-      } catch {
-        // Skip unreadable files
+      } catch (err) {
+        logger.warn(
+          `Failed to read .copilot-instructions: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
 
@@ -574,8 +587,10 @@ export class PromptEnhancer {
         currentDir = dirname(currentDir);
         distance++;
       }
-    } catch {
-      // Silently handle filesystem errors
+    } catch (err) {
+      logger.warn(
+        `Failed to walk directory for rules: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
 
     rules.sort((a, b) => a.distance - b.distance);
@@ -617,7 +632,10 @@ export class PromptEnhancer {
         const stateContent = await readFile(stateFile, 'utf-8');
         state = JSON.parse(stateContent);
       }
-    } catch {
+    } catch (err) {
+      logger.warn(
+        `Failed to read skill state.json: ${err instanceof Error ? err.message : String(err)}`
+      );
       return null;
     }
 
@@ -631,7 +649,10 @@ export class PromptEnhancer {
       let entries;
       try {
         entries = readdirSync(sourceDir, { withFileTypes: true });
-      } catch {
+      } catch (err) {
+        logger.warn(
+          `Failed to read skills/${source}: ${err instanceof Error ? err.message : String(err)}`
+        );
         continue;
       }
 
@@ -647,14 +668,17 @@ export class PromptEnhancer {
         let fileContent;
         try {
           fileContent = await readFile(mainFile, 'utf-8');
-        } catch {
+        } catch (err) {
+          logger.warn(
+            `Failed to read skill file ${mainFile}: ${err instanceof Error ? err.message : String(err)}`
+          );
           continue;
         }
 
         const fm = this._parseSkillFrontmatter(fileContent);
         if (!fm.keywords.some((kw) => lower.includes(kw.toLowerCase()))) continue;
 
-        console.log(`[PromptEnhancer] Skill matched: ${stateKey}`);
+        logger.info(`Skill matched: ${stateKey}`);
         return await this._loadDirSkillContent(skillDir, stateKey);
       }
     }
@@ -678,14 +702,17 @@ export class PromptEnhancer {
       let content;
       try {
         content = await readFile(join(skillsBase, entry.name), 'utf-8');
-      } catch {
+      } catch (err) {
+        logger.warn(
+          `Failed to read flat skill ${entry.name}: ${err instanceof Error ? err.message : String(err)}`
+        );
         continue;
       }
 
       const fm = this._parseSkillFrontmatter(content);
       if (!fm.keywords.some((kw) => lower.includes(kw.toLowerCase()))) continue;
 
-      console.log(`[PromptEnhancer] Skill matched (flat): ${stateKey}`);
+      logger.info(`Skill matched (flat): ${stateKey}`);
       return content;
     }
 
@@ -725,8 +752,10 @@ export class PromptEnhancer {
           return join(skillDir, e.name);
         }
       }
-    } catch {
-      /* ignore */
+    } catch (err) {
+      logger.warn(
+        `Failed to find main skill file in ${skillDir}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
     return null;
   }
@@ -738,7 +767,10 @@ export class PromptEnhancer {
       let entries;
       try {
         entries = readdirSync(dir, { withFileTypes: true });
-      } catch {
+      } catch (err) {
+        logger.warn(
+          `Failed to read skill dir ${dir}: ${err instanceof Error ? err.message : String(err)}`
+        );
         return;
       }
       for (const e of entries) {
@@ -751,8 +783,10 @@ export class PromptEnhancer {
           try {
             const content = await readFile(fullPath, 'utf-8');
             mdFiles.push({ path: relPath, content });
-          } catch {
-            /* skip */
+          } catch (err) {
+            logger.warn(
+              `Failed to read ${fullPath}: ${err instanceof Error ? err.message : String(err)}`
+            );
           }
         }
       }
@@ -796,7 +830,10 @@ export class PromptEnhancer {
       const content = await readFile(filePath, 'utf8');
       this.fileCache.set(filePath, { content, loadedAt: now });
       return content;
-    } catch {
+    } catch (err) {
+      logger.warn(
+        `Failed to read cached file ${filePath}: ${err instanceof Error ? err.message : String(err)}`
+      );
       return null;
     }
   }
@@ -838,8 +875,10 @@ export class PromptEnhancer {
           rules.push({ path: rulePath, content: parsed.content, distance });
         }
       }
-    } catch {
-      // Skip unreadable directories
+    } catch (err) {
+      logger.warn(
+        `Failed to collect rules from ${dirPath}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 }

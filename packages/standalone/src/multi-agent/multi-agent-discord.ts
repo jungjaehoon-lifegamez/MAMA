@@ -606,7 +606,11 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     };
     const enhanced = await this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
     if (enhanced.skillContent) {
-      fullPrompt = `<system-reminder>\n${enhanced.skillContent}\n</system-reminder>\n\n${fullPrompt}`;
+      const safeSkillContent = enhanced.skillContent.replace(
+        /<\/system-reminder>/gi,
+        '</system\u2011reminder>'
+      );
+      fullPrompt = `<system-reminder>\n${safeSkillContent}\n</system-reminder>\n\n${fullPrompt}`;
       logger.info(
         `[SkillMatch] Injecting skill into Discord agent ${agentId}: ${enhanced.skillContent.length} chars`
       );

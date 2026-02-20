@@ -189,7 +189,8 @@ var S={
   liveAgents:[],liveDelegations:[],livePolling:null,liveHistory:[],
   lastPoll:null,liveOk:false,prevDelegCount:0,
   prevStates:{},stateChanges:[],activeChains:0,pollCount:0,
-  liveTasks:[],waveCounter:0,currentBusy:new Set()
+  liveTasks:[],waveCounter:0,currentBusy:new Set(),
+  pollInFlight:false
 };
 
 // === Utilities ===
@@ -226,12 +227,19 @@ function renderLivePresetBar(){
     '<span style="font-size:12px;color:var(--text2);margin-left:8px" id="liveStatus">Connecting...</span>'+
     '<span style="font-size:11px;color:var(--text3);margin-left:auto" id="livePollTime"></span>';
 }
-function startLive(){pollLive();S.livePolling=setInterval(pollLive,3000)}
+function startLive(){pollLive();S.livePolling=setInterval(function(){
+  if(S.pollInFlight)return;
+  S.pollInFlight=true;
+  pollLive().finally(function(){S.pollInFlight=false;});
+},3000)}
 function stopLive(){if(S.livePolling){clearInterval(S.livePolling);S.livePolling=null}}
 
 async function pollLive(){
   try{
-    var r=await fetch('/api/multi-agent/status');
+    var ctrl=new AbortController();
+    var timeoutId=setTimeout(function(){ctrl.abort();},8000);
+    var r=await fetch('/api/multi-agent/status',{signal:ctrl.signal});
+    clearTimeout(timeoutId);
     if(!r.ok)throw new Error('API '+r.status);
     var sd=await r.json();
     S.liveAgents=sd.agents||[];
@@ -307,9 +315,10 @@ async function pollLive(){
 
     renderLiveSidebar();renderLiveArea();updateLivePrompt();
   }catch(e){
+    if(e.name==='AbortError'){console.warn('Poll timed out');}
     S.liveOk=false;
     var el=document.getElementById('liveStatus');
-    if(el){el.textContent='Disconnected — '+e.message;el.style.color='var(--red)'}
+    if(el){el.textContent='Disconnected — '+(e.name==='AbortError'?'Timeout':e.message);el.style.color='var(--red)'}
     renderLiveSidebar();renderLiveDisconnected();
   }
 }
