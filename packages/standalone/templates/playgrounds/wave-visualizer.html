@@ -193,7 +193,7 @@ var S={
 };
 
 // === Utilities ===
-function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function timeAgo(d){var s=(Date.now()-d.getTime())/1000;if(s<5)return'just now';if(s<60)return Math.floor(s)+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';return Math.floor(s/3600)+'h ago'}
 function fmtTime(d){if(!(d instanceof Date))d=new Date(d);return d.toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 
@@ -317,11 +317,11 @@ function renderLiveSidebar(){
   S.liveAgents.forEach(function(a){
     var c=AC[a.id]||'#888',e=AE[a.id]||'🤖';
     var sc=a.status==='online'?'online':a.status==='busy'?'busy':'offline';
-    h+='<div class="acard"><span class="online-dot '+sc+'"></span>'+
-      '<span class="aname" style="color:'+c+'">'+e+' '+(a.name||a.id)+'</span>'+
-      '<span class="atier">T'+(a.tier||1)+'</span></div>'+
+    h+='<div class="acard"><span class="online-dot '+esc(sc)+'"></span>'+
+      '<span class="aname" style="color:'+c+'">'+e+' '+esc(a.name||a.id)+'</span>'+
+      '<span class="atier">T'+esc(String(a.tier||1))+'</span></div>'+
       '<div style="padding:0 8px 6px 26px;font-size:11px;color:var(--text3)">'+
-      (a.model||'unknown')+' · '+(a.lastActivity?timeAgo(new Date(a.lastActivity)):'idle')+'</div>';
+      esc(a.model||'unknown')+' · '+(a.lastActivity?esc(timeAgo(new Date(a.lastActivity))):'idle')+'</div>';
   });
   h+='</div>';
 
@@ -335,12 +335,12 @@ function renderLiveSidebar(){
       var tc=c.to==='busy'?'var(--yellow)':c.to==='idle'||c.to==='online'?'var(--green)':'var(--text3)';
       var ic=c.to==='busy'?'⚡':c.to==='idle'||c.to==='online'?'✅':'⏸';
       h+='<div class="chg-item">'+
-        '<span style="color:var(--text3);font-family:monospace;font-size:10px;min-width:55px">'+fmtTime(c.time)+'</span>'+
+        '<span style="color:var(--text3);font-family:monospace;font-size:10px;min-width:55px">'+esc(fmtTime(c.time))+'</span>'+
         '<span>'+ic+'</span>'+
-        '<span style="color:'+col+';font-weight:600">'+c.agent+'</span>'+
-        '<span style="color:var(--text3);font-size:11px">'+c.from+'</span>'+
+        '<span style="color:'+col+';font-weight:600">'+esc(c.agent)+'</span>'+
+        '<span style="color:var(--text3);font-size:11px">'+esc(c.from)+'</span>'+
         '<span style="color:var(--accent);font-size:10px">→</span>'+
-        '<span style="color:'+tc+';font-weight:600;font-size:11px">'+c.to+'</span></div>';
+        '<span style="color:'+tc+';font-weight:600;font-size:11px">'+esc(c.to)+'</span></div>';
     });
   }
   h+='</div>';
@@ -351,10 +351,10 @@ function renderLiveSidebar(){
     S.liveHistory.slice(0,10).forEach(function(d){
       var cc=AC[d.claimedBy]||'#888';
       h+='<div style="padding:4px 0;font-size:12px;border-bottom:1px solid var(--border)">'+
-        '<span style="color:'+cc+';font-weight:600">'+(d.claimedBy||'?')+'</span>'+
-        ' <span class="tstatus '+(d.status||'pending')+'" style="font-size:9px">'+(d.status||'?')+'</span>'+
-        (d.wave?' <span style="color:var(--accent);font-size:10px">W'+d.wave+'</span>':'')+
-        '<div style="color:var(--text2);font-size:11px">'+(d.description||'-')+'</div></div>';
+        '<span style="color:'+cc+';font-weight:600">'+esc(d.claimedBy||'?')+'</span>'+
+        ' <span class="tstatus '+esc(d.status||'pending')+'" style="font-size:9px">'+esc(d.status||'?')+'</span>'+
+        (d.wave?' <span style="color:var(--accent);font-size:10px">W'+esc(String(d.wave))+'</span>':'')+
+        '<div style="color:var(--text2);font-size:11px">'+esc(d.description||'-')+'</div></div>';
     });
     h+='</div>';
   }
@@ -381,11 +381,11 @@ function renderLiveArea(){
     var bg=a.status==='busy'?'rgba(210,153,34,.08)':'transparent';
     h+='<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid '+bc+';border-radius:8px;padding:8px 12px;min-width:140px;'+(bg!=='transparent'?'background:'+bg:'')+'">'+
       '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+
-      '<span class="online-dot '+a.status+'"></span>'+
-      '<span style="font-size:13px;font-weight:600;color:'+c+'">'+e+' '+(a.name||a.id)+'</span>'+
+      '<span class="online-dot '+esc(a.status)+'"></span>'+
+      '<span style="font-size:13px;font-weight:600;color:'+c+'">'+e+' '+esc(a.name||a.id)+'</span>'+
       (a.ephemeral?'<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:var(--surface3);color:var(--text3)">ephemeral</span>':'')+
       '</div>'+
-      '<div style="font-size:10px;color:var(--text3)">'+(a.model||'-')+' · T'+(a.tier||1)+'</div>'+
+      '<div style="font-size:10px;color:var(--text3)">'+esc(a.model||'-')+' · T'+esc(String(a.tier||1))+'</div>'+
       '</div>';
   });
   h+='</div>';
@@ -415,14 +415,14 @@ function renderLiveArea(){
       wTasks.forEach(function(t){
         var c=AC[t.agent]||'#888',e=AE[t.agent]||'🤖';
         var elapsed='';
-        if(t.duration!==null)elapsed=t.duration+'s';
-        else if(t.startTime)elapsed=Math.round((Date.now()-t.startTime)/1000)+'s...';
+        if(t.duration!==null)elapsed=esc(String(t.duration))+'s';
+        else if(t.startTime)elapsed=esc(String(Math.round((Date.now()-t.startTime)/1000)))+'s...';
 
-        h+='<div class="tcard '+t.status+'">'+
+        h+='<div class="tcard '+esc(t.status)+'">'+
           '<div class="tagent"><div class="tagent-dot" style="background:'+c+'"></div>'+
-          '<span class="tagent-name" style="color:'+c+'">'+e+' '+t.agent+'</span></div>'+
-          '<div style="font-size:11px;color:var(--text3)">'+(t.model||'')+'</div>'+
-          '<div class="tmeta"><span class="tstatus '+t.status+'">'+(t.status==='busy'?'running':t.status)+'</span>'+
+          '<span class="tagent-name" style="color:'+c+'">'+e+' '+esc(t.agent)+'</span></div>'+
+          '<div style="font-size:11px;color:var(--text3)">'+esc(t.model||'')+'</div>'+
+          '<div class="tmeta"><span class="tstatus '+esc(t.status)+'">'+(t.status==='busy'?'running':esc(t.status))+'</span>'+
           (elapsed?'<span class="ttime">'+elapsed+'</span>':'')+'</div>'+
           '</div>';
       });
@@ -447,12 +447,12 @@ function renderLiveArea(){
       var tc=c.to==='busy'?'var(--yellow)':'var(--green)';
       var ic=c.to==='busy'?'⚡':'✅';
       h+='<div class="chg-item" style="opacity:'+Math.max(0.4,1-i*0.04)+'">'+
-        '<span style="font-size:10px;color:var(--text3);font-family:monospace;min-width:60px">'+fmtTime(c.time)+'</span>'+
+        '<span style="font-size:10px;color:var(--text3);font-family:monospace;min-width:60px">'+esc(fmtTime(c.time))+'</span>'+
         '<span>'+ic+'</span>'+
-        '<span style="color:'+col+';font-weight:600;min-width:70px">'+(AE[c.agent]||'')+' '+c.agent+'</span>'+
-        '<span style="color:var(--text3);font-size:11px">'+c.from+'</span>'+
+        '<span style="color:'+col+';font-weight:600;min-width:70px">'+(AE[c.agent]||'')+' '+esc(c.agent)+'</span>'+
+        '<span style="color:var(--text3);font-size:11px">'+esc(c.from)+'</span>'+
         '<span style="color:var(--accent);font-size:10px">→</span>'+
-        '<span style="color:'+tc+';font-weight:600;font-size:11px">'+c.to+'</span></div>';
+        '<span style="color:'+tc+';font-weight:600;font-size:11px">'+esc(c.to)+'</span></div>';
     });
     h+='</div>';
   } else if(S.liveOk) {

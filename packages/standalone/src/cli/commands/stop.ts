@@ -246,8 +246,26 @@ async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): 
       }
     });
 
-    if (stillInUse.length === 0) return;
+    if (stillInUse.length === 0) {
+      return;
+    }
     await sleep(pollInterval);
+  }
+
+  // Timeout occurred - warn user
+  const stillInUse = ports.filter((port) => {
+    try {
+      const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+      return output.length > 0;
+    } catch {
+      return false;
+    }
+  });
+
+  if (stillInUse.length > 0) {
+    console.log(
+      `⚠️  Warning: Port(s) ${stillInUse.join(', ')} still in use after ${maxWaitMs}ms timeout`
+    );
   }
 }
 

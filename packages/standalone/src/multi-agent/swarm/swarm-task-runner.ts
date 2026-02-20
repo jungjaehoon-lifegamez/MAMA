@@ -21,6 +21,7 @@ import { EventEmitter } from 'events';
 import type Database from 'better-sqlite3';
 import { SwarmManager } from './swarm-manager.js';
 import type { SwarmTask } from './swarm-db.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   claimTask,
   completeTask,
@@ -138,7 +139,7 @@ export class SwarmTaskRunner extends EventEmitter {
    */
   startSession(sessionId: string): void {
     if (this.sessions.has(sessionId)) {
-      console.warn(`[SwarmTaskRunner] Session ${sessionId} already running`);
+      debugLogger.warn(`[SwarmTaskRunner] Session ${sessionId} already running`);
       return;
     }
 
@@ -170,7 +171,7 @@ export class SwarmTaskRunner extends EventEmitter {
   stopSession(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (!state) {
-      console.warn(`[SwarmTaskRunner] Session ${sessionId} not running`);
+      debugLogger.warn(`[SwarmTaskRunner] Session ${sessionId} not running`);
       return;
     }
 
@@ -220,10 +221,10 @@ export class SwarmTaskRunner extends EventEmitter {
     }
 
     // Claim the task before execution
-    const agentId = task.category || 'developer';
     if (!task.category) {
-      console.warn(`[SwarmTaskRunner] Task ${task.id} has no category. Defaulting to 'developer'`);
+      throw new Error(`Task ${task.id} has no category; cannot determine target agent.`);
     }
+    const agentId = task.category;
     const claimed = claimTask(db, task.id, agentId);
     if (!claimed) {
       throw new Error(`Task ${taskId} could not be claimed (current status: ${task.status})`);
@@ -330,12 +331,10 @@ export class SwarmTaskRunner extends EventEmitter {
       }
 
       // Determine agent ID from category
-      const agentId = task.category || 'developer';
       if (!task.category) {
-        console.warn(
-          `[SwarmTaskRunner] Task ${task.id} has no category. Defaulting to 'developer'`
-        );
+        throw new Error(`Task ${task.id} has no category; cannot determine target agent.`);
       }
+      const agentId = task.category;
 
       // Try to claim the task
       const claimed = claimTask(db, task.id, agentId);
@@ -391,11 +390,11 @@ export class SwarmTaskRunner extends EventEmitter {
   ): Promise<TaskExecutionResult> {
     const db = this.swarmManager.getDatabase();
 
-    // Determine agent ID from category or use default
-    const agentId = task.category || 'developer';
+    // Determine agent ID from category
     if (!task.category) {
-      console.warn(`[SwarmTaskRunner] Task ${task.id} has no category. Defaulting to 'developer'`);
+      throw new Error(`Task ${task.id} has no category; cannot determine target agent.`);
     }
+    const agentId = task.category;
 
     let process: AgentRuntimeProcess | undefined; // Declare in outer scope for catch block access
 
@@ -415,7 +414,10 @@ export class SwarmTaskRunner extends EventEmitter {
           }
         } catch (error) {
           // Graceful fallback - log error but continue with original description
-          console.warn(`[SwarmTaskRunner] Failed to inject context for task ${task.id}:`, error);
+          debugLogger.warn(
+            `[SwarmTaskRunner] Failed to inject context for task ${task.id}:`,
+            error
+          );
         }
       }
 
@@ -431,7 +433,7 @@ export class SwarmTaskRunner extends EventEmitter {
             );
           }
         } catch (error) {
-          console.warn(
+          debugLogger.warn(
             `[SwarmTaskRunner] Anti-pattern detection failed for task ${task.id}:`,
             error
           );
@@ -548,7 +550,7 @@ export class SwarmTaskRunner extends EventEmitter {
 
     // Check for circular dependencies (self-reference and transitive cycles)
     if (dependencies.includes(task.id)) {
-      console.warn(`[SwarmTaskRunner] Circular dependency detected for task ${task.id}`);
+      debugLogger.warn(`[SwarmTaskRunner] Circular dependency detected for task ${task.id}`);
       return false;
     }
     // DFS cycle detection: walk dependency graph with visited set
@@ -557,7 +559,7 @@ export class SwarmTaskRunner extends EventEmitter {
     while (stack.length > 0) {
       const depId = stack.pop()!;
       if (depId === task.id) {
-        console.warn(
+        debugLogger.warn(
           `[SwarmTaskRunner] Transitive circular dependency: task ${task.id} → ... → ${task.id}`
         );
         return false;
@@ -581,7 +583,7 @@ export class SwarmTaskRunner extends EventEmitter {
         | undefined;
 
       if (!depTask) {
-        console.warn(`[SwarmTaskRunner] Dependency task ${depId} not found`);
+        debugLogger.warn(`[SwarmTaskRunner] Dependency task ${depId} not found`);
         return false;
       }
 
@@ -656,12 +658,12 @@ export class SwarmTaskRunner extends EventEmitter {
         this.checkpointFailCounts.set(sessionId, failCount);
 
         if (failCount >= 3) {
-          console.warn(
+          debugLogger.warn(
             `[SwarmTaskRunner] Checkpoint failed ${failCount} times for session ${sessionId}. Continuing without checkpoint.`,
             err
           );
         } else {
-          console.warn(
+          debugLogger.warn(
             `[SwarmTaskRunner] Failed to save checkpoint for session ${sessionId}:`,
             err
           );
@@ -707,12 +709,12 @@ export class SwarmTaskRunner extends EventEmitter {
         this.checkpointFailCounts.set(sessionId, failCount);
 
         if (failCount >= 3) {
-          console.warn(
+          debugLogger.warn(
             `[SwarmTaskRunner] Checkpoint failed ${failCount} times for session ${sessionId}. Continuing without checkpoint.`,
             err
           );
         } else {
-          console.warn(`[SwarmTaskRunner] Failed to save debounced checkpoint:`, err);
+          debugLogger.warn(`[SwarmTaskRunner] Failed to save debounced checkpoint:`, err);
         }
       }
     }, this.checkpointDebounceMs);

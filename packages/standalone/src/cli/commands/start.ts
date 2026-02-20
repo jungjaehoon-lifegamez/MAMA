@@ -54,6 +54,7 @@ import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
+import type { DelegationHistoryEntry } from '../../api/graph-api-types.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getEmbeddingDim, getModelName } from '@jungjaehoon/mama-core/config-loader';
@@ -1062,8 +1063,7 @@ export async function runAgentLoop(
     getAgentStates?: () => Map<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     getSwarmTasks?: (limit?: number) => Array<any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    getRecentDelegations?: (limit?: number) => Array<any>;
+    getRecentDelegations?: (limit?: number) => DelegationHistoryEntry[];
     applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
     restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   } = {};
@@ -1308,12 +1308,15 @@ export async function runAgentLoop(
       };
 
       // getRecentDelegations: in-memory delegation history from DelegationManager
-      graphHandlerOptions.getRecentDelegations = (limit = 20) => {
+      graphHandlerOptions.getRecentDelegations = (limit = 20): DelegationHistoryEntry[] => {
         try {
           return multiAgentHandler.getDelegationManager().getRecentDelegations(limit);
         } catch (err) {
-          console.error('[GraphAPI] Failed to fetch recent delegations:', err);
-          return [];
+          const logger = new DebugLogger('GraphAPI');
+          logger.error('[GraphAPI] Failed to fetch recent delegations:', err);
+          throw new Error(
+            `Failed to fetch recent delegations: ${err instanceof Error ? err.message : String(err)}`
+          );
         }
       };
 
@@ -1859,7 +1862,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   // Seed built-in playgrounds from templates
   try {
-    const pgTemplatesDir = path.join(process.cwd(), 'templates', 'playgrounds');
+    const pgTemplatesDir = path.join(__dirname, '..', '..', '..', 'templates', 'playgrounds');
     if (existsSync(pgTemplatesDir)) {
       const pgEntries = readdirSync(pgTemplatesDir);
       let pgSynced = 0;
@@ -1909,7 +1912,25 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     const indexPath = path.join(playgroundsDir, 'index.json');
     try {
       if (!existsSync(indexPath)) {
-        res.json([]);
+        // Self-heal: rebuild index from existing HTML files
+        const htmlFiles = readdirSync(playgroundsDir)
+          .filter((f) => f.endsWith('.html'))
+          .map((f) => {
+            const slug = f.replace('.html', '');
+            const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+            return {
+              name,
+              slug,
+              description: `Playground: ${name}`,
+              created_at: new Date().toISOString(),
+            };
+          });
+        if (htmlFiles.length > 0) {
+          writeFileSync(indexPath, JSON.stringify(htmlFiles, null, 2), 'utf-8');
+          res.json(htmlFiles);
+        } else {
+          res.json([]);
+        }
         return;
       }
       const data = JSON.parse(readFileSync(indexPath, 'utf-8'));
@@ -2006,9 +2027,13 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   const apiPortAvailable = await waitForPortAvailable(API_PORT, 8000);
   if (!apiPortAvailable) {
     console.warn(`[API] Port ${API_PORT} still in use, attempting cleanup...`);
-    const { killProcessesOnPorts } = await import('./stop.js');
     await killProcessesOnPorts([API_PORT]);
-    await waitForPortAvailable(API_PORT, 5000);
+    const portAvailableAfterCleanup = await waitForPortAvailable(API_PORT, 5000);
+    if (!portAvailableAfterCleanup) {
+      throw new Error(
+        `Failed to free port ${API_PORT} after cleanup. Please check for conflicting processes.`
+      );
+    }
   }
 
   await apiServer.start();

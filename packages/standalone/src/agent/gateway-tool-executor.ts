@@ -1723,8 +1723,10 @@ export class GatewayToolExecutor {
       if (existsSync(indexPath)) {
         try {
           index = JSON.parse(readFileSync(indexPath, 'utf-8'));
-        } catch {
-          index = [];
+        } catch (error) {
+          throw new Error(
+            `Failed to parse ${indexPath}: ${error instanceof Error ? error.message : String(error)}`
+          );
         }
       }
 
@@ -1772,9 +1774,28 @@ export class GatewayToolExecutor {
 
       if (file_path) {
         // Expand ~ to home directory
+        const homeDir = homedir();
         const expandedPath = file_path.startsWith('~/')
-          ? join(homedir(), file_path.slice(2))
+          ? join(homeDir, file_path.slice(2))
           : file_path;
+
+        // Check path permission based on role
+        const pathPermission = this.checkPathPermission(expandedPath);
+        if (!pathPermission.allowed) {
+          return { success: false, error: pathPermission.error };
+        }
+
+        // Fallback security for contexts without path restrictions:
+        // Only allow reading from ~/.mama/ directory
+        if (!this.currentContext?.role.allowedPaths?.length) {
+          const mamaDir = join(homeDir, '.mama');
+          if (!expandedPath.startsWith(mamaDir)) {
+            return {
+              success: false,
+              error: `Access denied: Can only copy files from ${mamaDir}`,
+            };
+          }
+        }
 
         if (!existsSync(expandedPath)) {
           return { success: false, error: `File not found: ${expandedPath}` };
