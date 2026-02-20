@@ -105,13 +105,6 @@ export interface AgentPersonaConfig {
   enabled?: boolean;
 
   /**
-   * Number of concurrent CLI processes for this agent
-   * Enables parallel task execution (pool of processes)
-   * @default 1 (single process, backward compatible)
-   */
-  pool_size?: number;
-
-  /**
    * Agent tier level
    * - Tier 1: Full access, can delegate to others
    * - Tier 2: Read/analyze tools only (no write/edit/bash)
