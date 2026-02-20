@@ -761,9 +761,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         duration: 0,
       };
     } finally {
-      if (process) {
-        this.processManager.releaseProcess(agentId, process);
-      }
       this.workTracker.completeWork(agentId, context.channelId);
     }
   }
