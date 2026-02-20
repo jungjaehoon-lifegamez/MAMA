@@ -20,7 +20,7 @@ import {
   copyFileSync,
   unlinkSync,
 } from 'fs';
-import { join, dirname, resolve, relative, isAbsolute } from 'path';
+import { join, dirname, resolve, relative, isAbsolute, basename } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -1832,8 +1832,8 @@ export class GatewayToolExecutor {
         }
 
         // Copy file to outbound directory with timestamp prefix
-        const basename = expandedPath.split('/').pop() || 'file';
-        const outName = `${Date.now()}_${basename}`;
+        const baseName = basename(expandedPath) || 'file';
+        const outName = `${Date.now()}_${baseName}`;
         const outPath = join(outboundDir, outName);
         copyFileSync(expandedPath, outPath);
 

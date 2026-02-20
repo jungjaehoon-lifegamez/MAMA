@@ -672,7 +672,7 @@ async function copyPrompt(){
 }
 function sendToChat(){
   var t=document.getElementById('promptText').textContent;if(!t)return;
-  window.parent.postMessage({type:'playground:sendToChat',message:t},'*');
+  window.parent.postMessage({type:'playground:sendToChat',message:t},window.location.origin);
   document.getElementById('sendToChatBtn').textContent='Sent!';
   setTimeout(function(){document.getElementById('sendToChatBtn').textContent='Send to Chat'},1500);
 }

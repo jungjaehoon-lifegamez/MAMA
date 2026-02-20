@@ -32,7 +32,11 @@ export async function downloadFile(
   const fs = await import('fs/promises');
   const path = await import('path');
 
-  const mediaDir = path.join(process.env.HOME || '', '.mama', 'workspace', 'media', 'inbound');
+  const homeDir = process.env.HOME;
+  if (!homeDir) {
+    throw new Error('HOME environment variable is not set');
+  }
+  const mediaDir = path.join(homeDir, '.mama', 'workspace', 'media', 'inbound');
   await fs.mkdir(mediaDir, { recursive: true });
 
   const timestamp = Date.now();
@@ -131,7 +135,9 @@ export async function buildContentBlocks(
   const contentBlocks: ContentBlock[] = [];
 
   for (const attachment of attachments) {
-    if (!attachment.localPath) continue;
+    if (!attachment.localPath) {
+      continue;
+    }
 
     try {
       if (attachment.type === 'image') {

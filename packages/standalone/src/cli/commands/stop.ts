@@ -6,6 +6,17 @@
 
 import { execSync } from 'node:child_process';
 import { isDaemonRunning, deletePid, isProcessRunning } from '../utils/pid-manager.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('Stop');
 
 /**
  * Execute stop command
@@ -154,8 +165,12 @@ function isPortInUse(port: number): boolean {
   try {
     const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
     return output.length > 0;
-  } catch {
-    return false;
+  } catch (err) {
+    logger.warn(`isPortInUse failed for port ${port}: ${err}`);
+    if (process.platform === 'win32') {
+      return false;
+    }
+    return true;
   }
 }
 

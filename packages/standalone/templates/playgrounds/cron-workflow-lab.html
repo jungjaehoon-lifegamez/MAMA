@@ -1336,13 +1336,8 @@ function testRun() {
   const name = state.wfName || 'Unnamed Workflow';
   if (state.nodes.length === 0) { toast('Add nodes first', 'error'); return; }
   const prompt = 'Run the following workflow once as a test (do not register a cron, execute immediately):\n\n' + `Workflow: "${name}"\n` + generatePrompt();
-  try {
-    window.parent.postMessage({type:'playground:sendToChat', message: prompt}, '*');
-    toast('Test run request sent!', 'success');
-  } catch(e) {
-    navigator.clipboard.writeText(prompt);
-    toast('Copied to clipboard', 'error');
-  }
+  window.parent.postMessage({type:'playground:sendToChat', message: prompt}, window.location.origin);
+  toast('Test run request sent!', 'success');
 }
 
 function deployToChat() {
@@ -1350,16 +1345,11 @@ function deployToChat() {
   if (!name || !name.trim()) { toast('Enter a workflow name first', 'error'); document.getElementById('wfName').focus(); return; }
   if (state.nodes.length === 0) { toast('Add nodes first', 'error'); return; }
   const prompt = generatePrompt();
-  try {
-    window.parent.postMessage({type:'playground:sendToChat', message: prompt}, '*');
-    state.wfStatus = 'deployed';
-    updateStatusBadge();
-    saveAllWorkflows();
-    toast(`"${name}" deploy request sent!`, 'success');
-  } catch(e) {
-    navigator.clipboard.writeText(prompt);
-    toast('Copied to clipboard', 'error');
-  }
+  window.parent.postMessage({type:'playground:sendToChat', message: prompt}, window.location.origin);
+  state.wfStatus = 'deployed';
+  updateStatusBadge();
+  saveAllWorkflows();
+  toast(`"${name}" deploy request sent!`, 'success');
 }
 
 // ─── Verify Method Selector ───
@@ -1541,16 +1531,11 @@ function requestDecompose() {
     prompt = `The user wants to create a cron workflow. Ask what they need, and once answered, decompose it into structured nodes as JSON.\n\n` + DECOMPOSE_INSTRUCTION;
   }
 
-  try {
-    window.parent.postMessage({type:'playground:sendToChat', message: prompt}, '*');
-    indicator.classList.add('show');
-    toast('Decompose request sent to agent', 'success');
-    // Auto-hide indicator after 30s
-    setTimeout(() => indicator.classList.remove('show'), 30000);
-  } catch(e) {
-    navigator.clipboard.writeText(prompt);
-    toast('Copied to clipboard — paste into Chat', 'error');
-  }
+  window.parent.postMessage({type:'playground:sendToChat', message: prompt}, window.location.origin);
+  indicator.classList.add('show');
+  toast('Decompose request sent to agent', 'success');
+  // Auto-hide indicator after 30s
+  setTimeout(() => indicator.classList.remove('show'), 30000);
 }
 
 const DECOMPOSE_INSTRUCTION = `When responding, you MUST include a code block in the following JSON format (the playground will parse it):
