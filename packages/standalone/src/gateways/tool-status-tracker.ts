@@ -256,23 +256,25 @@ export class ToolStatusTracker {
     const elapsed = now - this.lastEditTime;
 
     if (elapsed >= this.throttleMs) {
-      this.doEdit();
+      void this.doEdit();
     } else if (!this.pendingEditHandle) {
       const delay = this.throttleMs - elapsed;
       this.pendingEditHandle = setTimeout(() => {
         this.pendingEditHandle = null;
-        if (!this.destroyed) this.doEdit();
+        if (!this.destroyed) void this.doEdit();
       }, delay);
     }
   }
 
-  private doEdit(): void {
+  private async doEdit(): Promise<void> {
     if (!this.handle || this.destroyed) return;
     this.lastEditTime = Date.now();
     const content = this.render();
-    this.adapter.editPlaceholder(this.handle, content).catch((err) => {
+    try {
+      await this.adapter.editPlaceholder(this.handle, content);
+    } catch (err) {
       logger.warn(`Failed to edit placeholder: ${err}`);
-    });
+    }
   }
 
   /**
