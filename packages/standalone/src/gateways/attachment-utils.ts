@@ -4,6 +4,17 @@
  */
 
 import type { MessageAttachment, ContentBlock } from './types.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('AttachmentUtils');
 
 /**
  * Download a file from URL to local inbound media directory.
@@ -67,7 +78,7 @@ export async function compressImage(buffer: Buffer, maxSizeBytes: number): Promi
 
     return compressed;
   } catch (err) {
-    console.warn(`[attachment-utils] sharp not available, cannot compress: ${err}`);
+    logger.warn(`sharp not available, cannot compress: ${err}`);
     return buffer;
   }
 }
@@ -130,15 +141,13 @@ export async function buildContentBlocks(
 
         const MAX_RAW_SIZE = 5 * 1024 * 1024;
         if (imageBuffer.length > MAX_RAW_SIZE) {
-          console.log(
-            `[attachment-utils] Image too large (${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB), compressing...`
+          logger.info(
+            `Image too large (${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB), compressing...`
           );
           const compressed = await compressImage(imageBuffer, MAX_RAW_SIZE);
           imageBuffer = Buffer.from(compressed);
           wasCompressed = true;
-          console.log(
-            `[attachment-utils] Compressed to ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB`
-          );
+          logger.info(`Compressed to ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB`);
         }
 
         const base64Data = imageBuffer.toString('base64');
@@ -151,7 +160,7 @@ export async function buildContentBlocks(
           if (mediaType.startsWith('image/')) {
             mediaType = detectedType || 'image/png';
           } else {
-            console.warn(`[attachment-utils] Unsupported media type: ${mediaType}, skipping`);
+            logger.warn(`Unsupported media type: ${mediaType}, skipping`);
             continue;
           }
         }
@@ -177,7 +186,7 @@ export async function buildContentBlocks(
         });
       }
     } catch (err) {
-      console.error(`[attachment-utils] Failed to build content block: ${err}`);
+      logger.error(`Failed to build content block: ${err}`);
     }
   }
 

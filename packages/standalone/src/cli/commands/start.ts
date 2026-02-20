@@ -1881,8 +1881,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         if (existsSync(indexPath)) {
           index = JSON.parse(readFileSync(indexPath, 'utf-8'));
         }
-      } catch {
-        /* empty */
+      } catch (err) {
+        startLogger.warn(`[seedBuiltinPlaygrounds] Failed to parse index.json, rebuilding: ${err}`);
+        index = [];
       }
       const existingSlugs = new Set(index.map((e) => e.slug));
 

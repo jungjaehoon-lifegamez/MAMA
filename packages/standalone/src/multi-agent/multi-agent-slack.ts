@@ -407,7 +407,11 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
     // Inject matched skill content into user message
     if (enhanced.skillContent) {
-      fullPrompt = `<system-reminder>\n${enhanced.skillContent}\n</system-reminder>\n\n${fullPrompt}`;
+      const safeSkillContent = enhanced.skillContent.replace(
+        /<\/system-reminder>/gi,
+        '<\\/system-reminder>'
+      );
+      fullPrompt = `<system-reminder>\n${safeSkillContent}\n</system-reminder>\n\n${fullPrompt}`;
       this.logger.log(
         `[SkillMatch] Injecting skill into Slack agent ${agentId}: ${enhanced.skillContent.length} chars`
       );

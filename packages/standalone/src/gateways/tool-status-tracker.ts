@@ -11,6 +11,18 @@
  *   🔧 Grep: searching...
  */
 
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('ToolStatusTracker');
+
 export interface PlatformAdapter {
   /** Post a new placeholder message, returns an opaque handle for later edits */
   postPlaceholder(content: string): Promise<string | null>;
@@ -43,7 +55,9 @@ const DEFAULT_MAX_COMPLETED = 8;
  * Build a human-readable label from tool name + input
  */
 export function buildToolLabel(name: string, input?: Record<string, unknown>): string {
-  if (!input) return name;
+  if (!input) {
+    return name;
+  }
 
   switch (name) {
     case 'Read': {
@@ -60,7 +74,9 @@ export function buildToolLabel(name: string, input?: Record<string, unknown>): s
     }
     case 'Bash': {
       const cmd = input.command ?? input.cmd;
-      if (!cmd) return 'Bash';
+      if (!cmd) {
+        return 'Bash';
+      }
       const cmdStr = String(cmd);
       return `Bash: ${cmdStr.length > 40 ? cmdStr.substring(0, 37) + '...' : cmdStr}`;
     }
@@ -202,8 +218,8 @@ export class ToolStatusTracker {
     if (this.handle) {
       try {
         await this.adapter.deletePlaceholder(this.handle);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        logger.warn(`Failed to delete placeholder: ${err}`);
       }
       this.handle = null;
     }
@@ -224,8 +240,8 @@ export class ToolStatusTracker {
         this.handle = await this.adapter.postPlaceholder(content);
         this.placeholderPosted = true;
         this.lastEditTime = Date.now();
-      } catch {
-        /* ignore */
+      } catch (err) {
+        logger.warn(`Failed to post placeholder: ${err}`);
       }
     }, this.initialDelayMs);
   }
@@ -254,8 +270,8 @@ export class ToolStatusTracker {
     if (!this.handle || this.destroyed) return;
     this.lastEditTime = Date.now();
     const content = this.render();
-    this.adapter.editPlaceholder(this.handle, content).catch(() => {
-      /* ignore */
+    this.adapter.editPlaceholder(this.handle, content).catch((err) => {
+      logger.warn(`Failed to edit placeholder: ${err}`);
     });
   }
 

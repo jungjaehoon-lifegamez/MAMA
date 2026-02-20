@@ -1759,9 +1759,9 @@ export class GatewayToolExecutor {
         created_at: new Date().toISOString(),
       });
 
-      // Write index first, then HTML file (atomic-ish order)
-      writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+      // Write HTML first, then index (HTML is primary artifact)
       writeFileSync(htmlPath, html, 'utf-8');
+      writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
 
       return { success: true, url: `/playgrounds/${slug}.html`, slug };
     } catch (err) {
@@ -1780,9 +1780,10 @@ export class GatewayToolExecutor {
   /**
    * Execute webchat_send tool — Send message/file to webchat viewer
    * Copies file to outbound directory and returns the path for viewer rendering
+   *
+   * Note: session_id removed - all files route to shared outbound dir
    */
   private async executeWebchatSend(input: {
-    session_id?: string;
     message?: string;
     file_path?: string;
   }): Promise<{ success: boolean; message?: string; outbound_path?: string; error?: string }> {

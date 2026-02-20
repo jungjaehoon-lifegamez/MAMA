@@ -1086,9 +1086,10 @@ You can also paste (Ctrl+V) a response into this area.</div>
     }
 
     function copyPrompt() {
+      var btn = event.target; // capture BEFORE async
       var text = document.getElementById('promptPreview').textContent;
       navigator.clipboard.writeText(text).then(function(){
-        flashBtn(event.target, 'Copied!');
+        flashBtn(btn, 'Copied!');
       });
     }
 
@@ -1097,7 +1098,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
       if (state.droppedFile) sendFileToChat();
 
       var text = document.getElementById('promptPreview').textContent;
-      window.parent.postMessage({type:'playground:sendToChat', message: text}, '*');
+      window.parent.postMessage({type:'playground:sendToChat', message: text}, window.location.origin);
       state.iterations++;
       updateStatus('Prompt sent (iteration #'+state.iterations+')', versionStr());
       goToStep('review');
@@ -1192,7 +1193,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
         + 'Respond with the entire revised SKILL.md in a code block.\n'
         + 'Version: '+nextVersion();
 
-      window.parent.postMessage({type:'playground:sendToChat', message: refinePrompt}, '*');
+      window.parent.postMessage({type:'playground:sendToChat', message: refinePrompt}, window.location.origin);
       state.chatLog.push({role:'system', text:'Feedback sent to the LLM. Waiting for response...'});
       state.iterations++;
       state.history.unshift({ver: versionStr(), summary: text.slice(0,60), time: now()});
@@ -1275,7 +1276,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
         renderPublish();
         updateStatus('Published!', versionStr());
         // Notify parent viewer to refresh Skills Tab
-        window.parent.postMessage({type: 'skill:deployed', id: name}, '*');
+        window.parent.postMessage({type: 'skill:deployed', id: name}, window.location.origin);
       })
       .catch(function(err) {
         alert('Save failed: ' + err.message);
@@ -1290,6 +1291,8 @@ You can also paste (Ctrl+V) a response into this area.</div>
 
     // Listen for LLM response, paste, or skill:load from viewer
     window.addEventListener('message', function(e) {
+      if (e.origin !== window.location.origin) return;
+      if (e.source !== window.parent) return;
       if (e.data && e.data.type === 'playground:response') {
         handleLLMResponse(e.data.content || '');
       }
@@ -1367,7 +1370,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
       if (state.currentStep === 'review') {
         renderReview();
       } else if (state.currentStep === 'refine') {
-        renderChatLog(); renderReview();
+        renderChatLog(); renderReview(); renderRefine();
       } else {
         goToStep('review');
       }
@@ -1516,7 +1519,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
           fileType: f.type,
           fileSize: f.size,
           data: e.target.result
-        }, '*');
+        }, window.location.origin);
       };
       reader.readAsDataURL(f.file);
     }
