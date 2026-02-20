@@ -194,6 +194,12 @@ Interactive HTML playgrounds run directly inside the MAMA dashboard. Create skil
 <p align="center">
   <img src="docs/website/assets/screenshot-skill-lab.png" alt="Skill Lab Playground" width="720">
 </p>
+<p align="center">
+  <img src="docs/website/assets/screenshot-cron-workflow.png" alt="Cron Workflow Lab" width="720">
+</p>
+<p align="center">
+  <img src="docs/website/assets/screenshot-wave-visualizer.png" alt="Wave Visualizer" width="720">
+</p>
 
 Skills Tab and Playground Tab are bidirectionally linked — selecting a skill in Skills opens it in Skill Lab, and publishing from Skill Lab refreshes Skills.
 
