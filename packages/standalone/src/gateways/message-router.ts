@@ -493,7 +493,7 @@ This protects your credentials from being exposed in chat logs.`;
           contentBlocks.length = 0;
           contentBlocks.push({
             type: 'text',
-            text: `${messageText || ''}\n\n${analysisText}`.trim(),
+            text: `${effectiveMessageText || ''}\n\n${analysisText}`.trim(),
           });
         } else {
           for (const block of message.contentBlocks) {

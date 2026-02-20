@@ -148,6 +148,18 @@ async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
 }
 
 /**
+ * Check if a port is in use
+ */
+function isPortInUse(port: number): boolean {
+  try {
+    const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+    return output.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Kill processes occupying specified ports (cleanup for zombie MAMA processes)
  * @returns true if any processes were killed
  */
@@ -237,14 +249,7 @@ async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): 
   const pollInterval = 200;
 
   while (Date.now() - startTime < maxWaitMs) {
-    const stillInUse = ports.filter((port) => {
-      try {
-        const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-        return output.length > 0;
-      } catch {
-        return false; // lsof returned no results = port is free
-      }
-    });
+    const stillInUse = ports.filter((port) => isPortInUse(port));
 
     if (stillInUse.length === 0) {
       return;
@@ -253,14 +258,7 @@ async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): 
   }
 
   // Timeout occurred - warn user
-  const stillInUse = ports.filter((port) => {
-    try {
-      const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-      return output.length > 0;
-    } catch {
-      return false;
-    }
-  });
+  const stillInUse = ports.filter((port) => isPortInUse(port));
 
   if (stillInUse.length > 0) {
     console.log(
