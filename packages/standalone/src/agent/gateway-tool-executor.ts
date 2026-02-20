@@ -392,7 +392,7 @@ export class GatewayToolExecutor {
         // Webchat tools
         case 'webchat_send':
           return await this.executeWebchatSend(
-            input as { session_id?: string; message?: string; file_path?: string }
+            input as { message?: string; file_path?: string } // session_id omitted: all files use shared outbound dir
           );
       }
 
@@ -1751,6 +1751,9 @@ export class GatewayToolExecutor {
       // Remove existing entry with same slug
       index = index.filter((entry) => entry.slug !== slug);
 
+      // Write HTML before updating index (HTML is primary artifact; index push comes after)
+      writeFileSync(htmlPath, html, 'utf-8');
+
       // Add new entry
       index.push({
         name,
@@ -1759,8 +1762,7 @@ export class GatewayToolExecutor {
         created_at: new Date().toISOString(),
       });
 
-      // Write HTML first, then index (HTML is primary artifact)
-      writeFileSync(htmlPath, html, 'utf-8');
+      // Write index after HTML is safely on disk
       writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
 
       return { success: true, url: `/playgrounds/${slug}.html`, slug };

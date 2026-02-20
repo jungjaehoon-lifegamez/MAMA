@@ -409,7 +409,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     if (enhanced.skillContent) {
       const safeSkillContent = enhanced.skillContent.replace(
         /<\/system-reminder>/gi,
-        '<\\/system-reminder>'
+        '</system\\u2011reminder>'
       );
       fullPrompt = `<system-reminder>\n${safeSkillContent}\n</system-reminder>\n\n${fullPrompt}`;
       this.logger.log(

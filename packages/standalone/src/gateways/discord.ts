@@ -28,7 +28,7 @@ import type {
   ContentBlock,
 } from './types.js';
 import { downloadFile, buildContentBlocks } from './attachment-utils.js';
-import type { MessageRouter } from './message-router.js';
+import type { MessageRouter, ProcessingResult } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
@@ -712,7 +712,7 @@ export class DiscordGateway extends BaseGateway {
     });
     const streamCallbacks = tracker.toStreamCallbacks();
 
-    let routerResult;
+    let routerResult: ProcessingResult;
     try {
       routerResult = await this.messageRouter.process(normalizedMessage, {
         onStream: streamCallbacks,

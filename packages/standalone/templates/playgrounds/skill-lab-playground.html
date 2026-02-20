@@ -1086,7 +1086,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
     }
 
     function copyPrompt() {
-      var btn = event.target; // capture BEFORE async
+      var btn = event.currentTarget || event.target; // capture before async
       var text = document.getElementById('promptPreview').textContent;
       navigator.clipboard.writeText(text).then(function(){
         flashBtn(btn, 'Copied!');
