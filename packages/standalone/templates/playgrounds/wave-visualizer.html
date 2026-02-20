@@ -321,7 +321,7 @@ function renderLiveSidebar(){
     var c=AC[a.id]||'#888',e=AE[a.id]||'🤖';
     var sc=a.status==='online'?'online':a.status==='busy'?'busy':'offline';
     h+='<div class="acard"><span class="online-dot '+esc(sc)+'"></span>'+
-      '<span class="aname" style="color:'+c+'">'+e+' '+esc(a.name||a.id)+'</span>'+
+      '<span class="aname" style="color:'+esc(c)+'">'+esc(e)+' '+esc(a.name||a.id)+'</span>'+
       '<span class="atier">T'+esc(String(a.tier||1))+'</span></div>'+
       '<div style="padding:0 8px 6px 26px;font-size:11px;color:var(--text3)">'+
       esc(a.model||'unknown')+' · '+(a.lastActivity?esc(timeAgo(new Date(a.lastActivity))):'idle')+'</div>';
@@ -339,11 +339,11 @@ function renderLiveSidebar(){
       var ic=c.to==='busy'?'⚡':c.to==='idle'||c.to==='online'?'✅':'⏸';
       h+='<div class="chg-item">'+
         '<span style="color:var(--text3);font-family:monospace;font-size:10px;min-width:55px">'+esc(fmtTime(c.time))+'</span>'+
-        '<span>'+ic+'</span>'+
-        '<span style="color:'+col+';font-weight:600">'+esc(c.agent)+'</span>'+
+        '<span>'+esc(ic)+'</span>'+
+        '<span style="color:'+esc(col)+';font-weight:600">'+esc(c.agent)+'</span>'+
         '<span style="color:var(--text3);font-size:11px">'+esc(c.from)+'</span>'+
         '<span style="color:var(--accent);font-size:10px">→</span>'+
-        '<span style="color:'+tc+';font-weight:600;font-size:11px">'+esc(c.to)+'</span></div>';
+        '<span style="color:'+esc(tc)+';font-weight:600;font-size:11px">'+esc(c.to)+'</span></div>';
     });
   }
   h+='</div>';
@@ -354,7 +354,7 @@ function renderLiveSidebar(){
     S.liveHistory.slice(0,10).forEach(function(d){
       var cc=AC[d.claimedBy]||'#888';
       h+='<div style="padding:4px 0;font-size:12px;border-bottom:1px solid var(--border)">'+
-        '<span style="color:'+cc+';font-weight:600">'+esc(d.claimedBy||'?')+'</span>'+
+        '<span style="color:'+esc(cc)+';font-weight:600">'+esc(d.claimedBy||'?')+'</span>'+
         ' <span class="tstatus '+esc(d.status||'pending')+'" style="font-size:9px">'+esc(d.status||'?')+'</span>'+
         (d.wave?' <span style="color:var(--accent);font-size:10px">W'+esc(String(d.wave))+'</span>':'')+
         '<div style="color:var(--text2);font-size:11px">'+esc(d.description||'-')+'</div></div>';
@@ -382,10 +382,10 @@ function renderLiveArea(){
     var c=AC[a.id]||'#888',e=AE[a.id]||'🤖';
     var bc=a.status==='busy'?'var(--yellow)':a.status==='online'||a.status==='idle'?'var(--green)':'var(--text3)';
     var bg=a.status==='busy'?'rgba(210,153,34,.08)':'transparent';
-    h+='<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid '+bc+';border-radius:8px;padding:8px 12px;min-width:140px;'+(bg!=='transparent'?'background:'+bg:'')+'">'+
+    h+='<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid '+esc(bc)+';border-radius:8px;padding:8px 12px;min-width:140px;'+(bg!=='transparent'?'background:'+esc(bg):'')+'">'+
       '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+
       '<span class="online-dot '+esc(a.status)+'"></span>'+
-      '<span style="font-size:13px;font-weight:600;color:'+c+'">'+e+' '+esc(a.name||a.id)+'</span>'+
+      '<span style="font-size:13px;font-weight:600;color:'+esc(c)+'">'+esc(e)+' '+esc(a.name||a.id)+'</span>'+
       (a.ephemeral?'<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:var(--surface3);color:var(--text3)">ephemeral</span>':'')+
       '</div>'+
       '<div style="font-size:10px;color:var(--text3)">'+esc(a.model||'-')+' · T'+esc(String(a.tier||1))+'</div>'+
@@ -422,8 +422,8 @@ function renderLiveArea(){
         else if(t.startTime)elapsed=esc(String(Math.round((Date.now()-t.startTime)/1000)))+'s...';
 
         h+='<div class="tcard '+esc(t.status)+'">'+
-          '<div class="tagent"><div class="tagent-dot" style="background:'+c+'"></div>'+
-          '<span class="tagent-name" style="color:'+c+'">'+e+' '+esc(t.agent)+'</span></div>'+
+          '<div class="tagent"><div class="tagent-dot" style="background:'+esc(c)+'"></div>'+
+          '<span class="tagent-name" style="color:'+esc(c)+'">'+esc(e)+' '+esc(t.agent)+'</span></div>'+
           '<div style="font-size:11px;color:var(--text3)">'+esc(t.model||'')+'</div>'+
           '<div class="tmeta"><span class="tstatus '+esc(t.status)+'">'+(t.status==='busy'?'running':esc(t.status))+'</span>'+
           (elapsed?'<span class="ttime">'+elapsed+'</span>':'')+'</div>'+
@@ -451,11 +451,11 @@ function renderLiveArea(){
       var ic=c.to==='busy'?'⚡':'✅';
       h+='<div class="chg-item" style="opacity:'+Math.max(0.4,1-i*0.04)+'">'+
         '<span style="font-size:10px;color:var(--text3);font-family:monospace;min-width:60px">'+esc(fmtTime(c.time))+'</span>'+
-        '<span>'+ic+'</span>'+
-        '<span style="color:'+col+';font-weight:600;min-width:70px">'+(AE[c.agent]||'')+' '+esc(c.agent)+'</span>'+
+        '<span>'+esc(ic)+'</span>'+
+        '<span style="color:'+esc(col)+';font-weight:600;min-width:70px">'+esc(AE[c.agent]||'')+' '+esc(c.agent)+'</span>'+
         '<span style="color:var(--text3);font-size:11px">'+esc(c.from)+'</span>'+
         '<span style="color:var(--accent);font-size:10px">→</span>'+
-        '<span style="color:'+tc+';font-weight:600;font-size:11px">'+esc(c.to)+'</span></div>';
+        '<span style="color:'+esc(tc)+';font-weight:600;font-size:11px">'+esc(c.to)+'</span></div>';
     });
     h+='</div>';
   } else if(S.liveOk) {
@@ -475,13 +475,13 @@ function renderLiveArea(){
   var ltTotal=S.liveTasks.length||1;
   var agBusy=S.liveAgents.filter(function(a){return a.status==='busy'}).length;
   document.getElementById('ptrack').innerHTML=
-    '<div class="pfill c" style="width:'+(ltDone/ltTotal*100)+'%"></div>'+
-    '<div class="pfill a" style="width:'+(ltBusy/ltTotal*100)+'%"></div>';
+    '<div class="pfill c" style="width:'+esc(String(ltDone/ltTotal*100))+'%"></div>'+
+    '<div class="pfill a" style="width:'+esc(String(ltBusy/ltTotal*100))+'%"></div>';
   document.getElementById('pstats').innerHTML=
-    '<span>✅ Done: <strong>'+ltDone+'</strong></span>'+
-    '<span>⚡ Running: <strong>'+ltBusy+'</strong></span>'+
-    '<span>🤖 Agents: <strong>'+S.liveAgents.length+'</strong> ('+agBusy+' busy)</span>'+
-    '<span style="margin-left:auto">Wave <strong>'+S.waveCounter+'</strong></span>';
+    '<span>✅ Done: <strong>'+esc(String(ltDone))+'</strong></span>'+
+    '<span>⚡ Running: <strong>'+esc(String(ltBusy))+'</strong></span>'+
+    '<span>🤖 Agents: <strong>'+esc(String(S.liveAgents.length))+'</strong> ('+esc(String(agBusy))+' busy)</span>'+
+    '<span style="margin-left:auto">Wave <strong>'+esc(String(S.waveCounter))+'</strong></span>';
 }
 
 function renderLiveDisconnected(){
@@ -547,10 +547,10 @@ function renderSidebar(){
     var i=at[a]||{t:0,c:0,f:0,a:0};
     var tier=a==='conductor'||a==='pm'?1:(a==='reviewer'||a==='qa'||a==='critic')?3:2;
     var ic=i.a>0?'⚡':i.c===i.t&&i.t>0?'✅':i.f>0?'❌':'⏸';
-    h+='<div class="acard"><div class="adot" style="background:'+(AC[a]||'#888')+'"></div>'+
-      '<span class="aname">'+(AE[a]||'🤖')+' '+a+'</span>'+
-      '<span class="atier">T'+tier+'</span>'+
-      '<span class="astatus">'+ic+' '+i.c+'/'+i.t+'</span></div>';
+    h+='<div class="acard"><div class="adot" style="background:'+esc(AC[a]||'#888')+'"></div>'+
+      '<span class="aname">'+esc(AE[a]||'🤖')+' '+esc(a)+'</span>'+
+      '<span class="atier">T'+esc(String(tier))+'</span>'+
+      '<span class="astatus">'+esc(ic)+' '+esc(String(i.c))+'/'+esc(String(i.t))+'</span></div>';
   });
   h+='</div>';
   h+='<div class="sec"><div class="sec-title">Legend</div><div style="font-size:12px;color:var(--text2);line-height:1.8">'+
@@ -576,12 +576,12 @@ function renderWaves(){
       var el='';
       if(tk.st&&tk.et)el=((tk.et-tk.st)/1000).toFixed(1)+'s';
       else if(tk.st)el='...';
-      h+='<div class="tcard '+tk.status+'" onclick="selectTask(\''+t.id+'\')">'+
-        '<div class="tagent"><div class="tagent-dot" style="background:'+c+'"></div>'+
-        '<span class="tagent-name" style="color:'+c+'">'+(AE[tk.agent]||'')+' '+tk.agent+'</span></div>'+
+      h+='<div class="tcard '+esc(tk.status)+'" onclick="selectTask(\''+esc(t.id)+'\')">'+
+        '<div class="tagent"><div class="tagent-dot" style="background:'+esc(c)+'"></div>'+
+        '<span class="tagent-name" style="color:'+esc(c)+'">'+esc(AE[tk.agent]||'')+' '+esc(tk.agent)+'</span></div>'+
         '<div class="tdesc">'+esc(tk.desc)+'</div>'+
-        '<div class="tmeta"><span class="tstatus '+tk.status+'">'+tk.status+'</span>'+
-        (el?'<span class="ttime">'+el+'</span>':'')+'</div></div>';
+        '<div class="tmeta"><span class="tstatus '+esc(tk.status)+'">'+esc(tk.status)+'</span>'+
+        (el?'<span class="ttime">'+esc(el)+'</span>':'')+'</div></div>';
     });
     h+='</div></div>';
   });
@@ -594,12 +594,12 @@ function updateProgress(){
   var a=ts.filter(function(t){return t.status==='claimed'}).length;
   var f=ts.filter(function(t){return t.status==='failed'}).length;
   document.getElementById('ptrack').innerHTML=
-    '<div class="pfill c" style="width:'+(c/n*100)+'%"></div>'+
-    '<div class="pfill a" style="width:'+(a/n*100)+'%"></div>'+
-    '<div class="pfill f" style="width:'+(f/n*100)+'%"></div>';
+    '<div class="pfill c" style="width:'+esc(String(c/n*100))+'%"></div>'+
+    '<div class="pfill a" style="width:'+esc(String(a/n*100))+'%"></div>'+
+    '<div class="pfill f" style="width:'+esc(String(f/n*100))+'%"></div>';
   document.getElementById('pstats').innerHTML=
-    '<span>✅ <strong>'+c+'</strong></span><span>⚡ <strong>'+a+'</strong></span>'+
-    '<span>❌ <strong>'+f+'</strong></span><span style="margin-left:auto">Wave <strong>'+(S.curWave+1)+'</strong>/'+S.taskOrder.length+'</span>';
+    '<span>✅ <strong>'+esc(String(c))+'</strong></span><span>⚡ <strong>'+esc(String(a))+'</strong></span>'+
+    '<span>❌ <strong>'+esc(String(f))+'</strong></span><span style="margin-left:auto">Wave <strong>'+esc(String(S.curWave+1))+'</strong>/'+esc(String(S.taskOrder.length))+'</span>';
 }
 
 function togglePlay(){if(S.playing)stopSim();else startSim()}
@@ -635,16 +635,16 @@ document.getElementById('speedSlider').addEventListener('input',function(e){
 function selectTask(id){
   S.selTask=id;var t=S.tasks[id],p=document.getElementById('dpanel');
   var tier=t.agent==='conductor'||t.agent==='pm'?1:(t.agent==='reviewer'||t.agent==='qa'||t.agent==='critic')?3:2;
-  var h='<div class="dtitle">'+(AE[t.agent]||'')+' '+esc(t.id.toUpperCase())+'</div>'+
+  var h='<div class="dtitle">'+esc(AE[t.agent]||'')+' '+esc(t.id.toUpperCase())+'</div>'+
     '<div class="dfield"><div class="dlabel">Description</div><div class="dvalue">'+esc(t.desc)+'</div></div>'+
-    '<div class="dfield"><div class="dlabel">Agent</div><div class="dvalue" style="color:'+(AC[t.agent]||'#888')+'">'+esc(t.agent)+' (Tier '+tier+')</div></div>'+
+    '<div class="dfield"><div class="dlabel">Agent</div><div class="dvalue" style="color:'+esc(AC[t.agent]||'#888')+'">'+esc(t.agent)+' (Tier '+esc(String(tier))+')</div></div>'+
     '<div class="dfield"><div class="dlabel">Wave</div><div class="dvalue">Wave '+esc(String(t.wave))+'</div></div>'+
     '<div class="dfield"><div class="dlabel">Status</div><div class="dvalue"><span class="tstatus '+esc(t.status)+'">'+esc(t.status)+'</span></div></div>'+
     '<div class="dfield"><div class="dlabel">Category</div><div class="dvalue">'+esc(t.category||'-')+'</div></div>';
   if(t.files&&t.files.length){h+='<div class="dfield"><div class="dlabel">Files</div><ul class="dfiles">';t.files.forEach(function(f){h+='<li>'+esc(f)+'</li>'});h+='</ul></div>'}
   if(t.dependsOn&&t.dependsOn.length){
     h+='<div class="dfield"><div class="dlabel">Dependencies</div><div class="ddeps">';
-    t.dependsOn.forEach(function(d){var dt=S.tasks[d];var c=dt?(dt.status==='completed'?'var(--green)':dt.status==='failed'?'var(--red)':'var(--text3)'):'var(--text3)';h+='<span class="ddep" style="border-left:2px solid '+c+'">'+esc(d)+'</span>'});
+    t.dependsOn.forEach(function(d){var dt=S.tasks[d];var c=dt?(dt.status==='completed'?'var(--green)':dt.status==='failed'?'var(--red)':'var(--text3)'):'var(--text3)';h+='<span class="ddep" style="border-left:2px solid '+esc(c)+'">'+esc(d)+'</span>'});
     h+='</div></div>';
   }
   if(t.st){var el=t.et?((t.et-t.st)/1000).toFixed(1)+'s':'running...';h+='<div class="dfield"><div class="dlabel">Duration</div><div class="dvalue" style="font-family:monospace">'+esc(el)+'</div></div>'}

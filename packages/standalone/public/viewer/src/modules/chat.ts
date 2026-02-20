@@ -840,7 +840,7 @@ export class ChatModule {
    */
   private getToolDetail(toolName: string, input: ChatToolInput | null): string {
     if (toolName === 'Read' && input?.file_path) {
-      return `(${escapeHtml(input.file_path.split('/').pop())})`;
+      return `(${escapeHtml(input.file_path.split('/').pop() ?? '')})`;
     }
     if (toolName === 'Bash' && input?.command) {
       const cmd = String(input.command);
@@ -1042,10 +1042,12 @@ export class ChatModule {
 
     const iframe = document.getElementById('playground-iframe') as HTMLIFrameElement | null;
     if (!iframe || !iframe.contentWindow) {
+      this.playgroundAwaitingResponse = false;
       return;
     }
     const viewer = document.getElementById('playground-viewer');
     if (!viewer || viewer.classList.contains('hidden')) {
+      this.playgroundAwaitingResponse = false;
       return;
     }
 

@@ -282,7 +282,7 @@ describe('PromptEnhancer', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('should find AGENTS.md in parent directories', () => {
+    it('should find AGENTS.md in parent directories', async () => {
       // Structure:
       // tmpDir/
       //   .git/              (project root)
@@ -295,12 +295,12 @@ describe('PromptEnhancer', () => {
       writeFileSync(join(tmpDir, 'packages', 'AGENTS.md'), '# Package Agents');
       writeFileSync(join(tmpDir, 'packages', 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub', 'file.ts'));
+      const result = await enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub', 'file.ts'));
       expect(result).toContain('# Package Agents');
       expect(result).toContain('AGENTS.md from');
     });
 
-    it('should skip project root AGENTS.md', () => {
+    it('should skip project root AGENTS.md', async () => {
       // Structure:
       // tmpDir/
       //   .git/              (project root marker)
@@ -313,11 +313,11 @@ describe('PromptEnhancer', () => {
       writeFileSync(join(tmpDir, 'AGENTS.md'), '# Root Agents');
       writeFileSync(join(tmpDir, 'packages', 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub', 'file.ts'));
+      const result = await enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub', 'file.ts'));
       expect(result).toBe('');
     });
 
-    it('should find non-root AGENTS.md while skipping root one', () => {
+    it('should find non-root AGENTS.md while skipping root one', async () => {
       // tmpDir/
       //   .git/
       //   AGENTS.md          (root — skipped)
@@ -331,22 +331,22 @@ describe('PromptEnhancer', () => {
       writeFileSync(join(tmpDir, 'packages', 'AGENTS.md'), '# Package Agents');
       writeFileSync(join(tmpDir, 'packages', 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub', 'file.ts'));
+      const result = await enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub', 'file.ts'));
       expect(result).toContain('# Package Agents');
       expect(result).not.toContain('# Root Agents');
     });
 
-    it('should return empty string for non-existent workspace path', () => {
-      const result = enhancer.discoverAgentsMd('/totally/nonexistent/path/xyz');
+    it('should return empty string for non-existent workspace path', async () => {
+      const result = await enhancer.discoverAgentsMd('/totally/nonexistent/path/xyz');
       expect(result).toBe('');
     });
 
-    it('should return empty string for empty workspace path', () => {
-      const result = enhancer.discoverAgentsMd('');
+    it('should return empty string for empty workspace path', async () => {
+      const result = await enhancer.discoverAgentsMd('');
       expect(result).toBe('');
     });
 
-    it('should respect maxDepth of 5 levels', () => {
+    it('should respect maxDepth of 5 levels', async () => {
       // Create a deeply nested structure: 8 levels deep
       // AGENTS.md at level 7 from workspace (beyond maxDepth=5)
       mkdirSync(join(tmpDir, '.git'), { recursive: true });
@@ -356,26 +356,26 @@ describe('PromptEnhancer', () => {
       writeFileSync(join(deepPath, 'file.ts'), '');
 
       // From h -> g -> f -> e -> d -> c (5 levels) — 'a' is at depth 6+, shouldn't reach
-      const result = enhancer.discoverAgentsMd(join(deepPath, 'file.ts'));
+      const result = await enhancer.discoverAgentsMd(join(deepPath, 'file.ts'));
       expect(result).toBe('');
     });
 
-    it('should handle workspace path as directory', () => {
+    it('should handle workspace path as directory', async () => {
       mkdirSync(join(tmpDir, '.git'), { recursive: true });
       mkdirSync(join(tmpDir, 'packages', 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'packages', 'AGENTS.md'), '# Agents Here');
 
-      const result = enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub'));
+      const result = await enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub'));
       expect(result).toContain('# Agents Here');
     });
 
-    it('should include distance in AGENTS.md comment', () => {
+    it('should include distance in AGENTS.md comment', async () => {
       mkdirSync(join(tmpDir, '.git'), { recursive: true });
       mkdirSync(join(tmpDir, 'packages', 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'packages', 'AGENTS.md'), '# Agents');
       writeFileSync(join(tmpDir, 'packages', 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub', 'file.ts'));
+      const result = await enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'sub', 'file.ts'));
       expect(result).toMatch(/distance: \d+/);
     });
   });
@@ -394,7 +394,7 @@ describe('PromptEnhancer', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('should find .copilot-instructions at project root', () => {
+    it('should find .copilot-instructions at project root', async () => {
       // tmpDir/
       //   package.json       (project root marker)
       //   .copilot-instructions
@@ -405,12 +405,12 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
       expect(result).toContain('Use semicolons always');
       expect(result).toContain('.copilot-instructions');
     });
 
-    it('should find .claude/rules/*.md files', () => {
+    it('should find .claude/rules/*.md files', async () => {
       // tmpDir/
       //   package.json
       //   .claude/
@@ -426,12 +426,12 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
       expect(result).toContain('Rule one content');
       expect(result).toContain('Rule two content');
     });
 
-    it('should ignore non-.md files in rules directory', () => {
+    it('should ignore non-.md files in rules directory', async () => {
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
       writeFileSync(join(tmpDir, '.claude', 'rules', 'rule1.md'), 'Valid rule');
@@ -440,13 +440,13 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
       expect(result).toContain('Valid rule');
       expect(result).not.toContain('Should be ignored');
       expect(result).not.toContain('data.json');
     });
 
-    it('should return empty string when no project root found', () => {
+    it('should return empty string when no project root found', async () => {
       // No project root markers in temp dir (no .git, package.json, etc.)
       // Create a deeply nested structure without any markers
       const isolatedTmp = mkdtempSync(join(tmpdir(), 'mama-no-root-'));
@@ -454,19 +454,19 @@ describe('PromptEnhancer', () => {
         mkdirSync(join(isolatedTmp, 'sub'), { recursive: true });
         writeFileSync(join(isolatedTmp, 'sub', 'file.ts'), '');
 
-        const result = enhancer.discoverRules(join(isolatedTmp, 'sub', 'file.ts'));
+        const result = await enhancer.discoverRules(join(isolatedTmp, 'sub', 'file.ts'));
         expect(result).toBe('');
       } finally {
         rmSync(isolatedTmp, { recursive: true, force: true });
       }
     });
 
-    it('should return empty string for empty workspace path', () => {
-      const result = enhancer.discoverRules('');
+    it('should return empty string for empty workspace path', async () => {
+      const result = await enhancer.discoverRules('');
       expect(result).toBe('');
     });
 
-    it('should find directory-level .claude/rules/*.md walking up from workspace', () => {
+    it('should find directory-level .claude/rules/*.md walking up from workspace', async () => {
       // tmpDir/
       //   package.json       (project root)
       //   sub/
@@ -481,11 +481,11 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub', 'deep'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'deep', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'deep', 'file.ts'));
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'deep', 'file.ts'));
       expect(result).toContain('Local rule here');
     });
 
-    it('should combine .copilot-instructions and .claude/rules', () => {
+    it('should combine .copilot-instructions and .claude/rules', async () => {
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       writeFileSync(join(tmpDir, '.copilot-instructions'), 'Copilot instructions');
       mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
@@ -493,19 +493,19 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
       expect(result).toContain('Copilot instructions');
       expect(result).toContain('Style rules');
       expect(result).toContain('---');
     });
 
-    it('should skip empty .copilot-instructions files', () => {
+    it('should skip empty .copilot-instructions files', async () => {
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       writeFileSync(join(tmpDir, '.copilot-instructions'), '   ');
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
       expect(result).toBe('');
     });
   });
@@ -524,21 +524,21 @@ describe('PromptEnhancer', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('should return all three fields', () => {
-      const result = enhancer.enhance('hello world', '/nonexistent/path');
+    it('should return all three fields', async () => {
+      const result = await enhancer.enhance('hello world', '/nonexistent/path');
       expect(result).toHaveProperty('keywordInstructions');
       expect(result).toHaveProperty('agentsContent');
       expect(result).toHaveProperty('rulesContent');
     });
 
-    it('should return empty strings when nothing matches', () => {
-      const result = enhancer.enhance('normal message', '/nonexistent');
+    it('should return empty strings when nothing matches', async () => {
+      const result = await enhancer.enhance('normal message', '/nonexistent');
       expect(result.keywordInstructions).toBe('');
       expect(result.agentsContent).toBe('');
       expect(result.rulesContent).toBe('');
     });
 
-    it('should combine keyword + agents + rules correctly', () => {
+    it('should combine keyword + agents + rules correctly', async () => {
       // Set up filesystem structure with AGENTS.md and rules
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       mkdirSync(join(tmpDir, '.git'), { recursive: true });
@@ -548,7 +548,7 @@ describe('PromptEnhancer', () => {
       writeFileSync(join(tmpDir, '.claude', 'rules', 'test.md'), 'Test rule content');
       writeFileSync(join(tmpDir, 'packages', 'sub', 'file.ts'), '');
 
-      const result = enhancer.enhance(
+      const result = await enhancer.enhance(
         'ultrawork fix everything',
         join(tmpDir, 'packages', 'sub', 'file.ts')
       );
@@ -558,8 +558,8 @@ describe('PromptEnhancer', () => {
       expect(result.rulesContent).toContain('Test rule content');
     });
 
-    it('should return EnhancedPromptContext type with correct structure', () => {
-      const result = enhancer.enhance('', '');
+    it('should return EnhancedPromptContext type with correct structure', async () => {
+      const result = await enhancer.enhance('', '');
       expect(typeof result.keywordInstructions).toBe('string');
       expect(typeof result.agentsContent).toBe('string');
       expect(typeof result.rulesContent).toBe('string');
@@ -580,7 +580,7 @@ describe('PromptEnhancer', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('should include rule when applies_to matches context', () => {
+    it('should include rule when applies_to matches context', async () => {
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
       writeFileSync(
@@ -590,11 +590,13 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'), { agentId: 'dev' });
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'), {
+        agentId: 'dev',
+      });
       expect(result).toContain('Dev-specific rule content');
     });
 
-    it('should exclude rule when applies_to does not match context', () => {
+    it('should exclude rule when applies_to does not match context', async () => {
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
       writeFileSync(
@@ -604,13 +606,13 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'), {
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'), {
         agentId: 'reviewer',
       });
       expect(result).not.toContain('Dev-specific rule content');
     });
 
-    it('should include all rules when no ruleContext is provided (backward compatible)', () => {
+    it('should include all rules when no ruleContext is provided (backward compatible)', async () => {
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
       writeFileSync(
@@ -620,7 +622,7 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
+      const result = await enhancer.discoverRules(join(tmpDir, 'sub', 'file.ts'));
       expect(result).toContain('Restricted rule');
     });
   });
@@ -639,7 +641,7 @@ describe('PromptEnhancer', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('should deduplicate AGENTS.md with identical content from different paths', () => {
+    it('should deduplicate AGENTS.md with identical content from different paths', async () => {
       mkdirSync(join(tmpDir, '.git'), { recursive: true });
       mkdirSync(join(tmpDir, 'packages', 'a', 'sub'), { recursive: true });
       mkdirSync(join(tmpDir, 'packages', 'b'), { recursive: true });
@@ -647,7 +649,9 @@ describe('PromptEnhancer', () => {
       writeFileSync(join(tmpDir, 'packages', 'b', 'AGENTS.md'), '# Duplicate Agents');
       writeFileSync(join(tmpDir, 'packages', 'a', 'sub', 'file.ts'), '');
 
-      const result = enhancer.discoverAgentsMd(join(tmpDir, 'packages', 'a', 'sub', 'file.ts'));
+      const result = await enhancer.discoverAgentsMd(
+        join(tmpDir, 'packages', 'a', 'sub', 'file.ts')
+      );
       const occurrences = result.split('# Duplicate Agents').length - 1;
       expect(occurrences).toBe(1);
     });
@@ -667,7 +671,7 @@ describe('PromptEnhancer', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('should pass ruleContext to discoverRules for filtering', () => {
+    it('should pass ruleContext to discoverRules for filtering', async () => {
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
       writeFileSync(
@@ -681,7 +685,7 @@ describe('PromptEnhancer', () => {
       mkdirSync(join(tmpDir, 'sub'), { recursive: true });
       writeFileSync(join(tmpDir, 'sub', 'file.ts'), '');
 
-      const result = enhancer.enhance('hello', join(tmpDir, 'sub', 'file.ts'), { tier: 2 });
+      const result = await enhancer.enhance('hello', join(tmpDir, 'sub', 'file.ts'), { tier: 2 });
       expect(result.rulesContent).not.toContain('Tier 1 rule');
       expect(result.rulesContent).toContain('Universal rule for everyone');
     });
@@ -702,7 +706,7 @@ describe('PromptEnhancer', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('should use cached content on second call within TTL', () => {
+    it('should use cached content on second call within TTL', async () => {
       // Set up a structure with AGENTS.md
       mkdirSync(join(tmpDir, '.git'), { recursive: true });
       mkdirSync(join(tmpDir, 'packages', 'sub'), { recursive: true });
@@ -712,19 +716,19 @@ describe('PromptEnhancer', () => {
       const workspacePath = join(tmpDir, 'packages', 'sub', 'file.ts');
 
       // First call — reads from disk
-      const result1 = enhancer.discoverAgentsMd(workspacePath);
+      const result1 = await enhancer.discoverAgentsMd(workspacePath);
       expect(result1).toContain('Original content');
 
       // Modify file on disk
       writeFileSync(join(tmpDir, 'packages', 'AGENTS.md'), 'Modified content');
 
       // Second call within TTL — should still see original (cached)
-      const result2 = enhancer.discoverAgentsMd(workspacePath);
+      const result2 = await enhancer.discoverAgentsMd(workspacePath);
       expect(result2).toContain('Original content');
       expect(result2).not.toContain('Modified content');
     });
 
-    it('should expire cache after TTL (60000ms)', () => {
+    it('should expire cache after TTL (60000ms)', async () => {
       vi.useFakeTimers();
 
       mkdirSync(join(tmpDir, '.git'), { recursive: true });
@@ -735,7 +739,7 @@ describe('PromptEnhancer', () => {
       const workspacePath = join(tmpDir, 'packages', 'sub', 'file.ts');
 
       // First call — reads from disk
-      const result1 = enhancer.discoverAgentsMd(workspacePath);
+      const result1 = await enhancer.discoverAgentsMd(workspacePath);
       expect(result1).toContain('Original content');
 
       // Modify file on disk
@@ -745,12 +749,12 @@ describe('PromptEnhancer', () => {
       vi.advanceTimersByTime(61_000);
 
       // Third call — cache expired, should read updated file
-      const result2 = enhancer.discoverAgentsMd(workspacePath);
+      const result2 = await enhancer.discoverAgentsMd(workspacePath);
       expect(result2).toContain('Updated content');
       expect(result2).not.toContain('Original content');
     });
 
-    it('should cache rules files too', () => {
+    it('should cache rules files too', async () => {
       writeFileSync(join(tmpDir, 'package.json'), '{}');
       mkdirSync(join(tmpDir, '.claude', 'rules'), { recursive: true });
       writeFileSync(join(tmpDir, '.claude', 'rules', 'rule.md'), 'Rule v1');
@@ -760,14 +764,14 @@ describe('PromptEnhancer', () => {
       const workspacePath = join(tmpDir, 'sub', 'file.ts');
 
       // First call
-      const result1 = enhancer.discoverRules(workspacePath);
+      const result1 = await enhancer.discoverRules(workspacePath);
       expect(result1).toContain('Rule v1');
 
       // Modify on disk
       writeFileSync(join(tmpDir, '.claude', 'rules', 'rule.md'), 'Rule v2');
 
       // Should still see cached version
-      const result2 = enhancer.discoverRules(workspacePath);
+      const result2 = await enhancer.discoverRules(workspacePath);
       expect(result2).toContain('Rule v1');
     });
   });

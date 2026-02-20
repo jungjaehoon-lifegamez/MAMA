@@ -1768,10 +1768,17 @@ export class GatewayToolExecutor {
       return { success: true, url: `/playgrounds/${slug}.html`, slug };
     } catch (err) {
       // Clean up orphaned HTML file if it was written before error
-      if (existsSync(htmlPath)) {
-        unlinkSync(htmlPath);
+      try {
+        if (existsSync(htmlPath)) {
+          unlinkSync(htmlPath);
+        }
+      } catch {
+        // Silently ignore cleanup errors to preserve original error
       }
-      return { success: false, error: `Failed to create playground: ${err}` };
+      return {
+        success: false,
+        error: `Failed to create playground: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 

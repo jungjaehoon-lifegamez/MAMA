@@ -362,7 +362,7 @@ This protects your credentials from being exposed in chat logs.`;
           channelId: message.channelId,
         }
       : undefined;
-    const enhanced = this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
+    const enhanced = await this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
 
     // 6. Build system prompt with all contexts including AgentContext
     // Always inject DB history for reliable memory (CLI --resume is unreliable)

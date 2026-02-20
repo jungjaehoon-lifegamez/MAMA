@@ -400,7 +400,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       tier: agent.tier,
       channelId: context.channelId,
     };
-    const enhanced = this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
+    const enhanced = await this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
 
     // Build full prompt with context.
     let fullPrompt = cleanMessage;

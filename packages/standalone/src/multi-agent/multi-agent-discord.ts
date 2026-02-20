@@ -604,7 +604,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       tier: agent.tier,
       channelId: context.channelId,
     };
-    const enhanced = this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
+    const enhanced = await this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
     if (enhanced.skillContent) {
       fullPrompt = `<system-reminder>\n${enhanced.skillContent}\n</system-reminder>\n\n${fullPrompt}`;
       logger.info(
