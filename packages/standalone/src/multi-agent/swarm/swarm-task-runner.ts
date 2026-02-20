@@ -277,26 +277,6 @@ export class SwarmTaskRunner extends EventEmitter {
       console.log(`[SwarmTaskRunner] Expired ${expired} stale leases`);
     }
 
-    // Cleanup idle & hung processes
-    const agentPool = this.agentProcessManager.getAgentProcessPool();
-    const idleCleaned = agentPool.cleanupIdleProcesses();
-    const hungCleaned = agentPool.cleanupHungProcesses();
-    if (idleCleaned > 0 || hungCleaned > 0) {
-      console.log(
-        `[SwarmTaskRunner] Cleaned up ${idleCleaned} idle + ${hungCleaned} hung processes`
-      );
-    }
-
-    // Log pool status (only if pools exist)
-    const statuses = agentPool.getAllPoolStatuses();
-    if (statuses.size > 0) {
-      for (const [agentId, status] of statuses) {
-        console.log(
-          `[SwarmTaskRunner] Pool status: agent=${agentId} busy=${status.busy}/${status.total}`
-        );
-      }
-    }
-
     // Check if session is complete
     if (this.swarmManager.isSessionComplete(sessionId)) {
       console.log(`[SwarmTaskRunner] Session ${sessionId} is complete`);
@@ -447,9 +427,6 @@ export class SwarmTaskRunner extends EventEmitter {
       if (!process.isReady()) {
         deferTask(db, task.id);
 
-        // Release process back to pool (we didn't use it)
-        this.agentProcessManager.releaseProcess(agentId, process);
-
         const deferredResult: TaskExecutionResult = {
           taskId: task.id,
           agentId,
@@ -467,9 +444,6 @@ export class SwarmTaskRunner extends EventEmitter {
       // Mark task as completed
       const resultText = promptResult.response || 'Task completed';
       completeTask(db, task.id, resultText);
-
-      // Release process back to pool
-      this.agentProcessManager.releaseProcess(agentId, process);
 
       const result: TaskExecutionResult = {
         taskId: task.id,
@@ -489,11 +463,6 @@ export class SwarmTaskRunner extends EventEmitter {
         .prepare('SELECT retry_count FROM swarm_tasks WHERE id = ?')
         .get(task.id) as { retry_count: number } | undefined;
       const retryCount = currentTask?.retry_count ?? 0;
-
-      // Release process back to pool (error occurred after getting process)
-      if (process) {
-        this.agentProcessManager.releaseProcess(agentId, process);
-      }
 
       if (retryCount < this.maxRetries) {
         // Retry the task

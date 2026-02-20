@@ -13,7 +13,6 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { loadInstalledSkills } from '../agent/agent-loop.js';
 import { homedir } from 'os';
-import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
@@ -22,7 +21,6 @@ import {
 } from '../agent/persistent-cli-process.js';
 import type { AgentPersonaConfig, MultiAgentConfig, MultiAgentRuntimeOptions } from './types.js';
 import { ToolPermissionManager } from './tool-permission-manager.js';
-import { AgentProcessPool } from './agent-process-pool.js';
 import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
 import type { EphemeralAgentDef } from './workflow-types.js';
 import { buildBmadPromptBlock } from './bmad-templates.js';
@@ -96,7 +94,6 @@ function getModelDisplayName(modelId: string): string {
 export class AgentProcessManager extends EventEmitter {
   private config: MultiAgentConfig;
   private processPool: PersistentProcessPool;
-  private agentProcessPool: AgentProcessPool;
   private codexProcessPool: Map<string, AgentRuntimeProcess> = new Map();
   private permissionManager: ToolPermissionManager;
   private runtimeOptions: MultiAgentRuntimeOptions;
@@ -126,20 +123,6 @@ export class AgentProcessManager extends EventEmitter {
     this.runtimeOptions = runtimeOptions;
     this.processPool = new PersistentProcessPool(defaultOptions);
     this.permissionManager = new ToolPermissionManager();
-
-    // Initialize AgentProcessPool with per-agent pool sizes
-    const agentPoolSizes: Record<string, number> = {};
-    for (const [agentId, agentConfig] of Object.entries(config.agents)) {
-      if (agentConfig.pool_size && agentConfig.pool_size > 1) {
-        agentPoolSizes[agentId] = agentConfig.pool_size;
-      }
-    }
-
-    this.agentProcessPool = new AgentProcessPool({
-      defaultPoolSize: 1,
-      agentPoolSizes,
-      idleTimeoutMs: 300000, // 5 minutes
-    });
   }
 
   /**
@@ -163,20 +146,6 @@ export class AgentProcessManager extends EventEmitter {
       }
       this.codexProcessPool.delete(key);
     }
-
-    // 3. Rebuild AgentProcessPool with new pool sizes
-    this.agentProcessPool.stopAll();
-    const agentPoolSizes: Record<string, number> = {};
-    for (const [agentId, agentConfig] of Object.entries(config.agents)) {
-      if (agentConfig.pool_size && agentConfig.pool_size > 1) {
-        agentPoolSizes[agentId] = agentConfig.pool_size;
-      }
-    }
-    this.agentProcessPool = new AgentProcessPool({
-      defaultPoolSize: 1,
-      agentPoolSizes,
-      idleTimeoutMs: 300000, // 5 minutes
-    });
   }
 
   private getAgentBackend(
@@ -263,7 +232,6 @@ export class AgentProcessManager extends EventEmitter {
     const processStart = Date.now();
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     const agentConfig = this.config.agents[agentId];
-    const poolSize = agentConfig?.pool_size ?? 1;
     const agentBackend = this.getAgentBackend(agentConfig, agentId);
     const systemPrompt = await this.loadPersona(agentId);
     const tier = agentConfig?.tier ?? 1;
@@ -302,19 +270,6 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     if (agentBackend === 'codex-mcp') {
-      // Use AgentProcessPool for multi-process agents (pool_size > 1)
-      if (poolSize > 1) {
-        const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
-          agentId,
-          channelKey,
-          async () => this.createCodexProcess(options)
-        );
-        if (isNew) {
-          this.emit('process-created', { agentId, process });
-        }
-        return process;
-      }
-
       const existing = this.codexProcessPool.get(channelKey);
       if (existing) {
         return existing;
@@ -327,31 +282,6 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     // Claude backend
-    if (poolSize > 1) {
-      const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
-        agentId,
-        channelKey,
-        async () => {
-          const mergedOptions: PersistentProcessOptions = {
-            sessionId: randomUUID(),
-            ...this.defaultOptions,
-            ...options,
-          } as PersistentProcessOptions;
-
-          const { PersistentClaudeProcess } = await import('../agent/persistent-cli-process.js');
-          const newProcess = new PersistentClaudeProcess(mergedOptions);
-          await newProcess.start();
-          return newProcess;
-        }
-      );
-
-      if (isNew) {
-        this.emit('process-created', { agentId, process });
-      }
-
-      return process;
-    }
-
     const process = await this.processPool.getProcess(channelKey, options);
     if (process.listenerCount('idle') === 0) {
       this.emit('process-created', { agentId, process });
@@ -770,36 +700,15 @@ Respond to messages in a helpful and professional manner.
   }
 
   /**
-   * Release a process back to the pool (for multi-process agents)
-   */
-  releaseProcess(agentId: string, process: AgentRuntimeProcess): void {
-    const agentConfig = this.config.agents[agentId];
-    const poolSize = agentConfig?.pool_size ?? 1;
-
-    if (poolSize > 1) {
-      this.agentProcessPool.releaseProcess(agentId, process);
-    }
-    // pool_size=1: PersistentProcessPool handles reuse automatically, no release needed
-  }
-
-  /**
    * Stop all processes
    */
   stopAll(): void {
     this.processPool.stopAll();
-    this.agentProcessPool.stopAll();
     for (const process of this.codexProcessPool.values()) {
       process.stop();
     }
     this.codexProcessPool.clear();
     this.personaCache.clear();
-  }
-
-  /**
-   * Get AgentProcessPool instance (for testing/advanced usage)
-   */
-  getAgentProcessPool(): AgentProcessPool {
-    return this.agentProcessPool;
   }
 
   /**
@@ -943,7 +852,7 @@ Respond to messages in a helpful and professional manner.
       }
     }
 
-    // 2. Check agentProcessPool (pool_size>1 agents) — only include agents serving this channel
+    // 2. Check codex processes
     for (const channelKey of this.codexProcessPool.keys()) {
       if (channelKey.startsWith(prefix)) {
         try {
@@ -952,13 +861,6 @@ Respond to messages in a helpful and professional manner.
         } catch {
           // Skip malformed keys
         }
-      }
-    }
-
-    // 3. Check agentProcessPool (pool_size>1 agents) — only include agents serving this channel
-    for (const [agentId] of this.agentProcessPool.getAllPoolStatuses()) {
-      if (this.agentProcessPool.hasBusyProcessForChannel(agentId, prefix)) {
-        agentIdSet.add(agentId);
       }
     }
 

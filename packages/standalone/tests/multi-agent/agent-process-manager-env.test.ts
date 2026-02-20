@@ -4,7 +4,7 @@
  * Verifies that:
  * - Tier 1 agents get MAMA_HOOK_FEATURES='rules,agents' (keywords handled by native PromptEnhancer)
  * - Tier 2+ agents get MAMA_DISABLE_HOOKS='true'
- * - Both pool_size>1 (AgentProcessPool) and pool_size=1 (PersistentProcessPool) paths
+ * - PersistentProcessPool path (single process per agent)
  * - Single-agent mode (PersistentCLIAdapter) gets MAMA_HOOK_FEATURES
  */
 
@@ -97,7 +97,6 @@ function makeConfig(
     string,
     {
       tier?: 1 | 2 | 3;
-      pool_size?: number;
       model?: string;
       can_delegate?: boolean;
       is_planning_agent?: boolean;
@@ -114,7 +113,6 @@ function makeConfig(
       trigger_prefix: `!${id}`,
       persona_file: `~/.mama/personas/${id}.md`,
       tier: opts.tier ?? 1,
-      pool_size: opts.pool_size ?? 1,
       backend: 'claude',
       model: opts.model ?? 'claude-sonnet-4-6',
       can_delegate: opts.can_delegate,
@@ -167,10 +165,10 @@ describe('AgentProcessManager env vars by tier', () => {
     manager?.stopAll();
   });
 
-  describe('pool_size > 1 path (AgentProcessPool)', () => {
+  describe('env vars by tier', () => {
     it('should pass MAMA_HOOK_FEATURES for Tier 1 agent', async () => {
       const config = makeConfig({
-        developer: { tier: 1, pool_size: 3 },
+        developer: { tier: 1 },
       });
       manager = new AgentProcessManager(config);
 
@@ -184,7 +182,7 @@ describe('AgentProcessManager env vars by tier', () => {
 
     it('should pass MAMA_DISABLE_HOOKS for Tier 2 agent', async () => {
       const config = makeConfig({
-        reviewer: { tier: 2, pool_size: 2 },
+        reviewer: { tier: 2 },
       });
       manager = new AgentProcessManager(config);
 
@@ -198,51 +196,7 @@ describe('AgentProcessManager env vars by tier', () => {
 
     it('should pass MAMA_DISABLE_HOOKS for Tier 3 agent', async () => {
       const config = makeConfig({
-        tester: { tier: 3, pool_size: 2 },
-      });
-      manager = new AgentProcessManager(config);
-
-      await manager.getProcess('discord', 'channel-1', 'tester');
-
-      const env = getLastSpawnEnv();
-      expect(env).toBeDefined();
-      expect(env!['MAMA_DISABLE_HOOKS']).toBe('true');
-      expect(env!['MAMA_HOOK_FEATURES']).toBeUndefined();
-    });
-  });
-
-  describe('pool_size = 1 path (PersistentProcessPool)', () => {
-    it('should pass MAMA_HOOK_FEATURES for Tier 1 agent', async () => {
-      const config = makeConfig({
-        developer: { tier: 1, pool_size: 1 },
-      });
-      manager = new AgentProcessManager(config);
-
-      await manager.getProcess('discord', 'channel-1', 'developer');
-
-      const env = getLastSpawnEnv();
-      expect(env).toBeDefined();
-      expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
-      expect(env!['MAMA_DISABLE_HOOKS']).toBeUndefined();
-    });
-
-    it('should pass MAMA_DISABLE_HOOKS for Tier 2 agent', async () => {
-      const config = makeConfig({
-        reviewer: { tier: 2, pool_size: 1 },
-      });
-      manager = new AgentProcessManager(config);
-
-      await manager.getProcess('discord', 'channel-1', 'reviewer');
-
-      const env = getLastSpawnEnv();
-      expect(env).toBeDefined();
-      expect(env!['MAMA_DISABLE_HOOKS']).toBe('true');
-      expect(env!['MAMA_HOOK_FEATURES']).toBeUndefined();
-    });
-
-    it('should pass MAMA_DISABLE_HOOKS for Tier 3 agent', async () => {
-      const config = makeConfig({
-        tester: { tier: 3, pool_size: 1 },
+        tester: { tier: 3 },
       });
       manager = new AgentProcessManager(config);
 
@@ -259,7 +213,7 @@ describe('AgentProcessManager env vars by tier', () => {
     it('should default to Tier 1 (MAMA_HOOK_FEATURES) when tier is not specified', async () => {
       // Agent without explicit tier → defaults to tier 1 in getProcess (line: agentConfig?.tier ?? 1)
       const config = makeConfig({
-        agent_no_tier: { pool_size: 1 },
+        agent_no_tier: {},
       });
       manager = new AgentProcessManager(config);
 
@@ -270,25 +224,12 @@ describe('AgentProcessManager env vars by tier', () => {
       expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
       expect(env!['MAMA_DISABLE_HOOKS']).toBeUndefined();
     });
-
-    it('should default to Tier 1 for pool_size > 1 when tier not specified', async () => {
-      const config = makeConfig({
-        agent_no_tier: { pool_size: 3 },
-      });
-      manager = new AgentProcessManager(config);
-
-      await manager.getProcess('discord', 'channel-1', 'agent_no_tier');
-
-      const env = getLastSpawnEnv();
-      expect(env).toBeDefined();
-      expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
-    });
   });
 
   describe('env vars include process.env', () => {
     it('should merge agent env with process.env', async () => {
       const config = makeConfig({
-        developer: { tier: 1, pool_size: 1 },
+        developer: { tier: 1 },
       });
       manager = new AgentProcessManager(config);
 
