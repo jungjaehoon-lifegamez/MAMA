@@ -47,6 +47,9 @@ export class PersistentCLIAdapter {
       dangerouslySkipPermissions: options.dangerouslySkipPermissions,
       useGatewayTools: options.useGatewayTools,
       requestTimeout: options.requestTimeout,
+      tools: options.tools,
+      pluginDir: options.pluginDir,
+      disallowedTools: options.disallowedTools,
     });
   }
 

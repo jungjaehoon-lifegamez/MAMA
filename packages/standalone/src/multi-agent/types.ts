@@ -159,6 +159,14 @@ export interface AgentPersonaConfig {
     /** Git user.email for commits */
     email: string;
   };
+
+  /**
+   * Enable Code-Act mode for this agent
+   * LLM writes JS code blocks to compose multiple tools in a single sandbox execution
+   * Forced disabled for Tier 3 agents
+   * @default false
+   */
+  useCodeAct?: boolean;
 }
 
 /**

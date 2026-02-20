@@ -54,7 +54,7 @@ import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
-import type { DelegationHistoryEntry } from '../../api/graph-api-types.js';
+import type { DelegationHistoryEntry, GraphHandlerOptions } from '../../api/graph-api-types.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getEmbeddingDim, getModelName } from '@jungjaehoon/mama-core/config-loader';
@@ -754,11 +754,17 @@ export async function runAgentLoop(
   const runtimeBackend = config.agent.backend;
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
+  // Inherit useCodeAct from Conductor agent config (webchat uses main agentLoop)
+  const conductorConfig =
+    config.multi_agent?.agents?.conductor || config.multi_agent?.agents?.Conductor;
+  const useCodeAct = (conductorConfig as any)?.useCodeAct === true;
+
   const agentLoop = new AgentLoop(oauthManager, {
     backend: runtimeBackend,
     model: config.agent.model,
     timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
+    useCodeAct,
     toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord
     // SECURITY MODEL: MAMA OS is a headless daemon — no TTY for interactive permission prompts.
@@ -1067,14 +1073,26 @@ export async function runAgentLoop(
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);
 
   // Prepare graph handler options (will be populated after gateways init)
-  const graphHandlerOptions: {
-    getAgentStates?: () => Map<string, string>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const graphHandlerOptions: GraphHandlerOptions & {
     getSwarmTasks?: (limit?: number) => Array<any>;
-    getRecentDelegations?: (limit?: number) => DelegationHistoryEntry[];
-    applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
-    restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   } = {};
+
+  // Wire up Code-Act executor for POST /api/code-act endpoint
+  graphHandlerOptions.executeCodeAct = async (code: string) => {
+    const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
+    const sandbox = new CodeActSandbox();
+    const bridge = new HostBridge(toolExecutor);
+    bridge.injectInto(sandbox, 1);
+    const result = await sandbox.execute(code);
+    return {
+      success: result.success,
+      value: result.value,
+      logs: result.logs,
+      error: result.error?.message,
+      metrics: result.metrics,
+    };
+  };
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
 
