@@ -384,16 +384,45 @@
       padding: 4px;
     }
 
+    .sidebar-toggle {
+      display: none;
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 1000;
+      padding: 10px 16px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: var(--radius);
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+
     @media (max-width: 768px) {
       .app { grid-template-columns: 1fr; }
-      .sidebar { display: none; }
+      .sidebar {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        width: 260px;
+        z-index: 999;
+        box-shadow: 2px 0 12px rgba(0,0,0,0.15);
+      }
+      .sidebar.open { display: flex; }
+      .sidebar-toggle { display: block; }
       .two-col { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
+  <button class="sidebar-toggle" onclick="toggleSidebar()">☰ Skills</button>
   <div class="app">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <h1>Skill Lab</h1>
         <p>Create · Edit · Validate skills</p>
@@ -600,6 +629,11 @@ You can also paste (Ctrl+V) a response into this area.</div>
   </div>
 
   <script>
+    function toggleSidebar() {
+      var sidebar = document.getElementById('sidebar');
+      if (sidebar) sidebar.classList.toggle('open');
+    }
+
     var STEPS = ['define','prompt','review','refine','publish'];
     var STEP_LABELS = {define:'Define',prompt:'Prompt',review:'Review Draft',refine:'Feedback',publish:'Publish'};
 
@@ -794,7 +828,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
         var sourceTag = s._registrySource
           ? ' <span style="font-size:9px;color:var(--accent);font-weight:700;">'+esc(s._registrySource)+'</span>'
           : '';
-        return '<div class="'+cls+'" data-skill-id="'+esc(s.id)+'">'
+        return '<div class="'+cls+'" data-skill-id="'+esc(s.id)+'" role="button" tabindex="0">'
           + '<div class="skill-name">'+esc(s.name)+' '+badge+sourceTag+'</div>'
           + '<div class="skill-meta">'+esc(s.version)+' \u00B7 '+esc(s.path||s._registrySource||'')+'</div>'
           + '</div>';
@@ -805,6 +839,12 @@ You can also paste (Ctrl+V) a response into this area.</div>
         item.addEventListener('click', function() {
           var skillId = this.getAttribute('data-skill-id');
           selectSkill(skillId);
+        });
+        item.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.click();
+          }
         });
       });
     }
@@ -901,7 +941,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
       var html = PRESETS.map(function(p) {
         var tc = detectToolchain(p.input);
         var libTag = tc ? '<div style="font-size:10px;color:var(--accent);margin-top:4px;font-weight:700;">'+esc(tc.lib)+'</div>' : '';
-        return '<div class="preset-card" data-preset="'+esc(p.id)+'">'
+        return '<div class="preset-card" data-preset="'+esc(p.id)+'" role="button" tabindex="0">'
           + '<div class="preset-icon">'+p.icon+'</div>'
           + '<div class="preset-name">'+esc(p.name)+'</div>'
           + '<div class="preset-desc">'+esc(p.desc)+'</div>'
@@ -914,6 +954,12 @@ You can also paste (Ctrl+V) a response into this area.</div>
         card.addEventListener('click', function() {
           var presetId = this.getAttribute('data-preset');
           applyPreset(presetId);
+        });
+        card.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.click();
+          }
         });
       });
     }
@@ -941,7 +987,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
         else if (state.stepsDone[s]) cls += ' done';
         var numText = state.stepsDone[s] ? '\u2713' : String(i+1);
         var arrow = i < STEPS.length-1 ? '<span class="step-arrow">\u2192</span>' : '';
-        return '<div class="'+cls+'" data-step="'+esc(s)+'">'
+        return '<div class="'+cls+'" data-step="'+esc(s)+'" role="button" tabindex="0">'
           + '<span class="num">'+numText+'</span>'
           + STEP_LABELS[s]
           + '</div>' + arrow;
@@ -952,6 +998,12 @@ You can also paste (Ctrl+V) a response into this area.</div>
         dot.addEventListener('click', function() {
           var stepName = this.getAttribute('data-step');
           goToStep(stepName);
+        });
+        dot.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.click();
+          }
         });
       });
     }
@@ -1109,13 +1161,21 @@ You can also paste (Ctrl+V) a response into this area.</div>
 
     function sendPrompt() {
       // Upload file first if dropped
-      if (state.droppedFile) sendFileToChat();
-
-      var text = document.getElementById('promptPreview').textContent;
-      window.parent.postMessage({type:'playground:sendToChat', message: text}, window.location.origin);
-      state.iterations++;
-      updateStatus('Prompt sent (iteration #'+state.iterations+')', versionStr());
-      goToStep('review');
+      if (state.droppedFile) {
+        sendFileToChat(function() {
+          var text = document.getElementById('promptPreview').textContent;
+          window.parent.postMessage({type:'playground:sendToChat', message: text}, window.location.origin);
+          state.iterations++;
+          updateStatus('Prompt sent (iteration #'+state.iterations+')', versionStr());
+          goToStep('review');
+        });
+      } else {
+        var text = document.getElementById('promptPreview').textContent;
+        window.parent.postMessage({type:'playground:sendToChat', message: text}, window.location.origin);
+        state.iterations++;
+        updateStatus('Prompt sent (iteration #'+state.iterations+')', versionStr());
+        goToStep('review');
+      }
     }
 
     function renderReview() {
@@ -1521,8 +1581,11 @@ You can also paste (Ctrl+V) a response into this area.</div>
       renderFileInfo();
     }
 
-    function sendFileToChat() {
-      if (!state.droppedFile) return;
+    function sendFileToChat(callback) {
+      if (!state.droppedFile) {
+        if (callback) callback();
+        return;
+      }
       var f = state.droppedFile;
       // Read file as base64 and send via postMessage for parent to save
       var reader = new FileReader();
@@ -1534,6 +1597,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
           fileSize: f.size,
           data: e.target.result
         }, window.location.origin);
+        if (callback) callback();
       };
       reader.readAsDataURL(f.file);
     }

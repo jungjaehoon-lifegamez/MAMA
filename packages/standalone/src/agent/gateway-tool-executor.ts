@@ -19,6 +19,7 @@ import {
   statSync,
   copyFileSync,
   unlinkSync,
+  realpathSync,
 } from 'fs';
 import { join, dirname, resolve, relative, isAbsolute, basename } from 'path';
 import { homedir } from 'os';
@@ -740,10 +741,18 @@ export class GatewayToolExecutor {
       // Resolve any .. or . in the path
       const normalizedTarget = resolve(resolvedTarget);
 
+      // Follow symlinks to prevent sandbox bypass
+      let realTarget: string;
+      try {
+        realTarget = realpathSync(normalizedTarget);
+      } catch {
+        realTarget = normalizedTarget; // file doesn't exist yet — lexical check is fine
+      }
+
       // Check if target is within sandbox
       // Add trailing separator to prevent path traversal (e.g., ~/.mama vs ~/.mama-evil)
       const sandboxRootWithSep = sandboxRoot.endsWith('/') ? sandboxRoot : sandboxRoot + '/';
-      if (!normalizedTarget.startsWith(sandboxRootWithSep) && normalizedTarget !== sandboxRoot) {
+      if (!realTarget.startsWith(sandboxRootWithSep) && realTarget !== sandboxRoot) {
         return {
           success: false,
           error:
@@ -1859,7 +1868,10 @@ export class GatewayToolExecutor {
         message: message!,
       };
     } catch (err) {
-      return { success: false, error: `Failed to send to webchat: ${err}` };
+      return {
+        success: false,
+        error: `Failed to send to webchat: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 
