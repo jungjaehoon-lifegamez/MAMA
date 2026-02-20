@@ -282,6 +282,9 @@ async function pollLive(){
     if(S.stateChanges.length>50)S.stateChanges=S.stateChanges.slice(0,50);
 
     // Track new swarm tasks
+    if (S.liveDelegations.length < S.prevDelegCount) {
+      S.prevDelegCount = S.liveDelegations.length;
+    }
     if(S.liveDelegations.length>S.prevDelegCount){
       S.liveDelegations.slice(S.prevDelegCount).forEach(function(d){
         S.liveHistory.unshift(Object.assign({},d,{receivedAt:new Date()}));

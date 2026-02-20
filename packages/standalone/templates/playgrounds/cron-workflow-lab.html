@@ -1299,9 +1299,14 @@ function resetToEmpty() {
 }
 
 // Auto-save on every render
+var _saveDebounceTimer = null;
+function debouncedSave() {
+  clearTimeout(_saveDebounceTimer);
+  _saveDebounceTimer = setTimeout(saveAllWorkflows, 500);
+}
 (function patchRender() {
   const orig = window.render;
-  window.render = function() { orig(); saveAllWorkflows(); };
+  window.render = function() { orig(); debouncedSave(); };
 })();
 
 // ─── New Workflow ───
