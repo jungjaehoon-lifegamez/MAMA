@@ -369,9 +369,16 @@ function syncBuiltinSkills(): void {
   const skillsDir = join(homedir(), '.mama', 'skills');
   const templatesDir = join(__dirname, '..', '..', '..', 'templates', 'skills');
 
-  if (!existsSync(templatesDir)) return;
+  if (!existsSync(templatesDir)) {
+    return;
+  }
 
-  mkdirSync(skillsDir, { recursive: true });
+  try {
+    mkdirSync(skillsDir, { recursive: true });
+  } catch (err) {
+    console.warn('[syncBuiltinSkills] Failed to create skills directory (non-fatal):', err);
+    return;
+  }
 
   try {
     const entries = readdirSync(templatesDir);
@@ -1903,8 +1910,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         console.log(`✓ Seeded ${pgSynced} built-in playground(s)`);
       }
     }
-  } catch {
-    // Non-blocking
+  } catch (err) {
+    // Non-blocking: playground seeding is optional
+    console.warn('[seedBuiltinPlaygrounds] Playground seeding failed (non-fatal):', err);
   }
 
   apiServer.app.use('/playgrounds', express.static(playgroundsDir));
@@ -1936,7 +1944,8 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       }
       const data = JSON.parse(readFileSync(indexPath, 'utf-8'));
       res.json(Array.isArray(data) ? data : []);
-    } catch {
+    } catch (err) {
+      console.warn('[GET /api/playgrounds] Failed to read playground index (non-fatal):', err);
       res.json([]);
     }
   });
@@ -1978,11 +1987,13 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         .map((d) => {
           const mdPath = path.join(skillsWorkDir, d.name, 'SKILL.md');
           const exists = existsSync(mdPath);
-          return { id: d.name, path: mdPath, exists };
+          return { id: d.name, exists };
         })
-        .filter((s) => s.exists);
+        .filter((s) => s.exists)
+        .map(({ id }) => ({ id }));
       res.json({ skills: dirs });
-    } catch {
+    } catch (err) {
+      console.warn('[GET /api/workspace/skills] Failed to read skills directory (non-fatal):', err);
       res.json({ skills: [] });
     }
   });

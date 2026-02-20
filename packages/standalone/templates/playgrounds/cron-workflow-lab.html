@@ -887,15 +887,18 @@ function generatePrompt() {
 function buildChain(startId) {
   const chain = [];
   const visited = new Set();
-  let current = startId;
-  while (current && !visited.has(current)) {
+  const queue = [startId];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) { continue; }
     visited.add(current);
     const node = state.nodes.find(n => n.id === current);
-    if (node) chain.push(node);
-    // Use filter to get ALL outgoing connections (supports branching workflows)
+    if (node) { chain.push(node); }
+    // BFS: follow ALL outgoing connections to capture branching workflows
     const outgoing = state.connections.filter(c => c.from === current);
-    // For linear chain building, take the first connection if multiple exist
-    current = outgoing.length > 0 ? outgoing[0].to : null;
+    for (const conn of outgoing) {
+      if (!visited.has(conn.to)) { queue.push(conn.to); }
+    }
   }
   return chain;
 }
