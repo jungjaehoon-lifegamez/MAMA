@@ -24,6 +24,22 @@ const ALLOWED_MIME = new Set([
   'image/webp',
   'image/svg+xml',
   'application/pdf',
+  // Document types
+  'text/plain',
+  'text/csv',
+  'text/markdown',
+  'text/html',
+  'text/xml',
+  'application/json',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/xml',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/zip',
+  'application/gzip',
 ]);
 
 // Ensure directories exist
@@ -40,15 +56,31 @@ const storage = multer.diskStorage({
   },
 });
 
-// Map extension to expected MIME type for validation
-const EXT_TO_MIME: Record<string, string> = {
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf',
+// Map extension to expected MIME types for validation (some extensions have multiple valid MIME types)
+const EXT_TO_MIME: Record<string, string[]> = {
+  '.jpg': ['image/jpeg'],
+  '.jpeg': ['image/jpeg'],
+  '.png': ['image/png'],
+  '.gif': ['image/gif'],
+  '.webp': ['image/webp'],
+  '.svg': ['image/svg+xml'],
+  '.pdf': ['application/pdf'],
+  // Document types
+  '.txt': ['text/plain'],
+  '.csv': ['text/csv'],
+  '.md': ['text/markdown'],
+  '.html': ['text/html'],
+  '.htm': ['text/html'],
+  '.xml': ['text/xml', 'application/xml'], // Both MIME types are valid for XML
+  '.json': ['application/json'],
+  '.doc': ['application/msword'],
+  '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  '.xls': ['application/vnd.ms-excel'],
+  '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  '.ppt': ['application/vnd.ms-powerpoint'],
+  '.pptx': ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  '.zip': ['application/zip'],
+  '.gz': ['application/gzip'],
 };
 
 const upload = multer({
@@ -61,8 +93,8 @@ const upload = multer({
     }
     // Validate extension matches MIME type to prevent spoofing
     const ext = path.extname(file.originalname).toLowerCase();
-    const expectedMime = EXT_TO_MIME[ext];
-    if (expectedMime && expectedMime !== file.mimetype) {
+    const expectedMimes = EXT_TO_MIME[ext];
+    if (expectedMimes && !expectedMimes.includes(file.mimetype)) {
       cb(new Error(`Extension ${ext} does not match MIME type ${file.mimetype}`));
       return;
     }
@@ -116,15 +148,14 @@ async function compressIfNeeded(filePath: string, size: number): Promise<string>
   }
 }
 
-const MIME_MAP: Record<string, string> = {
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf',
-};
+/**
+ * Encode Content-Disposition header for safe Unicode filenames (RFC 5987)
+ */
+function encodeContentDisposition(filename: string): string {
+  const asciiName = filename.replace(/[^\x20-\x7E]/g, '_').replace(/[\\"]/g, '\\$&');
+  const encodedName = encodeURIComponent(filename).replace(/'/g, '%27');
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
+}
 
 function findMediaFile(safeName: string): string | null {
   for (const dir of [OUTBOUND_DIR, INBOUND_DIR]) {
@@ -238,14 +269,16 @@ export function createUploadRouter(): Router {
     }
 
     const ext = path.extname(safeName).toLowerCase();
-    const contentType = MIME_MAP[ext] || 'application/octet-stream';
+    const contentType = EXT_TO_MIME[ext]?.[0] || 'application/octet-stream';
     const stat = fs.statSync(fullPath);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', stat.size);
-    // SVG can contain scripts — force download to prevent Stored XSS
-    // Check both extension and content type to catch mismatched files
-    if (ext === '.svg' || contentType === 'image/svg+xml') {
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff'); // Prevent MIME type sniffing
+    // SVG/HTML/XML can contain scripts — force download to prevent Stored XSS
+    const dangerousExts = ['.svg', '.html', '.htm', '.xml'];
+    const dangerousTypes = ['image/svg+xml', 'text/html', 'text/xml', 'application/xml'];
+    if (dangerousExts.includes(ext) || dangerousTypes.includes(contentType)) {
+      res.setHeader('Content-Disposition', encodeContentDisposition(safeName));
     }
     fs.createReadStream(fullPath).pipe(res);
   });
@@ -262,8 +295,10 @@ export function createUploadRouter(): Router {
     }
 
     const stat = fs.statSync(fullPath);
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', encodeContentDisposition(safeName));
     res.setHeader('Content-Length', stat.size);
+    res.setHeader('X-Content-Type-Options', 'nosniff'); // Prevent MIME type sniffing
     fs.createReadStream(fullPath).pipe(res);
   });
 

@@ -13,6 +13,7 @@ import { API, type SkillItem } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 import { getElementByIdOrNull } from '../utils/dom.js';
 import { renderSafeMarkdown } from '../utils/markdown.js';
+import { PlaygroundModule } from './playground.js';
 
 const logger = new DebugLogger('Skills');
 
@@ -158,6 +159,13 @@ export const SkillsModule = {
     const available = this._filterSkills(this.catalog);
 
     container.innerHTML = `
+      <div class="flex items-center justify-between mb-4">
+        <span></span>
+        <button id="skills-new-btn"
+          class="text-xs px-3 py-1.5 rounded-lg bg-yellow-500 text-gray-900 font-semibold hover:bg-yellow-400">
+          + New Skill
+        </button>
+      </div>
       ${
         installed.length > 0
           ? `
@@ -209,9 +217,17 @@ export const SkillsModule = {
           this.uninstall(source, id);
         } else if (action === 'toggle') {
           this.toggle(source, id, btn.dataset.enabled !== 'true');
+        } else if (action === 'edit') {
+          this.editInSkillLab(source, id);
         }
       });
     });
+
+    // Bind + New button
+    const newBtn = container.querySelector<HTMLButtonElement>('#skills-new-btn');
+    if (newBtn) {
+      newBtn.addEventListener('click', () => this.openNewSkillLab());
+    }
 
     // Bind card click for detail
     container.querySelectorAll<HTMLElement>('[data-skill-card]').forEach((card) => {
@@ -283,10 +299,16 @@ export const SkillsModule = {
               class="text-xs px-2 py-1 rounded ${skill.enabled !== false ? 'bg-green-900/30 text-green-400' : 'bg-gray-700 text-gray-400'}">
               ${skill.enabled !== false ? 'Enabled' : 'Disabled'}
             </button>
-            <button data-action="uninstall" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
-              class="text-xs px-2 py-1 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50">
-              Remove
-            </button>
+            <div class="flex gap-1">
+              <button data-action="edit" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
+                class="text-xs px-2 py-1 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50">
+                Edit
+              </button>
+              <button data-action="uninstall" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
+                class="text-xs px-2 py-1 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50">
+                Remove
+              </button>
+            </div>
           `
               : `
             <span></span>
@@ -425,6 +447,41 @@ export const SkillsModule = {
     if (modal) {
       modal.classList.add('hidden');
     }
+  },
+
+  /**
+   * Open Skill Lab with existing skill content for editing
+   */
+  async editInSkillLab(source: string, id: string): Promise<void> {
+    try {
+      const { content } = (await API.getSkillContent(id, source)) as { content: string };
+      const skill = this.installed.find((s: SkillItem) => s.id === id && s.source === source);
+      const name = skill?.name || id;
+
+      // Switch to playground tab and open Skill Lab
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const switchTab = (window as any).switchTab;
+      if (typeof switchTab === 'function') {
+        switchTab('playground');
+      }
+      PlaygroundModule.openSkillLab({ id, name, content });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Failed to load skill for editing:', message);
+      alert(`Failed to load skill: ${message}`);
+    }
+  },
+
+  /**
+   * Open Skill Lab with empty state for new skill creation
+   */
+  openNewSkillLab(): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const switchTab = (window as any).switchTab;
+    if (typeof switchTab === 'function') {
+      switchTab('playground');
+    }
+    PlaygroundModule.openSkillLab();
   },
 
   /**
