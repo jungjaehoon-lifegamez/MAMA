@@ -532,6 +532,33 @@ export class SkillRegistry {
   }
 
   /**
+   * Save skill content to disk and register in state
+   */
+  async save(
+    name: string,
+    content: string,
+    source: SkillSource = 'mama'
+  ): Promise<{ id: string; path: string }> {
+    validateSkillName(name);
+
+    const validSources: SkillSource[] = ['mama', 'cowork', 'external'];
+    if (!validSources.includes(source)) {
+      throw new Error(`Invalid skill source: ${source}`);
+    }
+
+    const skillDir = join(SKILLS_BASE, source, name);
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = join(skillDir, 'SKILL.md');
+    await writeFile(skillPath, content, 'utf-8');
+
+    const state = await loadState();
+    state[`${source}/${name}`] = { ...state[`${source}/${name}`], enabled: true };
+    await saveState(state);
+
+    return { id: name, path: skillPath };
+  }
+
+  /**
    * Clear catalog cache
    */
   clearCache(source?: SkillSource): void {

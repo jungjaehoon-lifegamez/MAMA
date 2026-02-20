@@ -13,18 +13,27 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { loadInstalledSkills } from '../agent/agent-loop.js';
 import { homedir } from 'os';
-import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   PersistentProcessPool,
   type PersistentProcessOptions,
 } from '../agent/persistent-cli-process.js';
 import type { AgentPersonaConfig, MultiAgentConfig, MultiAgentRuntimeOptions } from './types.js';
 import { ToolPermissionManager } from './tool-permission-manager.js';
-import { AgentProcessPool } from './agent-process-pool.js';
 import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
 import type { EphemeralAgentDef } from './workflow-types.js';
 import { buildBmadPromptBlock } from './bmad-templates.js';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const processManagerLogger = new DebugLogger('AgentProcessManager');
 
 /**
  * Resolve path with ~ expansion
@@ -85,10 +94,11 @@ function getModelDisplayName(modelId: string): string {
 export class AgentProcessManager extends EventEmitter {
   private config: MultiAgentConfig;
   private processPool: PersistentProcessPool;
-  private agentProcessPool: AgentProcessPool;
   private codexProcessPool: Map<string, AgentRuntimeProcess> = new Map();
   private permissionManager: ToolPermissionManager;
   private runtimeOptions: MultiAgentRuntimeOptions;
+  private readonly tracePromptMs = globalThis.process.env.MAMA_CONDUCTOR_PROMPT_MS === '1';
+  private readonly dumpConductorPrompt = globalThis.process.env.MAMA_DUMP_CONDUCTOR_PROMPT === '1';
 
   /** Cached persona content: Map<agentId, systemPrompt> */
   private personaCache: Map<string, string> = new Map();
@@ -113,20 +123,6 @@ export class AgentProcessManager extends EventEmitter {
     this.runtimeOptions = runtimeOptions;
     this.processPool = new PersistentProcessPool(defaultOptions);
     this.permissionManager = new ToolPermissionManager();
-
-    // Initialize AgentProcessPool with per-agent pool sizes
-    const agentPoolSizes: Record<string, number> = {};
-    for (const [agentId, agentConfig] of Object.entries(config.agents)) {
-      if (agentConfig.pool_size && agentConfig.pool_size > 1) {
-        agentPoolSizes[agentId] = agentConfig.pool_size;
-      }
-    }
-
-    this.agentProcessPool = new AgentProcessPool({
-      defaultPoolSize: 1,
-      agentPoolSizes,
-      idleTimeoutMs: 300000, // 5 minutes
-    });
   }
 
   /**
@@ -150,26 +146,20 @@ export class AgentProcessManager extends EventEmitter {
       }
       this.codexProcessPool.delete(key);
     }
-
-    // 3. Rebuild AgentProcessPool with new pool sizes
-    this.agentProcessPool.stopAll();
-    const agentPoolSizes: Record<string, number> = {};
-    for (const [agentId, agentConfig] of Object.entries(config.agents)) {
-      if (agentConfig.pool_size && agentConfig.pool_size > 1) {
-        agentPoolSizes[agentId] = agentConfig.pool_size;
-      }
-    }
-    this.agentProcessPool = new AgentProcessPool({
-      defaultPoolSize: 1,
-      agentPoolSizes,
-      idleTimeoutMs: 300000, // 5 minutes
-    });
   }
 
   private getAgentBackend(
-    agentConfig: Omit<AgentPersonaConfig, 'id'>
+    agentConfig: Omit<AgentPersonaConfig, 'id'>,
+    agentId?: string
   ): 'claude' | 'codex-mcp' | 'gemini' {
-    return agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
+    const backend = agentConfig.backend ?? this.runtimeOptions.backend;
+    if (!backend) {
+      throw new Error(
+        `No backend configured for agent${agentId ? ` '${agentId}'` : ''}. ` +
+          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex-mcp'`
+      );
+    }
+    return backend;
   }
 
   /**
@@ -239,10 +229,10 @@ export class AgentProcessManager extends EventEmitter {
     channelId: string,
     agentId: string
   ): Promise<AgentRuntimeProcess> {
+    const processStart = Date.now();
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     const agentConfig = this.config.agents[agentId];
-    const poolSize = agentConfig?.pool_size ?? 1;
-    const agentBackend = this.getAgentBackend(agentConfig);
+    const agentBackend = this.getAgentBackend(agentConfig, agentId);
     const systemPrompt = await this.loadPersona(agentId);
     const tier = agentConfig?.tier ?? 1;
     const options: Partial<PersistentProcessOptions> = {
@@ -280,19 +270,6 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     if (agentBackend === 'codex-mcp') {
-      // Use AgentProcessPool for multi-process agents (pool_size > 1)
-      if (poolSize > 1) {
-        const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
-          agentId,
-          channelKey,
-          async () => this.createCodexProcess(options)
-        );
-        if (isNew) {
-          this.emit('process-created', { agentId, process });
-        }
-        return process;
-      }
-
       const existing = this.codexProcessPool.get(channelKey);
       if (existing) {
         return existing;
@@ -305,34 +282,14 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     // Claude backend
-    if (poolSize > 1) {
-      const { process, isNew } = await this.agentProcessPool.getAvailableProcess(
-        agentId,
-        channelKey,
-        async () => {
-          const mergedOptions: PersistentProcessOptions = {
-            sessionId: randomUUID(),
-            ...this.defaultOptions,
-            ...options,
-          } as PersistentProcessOptions;
-
-          const { PersistentClaudeProcess } = await import('../agent/persistent-cli-process.js');
-          const newProcess = new PersistentClaudeProcess(mergedOptions);
-          await newProcess.start();
-          return newProcess;
-        }
-      );
-
-      if (isNew) {
-        this.emit('process-created', { agentId, process });
-      }
-
-      return process;
-    }
-
     const process = await this.processPool.getProcess(channelKey, options);
     if (process.listenerCount('idle') === 0) {
       this.emit('process-created', { agentId, process });
+    }
+    if (agentId.toLowerCase() === 'conductor' && this.tracePromptMs) {
+      processManagerLogger.debug(
+        `[Conductor][timing] total getProcess latency ${Date.now() - processStart}ms`
+      );
     }
     return process;
   }
@@ -355,9 +312,18 @@ export class AgentProcessManager extends EventEmitter {
    * Load persona system prompt for an agent
    */
   async loadPersona(agentId: string): Promise<string> {
+    const shouldTrace = this.shouldTracePrompt(agentId);
+    const traceCacheKey = agentId.toLowerCase() === 'conductor' ? 'conductor' : agentId;
+
     // Check cache first
     if (this.personaCache.has(agentId)) {
-      return this.personaCache.get(agentId)!;
+      const cachedPrompt = this.personaCache.get(agentId)!;
+      if (shouldTrace) {
+        processManagerLogger.debug(
+          `[Conductor] system prompt cache HIT | key=${traceCacheKey} len=${cachedPrompt.length}`
+        );
+      }
+      return cachedPrompt;
     }
 
     const agentConfig = this.config.agents[agentId];
@@ -366,6 +332,7 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     const personaPath = resolvePath(agentConfig.persona_file);
+    const loadStart = Date.now();
 
     // Check if persona file exists
     if (!existsSync(personaPath)) {
@@ -373,19 +340,43 @@ export class AgentProcessManager extends EventEmitter {
       // Return default persona
       const defaultPersona = this.buildDefaultPersona(agentId, agentConfig);
       this.personaCache.set(agentId, defaultPersona);
+      if (shouldTrace) {
+        processManagerLogger.warn(
+          `[Conductor] persona file missing (${traceCacheKey}), using default in ${Date.now() - loadStart}ms`
+        );
+      }
       return defaultPersona;
     }
 
     try {
+      const readStart = Date.now();
       const personaContent = await readFile(personaPath, 'utf-8');
+      const readDuration = Date.now() - readStart;
+      if (shouldTrace) {
+        processManagerLogger.debug(
+          `[Conductor] persona read complete key=${traceCacheKey} path=${personaPath} read_ms=${readDuration} bytes=${personaContent.length}`
+        );
+      }
+      const buildStart = Date.now();
       const systemPrompt = await this.buildSystemPrompt(agentId, agentConfig, personaContent);
+      if (shouldTrace) {
+        processManagerLogger.debug(
+          `[Conductor] system prompt built key=${traceCacheKey} build_ms=${Date.now() - buildStart} total_ms=${
+            Date.now() - loadStart
+          } len=${systemPrompt.length}`
+        );
+      }
       this.personaCache.set(agentId, systemPrompt);
+      if (shouldTrace && this.dumpConductorPrompt) {
+        processManagerLogger.debug(`[Conductor] system prompt content:\n${systemPrompt}`);
+      }
       return systemPrompt;
     } catch (error) {
-      console.error(`[AgentProcessManager] Failed to load persona: ${personaPath}`, error);
-      const defaultPersona = this.buildDefaultPersona(agentId, agentConfig);
-      this.personaCache.set(agentId, defaultPersona);
-      return defaultPersona;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Failed to load persona for '${agentId}': ${personaPath}. ` +
+          `Error: ${message}. Fix: check file permissions or run 'mama init'`
+      );
     }
   }
 
@@ -399,6 +390,7 @@ export class AgentProcessManager extends EventEmitter {
   ): Promise<string> {
     const agent: AgentPersonaConfig = { id: agentId, ...agentConfig };
 
+    const buildStart = Date.now();
     // Replace @mentions in persona with platform-specific <@userId>
     // Matches both @DisplayName (e.g. @📝 Reviewer) and @Name (e.g. @Reviewer)
     let resolvedPersona = personaContent;
@@ -424,7 +416,13 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     // Replace model placeholders with actual config values
-    const actualModel = agentConfig.model || this.runtimeOptions.model || 'unknown';
+    const actualModel = agentConfig.model || this.runtimeOptions.model;
+    if (!actualModel) {
+      throw new Error(
+        `No model configured for agent '${agentId}'. ` +
+          `Set 'model' in agent config or global agent.model`
+      );
+    }
     const modelDisplayName = getModelDisplayName(actualModel);
     resolvedPersona = resolvedPersona.replace(/\{\{model\}\}/gi, modelDisplayName);
     resolvedPersona = resolvedPersona.replace(/\{\{model_id\}\}/gi, actualModel);
@@ -471,9 +469,12 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     const includeBmadBlock = this.shouldInjectBmadBlock(agentId, agentConfig);
+    const bmadStart = Date.now();
     const bmadBlock = includeBmadBlock ? await this.buildBmadBlock() : '';
+    const bmadMs = includeBmadBlock ? Date.now() - bmadStart : 0;
 
-    return `# Agent Identity
+    const skillsPrompt = this.buildSkillsPrompt();
+    const systemPrompt = `# Agent Identity
 
 You are **${agentConfig.display_name}** (ID: ${agentId}).
 
@@ -486,7 +487,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${resolvedPersona}
 
-${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}## Gateway Tools
+${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\\n' : ''}${reportBackPrompt ? reportBackPrompt + '\\n' : ''}## Gateway Tools
 
 To use gateway tools, output a JSON block in your response:
 
@@ -504,12 +505,27 @@ Available tools:
 The channel_id for the current conversation is provided in the message context.
 Tool calls are executed automatically. You do NOT need curl or Bash for these.
 
-${this.buildSkillsPrompt()}
-## Guidelines
+${skillsPrompt}## Guidelines
 - Stay in character as ${agentConfig.name}
 - Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
 - Your trigger prefix is: ${agentConfig.trigger_prefix}
 `;
+
+    if (this.shouldTracePrompt(agentId)) {
+      processManagerLogger.debug(
+        `[Conductor] buildSystemPrompt done key=${agentId.toLowerCase()} build_ms=${Date.now() - buildStart} bmad_ms=${bmadMs} skills_len=${skillsPrompt.length} total_len=${systemPrompt.length}`
+      );
+    }
+
+    return systemPrompt;
+  }
+
+  private shouldTracePrompt(agentId: string): boolean {
+    return (
+      this.tracePromptMs &&
+      (agentId.toLowerCase() === 'conductor' ||
+        globalThis.process.env.MAMA_AGENT_PROMPT_TRACE === '1')
+    );
   }
 
   private shouldInjectBmadBlock(
@@ -559,7 +575,10 @@ ${this.buildSkillsPrompt()}
       }
     }
     if (backend === 'claude') {
-      return this.runtimeOptions.model || 'claude-sonnet-4-6';
+      if (!this.runtimeOptions.model) {
+        throw new Error(`No model configured for claude backend. Set agent.model in config.yaml`);
+      }
+      return this.runtimeOptions.model;
     }
     return 'unknown';
   }
@@ -568,19 +587,15 @@ ${this.buildSkillsPrompt()}
    * Build installed skills prompt section
    */
   private buildSkillsPrompt(): string {
-    const skillBlocks = loadInstalledSkills();
-    if (skillBlocks.length === 0) return '';
+    const skillCatalog = loadInstalledSkills();
+    if (skillCatalog.length === 0) return '';
 
-    return `## Installed Skills (PRIORITY)
+    return `## Installed Skills
 
-**IMPORTANT:** The following skills/plugins are installed by the user.
-When a user message contains [INSTALLED PLUGIN COMMAND] you MUST:
-1. Find the matching "commands/{name}.md" section below
-2. Follow its instructions EXACTLY as written
-3. DO NOT use the Skill tool — these are NOT system skills
-4. DO NOT match to bmad, oh-my-claudecode, or any built-in skill
+To invoke a skill, include its keywords in your message.
+The full skill instructions will be provided automatically when matched.
 
-${skillBlocks.join('\n\n---\n\n')}
+${skillCatalog.join('\n')}
 `;
   }
 
@@ -593,7 +608,10 @@ ${skillBlocks.join('\n\n---\n\n')}
       return await buildBmadPromptBlock(process.cwd());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn('[AgentProcessManager] BMAD prompt block generation failed, using fallback:', message);
+      console.warn(
+        '[AgentProcessManager] BMAD prompt block generation failed, using fallback:',
+        message
+      );
       console.error('[AgentProcessManager] BMAD prompt block generation failed:', message);
       return `[BMAD_LOAD_ERROR: ${message}]`;
     }
@@ -682,36 +700,15 @@ Respond to messages in a helpful and professional manner.
   }
 
   /**
-   * Release a process back to the pool (for multi-process agents)
-   */
-  releaseProcess(agentId: string, process: AgentRuntimeProcess): void {
-    const agentConfig = this.config.agents[agentId];
-    const poolSize = agentConfig?.pool_size ?? 1;
-
-    if (poolSize > 1) {
-      this.agentProcessPool.releaseProcess(agentId, process);
-    }
-    // pool_size=1: PersistentProcessPool handles reuse automatically, no release needed
-  }
-
-  /**
    * Stop all processes
    */
   stopAll(): void {
     this.processPool.stopAll();
-    this.agentProcessPool.stopAll();
     for (const process of this.codexProcessPool.values()) {
       process.stop();
     }
     this.codexProcessPool.clear();
     this.personaCache.clear();
-  }
-
-  /**
-   * Get AgentProcessPool instance (for testing/advanced usage)
-   */
-  getAgentProcessPool(): AgentProcessPool {
-    return this.agentProcessPool;
   }
 
   /**
@@ -855,7 +852,7 @@ Respond to messages in a helpful and professional manner.
       }
     }
 
-    // 2. Check agentProcessPool (pool_size>1 agents) — only include agents serving this channel
+    // 2. Check codex processes
     for (const channelKey of this.codexProcessPool.keys()) {
       if (channelKey.startsWith(prefix)) {
         try {
@@ -864,13 +861,6 @@ Respond to messages in a helpful and professional manner.
         } catch {
           // Skip malformed keys
         }
-      }
-    }
-
-    // 3. Check agentProcessPool (pool_size>1 agents) — only include agents serving this channel
-    for (const [agentId] of this.agentProcessPool.getAllPoolStatuses()) {
-      if (this.agentProcessPool.hasBusyProcessForChannel(agentId, prefix)) {
-        agentIdSet.add(agentId);
       }
     }
 
