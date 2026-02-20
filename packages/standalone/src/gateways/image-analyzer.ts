@@ -1,4 +1,15 @@
 import { loadConfig } from '../cli/config/config-manager.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('ImageAnalyzer');
 
 // Default model for image analysis (vision-capable)
 const DEFAULT_IMAGE_MODEL = 'claude-sonnet-4-6';
@@ -74,8 +85,8 @@ export class ImageAnalyzer {
     const configModel = config.agent?.model || '';
     const isClaudeModel = configModel.startsWith('claude-');
     if (!isClaudeModel && configModel) {
-      console.warn(
-        `[ImageAnalyzer] config model '${configModel}' is not Claude. ` +
+      logger.warn(
+        `config model '${configModel}' is not Claude. ` +
           `Image analysis using fallback: ${DEFAULT_IMAGE_MODEL}`
       );
     }

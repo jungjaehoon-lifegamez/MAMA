@@ -27,14 +27,21 @@ import { DebugLogger } from '../utils/debug-logger.js';
 
 const logger = new DebugLogger('Chat');
 
-declare global {
-  interface Window {
-    switchTab?: (tab: string) => void;
-    sendChatMessage: (msg?: string) => void;
-    webkitSpeechRecognition?: {
-      new (): SpeechRecognition;
-    };
-  }
+// Speech Recognition API type definitions
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+interface SpeechRecognitionResult {
+  isFinal: boolean;
+  readonly length: number;
+  [index: number]: SpeechRecognitionAlternative;
+}
+
+interface SpeechRecognitionResultList {
+  readonly length: number;
+  [index: number]: SpeechRecognitionResult;
 }
 
 interface SpeechRecognitionEvent extends Event {
@@ -47,7 +54,7 @@ interface SpeechRecognitionErrorEvent extends Event {
   message?: string;
 }
 
-interface ISpeechRecognition extends EventTarget {
+interface SpeechRecognitionInstance {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
@@ -56,9 +63,22 @@ interface ISpeechRecognition extends EventTarget {
   onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
   onstart: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+
+interface SpeechRecognitionConstructor {
+  new (): SpeechRecognitionInstance;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    switchTab?: (tab: string) => void;
+    sendChatMessage: (msg?: string) => void;
+  }
 }
 
 type ChatAttachment = {
@@ -113,7 +133,7 @@ export class ChatModule {
   sessionId: string | null = null;
   reconnectAttempts = 0;
   maxReconnectDelay = 30000;
-  speechRecognition: ISpeechRecognition | null = null;
+  speechRecognition: SpeechRecognitionInstance | null = null;
   isRecording = false;
   silenceTimeout: ReturnType<typeof setTimeout> | null = null;
   silenceDelay = 2500;
@@ -603,7 +623,7 @@ export class ChatModule {
     }
 
     // Switch to Memory tab and open form with text
-    window.switchTab('memory');
+    window.switchTab?.('memory');
     this.memoryModule.showSaveFormWithText(text);
     this.addSystemMessage(`💾 Opening save form with: "${text.substring(0, 50)}..."`);
   }
@@ -623,7 +643,7 @@ export class ChatModule {
     }
 
     // Switch to Memory tab and execute search
-    window.switchTab('memory');
+    window.switchTab?.('memory');
     this.memoryModule.searchWithQuery(query);
     this.addSystemMessage(`🔍 Searching for: "${query}"`);
   }
@@ -1025,7 +1045,9 @@ export class ChatModule {
       return;
     }
     const viewer = document.getElementById('playground-viewer');
-    if (!viewer || viewer.classList.contains('hidden')) return;
+    if (!viewer || viewer.classList.contains('hidden')) {
+      return;
+    }
 
     this.playgroundAwaitingResponse = false;
 
@@ -1338,8 +1360,8 @@ export class ChatModule {
       return;
     }
 
-    this.speechRecognition = new SpeechRecognition() as ISpeechRecognition;
-    const recognition = this.speechRecognition!;
+    this.speechRecognition = new SpeechRecognition();
+    const recognition = this.speechRecognition;
     recognition.lang = navigator.language || 'ko-KR';
     recognition.continuous = true;
     recognition.interimResults = true;

@@ -1377,8 +1377,11 @@ function setVerifyMethod(method) {
 let _pendingAgentData = null;
 
 window.addEventListener('message', (e) => {
-  // SECURITY: Validate origin to prevent cross-origin attacks
+  // SECURITY: Validate origin and source to prevent cross-origin attacks
   if (e.origin !== window.location.origin) {
+    return;
+  }
+  if (e.source !== window.parent) {
     return;
   }
 
