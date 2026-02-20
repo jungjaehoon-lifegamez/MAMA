@@ -1889,11 +1889,15 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       for (const file of pgEntries) {
         if (!file.endsWith('.html')) continue;
         const dest = path.join(playgroundsDir, file);
-        if (existsSync(dest)) continue;
-        copyFileSync(path.join(pgTemplatesDir, file), dest);
-        pgSynced++;
-
         const slug = file.replace('.html', '');
+
+        // Copy file if it doesn't exist
+        if (!existsSync(dest)) {
+          copyFileSync(path.join(pgTemplatesDir, file), dest);
+          pgSynced++;
+        }
+
+        // Add to index if slug doesn't exist (decouple from file copy)
         if (!existingSlugs.has(slug)) {
           const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
           index.push({
@@ -1902,6 +1906,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
             description: `Built-in ${name}`,
             created_at: new Date().toISOString(),
           });
+          existingSlugs.add(slug);
         }
       }
 

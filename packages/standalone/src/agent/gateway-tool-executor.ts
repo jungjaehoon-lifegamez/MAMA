@@ -11,7 +11,15 @@
  * - Path-based tools (Read, Write) also check path permissions
  */
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, copyFileSync } from 'fs';
+import {
+  readFileSync,
+  existsSync,
+  writeFileSync,
+  mkdirSync,
+  statSync,
+  copyFileSync,
+  unlinkSync,
+} from 'fs';
 import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
@@ -733,7 +741,9 @@ export class GatewayToolExecutor {
       const normalizedTarget = resolve(resolvedTarget);
 
       // Check if target is within sandbox
-      if (!normalizedTarget.startsWith(sandboxRoot)) {
+      // Add trailing separator to prevent path traversal (e.g., ~/.mama vs ~/.mama-evil)
+      const sandboxRootWithSep = sandboxRoot.endsWith('/') ? sandboxRoot : sandboxRoot + '/';
+      if (!normalizedTarget.startsWith(sandboxRootWithSep) && normalizedTarget !== sandboxRoot) {
         return {
           success: false,
           error:
@@ -1728,9 +1738,7 @@ export class GatewayToolExecutor {
         try {
           const parsed = JSON.parse(readFileSync(indexPath, 'utf-8'));
           if (!Array.isArray(parsed)) {
-            throw new Error(
-              `${indexPath} contains invalid data: expected array, got ${typeof parsed}`
-            );
+            throw new Error(`${indexPath} is corrupted: expected array, got ${typeof parsed}`);
           }
           index = parsed;
         } catch (error) {
@@ -1757,6 +1765,10 @@ export class GatewayToolExecutor {
 
       return { success: true, url: `/playgrounds/${slug}.html`, slug };
     } catch (err) {
+      // Clean up orphaned HTML file if it was written before error
+      if (existsSync(htmlPath)) {
+        unlinkSync(htmlPath);
+      }
       return { success: false, error: `Failed to create playground: ${err}` };
     }
   }

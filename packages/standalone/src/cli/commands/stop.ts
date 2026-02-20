@@ -261,7 +261,7 @@ async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): 
   const stillInUse = ports.filter((port) => isPortInUse(port));
 
   if (stillInUse.length > 0) {
-    console.log(
+    console.warn(
       `⚠️  Warning: Port(s) ${stillInUse.join(', ')} still in use after ${maxWaitMs}ms timeout`
     );
   }
