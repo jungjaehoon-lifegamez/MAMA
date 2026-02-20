@@ -6,6 +6,17 @@
 
 import { execSync } from 'node:child_process';
 import { isDaemonRunning, deletePid, isProcessRunning } from '../utils/pid-manager.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('Stop');
 
 /**
  * Execute stop command
@@ -65,6 +76,9 @@ export async function stopCommand(): Promise<void> {
 
     // Best-effort cleanup: kill any processes still holding MAMA ports
     await killProcessesOnPorts([3847, 3849]);
+
+    // Verify ports are actually released (wait up to 3s)
+    await waitForPortsReleased([3847, 3849], 3000);
 
     console.log('MAMA has been stopped.\n');
   } catch (error) {
@@ -141,6 +155,31 @@ async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
         // ignore
       }
     }
+  }
+}
+
+/**
+ * Check if a port is in use
+ */
+function isPortInUse(port: number): boolean {
+  try {
+    const result = execSync(`lsof -ti :${port}`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return result.trim().length > 0;
+  } catch (err: unknown) {
+    // lsof exits with code 1 when no process is listening (port is free)
+    if (
+      err instanceof Error &&
+      'status' in err &&
+      (err as NodeJS.ErrnoException & { status?: number }).status === 1
+    ) {
+      return false; // port is free
+    }
+    // lsof unavailable (e.g., Windows) or unexpected error
+    logger.warn(`isPortInUse check failed for port ${port}: ${err}`);
+    return false;
   }
 }
 
@@ -224,6 +263,32 @@ export async function killAllMamaDaemons(): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * Wait until all specified ports are released
+ */
+async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): Promise<void> {
+  const startTime = Date.now();
+  const pollInterval = 200;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const stillInUse = ports.filter((port) => isPortInUse(port));
+
+    if (stillInUse.length === 0) {
+      return;
+    }
+    await sleep(pollInterval);
+  }
+
+  // Timeout occurred - warn user
+  const stillInUse = ports.filter((port) => isPortInUse(port));
+
+  if (stillInUse.length > 0) {
+    console.warn(
+      `⚠️  Warning: Port(s) ${stillInUse.join(', ')} still in use after ${maxWaitMs}ms timeout`
+    );
+  }
 }
 
 function listProcesses(): Array<{ pid: number; command: string }> {

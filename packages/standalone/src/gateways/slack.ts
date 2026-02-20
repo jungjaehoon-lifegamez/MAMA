@@ -9,13 +9,22 @@ import { SocketModeClient } from '@slack/socket-mode';
 import { WebClient } from '@slack/web-api';
 import { splitForSlack } from './message-splitter.js';
 import { BaseGateway } from './base-gateway.js';
-import type { NormalizedMessage, SlackGatewayConfig, SlackChannelConfig } from './types.js';
+import type {
+  NormalizedMessage,
+  SlackGatewayConfig,
+  SlackChannelConfig,
+  MessageAttachment,
+  ContentBlock,
+} from './types.js';
+import { downloadFile, buildContentBlocks } from './attachment-utils.js';
 import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentSlackHandler } from '../multi-agent/multi-agent-slack.js';
 import { getChannelHistory } from './channel-history.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
+import { ToolStatusTracker } from './tool-status-tracker.js';
+import type { PlatformAdapter } from './tool-status-tracker.js';
 
 /**
  * Slack message event structure
@@ -30,6 +39,14 @@ interface SlackMessageEvent {
   thread_ts?: string;
   bot_id?: string;
   channel_type?: string;
+  files?: Array<{
+    id: string;
+    name: string;
+    mimetype: string;
+    url_private_download?: string;
+    url_private?: string;
+    size: number;
+  }>;
 }
 
 /**
@@ -164,7 +181,11 @@ export class SlackGateway extends BaseGateway {
     this.socketClient.on('message', async ({ event, ack }) => {
       try {
         await ack();
-        await this.handleMessage(event as SlackMessageEvent, false);
+        // file_share subtype only arrives via 'message' event (not app_mention),
+        // so detect mention from text to avoid shouldRespond rejecting it
+        const slackEvent = event as SlackMessageEvent;
+        const hasMentionInText = !!slackEvent.text?.match(/<@[UW]\w+>/);
+        await this.handleMessage(slackEvent, hasMentionInText);
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         this.logger.error('Error handling Slack message:', errMsg);
@@ -199,8 +220,14 @@ export class SlackGateway extends BaseGateway {
    * Handle incoming Slack message
    */
   private async handleMessage(event: SlackMessageEvent, isMention: boolean): Promise<void> {
+    this.logger.log(
+      `[Slack] handleMessage: subtype=${event.subtype || 'none'}, user=${event.user}, bot_id=${event.bot_id || 'none'}, files=${event.files?.length || 0}, text="${(event.text || '').substring(0, 50)}"`
+    );
+
     // Skip non-standard message subtypes (edits, deletes, unfurls, etc.)
-    if (event.subtype) {
+    // Allow file_share so uploaded files are processed
+    if (event.subtype && event.subtype !== 'file_share') {
+      this.logger.log(`[Slack] Skipping subtype: ${event.subtype}`);
       return;
     }
 
@@ -335,6 +362,33 @@ export class SlackGateway extends BaseGateway {
     // Remove mentions from message content
     const cleanContent = this.cleanMessageContent(event.text);
 
+    // Process file attachments (images, documents, etc.)
+    const attachments = await this.downloadSlackFiles(event);
+
+    // Build content blocks from attachments
+    const contentBlocks: ContentBlock[] =
+      attachments.length > 0 ? await buildContentBlocks(attachments) : [];
+
+    // Enrich content with file info for multi-agent (which only gets text)
+    let enrichedContent = cleanContent;
+
+    // Append file reference text blocks so agents know about uploaded files
+    const fileRefTexts = contentBlocks
+      .filter((b) => b.type === 'text' && b.text?.startsWith('[File:'))
+      .map((b) => b.text!);
+    if (fileRefTexts.length > 0) {
+      enrichedContent = `${cleanContent}\n\n${fileRefTexts.join('\n')}`;
+    }
+
+    // Pre-analyze images for text enrichment (multi-agent gets text only)
+    if (contentBlocks.some((b) => b.type === 'image')) {
+      const { getImageAnalyzer } = await import('./image-analyzer.js');
+      const analysisText = await getImageAnalyzer().processContentBlocks(contentBlocks);
+      if (analysisText) {
+        enrichedContent = `${enrichedContent}\n\n${analysisText}`;
+      }
+    }
+
     // Check if multi-agent mode should handle this message
     if (this.multiAgentHandler?.isEnabled()) {
       // Acknowledge receipt with emoji reaction
@@ -349,7 +403,7 @@ export class SlackGateway extends BaseGateway {
         this.logger.warn(`[Slack] Failed to add reaction: ${errDetail}`);
       }
 
-      const multiAgentResult = await this.multiAgentHandler.handleMessage(event, cleanContent);
+      const multiAgentResult = await this.multiAgentHandler.handleMessage(event, enrichedContent);
 
       if (multiAgentResult && multiAgentResult.responses.length > 0) {
         // Replace eyes with checkmark on completion
@@ -424,24 +478,80 @@ export class SlackGateway extends BaseGateway {
 
         return; // Multi-agent handled it
       }
-      // No multi-agent response; keep eyes reaction as "thinking" indicator
-      // Fall through to regular processing (eyes will be replaced after response)
+      // Multi-agent mode is enabled but no response (blocked, no match, or error).
+      // Do NOT fall through to single-agent — that creates duplicate conductor processes.
+      // Just remove the eyes reaction and return silently.
+      try {
+        await this.webClient.reactions.remove({
+          channel: event.channel,
+          timestamp: event.ts,
+          name: 'eyes',
+        });
+      } catch {
+        /* ignore */
+      }
+      return;
     }
 
     // Normalize message for router
+    // Use enriched content (with image analysis) for text-only routing
     const normalizedMessage: NormalizedMessage = {
       source: 'slack',
       channelId: event.channel,
       userId: event.user,
-      text: cleanContent,
+      text: enrichedContent,
+      contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
       metadata: {
         threadTs: event.thread_ts || event.ts,
         messageId: event.ts,
+        attachments: attachments.length > 0 ? attachments : undefined,
       },
     };
+    // Clear image contentBlocks after analysis to prevent double processing in message-router
+    if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
+      normalizedMessage.contentBlocks = undefined;
+    }
+
+    // Create tool status tracker for real-time progress
+    const threadTs = event.thread_ts || event.ts;
+    const slackAdapter: PlatformAdapter = {
+      postPlaceholder: async (content: string) => {
+        const res = await this.webClient.chat.postMessage({
+          channel: event.channel,
+          text: content,
+          thread_ts: threadTs,
+        });
+        return res.ts ?? null;
+      },
+      editPlaceholder: async (handle: string, content: string) => {
+        await this.webClient.chat.update({
+          channel: event.channel,
+          ts: handle,
+          text: content,
+        });
+      },
+      deletePlaceholder: async (handle: string) => {
+        await this.webClient.chat.delete({
+          channel: event.channel,
+          ts: handle,
+        });
+      },
+    };
+    const tracker = new ToolStatusTracker(slackAdapter, {
+      throttleMs: 1500,
+      initialDelayMs: 3000,
+    });
+    const streamCallbacks = tracker.toStreamCallbacks();
 
     // Process through message router
-    const result = await this.messageRouter.process(normalizedMessage);
+    let result;
+    try {
+      result = await this.messageRouter.process(normalizedMessage, {
+        onStream: streamCallbacks,
+      });
+    } finally {
+      await tracker.cleanup();
+    }
 
     // Send response in thread
     await this.sendResponse(event, result.response);
@@ -508,6 +618,46 @@ export class SlackGateway extends BaseGateway {
       .replace(/<@[UW]\w+>/g, '')
       .replace(/<@[UW]\w+\|[^>]+>/g, '')
       .trim();
+  }
+
+  /**
+   * Download files attached to a Slack message.
+   * Slack requires Authorization header with bot token for url_private_download.
+   */
+  private async downloadSlackFiles(event: SlackMessageEvent): Promise<MessageAttachment[]> {
+    if (!event.files || event.files.length === 0) return [];
+
+    const attachments: MessageAttachment[] = [];
+    const authHeaders = { Authorization: `Bearer ${this.botToken}` };
+
+    for (const file of event.files) {
+      const downloadUrl = file.url_private_download || file.url_private;
+      if (!downloadUrl) {
+        this.logger.warn(`[Slack] No download URL for file: ${file.name}`);
+        continue;
+      }
+
+      try {
+        const localPath = await downloadFile(downloadUrl, file.name, authHeaders);
+        const isImage = file.mimetype?.startsWith('image/');
+        attachments.push({
+          type: isImage ? 'image' : 'file',
+          url: downloadUrl,
+          localPath,
+          filename: file.name,
+          contentType: file.mimetype || 'application/octet-stream',
+          size: file.size,
+        });
+        this.logger.log(
+          `[Slack] Downloaded ${isImage ? 'image' : 'file'}: ${file.name} -> ${localPath}`
+        );
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`[Slack] Failed to download file ${file.name}: ${errMsg}`);
+      }
+    }
+
+    return attachments;
   }
 
   /**

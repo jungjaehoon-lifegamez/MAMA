@@ -46,6 +46,7 @@ export class PersistentCLIAdapter {
       mcpConfigPath: options.mcpConfigPath,
       dangerouslySkipPermissions: options.dangerouslySkipPermissions,
       useGatewayTools: options.useGatewayTools,
+      requestTimeout: options.requestTimeout,
     });
   }
 

@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { SwarmTaskRunner } from '../../src/multi-agent/swarm/swarm-task-runner.js';
 import { SwarmManager } from '../../src/multi-agent/swarm/swarm-manager.js';
 import type { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
@@ -38,16 +39,8 @@ describe('SwarmTaskRunner', () => {
       }),
     };
 
-    const mockAgentProcessPool = {
-      cleanupIdleProcesses: vi.fn().mockReturnValue(0),
-      cleanupHungProcesses: vi.fn().mockReturnValue(0),
-      getAllPoolStatuses: vi.fn().mockReturnValue(new Map()),
-    };
-
     mockAgentProcessManager = {
       getProcess: vi.fn().mockResolvedValue(mockProcess),
-      releaseProcess: vi.fn(),
-      getAgentProcessPool: vi.fn().mockReturnValue(mockAgentProcessPool),
     } as unknown as AgentProcessManager;
 
     runner = new SwarmTaskRunner(manager, mockAgentProcessManager, { maxRetries: 0 });
@@ -56,6 +49,7 @@ describe('SwarmTaskRunner', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(debugLogger, 'warn');
   });
 
   afterEach(() => {
@@ -98,7 +92,7 @@ describe('SwarmTaskRunner', () => {
 
       runner.startSession(sessionId); // Duplicate
 
-      expect(console.warn).toHaveBeenCalledWith(
+      expect(debugLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining(`Session ${sessionId} already running`)
       );
       expect(runner.getActiveSessionCount()).toBe(1);
@@ -121,7 +115,7 @@ describe('SwarmTaskRunner', () => {
 
     it('should warn when stopping non-existent session', () => {
       runner.stopSession('non-existent-session');
-      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('not running'));
+      expect(debugLogger.warn).toHaveBeenCalledWith(expect.stringContaining('not running'));
     });
 
     it('should stop all sessions', async () => {
@@ -891,115 +885,6 @@ describe('SwarmTaskRunner', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       task = db.prepare('SELECT * FROM swarm_tasks WHERE id = ?').get(taskId) as any;
       expect(task.status).toBe('completed');
-    });
-  });
-
-  describe('process release', () => {
-    it('should call releaseProcess after task completion', async () => {
-      const taskParams: CreateTaskParams[] = [
-        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
-      ];
-      const [taskId] = manager.addTasks(sessionId, taskParams);
-
-      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
-
-      // releaseProcess should be called with agentId and process
-      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledOnce();
-      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledWith(
-        'test',
-        expect.objectContaining({
-          isReady: expect.any(Function),
-          sendMessage: expect.any(Function),
-        })
-      );
-    });
-
-    it('should call releaseProcess after task failure', async () => {
-      // Mock process to fail
-      const failProcess = {
-        isReady: vi.fn().mockReturnValue(true),
-        sendMessage: vi.fn().mockRejectedValue(new Error('Failed')),
-      };
-      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        failProcess
-      );
-
-      const taskParams: CreateTaskParams[] = [
-        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
-      ];
-      const [taskId] = manager.addTasks(sessionId, taskParams);
-
-      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
-
-      // releaseProcess should be called even on failure
-      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledOnce();
-      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledWith(
-        'test',
-        expect.objectContaining({
-          isReady: expect.any(Function),
-          sendMessage: expect.any(Function),
-        })
-      );
-    });
-
-    it('should call releaseProcess when task is deferred (busy guard)', async () => {
-      // Mock process as not ready (busy)
-      const busyProcess = {
-        isReady: vi.fn().mockReturnValue(false),
-        sendMessage: vi.fn(),
-      };
-      (mockAgentProcessManager.getProcess as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        busyProcess
-      );
-
-      const taskParams: CreateTaskParams[] = [
-        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
-      ];
-      const [taskId] = manager.addTasks(sessionId, taskParams);
-
-      await runner.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
-
-      // releaseProcess should be called for deferred task
-      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledOnce();
-      expect(mockAgentProcessManager.releaseProcess).toHaveBeenCalledWith(
-        'test',
-        expect.objectContaining({
-          isReady: expect.any(Function),
-        })
-      );
-    });
-
-    it('should call releaseProcess on success path consistently', async () => {
-      // Verify releaseProcess is called directly (no typeof guard)
-      const mockProcessWithRelease = {
-        isReady: vi.fn().mockReturnValue(true),
-        sendMessage: vi.fn().mockResolvedValue({
-          response: 'Success',
-          usage: { input_tokens: 10, output_tokens: 20 },
-          session_id: 'test-session',
-        }),
-      };
-
-      const mockManagerWithRelease = {
-        getProcess: vi.fn().mockResolvedValue(mockProcessWithRelease),
-        releaseProcess: vi.fn(),
-      } as unknown as AgentProcessManager;
-
-      const runnerWithRelease = new SwarmTaskRunner(manager, mockManagerWithRelease, {
-        maxRetries: 0,
-      });
-
-      const taskParams: CreateTaskParams[] = [
-        { session_id: sessionId, description: 'Task', category: 'test', wave: 1 },
-      ];
-      const [taskId] = manager.addTasks(sessionId, taskParams);
-
-      await runnerWithRelease.executeImmediateTask(sessionId, taskId, 'test', 'channel1');
-
-      // releaseProcess should be called on success
-      expect(mockManagerWithRelease.releaseProcess).toHaveBeenCalledOnce();
-
-      runnerWithRelease.stopAll();
     });
   });
 

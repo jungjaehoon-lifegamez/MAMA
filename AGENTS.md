@@ -168,6 +168,20 @@ DebugLogger.log('debug info');  // ✅ REQUIRED
 // Test real implementation, not mocks
 ```
 
+### **CODEx 실행 워크플로우 (실패 방지 규칙)**
+
+- `수정` 요청이면 먼저 대상 파일을 즉시 변경하고, 완료 메시지 이전에 변경 파일 근거를 제시한다.
+- 추측성 정리/해설은 마지막에만, 먼저 `수정 → 검증(요청 범위)` 순서로 진행한다.
+- 완료 판정은 아래 중 요청된 항목으로만 수행한다.
+  - 빌드/테스트/재시작/상태조회/로그 확인
+- 실행 요청은 요청한 명령이 실제 완료될 때까지 멈추지 않는다.
+  - 예: `build` 요청 시 종료 코드 0이 나올 때까지 결과를 완료로 선언하지 않는다.
+- 실패 시 `원인-수정-재검증` 1회 루프를 기본으로 적용한다.
+- 사용자 요구가 “수정해”인 경우 최초 응답은 최소 항목만 즉시 보고한다.
+  - 변경 파일
+  - 실행 명령
+  - 각 명령 결과 코드와 핵심 메시지
+
 ### **Security Warnings**
 
 ```bash
@@ -353,6 +367,19 @@ pnpm vitest run -t "relevance scorer"
 9. **Configuration Format Inconsistency:** YAML for standalone, JSON for others. No documented convention.
 
 10. **Root-Level Database File:** `mama-memory.db` at monorepo root (not in .gitignore'd directory). Typically would be in `~/.claude/` or similar user directory. Shared across all packages.
+
+### **운영 세션 반영 이력 (2026-02-19)**
+
+- `packages/standalone/src/multi-agent/workflow-engine.ts`
+  - `workflow_plan` 파서가 CRLF, raw JSON, ` ```json` 포함 블록을 더 견고하게 처리하도록 정규식 보강
+  - `DEFAULT_STEP_TIMEOUT_MS`를 10분으로 조정
+- `packages/standalone/src/api/graph-api.ts`
+  - 결정 저장 API 호환 이슈를 `mama.save` 호출로 정리
+- `packages/standalone/tests/multi-agent/workflow-engine.test.ts`
+  - 파서 회귀 케이스(원본 JSON, CRLF, json-fenced body, 선행 JSON 혼재) 테스트 추가
+- 런타임 반영
+  - `pnpm build` 후 `mama stop`/`mama start start`로 재기동 확인
+  - `pnpm start status`에서 실행 상태 Running 확인
 
 ---
 

@@ -179,27 +179,69 @@ function collectMarkdownFiles(dir: string, prefix = ''): Array<{ path: string; c
   return results;
 }
 
+// ─── Skill On-Demand Injection ───────────────────────────────────────────────
+
 /**
- * Load installed & enabled skills from ~/.mama/skills/
- * Returns skill content blocks for system prompt injection.
- * Reads all .md files recursively (commands/, skills/, etc.)
+ * Parse YAML frontmatter from skill .md file
  */
-export function loadInstalledSkills(
-  verbose = false,
-  options: { onlyCommands?: boolean } = {}
-): string[] {
+function parseSkillFrontmatter(content: string): {
+  name: string;
+  description: string;
+  keywords: string[];
+} {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return { name: '', description: '', keywords: [] };
+  const block = match[1];
+  const name = (block.match(/^name:\s*(.+)$/m)?.[1] ?? '').trim();
+  const description = (block.match(/^description:\s*(.+)$/m)?.[1] ?? '').trim();
+  const kwBlock = block.match(/^keywords:\n((?:[ \t]+-[ \t]*.+\n?)+)/m);
+  const keywords = kwBlock
+    ? kwBlock[1]
+        .trim()
+        .split('\n')
+        .map((l) => l.replace(/^[ \t]*-[ \t]*/, '').trim())
+        .filter((k) => k.length > 0)
+    : [];
+  return { name, description, keywords };
+}
+
+/**
+ * Find the main .md file for a directory skill (for frontmatter parsing)
+ */
+function findMainSkillFile(skillDir: string, skillName: string): string | null {
+  for (const name of [`${skillName}.md`, 'skill.md', 'index.md']) {
+    const p = join(skillDir, name);
+    if (existsSync(p)) return p;
+  }
+  try {
+    const entries = readdirSync(skillDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.isFile() && e.name.endsWith('.md') && !EXCLUDED_SKILL_FILES.has(e.name)) {
+        return join(skillDir, e.name);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
+ * Build skill catalog (one line per enabled skill) for system prompt.
+ * Format: "- [source/skillId] keywords: kw1, kw2 | description"
+ */
+function buildSkillCatalog(verbose = false): string[] {
   const skillsBase = join(homedir(), '.mama', 'skills');
   const stateFile = join(skillsBase, 'state.json');
-  const blocks: string[] = [];
+  const catalog: string[] = [];
 
-  // Load state (enabled/disabled tracking)
   let state: Record<string, { enabled: boolean }> = {};
   try {
     if (existsSync(stateFile)) {
       state = JSON.parse(readFileSync(stateFile, 'utf-8'));
     }
   } catch {
-    // No state file
+    /* no state file */
   }
 
   const sources = ['mama', 'cowork', 'external'];
@@ -212,66 +254,101 @@ export function loadInstalledSkills(
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         const stateKey = `${source}/${entry.name}`;
-
-        // Skip disabled skills
         if (state[stateKey]?.enabled === false) continue;
 
         const skillDir = join(sourceDir, entry.name);
-        let mdFiles = collectMarkdownFiles(skillDir);
-        if (options.onlyCommands) {
-          mdFiles = mdFiles.filter((f) => f.path.startsWith('commands/'));
-        }
+        const mainFile = findMainSkillFile(skillDir, entry.name);
+        if (!mainFile) continue;
 
-        if (mdFiles.length > 0) {
-          const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
-          blocks.push(`# [Skill: ${source}/${entry.name}]\n\n${parts.join('\n\n---\n\n')}`);
-          if (verbose)
-            console.log(
-              `[AgentLoop] Loaded skill: ${source}/${entry.name} (${mdFiles.length} files)`
-            );
+        try {
+          const content = readFileSync(mainFile, 'utf-8');
+          const fm = parseSkillFrontmatter(content);
+          const description = fm.description || '';
+          const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : entry.name;
+          catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
+          if (verbose) console.log(`[AgentLoop] Skill catalog: ${stateKey}`);
+        } catch {
+          /* skip unreadable */
         }
       }
     } catch {
-      // Directory read failed
+      /* directory read failed */
     }
   }
 
-  // Also load flat .md skill files from ~/.mama/skills/ root
+  // Flat .md files at root
   try {
     const rootEntries = readdirSync(skillsBase, { withFileTypes: true });
     for (const entry of rootEntries) {
-      if (!entry.isFile() || !entry.name.endsWith('.md')) {
-        continue;
-      }
-      if (EXCLUDED_SKILL_FILES.has(entry.name)) {
-        continue;
-      }
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
+
       const id = entry.name.replace(/\.md$/, '');
       const stateKey = `mama/${id}`;
+      if (state[stateKey]?.enabled === false) continue;
+      if (catalog.some((l) => l.includes(`[${stateKey}]`))) continue;
 
-      // Skip disabled skills (check state like subdirectory skills)
-      if (state[stateKey]?.enabled === false) {
-        continue;
+      try {
+        const content = readFileSync(join(skillsBase, entry.name), 'utf-8');
+        const fm = parseSkillFrontmatter(content);
+        const description = fm.description || '';
+        const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : id;
+        catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
+        if (verbose) console.log(`[AgentLoop] Skill catalog (flat): ${stateKey}`);
+      } catch {
+        /* skip */
       }
-
-      // Skip if already loaded from subdirectory
-      if (blocks.some((b) => b.includes(`[Skill: mama/${id}]`))) {
-        continue;
-      }
-
-      const fullPath = join(skillsBase, entry.name);
-      let content = readFileSync(fullPath, 'utf-8');
-      if (content.length > MAX_SKILL_FILE_CHARS) {
-        content = content.slice(0, MAX_SKILL_FILE_CHARS) + '\n\n[... truncated]';
-      }
-      blocks.push(`# [Skill: mama/${id}]\n\n${content}`);
-      if (verbose) console.log(`[AgentLoop] Loaded root skill: ${id}`);
     }
   } catch {
-    // Root directory read failed
+    /* root directory read failed */
   }
 
-  return blocks;
+  return catalog;
+}
+
+/**
+ * Load full skill content on-demand for per-message injection.
+ * @param skillId - Skill identifier like "mama/playground"
+ */
+export function loadSkillContent(skillId: string): string | null {
+  const skillsBase = join(homedir(), '.mama', 'skills');
+
+  // Try directory skill first
+  const skillDir = join(skillsBase, skillId);
+  if (existsSync(skillDir)) {
+    const mdFiles = collectMarkdownFiles(skillDir);
+    if (mdFiles.length > 0) {
+      const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
+      return `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
+    }
+  }
+
+  // Try flat .md file: "mama/playground" → skills/playground.md
+  const idParts = skillId.split('/');
+  if (idParts.length >= 2) {
+    const flatPath = join(skillsBase, `${idParts[idParts.length - 1]}.md`);
+    if (existsSync(flatPath)) {
+      try {
+        return readFileSync(flatPath, 'utf-8');
+      } catch {
+        /* skip */
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Load installed & enabled skills from ~/.mama/skills/
+ * Returns skill catalog lines for system prompt injection (on-demand mode).
+ * Full skill content is injected per-message via detectSkillMatch() in PromptEnhancer.
+ */
+export function loadInstalledSkills(
+  verbose = false,
+  _options: { onlyCommands?: boolean } = {}
+): string[] {
+  return buildSkillCatalog(verbose);
 }
 
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
@@ -305,25 +382,19 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
     }
   }
 
-  // Load installed & enabled skills (HIGH PRIORITY — before CLAUDE.md)
-  const skillBlocks = loadInstalledSkills(verbose);
-  if (skillBlocks.length > 0) {
+  // Load skill catalog (on-demand mode — full content injected per-message by PromptEnhancer)
+  const skillCatalog = loadInstalledSkills(verbose);
+  if (skillCatalog.length > 0) {
     const skillDirective = [
-      '# Installed Skills (PRIORITY)',
+      '# Installed Skills',
       '',
-      '**IMPORTANT:** The following skills/plugins are installed by the user.',
-      'When a user request matches a skill by keywords or description, you MUST:',
-      '1. Find the matching skill section below (check "keywords" in frontmatter or skill name)',
-      '2. Follow its "지시사항" / instructions EXACTLY as written — do NOT improvise alternatives',
-      '3. Use the tools available to you (fetch, Bash, etc.) as the skill directs',
-      '4. DO NOT create separate scripts or files unless the skill explicitly instructs it',
-      '5. For [INSTALLED PLUGIN COMMAND] messages, find matching "commands/{name}.md"',
-      '6. DO NOT use the Skill tool — these are NOT system skills',
+      'To invoke a skill, include its keywords in your message.',
+      'The full skill instructions will be injected automatically when matched.',
       '',
-      skillBlocks.join('\n\n---\n\n'),
+      ...skillCatalog,
     ].join('\n');
     layers.push(skillDirective);
-    if (verbose) console.log(`[AgentLoop] Injected ${skillBlocks.length} installed skills`);
+    if (verbose) console.log(`[AgentLoop] Skill catalog: ${skillCatalog.length} skills`);
   }
 
   // Add context prompt if AgentContext is provided (role awareness)
@@ -417,6 +488,7 @@ export class AgentLoop {
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
   private preCompactInjected = false;
+  private currentStreamCallbacks?: StreamCallbacks;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -455,42 +527,94 @@ export class AgentLoop {
       logger.debug('⚙️ Gateway-only mode');
     }
 
-    // Build system prompt
-    const basePrompt = options.systemPrompt || loadComposedSystemPrompt();
-    // Only include Gateway Tools prompt if using Gateway mode
-    const gatewayToolsPrompt = useGatewayMode ? getGatewayToolsPrompt() : '';
-    let defaultSystemPrompt = gatewayToolsPrompt
-      ? `${basePrompt}\n\n---\n\n${gatewayToolsPrompt}`
-      : basePrompt;
-
-    // Monitor and enforce prompt size limits
+    // Build system prompt with layered truncation support
     const monitor = new PromptSizeMonitor();
-    const promptLayers: PromptLayer[] = [
-      { name: 'base', content: basePrompt, priority: 1 },
-      ...(gatewayToolsPrompt
-        ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
-        : []),
-    ];
+    let promptLayers: PromptLayer[];
+
+    if (options.systemPrompt) {
+      // Custom system prompt (e.g., multi-agent): treat as a single critical layer
+      promptLayers = [{ name: 'custom', content: options.systemPrompt, priority: 1 }];
+    } else {
+      // Composed prompt: build layers with individual priorities for graceful truncation
+      // Priority 1 (never cut): CLAUDE.md base instructions
+      // Priority 2 (cut if extreme): personas (SOUL, IDENTITY, USER) + gateway tools
+      // Priority 3 (cut first): context prompt + skills + onboarding
+      const mamaHome = join(homedir(), '.mama');
+      const claudeMd = loadSystemPrompt();
+      const personaFiles = ['SOUL.md', 'IDENTITY.md', 'USER.md'];
+      const personaParts: string[] = [];
+      for (const file of personaFiles) {
+        const p = join(mamaHome, file);
+        if (existsSync(p)) personaParts.push(readFileSync(p, 'utf-8'));
+      }
+      const skillCatalog = loadInstalledSkills();
+      const onboardingPath = join(mamaHome, 'ONBOARDING.md');
+      const onboardingContent = existsSync(onboardingPath)
+        ? readFileSync(onboardingPath, 'utf-8')
+        : '';
+
+      promptLayers = [
+        { name: 'claudeMd', content: claudeMd, priority: 1 },
+        ...(personaParts.length > 0
+          ? [
+              {
+                name: 'personas',
+                content: personaParts.join('\n\n---\n\n'),
+                priority: 2,
+              } as PromptLayer,
+            ]
+          : []),
+        ...(skillCatalog.length > 0
+          ? [
+              {
+                name: 'skills',
+                content: [
+                  '# Installed Skills',
+                  '',
+                  'To invoke a skill, include its keywords in your message.',
+                  '',
+                  ...skillCatalog,
+                ].join('\n'),
+                priority: 3,
+              } as PromptLayer,
+            ]
+          : []),
+        ...(onboardingContent
+          ? [{ name: 'onboarding', content: onboardingContent, priority: 4 } as PromptLayer]
+          : []),
+      ];
+    }
+
+    if (useGatewayMode) {
+      const gatewayToolsPrompt = getGatewayToolsPrompt();
+      if (gatewayToolsPrompt) {
+        promptLayers.push({ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 });
+      }
+    }
+
     const checkResult = monitor.check(promptLayers);
     if (checkResult.warning) {
       logger.warn(checkResult.warning);
     }
-    // Actually enforce truncation if over budget
+    // Enforce truncation if over budget (priority > 1 layers trimmed first)
     if (!checkResult.withinBudget) {
       const { layers: trimmedLayers, result: enforceResult } = monitor.enforce(promptLayers);
       if (enforceResult.truncatedLayers.length > 0) {
         logger.warn(`Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`);
       }
-      const trimmedBase = trimmedLayers.find((l) => l.name === 'base')?.content || basePrompt;
-      const trimmedTools = trimmedLayers.find((l) => l.name === 'gatewayTools')?.content || '';
-      defaultSystemPrompt = trimmedTools ? `${trimmedBase}\n\n---\n\n${trimmedTools}` : trimmedBase;
+      promptLayers = trimmedLayers;
       logger.debug(
-        `System prompt truncated: ${checkResult.totalChars} → ${defaultSystemPrompt.length} chars`
+        `System prompt truncated: ${checkResult.totalChars} → ${enforceResult.totalChars} chars`
       );
     }
 
+    const defaultSystemPrompt = promptLayers
+      .filter((l) => l.content.length > 0)
+      .map((l) => l.content)
+      .join('\n\n---\n\n');
+
     // Choose backend (default: claude)
-    this.backend = options.backend ?? 'claude';
+    this.backend = options.backend!;
 
     if (this.backend === 'codex-mcp') {
       // Codex MCP mode: standard MCP protocol
@@ -517,13 +641,14 @@ export class AgentLoop {
         systemPrompt: defaultSystemPrompt,
         // Hybrid mode: pass MCP config even with Gateway tools enabled
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
-        // Headless daemon requires skipping permission prompts (no TTY available).
-        // Security is enforced by MAMA's RoleManager, not Claude CLI's interactive prompts.
-        // MAMA_TRUSTED_ENV must be set to enable this flag (defense in depth)
-        dangerouslySkipPermissions:
-          process.env.MAMA_TRUSTED_ENV === 'true' && (options.dangerouslySkipPermissions ?? false),
+        // MAMA OS is a headless daemon (no TTY) — Claude CLI's interactive permission prompts
+        // cannot work. Security is enforced by MAMA's own RoleManager layer (config.yaml roles).
+        // DO NOT gate this on env vars — MAMA manages permissions via its config, not Claude CLI.
+        dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
+        // Pass configured timeout (default in PersistentCLI: 120s — too short for complex tasks)
+        requestTimeout: options.timeoutMs,
       });
       this.agent = this.persistentCLI;
       logger.debug('🚀 Claude PersistentCLI mode enabled - faster responses');
@@ -702,6 +827,7 @@ export class AgentLoop {
     content: ContentBlock[],
     options?: AgentLoopOptions
   ): Promise<AgentLoopResult> {
+    this.currentStreamCallbacks = options?.streamCallbacks;
     const history: Message[] = [];
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
     let turn = 0;
@@ -821,19 +947,19 @@ export class AgentLoop {
 
         let response: ClaudeResponse;
 
+        const ext = this.currentStreamCallbacks;
         const callbacks: StreamCallbacks = {
           onDelta: (text: string) => {
-            console.log('[Streaming] Delta received:', text.length, 'chars');
+            ext?.onDelta?.(text);
           },
-          onToolUse: (name: string, _input: Record<string, unknown>) => {
-            console.log(`[Streaming] Tool called: ${name}`);
+          onToolUse: (name: string, input: Record<string, unknown>) => {
+            ext?.onToolUse?.(name, input);
           },
-          onFinal: (_finalResponse: ClaudeResponse) => {
-            console.log('[Streaming] Stream complete');
+          onFinal: (finalResponse: ClaudeResponse) => {
+            ext?.onFinal?.(finalResponse);
           },
           onError: (error: Error) => {
-            console.error('[Streaming] Error:', error);
-            // Don't throw - let the promise rejection handle it
+            ext?.onError?.(error);
           },
         };
 
@@ -1134,6 +1260,7 @@ export class AgentLoop {
       if (ownedSession) {
         this.sessionPool.releaseSession(channelKey);
       }
+      this.currentStreamCallbacks = undefined;
     }
   }
 
@@ -1150,6 +1277,12 @@ export class AgentLoop {
     for (const toolUse of toolUseBlocks) {
       let result: string;
       let isError = false;
+
+      // Notify stream: tool execution starting
+      this.currentStreamCallbacks?.onToolUse?.(
+        toolUse.name,
+        toolUse.input as Record<string, unknown>
+      );
 
       try {
         // PreToolUse: search MAMA for contracts before Write operations
@@ -1176,12 +1309,18 @@ export class AgentLoop {
 
         // PostToolUse: auto-extract contracts (fire-and-forget)
         this.postToolHandler?.processInBackground(toolUse.name, toolUse.input, toolResult);
+
+        // Notify stream: tool completed successfully
+        this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, false);
       } catch (error) {
         isError = true;
         result = error instanceof Error ? error.message : String(error);
 
         // Notify tool use callback with error
         this.onToolUse?.(toolUse.name, toolUse.input, { error: result });
+
+        // Notify stream: tool completed with error
+        this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, true);
       }
 
       results.push({

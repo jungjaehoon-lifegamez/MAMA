@@ -5,7 +5,17 @@
  */
 
 import { spawn, exec } from 'node:child_process';
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  copyFileSync,
+  writeFileSync,
+  unlinkSync,
+} from 'node:fs';
 import { homedir, platform } from 'node:os';
 import Database from 'better-sqlite3';
 import express from 'express';
@@ -44,6 +54,7 @@ import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
+import type { DelegationHistoryEntry } from '../../api/graph-api-types.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getEmbeddingDim, getModelName } from '@jungjaehoon/mama-core/config-loader';
@@ -309,7 +320,10 @@ async function startEmbeddingServerIfAvailable(
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn('[EmbeddingServer] Failed to start (optional):', message);
+    console.warn(
+      `[EmbeddingServer] Failed to start: ${message}\n` +
+        `  ⚠️  Semantic search (decision recall) UNAVAILABLE this session`
+    );
   }
 }
 
@@ -345,6 +359,44 @@ function openBrowser(url: string): void {
 function isOnboardingComplete(): boolean {
   const mamaHome = join(homedir(), '.mama');
   return existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
+}
+
+/**
+ * Sync built-in skills from templates to user's skills directory.
+ * Only copies files that don't already exist (never overwrites user modifications).
+ */
+function syncBuiltinSkills(): void {
+  const skillsDir = join(homedir(), '.mama', 'skills');
+  const templatesDir = join(__dirname, '..', '..', '..', 'templates', 'skills');
+
+  if (!existsSync(templatesDir)) {
+    return;
+  }
+
+  try {
+    mkdirSync(skillsDir, { recursive: true });
+  } catch (err) {
+    console.warn('[syncBuiltinSkills] Failed to create skills directory (non-fatal):', err);
+    return;
+  }
+
+  try {
+    const entries = readdirSync(templatesDir);
+    let synced = 0;
+    for (const file of entries) {
+      if (!file.endsWith('.md')) continue;
+      const dest = join(skillsDir, file);
+      if (existsSync(dest)) continue;
+      copyFileSync(join(templatesDir, file), dest);
+      synced++;
+    }
+    if (synced > 0) {
+      console.log(`✓ Synced ${synced} built-in skill(s)`);
+    }
+  } catch (err) {
+    // Non-blocking: skills are optional, but surface failures for observability
+    console.warn('[syncBuiltinSkills] Skill sync failed (non-fatal):', err);
+  }
 }
 
 function shouldAutoOpenBrowser(): boolean {
@@ -404,7 +456,7 @@ function resolveCodexCommandForStartup(): string {
 }
 
 function hasCodexBackendConfigured(config: Awaited<ReturnType<typeof loadConfig>>): boolean {
-  if ((config.agent?.backend ?? 'claude') === 'codex-mcp') {
+  if (config.agent.backend === 'codex-mcp') {
     return true;
   }
 
@@ -470,25 +522,11 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const backend = config.agent.backend ?? 'claude';
+  const backend = config.agent.backend;
   process.env.MAMA_BACKEND = backend;
 
   if (backend === 'codex-mcp') {
     console.log('✓ Codex-MCP backend (OAuth handled by Codex login)');
-  } else if (!config.use_claude_cli) {
-    process.stdout.write('Checking OAuth token... ');
-    try {
-      const oauthManager = new OAuthManager();
-      await oauthManager.getToken();
-      console.log('✓');
-    } catch (error) {
-      console.log('❌');
-      console.error(
-        `\nOAuth token error: ${error instanceof Error ? error.message : String(error)}`
-      );
-      console.error('Please log in again to Claude Code.\n');
-      process.exit(1);
-    }
   } else {
     console.log('✓ Claude CLI mode (OAuth token not needed)');
   }
@@ -607,7 +645,7 @@ export async function runAgentLoop(
   config: Awaited<ReturnType<typeof loadConfig>>,
   options: { osAgentMode?: boolean } = {}
 ): Promise<void> {
-  const startupBackend = config.agent.backend ?? 'claude';
+  const startupBackend = config.agent.backend;
   const usesCodexBackend = startupBackend === 'codex-mcp' || hasCodexBackendConfigured(config);
 
   if (usesCodexBackend) {
@@ -673,6 +711,10 @@ export async function runAgentLoop(
   let autoRecallUsed = false;
 
   const mamaHome = join(homedir(), '.mama');
+
+  // Sync built-in skills on every start (non-destructive — skips existing files)
+  syncBuiltinSkills();
+
   const personaComplete =
     existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
 
@@ -709,7 +751,7 @@ export async function runAgentLoop(
     }
   }
 
-  const runtimeBackend = config.agent.backend ?? 'claude';
+  const runtimeBackend = config.agent.backend;
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
   const agentLoop = new AgentLoop(oauthManager, {
@@ -719,15 +761,15 @@ export async function runAgentLoop(
     maxTurns: config.agent.max_turns,
     toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord
-    // SECURITY NOTE: dangerouslySkipPermissions=true is REQUIRED for headless daemon operation.
-    // This is NOT a security violation because:
-    // 1. MAMA runs as a background daemon with no TTY - interactive prompts are impossible
-    // 2. Permission control is handled by MAMA's RoleManager (allowedTools, allowedPaths, blockedTools)
-    // 3. OS agent access is restricted to authenticated viewer sessions only
-    // 4. MAMA_TRUSTED_ENV=true is a hard gate - config alone cannot enable this
-    dangerouslySkipPermissions:
-      process.env.MAMA_TRUSTED_ENV === 'true' &&
-      (config.multi_agent?.dangerouslySkipPermissions ?? true),
+    // SECURITY MODEL: MAMA OS is a headless daemon — no TTY for interactive permission prompts.
+    // Permission enforcement is handled by MAMA's own RoleManager layer:
+    //   - config.yaml roles.definitions.*.allowedTools / blockedTools / allowedPaths
+    //   - Multi-agent ToolPermissionManager (tier-based tool access)
+    //   - Source-based role mapping (viewer=os_agent, discord=chat_bot, etc.)
+    // Claude CLI's interactive permission system is bypassed because it cannot work without a TTY.
+    // This is controlled solely by config.yaml (multi_agent.dangerouslySkipPermissions, default: true).
+    // DO NOT add env-var gates here — MAMA manages its own security via config.yaml roles.
+    dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
     // Collect reasoning for Discord display
@@ -1029,6 +1071,7 @@ export async function runAgentLoop(
     getAgentStates?: () => Map<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     getSwarmTasks?: (limit?: number) => Array<any>;
+    getRecentDelegations?: (limit?: number) => DelegationHistoryEntry[];
     applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
     restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   } = {};
@@ -1140,7 +1183,7 @@ export async function runAgentLoop(
         sendFile: async (channelId: string, filePath: string, caption?: string) =>
           discordGateway!.sendFile(channelId, filePath, caption),
         sendImage: async (channelId: string, imagePath: string, caption?: string) =>
-          discordGateway!.sendImage(channelId, imagePath, caption),
+          discordGateway!.sendFile(channelId, imagePath, caption),
       };
 
       agentLoop.setDiscordGateway(gatewayInterface);
@@ -1187,7 +1230,7 @@ export async function runAgentLoop(
         sendFile: async (channelId: string, filePath: string, caption?: string) =>
           slackGateway!.sendFile(channelId, filePath, caption),
         sendImage: async (channelId: string, imagePath: string, caption?: string) =>
-          slackGateway!.sendImage(channelId, imagePath, caption),
+          slackGateway!.sendFile(channelId, imagePath, caption),
       };
       toolExecutor.setSlackGateway(slackGatewayInterface);
 
@@ -1213,10 +1256,38 @@ export async function runAgentLoop(
     const multiAgentHandler = discordHandler || slackHandler;
 
     if (multiAgentHandler) {
-      // getAgentStates: real-time process states
+      // getAgentStates: merge real-time process states from ALL gateways
       graphHandlerOptions.getAgentStates = () => {
         try {
-          return multiAgentHandler.getProcessManager().getAgentStates();
+          const merged = new Map<string, string>();
+          const priority: Record<string, number> = {
+            busy: 3,
+            starting: 2,
+            idle: 1,
+            online: 0,
+            dead: -1,
+          };
+
+          // Collect from Discord
+          if (discordHandler) {
+            for (const [id, state] of discordHandler.getProcessManager().getAgentStates()) {
+              const existing = merged.get(id);
+              if (!existing || (priority[state] ?? 0) > (priority[existing] ?? 0)) {
+                merged.set(id, state);
+              }
+            }
+          }
+          // Collect from Slack
+          if (slackHandler) {
+            for (const [id, state] of slackHandler.getProcessManager().getAgentStates()) {
+              const existing = merged.get(id);
+              if (!existing || (priority[state] ?? 0) > (priority[existing] ?? 0)) {
+                merged.set(id, state);
+              }
+            }
+          }
+
+          return merged;
         } catch (err) {
           console.error('[GraphAPI] Failed to get agent states:', err);
           return new Map();
@@ -1241,6 +1312,25 @@ export async function runAgentLoop(
         } catch (err) {
           console.error('[GraphAPI] Failed to fetch swarm tasks:', err);
           return [];
+        }
+      };
+
+      // getRecentDelegations: in-memory delegation history from DelegationManager
+      graphHandlerOptions.getRecentDelegations = (limit = 20): DelegationHistoryEntry[] => {
+        try {
+          const delegationManager = multiAgentHandler.getDelegationManager();
+          if (!delegationManager) {
+            const logger = new DebugLogger('GraphAPI');
+            logger.warn('[GraphAPI] DelegationManager not available');
+            return [];
+          }
+          return delegationManager.getRecentDelegations(limit);
+        } catch (err) {
+          const logger = new DebugLogger('GraphAPI');
+          logger.error('[GraphAPI] Failed to fetch recent delegations:', err);
+          throw new Error(
+            `Failed to fetch recent delegations: ${err instanceof Error ? err.message : String(err)}`
+          );
         }
       };
 
@@ -1640,7 +1730,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       // Send to Discord
       console.log(`[Screenshot] Sending to Discord: ${outputPath}`);
-      await discordGateway.sendImage(channelId, outputPath, caption);
+      await discordGateway.sendFile(channelId, outputPath, caption);
 
       console.log('[Screenshot] Complete');
       res.json({ success: true, screenshot: outputPath });
@@ -1726,7 +1816,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       }
 
       console.log(`[Discord Image] Sending: ${resolvedImagePath}`);
-      await discordGateway.sendImage(channelId, resolvedImagePath, caption);
+      await discordGateway.sendFile(channelId, resolvedImagePath, caption);
 
       console.log('[Discord Image] Complete');
       res.json({ success: true });
@@ -1778,7 +1868,191 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   });
   console.log(`✓ Session API proxied to port ${EMBEDDING_PORT}`);
 
-  const publicDir = path.resolve(process.cwd(), 'public');
+  const publicDir = path.join(__dirname, '..', '..', '..', 'public');
+
+  // Playground static serving + API
+  const playgroundsDir = path.join(homedir(), '.mama', 'workspace', 'playgrounds');
+  try {
+    mkdirSync(playgroundsDir, { recursive: true });
+  } catch (err) {
+    startLogger.warn(
+      `Failed to create playgrounds dir, skipping seeding: ${err instanceof Error ? err.message : String(err)}`
+    );
+    // DO NOT return — continue with the rest of runAgentLoop
+  }
+
+  // Seed built-in playgrounds from templates
+  try {
+    const pgTemplatesDir = path.join(__dirname, '..', '..', '..', 'templates', 'playgrounds');
+    if (existsSync(pgTemplatesDir)) {
+      const pgEntries = readdirSync(pgTemplatesDir);
+      let pgSynced = 0;
+      const indexPath = path.join(playgroundsDir, 'index.json');
+      let index: Array<{ name: string; slug: string; description: string; created_at: string }> =
+        [];
+      try {
+        if (existsSync(indexPath)) {
+          const parsed = JSON.parse(readFileSync(indexPath, 'utf-8'));
+          if (!Array.isArray(parsed)) {
+            throw new Error(`index.json must be an array, got ${typeof parsed}`);
+          }
+          index = parsed;
+        }
+      } catch (err) {
+        startLogger.warn(`[seedBuiltinPlaygrounds] Failed to parse index.json, rebuilding: ${err}`);
+        index = [];
+      }
+      const existingSlugs = new Set(index.map((e) => e.slug));
+      let indexRepaired = false;
+
+      for (const file of pgEntries) {
+        if (!file.endsWith('.html')) continue;
+        const dest = path.join(playgroundsDir, file);
+        const slug = file.replace('.html', '');
+
+        // Copy file if it doesn't exist
+        if (!existsSync(dest)) {
+          copyFileSync(path.join(pgTemplatesDir, file), dest);
+          pgSynced++;
+        }
+
+        // Add to index if slug doesn't exist (decouple from file copy)
+        if (!existingSlugs.has(slug)) {
+          const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+          index.push({
+            name,
+            slug,
+            description: `Built-in ${name}`,
+            created_at: new Date().toISOString(),
+          });
+          existingSlugs.add(slug);
+          indexRepaired = true;
+        }
+      }
+
+      if (pgSynced > 0 || indexRepaired) {
+        writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+        if (pgSynced > 0 && indexRepaired) {
+          console.log(`✓ Seeded ${pgSynced} built-in playground(s) and repaired index`);
+        } else if (pgSynced > 0) {
+          console.log(`✓ Seeded ${pgSynced} built-in playground(s)`);
+        } else {
+          console.log('✓ Repaired built-in playground index');
+        }
+      }
+    }
+  } catch (err) {
+    // Non-blocking: playground seeding is optional
+    console.warn('[seedBuiltinPlaygrounds] Playground seeding failed (non-fatal):', err);
+  }
+
+  apiServer.app.use('/playgrounds', express.static(playgroundsDir));
+
+  apiServer.app.get('/api/playgrounds', (_req, res) => {
+    const indexPath = path.join(playgroundsDir, 'index.json');
+    try {
+      if (!existsSync(indexPath)) {
+        // Self-heal: rebuild index from existing HTML files
+        const htmlFiles = readdirSync(playgroundsDir)
+          .filter((f) => f.endsWith('.html'))
+          .map((f) => {
+            const slug = f.replace('.html', '');
+            const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+            return {
+              name,
+              slug,
+              description: `Playground: ${name}`,
+              created_at: new Date().toISOString(),
+            };
+          });
+        if (htmlFiles.length > 0) {
+          writeFileSync(indexPath, JSON.stringify(htmlFiles, null, 2), 'utf-8');
+          res.json(htmlFiles);
+        } else {
+          res.json([]);
+        }
+        return;
+      }
+      const data = JSON.parse(readFileSync(indexPath, 'utf-8'));
+      res.json(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.warn('[GET /api/playgrounds] Failed to read playground index (non-fatal):', err);
+      res.json([]);
+    }
+  });
+
+  apiServer.app.delete('/api/playgrounds/:slug', (req, res) => {
+    const { slug } = req.params;
+    if (!slug || /[^a-z0-9-]/.test(slug)) {
+      res.status(400).json({ error: 'Invalid slug' });
+      return;
+    }
+    const htmlPath = path.join(playgroundsDir, `${slug}.html`);
+    const indexPath = path.join(playgroundsDir, 'index.json');
+    try {
+      if (existsSync(htmlPath)) unlinkSync(htmlPath);
+      if (existsSync(indexPath)) {
+        const index = JSON.parse(readFileSync(indexPath, 'utf-8'));
+        const updated = Array.isArray(index)
+          ? index.filter((e: { slug: string }) => e.slug !== slug)
+          : [];
+        writeFileSync(indexPath, JSON.stringify(updated, null, 2), 'utf-8');
+      }
+      res.json({ success: true });
+    } catch (err) {
+      const safeMsg = (err instanceof Error ? err.message : String(err))
+        .replace(/\/home\/[^/]+/g, '~') // Linux
+        .replace(/\/Users\/[^/]+/g, '~') // macOS
+        .replace(/C:\\Users\\[^\\]+/gi, '~'); // Windows
+      res.status(500).json({ error: `Failed to delete playground: ${safeMsg}` });
+    }
+  });
+  console.log('✓ Playground API available at /api/playgrounds');
+
+  // Workspace skill file read API
+  const skillsWorkDir = path.join(homedir(), '.mama', 'workspace', 'skills');
+  apiServer.app.get('/api/workspace/skills', (_req, res) => {
+    try {
+      if (!existsSync(skillsWorkDir)) {
+        res.json({ skills: [] });
+        return;
+      }
+      const dirs = readdirSync(skillsWorkDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => {
+          const mdPath = path.join(skillsWorkDir, d.name, 'SKILL.md');
+          const exists = existsSync(mdPath);
+          return { id: d.name, exists };
+        })
+        .filter((s) => s.exists)
+        .map(({ id }) => ({ id }));
+      res.json({ skills: dirs });
+    } catch (err) {
+      console.warn('[GET /api/workspace/skills] Failed to read skills directory (non-fatal):', err);
+      res.json({ skills: [] });
+    }
+  });
+
+  apiServer.app.get('/api/workspace/skills/:name/content', (req, res) => {
+    const name = req.params.name as string;
+    if (!name || /[^a-zA-Z0-9_-]/.test(name)) {
+      res.status(400).json({ error: 'Invalid skill name' });
+      return;
+    }
+    const mdPath = path.join(skillsWorkDir, name, 'SKILL.md');
+    try {
+      if (!existsSync(mdPath)) {
+        res.status(404).json({ error: 'Skill not found' });
+        return;
+      }
+      const content = readFileSync(mdPath, 'utf-8');
+      res.json({ content });
+    } catch (err) {
+      startLogger.warn('[GET /api/workspace/skills/:name/content] Failed to read skill:', err);
+      res.status(500).json({ error: 'Failed to read skill content' });
+    }
+  });
+  console.log('✓ Workspace Skills API available at /api/workspace/skills');
 
   // Serve setup page at /setup route
   apiServer.app.get('/setup', (_req, res) => {
@@ -1796,6 +2070,19 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   );
   console.log('✓ Viewer UI available at /viewer');
   console.log('✓ Setup wizard available at /setup');
+
+  // Ensure API port is available before starting (prevents EADDRINUSE after unclean shutdown)
+  const apiPortAvailable = await waitForPortAvailable(API_PORT, 8000);
+  if (!apiPortAvailable) {
+    console.warn(`[API] Port ${API_PORT} still in use, attempting cleanup...`);
+    await killProcessesOnPorts([API_PORT]);
+    const portAvailableAfterCleanup = await waitForPortAvailable(API_PORT, 5000);
+    if (!portAvailableAfterCleanup) {
+      throw new Error(
+        `Failed to free port ${API_PORT} after cleanup. Please check for conflicting processes.`
+      );
+    }
+  }
 
   await apiServer.start();
   console.log(`API server started: http://localhost:${apiServer.port}`);

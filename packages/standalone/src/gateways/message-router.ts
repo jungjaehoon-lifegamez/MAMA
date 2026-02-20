@@ -85,6 +85,8 @@ export interface AgentLoopOptions {
   resumeSession?: boolean;
   /** CLI session ID from session pool (prevents double-locking) */
   cliSessionId?: string;
+  /** Streaming callbacks for real-time progress events */
+  streamCallbacks?: import('../agent/types.js').StreamCallbacks;
 }
 
 /**
@@ -249,7 +251,10 @@ export class MessageRouter {
    */
   async process(
     message: NormalizedMessage,
-    processOptions?: { onQueued?: () => void }
+    processOptions?: {
+      onQueued?: () => void;
+      onStream?: import('../agent/types.js').StreamCallbacks;
+    }
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
 
@@ -357,7 +362,7 @@ This protects your credentials from being exposed in chat logs.`;
           channelId: message.channelId,
         }
       : undefined;
-    const enhanced = this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
+    const enhanced = await this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
 
     // 6. Build system prompt with all contexts including AgentContext
     // Always inject DB history for reliable memory (CLI --resume is unreliable)
@@ -373,8 +378,20 @@ This protects your credentials from being exposed in chat logs.`;
     );
 
     // 7. Run agent loop (with session info for lane-based concurrency)
-    // Use role-specific model if configured, otherwise use global model
     const roleModel = agentContext.role.model;
+    if (!roleModel) {
+      throw new Error(
+        `No model configured for role "${agentContext.roleName}".\n\n` +
+          'To fix this, set model in config.yaml:\n' +
+          '  Claude: claude login → roles.definitions.' +
+          agentContext.roleName +
+          '.model: claude-sonnet-4-6\n' +
+          '  Codex:  codex login → roles.definitions.' +
+          agentContext.roleName +
+          '.model: gpt-5.3-codex\n\n' +
+          'Or run: mama init --reconfigure'
+      );
+    }
     const roleMaxTurns = agentContext.role.maxTurns;
 
     // Determine if we should resume an existing CLI session
@@ -399,6 +416,7 @@ This protects your credentials from being exposed in chat logs.`;
       agentContext,
       resumeSession: shouldResume, // Use --resume flag for continuing sessions
       cliSessionId, // Pass CLI session ID to avoid double-locking
+      streamCallbacks: processOptions?.onStream,
     };
 
     if (shouldResume) {
@@ -408,6 +426,17 @@ This protects your credentials from being exposed in chat logs.`;
     }
 
     let response: string;
+
+    // Skill on-demand injection: prepend matched skill content to user message
+    // (not system prompt — PersistentCLI can't update system prompt after creation)
+    const skillPrefix = enhanced.skillContent
+      ? `<system-reminder>\n${enhanced.skillContent.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n`
+      : '';
+    if (enhanced.skillContent) {
+      logger.info(
+        `[SkillMatch] Injecting skill into user message: ${enhanced.skillContent.length} chars`
+      );
+    }
 
     try {
       // Use multimodal content if available (OpenClaw-style)
@@ -449,9 +478,12 @@ This protects your credentials from being exposed in chat logs.`;
           }
         }
 
-        // Add text content
-        if (messageText) {
-          contentBlocks.push({ type: 'text', text: messageText });
+        // Add text content (with skill context if matched)
+        const effectiveMessageText = skillPrefix
+          ? `${skillPrefix}${messageText || ''}`
+          : messageText;
+        if (effectiveMessageText) {
+          contentBlocks.push({ type: 'text', text: effectiveMessageText });
         }
 
         // Pre-analyze images via shared ImageAnalyzer
@@ -461,7 +493,7 @@ This protects your credentials from being exposed in chat logs.`;
           contentBlocks.length = 0;
           contentBlocks.push({
             type: 'text',
-            text: `${messageText || ''}\n\n${analysisText}`.trim(),
+            text: `${effectiveMessageText || ''}\n\n${analysisText}`.trim(),
           });
         } else {
           for (const block of message.contentBlocks) {
@@ -474,7 +506,8 @@ This protects your credentials from being exposed in chat logs.`;
         const result = await this.agentLoop.runWithContent(contentBlocks, options);
         response = result.response;
       } else {
-        const result = await this.agentLoop.run(message.text, options);
+        const effectiveText = skillPrefix ? `${skillPrefix}${message.text}` : message.text;
+        const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
       }
     } catch (error) {
@@ -715,6 +748,10 @@ The ONLY way to display an image is the bare outbound path in your response text
       prompt += `\n${enhanced.keywordInstructions}\n`;
     }
 
+    // NOTE: skillContent is injected into user message (not system prompt)
+    // because PersistentCLI sessions can't update system prompt after creation.
+    // See process() method for user-message injection.
+
     // Include gateway tools directly in system prompt (priority 1 protection)
     // so they don't get truncated by PromptSizeMonitor as a separate layer
     const gatewayTools = getGatewayToolsPrompt();
@@ -733,12 +770,12 @@ The ONLY way to display an image is the bare outbound path in your response text
   private buildMinimalResumePrompt(injectedContext: string, agentContext?: AgentContext): string {
     let prompt = '';
 
-    // Only include per-message related decisions (if any)
     if (injectedContext) {
       prompt += injectedContext;
     }
 
-    // Brief reminder of role (in case CLI context was partially lost)
+    // NOTE: skillContent is injected into user message, not here.
+
     if (agentContext) {
       prompt += `\n[Role: ${agentContext.roleName}@${agentContext.platform}]\n`;
     }

@@ -124,6 +124,46 @@ export function createSkillsRouter(registry: SkillRegistry): Router {
     })
   );
 
+  // POST /api/skills — create a new skill with content
+  router.post(
+    '/',
+    asyncHandler(async (req, res) => {
+      const body = req.body as { name?: string; content?: string; source?: string };
+      validateRequired(body as unknown as Record<string, unknown>, ['name', 'content']);
+      validateSkillName(body.name!);
+
+      if (!body.content || typeof body.content !== 'string') {
+        throw new ApiError('Field "content" must be a non-empty string', 400, 'BAD_REQUEST');
+      }
+
+      const source = body.source || 'mama';
+      validateSource(source);
+
+      const result = await registry.save(body.name!, body.content, source as SkillSource);
+      res.status(201).json(result);
+    })
+  );
+
+  // PUT /api/skills/:name/content — update skill content
+  router.put(
+    '/:name/content',
+    asyncHandler(async (req, res) => {
+      const name = decodeURIComponent(req.params.name as string);
+      validateSkillName(name);
+      const { content, source: rawSource } = req.body as { content?: string; source?: string };
+
+      if (!content || typeof content !== 'string') {
+        throw new ApiError('Field "content" is required', 400, 'BAD_REQUEST');
+      }
+
+      const source = rawSource || 'mama';
+      validateSource(source);
+
+      const result = await registry.save(name, content, source as SkillSource);
+      res.json(result);
+    })
+  );
+
   // DELETE /api/skills/:name — uninstall
   router.delete(
     '/:name',

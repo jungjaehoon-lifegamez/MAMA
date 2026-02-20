@@ -11,8 +11,17 @@
  * - Path-based tools (Read, Write) also check path permissions
  */
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import {
+  readFileSync,
+  existsSync,
+  writeFileSync,
+  mkdirSync,
+  statSync,
+  copyFileSync,
+  unlinkSync,
+  realpathSync,
+} from 'fs';
+import { join, dirname, resolve, relative, isAbsolute, basename } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -113,6 +122,10 @@ const VALID_TOOLS: GatewayToolName[] = [
   'os_stop_bot',
   // PR Review tools
   'pr_review_threads',
+  // Playground tools
+  'playground_create',
+  // Webchat tools
+  'webchat_send',
 ];
 
 /**
@@ -372,6 +385,16 @@ export class GatewayToolExecutor {
           return await this.executePrReviewThreads(
             input as { pr_url?: string; owner?: string; repo?: string; pr_number?: number }
           );
+        // Playground tools
+        case 'playground_create':
+          return await this.executePlaygroundCreate(
+            input as { name: string; html: string; description?: string }
+          );
+        // Webchat tools
+        case 'webchat_send':
+          return await this.executeWebchatSend(
+            input as { message?: string; file_path?: string } // session_id omitted: all files use shared outbound dir
+          );
       }
 
       // MAMA tools require API
@@ -583,8 +606,11 @@ export class GatewayToolExecutor {
     // Fallback security for contexts without path restrictions:
     // Only allow reading from ~/.mama/ directory
     if (!this.currentContext?.role.allowedPaths?.length) {
-      const mamaDir = join(homeDir, '.mama');
-      if (!expandedPath.startsWith(mamaDir)) {
+      const mamaDir = resolve(homeDir, '.mama');
+      const resolvedPath = resolve(expandedPath);
+      // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
+      const rel = relative(mamaDir, resolvedPath);
+      if (rel.startsWith('..') || isAbsolute(rel)) {
         return { success: false, error: `Access denied: Can only read files from ${mamaDir}` };
       }
     }
@@ -643,8 +669,11 @@ export class GatewayToolExecutor {
     // Fallback security for contexts without path restrictions:
     // Only allow writing to ~/.mama/ directory
     if (!this.currentContext?.role.allowedPaths?.length) {
-      const mamaDir = join(homeDir, '.mama');
-      if (!expandedPath.startsWith(mamaDir)) {
+      const mamaDir = resolve(homeDir, '.mama');
+      const resolvedPath = resolve(expandedPath);
+      // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
+      const rel = relative(mamaDir, resolvedPath);
+      if (rel.startsWith('..') || isAbsolute(rel)) {
         return { success: false, error: `Access denied: Can only write files to ${mamaDir}` };
       }
     }
@@ -712,8 +741,18 @@ export class GatewayToolExecutor {
       // Resolve any .. or . in the path
       const normalizedTarget = resolve(resolvedTarget);
 
+      // Follow symlinks to prevent sandbox bypass
+      let realTarget: string;
+      try {
+        realTarget = realpathSync(normalizedTarget);
+      } catch {
+        realTarget = normalizedTarget; // file doesn't exist yet — lexical check is fine
+      }
+
       // Check if target is within sandbox
-      if (!normalizedTarget.startsWith(sandboxRoot)) {
+      // Add trailing separator to prevent path traversal (e.g., ~/.mama vs ~/.mama-evil)
+      const sandboxRootWithSep = sandboxRoot.endsWith('/') ? sandboxRoot : sandboxRoot + '/';
+      if (!realTarget.startsWith(sandboxRootWithSep) && realTarget !== sandboxRoot) {
         return {
           success: false,
           error:
@@ -1320,6 +1359,7 @@ export class GatewayToolExecutor {
       // No role specified - update global agent config
       if (!config.agent) {
         config.agent = {
+          backend: 'claude',
           model: 'claude-sonnet-4-6',
           max_turns: 10,
           timeout: 300000,
@@ -1657,6 +1697,181 @@ export class GatewayToolExecutor {
       return { success: true, threads: unresolved, summary: summaryLines.join('\n') };
     } catch (err) {
       return { success: false, error: `Failed to fetch PR threads: ${err}` };
+    }
+  }
+
+  // ============================================================================
+  // Playground Tools
+  // ============================================================================
+
+  private async executePlaygroundCreate(input: {
+    name: string;
+    html: string;
+    description?: string;
+  }): Promise<{ success: boolean; url?: string; slug?: string; error?: string }> {
+    const { name, html, description } = input;
+
+    if (!name || !html) {
+      return { success: false, error: 'name and html are required' };
+    }
+
+    // Generate slug from name (kebab-case, sanitized)
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 64);
+
+    if (!slug) {
+      return { success: false, error: 'Invalid name: cannot generate slug' };
+    }
+
+    const playgroundsDir = join(homedir(), '.mama', 'workspace', 'playgrounds');
+    const htmlPath = join(playgroundsDir, `${slug}.html`);
+    const indexPath = join(playgroundsDir, 'index.json');
+
+    try {
+      mkdirSync(playgroundsDir, { recursive: true });
+
+      // Read and validate index FIRST, before writing HTML file
+      // (so if index is corrupt, we don't leave dangling HTML files)
+      let index: Array<{
+        name: string;
+        slug: string;
+        description?: string;
+        created_at: string;
+      }> = [];
+      if (existsSync(indexPath)) {
+        try {
+          const parsed = JSON.parse(readFileSync(indexPath, 'utf-8'));
+          if (!Array.isArray(parsed)) {
+            throw new Error(`${indexPath} is corrupted: expected array, got ${typeof parsed}`);
+          }
+          index = parsed;
+        } catch (error) {
+          throw new Error(
+            `Failed to parse ${indexPath}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
+      // Remove existing entry with same slug
+      index = index.filter((entry) => entry.slug !== slug);
+
+      // Write HTML before updating index (HTML is primary artifact; index push comes after)
+      writeFileSync(htmlPath, html, 'utf-8');
+
+      // Add new entry
+      index.push({
+        name,
+        slug,
+        description,
+        created_at: new Date().toISOString(),
+      });
+
+      // Write index after HTML is safely on disk
+      writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+
+      return { success: true, url: `/playgrounds/${slug}.html`, slug };
+    } catch (err) {
+      // Clean up orphaned HTML file if it was written before error
+      try {
+        if (existsSync(htmlPath)) {
+          unlinkSync(htmlPath);
+        }
+      } catch {
+        // Silently ignore cleanup errors to preserve original error
+      }
+      return {
+        success: false,
+        error: `Failed to create playground: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  // ============================================================================
+  // Webchat Tools
+  // ============================================================================
+
+  /**
+   * Execute webchat_send tool — Send message/file to webchat viewer
+   * Copies file to outbound directory and returns the path for viewer rendering
+   *
+   * Note: session_id removed - all files route to shared outbound dir
+   */
+  private async executeWebchatSend(input: {
+    message?: string;
+    file_path?: string;
+  }): Promise<{ success: boolean; message?: string; outbound_path?: string; error?: string }> {
+    const { message, file_path } = input;
+
+    if (!message && !file_path) {
+      return { success: false, error: 'Either message or file_path is required' };
+    }
+
+    try {
+      const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
+      mkdirSync(outboundDir, { recursive: true });
+
+      if (file_path) {
+        // Expand ~ to home directory
+        const homeDir = homedir();
+        const expandedPath = file_path.startsWith('~/')
+          ? join(homeDir, file_path.slice(2))
+          : file_path;
+
+        // Check path permission based on role
+        const pathPermission = this.checkPathPermission(expandedPath);
+        if (!pathPermission.allowed) {
+          return { success: false, error: pathPermission.error };
+        }
+
+        // Fallback security for contexts without path restrictions:
+        // Only allow reading from ~/.mama/ directory
+        if (!this.currentContext?.role.allowedPaths?.length) {
+          const mamaDir = resolve(homeDir, '.mama');
+          const resolvedPath = resolve(expandedPath);
+          // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
+          const rel = relative(mamaDir, resolvedPath);
+          if (rel.startsWith('..') || isAbsolute(rel)) {
+            return {
+              success: false,
+              error: `Access denied: Can only copy files from ${mamaDir}`,
+            };
+          }
+        }
+
+        if (!existsSync(expandedPath)) {
+          return { success: false, error: `File not found: ${expandedPath}` };
+        }
+
+        // Copy file to outbound directory with timestamp prefix
+        const baseName = basename(expandedPath) || 'file';
+        const outName = `${Date.now()}_${baseName}`;
+        const outPath = join(outboundDir, outName);
+        copyFileSync(expandedPath, outPath);
+
+        const viewerPath = `~/.mama/workspace/media/outbound/${outName}`;
+
+        return {
+          success: true,
+          message: `${message || 'File ready for download.'}\n\nCRITICAL: Include this EXACT path on its own line in your next response so the viewer renders it as a download link:\n${viewerPath}`,
+          outbound_path: viewerPath,
+        };
+      }
+
+      // Text-only message
+      return {
+        success: true,
+        message: message!,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: `Failed to send to webchat: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 

@@ -60,6 +60,7 @@ Choose the right package for your use case:
 **→ Installable skill system** — drop a `.md` file, agent follows it
 **→ Built-in cron scheduler** — manage from dashboard or settings UI
 **→ Multi-Agent System** — delegation, workflows, council, UltraWork
+**→ Interactive Playgrounds** — Skill Lab, Cron Workflow Lab, Wave Visualizer
 
 **Use:** [MAMA OS](packages/standalone/README.md)
 
@@ -69,7 +70,7 @@ mama init    # copies default skills to ~/.mama/skills/
 mama start   # opens web dashboard at localhost:3847
 ```
 
-**Package:** `@jungjaehoon/mama-os` 0.9.4
+**Package:** `@jungjaehoon/mama-os` 0.9.5
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -179,6 +180,22 @@ Phase 3: Retrospective → Reviews results (+ Council quality check)
 ```
 
 [Setup Guide →](packages/standalone/README.md#multi-agent-swarm) | [Architecture →](docs/architecture-mama-swarm-2026-02-06.md)
+
+#### Playgrounds
+
+Interactive HTML playgrounds run directly inside the MAMA dashboard. Create skills, schedule workflows, and experiment — all without leaving the browser.
+
+| Playground            | Description                                                 |
+| --------------------- | ----------------------------------------------------------- |
+| **Skill Lab**         | Create, verify, and publish skills with step-by-step wizard |
+| **Cron Workflow Lab** | Design and test cron-scheduled agent workflows visually     |
+| **Wave Visualizer**   | Audio waveform playground for voice/audio skill development |
+
+<p align="center">
+  <img src="docs/website/assets/screenshot-skill-lab.png" alt="Skill Lab Playground" width="720">
+</p>
+
+Skills Tab and Playground Tab are bidirectionally linked — selecting a skill in Skills opens it in Skill Lab, and publishing from Skill Lab refreshes Skills.
 
 ---
 
@@ -314,7 +331,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.9.4   | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.9.5   | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.6   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.4   | Shared core library (embeddings, DB, memory) | npm                |
 | [mama](packages/claude-code-plugin/README.md)                    | 1.7.13  | Claude Code plugin                           | Claude Marketplace |

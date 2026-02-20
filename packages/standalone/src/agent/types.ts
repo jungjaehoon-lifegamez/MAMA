@@ -246,6 +246,8 @@ export interface StreamCallbacks {
   onDelta?: (text: string) => void;
   /** Called when a tool use starts */
   onToolUse?: (toolName: string, input: Record<string, unknown>) => void;
+  /** Called when a tool execution completes */
+  onToolComplete?: (toolName: string, toolUseId: string, isError: boolean) => void;
   /** Called when final message arrives */
   onFinal?: (response: ClaudeResponse) => void;
   /** Called on error */
@@ -619,7 +621,11 @@ export type GatewayToolName =
   | 'os_restart_bot'
   | 'os_stop_bot'
   // PR Review tools
-  | 'pr_review_threads';
+  | 'pr_review_threads'
+  // Playground tools
+  | 'playground_create'
+  // Webchat tools
+  | 'webchat_send';
 
 // ============================================================================
 // MCP Tool Output Types
@@ -721,7 +727,7 @@ export interface AgentLoopOptions {
    * Backend to use for CLI execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex-mcp': Codex via MCP protocol
-   * @default 'claude'
+   * Required at construction time (validated by config-manager)
    */
   backend?: 'claude' | 'codex-mcp';
   /** System prompt for Claude */
@@ -818,6 +824,9 @@ export interface AgentLoopOptions {
    * Called after each API response to track token consumption
    */
   onTokenUsage?: (record: TokenUsageRecord) => void;
+
+  /** Streaming callbacks for real-time progress events to external consumers */
+  streamCallbacks?: StreamCallbacks;
 }
 
 /**
