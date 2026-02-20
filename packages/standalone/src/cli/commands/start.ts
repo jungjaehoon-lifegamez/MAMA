@@ -2002,6 +2002,15 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   console.log('✓ Viewer UI available at /viewer');
   console.log('✓ Setup wizard available at /setup');
 
+  // Ensure API port is available before starting (prevents EADDRINUSE after unclean shutdown)
+  const apiPortAvailable = await waitForPortAvailable(API_PORT, 8000);
+  if (!apiPortAvailable) {
+    console.warn(`[API] Port ${API_PORT} still in use, attempting cleanup...`);
+    const { killProcessesOnPorts } = await import('./stop.js');
+    await killProcessesOnPorts([API_PORT]);
+    await waitForPortAvailable(API_PORT, 5000);
+  }
+
   await apiServer.start();
   console.log(`API server started: http://localhost:${apiServer.port}`);
 

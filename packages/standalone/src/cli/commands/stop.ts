@@ -66,6 +66,9 @@ export async function stopCommand(): Promise<void> {
     // Best-effort cleanup: kill any processes still holding MAMA ports
     await killProcessesOnPorts([3847, 3849]);
 
+    // Verify ports are actually released (wait up to 3s)
+    await waitForPortsReleased([3847, 3849], 3000);
+
     console.log('MAMA has been stopped.\n');
   } catch (error) {
     console.log('❌');
@@ -224,6 +227,28 @@ export async function killAllMamaDaemons(): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * Wait until all specified ports are released
+ */
+async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): Promise<void> {
+  const startTime = Date.now();
+  const pollInterval = 200;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const stillInUse = ports.filter((port) => {
+      try {
+        const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+        return output.length > 0;
+      } catch {
+        return false; // lsof returned no results = port is free
+      }
+    });
+
+    if (stillInUse.length === 0) return;
+    await sleep(pollInterval);
+  }
 }
 
 function listProcesses(): Array<{ pid: number; command: string }> {
