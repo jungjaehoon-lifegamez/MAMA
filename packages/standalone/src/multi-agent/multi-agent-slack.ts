@@ -391,7 +391,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     const agentContext = this.sharedContext.buildContextForAgent(context.channelId, agentId, 5);
 
     // Enhance with skill detection + keyword instructions
-    const workspacePath = globalThis.process?.env?.HOME || '/tmp';
+    const workspacePath =
+      globalThis.process?.env?.MAMA_WORKSPACE || globalThis.process?.env?.HOME || '/tmp';
     const ruleContext: RuleContext = {
       agentId,
       tier: agent.tier,

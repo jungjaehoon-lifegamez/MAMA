@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { SwarmTaskRunner } from '../../src/multi-agent/swarm/swarm-task-runner.js';
 import { SwarmManager } from '../../src/multi-agent/swarm/swarm-manager.js';
 import type { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
@@ -56,6 +57,7 @@ describe('SwarmTaskRunner', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(debugLogger, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -98,7 +100,7 @@ describe('SwarmTaskRunner', () => {
 
       runner.startSession(sessionId); // Duplicate
 
-      expect(console.warn).toHaveBeenCalledWith(
+      expect(debugLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining(`Session ${sessionId} already running`)
       );
       expect(runner.getActiveSessionCount()).toBe(1);
@@ -121,7 +123,7 @@ describe('SwarmTaskRunner', () => {
 
     it('should warn when stopping non-existent session', () => {
       runner.stopSession('non-existent-session');
-      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('not running'));
+      expect(debugLogger.warn).toHaveBeenCalledWith(expect.stringContaining('not running'));
     });
 
     it('should stop all sessions', async () => {

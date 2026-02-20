@@ -29,6 +29,30 @@ import { DebugLogger } from '../utils/debug-logger.js';
 
 const logger = new DebugLogger('Chat');
 
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message?: string;
+}
+
+interface ISpeechRecognition extends EventTarget {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  onstart: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+}
+
 type ChatAttachment = {
   isImage: boolean;
   mediaUrl: string;
@@ -81,7 +105,7 @@ export class ChatModule {
   sessionId: string | null = null;
   reconnectAttempts = 0;
   maxReconnectDelay = 30000;
-  speechRecognition: any = null;
+  speechRecognition: ISpeechRecognition | null = null;
   isRecording = false;
   silenceTimeout: ReturnType<typeof setTimeout> | null = null;
   silenceDelay = 2500;
@@ -1292,13 +1316,14 @@ export class ChatModule {
       return;
     }
 
-    this.speechRecognition = new SpeechRecognition();
-    this.speechRecognition.lang = navigator.language || 'ko-KR';
-    this.speechRecognition.continuous = true; // Enable continuous recognition for longer phrases
-    this.speechRecognition.interimResults = true;
-    this.speechRecognition.maxAlternatives = 3; // Get multiple recognition candidates for better accuracy
+    this.speechRecognition = new SpeechRecognition() as ISpeechRecognition;
+    const recognition = this.speechRecognition!;
+    recognition.lang = navigator.language || 'ko-KR';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 3;
 
-    this.speechRecognition.onresult = (event: any) => {
+    recognition.onresult = (event: any) => {
       const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
       if (!input) {
         return;
@@ -1367,12 +1392,12 @@ export class ChatModule {
       }, this.silenceDelay);
     };
 
-    this.speechRecognition.onend = () => {
+    recognition.onend = () => {
       logger.info('Recognition ended');
       this.stopVoice();
     };
 
-    this.speechRecognition.onerror = (event: any) => {
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       logger.error('Error:', event.error);
       this.stopVoice();
 
@@ -1394,7 +1419,7 @@ export class ChatModule {
       this.addSystemMessage(errorMessage, 'error');
     };
 
-    logger.info('SpeechRecognition initialized (lang:', this.speechRecognition.lang + ')');
+    logger.info('SpeechRecognition initialized (lang:', recognition.lang + ')');
   }
 
   /**
@@ -1465,7 +1490,9 @@ export class ChatModule {
     if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
 
     try {
-      this.speechRecognition.stop();
+      if (this.speechRecognition) {
+        this.speechRecognition.stop();
+      }
     } catch {
       // Ignore errors
     }
@@ -1474,7 +1501,7 @@ export class ChatModule {
 
     const micBtn = getElementByIdOrNull<HTMLButtonElement>('chat-mic');
     const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
-    if (!micBtn || !input || !this.speechRecognition) {
+    if (!micBtn || !input) {
       return;
     }
 

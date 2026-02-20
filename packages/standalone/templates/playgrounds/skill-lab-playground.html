@@ -794,12 +794,19 @@ You can also paste (Ctrl+V) a response into this area.</div>
         var sourceTag = s._registrySource
           ? ' <span style="font-size:9px;color:var(--accent);font-weight:700;">'+esc(s._registrySource)+'</span>'
           : '';
-        return '<div class="'+cls+'" onclick="selectSkill(\''+s.id+'\')">'
+        return '<div class="'+cls+'" data-skill-id="'+esc(s.id)+'">'
           + '<div class="skill-name">'+esc(s.name)+' '+badge+sourceTag+'</div>'
           + '<div class="skill-meta">'+esc(s.version)+' \u00B7 '+esc(s.path||s._registrySource||'')+'</div>'
           + '</div>';
       }).join('');
       document.getElementById('skillList').innerHTML = html;
+      // Event delegation for skill selection
+      document.querySelectorAll('.skill-item[data-skill-id]').forEach(function(item) {
+        item.addEventListener('click', function() {
+          var skillId = this.getAttribute('data-skill-id');
+          selectSkill(skillId);
+        });
+      });
     }
 
     function selectSkill(id) {
@@ -1310,6 +1317,33 @@ You can also paste (Ctrl+V) a response into this area.</div>
         showStep('review');
         document.getElementById('skillPreview').textContent = content;
         updateStatus('Skill loaded: '+name, 'v1.0.0');
+      }
+      // Handle file upload from playground
+      if (e.data && e.data.type === 'playground:uploadFile') {
+        var d = e.data;
+        // Extract base64 data from data URI
+        var base64Data = d.data.split(',')[1] || d.data;
+        var uploadPath = '~/.mama/workspace/media/inbound/' + d.fileName;
+
+        // Send file save request to parent/backend
+        fetch('/api/workspace/media/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: d.fileName,
+            fileType: d.fileType,
+            fileSize: d.fileSize,
+            data: base64Data,
+            path: 'inbound'
+          })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(result) {
+          updateStatus('File uploaded: ' + d.fileName + ' → ' + uploadPath, versionStr());
+        })
+        .catch(function(err) {
+          updateStatus('Upload failed: ' + err.message, versionStr());
+        });
       }
     });
 

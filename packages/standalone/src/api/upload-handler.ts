@@ -56,31 +56,31 @@ const storage = multer.diskStorage({
   },
 });
 
-// Map extension to expected MIME type for validation
-const EXT_TO_MIME: Record<string, string> = {
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf',
+// Map extension to expected MIME types for validation (some extensions have multiple valid MIME types)
+const EXT_TO_MIME: Record<string, string[]> = {
+  '.jpg': ['image/jpeg'],
+  '.jpeg': ['image/jpeg'],
+  '.png': ['image/png'],
+  '.gif': ['image/gif'],
+  '.webp': ['image/webp'],
+  '.svg': ['image/svg+xml'],
+  '.pdf': ['application/pdf'],
   // Document types
-  '.txt': 'text/plain',
-  '.csv': 'text/csv',
-  '.md': 'text/markdown',
-  '.html': 'text/html',
-  '.htm': 'text/html',
-  '.xml': 'text/xml',
-  '.json': 'application/json',
-  '.doc': 'application/msword',
-  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  '.xls': 'application/vnd.ms-excel',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  '.ppt': 'application/vnd.ms-powerpoint',
-  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  '.zip': 'application/zip',
-  '.gz': 'application/gzip',
+  '.txt': ['text/plain'],
+  '.csv': ['text/csv'],
+  '.md': ['text/markdown'],
+  '.html': ['text/html'],
+  '.htm': ['text/html'],
+  '.xml': ['text/xml', 'application/xml'], // Both MIME types are valid for XML
+  '.json': ['application/json'],
+  '.doc': ['application/msword'],
+  '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  '.xls': ['application/vnd.ms-excel'],
+  '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  '.ppt': ['application/vnd.ms-powerpoint'],
+  '.pptx': ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  '.zip': ['application/zip'],
+  '.gz': ['application/gzip'],
 };
 
 const upload = multer({
@@ -93,8 +93,8 @@ const upload = multer({
     }
     // Validate extension matches MIME type to prevent spoofing
     const ext = path.extname(file.originalname).toLowerCase();
-    const expectedMime = EXT_TO_MIME[ext];
-    if (expectedMime && expectedMime !== file.mimetype) {
+    const expectedMimes = EXT_TO_MIME[ext];
+    if (expectedMimes && !expectedMimes.includes(file.mimetype)) {
       cb(new Error(`Extension ${ext} does not match MIME type ${file.mimetype}`));
       return;
     }
@@ -162,7 +162,7 @@ const MIME_MAP: Record<string, string> = {
   '.md': 'text/markdown',
   '.html': 'text/html',
   '.htm': 'text/html',
-  '.xml': 'text/xml',
+  '.xml': 'application/xml', // Updated to match standard MIME type (text/xml also valid but less common)
   '.json': 'application/json',
   '.doc': 'application/msword',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -299,6 +299,7 @@ export function createUploadRouter(): Router {
     const stat = fs.statSync(fullPath);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', stat.size);
+    res.setHeader('X-Content-Type-Options', 'nosniff'); // Prevent MIME type sniffing
     // SVG/HTML/XML can contain scripts — force download to prevent Stored XSS
     const dangerousExts = ['.svg', '.html', '.htm', '.xml'];
     const dangerousTypes = ['image/svg+xml', 'text/html', 'text/xml', 'application/xml'];
@@ -322,6 +323,7 @@ export function createUploadRouter(): Router {
     const stat = fs.statSync(fullPath);
     res.setHeader('Content-Disposition', encodeContentDisposition(safeName));
     res.setHeader('Content-Length', stat.size);
+    res.setHeader('X-Content-Type-Options', 'nosniff'); // Prevent MIME type sniffing
     fs.createReadStream(fullPath).pipe(res);
   });
 

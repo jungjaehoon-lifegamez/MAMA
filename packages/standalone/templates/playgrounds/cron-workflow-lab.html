@@ -698,7 +698,7 @@ function closeDetail() {
   document.getElementById('detailPanel').classList.remove('show');
 }
 
-function esc(s) { return (s||'').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 // ─── Templates ───
 function toggleTemplates() {
@@ -1091,11 +1091,18 @@ function renderJobList() {
     return;
   }
   list.innerHTML = state.existingJobs.map(j => `
-    <div class="job-card" onclick="importJob('${j.id}')">
-      <div class="jname">${j.name} <span class="badge ${j.enabled?'badge-on':'badge-off'}">${j.enabled?'ON':'OFF'}</span></div>
-      <div class="jmeta">${j.cron_expr} · ${cronToHuman(j.cron_expr)}</div>
+    <div class="job-card" data-job-id="${esc(j.id)}">
+      <div class="jname">${esc(j.name)} <span class="badge ${j.enabled?'badge-on':'badge-off'}">${j.enabled?'ON':'OFF'}</span></div>
+      <div class="jmeta">${esc(j.cron_expr)} · ${esc(cronToHuman(j.cron_expr))}</div>
     </div>
   `).join('');
+  // Event delegation for job cards
+  document.querySelectorAll('.job-card').forEach(card => {
+    card.addEventListener('click', function() {
+      const jobId = this.getAttribute('data-job-id');
+      importJob(jobId);
+    });
+  });
 }
 
 function importJob(jobId) {
@@ -1228,12 +1235,29 @@ function renderWorkflowList() {
     const statusMap = {draft:['📝','badge-off','draft'], deployed:['✅','badge-on','deployed'], paused:['⏸','','paused']};
     const [icon, cls, label] = statusMap[w.status] || statusMap.draft;
     const nodeCount = (w.nodes||[]).length;
-    return `<div class="job-card${active?' active':''}" onclick="switchToWorkflow('${w.id}')">
-      <div class="jname">${icon} ${esc(w.name||'Unnamed')} <span class="badge ${cls}" style="font-size:9px">${label}</span></div>
-      <div class="jmeta">${nodeCount} nodes · ${timeAgo(w.updatedAt)}</div>
-      ${!active ? '<span style="position:absolute;right:8px;top:8px;font-size:11px;color:var(--dim);cursor:pointer" onclick="event.stopPropagation();deleteWorkflow(\''+w.id+'\')">×</span>' : ''}
+    return `<div class="job-card${active?' active':''}" data-workflow-id="${esc(w.id)}">
+      <div class="jname">${icon} ${esc(w.name||'Unnamed')} <span class="badge ${cls}" style="font-size:9px">${esc(label)}</span></div>
+      <div class="jmeta">${nodeCount} nodes · ${esc(timeAgo(w.updatedAt))}</div>
+      ${!active ? '<span class="workflow-delete" style="position:absolute;right:8px;top:8px;font-size:11px;color:var(--dim);cursor:pointer" data-workflow-id="'+esc(w.id)+'">×</span>' : ''}
     </div>`;
   }).join('');
+  // Event delegation for workflow cards
+  document.querySelectorAll('.job-card[data-workflow-id]').forEach(card => {
+    card.addEventListener('click', function(e) {
+      if (!e.target.classList.contains('workflow-delete')) {
+        const wfId = this.getAttribute('data-workflow-id');
+        switchToWorkflow(wfId);
+      }
+    });
+  });
+  // Event delegation for delete buttons
+  document.querySelectorAll('.workflow-delete').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      const wfId = this.getAttribute('data-workflow-id');
+      deleteWorkflow(wfId);
+    });
+  });
 }
 
 function timeAgo(ts) {
