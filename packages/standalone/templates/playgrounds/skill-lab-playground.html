@@ -864,6 +864,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
         fetch('/api/skills/'+encodeURIComponent(id)+'/readme?source='+src)
           .then(function(r){ return r.json(); })
           .then(function(data){
+            if (state.activeSkillId !== id) return; // selection changed
             if (data.content) {
               state.skillContent = data.content;
               persistSkillContent(id, data.content);
@@ -880,6 +881,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
         fetch('/api/workspace/skills/'+encodeURIComponent(id)+'/content')
           .then(function(r){ return r.json(); })
           .then(function(data){
+            if (state.activeSkillId !== id) return; // selection changed
             if (data.content) {
               state.skillContent = data.content;
               persistSkillContent(id, data.content);
@@ -1227,6 +1229,8 @@ You can also paste (Ctrl+V) a response into this area.</div>
     function pasteSkillManual() {
       navigator.clipboard.readText().then(function(text){
         if (text && text.length > 10) handleLLMResponse(text);
+      }).catch(function() {
+        updateStatus('Clipboard access denied — paste manually into the preview area', versionStr());
       });
     }
 
@@ -1597,6 +1601,10 @@ You can also paste (Ctrl+V) a response into this area.</div>
           fileSize: f.size,
           data: e.target.result
         }, window.location.origin);
+        if (callback) callback();
+      };
+      reader.onerror = function() {
+        updateStatus('File read failed: ' + f.name, versionStr());
         if (callback) callback();
       };
       reader.readAsDataURL(f.file);

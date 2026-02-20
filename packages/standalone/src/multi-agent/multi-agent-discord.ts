@@ -716,9 +716,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           }),
         ]);
       } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         await tracker?.cleanup();
       }
-      if (timeoutHandle) clearTimeout(timeoutHandle);
 
       // Execute text-based gateway tool calls (```tool_call blocks in response)
       // Claude CLI handles built-in tools (Read, Bash, Glob) internally via native tool_use.
@@ -934,9 +934,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
       return null;
     } finally {
-      if (agentProcess) {
-        this.processManager.releaseProcess(agentId, agentProcess);
-      }
       this.workTracker.completeWork(agentId, context.channelId);
     }
   }

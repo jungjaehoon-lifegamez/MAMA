@@ -1932,7 +1932,13 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       if (pgSynced > 0 || indexRepaired) {
         writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
-        console.log(`✓ Seeded ${pgSynced} built-in playground(s)`);
+        if (pgSynced > 0 && indexRepaired) {
+          console.log(`✓ Seeded ${pgSynced} built-in playground(s) and repaired index`);
+        } else if (pgSynced > 0) {
+          console.log(`✓ Seeded ${pgSynced} built-in playground(s)`);
+        } else {
+          console.log('✓ Repaired built-in playground index');
+        }
       }
     }
   } catch (err) {
