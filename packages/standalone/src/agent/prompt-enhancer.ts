@@ -5,7 +5,8 @@
  * as native built-in features. Ported from claude-code-plugin hooks.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { ContentDeduplicator } from './content-dedup.js';
@@ -469,7 +470,7 @@ export class PromptEnhancer {
     return '';
   }
 
-  discoverAgentsMd(workspacePath: string): string {
+  async discoverAgentsMd(workspacePath: string): Promise<string> {
     if (!workspacePath) {
       return '';
     }
@@ -501,7 +502,7 @@ export class PromptEnhancer {
             continue;
           }
 
-          const content = this.getCachedFile(agentsMdPath);
+          const content = await this.getCachedFile(agentsMdPath);
           if (content) {
             dedup.add(agentsMdPath, content, depth);
           }
@@ -526,7 +527,7 @@ export class PromptEnhancer {
     return sections.join('\n\n---\n\n');
   }
 
-  discoverRules(workspacePath: string, ruleContext?: RuleContext): string {
+  async discoverRules(workspacePath: string, ruleContext?: RuleContext): Promise<string> {
     if (!workspacePath) {
       return '';
     }
@@ -544,7 +545,7 @@ export class PromptEnhancer {
     if (existsSync(copilotPath)) {
       try {
         if (statSync(copilotPath).isFile()) {
-          const rawContent = this.getCachedFile(copilotPath);
+          const rawContent = await this.getCachedFile(copilotPath);
           if (rawContent?.trim()) {
             if (dedup.add(copilotPath, rawContent, 0)) {
               rules.push({ path: copilotPath, content: rawContent, distance: 0 });
@@ -558,7 +559,7 @@ export class PromptEnhancer {
 
     // 2. Check project-level .claude/rules/*.md
     const projectRulesDir = join(projectRoot, '.claude', 'rules');
-    this.collectRulesFromDir(projectRulesDir, 0, rules, dedup, ruleContext);
+    await this.collectRulesFromDir(projectRulesDir, 0, rules, dedup, ruleContext);
 
     // 3. Walk up from workspacePath for directory-level rules
     try {
@@ -569,7 +570,7 @@ export class PromptEnhancer {
 
       while (currentDir !== projectRoot && currentDir !== dirname(currentDir)) {
         const dirRulesPath = join(currentDir, '.claude', 'rules');
-        this.collectRulesFromDir(dirRulesPath, distance, rules, dedup, ruleContext);
+        await this.collectRulesFromDir(dirRulesPath, distance, rules, dedup, ruleContext);
         currentDir = dirname(currentDir);
         distance++;
       }
@@ -587,16 +588,16 @@ export class PromptEnhancer {
     return sections.join('\n\n---\n\n');
   }
 
-  enhance(
+  async enhance(
     userMessage: string,
     workspacePath: string,
     ruleContext?: RuleContext
-  ): EnhancedPromptContext {
+  ): Promise<EnhancedPromptContext> {
     return {
       keywordInstructions: this.detectKeywords(userMessage),
-      agentsContent: this.discoverAgentsMd(workspacePath),
-      rulesContent: this.discoverRules(workspacePath, ruleContext),
-      skillContent: this.detectSkillMatch(userMessage) ?? undefined,
+      agentsContent: await this.discoverAgentsMd(workspacePath),
+      rulesContent: await this.discoverRules(workspacePath, ruleContext),
+      skillContent: (await this.detectSkillMatch(userMessage)) ?? undefined,
     };
   }
 
@@ -604,7 +605,7 @@ export class PromptEnhancer {
    * Detect if user message matches an installed skill by keywords.
    * Returns full skill content for per-message injection, or null if no match.
    */
-  detectSkillMatch(userMessage: string): string | null {
+  async detectSkillMatch(userMessage: string): Promise<string | null> {
     if (!userMessage) return null;
 
     const skillsBase = join(homedir(), '.mama', 'skills');
@@ -613,7 +614,8 @@ export class PromptEnhancer {
     let state: Record<string, { enabled: boolean }> = {};
     try {
       if (existsSync(stateFile)) {
-        state = JSON.parse(readFileSync(stateFile, 'utf-8'));
+        const stateContent = await readFile(stateFile, 'utf-8');
+        state = JSON.parse(stateContent);
       }
     } catch {
       return null;
@@ -644,7 +646,7 @@ export class PromptEnhancer {
 
         let fileContent;
         try {
-          fileContent = readFileSync(mainFile, 'utf-8');
+          fileContent = await readFile(mainFile, 'utf-8');
         } catch {
           continue;
         }
@@ -653,7 +655,7 @@ export class PromptEnhancer {
         if (!fm.keywords.some((kw) => lower.includes(kw.toLowerCase()))) continue;
 
         console.log(`[PromptEnhancer] Skill matched: ${stateKey}`);
-        return this._loadDirSkillContent(skillDir, stateKey);
+        return await this._loadDirSkillContent(skillDir, stateKey);
       }
     }
 
@@ -675,7 +677,7 @@ export class PromptEnhancer {
 
       let content;
       try {
-        content = readFileSync(join(skillsBase, entry.name), 'utf-8');
+        content = await readFile(join(skillsBase, entry.name), 'utf-8');
       } catch {
         continue;
       }
@@ -729,10 +731,10 @@ export class PromptEnhancer {
     return null;
   }
 
-  private _loadDirSkillContent(skillDir: string, skillId: string): string | null {
+  private async _loadDirSkillContent(skillDir: string, skillId: string): Promise<string | null> {
     const mdFiles: Array<{ path: string; content: string }> = [];
 
-    const collect = (dir: string, prefix = '') => {
+    const collect = async (dir: string, prefix = '') => {
       let entries;
       try {
         entries = readdirSync(dir, { withFileTypes: true });
@@ -744,10 +746,11 @@ export class PromptEnhancer {
         const fullPath = join(dir, e.name);
         const relPath = prefix ? `${prefix}/${e.name}` : e.name;
         if (e.isDirectory()) {
-          collect(fullPath, relPath);
+          await collect(fullPath, relPath);
         } else if (e.isFile() && e.name.endsWith('.md') && !SKILL_EXCLUDED_FILES.has(e.name)) {
           try {
-            mdFiles.push({ path: relPath, content: readFileSync(fullPath, 'utf-8') });
+            const content = await readFile(fullPath, 'utf-8');
+            mdFiles.push({ path: relPath, content });
           } catch {
             /* skip */
           }
@@ -755,7 +758,7 @@ export class PromptEnhancer {
       }
     };
 
-    collect(skillDir);
+    await collect(skillDir);
     if (mdFiles.length === 0) return null;
 
     const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
@@ -781,7 +784,7 @@ export class PromptEnhancer {
     }
   }
 
-  private getCachedFile(filePath: string): string | null {
+  private async getCachedFile(filePath: string): Promise<string | null> {
     const cached = this.fileCache.get(filePath);
     const now = Date.now();
 
@@ -790,7 +793,7 @@ export class PromptEnhancer {
     }
 
     try {
-      const content = readFileSync(filePath, 'utf8');
+      const content = await readFile(filePath, 'utf8');
       this.fileCache.set(filePath, { content, loadedAt: now });
       return content;
     } catch {
@@ -798,13 +801,13 @@ export class PromptEnhancer {
     }
   }
 
-  private collectRulesFromDir(
+  private async collectRulesFromDir(
     dirPath: string,
     distance: number,
     rules: Array<{ path: string; content: string; distance: number }>,
     dedup: ContentDeduplicator,
     ruleContext?: RuleContext
-  ): void {
+  ): Promise<void> {
     if (!existsSync(dirPath)) {
       return;
     }
@@ -821,7 +824,7 @@ export class PromptEnhancer {
         }
 
         const rulePath = join(dirPath, file);
-        const rawContent = this.getCachedFile(rulePath);
+        const rawContent = await this.getCachedFile(rulePath);
         if (!rawContent?.trim()) {
           continue;
         }

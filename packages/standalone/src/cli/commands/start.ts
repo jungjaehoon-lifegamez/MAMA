@@ -1318,7 +1318,13 @@ export async function runAgentLoop(
       // getRecentDelegations: in-memory delegation history from DelegationManager
       graphHandlerOptions.getRecentDelegations = (limit = 20): DelegationHistoryEntry[] => {
         try {
-          return multiAgentHandler.getDelegationManager().getRecentDelegations(limit);
+          const delegationManager = multiAgentHandler.getDelegationManager();
+          if (!delegationManager) {
+            const logger = new DebugLogger('GraphAPI');
+            logger.warn('[GraphAPI] DelegationManager not available');
+            return [];
+          }
+          return delegationManager.getRecentDelegations(limit);
         } catch (err) {
           const logger = new DebugLogger('GraphAPI');
           logger.error('[GraphAPI] Failed to fetch recent delegations:', err);
@@ -1862,11 +1868,16 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   });
   console.log(`✓ Session API proxied to port ${EMBEDDING_PORT}`);
 
-  const publicDir = path.resolve(process.cwd(), 'public');
+  const publicDir = path.join(__dirname, '..', '..', '..', 'public');
 
   // Playground static serving + API
   const playgroundsDir = path.join(homedir(), '.mama', 'workspace', 'playgrounds');
-  mkdirSync(playgroundsDir, { recursive: true });
+  try {
+    mkdirSync(playgroundsDir, { recursive: true });
+  } catch (err) {
+    startLogger.warn(`Failed to create playgrounds directory: ${err}`);
+    return;
+  }
 
   // Seed built-in playgrounds from templates
   try {
@@ -1879,13 +1890,18 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         [];
       try {
         if (existsSync(indexPath)) {
-          index = JSON.parse(readFileSync(indexPath, 'utf-8'));
+          const parsed = JSON.parse(readFileSync(indexPath, 'utf-8'));
+          if (!Array.isArray(parsed)) {
+            throw new Error(`index.json must be an array, got ${typeof parsed}`);
+          }
+          index = parsed;
         }
       } catch (err) {
         startLogger.warn(`[seedBuiltinPlaygrounds] Failed to parse index.json, rebuilding: ${err}`);
         index = [];
       }
       const existingSlugs = new Set(index.map((e) => e.slug));
+      let indexRepaired = false;
 
       for (const file of pgEntries) {
         if (!file.endsWith('.html')) continue;
@@ -1908,10 +1924,11 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
             created_at: new Date().toISOString(),
           });
           existingSlugs.add(slug);
+          indexRepaired = true;
         }
       }
 
-      if (pgSynced > 0) {
+      if (pgSynced > 0 || indexRepaired) {
         writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
         console.log(`✓ Seeded ${pgSynced} built-in playground(s)`);
       }
@@ -1975,7 +1992,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       }
       res.json({ success: true });
     } catch (err) {
-      res.status(500).json({ error: `Failed to delete playground: ${err}` });
+      const safeMsg =
+        err instanceof Error ? err.message.replace(/\/home\/[^/]+/g, '~') : 'Unknown error';
+      res.status(500).json({ error: `Failed to delete playground: ${safeMsg}` });
     }
   });
   console.log('✓ Playground API available at /api/playgrounds');
@@ -2019,7 +2038,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const content = readFileSync(mdPath, 'utf-8');
       res.json({ content });
     } catch (err) {
-      res.status(500).json({ error: `Failed to read: ${err}` });
+      const safeMsg =
+        err instanceof Error ? err.message.replace(/\/home\/[^/]+/g, '~') : 'Unknown error';
+      res.status(500).json({ error: `Failed to read: ${safeMsg}` });
     }
   });
   console.log('✓ Workspace Skills API available at /api/workspace/skills');

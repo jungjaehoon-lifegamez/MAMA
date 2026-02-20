@@ -163,14 +163,23 @@ async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
  */
 function isPortInUse(port: number): boolean {
   try {
-    const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-    return output.length > 0;
-  } catch (err) {
-    logger.warn(`isPortInUse failed for port ${port}: ${err}`);
-    if (process.platform === 'win32') {
-      return false;
+    const result = execSync(`lsof -ti :${port}`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return result.trim().length > 0;
+  } catch (err: unknown) {
+    // lsof exits with code 1 when no process is listening (port is free)
+    if (
+      err instanceof Error &&
+      'status' in err &&
+      (err as NodeJS.ErrnoException & { status?: number }).status === 1
+    ) {
+      return false; // port is free
     }
-    return true;
+    // lsof unavailable (e.g., Windows) or unexpected error
+    logger.warn(`isPortInUse check failed for port ${port}: ${err}`);
+    return false;
   }
 }
 

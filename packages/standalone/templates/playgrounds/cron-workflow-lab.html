@@ -596,7 +596,7 @@ function showDetail(node) {
   const title = document.getElementById('dpTitle');
   const body = document.getElementById('dpBody');
 
-  title.innerHTML = `${ICONS[node.type]} ${esc(node.label)}`;
+  title.textContent = `${ICONS[node.type]} ${node.label}`;
   let html = `<div class="dp-field"><label class="dp-label">Name</label><input class="dp-input" id="nd-label" value="${esc(node.label)}"></div>`;
 
   switch(node.type) {

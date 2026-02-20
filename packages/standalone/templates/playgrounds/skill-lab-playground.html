@@ -901,7 +901,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
       var html = PRESETS.map(function(p) {
         var tc = detectToolchain(p.input);
         var libTag = tc ? '<div style="font-size:10px;color:var(--accent);margin-top:4px;font-weight:700;">'+esc(tc.lib)+'</div>' : '';
-        return '<div class="preset-card" data-preset="'+p.id+'" onclick="applyPreset(\''+p.id+'\')">'
+        return '<div class="preset-card" data-preset="'+esc(p.id)+'">'
           + '<div class="preset-icon">'+p.icon+'</div>'
           + '<div class="preset-name">'+esc(p.name)+'</div>'
           + '<div class="preset-desc">'+esc(p.desc)+'</div>'
@@ -909,6 +909,13 @@ You can also paste (Ctrl+V) a response into this area.</div>
           + '</div>';
       }).join('');
       document.getElementById('presetGrid').innerHTML = html;
+      // Event delegation for preset selection
+      document.querySelectorAll('.preset-card[data-preset]').forEach(function(card) {
+        card.addEventListener('click', function() {
+          var presetId = this.getAttribute('data-preset');
+          applyPreset(presetId);
+        });
+      });
     }
 
     function applyPreset(id) {
@@ -934,12 +941,19 @@ You can also paste (Ctrl+V) a response into this area.</div>
         else if (state.stepsDone[s]) cls += ' done';
         var numText = state.stepsDone[s] ? '\u2713' : String(i+1);
         var arrow = i < STEPS.length-1 ? '<span class="step-arrow">\u2192</span>' : '';
-        return '<div class="'+cls+'" onclick="goToStep(\''+s+'\')">'
+        return '<div class="'+cls+'" data-step="'+esc(s)+'">'
           + '<span class="num">'+numText+'</span>'
           + STEP_LABELS[s]
           + '</div>' + arrow;
       }).join('');
       document.getElementById('stepsBar').innerHTML = html;
+      // Event delegation for step navigation
+      document.querySelectorAll('.step-dot[data-step]').forEach(function(dot) {
+        dot.addEventListener('click', function() {
+          var stepName = this.getAttribute('data-step');
+          goToStep(stepName);
+        });
+      });
     }
 
     function goToStep(step) {

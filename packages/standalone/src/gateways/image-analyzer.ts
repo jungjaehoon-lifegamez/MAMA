@@ -1,14 +1,6 @@
 import { loadConfig } from '../cli/config/config-manager.js';
-import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 
-const { DebugLogger } = debugLogger as unknown as {
-  DebugLogger: new (context?: string) => {
-    debug: (...args: unknown[]) => void;
-    info: (...args: unknown[]) => void;
-    warn: (...args: unknown[]) => void;
-    error: (...args: unknown[]) => void;
-  };
-};
 const logger = new DebugLogger('ImageAnalyzer');
 
 // Default model for image analysis (vision-capable)
