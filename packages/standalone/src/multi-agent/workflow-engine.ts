@@ -19,7 +19,7 @@ import type {
   EphemeralAgentDef,
 } from './workflow-types.js';
 
-const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const DEFAULT_MAX_EPHEMERAL = 20;
 const DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -122,21 +122,26 @@ export class WorkflowEngine extends EventEmitter {
   }
 
   private extractWorkflowPlanBlock(response: string): string | null {
-    const openMatch = response.match(/```workflow_plan\b[^\n]*\n?/i);
+    const openMatch = response.match(/```workflow_plan\b[^\r\n]*\r?\n?/i);
     if (!openMatch || openMatch.index === undefined) {
       return null;
     }
 
     const openIndex = openMatch.index;
-    const closeIndex = response.indexOf('```', openIndex + openMatch[0].length);
-    return closeIndex === -1
-      ? response.slice(openIndex)
-      : response.slice(openIndex, closeIndex + 3);
+    const closeRegex = /\r?\n[ \t]*```[ \t]*(?:\r?\n|$)/g;
+    closeRegex.lastIndex = openIndex + openMatch[0].length;
+
+    const closeMatch = closeRegex.exec(response);
+    const closeIndex = closeMatch ? closeMatch.index + closeMatch[0].length : -1;
+
+    return closeIndex === -1 ? response.slice(openIndex) : response.slice(openIndex, closeIndex);
   }
 
   private extractWorkflowPlanCandidates(response: string): string[] {
     const candidates = new Set<string>();
-    const blockMatches = response.matchAll(/```workflow_plan\b[^\n]*\n?[\s\S]*?(?:```|$)/gi);
+    const blockMatches = response.matchAll(
+      /```workflow_plan\b[^\r\n]*\r?\n?[\s\S]*?(?:\r?\n[ \t]*```[ \t]*(?:\r?\n|$)|$)/gi
+    );
     for (const match of blockMatches) {
       if (match[0]) {
         candidates.add(match[0].trim());
@@ -159,9 +164,9 @@ export class WorkflowEngine extends EventEmitter {
   }
 
   private stripWorkflowFence(block: string): string {
-    let withoutHeader = block.replace(/^```workflow_plan\b[^\n]*\n?/i, '');
-    withoutHeader = withoutHeader.replace(/^\n*```json\s*\n?/i, '');
-    withoutHeader = withoutHeader.replace(/\n*```\s*$/i, '');
+    let withoutHeader = block.replace(/^```workflow_plan\b[^\r\n]*\r?\n?/i, '');
+    withoutHeader = withoutHeader.replace(/^\r?\n*```json\s*\r?\n?/i, '');
+    withoutHeader = withoutHeader.replace(/\r?\n*```\s*$/i, '');
     return withoutHeader.trim();
   }
 

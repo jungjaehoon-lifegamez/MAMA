@@ -26,6 +26,10 @@ import {
   type AgentResponse,
   type MultiAgentResponse,
 } from './multi-agent-base.js';
+import { PromptEnhancer } from '../agent/prompt-enhancer.js';
+import type { RuleContext } from '../agent/yaml-frontmatter.js';
+import { ToolStatusTracker } from '../gateways/tool-status-tracker.js';
+import type { PlatformAdapter } from '../gateways/tool-status-tracker.js';
 
 export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
 
@@ -64,6 +68,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   /** Tracks the process used for history seeding per agent:channel */
   private historySeedProcess = new Map<string, AgentRuntimeProcess>();
 
+  private promptEnhancer: PromptEnhancer;
+
   constructor(
     config: MultiAgentConfig,
     processOptions: Partial<PersistentProcessOptions> = {},
@@ -71,6 +77,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   ) {
     super(config, processOptions, runtimeOptions);
     this.multiBotManager = new SlackMultiBotManager(config);
+    this.promptEnhancer = new PromptEnhancer();
 
     // Start periodic cleanup of processed mentions (every 60 seconds)
     this.mentionCleanupInterval = setInterval(() => {
@@ -385,8 +392,39 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     // Build context for this agent
     const agentContext = this.sharedContext.buildContextForAgent(context.channelId, agentId, 5);
 
+    // Enhance with skill detection + keyword instructions
+    const workspacePath =
+      globalThis.process?.env?.MAMA_WORKSPACE || globalThis.process?.env?.HOME || '/tmp';
+    const ruleContext: RuleContext = {
+      agentId,
+      tier: agent.tier,
+      channelId: context.channelId,
+    };
+    const enhanced = await this.promptEnhancer.enhance(cleanMessage, workspacePath, ruleContext);
+
     // Build full prompt with context.
     let fullPrompt = cleanMessage;
+
+    // Inject matched skill content into user message
+    if (enhanced.skillContent) {
+      const safeSkillContent = enhanced.skillContent.replace(
+        /<\/system-reminder>/gi,
+        '</system\\u2011reminder>'
+      );
+      fullPrompt = `<system-reminder>\n${safeSkillContent}\n</system-reminder>\n\n${fullPrompt}`;
+      this.logger.log(
+        `[SkillMatch] Injecting skill into Slack agent ${agentId}: ${enhanced.skillContent.length} chars`
+      );
+    }
+    if (enhanced.keywordInstructions) {
+      fullPrompt = `${enhanced.keywordInstructions}\n\n${fullPrompt}`;
+      this.logger.log(
+        `[PromptEnhancer] Keyword detected for Slack agent ${agentId}: ${enhanced.keywordInstructions.length} chars`
+      );
+    }
+    if (enhanced.rulesContent) {
+      fullPrompt = `## Project Rules\n${enhanced.rulesContent}\n\n${fullPrompt}`;
+    }
 
     // Track work start (completed in finally block)
     this.workTracker.startWork(agentId, context.channelId, cleanMessage);
@@ -432,12 +470,38 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         `[MultiAgentSlack] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`
       );
 
+      // Create tool status tracker for real-time progress
+      let tracker: ToolStatusTracker | null = null;
+      if (this.mainWebClient) {
+        const webClient = this.mainWebClient;
+        const channelId = context.channelId;
+        const slackAdapter: PlatformAdapter = {
+          postPlaceholder: async (content: string) => {
+            const res = await webClient.chat.postMessage({
+              channel: channelId,
+              text: content,
+            });
+            return res.ts ?? null;
+          },
+          editPlaceholder: async (handle: string, content: string) => {
+            await webClient.chat.update({ channel: channelId, ts: handle, text: content });
+          },
+          deletePlaceholder: async (handle: string) => {
+            await webClient.chat.delete({ channel: channelId, ts: handle });
+          },
+        };
+        tracker = new ToolStatusTracker(slackAdapter, {
+          throttleMs: 1500,
+          initialDelayMs: 3000,
+        });
+      }
+
       // Send message and get response (with timeout, properly cleaned up)
       let timeoutHandle: ReturnType<typeof setTimeout>;
       let result;
       try {
         result = await Promise.race([
-          process.sendMessage(fullPrompt),
+          process.sendMessage(fullPrompt, tracker?.toPromptCallbacks()),
           new Promise<never>((_, reject) => {
             timeoutHandle = setTimeout(
               () =>
@@ -448,6 +512,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         ]);
       } finally {
         clearTimeout(timeoutHandle!);
+        await tracker?.cleanup();
       }
 
       // Check for workflow plan BEFORE executing tool calls (priority)
@@ -696,9 +761,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         duration: 0,
       };
     } finally {
-      if (process) {
-        this.processManager.releaseProcess(agentId, process);
-      }
       this.workTracker.completeWork(agentId, context.channelId);
     }
   }

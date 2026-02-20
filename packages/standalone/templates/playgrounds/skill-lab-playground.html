@@ -1,0 +1,1625 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Skill Lab</title>
+  <style>
+    :root {
+      --bg: #f4f6fb;
+      --panel: #ffffff;
+      --soft: #f7f9fd;
+      --line: #dce3ef;
+      --text: #111827;
+      --muted: #5c6b82;
+      --accent: #0d6a62;
+      --accent-soft: #d7f1ec;
+      --accent-dark: #094f49;
+      --warn: #b76b00;
+      --warn-soft: #fff4e0;
+      --danger: #b42318;
+      --danger-soft: #ffeaea;
+      --ok: #16794a;
+      --ok-soft: #e2f9ec;
+      --radius: 12px;
+      --shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      font-family: 'Pretendard', 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      height: 100vh;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .sidebar-header h1 { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; }
+    .sidebar-header p { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .new-skill-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: calc(100% - 24px);
+      margin: 12px 12px 8px;
+      padding: 10px 14px;
+      border: 2px dashed var(--accent);
+      border-radius: var(--radius);
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .new-skill-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
+    .skill-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+    .skill-item {
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.12s;
+      display: grid;
+      gap: 3px;
+      margin-bottom: 2px;
+    }
+    .skill-item:hover { background: var(--soft); }
+    .skill-item.active { background: var(--accent-soft); }
+    .skill-item .skill-name {
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .skill-item .skill-meta { font-size: 11px; color: var(--muted); }
+    .badge-sm {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .badge-draft { background: var(--warn-soft); color: var(--warn); }
+    .badge-published { background: var(--ok-soft); color: var(--ok); }
+
+    /* Main */
+    .main { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Steps bar */
+    .steps-bar {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding: 14px 20px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
+    }
+    .step-dot {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 6px 12px;
+      border-radius: 999px;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .step-dot:hover { background: var(--soft); }
+    .step-dot.active { background: var(--accent-soft); color: var(--accent-dark); }
+    .step-dot.done { color: var(--ok); }
+    .step-dot .num {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 800;
+      background: var(--line); color: var(--muted);
+      flex-shrink: 0;
+    }
+    .step-dot.active .num { background: var(--accent); color: white; }
+    .step-dot.done .num { background: var(--ok); color: white; }
+    .step-arrow { color: var(--line); font-size: 14px; margin: 0 4px; flex-shrink: 0; }
+
+    /* Content */
+    .content { flex: 1; overflow-y: auto; padding: 20px; }
+    .step-panel { display: none; }
+    .step-panel.active { display: block; }
+
+    /* Cards */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      margin-bottom: 16px;
+    }
+    .card-head {
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 800;
+      border-bottom: 1px solid var(--line);
+    }
+    .card-body { padding: 16px; }
+
+    /* Form */
+    .field { margin-bottom: 14px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label {
+      display: block;
+      font-size: 12px; font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    input[type="text"], textarea, select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font: inherit;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--soft);
+      transition: border-color 0.15s;
+    }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+
+    /* Presets */
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .preset-card {
+      border: 2px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: center;
+    }
+    .preset-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .preset-card.selected { border-color: var(--accent); background: var(--accent-soft); }
+    .preset-card .preset-icon { font-size: 28px; margin-bottom: 6px; }
+    .preset-card .preset-name { font-size: 13px; font-weight: 700; }
+    .preset-card .preset-desc { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+    /* Prompt/Skill preview */
+    .prompt-box {
+      background: #0f1a2e;
+      color: #d7e6ff;
+      border-radius: var(--radius);
+      padding: 16px;
+      font-family: 'IBM Plex Mono', 'D2Coding', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .skill-preview {
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px;
+      font-family: 'IBM Plex Mono', 'D2Coding', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    /* Timeline */
+    .timeline { display: grid; gap: 8px; }
+    .timeline-item { display: grid; grid-template-columns: 40px 1fr; gap: 10px; }
+    .timeline-dot { display: flex; flex-direction: column; align-items: center; }
+    .timeline-dot .dot {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: var(--accent); border: 2px solid var(--accent-soft);
+    }
+    .timeline-dot .line-seg { width: 2px; flex: 1; background: var(--line); margin-top: 4px; }
+    .timeline-content {
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+    .timeline-content .ver { font-weight: 800; }
+    .timeline-content .summary { color: var(--muted); margin-top: 3px; }
+
+    /* Chat */
+    .chat-area {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--soft);
+      max-height: 300px;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .chat-msg {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 13px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .chat-msg.user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .chat-msg.system {
+      align-self: flex-start;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-bottom-left-radius: 4px;
+    }
+    .chat-input-row { display: flex; gap: 8px; margin-top: 8px; }
+    .chat-input-row input { flex: 1; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.12s;
+      background: var(--panel);
+      color: var(--text);
+    }
+    .btn:hover { background: var(--soft); }
+    .btn-accent { background: var(--accent); color: white; border-color: var(--accent-dark); }
+    .btn-accent:hover { background: var(--accent-dark); }
+    .btn-ok { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+    .btn-warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+    .btn-danger { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    /* Empty */
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+    .empty-state h2 { font-size: 18px; color: var(--text); margin-bottom: 6px; }
+    .empty-state p { font-size: 13px; }
+
+    /* Status */
+    .status-bar {
+      padding: 8px 20px;
+      background: var(--panel);
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .status-bar .dot-indicator {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+    }
+
+    /* Drop zone */
+    .dropzone {
+      border: 2px dashed var(--line);
+      border-radius: var(--radius);
+      padding: 28px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: var(--soft);
+      margin-bottom: 16px;
+      position: relative;
+    }
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .dropzone .drop-icon { font-size: 36px; margin-bottom: 8px; }
+    .dropzone .drop-main { font-size: 14px; font-weight: 700; color: var(--text); }
+    .dropzone .drop-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .dropzone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .file-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      background: var(--accent-soft);
+      margin-bottom: 16px;
+    }
+    .file-info .file-icon { font-size: 24px; }
+    .file-info .file-detail { flex: 1; }
+    .file-info .file-name { font-size: 13px; font-weight: 700; }
+    .file-info .file-meta { font-size: 11px; color: var(--muted); }
+    .file-info .file-remove {
+      background: none;
+      border: none;
+      color: var(--danger);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px;
+    }
+
+    .sidebar-toggle {
+      display: none;
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 1000;
+      padding: 10px 16px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: var(--radius);
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+
+    @media (max-width: 768px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        width: 260px;
+        z-index: 999;
+        box-shadow: 2px 0 12px rgba(0,0,0,0.15);
+      }
+      .sidebar.open { display: flex; }
+      .sidebar-toggle { display: block; }
+      .two-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <button class="sidebar-toggle" onclick="toggleSidebar()">☰ Skills</button>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h1>Skill Lab</h1>
+        <p>Create · Edit · Validate skills</p>
+      </div>
+      <button class="new-skill-btn" onclick="newSkill()">+ Create New Skill</button>
+      <div class="skill-list" id="skillList"></div>
+    </aside>
+
+    <div class="main">
+      <div class="steps-bar" id="stepsBar"></div>
+
+      <div class="content" id="contentArea">
+        <!-- Step 1: Define -->
+        <div class="step-panel" id="step-define">
+          <div class="card">
+            <div class="card-head">What would you like to automate?</div>
+            <div class="card-body">
+              <!-- Drop zone -->
+              <div class="dropzone" id="dropZone">
+                <input type="file" id="fileInput" />
+                <div class="drop-icon">📁</div>
+                <div class="drop-main">Drag a file here or click to select</div>
+                <div class="drop-sub">.pptx .docx .xlsx .csv .pdf etc. — Tool chain is detected automatically</div>
+              </div>
+              <div id="fileInfoArea"></div>
+
+              <div class="preset-grid" id="presetGrid"></div>
+              <div class="field">
+                <label>Purpose</label>
+                <textarea id="purposeInput" placeholder="e.g. Translate a Japanese PPTX to English and save without breaking the layout"></textarea>
+                <div class="hint">Write freely in natural language. The LLM will structure it.</div>
+              </div>
+              <div class="two-col">
+                <div class="field">
+                  <label>Input File / Data</label>
+                  <input type="text" id="inputTypeField" placeholder="e.g. .pptx, .csv, API response" />
+                </div>
+                <div class="field">
+                  <label>Output Format</label>
+                  <input type="text" id="outputTypeField" placeholder="e.g. translated .pptx, cleaned .csv" />
+                </div>
+              </div>
+              <div class="field">
+                <label>Constraints / Notes (optional)</label>
+                <textarea id="constraintField" rows="3" placeholder="e.g. Layout must not break, do not translate proper nouns, glossary required"></textarea>
+              </div>
+              <div class="btn-row">
+                <button class="btn btn-accent" onclick="goToStep('prompt')">Generate Prompt →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Prompt -->
+        <div class="step-panel" id="step-prompt">
+          <div class="card">
+            <div class="card-head">Detected Tool Chain</div>
+            <div class="card-body" id="toolchainInfo">
+              <div style="color:var(--muted);font-size:12px;">Required tools are automatically detected based on input file type.</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">Generated Prompt</div>
+            <div class="card-body">
+              <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+                This prompt includes file reception paths, required libraries, and processing script guides. You can edit it directly before sending.
+              </p>
+              <div class="prompt-box" id="promptPreview" contenteditable="true"></div>
+              <div class="btn-row">
+                <button class="btn" onclick="goToStep('define')">← Edit</button>
+                <button class="btn" onclick="copyPrompt()">Copy</button>
+                <button class="btn btn-accent" onclick="sendPrompt()">Send to Chat →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Review -->
+        <div class="step-panel" id="step-review">
+          <div class="two-col">
+            <div class="card">
+              <div class="card-head">SKILL.md Draft</div>
+              <div class="card-body">
+                <div class="skill-preview" id="skillPreview">Waiting for LLM response...
+
+After sending to Chat, the generated SKILL.md will appear here.
+You can also paste (Ctrl+V) a response into this area.</div>
+                <div class="btn-row">
+                  <button class="btn" onclick="copySkill()">Copy SKILL.md</button>
+                  <button class="btn" onclick="pasteSkillManual()">Paste</button>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head">Validation Results</div>
+              <div class="card-body">
+                <div id="validationResults">
+                  <div style="color:var(--muted);font-size:13px;">Validation runs automatically once a SKILL.md is loaded.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn" onclick="goToStep('prompt')">← Prompt</button>
+            <button class="btn btn-accent" onclick="goToStep('refine')">Add Feedback →</button>
+            <button class="btn btn-ok" onclick="goToStep('publish')">Go to Publish →</button>
+          </div>
+        </div>
+
+        <!-- Step 4: Refine -->
+        <div class="step-panel" id="step-refine">
+          <div class="card">
+            <div class="card-head">Feedback Loop</div>
+            <div class="card-body">
+              <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+                Enter your changes in natural language. A revision prompt will be generated and sent to the LLM.
+              </p>
+              <div class="chat-area" id="chatArea"></div>
+              <div class="chat-input-row">
+                <input type="text" id="feedbackInput" placeholder="e.g. Change tone to formal, add retry logic" onkeydown="if(event.key==='Enter')sendFeedback()" />
+                <button class="btn btn-accent" onclick="sendFeedback()">Send</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">Current SKILL.md <button class="btn" style="float:right;font-size:11px;padding:2px 10px;" onclick="toggleRefinePreview()">Collapse/Expand</button></div>
+            <div class="card-body" id="refinePreviewBody">
+              <pre id="refineSkillPreview" style="max-height:300px;overflow:auto;font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;white-space:pre-wrap;word-break:break-all;"></pre>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">Version History</div>
+            <div class="card-body">
+              <div class="timeline" id="versionTimeline"></div>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn" onclick="goToStep('review')">← View Draft</button>
+            <button class="btn btn-ok" onclick="goToStep('publish')">Go to Publish →</button>
+          </div>
+        </div>
+
+        <!-- Step 5: Publish -->
+        <div class="step-panel" id="step-publish">
+          <div class="card">
+            <div class="card-head">Final Review & Publish</div>
+            <div class="card-body">
+              <div class="two-col">
+                <div>
+                  <div class="field">
+                    <label>Skill Name</label>
+                    <input type="text" id="publishName" />
+                  </div>
+                  <div class="field">
+                    <label>Save Path</label>
+                    <input type="text" id="publishPath" />
+                  </div>
+                  <div class="field">
+                    <label>Version</label>
+                    <input type="text" id="publishVersion" readonly />
+                  </div>
+                </div>
+                <div>
+                  <div class="field">
+                    <label>Iterations</label>
+                    <div id="publishIterations" style="font-size:24px;font-weight:800;color:var(--accent);padding:8px 0;">0</div>
+                  </div>
+                  <div class="field">
+                    <label>Status</label>
+                    <div id="publishStatus"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="field" style="margin-top:16px;">
+                <label>Final SKILL.md</label>
+                <div class="skill-preview" id="finalSkillPreview" style="max-height:300px;"></div>
+              </div>
+              <div class="btn-row">
+                <button class="btn" onclick="goToStep('refine')">← Continue Editing</button>
+                <button class="btn btn-ok" onclick="publishSkill()">Approve & Publish</button>
+                <button class="btn btn-accent" onclick="sendSaveCommand()">Save File → Chat</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Empty state -->
+        <div class="step-panel active" id="step-empty">
+          <div class="empty-state">
+            <div class="icon">🧪</div>
+            <h2>Skill Lab</h2>
+            <p>Select an existing skill from the left, or create a new one.</p>
+            <button class="btn btn-accent" style="margin-top:16px;" onclick="newSkill()">+ Create New Skill</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div class="dot-indicator" id="statusDot"></div>
+        <span id="statusText">Ready</span>
+        <span style="margin-left:auto;" id="statusVersion"></span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggleSidebar() {
+      var sidebar = document.getElementById('sidebar');
+      if (sidebar) sidebar.classList.toggle('open');
+    }
+
+    var STEPS = ['define','prompt','review','refine','publish'];
+    var STEP_LABELS = {define:'Define',prompt:'Prompt',review:'Review Draft',refine:'Feedback',publish:'Publish'};
+
+    // --- Tool chain registry: file type -> processing tools ---
+    var TOOLCHAINS = {
+      '.pptx': {
+        lib: 'python-pptx',
+        install: 'pip install python-pptx',
+        runtime: 'python3',
+        fileReceive: 'webchat upload / Discord-Slack attach / local path',
+        inboundPath: '~/.mama/workspace/media/inbound/',
+        processing: [
+          'Extract text per slide using python-pptx (shape.text_frame)',
+          'Call LLM translation or translation API',
+          'Copy original PPTX and replace with translated text',
+          'Verify layout/font/position preservation'
+        ],
+        outputPath: '~/.mama/workspace/media/outbound/',
+        scriptTemplate: 'from pptx import Presentation\\nprs = Presentation(input_path)\\nfor slide in prs.slides:\\n    for shape in slide.shapes:\\n        if shape.has_text_frame:\\n            for para in shape.text_frame.paragraphs:\\n                # translate para.text\\nprs.save(output_path)',
+        risks: ['Font embedding missing may cause garbled text', 'Text length changes may cause layout overflow', 'Text inside charts/SmartArt requires separate handling']
+      },
+      '.csv': {
+        lib: 'pandas',
+        install: 'pip install pandas',
+        runtime: 'python3',
+        fileReceive: 'webchat upload / local path',
+        inboundPath: '~/.mama/workspace/media/inbound/',
+        processing: [
+          'Load with pandas.read_csv()',
+          'Remove duplicates (drop_duplicates)',
+          'Handle NULLs (fillna / dropna)',
+          'Normalize types (astype)',
+          'Save results (to_csv)'
+        ],
+        outputPath: '~/.mama/workspace/media/outbound/',
+        scriptTemplate: 'import pandas as pd\\ndf = pd.read_csv(input_path)\\ndf = df.drop_duplicates()\\ndf = df.dropna(subset=required_cols)\\ndf.to_csv(output_path, index=False)',
+        risks: ['Encoding issues (UTF-8/EUC-KR)', 'Large files may exceed memory', 'Column type auto-inference errors']
+      },
+      '.docx': {
+        lib: 'python-docx',
+        install: 'pip install python-docx',
+        runtime: 'python3',
+        fileReceive: 'webchat upload / local path',
+        inboundPath: '~/.mama/workspace/media/inbound/',
+        processing: [
+          'Load document with python-docx',
+          'Extract/transform text per paragraph',
+          'Preserve table/list structure',
+          'Maintain image paths'
+        ],
+        outputPath: '~/.mama/workspace/media/outbound/',
+        scriptTemplate: 'from docx import Document\\ndoc = Document(input_path)\\nfor para in doc.paragraphs:\\n    # process para.text\\ndoc.save(output_path)',
+        risks: ['Complex formatting (headers/footers/footnotes) may be lost', 'Image reference path changes may cause breakage']
+      },
+      '.xlsx': {
+        lib: 'openpyxl',
+        install: 'pip install openpyxl',
+        runtime: 'python3',
+        fileReceive: 'webchat upload / local path',
+        inboundPath: '~/.mama/workspace/media/inbound/',
+        processing: [
+          'Load with openpyxl.load_workbook()',
+          'Process data per sheet/cell',
+          'Preserve formulas/formatting',
+          'Save results'
+        ],
+        outputPath: '~/.mama/workspace/media/outbound/',
+        scriptTemplate: 'from openpyxl import load_workbook\\nwb = load_workbook(input_path)\\nfor sheet in wb.sheetnames:\\n    ws = wb[sheet]\\n    # process cells\\nwb.save(output_path)',
+        risks: ['Macros (.xlsm) not supported', 'Formula language locale differences', 'Chart data requires separate handling']
+      },
+      '.pdf': {
+        lib: 'pymupdf (fitz)',
+        install: 'pip install pymupdf',
+        runtime: 'python3',
+        fileReceive: 'webchat upload / local path',
+        inboundPath: '~/.mama/workspace/media/inbound/',
+        processing: [
+          'Load PDF with fitz.open()',
+          'Extract text per page',
+          'Extract images (optional)',
+          'Convert to markdown/text'
+        ],
+        outputPath: '~/.mama/workspace/media/outbound/',
+        scriptTemplate: 'import fitz\\ndoc = fitz.open(input_path)\\nfor page in doc:\\n    text = page.get_text()\\n    # process text',
+        risks: ['Scanned PDFs require OCR (tesseract)', 'Table structure extraction may be inaccurate', 'Encrypted PDFs cannot be processed']
+      }
+    };
+
+    function detectToolchain(inputType) {
+      if (!inputType) return null;
+      var lower = inputType.toLowerCase();
+      var keys = Object.keys(TOOLCHAINS);
+      for (var i = 0; i < keys.length; i++) {
+        if (lower.indexOf(keys[i]) >= 0) return TOOLCHAINS[keys[i]];
+      }
+      return null;
+    }
+
+    var PRESETS = [
+      {id:'pptx-translate',icon:'\uD83D\uDCCA',name:'PPTX Translation',desc:'Automate slide translation',
+        purpose:'Translate a Japanese PPTX to English, preserve layout',input:'.pptx',output:'translated .pptx',
+        constraints:'No layout breakage\nKeep proper nouns as-is\nGlossary support'},
+      {id:'csv-clean',icon:'\uD83D\uDCCB',name:'CSV Cleanup',desc:'Automate data cleaning',
+        purpose:'Remove duplicates, handle NULLs, normalize types in a CSV file',input:'.csv',output:'cleaned .csv',
+        constraints:'Preserve original column order\nNo data loss'},
+      {id:'doc-convert',icon:'\uD83D\uDCC4',name:'Document Conversion',desc:'Automate format conversion',
+        purpose:'Convert between DOCX/MD/HTML, preserve styles',input:'.docx, .md, .html',output:'converted document',
+        constraints:'Maintain image paths\nPreserve table/list structure'},
+      {id:'xlsx-process',icon:'\uD83D\uDCCA',name:'Excel Processing',desc:'Automate spreadsheets',
+        purpose:'Process, translate, and analyze Excel data',input:'.xlsx',output:'processed .xlsx',
+        constraints:'Preserve formulas\nMaintain formatting\nPreserve sheet structure'},
+      {id:'pdf-extract',icon:'\uD83D\uDCC3',name:'PDF Extraction',desc:'Extract PDF text/images',
+        purpose:'Extract text/tables/images from PDF and convert',input:'.pdf',output:'extracted .md or .txt',
+        constraints:'Preserve table structure as much as possible\nMaintain page order'},
+      {id:'blank',icon:'\uD83C\uDD95',name:'Blank Canvas',desc:'Start from scratch',
+        purpose:'',input:'',output:'',constraints:''}
+    ];
+
+    var FILE_ICONS = {'.pptx':'\uD83D\uDCCA','.csv':'\uD83D\uDCCB','.docx':'\uD83D\uDCC4','.xlsx':'\uD83D\uDCCA','.pdf':'\uD83D\uDCC3','.md':'\uD83D\uDCDD','.html':'\uD83C\uDF10','.txt':'\uD83D\uDCC4'};
+
+    var state = {
+      skills: [],
+      activeSkillId: null,
+      currentStep: 'empty',
+      stepsDone: {},
+      version: {major:1, minor:0, patch:0},
+      history: [],
+      chatLog: [],
+      skillContent: '',
+      iterations: 0,
+      published: false,
+      droppedFile: null
+    };
+
+    function loadSkillList() {
+      var saved = [];
+      try { saved = JSON.parse(localStorage.getItem('skillLab_skills') || '[]'); } catch(e){}
+
+      Promise.all([
+        fetch('/api/workspace/skills').then(function(r){ return r.json(); }).catch(function(){ return {skills:[]}; }),
+        fetch('/api/skills').then(function(r){ return r.json(); }).catch(function(){ return {skills:[]}; })
+      ]).then(function(results) {
+        var workspaceSkills = results[0].skills || [];
+        var registrySkills = results[1].skills || [];
+
+        var ids = {};
+        saved.forEach(function(s){ ids[s.id] = true; });
+
+        workspaceSkills.forEach(function(s) {
+          if (!ids[s.id]) {
+            saved.push({id: s.id, name: s.id, status: 'published', version: 'v1.0.0', path: s.path, _source: 'workspace'});
+            ids[s.id] = true;
+          }
+        });
+
+        registrySkills.forEach(function(s) {
+          if (!ids[s.id]) {
+            saved.push({
+              id: s.id, name: s.name || s.id, status: 'published',
+              version: 'v1.0.0', path: '',
+              _source: s.source || 'mama', _registrySource: s.source || 'mama'
+            });
+            ids[s.id] = true;
+          }
+        });
+
+        state.skills = saved;
+        persistSkills();
+        renderSkillList();
+      });
+    }
+
+    function persistSkills() {
+      try { localStorage.setItem('skillLab_skills', JSON.stringify(state.skills)); } catch(e){}
+    }
+
+    function persistSkillContent(id, content) {
+      if (!id || !content) return;
+      try { localStorage.setItem('skillLab_content_'+id, content); } catch(e){}
+    }
+
+    function loadSkillContent(id) {
+      try { return localStorage.getItem('skillLab_content_'+id) || ''; } catch(e){ return ''; }
+    }
+
+    function renderSkillList() {
+      var html = state.skills.map(function(s) {
+        var cls = s.id === state.activeSkillId ? 'skill-item active' : 'skill-item';
+        var badge = s.status === 'published'
+          ? '<span class="badge-sm badge-published">published</span>'
+          : '<span class="badge-sm badge-draft">draft</span>';
+        var sourceTag = s._registrySource
+          ? ' <span style="font-size:9px;color:var(--accent);font-weight:700;">'+esc(s._registrySource)+'</span>'
+          : '';
+        return '<div class="'+cls+'" data-skill-id="'+esc(s.id)+'" role="button" tabindex="0">'
+          + '<div class="skill-name">'+esc(s.name)+' '+badge+sourceTag+'</div>'
+          + '<div class="skill-meta">'+esc(s.version)+' \u00B7 '+esc(s.path||s._registrySource||'')+'</div>'
+          + '</div>';
+      }).join('');
+      document.getElementById('skillList').innerHTML = html;
+      // Event delegation for skill selection
+      document.querySelectorAll('.skill-item[data-skill-id]').forEach(function(item) {
+        item.addEventListener('click', function() {
+          var skillId = this.getAttribute('data-skill-id');
+          selectSkill(skillId);
+        });
+        item.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.click();
+          }
+        });
+      });
+    }
+
+    function selectSkill(id) {
+      var skill = state.skills.find(function(s){return s.id===id;});
+      if (!skill) return;
+      state.activeSkillId = id;
+      renderSkillList();
+
+      var saved = loadSkillContent(id);
+      if (saved) {
+        state.skillContent = saved;
+      } else if (skill._registrySource) {
+        state.skillContent = 'Loading file...';
+        var src = encodeURIComponent(skill._registrySource);
+        fetch('/api/skills/'+encodeURIComponent(id)+'/readme?source='+src)
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            if (state.activeSkillId !== id) return; // selection changed
+            if (data.content) {
+              state.skillContent = data.content;
+              persistSkillContent(id, data.content);
+              if (state.currentStep === 'review') {
+                document.getElementById('skillPreview').textContent = state.skillContent;
+              }
+              if (state.currentStep === 'publish') renderPublish();
+              updateStatus('Skill loaded', skill.version);
+            }
+          })
+          .catch(function(){ state.skillContent = '(Failed to read file)'; });
+      } else if (skill.path) {
+        state.skillContent = 'Loading file...';
+        fetch('/api/workspace/skills/'+encodeURIComponent(id)+'/content')
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            if (state.activeSkillId !== id) return; // selection changed
+            if (data.content) {
+              state.skillContent = data.content;
+              persistSkillContent(id, data.content);
+              if (state.currentStep === 'review') {
+                document.getElementById('skillPreview').textContent = state.skillContent;
+              }
+              if (state.currentStep === 'publish') renderPublish();
+              updateStatus('Skill loaded', skill.version);
+            }
+          })
+          .catch(function(){ state.skillContent = '(Failed to read file)'; });
+      } else {
+        state.skillContent = '(No skill content)';
+      }
+      state.currentStep = 'review';
+      state.stepsDone = {define:true, prompt:true};
+      state.version = parseVersion(skill.version);
+      state.iterations = 0;
+      state.published = skill.status === 'published';
+      state.chatLog = [{role:'system',text:'Existing skill "'+skill.name+'" selected. Enter your changes.'}];
+      state.history = [{ver:skill.version, summary:'Existing version', time:now()}];
+
+      renderSteps();
+      showStep('review');
+      document.getElementById('skillPreview').textContent = state.skillContent;
+      document.getElementById('promptPreview').textContent = saved ? '(Loaded from cache)' : '(File read request sent)';
+      updateStatus('Skill loaded: '+skill.name, skill.version);
+    }
+
+    function newSkill() {
+      var id = 'skill-'+Date.now();
+      state.activeSkillId = id;
+      state.currentStep = 'define';
+      state.stepsDone = {};
+      state.version = {major:1,minor:0,patch:0};
+      state.history = [];
+      state.chatLog = [];
+      state.skillContent = '';
+      state.iterations = 0;
+      state.published = false;
+
+      state.skills.push({id: id, name: id, status: 'draft', version: 'v1.0.0', path: ''});
+      persistSkills();
+
+      document.getElementById('purposeInput').value = '';
+      document.getElementById('inputTypeField').value = '';
+      document.getElementById('outputTypeField').value = '';
+      document.getElementById('constraintField').value = '';
+      state.droppedFile = null;
+      renderFileInfo();
+      clearPresetSelection();
+      renderSkillList();
+      renderSteps();
+      showStep('define');
+      updateStatus('New skill creation started', 'v1.0.0');
+    }
+
+    function renderPresets() {
+      var html = PRESETS.map(function(p) {
+        var tc = detectToolchain(p.input);
+        var libTag = tc ? '<div style="font-size:10px;color:var(--accent);margin-top:4px;font-weight:700;">'+esc(tc.lib)+'</div>' : '';
+        return '<div class="preset-card" data-preset="'+esc(p.id)+'" role="button" tabindex="0">'
+          + '<div class="preset-icon">'+p.icon+'</div>'
+          + '<div class="preset-name">'+esc(p.name)+'</div>'
+          + '<div class="preset-desc">'+esc(p.desc)+'</div>'
+          + libTag
+          + '</div>';
+      }).join('');
+      document.getElementById('presetGrid').innerHTML = html;
+      // Event delegation for preset selection
+      document.querySelectorAll('.preset-card[data-preset]').forEach(function(card) {
+        card.addEventListener('click', function() {
+          var presetId = this.getAttribute('data-preset');
+          applyPreset(presetId);
+        });
+        card.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.click();
+          }
+        });
+      });
+    }
+
+    function applyPreset(id) {
+      var p = PRESETS.find(function(x){return x.id===id;});
+      if (!p) return;
+      document.getElementById('purposeInput').value = p.purpose;
+      document.getElementById('inputTypeField').value = p.input;
+      document.getElementById('outputTypeField').value = p.output;
+      document.getElementById('constraintField').value = p.constraints;
+      clearPresetSelection();
+      var el = document.querySelector('[data-preset="'+id+'"]');
+      if (el) el.classList.add('selected');
+    }
+
+    function clearPresetSelection() {
+      document.querySelectorAll('.preset-card').forEach(function(el){el.classList.remove('selected');});
+    }
+
+    function renderSteps() {
+      var html = STEPS.map(function(s, i) {
+        var cls = 'step-dot';
+        if (s === state.currentStep) cls += ' active';
+        else if (state.stepsDone[s]) cls += ' done';
+        var numText = state.stepsDone[s] ? '\u2713' : String(i+1);
+        var arrow = i < STEPS.length-1 ? '<span class="step-arrow">\u2192</span>' : '';
+        return '<div class="'+cls+'" data-step="'+esc(s)+'" role="button" tabindex="0">'
+          + '<span class="num">'+numText+'</span>'
+          + STEP_LABELS[s]
+          + '</div>' + arrow;
+      }).join('');
+      document.getElementById('stepsBar').innerHTML = html;
+      // Event delegation for step navigation
+      document.querySelectorAll('.step-dot[data-step]').forEach(function(dot) {
+        dot.addEventListener('click', function() {
+          var stepName = this.getAttribute('data-step');
+          goToStep(stepName);
+        });
+        dot.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.click();
+          }
+        });
+      });
+    }
+
+    function goToStep(step) {
+      if (state.currentStep !== 'empty' && state.currentStep !== step) {
+        state.stepsDone[state.currentStep] = true;
+      }
+      state.currentStep = step;
+      if (step === 'prompt') buildPrompt();
+      if (step === 'review') renderReview();
+      if (step === 'refine') renderRefine();
+      if (step === 'publish') renderPublish();
+      renderSteps();
+      showStep(step);
+    }
+
+    function showStep(step) {
+      document.querySelectorAll('.step-panel').forEach(function(el){el.classList.remove('active');});
+      var panel = document.getElementById('step-'+step);
+      if (panel) panel.classList.add('active');
+    }
+
+    function buildPrompt() {
+      var purpose = document.getElementById('purposeInput').value.trim();
+      var inputType = document.getElementById('inputTypeField').value.trim();
+      var outputType = document.getElementById('outputTypeField').value.trim();
+      var constraints = document.getElementById('constraintField').value.trim();
+      var ver = versionStr();
+      var tc = detectToolchain(inputType);
+
+      var lines = [];
+      lines.push('Generate an executable SKILL.md file based on the following requirements.');
+
+      // Include dropped file info
+      if (state.droppedFile) {
+        lines.push('');
+        lines.push('## Uploaded File');
+        lines.push('- File name: '+state.droppedFile.name);
+        lines.push('- Extension: '+state.droppedFile.ext);
+        lines.push('- Size: '+state.droppedFile.sizeMB+' MB');
+        lines.push('- Saved at: ~/.mama/workspace/media/inbound/'+state.droppedFile.name);
+        lines.push('- Create a skill that processes this file');
+      }
+
+      lines.push('');
+      lines.push('## Requirements');
+      lines.push('- Purpose: '+(purpose||'(not specified)'));
+      lines.push('- Input: '+(inputType||'(not specified)'));
+      lines.push('- Output: '+(outputType||'(not specified)'));
+      if (constraints) {
+        lines.push('- Constraints:');
+        constraints.split('\n').forEach(function(c){
+          c = c.trim();
+          if (c) lines.push('  - '+c);
+        });
+      }
+
+      // --- File reception ---
+      lines.push('');
+      lines.push('## File Reception Path (skill must handle this)');
+      if (tc) {
+        lines.push('- Reception method: '+tc.fileReceive);
+        lines.push('- Upload path: '+tc.inboundPath);
+        lines.push('- Output path: '+tc.outputPath);
+      } else {
+        lines.push('- Reception method: webchat upload / Discord-Slack attach / local path');
+        lines.push('- Upload path: ~/.mama/workspace/media/inbound/');
+        lines.push('- Output path: ~/.mama/workspace/media/outbound/');
+      }
+      lines.push('- Workflow Step 1 must include file existence check + extension validation');
+
+      // --- Toolchain ---
+      if (tc) {
+        lines.push('');
+        lines.push('## Required Tool Chain (must be specified in the skill)');
+        lines.push('- Library: '+tc.lib);
+        lines.push('- Install: `'+tc.install+'`');
+        lines.push('- Runtime: '+tc.runtime);
+        lines.push('');
+        lines.push('### Processing Steps');
+        tc.processing.forEach(function(step, i) {
+          lines.push((i+1)+'. '+step);
+        });
+        lines.push('');
+        lines.push('### Reference Script Template');
+        lines.push('```python');
+        lines.push(tc.scriptTemplate.replace(/\\n/g, '\n'));
+        lines.push('```');
+        lines.push('');
+        lines.push('### Known Risks (reflect in skill Constraints/Forbidden)');
+        tc.risks.forEach(function(r) {
+          lines.push('- \u26A0\uFE0F '+r);
+        });
+      }
+
+      // --- SKILL.md format rules ---
+      lines.push('');
+      lines.push('## SKILL.md Format Rules');
+      lines.push('1. YAML frontmatter required: name, description, keywords (array)');
+      lines.push('2. Sections: Goal, Workflow (step-by-step), Input/Output Contract, Constraints, Forbidden');
+      lines.push('3. Workflow Step 1 must be "File reception and validation" (path check, extension check, file existence check)');
+      lines.push('4. Include required library install commands in the Workflow');
+      lines.push('5. Include specific bash/python execution instructions in each Workflow step');
+      lines.push('6. Specify failure behavior rules (no silent fallback, explicit error messages)');
+      lines.push('7. Include verifiable success conditions (AC)');
+      lines.push('8. Include a final step that delivers the output file path to the user');
+      lines.push('');
+      lines.push('## Meta');
+      lines.push('- Skill ID: '+(state.activeSkillId||'new-skill'));
+      lines.push('- Version: '+ver);
+      lines.push('- Iteration: #'+state.iterations);
+      lines.push('');
+      lines.push('Respond with the entire SKILL.md in a code block.');
+
+      document.getElementById('promptPreview').textContent = lines.join('\n');
+
+      // Show toolchain info card
+      renderToolchainInfo(tc);
+    }
+
+    function renderToolchainInfo(tc) {
+      var container = document.getElementById('toolchainInfo');
+      if (!container) return;
+      if (!tc) {
+        container.innerHTML = '<div style="color:var(--muted);font-size:12px;">No matching tool chain for the input file type. The LLM will suggest appropriate tools.</div>';
+        return;
+      }
+      var html = '<div style="display:grid;gap:8px;">';
+      html += '<div style="display:flex;gap:12px;flex-wrap:wrap;">';
+      html += '<div style="padding:6px 12px;border-radius:8px;background:var(--accent-soft);font-size:12px;font-weight:700;color:var(--accent-dark);">\uD83D\uDCE6 '+esc(tc.lib)+'</div>';
+      html += '<div style="padding:6px 12px;border-radius:8px;background:var(--soft);font-size:12px;font-weight:700;border:1px solid var(--line);"><code>'+esc(tc.install)+'</code></div>';
+      html += '<div style="padding:6px 12px;border-radius:8px;background:var(--soft);font-size:12px;color:var(--muted);">Runtime: '+esc(tc.runtime)+'</div>';
+      html += '</div>';
+      html += '<div style="font-size:12px;color:var(--muted);">';
+      html += '<strong>Processing pipeline:</strong> ';
+      html += tc.processing.join(' \u2192 ');
+      html += '</div>';
+      if (tc.risks.length) {
+        html += '<div style="font-size:11px;color:var(--warn);">';
+        html += '\u26A0\uFE0F Known risks: '+tc.risks.join(' | ');
+        html += '</div>';
+      }
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    function copyPrompt() {
+      var btn = event.currentTarget || event.target; // capture before async
+      var text = document.getElementById('promptPreview').textContent;
+      navigator.clipboard.writeText(text).then(function(){
+        flashBtn(btn, 'Copied!');
+      }).catch(function() {
+        updateStatus('Clipboard access denied', versionStr());
+      });
+    }
+
+    function sendPrompt() {
+      // Upload file first if dropped
+      if (state.droppedFile) {
+        sendFileToChat(function() {
+          var text = document.getElementById('promptPreview').textContent;
+          window.parent.postMessage({type:'playground:sendToChat', message: text}, window.location.origin);
+          state.iterations++;
+          updateStatus('Prompt sent (iteration #'+state.iterations+')', versionStr());
+          goToStep('review');
+        });
+      } else {
+        var text = document.getElementById('promptPreview').textContent;
+        window.parent.postMessage({type:'playground:sendToChat', message: text}, window.location.origin);
+        state.iterations++;
+        updateStatus('Prompt sent (iteration #'+state.iterations+')', versionStr());
+        goToStep('review');
+      }
+    }
+
+    function renderReview() {
+      var preview = document.getElementById('skillPreview');
+      preview.textContent = state.skillContent || 'Waiting for LLM response...\n\nAfter sending to Chat, the generated SKILL.md will appear here.\nYou can also paste (Ctrl+V) a response into this area.';
+      renderValidation();
+    }
+
+    function renderValidation() {
+      var content = state.skillContent;
+      if (!content || content.length < 20) {
+        document.getElementById('validationResults').innerHTML = '<div style="color:var(--muted);font-size:13px;">Validation runs automatically once a SKILL.md is loaded.</div>';
+        return;
+      }
+      var inputType = document.getElementById('inputTypeField').value.trim();
+      var tc = detectToolchain(inputType);
+      var checks = [
+        {name:'frontmatter', ok: content.indexOf('---') === 0, desc:'YAML frontmatter'},
+        {name:'name', ok: /name:\s*.+/i.test(content), desc:'name field'},
+        {name:'description', ok: /description:\s*.+/i.test(content), desc:'description field'},
+        {name:'keywords', ok: /keywords:/i.test(content), desc:'keywords field'},
+        {name:'workflow', ok: /##\s*Workflow/i.test(content), desc:'Workflow section'},
+        {name:'goal', ok: /##\s*Goal/i.test(content), desc:'Goal section'},
+        {name:'forbidden', ok: /##\s*Forbidden/i.test(content), desc:'Forbidden section'},
+        {name:'no-silent', ok: content.toLowerCase().indexOf('silent fallback') < 0 || content.toLowerCase().indexOf('forbidden') >= 0, desc:'No silent fallback rule'},
+        {name:'file-receive', ok: /inbound|upload|file.*recei|file.*path/i.test(content), desc:'File reception path specified'},
+        {name:'file-output', ok: /outbound|output.*path|save.*path/i.test(content), desc:'Output file path specified'},
+        {name:'install-cmd', ok: /pip install|npm install|apt install|install/i.test(content), desc:'Library install command included'},
+        {name:'exec-cmd', ok: /```(bash|python|sh)|python3|node /i.test(content), desc:'Executable code block included'}
+      ];
+      if (tc) {
+        checks.push({name:'lib-mentioned', ok: content.toLowerCase().indexOf(tc.lib.toLowerCase().split(' ')[0]) >= 0, desc:'Required library ('+tc.lib+') mentioned'});
+      }
+      var passCount = checks.filter(function(c){return c.ok;}).length;
+      var html = '<div style="font-size:14px;font-weight:800;margin-bottom:8px;color:'+(passCount===checks.length?'var(--ok)':'var(--warn)')+'">'+passCount+'/'+checks.length+' passed</div>';
+      html += checks.map(function(c){
+        var icon = c.ok ? '<span style="color:var(--ok)">\u2713</span>' : '<span style="color:var(--danger)">\u2717</span>';
+        return '<div style="padding:6px 0;font-size:13px;border-bottom:1px solid var(--line);">'+icon+' '+esc(c.desc)+'</div>';
+      }).join('');
+      document.getElementById('validationResults').innerHTML = html;
+    }
+
+    function copySkill() {
+      navigator.clipboard.writeText(state.skillContent).then(function(){
+        flashBtn(event.target, 'Copied!');
+      });
+    }
+
+    function pasteSkillManual() {
+      navigator.clipboard.readText().then(function(text){
+        if (text && text.length > 10) handleLLMResponse(text);
+      }).catch(function() {
+        updateStatus('Clipboard access denied — paste manually into the preview area', versionStr());
+      });
+    }
+
+    function renderRefine() {
+      renderChatLog();
+      renderTimeline();
+      var preview = document.getElementById('refineSkillPreview');
+      if (preview) {
+        preview.textContent = state.skillContent || '(No SKILL.md draft yet. Please receive a draft first from the Review tab.)';
+      }
+    }
+
+    function toggleRefinePreview() {
+      var body = document.getElementById('refinePreviewBody');
+      if (body) body.style.display = body.style.display === 'none' ? '' : 'none';
+    }
+
+    function renderChatLog() {
+      var html = state.chatLog.map(function(m){
+        return '<div class="chat-msg '+m.role+'">'+esc(m.text)+'</div>';
+      }).join('');
+      var area = document.getElementById('chatArea');
+      area.innerHTML = html || '<div class="chat-msg system">Enter your changes and they will be sent to the LLM.</div>';
+      area.scrollTop = area.scrollHeight;
+    }
+
+    function sendFeedback() {
+      var input = document.getElementById('feedbackInput');
+      var text = input.value.trim();
+      if (!text) return;
+
+      state.chatLog.push({role:'user', text: text});
+      input.value = '';
+
+      var refinePrompt = 'Revise the current SKILL.md based on the feedback below.\n\n'
+        + '## Feedback\n'+text+'\n\n'
+        + '## Current SKILL.md\n```\n'+(state.skillContent||'(none)')+'\n```\n\n'
+        + 'Respond with the entire revised SKILL.md in a code block.\n'
+        + 'Version: '+nextVersion();
+
+      window.parent.postMessage({type:'playground:sendToChat', message: refinePrompt}, window.location.origin);
+      state.chatLog.push({role:'system', text:'Feedback sent to the LLM. Waiting for response...'});
+      state.iterations++;
+      state.history.unshift({ver: versionStr(), summary: text.slice(0,60), time: now()});
+
+      renderChatLog();
+      renderTimeline();
+      updateStatus('Feedback sent (iteration #'+state.iterations+')', versionStr());
+    }
+
+    function renderTimeline() {
+      if (!state.history.length) {
+        document.getElementById('versionTimeline').innerHTML = '<div style="color:var(--muted);font-size:12px;">No version history yet.</div>';
+        return;
+      }
+      var html = state.history.map(function(h, i) {
+        var isLast = i === state.history.length - 1;
+        return '<div class="timeline-item">'
+          + '<div class="timeline-dot"><div class="dot"></div>'+(isLast?'':'<div class="line-seg"></div>')+'</div>'
+          + '<div class="timeline-content">'
+          + '<div class="ver">'+esc(h.ver)+'</div>'
+          + '<div class="summary">'+esc(h.summary)+' \u00B7 '+esc(h.time)+'</div>'
+          + '</div></div>';
+      }).join('');
+      document.getElementById('versionTimeline').innerHTML = html;
+    }
+
+    function renderPublish() {
+      var name = state.activeSkillId || 'new-skill';
+      document.getElementById('publishName').value = name;
+      document.getElementById('publishPath').value = '~/.mama/workspace/skills/'+name+'/SKILL.md';
+      document.getElementById('publishVersion').value = versionStr();
+      document.getElementById('publishIterations').textContent = String(state.iterations);
+      document.getElementById('publishStatus').innerHTML = state.published
+        ? '<span class="badge-sm badge-published">published</span>'
+        : '<span class="badge-sm badge-draft">draft</span>';
+      document.getElementById('finalSkillPreview').textContent = state.skillContent || '(No SKILL.md content)';
+    }
+
+    function publishSkill() {
+      var name = document.getElementById('publishName').value.trim() || state.activeSkillId;
+      var content = state.skillContent;
+      if (!content) { alert('No SKILL.md content.'); return; }
+
+      updateStatus('Saving...', versionStr());
+
+      var isUpdate = state.published;
+      var url = isUpdate
+        ? '/api/skills/' + encodeURIComponent(name) + '/content'
+        : '/api/skills';
+      var method = isUpdate ? 'PUT' : 'POST';
+      var body = isUpdate
+        ? { content: content, source: 'mama' }
+        : { name: name, content: content, source: 'mama' };
+
+      fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(e) { throw new Error(e.message || 'HTTP ' + r.status); });
+        return r.json();
+      })
+      .then(function(result) {
+        state.published = true;
+        var existing = state.skills.find(function(s){return s.id===name;});
+        if (existing) {
+          existing.version = versionStr();
+          existing.status = 'published';
+        } else {
+          state.skills.push({
+            id: name, name: name, status: 'published',
+            version: versionStr(),
+            path: result.path || ''
+          });
+        }
+        state.activeSkillId = name;
+        persistSkills();
+        renderSkillList();
+        renderPublish();
+        updateStatus('Published!', versionStr());
+        // Notify parent viewer to refresh Skills Tab
+        window.parent.postMessage({type: 'skill:deployed', id: name}, window.location.origin);
+      })
+      .catch(function(err) {
+        alert('Save failed: ' + err.message);
+        updateStatus('Save failed', versionStr());
+      });
+    }
+
+    function sendSaveCommand() {
+      // Now uses the same direct API path as publishSkill
+      publishSkill();
+    }
+
+    // Listen for LLM response, paste, or skill:load from viewer
+    window.addEventListener('message', function(e) {
+      if (e.origin !== window.location.origin) return;
+      if (e.source !== window.parent) return;
+      if (e.data && e.data.type === 'playground:response') {
+        handleLLMResponse(e.data.content || '');
+      }
+      if (e.data && e.data.type === 'skill:load') {
+        var d = e.data;
+        var id = d.id || d.name || 'loaded-skill';
+        var name = d.name || id;
+        var content = d.content || '';
+
+        // Check if already in list
+        var existing = state.skills.find(function(s){return s.id===id;});
+        if (!existing) {
+          state.skills.push({id: id, name: name, status: 'published', version: 'v1.0.0', path: ''});
+          persistSkills();
+        }
+        state.activeSkillId = id;
+        state.skillContent = content;
+        state.published = true;
+        state.currentStep = 'review';
+        state.stepsDone = {define:true, prompt:true};
+        state.chatLog = [{role:'system',text:'Skill "'+name+'" loaded in edit mode.'}];
+        persistSkillContent(id, content);
+        renderSkillList();
+        renderSteps();
+        showStep('review');
+        document.getElementById('skillPreview').textContent = content;
+        updateStatus('Skill loaded: '+name, 'v1.0.0');
+      }
+      // Handle file upload from playground
+      if (e.data && e.data.type === 'playground:uploadFile') {
+        var d = e.data;
+        if (!d.data || !d.fileName) {
+          updateStatus('Upload error: missing file data', versionStr());
+          return;
+        }
+        // Extract base64 data from data URI
+        var base64Data = d.data.split(',')[1] || d.data;
+        var uploadPath = '~/.mama/workspace/media/inbound/' + d.fileName;
+
+        // Send file save request to parent/backend
+        fetch('/api/workspace/media/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: d.fileName,
+            fileType: d.fileType,
+            fileSize: d.fileSize,
+            data: base64Data,
+            path: 'inbound'
+          })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(result) {
+          updateStatus('File uploaded: ' + d.fileName + ' → ' + uploadPath, versionStr());
+        })
+        .catch(function(err) {
+          updateStatus('Upload failed: ' + err.message, versionStr());
+        });
+      }
+    });
+
+    document.addEventListener('paste', function(e) {
+      var active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+      if (state.currentStep === 'review' || state.currentStep === 'refine') {
+        var text = (e.clipboardData || window.clipboardData).getData('text');
+        if (text && text.length > 30 && (text.indexOf('---') >= 0 || text.indexOf('# ') >= 0)) {
+          e.preventDefault();
+          handleLLMResponse(text);
+        }
+      }
+    });
+
+    function handleLLMResponse(text) {
+      var extracted = extractSkillMd(text);
+      state.skillContent = extracted || text;
+      persistSkillContent(state.activeSkillId, state.skillContent);
+      state.chatLog.push({role:'system', text:'SKILL.md updated ('+state.skillContent.length+' chars)'});
+      if (state.currentStep === 'review') {
+        renderReview();
+      } else if (state.currentStep === 'refine') {
+        renderChatLog(); renderReview(); renderRefine();
+      } else {
+        goToStep('review');
+      }
+      updateStatus('SKILL.md received', versionStr());
+    }
+
+    function extractSkillMd(text) {
+      var codeMatch = text.match(/```(?:markdown|md|yaml)?\s*\n([\s\S]*?)```/);
+      if (codeMatch) {
+        var inner = codeMatch[1].trim();
+        if (inner.indexOf('---') === 0) return inner;
+      }
+      if (text.trim().indexOf('---') === 0) return text.trim();
+      var fmMatch = text.match(/\n(---\s*\n[\s\S]*?\n---[\s\S]*)/);
+      if (fmMatch) return fmMatch[1].trim();
+      return null;
+    }
+
+    function versionStr() { return 'v'+state.version.major+'.'+state.version.minor+'.'+state.version.patch; }
+    function nextVersion() { state.version.patch++; return versionStr(); }
+    function parseVersion(str) {
+      var m = (str||'').match(/v?(\d+)\.(\d+)\.(\d+)/);
+      return m ? {major:+m[1],minor:+m[2],patch:+m[3]} : {major:1,minor:0,patch:0};
+    }
+    function now() { return new Date().toLocaleTimeString('en-US',{hour12:false}); }
+    function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function flashBtn(btn, text) {
+      if (!btn) return;
+      var old = btn.textContent;
+      btn.textContent = text;
+      setTimeout(function(){btn.textContent=old;},900);
+    }
+    function updateStatus(text, ver) {
+      document.getElementById('statusText').textContent = text;
+      document.getElementById('statusVersion').textContent = ver || '';
+    }
+
+    // --- Drag & Drop ---
+    function initDropZone() {
+      var zone = document.getElementById('dropZone');
+      var input = document.getElementById('fileInput');
+
+      ['dragenter','dragover'].forEach(function(evt) {
+        zone.addEventListener(evt, function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          zone.classList.add('dragover');
+        });
+      });
+      ['dragleave','drop'].forEach(function(evt) {
+        zone.addEventListener(evt, function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          zone.classList.remove('dragover');
+        });
+      });
+
+      zone.addEventListener('drop', function(e) {
+        var files = e.dataTransfer.files;
+        if (files.length > 0) handleFile(files[0]);
+      });
+
+      input.addEventListener('change', function(e) {
+        if (e.target.files.length > 0) handleFile(e.target.files[0]);
+      });
+    }
+
+    function handleFile(file) {
+      var name = file.name;
+      var ext = name.lastIndexOf('.') >= 0 ? name.slice(name.lastIndexOf('.')).toLowerCase() : '';
+      var sizeMB = (file.size / (1024*1024)).toFixed(2);
+
+      state.droppedFile = {
+        name: name,
+        ext: ext,
+        size: file.size,
+        sizeMB: sizeMB,
+        type: file.type,
+        file: file
+      };
+
+      // Auto-fill input type
+      if (ext) {
+        document.getElementById('inputTypeField').value = ext;
+      }
+
+      // Auto-select preset
+      var presetMap = {'.pptx':'pptx-translate','.csv':'csv-clean','.docx':'doc-convert','.xlsx':'xlsx-process','.pdf':'pdf-extract'};
+      if (presetMap[ext]) {
+        applyPreset(presetMap[ext]);
+        // Keep the file name in purpose if purpose is empty
+        var purposeEl = document.getElementById('purposeInput');
+        if (!purposeEl.value.trim()) {
+          purposeEl.value = 'I want to process the file ' + name;
+        }
+      }
+
+      // Auto-fill output type based on extension
+      var outputEl = document.getElementById('outputTypeField');
+      if (!outputEl.value.trim() && ext) {
+        outputEl.value = 'processed ' + ext;
+      }
+
+      renderFileInfo();
+      updateStatus('File dropped: ' + name + ' (' + sizeMB + 'MB)', versionStr());
+    }
+
+    function renderFileInfo() {
+      var area = document.getElementById('fileInfoArea');
+      if (!state.droppedFile) {
+        area.innerHTML = '';
+        document.getElementById('dropZone').style.display = '';
+        return;
+      }
+      var f = state.droppedFile;
+      var icon = FILE_ICONS[f.ext] || '\uD83D\uDCC1';
+      var tc = detectToolchain(f.ext);
+      var tcTag = tc ? '<span style="color:var(--accent);font-weight:700;"> \u2192 ' + esc(tc.lib) + '</span>' : '';
+
+      area.innerHTML = '<div class="file-info">'
+        + '<div class="file-icon">' + icon + '</div>'
+        + '<div class="file-detail">'
+        + '<div class="file-name">' + esc(f.name) + tcTag + '</div>'
+        + '<div class="file-meta">' + esc(f.ext) + ' \u00B7 ' + f.sizeMB + ' MB \u00B7 inbound/' + esc(f.name) + '</div>'
+        + '</div>'
+        + '<button class="file-remove" onclick="removeFile()" title="Remove">\u2715</button>'
+        + '</div>';
+      document.getElementById('dropZone').style.display = 'none';
+    }
+
+    function removeFile() {
+      state.droppedFile = null;
+      document.getElementById('fileInput').value = '';
+      renderFileInfo();
+    }
+
+    function sendFileToChat(callback) {
+      if (!state.droppedFile) {
+        if (callback) callback();
+        return;
+      }
+      var f = state.droppedFile;
+      // Read file as base64 and send via postMessage for parent to save
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        window.parent.postMessage({
+          type: 'playground:uploadFile',
+          fileName: f.name,
+          fileType: f.type,
+          fileSize: f.size,
+          data: e.target.result
+        }, window.location.origin);
+        if (callback) callback();
+      };
+      reader.onerror = function() {
+        updateStatus('File read failed: ' + f.name, versionStr());
+        if (callback) callback();
+      };
+      reader.readAsDataURL(f.file);
+    }
+
+    renderPresets();
+    loadSkillList();
+    renderSteps();
+    initDropZone();
+  </script>
+</body>
+</html>

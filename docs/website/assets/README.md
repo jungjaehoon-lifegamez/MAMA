@@ -4,10 +4,11 @@ Visual assets for the MAMA landing page and documentation.
 
 ## Screenshots
 
-| File               | Description                  | Size  | Source                               |
-| ------------------ | ---------------------------- | ----- | ------------------------------------ |
-| `mobile-chat.png`  | Mobile chat interface demo   | 165KB | docs/images/1.5-chat.png             |
-| `graph-viewer.png` | Decision graph visualization | 216KB | docs/images/reasoning-graph1.4.5.png |
+| File                       | Description                  | Size  | Source                                              |
+| -------------------------- | ---------------------------- | ----- | --------------------------------------------------- |
+| `mobile-chat.png`          | Mobile chat interface demo   | 165KB | docs/images/1.5-chat.png                            |
+| `graph-viewer.png`         | Decision graph visualization | 216KB | docs/images/reasoning-graph1.4.5.png                |
+| `screenshot-skill-lab.png` | Skill Lab Playground UI      | 141KB | ~/.mama/workspace/media/outbound/mama_skill_lab.png |
 
 ## Usage
 

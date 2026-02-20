@@ -5,17 +5,44 @@
  * as native built-in features. Ported from claude-code-plugin hooks.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
+import { homedir } from 'node:os';
 import { ContentDeduplicator } from './content-dedup.js';
 import { parseFrontmatter, matchesContext } from './yaml-frontmatter.js';
 import type { RuleContext } from './yaml-frontmatter.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('PromptEnhancer');
 
 export interface EnhancedPromptContext {
   keywordInstructions: string;
   agentsContent: string;
   rulesContent: string;
+  skillContent?: string;
 }
+
+const SKILL_EXCLUDED_FILES = new Set([
+  'CONNECTORS.md',
+  'connectors.md',
+  'LICENSE.md',
+  'license.md',
+  'CHANGELOG.md',
+  'changelog.md',
+  'CONTRIBUTING.md',
+  'contributing.md',
+  'README.md',
+  'readme.md',
+]);
 
 interface CacheEntry {
   content: string;
@@ -443,9 +470,7 @@ export class PromptEnhancer {
     for (const detector of sorted) {
       for (const pattern of detector.patterns) {
         if (pattern.test(cleanText)) {
-          console.log(
-            `[PromptEnhancer] Keyword detected: ${detector.type} (priority=${detector.priority})`
-          );
+          logger.info(`Keyword detected: ${detector.type} (priority=${detector.priority})`);
           return detector.message;
         }
       }
@@ -454,7 +479,7 @@ export class PromptEnhancer {
     return '';
   }
 
-  discoverAgentsMd(workspacePath: string): string {
+  async discoverAgentsMd(workspacePath: string): Promise<string> {
     if (!workspacePath) {
       return '';
     }
@@ -486,7 +511,7 @@ export class PromptEnhancer {
             continue;
           }
 
-          const content = this.getCachedFile(agentsMdPath);
+          const content = await this.getCachedFile(agentsMdPath);
           if (content) {
             dedup.add(agentsMdPath, content, depth);
           }
@@ -495,8 +520,10 @@ export class PromptEnhancer {
         currentDir = dirname(currentDir);
         depth++;
       }
-    } catch {
-      // Silently handle filesystem errors
+    } catch (err) {
+      logger.warn(
+        `Failed to discover AGENTS.md: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
 
     const entries = dedup.getEntries();
@@ -511,7 +538,7 @@ export class PromptEnhancer {
     return sections.join('\n\n---\n\n');
   }
 
-  discoverRules(workspacePath: string, ruleContext?: RuleContext): string {
+  async discoverRules(workspacePath: string, ruleContext?: RuleContext): Promise<string> {
     if (!workspacePath) {
       return '';
     }
@@ -529,21 +556,23 @@ export class PromptEnhancer {
     if (existsSync(copilotPath)) {
       try {
         if (statSync(copilotPath).isFile()) {
-          const rawContent = this.getCachedFile(copilotPath);
+          const rawContent = await this.getCachedFile(copilotPath);
           if (rawContent?.trim()) {
             if (dedup.add(copilotPath, rawContent, 0)) {
               rules.push({ path: copilotPath, content: rawContent, distance: 0 });
             }
           }
         }
-      } catch {
-        // Skip unreadable files
+      } catch (err) {
+        logger.warn(
+          `Failed to read .copilot-instructions: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
 
     // 2. Check project-level .claude/rules/*.md
     const projectRulesDir = join(projectRoot, '.claude', 'rules');
-    this.collectRulesFromDir(projectRulesDir, 0, rules, dedup, ruleContext);
+    await this.collectRulesFromDir(projectRulesDir, 0, rules, dedup, ruleContext);
 
     // 3. Walk up from workspacePath for directory-level rules
     try {
@@ -554,12 +583,14 @@ export class PromptEnhancer {
 
       while (currentDir !== projectRoot && currentDir !== dirname(currentDir)) {
         const dirRulesPath = join(currentDir, '.claude', 'rules');
-        this.collectRulesFromDir(dirRulesPath, distance, rules, dedup, ruleContext);
+        await this.collectRulesFromDir(dirRulesPath, distance, rules, dedup, ruleContext);
         currentDir = dirname(currentDir);
         distance++;
       }
-    } catch {
-      // Silently handle filesystem errors
+    } catch (err) {
+      logger.warn(
+        `Failed to walk directory for rules: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
 
     rules.sort((a, b) => a.distance - b.distance);
@@ -572,16 +603,200 @@ export class PromptEnhancer {
     return sections.join('\n\n---\n\n');
   }
 
-  enhance(
+  async enhance(
     userMessage: string,
     workspacePath: string,
     ruleContext?: RuleContext
-  ): EnhancedPromptContext {
+  ): Promise<EnhancedPromptContext> {
     return {
       keywordInstructions: this.detectKeywords(userMessage),
-      agentsContent: this.discoverAgentsMd(workspacePath),
-      rulesContent: this.discoverRules(workspacePath, ruleContext),
+      agentsContent: await this.discoverAgentsMd(workspacePath),
+      rulesContent: await this.discoverRules(workspacePath, ruleContext),
+      skillContent: (await this.detectSkillMatch(userMessage)) ?? undefined,
     };
+  }
+
+  /**
+   * Detect if user message matches an installed skill by keywords.
+   * Returns full skill content for per-message injection, or null if no match.
+   */
+  async detectSkillMatch(userMessage: string): Promise<string | null> {
+    if (!userMessage) return null;
+
+    const skillsBase = join(homedir(), '.mama', 'skills');
+    const stateFile = join(skillsBase, 'state.json');
+
+    let state: Record<string, { enabled: boolean }> = {};
+    try {
+      if (existsSync(stateFile)) {
+        const stateContent = await readFile(stateFile, 'utf-8');
+        state = JSON.parse(stateContent);
+      }
+    } catch (err) {
+      logger.warn(
+        `Failed to read skill state.json: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return null;
+    }
+
+    const lower = userMessage.toLowerCase();
+
+    // Check directory skills
+    for (const source of ['mama', 'cowork', 'external']) {
+      const sourceDir = join(skillsBase, source);
+      if (!existsSync(sourceDir)) continue;
+
+      let entries;
+      try {
+        entries = readdirSync(sourceDir, { withFileTypes: true });
+      } catch (err) {
+        logger.warn(
+          `Failed to read skills/${source}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const stateKey = `${source}/${entry.name}`;
+        if (state[stateKey]?.enabled === false) continue;
+
+        const skillDir = join(sourceDir, entry.name);
+        const mainFile = this._findMainSkillFile(skillDir, entry.name);
+        if (!mainFile) continue;
+
+        let fileContent;
+        try {
+          fileContent = await readFile(mainFile, 'utf-8');
+        } catch (err) {
+          logger.warn(
+            `Failed to read skill file ${mainFile}: ${err instanceof Error ? err.message : String(err)}`
+          );
+          continue;
+        }
+
+        const fm = this._parseSkillFrontmatter(fileContent);
+        if (!fm.keywords.some((kw) => lower.includes(kw.toLowerCase()))) continue;
+
+        logger.info(`Skill matched: ${stateKey}`);
+        return await this._loadDirSkillContent(skillDir, stateKey);
+      }
+    }
+
+    // Check flat .md files at root
+    let rootEntries;
+    try {
+      rootEntries = readdirSync(skillsBase, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+
+    for (const entry of rootEntries) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      if (SKILL_EXCLUDED_FILES.has(entry.name)) continue;
+
+      const id = entry.name.replace(/\.md$/, '');
+      const stateKey = `mama/${id}`;
+      if (state[stateKey]?.enabled === false) continue;
+
+      let content;
+      try {
+        content = await readFile(join(skillsBase, entry.name), 'utf-8');
+      } catch (err) {
+        logger.warn(
+          `Failed to read flat skill ${entry.name}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
+
+      const fm = this._parseSkillFrontmatter(content);
+      if (!fm.keywords.some((kw) => lower.includes(kw.toLowerCase()))) continue;
+
+      logger.info(`Skill matched (flat): ${stateKey}`);
+      return content;
+    }
+
+    return null;
+  }
+
+  private _parseSkillFrontmatter(content: string): {
+    name: string;
+    description: string;
+    keywords: string[];
+  } {
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) return { name: '', description: '', keywords: [] };
+    const block = match[1];
+    const name = (block.match(/^name:\s*(.+)$/m)?.[1] ?? '').trim();
+    const description = (block.match(/^description:\s*(.+)$/m)?.[1] ?? '').trim();
+    const kwBlock = block.match(/^keywords:\n((?:[ \t]+-[ \t]*.+\n?)+)/m);
+    const keywords = kwBlock
+      ? kwBlock[1]
+          .trim()
+          .split('\n')
+          .map((l) => l.replace(/^[ \t]*-[ \t]*/, '').trim())
+          .filter((k) => k.length > 0)
+      : [];
+    return { name, description, keywords };
+  }
+
+  private _findMainSkillFile(skillDir: string, skillName: string): string | null {
+    for (const name of [`${skillName}.md`, 'skill.md', 'index.md']) {
+      const p = join(skillDir, name);
+      if (existsSync(p)) return p;
+    }
+    try {
+      const entries = readdirSync(skillDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isFile() && e.name.endsWith('.md') && !SKILL_EXCLUDED_FILES.has(e.name)) {
+          return join(skillDir, e.name);
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        `Failed to find main skill file in ${skillDir}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    return null;
+  }
+
+  private async _loadDirSkillContent(skillDir: string, skillId: string): Promise<string | null> {
+    const mdFiles: Array<{ path: string; content: string }> = [];
+
+    const collect = async (dir: string, prefix = '') => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch (err) {
+        logger.warn(
+          `Failed to read skill dir ${dir}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return;
+      }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const fullPath = join(dir, e.name);
+        const relPath = prefix ? `${prefix}/${e.name}` : e.name;
+        if (e.isDirectory()) {
+          await collect(fullPath, relPath);
+        } else if (e.isFile() && e.name.endsWith('.md') && !SKILL_EXCLUDED_FILES.has(e.name)) {
+          try {
+            const content = await readFile(fullPath, 'utf-8');
+            mdFiles.push({ path: relPath, content });
+          } catch (err) {
+            logger.warn(
+              `Failed to read ${fullPath}: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+      }
+    };
+
+    await collect(skillDir);
+    if (mdFiles.length === 0) return null;
+
+    const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
+    return `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
   }
 
   private findProjectRoot(startPath: string): string | null {
@@ -603,7 +818,7 @@ export class PromptEnhancer {
     }
   }
 
-  private getCachedFile(filePath: string): string | null {
+  private async getCachedFile(filePath: string): Promise<string | null> {
     const cached = this.fileCache.get(filePath);
     const now = Date.now();
 
@@ -612,21 +827,24 @@ export class PromptEnhancer {
     }
 
     try {
-      const content = readFileSync(filePath, 'utf8');
+      const content = await readFile(filePath, 'utf8');
       this.fileCache.set(filePath, { content, loadedAt: now });
       return content;
-    } catch {
+    } catch (err) {
+      logger.warn(
+        `Failed to read cached file ${filePath}: ${err instanceof Error ? err.message : String(err)}`
+      );
       return null;
     }
   }
 
-  private collectRulesFromDir(
+  private async collectRulesFromDir(
     dirPath: string,
     distance: number,
     rules: Array<{ path: string; content: string; distance: number }>,
     dedup: ContentDeduplicator,
     ruleContext?: RuleContext
-  ): void {
+  ): Promise<void> {
     if (!existsSync(dirPath)) {
       return;
     }
@@ -643,7 +861,7 @@ export class PromptEnhancer {
         }
 
         const rulePath = join(dirPath, file);
-        const rawContent = this.getCachedFile(rulePath);
+        const rawContent = await this.getCachedFile(rulePath);
         if (!rawContent?.trim()) {
           continue;
         }
@@ -657,8 +875,10 @@ export class PromptEnhancer {
           rules.push({ path: rulePath, content: parsed.content, distance });
         }
       }
-    } catch {
-      // Skip unreadable directories
+    } catch (err) {
+      logger.warn(
+        `Failed to collect rules from ${dirPath}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 }

@@ -75,6 +75,8 @@ export interface ClaudeCLIWrapperOptions {
   dangerouslySkipPermissions?: boolean;
   /** If true, use GatewayToolExecutor instead of MCP (default: false) */
   useGatewayTools?: boolean;
+  /** Request timeout in ms (default: 120000). Increase for complex/long tasks. */
+  requestTimeout?: number;
 }
 
 export interface PromptCallbacks {

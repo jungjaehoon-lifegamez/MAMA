@@ -27,6 +27,60 @@ import { DebugLogger } from '../utils/debug-logger.js';
 
 const logger = new DebugLogger('Chat');
 
+// Speech Recognition API type definitions
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+interface SpeechRecognitionResult {
+  isFinal: boolean;
+  readonly length: number;
+  [index: number]: SpeechRecognitionAlternative;
+}
+
+interface SpeechRecognitionResultList {
+  readonly length: number;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message?: string;
+}
+
+interface SpeechRecognitionInstance {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  onstart: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+
+interface SpeechRecognitionConstructor {
+  new (): SpeechRecognitionInstance;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    switchTab?: (tab: string) => void;
+    sendChatMessage: (msg?: string) => void;
+  }
+}
+
 type ChatAttachment = {
   isImage: boolean;
   mediaUrl: string;
@@ -79,7 +133,7 @@ export class ChatModule {
   sessionId: string | null = null;
   reconnectAttempts = 0;
   maxReconnectDelay = 30000;
-  speechRecognition: SpeechRecognition | null = null;
+  speechRecognition: SpeechRecognitionInstance | null = null;
   isRecording = false;
   silenceTimeout: ReturnType<typeof setTimeout> | null = null;
   silenceDelay = 2500;
@@ -102,6 +156,7 @@ export class ChatModule {
   historyExpiryMs = 24 * 60 * 60 * 1000;
   checkpointCooldown = false;
   COOLDOWN_MS = 60 * 1000;
+  playgroundAwaitingResponse = false;
   idleTimer: ReturnType<typeof setTimeout> | null = null;
   IDLE_TIMEOUT = 5 * 60 * 1000;
   _onDragMouseMove: ((event: MouseEvent) => void) | null = null;
@@ -113,6 +168,15 @@ export class ChatModule {
   _onResizeTouchMove: ((event: TouchEvent) => void) | null = null;
   _onResizeTouchEnd: (() => void) | null = null;
   _onEscapeKey: ((event: KeyboardEvent) => void) | null = null;
+
+  /** Active tool-status group element (single line, in-place updates) */
+  private toolStatusGroup: HTMLDivElement | null = null;
+  /** Completed tool names in current group */
+  private toolStatusCompleted: string[] = [];
+  /** Currently running tool name */
+  private toolStatusCurrentName: string | null = null;
+  /** Current tool detail string (for rendering) */
+  private toolStatusCurrentDetail = '';
 
   constructor(
     memoryModule: {
@@ -248,7 +312,7 @@ export class ChatModule {
       this.updateStatus('connected');
       this.enableInput(true);
 
-      this.ws.send(
+      this.ws!.send(
         JSON.stringify({
           type: 'attach',
           sessionId: sessionId,
@@ -313,6 +377,7 @@ export class ChatModule {
       case 'stream_end':
         this.hideTypingIndicator();
         this.finalizeStreamMessage();
+        this.resetToolStatusGroup();
         break;
 
       case 'error':
@@ -348,7 +413,7 @@ export class ChatModule {
         break;
 
       case 'typing':
-        this.showTypingIndicator(data.elapsed);
+        this.showTypingIndicator(data.elapsed ?? 0);
         break;
 
       case 'pong':
@@ -558,7 +623,7 @@ export class ChatModule {
     }
 
     // Switch to Memory tab and open form with text
-    window.switchTab('memory');
+    window.switchTab?.('memory');
     this.memoryModule.showSaveFormWithText(text);
     this.addSystemMessage(`💾 Opening save form with: "${text.substring(0, 50)}..."`);
   }
@@ -578,7 +643,7 @@ export class ChatModule {
     }
 
     // Switch to Memory tab and execute search
-    window.switchTab('memory');
+    window.switchTab?.('memory');
     this.memoryModule.searchWithQuery(query);
     this.addSystemMessage(`🔍 Searching for: "${query}"`);
   }
@@ -753,17 +818,10 @@ export class ChatModule {
   }
 
   /**
-   * Add tool usage card
+   * Get tool icon by name
    */
-  addToolCard(toolName: string, toolId: string, input: ChatToolInput | null): void {
-    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
-    if (!container) {
-      return;
-    }
-    this.removePlaceholder();
-
-    // Tool icon mapping
-    const iconMap = {
+  private getToolIcon(toolName: string): string {
+    const iconMap: Record<string, string> = {
       Read: '📄',
       Write: '✏️',
       Bash: '💻',
@@ -774,74 +832,107 @@ export class ChatModule {
       WebFetch: '🌐',
       WebSearch: '🔎',
     };
-    const icon = iconMap[toolName] || '🔧';
+    return iconMap[toolName] || '🔧';
+  }
 
-    // Extract file path for Read tool
-    let detail = '';
+  /**
+   * Get short detail label for a tool invocation
+   */
+  private getToolDetail(toolName: string, input: ChatToolInput | null): string {
     if (toolName === 'Read' && input?.file_path) {
-      const fileName = input.file_path.split('/').pop();
-      detail = `<div class="tool-detail">${escapeHtml(fileName)}</div>`;
-    } else if (toolName === 'Bash' && input?.command) {
-      const command = String(input.command);
-      detail = `<div class="tool-detail">${escapeHtml(command.substring(0, 50))}${
-        command.length > 50 ? '...' : ''
-      }</div>`;
+      return `(${escapeHtml(input.file_path.split('/').pop() ?? '')})`;
+    }
+    if (toolName === 'Bash' && input?.command) {
+      const cmd = String(input.command);
+      return `(${escapeHtml(cmd.substring(0, 40))}${cmd.length > 40 ? '…' : ''})`;
+    }
+    return '';
+  }
+
+  /**
+   * Render the tool-status group HTML in-place
+   */
+  private renderToolStatusGroup(): void {
+    if (!this.toolStatusGroup) {
+      return;
     }
 
-    const cardEl = document.createElement('div');
-    cardEl.className = 'tool-card loading';
-    cardEl.dataset.collapsed = 'true';
-    cardEl.dataset.toolId = toolId;
-    cardEl.innerHTML = `
-      <div class="tool-header" data-tool-toggle="true">
-        <span class="tool-icon">${icon}</span>
-        <span class="tool-name">${escapeHtml(toolName)}</span>
-        <span class="tool-spinner">⏳</span>
-      </div>
-      ${detail}
-    `;
+    const parts: string[] = [];
 
-    // Bind click handler safely (avoid inline onclick with string interpolation)
-    const header = cardEl.querySelector('.tool-header');
-    if (header) {
-      header.addEventListener('click', () => this.toggleToolCard(toolId));
+    // Completed tools: ✓ icon name
+    for (const name of this.toolStatusCompleted) {
+      parts.push(
+        `<span style="color:#4caf50">✓</span> ${this.getToolIcon(name)} ${escapeHtml(name)}`
+      );
     }
 
-    container.appendChild(cardEl);
+    // Current running tool: ⏳ icon name(detail)
+    if (this.toolStatusCurrentName) {
+      parts.push(
+        `<span class="tool-status-spinner">⏳</span> ${this.getToolIcon(this.toolStatusCurrentName)} <b>${escapeHtml(this.toolStatusCurrentName)}</b>${this.toolStatusCurrentDetail}`
+      );
+    }
+
+    this.toolStatusGroup.innerHTML = parts.join(' &nbsp; ');
+  }
+
+  /**
+   * Reset tool status group (call when assistant turn ends)
+   */
+  private resetToolStatusGroup(): void {
+    this.toolStatusGroup = null;
+    this.toolStatusCompleted = [];
+    this.toolStatusCurrentName = null;
+    this.toolStatusCurrentDetail = '';
+  }
+
+  /**
+   * Add tool usage — single in-place status line
+   */
+  addToolCard(toolName: string, _toolId: string, input: ChatToolInput | null): void {
+    const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
+    if (!container) {
+      return;
+    }
+    this.removePlaceholder();
+
+    // Create group element on first tool call
+    if (!this.toolStatusGroup) {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'tool-status-group';
+      groupEl.style.cssText =
+        'padding:4px 12px;margin:2px 0;font-size:0.85em;color:#aaa;line-height:1.8;white-space:normal;word-wrap:break-word;';
+      container.appendChild(groupEl);
+      this.toolStatusGroup = groupEl;
+      this.toolStatusCompleted = [];
+    }
+
+    // Move previous current tool to completed
+    if (this.toolStatusCurrentName) {
+      this.toolStatusCompleted.push(this.toolStatusCurrentName);
+    }
+
+    // Set new current tool
+    this.toolStatusCurrentName = toolName;
+    this.toolStatusCurrentDetail = this.getToolDetail(toolName, input);
+
+    this.renderToolStatusGroup();
     scrollToBottom(container);
   }
 
   /**
-   * Complete tool card (mark as finished)
+   * Complete tool card (mark current as finished)
    */
   completeToolCard(_index: number): void {
-    // Find the most recent loading tool card
-    const loadingCards = document.querySelectorAll('.tool-card.loading');
-    if (loadingCards.length > 0) {
-      const lastCard = loadingCards[loadingCards.length - 1];
-      lastCard.classList.remove('loading');
-      lastCard.classList.add('completed');
-
-      // Replace spinner with checkmark
-      const spinner = lastCard.querySelector('.tool-spinner');
-      if (spinner) {
-        spinner.textContent = '✓';
-        spinner.classList.add('checkmark');
-      }
-    }
-  }
-
-  /**
-   * Toggle tool card collapsed/expanded state
-   */
-  toggleToolCard(toolId: string): void {
-    const card = document.querySelector(`.tool-card[data-tool-id="${CSS.escape(toolId)}"]`);
-    if (!card) {
+    if (!this.toolStatusCurrentName) {
       return;
     }
-    const toolCard = card as HTMLElement;
-    const isCollapsed = toolCard.dataset.collapsed === 'true';
-    toolCard.dataset.collapsed = isCollapsed ? 'false' : 'true';
+
+    this.toolStatusCompleted.push(this.toolStatusCurrentName);
+    this.toolStatusCurrentName = null;
+    this.toolStatusCurrentDetail = '';
+
+    this.renderToolStatusGroup();
   }
 
   /**
@@ -889,7 +980,7 @@ export class ChatModule {
           this.currentStreamText += this.streamBuffer;
           this.streamBuffer = '';
 
-          const contentEl = this.currentStreamEl.querySelector('.message-content');
+          const contentEl = this.currentStreamEl?.querySelector('.message-content');
           if (contentEl) {
             contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
           }
@@ -911,7 +1002,9 @@ export class ChatModule {
     if (this.streamBuffer && this.currentStreamEl) {
       this.currentStreamText += this.streamBuffer;
       const contentEl = this.currentStreamEl.querySelector('.message-content');
-      contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
+      if (contentEl) {
+        contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
+      }
     }
 
     if (this.currentStreamText) {
@@ -921,6 +1014,9 @@ export class ChatModule {
       if (this.ttsEnabled) {
         this.speak(this.currentStreamText);
       }
+
+      // Relay response to playground iframe if open
+      this.relayToPlayground(this.currentStreamText);
     }
 
     // Show unread badge if floating panel is closed
@@ -934,6 +1030,38 @@ export class ChatModule {
     }
     this.rafPending = false;
     this.enableSend(true);
+  }
+
+  /**
+   * Relay assistant response to playground iframe (if open)
+   */
+  relayToPlayground(content: string): void {
+    if (!this.playgroundAwaitingResponse) {
+      return;
+    }
+
+    const iframe = document.getElementById('playground-iframe') as HTMLIFrameElement | null;
+    if (!iframe || !iframe.contentWindow) {
+      this.playgroundAwaitingResponse = false;
+      return;
+    }
+    const viewer = document.getElementById('playground-viewer');
+    if (!viewer || viewer.classList.contains('hidden')) {
+      this.playgroundAwaitingResponse = false;
+      return;
+    }
+
+    this.playgroundAwaitingResponse = false;
+
+    try {
+      iframe.contentWindow.postMessage(
+        { type: 'playground:response', content },
+        window.location.origin
+      );
+      logger.info('Relayed response to playground iframe');
+    } catch (e) {
+      logger.error('Failed to relay to playground:', e);
+    }
   }
 
   /**
@@ -1076,7 +1204,12 @@ export class ChatModule {
   handleInputKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      this.send();
+      // Use sendChatMessage which handles file attachments
+      if (typeof window.sendChatMessage === 'function') {
+        window.sendChatMessage();
+      } else {
+        this.send();
+      }
     }
   }
 
@@ -1230,12 +1363,13 @@ export class ChatModule {
     }
 
     this.speechRecognition = new SpeechRecognition();
-    this.speechRecognition.lang = navigator.language || 'ko-KR';
-    this.speechRecognition.continuous = true; // Enable continuous recognition for longer phrases
-    this.speechRecognition.interimResults = true;
-    this.speechRecognition.maxAlternatives = 3; // Get multiple recognition candidates for better accuracy
+    const recognition = this.speechRecognition;
+    recognition.lang = navigator.language || 'ko-KR';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 3;
 
-    this.speechRecognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
       if (!input) {
         return;
@@ -1295,7 +1429,9 @@ export class ChatModule {
       autoResizeTextarea(input);
 
       // Reset silence timer on each result
-      clearTimeout(this.silenceTimeout);
+      if (this.silenceTimeout) {
+        clearTimeout(this.silenceTimeout);
+      }
       this.silenceTimeout = setTimeout(() => {
         if (this.isRecording) {
           logger.info('Silence detected, stopping...');
@@ -1304,12 +1440,12 @@ export class ChatModule {
       }, this.silenceDelay);
     };
 
-    this.speechRecognition.onend = () => {
+    recognition.onend = () => {
       logger.info('Recognition ended');
       this.stopVoice();
     };
 
-    this.speechRecognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       logger.error('Error:', event.error);
       this.stopVoice();
 
@@ -1331,7 +1467,7 @@ export class ChatModule {
       this.addSystemMessage(errorMessage, 'error');
     };
 
-    logger.info('SpeechRecognition initialized (lang:', this.speechRecognition.lang + ')');
+    logger.info('SpeechRecognition initialized (lang:', recognition.lang + ')');
   }
 
   /**
@@ -1399,10 +1535,14 @@ export class ChatModule {
       return;
     }
 
-    clearTimeout(this.silenceTimeout);
+    if (this.silenceTimeout) {
+      clearTimeout(this.silenceTimeout);
+    }
 
     try {
-      this.speechRecognition.stop();
+      if (this.speechRecognition) {
+        this.speechRecognition.stop();
+      }
     } catch {
       // Ignore errors
     }
@@ -1411,7 +1551,7 @@ export class ChatModule {
 
     const micBtn = getElementByIdOrNull<HTMLButtonElement>('chat-mic');
     const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
-    if (!micBtn || !input || !this.speechRecognition) {
+    if (!micBtn || !input) {
       return;
     }
 
@@ -1802,7 +1942,7 @@ export class ChatModule {
       keys.forEach((key) => {
         if (key.startsWith(this.historyPrefix)) {
           try {
-            const data = JSON.parse(localStorage.getItem(key));
+            const data = JSON.parse(localStorage.getItem(key) ?? 'null');
             if (data && data.savedAt && now - data.savedAt > this.historyExpiryMs) {
               localStorage.removeItem(key);
               logger.info('Cleaned up expired history:', key);

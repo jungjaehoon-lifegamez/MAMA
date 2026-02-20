@@ -14,6 +14,68 @@ import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig } from './types.j
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
 
 /**
+ * Error thrown when config validation fails.
+ * Contains all validation errors and resolution guidance.
+ */
+export class ConfigValidationError extends Error {
+  constructor(
+    public readonly errors: string[],
+    public readonly configPath: string
+  ) {
+    const header = `Invalid configuration (${configPath}):\n`;
+    const body = errors.map((e) => `  - ${e}`).join('\n');
+    const footer = `\nFix config.yaml or run 'mama init --force' to regenerate.`;
+    super(header + body + footer);
+    this.name = 'ConfigValidationError';
+  }
+}
+
+/**
+ * Validate required config fields (fail-fast policy).
+ * Called after mergeWithDefaults() — if a field is still missing after merge,
+ * the user's config.yaml is genuinely missing it.
+ */
+function validateRequiredFields(config: MAMAConfig, configPath: string): void {
+  const errors: string[] = [];
+
+  if (!config.agent.backend) {
+    errors.push("agent.backend is required. Valid: 'claude' | 'codex-mcp'");
+  }
+  if (!config.agent.model) {
+    errors.push("agent.model is required. Example: 'claude-sonnet-4-6'");
+  }
+
+  // Validate role definitions have models
+  if (config.roles?.definitions) {
+    for (const [name, role] of Object.entries(config.roles.definitions)) {
+      if (!role.model) {
+        errors.push(`roles.definitions.${name}.model is required`);
+      }
+    }
+  }
+
+  // Validate enabled multi-agent agents have backend+model
+  if (config.multi_agent?.agents) {
+    for (const [id, agent] of Object.entries(config.multi_agent.agents)) {
+      if (agent.enabled === false) continue;
+      // Agents inherit from global config, so only error if neither agent nor global has it
+      const effectiveBackend = agent.backend ?? config.agent.backend;
+      const effectiveModel = agent.model ?? config.agent.model;
+      if (!effectiveBackend) {
+        errors.push(`multi_agent.agents.${id}: no backend. Set in agent config or agent.backend`);
+      }
+      if (!effectiveModel) {
+        errors.push(`multi_agent.agents.${id}: no model. Set in agent config or agent.model`);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new ConfigValidationError(errors, configPath);
+  }
+}
+
+/**
  * Expand ~ to home directory
  */
 export function expandPath(path: string): string {
@@ -67,7 +129,12 @@ export async function loadConfig(): Promise<MAMAConfig> {
     }
 
     // Merge with defaults for any missing optional fields
-    return mergeWithDefaults(config);
+    const merged = mergeWithDefaults(config);
+
+    // Fail-fast: validate required fields after merge
+    validateRequiredFields(merged, configPath);
+
+    return merged;
   } catch (error) {
     if (error instanceof Error && error.message.includes('missing required')) {
       throw error;

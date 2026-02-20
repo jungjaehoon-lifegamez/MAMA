@@ -157,9 +157,8 @@ export interface AgentConfig {
    * Backend for agent execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex-mcp': Codex via MCP protocol
-   * @default 'claude'
    */
-  backend?: 'claude' | 'codex-mcp';
+  backend: 'claude' | 'codex-mcp';
   /** Claude model to use */
   model: string;
   /**
@@ -346,14 +345,14 @@ export interface AgentPersonaConfig {
   auto_respond_keywords?: string[];
   /** Cooldown between responses in milliseconds */
   cooldown_ms?: number;
+  /** Backend for this agent (inherits from agent.backend if not set) */
+  backend?: 'claude' | 'codex-mcp' | 'gemini';
   /** Claude model to use for this agent */
   model?: string;
   /** Maximum turns for this agent */
   max_turns?: number;
   /** Whether this agent is enabled */
   enabled?: boolean;
-  /** Number of concurrent CLI processes for this agent @default 1 */
-  pool_size?: number;
   /** Agent tier level (1=full, 2=limited, 3=scoped execution) @default 1 */
   tier?: 1 | 2 | 3;
   /** Whether this agent can delegate tasks (Tier 1 only) */

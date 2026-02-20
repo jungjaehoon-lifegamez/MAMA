@@ -157,9 +157,7 @@ export abstract class MultiAgentHandlerBase {
           const cleaned = await this.executeTextToolCalls(result.response);
           return cleaned;
         } finally {
-          if (process) {
-            this.processManager.releaseProcess(agentId, process);
-          }
+          // no-op: pool_size=1, PersistentProcessPool handles reuse
         }
       },
       { maxConcurrentPerAgent: 2, maxTotalConcurrent: 5 }
@@ -275,13 +273,9 @@ export abstract class MultiAgentHandlerBase {
   protected setupIdleListeners(): void {
     this.processManager.on('process-created', ({ agentId, process }) => {
       process.on('idle', async () => {
-        try {
-          await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
-            await this.sendQueuedResponse(aid, message, response);
-          });
-        } finally {
-          this.processManager.releaseProcess(agentId, process);
-        }
+        await this.messageQueue.drain(agentId, process, async (aid, message, response) => {
+          await this.sendQueuedResponse(aid, message, response);
+        });
       });
     });
   }
@@ -368,6 +362,13 @@ export abstract class MultiAgentHandlerBase {
    */
   getProcessManager(): AgentProcessManager {
     return this.processManager;
+  }
+
+  /**
+   * Get delegation manager for API access
+   */
+  getDelegationManager(): DelegationManager {
+    return this.delegationManager;
   }
 
   /**
@@ -583,9 +584,6 @@ export abstract class MultiAgentHandlerBase {
           return cleaned;
         } finally {
           clearStepTimeout();
-          if (process) {
-            this.processManager.releaseProcess(agent.id, process);
-          }
         }
       };
 
@@ -690,9 +688,6 @@ export abstract class MultiAgentHandlerBase {
           return cleaned;
         } finally {
           clearStepTimeout();
-          if (process) {
-            this.processManager.releaseProcess(agentId, process);
-          }
         }
       };
 
