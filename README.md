@@ -185,11 +185,11 @@ Phase 3: Retrospective → Reviews results (+ Council quality check)
 
 Interactive HTML playgrounds run directly inside the MAMA dashboard. Create skills, schedule workflows, and experiment — all without leaving the browser.
 
-| Playground            | Description                                                 |
-| --------------------- | ----------------------------------------------------------- |
-| **Skill Lab**         | Create, verify, and publish skills with step-by-step wizard |
-| **Cron Workflow Lab** | Design and test cron-scheduled agent workflows visually     |
-| **Wave Visualizer**   | Audio waveform playground for voice/audio skill development |
+| Playground            | Description                                                                      |
+| --------------------- | -------------------------------------------------------------------------------- |
+| **Skill Lab**         | Create, verify, and publish skills with step-by-step wizard                      |
+| **Cron Workflow Lab** | Node-based DAG editor for cron workflows (trigger → prompt → condition → action) |
+| **Wave Visualizer**   | Multi-Agent task execution flow visualizer with Simulation and Live modes        |
 
 <p align="center">
   <img src="docs/website/assets/screenshot-skill-lab.png" alt="Skill Lab Playground" width="720">
