@@ -24,6 +24,7 @@ import { ToolPermissionManager } from './tool-permission-manager.js';
 import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
 import type { EphemeralAgentDef } from './workflow-types.js';
 import { buildBmadPromptBlock } from './bmad-templates.js';
+import { TypeDefinitionGenerator, CODE_ACT_INSTRUCTIONS } from '../agent/code-act/index.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -269,6 +270,14 @@ export class AgentProcessManager extends EventEmitter {
       options.disallowedTools = permissions.blocked;
     }
 
+    // Code-Act mode: block direct Bash/Write/Edit so LLM uses code_act MCP tool instead.
+    // code_act sandbox has Bash/Read/Write as host functions — accessible through code_act.
+    if (agentConfig.useCodeAct) {
+      const codeActBlocked = ['Bash', 'Write', 'Edit', 'NotebookEdit'];
+      const existing = options.disallowedTools || [];
+      options.disallowedTools = [...new Set([...existing, ...codeActBlocked])];
+    }
+
     if (agentBackend === 'codex-mcp') {
       const existing = this.codexProcessPool.get(channelKey);
       if (existing) {
@@ -487,7 +496,33 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${resolvedPersona}
 
-${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\\n' : ''}${reportBackPrompt ? reportBackPrompt + '\\n' : ''}## Gateway Tools
+${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\\n' : ''}${reportBackPrompt ? reportBackPrompt + '\\n' : ''}${this.buildToolsSection(agentConfig)}
+
+${skillsPrompt}## Guidelines
+- Stay in character as ${agentConfig.name}
+- Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
+- Your trigger prefix is: ${agentConfig.trigger_prefix}
+`;
+
+    if (this.shouldTracePrompt(agentId)) {
+      processManagerLogger.debug(
+        `[Conductor] buildSystemPrompt done key=${agentId.toLowerCase()} build_ms=${Date.now() - buildStart} bmad_ms=${bmadMs} skills_len=${skillsPrompt.length} total_len=${systemPrompt.length}`
+      );
+    }
+
+    return systemPrompt;
+  }
+
+  private buildToolsSection(agentConfig: Omit<AgentPersonaConfig, 'id'>): string {
+    const tier = agentConfig.tier ?? 1;
+    // Code-Act mode: replace tool_call instructions with Code-Act JS execution
+    if (agentConfig.useCodeAct && tier !== 3) {
+      const typeDefs = TypeDefinitionGenerator.generate(tier as 1 | 2 | 3);
+      return CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```\n';
+    }
+
+    // Default: tool_call JSON block instructions
+    return `## Gateway Tools
 
 To use gateway tools, output a JSON block in your response:
 
@@ -504,20 +539,7 @@ Available tools:
 
 The channel_id for the current conversation is provided in the message context.
 Tool calls are executed automatically. You do NOT need curl or Bash for these.
-
-${skillsPrompt}## Guidelines
-- Stay in character as ${agentConfig.name}
-- Respond naturally to your trigger keywords: ${(agentConfig.auto_respond_keywords || []).join(', ')}
-- Your trigger prefix is: ${agentConfig.trigger_prefix}
 `;
-
-    if (this.shouldTracePrompt(agentId)) {
-      processManagerLogger.debug(
-        `[Conductor] buildSystemPrompt done key=${agentId.toLowerCase()} build_ms=${Date.now() - buildStart} bmad_ms=${bmadMs} skills_len=${skillsPrompt.length} total_len=${systemPrompt.length}`
-      );
-    }
-
-    return systemPrompt;
   }
 
   private shouldTracePrompt(agentId: string): boolean {

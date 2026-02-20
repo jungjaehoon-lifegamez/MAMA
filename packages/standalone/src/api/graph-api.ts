@@ -1186,6 +1186,12 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: POST /api/code-act - execute code in Code-Act sandbox
+    if (pathname === '/api/code-act' && req.method === 'POST') {
+      await handleCodeActRequest(req, res, options);
+      return true;
+    }
+
     return false;
   };
 }
@@ -2721,6 +2727,38 @@ async function handleDeleteMCPServerRequest(
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error('Delete MCP server error:', message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: true, message }));
+  }
+}
+
+async function handleCodeActRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: GraphHandlerOptions = {}
+): Promise<void> {
+  try {
+    if (!options.executeCodeAct) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, message: 'Code-Act executor not configured' }));
+      return;
+    }
+
+    const body = await readBody(req);
+    const code = body?.code;
+    if (!code || typeof code !== 'string') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, message: 'Missing required field: code (string)' }));
+      return;
+    }
+
+    const result = await options.executeCodeAct(code);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('Code-Act execution error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: true, message }));
   }

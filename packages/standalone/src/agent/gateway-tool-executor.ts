@@ -126,6 +126,8 @@ const VALID_TOOLS: GatewayToolName[] = [
   'playground_create',
   // Webchat tools
   'webchat_send',
+  // Code-Act sandbox
+  'code_act',
 ];
 
 /**
@@ -395,6 +397,9 @@ export class GatewayToolExecutor {
           return await this.executeWebchatSend(
             input as { message?: string; file_path?: string } // session_id omitted: all files use shared outbound dir
           );
+        // Code-Act sandbox execution
+        case 'code_act':
+          return await this.executeCodeAct(input as { code: string });
       }
 
       // MAMA tools require API
@@ -483,25 +488,11 @@ export class GatewayToolExecutor {
   private async executeSearch(api: MAMAApiInterface, input: SearchInput): Promise<SearchResult> {
     const { query, type, limit = 10 } = input;
 
-    // If no query provided, return recent items using listDecisions
+    // If no query provided, return recent items (listDecisions returns decisions table rows)
     if (!query) {
       const decisions = await api.listDecisions({ limit });
       const results = Array.isArray(decisions) ? decisions : [];
-
-      // Filter by type if specified
-      const filteredResults =
-        type && type !== 'all'
-          ? results.filter((item) => {
-              const typedItem = item as { type?: string };
-              return typedItem.type === type;
-            })
-          : results;
-
-      return {
-        success: true,
-        results: filteredResults as SearchResult['results'],
-        count: filteredResults.length,
-      };
+      return { success: true, results: results as SearchResult['results'], count: results.length };
     }
 
     // Semantic search using suggest
@@ -1873,6 +1864,22 @@ export class GatewayToolExecutor {
         error: `Failed to send to webchat: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
+  }
+
+  private async executeCodeAct(input: { code: string }): Promise<GatewayToolResult> {
+    const { CodeActSandbox, HostBridge } = await import('./code-act/index.js');
+    const sandbox = new CodeActSandbox();
+    const bridge = new HostBridge(this);
+    bridge.injectInto(sandbox, 1);
+
+    const result = await sandbox.execute(input.code);
+
+    return {
+      success: result.success,
+      message: result.success
+        ? JSON.stringify({ value: result.value, logs: result.logs, metrics: result.metrics })
+        : `Code-Act error: ${result.error?.message || 'Unknown error'}`,
+    } as GatewayToolResult;
   }
 
   static getValidTools(): GatewayToolName[] {

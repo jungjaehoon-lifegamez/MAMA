@@ -625,7 +625,9 @@ export type GatewayToolName =
   // Playground tools
   | 'playground_create'
   // Webchat tools
-  | 'webchat_send';
+  | 'webchat_send'
+  // Code-Act sandbox
+  | 'code_act';
 
 // ============================================================================
 // MCP Tool Output Types
@@ -824,6 +826,13 @@ export interface AgentLoopOptions {
    * Called after each API response to track token consumption
    */
   onTokenUsage?: (record: TokenUsageRecord) => void;
+
+  /**
+   * Enable Code-Act mode: LLM writes JS code blocks instead of tool_call blocks
+   * Multiple tools composed in a single QuickJS sandbox execution
+   * @default false
+   */
+  useCodeAct?: boolean;
 
   /** Streaming callbacks for real-time progress events to external consumers */
   streamCallbacks?: StreamCallbacks;

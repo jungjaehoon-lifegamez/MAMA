@@ -16,6 +16,13 @@ import type { PromptLayer } from './prompt-size-monitor.js';
 import { CodexMCPProcess } from './codex-mcp-process.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
+import {
+  CodeActSandbox,
+  HostBridge,
+  TypeDefinitionGenerator,
+  CODE_ACT_INSTRUCTIONS,
+  CODE_ACT_MARKER,
+} from './code-act/index.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
 import type { OAuthManager } from '../auth/index.js';
@@ -483,6 +490,7 @@ export class AgentLoop {
   private readonly sessionPool: SessionPool;
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
+  private readonly useCodeAct: boolean;
   private readonly backend: 'claude' | 'codex-mcp';
   private readonly postToolHandler: PostToolHandler | null;
   private readonly stopContinuationHandler: StopContinuationHandler | null;
@@ -518,6 +526,7 @@ export class AgentLoop {
     const useGatewayMode = gatewayTools.includes('*') || gatewayTools.length > 0;
     const useMCPMode = mcpTools.includes('*') || mcpTools.length > 0;
     this.isGatewayMode = useGatewayMode;
+    this.useCodeAct = options.useCodeAct ?? false;
 
     if (useGatewayMode && useMCPMode) {
       logger.debug('🔀 Hybrid mode: Gateway + MCP tools enabled');
@@ -586,9 +595,16 @@ export class AgentLoop {
     }
 
     if (useGatewayMode) {
-      const gatewayToolsPrompt = getGatewayToolsPrompt();
-      if (gatewayToolsPrompt) {
-        promptLayers.push({ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 });
+      if (this.useCodeAct) {
+        // Code-Act mode: replace verbose gateway tools markdown with compact .d.ts
+        const typeDefs = TypeDefinitionGenerator.generate(1);
+        const codeActPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
+        promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
+      } else {
+        const gatewayToolsPrompt = getGatewayToolsPrompt();
+        if (gatewayToolsPrompt) {
+          promptLayers.push({ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 });
+        }
       }
     }
 
@@ -639,7 +655,9 @@ export class AgentLoop {
         model: options.model!,
         sessionId,
         systemPrompt: defaultSystemPrompt,
+        // Code-Act mode: empty MCP config + strict to block all auto-discovered MCP servers
         // Hybrid mode: pass MCP config even with Gateway tools enabled
+        // Code-Act mode: keep MCP servers available (slack, notion, etc.)
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
         // MAMA OS is a headless daemon (no TTY) — Claude CLI's interactive permission prompts
         // cannot work. Security is enforced by MAMA's own RoleManager layer (config.yaml roles).
@@ -647,6 +665,8 @@ export class AgentLoop {
         dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
+        // Code-Act: block direct Bash/Write/Edit so LLM prefers code_act MCP tool
+        disallowedTools: this.useCodeAct ? ['Bash', 'Write', 'Edit', 'NotebookEdit'] : undefined,
         // Pass configured timeout (default in PersistentCLI: 120s — too short for complex tasks)
         requestTimeout: options.timeoutMs,
       });
@@ -875,9 +895,18 @@ export class AgentLoop {
     try {
       if (options?.systemPrompt) {
         // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
-        const alreadyHasTools = options.systemPrompt.includes('# Gateway Tools');
-        const gatewayToolsPrompt =
-          this.isGatewayMode && !alreadyHasTools ? getGatewayToolsPrompt() : '';
+        const alreadyHasTools =
+          options.systemPrompt.includes('## Gateway Tools') ||
+          options.systemPrompt.includes('# Code Execution');
+        let gatewayToolsPrompt = '';
+        if (this.isGatewayMode && !alreadyHasTools) {
+          if (this.useCodeAct) {
+            const typeDefs = TypeDefinitionGenerator.generate(1);
+            gatewayToolsPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
+          } else {
+            gatewayToolsPrompt = getGatewayToolsPrompt();
+          }
+        }
         const fullPrompt = gatewayToolsPrompt
           ? `${options.systemPrompt}\n\n---\n\n${gatewayToolsPrompt}`
           : options.systemPrompt;
@@ -1029,9 +1058,16 @@ export class AgentLoop {
         const contentBlocks: ContentBlock[] = [];
         let parsedToolCalls: ToolUseBlock[] = [];
 
-        // Parse tool_call blocks from text response (Gateway Tools mode ONLY)
+        // Parse tool_call / code_act blocks from text response (Gateway Tools mode ONLY)
         if (this.isGatewayMode) {
           parsedToolCalls = this.parseToolCallsFromText(piResult.response || '');
+
+          // Code-Act: always parse ```js blocks — system prompt controls whether LLM generates them
+          const codeActCalls = this.parseCodeActBlocks(piResult.response || '');
+          if (codeActCalls.length > 0) {
+            parsedToolCalls.push(...codeActCalls);
+          }
+
           const textWithoutToolCalls = this.removeToolCallBlocks(piResult.response || '');
 
           if (textWithoutToolCalls.trim()) {
@@ -1285,33 +1321,44 @@ export class AgentLoop {
       );
 
       try {
-        // PreToolUse: search MAMA for contracts before Write operations
-        let contractContext = '';
-        if (toolUse.name === 'Write' && toolUse.input) {
-          contractContext = await this.searchContractsForTool(
+        // Code-Act: execute JS code in sandbox
+        if (toolUse.name === CODE_ACT_MARKER) {
+          const codeActResult = await this.executeCodeAct((toolUse.input as { code: string }).code);
+          result = JSON.stringify(codeActResult, null, 2);
+          if (!codeActResult.success) {
+            isError = true;
+          }
+          this.onToolUse?.(toolUse.name, toolUse.input, codeActResult);
+          this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
+        } else {
+          // PreToolUse: search MAMA for contracts before Write operations
+          let contractContext = '';
+          if (toolUse.name === 'Write' && toolUse.input) {
+            contractContext = await this.searchContractsForTool(
+              toolUse.name,
+              toolUse.input as GatewayToolInput
+            );
+          }
+
+          const toolResult = await this.mcpExecutor.execute(
             toolUse.name,
             toolUse.input as GatewayToolInput
           );
+          result = JSON.stringify(toolResult, null, 2);
+
+          if (contractContext) {
+            result = `${contractContext}\n\n---\n\n${result}`;
+          }
+
+          // Notify tool use callback
+          this.onToolUse?.(toolUse.name, toolUse.input, toolResult);
+
+          // PostToolUse: auto-extract contracts (fire-and-forget)
+          this.postToolHandler?.processInBackground(toolUse.name, toolUse.input, toolResult);
+
+          // Notify stream: tool completed successfully
+          this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, false);
         }
-
-        const toolResult = await this.mcpExecutor.execute(
-          toolUse.name,
-          toolUse.input as GatewayToolInput
-        );
-        result = JSON.stringify(toolResult, null, 2);
-
-        if (contractContext) {
-          result = `${contractContext}\n\n---\n\n${result}`;
-        }
-
-        // Notify tool use callback
-        this.onToolUse?.(toolUse.name, toolUse.input, toolResult);
-
-        // PostToolUse: auto-extract contracts (fire-and-forget)
-        this.postToolHandler?.processInBackground(toolUse.name, toolUse.input, toolResult);
-
-        // Notify stream: tool completed successfully
-        this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, false);
       } catch (error) {
         isError = true;
         result = error instanceof Error ? error.message : String(error);
@@ -1416,10 +1463,55 @@ export class AgentLoop {
   }
 
   /**
-   * Remove tool_call blocks from text (to avoid duplication in response)
+   * Parse ```js code blocks as code_act tool calls (Code-Act mode)
+   */
+  private parseCodeActBlocks(text: string): ToolUseBlock[] {
+    const blocks: ToolUseBlock[] = [];
+    const codeActRegex = /```(?:js|javascript)\s*\n([\s\S]*?)\n```/g;
+
+    let match;
+    while ((match = codeActRegex.exec(text)) !== null) {
+      const code = match[1].trim();
+      if (code) {
+        blocks.push({
+          type: 'tool_use',
+          id: `code_act_${randomUUID()}`,
+          name: CODE_ACT_MARKER,
+          input: { code },
+        });
+      }
+    }
+
+    return blocks;
+  }
+
+  /**
+   * Execute Code-Act JS code in a sandboxed QuickJS environment
+   */
+  private async executeCodeAct(
+    code: string
+  ): Promise<import('./code-act/types.js').ExecutionResult> {
+    const sandbox = new CodeActSandbox();
+    const bridge = new HostBridge(this.mcpExecutor);
+    bridge.injectInto(sandbox, 1);
+
+    const result = await sandbox.execute(code);
+
+    if (result.logs.length > 0) {
+      console.log(`[CodeAct] console output: ${result.logs.join('\n')}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Remove tool_call and code_act blocks from text (to avoid duplication in response)
    */
   private removeToolCallBlocks(text: string): string {
-    return text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '').trim();
+    return text
+      .replace(/```tool_call\s*\n[\s\S]*?\n```/g, '')
+      .replace(/```(?:js|javascript)\s*\n[\s\S]*?\n```/g, '')
+      .trim();
   }
 
   private extractTextFromContent(content: ContentBlock[]): string {
