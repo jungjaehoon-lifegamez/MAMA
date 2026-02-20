@@ -27,6 +27,7 @@ import type {
   MessageAttachment,
   ContentBlock,
 } from './types.js';
+import { downloadFile, buildContentBlocks } from './attachment-utils.js';
 import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
@@ -491,7 +492,7 @@ export class DiscordGateway extends BaseGateway {
     const attachments: MessageAttachment[] = [];
     for (const [, attachment] of message.attachments) {
       try {
-        const localPath = await this.downloadAttachment(attachment.url, attachment.name);
+        const localPath = await downloadFile(attachment.url, attachment.name);
         const isImage = attachment.contentType?.startsWith('image/');
         attachments.push({
           type: isImage ? 'image' : 'file',
@@ -573,7 +574,7 @@ export class DiscordGateway extends BaseGateway {
     }
 
     // Convert attachments to content blocks (OpenClaw-style)
-    const contentBlocks: ContentBlock[] = await this.buildContentBlocks(effectiveAttachments);
+    const contentBlocks: ContentBlock[] = await buildContentBlocks(effectiveAttachments);
 
     return { attachments, effectiveAttachments, contentBlocks };
   }
@@ -589,15 +590,23 @@ export class DiscordGateway extends BaseGateway {
   ): Promise<void> {
     const channelHistory = getChannelHistory();
 
-    // Pre-analyze images before routing (multi-agent handler only gets text)
+    // Enrich content with file reference text blocks for multi-agent (text-only)
     let enrichedContent = cleanContent;
+    const fileRefTexts = normalizedMessage.contentBlocks
+      ?.filter((b) => b.type === 'text' && b.text?.startsWith('[File:'))
+      .map((b) => b.text!);
+    if (fileRefTexts && fileRefTexts.length > 0) {
+      enrichedContent = `${cleanContent}\n\n${fileRefTexts.join('\n')}`;
+    }
+
+    // Pre-analyze images before routing (multi-agent handler only gets text)
     if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
       const { getImageAnalyzer } = await import('./image-analyzer.js');
       const analysisText = await getImageAnalyzer().processContentBlocks(
         normalizedMessage.contentBlocks
       );
       if (analysisText) {
-        enrichedContent = `${cleanContent}\n\n${analysisText}`;
+        enrichedContent = `${enrichedContent}\n\n${analysisText}`;
       }
     }
 
@@ -1127,199 +1136,6 @@ export class DiscordGateway extends BaseGateway {
     for (const chunk of chunks) {
       await channel.send(chunk);
     }
-  }
-
-  /**
-   * Download attachment to local file
-   */
-  private async downloadAttachment(url: string, filename: string): Promise<string> {
-    const fs = await import('fs/promises');
-    const path = await import('path');
-
-    // Create media directory
-    const mediaDir = path.join(process.env.HOME || '', '.mama', 'workspace', 'media', 'inbound');
-    await fs.mkdir(mediaDir, { recursive: true });
-
-    // Generate unique filename
-    const timestamp = Date.now();
-    const localPath = path.join(
-      mediaDir,
-      `${timestamp}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`
-    );
-
-    // Download file
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to download: ${response.status}`);
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await fs.writeFile(localPath, buffer);
-
-    console.log(`[Discord] Downloaded attachment: ${localPath} (${buffer.length} bytes)`);
-    return localPath;
-  }
-
-  private async compressImage(buffer: Buffer, maxSizeBytes: number): Promise<Buffer> {
-    try {
-      const sharp = (await import('sharp')).default;
-
-      let compressed = await sharp(buffer)
-        .resize(2048, 2048, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 85 })
-        .toBuffer();
-
-      if (compressed.length > maxSizeBytes) {
-        compressed = await sharp(buffer)
-          .resize(2048, 2048, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 75 })
-          .toBuffer();
-      }
-
-      if (compressed.length > maxSizeBytes) {
-        compressed = await sharp(buffer)
-          .resize(1600, 1600, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 70 })
-          .toBuffer();
-      }
-
-      return compressed;
-    } catch (err) {
-      console.warn(`[Discord] sharp not available, cannot compress: ${err}`);
-      return buffer;
-    }
-  }
-
-  /**
-   * Detect actual image media type from magic bytes
-   */
-  private detectImageType(buffer: Buffer): string | null {
-    if (buffer.length < 12) {
-      return null;
-    }
-
-    // JPEG: FF D8 FF
-    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
-      return 'image/jpeg';
-    }
-    // PNG: 89 50 4E 47 0D 0A 1A 0A
-    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
-      return 'image/png';
-    }
-    // GIF: 47 49 46 38
-    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) {
-      return 'image/gif';
-    }
-    // WebP: RIFF....WEBP
-    if (
-      buffer[0] === 0x52 &&
-      buffer[1] === 0x49 &&
-      buffer[2] === 0x46 &&
-      buffer[3] === 0x46 &&
-      buffer[8] === 0x57 &&
-      buffer[9] === 0x45 &&
-      buffer[10] === 0x42 &&
-      buffer[11] === 0x50
-    ) {
-      return 'image/webp';
-    }
-    return null;
-  }
-
-  /**
-   * Build content blocks from attachments (OpenClaw-style)
-   * Converts images to base64-encoded content blocks for Claude
-   */
-  private async buildContentBlocks(attachments: MessageAttachment[]): Promise<ContentBlock[]> {
-    const contentBlocks: ContentBlock[] = [];
-
-    // Supported Claude image types
-    const SUPPORTED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-
-    for (const attachment of attachments) {
-      if (!attachment.localPath) continue;
-
-      try {
-        if (attachment.type === 'image') {
-          // Handle images: add path info + base64 content
-          const fs = await import('fs/promises');
-          let imageBuffer = await fs.readFile(attachment.localPath);
-          const originalSize = imageBuffer.length;
-          let wasCompressed = false;
-
-          // Compress image if needed (Claude limit: ~5MB base64)
-          const MAX_RAW_SIZE = 5 * 1024 * 1024;
-          if (imageBuffer.length > MAX_RAW_SIZE) {
-            console.log(
-              `[Discord] Image too large (${(originalSize / 1024 / 1024).toFixed(2)}MB), compressing...`
-            );
-            const compressed = await this.compressImage(imageBuffer, MAX_RAW_SIZE);
-            imageBuffer = Buffer.from(compressed);
-            wasCompressed = true;
-            console.log(
-              `[Discord] Compressed to ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB`
-            );
-          }
-
-          const base64Data = imageBuffer.toString('base64');
-
-          // Detect actual image type from magic bytes (more reliable than Discord's contentType)
-          const detectedType = this.detectImageType(imageBuffer);
-          let mediaType = wasCompressed
-            ? 'image/jpeg'
-            : detectedType || attachment.contentType || 'image/png';
-
-          // Normalize media type to Claude-supported format
-          if (!SUPPORTED_MEDIA_TYPES.includes(mediaType)) {
-            if (mediaType.startsWith('image/')) {
-              // Fall back to detected type or PNG
-              mediaType = detectedType || 'image/png';
-            } else {
-              console.warn(`[Discord] Unsupported media type: ${mediaType}, skipping`);
-              continue;
-            }
-          }
-
-          discordLogger.info(
-            `[Discord] Image type: declared=${attachment.contentType}, detected=${detectedType}, using=${mediaType}`
-          );
-
-          // Add image path info as text block
-          contentBlocks.push({
-            type: 'text',
-            text: `[Image: ${attachment.filename}, saved at: ${attachment.localPath}]`,
-          });
-
-          contentBlocks.push({
-            type: 'image',
-            localPath: attachment.localPath, // For formatHistoryAsPrompt()
-            source: {
-              type: 'base64',
-              media_type: mediaType,
-              data: base64Data,
-            },
-          });
-
-          console.log(
-            `[Discord] Built content block for image: ${attachment.filename} at ${attachment.localPath}`
-          );
-        } else {
-          // Handle files: add path info only (Claude can read files via tools)
-          contentBlocks.push({
-            type: 'text',
-            text: `[File: ${attachment.filename}, type: ${attachment.contentType}, saved at: ${attachment.localPath}]`,
-          });
-
-          console.log(
-            `[Discord] Added file reference: ${attachment.filename} at ${attachment.localPath}`
-          );
-        }
-      } catch (err) {
-        console.error(`[Discord] Failed to build content block: ${err}`);
-      }
-    }
-
-    return contentBlocks;
   }
 
   /**
