@@ -2048,9 +2048,8 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const content = readFileSync(mdPath, 'utf-8');
       res.json({ content });
     } catch (err) {
-      const safeMsg =
-        err instanceof Error ? err.message.replace(/\/home\/[^/]+/g, '~') : 'Unknown error';
-      res.status(500).json({ error: `Failed to read: ${safeMsg}` });
+      startLogger.warn('[GET /api/workspace/skills/:name/content] Failed to read skill:', err);
+      res.status(500).json({ error: 'Failed to read skill content' });
     }
   });
   console.log('✓ Workspace Skills API available at /api/workspace/skills');

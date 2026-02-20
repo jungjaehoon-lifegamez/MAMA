@@ -1158,6 +1158,8 @@ You can also paste (Ctrl+V) a response into this area.</div>
       var text = document.getElementById('promptPreview').textContent;
       navigator.clipboard.writeText(text).then(function(){
         flashBtn(btn, 'Copied!');
+      }).catch(function() {
+        updateStatus('Clipboard access denied', versionStr());
       });
     }
 
@@ -1402,6 +1404,10 @@ You can also paste (Ctrl+V) a response into this area.</div>
       // Handle file upload from playground
       if (e.data && e.data.type === 'playground:uploadFile') {
         var d = e.data;
+        if (!d.data || !d.fileName) {
+          updateStatus('Upload error: missing file data', versionStr());
+          return;
+        }
         // Extract base64 data from data URI
         var base64Data = d.data.split(',')[1] || d.data;
         var uploadPath = '~/.mama/workspace/media/inbound/' + d.fileName;
