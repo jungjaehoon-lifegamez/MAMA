@@ -833,7 +833,9 @@ export class ChatModule {
    * Render the tool-status group HTML in-place
    */
   private renderToolStatusGroup(): void {
-    if (!this.toolStatusGroup) return;
+    if (!this.toolStatusGroup) {
+      return;
+    }
 
     const parts: string[] = [];
 
@@ -869,7 +871,9 @@ export class ChatModule {
    */
   addToolCard(toolName: string, _toolId: string, input: ChatToolInput | null): void {
     const container = getElementByIdOrNull<HTMLDivElement>('chat-messages');
-    if (!container) return;
+    if (!container) {
+      return;
+    }
     this.removePlaceholder();
 
     // Create group element on first tool call
@@ -900,7 +904,9 @@ export class ChatModule {
    * Complete tool card (mark current as finished)
    */
   completeToolCard(_index: number): void {
-    if (!this.toolStatusCurrentName) return;
+    if (!this.toolStatusCurrentName) {
+      return;
+    }
 
     this.toolStatusCompleted.push(this.toolStatusCurrentName);
     this.toolStatusCurrentName = null;
@@ -1010,10 +1016,14 @@ export class ChatModule {
    * Relay assistant response to playground iframe (if open)
    */
   relayToPlayground(content: string): void {
-    if (!this.playgroundAwaitingResponse) return;
+    if (!this.playgroundAwaitingResponse) {
+      return;
+    }
 
     const iframe = document.getElementById('playground-iframe') as HTMLIFrameElement | null;
-    if (!iframe || !iframe.contentWindow) return;
+    if (!iframe || !iframe.contentWindow) {
+      return;
+    }
     const viewer = document.getElementById('playground-viewer');
     if (!viewer || viewer.classList.contains('hidden')) return;
 

@@ -295,6 +295,7 @@ export function createUploadRouter(): Router {
     }
 
     const stat = fs.statSync(fullPath);
+    res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', encodeContentDisposition(safeName));
     res.setHeader('Content-Length', stat.size);
     res.setHeader('X-Content-Type-Options', 'nosniff'); // Prevent MIME type sniffing

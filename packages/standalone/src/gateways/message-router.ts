@@ -430,7 +430,7 @@ This protects your credentials from being exposed in chat logs.`;
     // Skill on-demand injection: prepend matched skill content to user message
     // (not system prompt — PersistentCLI can't update system prompt after creation)
     const skillPrefix = enhanced.skillContent
-      ? `<system-reminder>\n${enhanced.skillContent}\n</system-reminder>\n\n`
+      ? `<system-reminder>\n${enhanced.skillContent.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n`
       : '';
     if (enhanced.skillContent) {
       logger.info(
