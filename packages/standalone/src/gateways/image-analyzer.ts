@@ -29,11 +29,13 @@ interface ContentBlock {
 
 // Sanitize user input to prevent prompt injection
 function sanitizeUserPrompt(prompt: string): string {
-  if (!prompt) return 'Analyze this image';
+  if (!prompt) {
+    return 'Analyze this image';
+  }
   // Remove potential prompt injection attempts while preserving the user's intent
   return (
     prompt
-      .replace(/\\n/g, ' ') // Remove literal \n
+      .replace(/[\n\r\\]/g, ' ') // Remove actual newlines and literal backslash
       .replace(/[[\]{}]/g, '') // Remove brackets that could interfere with prompts
       .trim()
       .substring(0, 500) || // Limit length
@@ -140,7 +142,8 @@ export class ImageAnalyzer {
           // Validate path to prevent traversal attacks
           const allowedBase = nodePath.join(homedir(), '.mama', 'workspace', 'media');
           const resolvedPath = nodePath.resolve(block.localPath);
-          if (!resolvedPath.startsWith(allowedBase)) {
+          const rel = nodePath.relative(allowedBase, resolvedPath);
+          if (rel.startsWith('..') || nodePath.isAbsolute(rel)) {
             throw new Error('Image path must be within ~/.mama/workspace/media/');
           }
 

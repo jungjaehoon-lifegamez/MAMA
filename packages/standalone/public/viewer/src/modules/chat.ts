@@ -12,8 +12,6 @@
 
 /* eslint-env browser */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import {
   escapeHtml,
   escapeAttr,
@@ -28,6 +26,16 @@ import { API, type JsonRecord } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 
 const logger = new DebugLogger('Chat');
+
+declare global {
+  interface Window {
+    switchTab?: (tab: string) => void;
+    sendChatMessage: (msg?: string) => void;
+    webkitSpeechRecognition?: {
+      new (): SpeechRecognition;
+    };
+  }
+}
 
 interface SpeechRecognitionEvent extends Event {
   resultIndex: number;
@@ -595,7 +603,7 @@ export class ChatModule {
     }
 
     // Switch to Memory tab and open form with text
-    (window as any).switchTab('memory');
+    window.switchTab('memory');
     this.memoryModule.showSaveFormWithText(text);
     this.addSystemMessage(`💾 Opening save form with: "${text.substring(0, 50)}..."`);
   }
@@ -615,7 +623,7 @@ export class ChatModule {
     }
 
     // Switch to Memory tab and execute search
-    (window as any).switchTab('memory');
+    window.switchTab('memory');
     this.memoryModule.searchWithQuery(query);
     this.addSystemMessage(`🔍 Searching for: "${query}"`);
   }
@@ -1158,8 +1166,8 @@ export class ChatModule {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       // Use sendChatMessage which handles file attachments
-      if (typeof (window as any).sendChatMessage === 'function') {
-        (window as any).sendChatMessage();
+      if (typeof window.sendChatMessage === 'function') {
+        window.sendChatMessage();
       } else {
         this.send();
       }
@@ -1304,8 +1312,7 @@ export class ChatModule {
    * Initialize speech recognition
    */
   initSpeechRecognition(): void {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       logger.warn('SpeechRecognition not supported');
@@ -1323,7 +1330,7 @@ export class ChatModule {
     recognition.interimResults = true;
     recognition.maxAlternatives = 3;
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       const input = getElementByIdOrNull<HTMLTextAreaElement>('chat-input');
       if (!input) {
         return;

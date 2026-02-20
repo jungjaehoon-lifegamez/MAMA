@@ -148,32 +148,6 @@ async function compressIfNeeded(filePath: string, size: number): Promise<string>
   }
 }
 
-const MIME_MAP: Record<string, string> = {
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf',
-  // Document types
-  '.txt': 'text/plain',
-  '.csv': 'text/csv',
-  '.md': 'text/markdown',
-  '.html': 'text/html',
-  '.htm': 'text/html',
-  '.xml': 'application/xml', // Updated to match standard MIME type (text/xml also valid but less common)
-  '.json': 'application/json',
-  '.doc': 'application/msword',
-  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  '.xls': 'application/vnd.ms-excel',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  '.ppt': 'application/vnd.ms-powerpoint',
-  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  '.zip': 'application/zip',
-  '.gz': 'application/gzip',
-};
-
 /**
  * Encode Content-Disposition header for safe Unicode filenames (RFC 5987)
  */
@@ -295,7 +269,7 @@ export function createUploadRouter(): Router {
     }
 
     const ext = path.extname(safeName).toLowerCase();
-    const contentType = MIME_MAP[ext] || 'application/octet-stream';
+    const contentType = EXT_TO_MIME[ext]?.[0] || 'application/octet-stream';
     const stat = fs.statSync(fullPath);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', stat.size);

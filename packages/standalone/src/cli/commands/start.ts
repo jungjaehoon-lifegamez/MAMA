@@ -386,8 +386,9 @@ function syncBuiltinSkills(): void {
     if (synced > 0) {
       console.log(`✓ Synced ${synced} built-in skill(s)`);
     }
-  } catch {
-    // Non-blocking: skills are optional
+  } catch (err) {
+    // Non-blocking: skills are optional, but surface failures for observability
+    console.warn('[syncBuiltinSkills] Skill sync failed (non-fatal):', err);
   }
 }
 
@@ -1256,8 +1257,8 @@ export async function runAgentLoop(
             busy: 3,
             starting: 2,
             idle: 1,
-            dead: 0,
-            online: -1,
+            online: 0,
+            dead: -1,
           };
 
           // Collect from Discord
