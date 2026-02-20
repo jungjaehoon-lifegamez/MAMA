@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-02-20
+
+### Added
+
+- **Playground Integration**: Skill Lab ↔ Skills Tab bidirectional integration
+  - Playground viewer module with iframe embedding and Skills Tab sync
+  - 3 built-in playgrounds: Skill Lab, Cron Workflow Lab, Wave Visualizer
+  - Skill Registry API (`/api/skills/list`) for playground consumption
+  - "Open in new tab" support for full-screen playground editing
+  - ![Skill Lab Playground](docs/website/assets/screenshot-skill-lab.png)
+- **Built-in Skill Templates**: 4 new skill templates (frontend-design, multi-agent-collab, playground, scheduling)
+- **Tool Status Tracker**: In-place tool execution status updates in Viewer chat
+  - Real-time tool progress display (running → completed/failed)
+  - Gateway tool executor backend integration
+- **Slack File Upload**: Shared attachment utilities for Discord/Slack file handling
+  - `attachment-utils.ts` with `downloadAttachment`, `compressImage`, `detectImageType`
+  - Deduplicated file upload logic across gateways
+
+### Changed
+
+- **Fail-Fast Policy**: Removed silent fallbacks, added explicit permission gates across standalone
+- **AgentProcessPool Removed**: Simplified to direct process management (no pool_size)
+- **Port Cleanup**: `mama start` ensures clean port release to prevent EADDRINUSE crashes
+
+### Fixed
+
+- **Timeout Propagation**: Agent timeout correctly passed through CLI wrapper
+- **System Prompt Truncation**: Long system prompts no longer silently truncated
+- **EADDRINUSE**: Restart no longer crashes when previous daemon port not released
+
 ## [0.9.4] - 2026-02-19
 
 ### Added
