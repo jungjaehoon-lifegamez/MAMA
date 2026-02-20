@@ -596,7 +596,7 @@ function showDetail(node) {
   const title = document.getElementById('dpTitle');
   const body = document.getElementById('dpBody');
 
-  title.innerHTML = `${ICONS[node.type]} ${node.label}`;
+  title.innerHTML = `${ICONS[node.type]} ${esc(node.label)}`;
   let html = `<div class="dp-field"><label class="dp-label">Name</label><input class="dp-input" id="nd-label" value="${esc(node.label)}"></div>`;
 
   switch(node.type) {
@@ -892,8 +892,10 @@ function buildChain(startId) {
     visited.add(current);
     const node = state.nodes.find(n => n.id === current);
     if (node) chain.push(node);
-    const next = state.connections.find(c => c.from === current);
-    current = next ? next.to : null;
+    // Use filter to get ALL outgoing connections (supports branching workflows)
+    const outgoing = state.connections.filter(c => c.from === current);
+    // For linear chain building, take the first connection if multiple exist
+    current = outgoing.length > 0 ? outgoing[0].to : null;
   }
   return chain;
 }
@@ -1372,6 +1374,11 @@ function setVerifyMethod(method) {
 let _pendingAgentData = null;
 
 window.addEventListener('message', (e) => {
+  // SECURITY: Validate origin to prevent cross-origin attacks
+  if (e.origin !== window.location.origin) {
+    return;
+  }
+
   const d = e.data;
   if (!d || typeof d !== 'object') return;
 

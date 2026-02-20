@@ -16,6 +16,8 @@ import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentSlackHandler } from '../multi-agent/multi-agent-slack.js';
 import { getChannelHistory } from './channel-history.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
+import { ToolStatusTracker } from './tool-status-tracker.js';
+import type { PlatformAdapter } from './tool-status-tracker.js';
 
 /**
  * Slack message event structure
@@ -440,8 +442,46 @@ export class SlackGateway extends BaseGateway {
       },
     };
 
+    // Create tool status tracker for real-time progress
+    const threadTs = event.thread_ts || event.ts;
+    const slackAdapter: PlatformAdapter = {
+      postPlaceholder: async (content: string) => {
+        const res = await this.webClient.chat.postMessage({
+          channel: event.channel,
+          text: content,
+          thread_ts: threadTs,
+        });
+        return res.ts ?? null;
+      },
+      editPlaceholder: async (handle: string, content: string) => {
+        await this.webClient.chat.update({
+          channel: event.channel,
+          ts: handle,
+          text: content,
+        });
+      },
+      deletePlaceholder: async (handle: string) => {
+        await this.webClient.chat.delete({
+          channel: event.channel,
+          ts: handle,
+        });
+      },
+    };
+    const tracker = new ToolStatusTracker(slackAdapter, {
+      throttleMs: 1500,
+      initialDelayMs: 3000,
+    });
+    const streamCallbacks = tracker.toStreamCallbacks();
+
     // Process through message router
-    const result = await this.messageRouter.process(normalizedMessage);
+    let result;
+    try {
+      result = await this.messageRouter.process(normalizedMessage, {
+        onStream: streamCallbacks,
+      });
+    } finally {
+      await tracker.cleanup();
+    }
 
     // Send response in thread
     await this.sendResponse(event, result.response);

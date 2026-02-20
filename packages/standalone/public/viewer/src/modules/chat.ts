@@ -976,7 +976,9 @@ export class ChatModule {
     if (this.streamBuffer && this.currentStreamEl) {
       this.currentStreamText += this.streamBuffer;
       const contentEl = this.currentStreamEl.querySelector('.message-content');
-      if (contentEl) contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
+      if (contentEl) {
+        contentEl.innerHTML = formatAssistantMessage(this.currentStreamText);
+      }
     }
 
     if (this.currentStreamText) {
@@ -1018,7 +1020,10 @@ export class ChatModule {
     this.playgroundAwaitingResponse = false;
 
     try {
-      iframe.contentWindow.postMessage({ type: 'playground:response', content }, '*');
+      iframe.contentWindow.postMessage(
+        { type: 'playground:response', content },
+        window.location.origin
+      );
       logger.info('Relayed response to playground iframe');
     } catch (e) {
       logger.error('Failed to relay to playground:', e);
@@ -1390,7 +1395,9 @@ export class ChatModule {
       autoResizeTextarea(input);
 
       // Reset silence timer on each result
-      if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
+      if (this.silenceTimeout) {
+        clearTimeout(this.silenceTimeout);
+      }
       this.silenceTimeout = setTimeout(() => {
         if (this.isRecording) {
           logger.info('Silence detected, stopping...');
@@ -1494,7 +1501,9 @@ export class ChatModule {
       return;
     }
 
-    if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
+    if (this.silenceTimeout) {
+      clearTimeout(this.silenceTimeout);
+    }
 
     try {
       if (this.speechRecognition) {
@@ -2304,7 +2313,7 @@ export class ChatModule {
 
     // Clean up timers
     if (this.silenceTimeout) {
-      if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
+      clearTimeout(this.silenceTimeout);
       this.silenceTimeout = null;
     }
     if (this.idleTimer) {

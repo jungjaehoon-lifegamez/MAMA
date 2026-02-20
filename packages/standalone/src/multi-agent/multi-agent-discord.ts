@@ -21,6 +21,8 @@ import { validateDelegationFormat, isDelegationAttempt } from './delegation-form
 import { getChannelHistory } from '../gateways/channel-history.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
+import { ToolStatusTracker } from '../gateways/tool-status-tracker.js';
+import type { PlatformAdapter } from '../gateways/tool-status-tracker.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -637,99 +639,43 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       const addedEmojis = new Set<string>();
       const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
 
-      // Progress tracking state
-      let _toolCount = 0;
-      const startTime = Date.now();
-      let progressMessage: Message | null = null;
-      let progressDelayHandle: ReturnType<typeof setTimeout> | null = null;
-      let lastEditTime = 0;
-      let pendingEditHandle: ReturnType<typeof setTimeout> | null = null;
-
-      /** Build progress message content (elapsed time only -- no tool/code details exposed) */
-      const buildProgressContent = (): string => {
-        const elapsed = Math.round((Date.now() - startTime) / 1000);
-        return `⏳ Working... (${elapsed}s)`;
-      };
-
-      /** Send or edit the progress message (debounced to 1 edit per 3s) */
-      const updateProgressMessage = (): void => {
-        if (!discordMessage) return;
-
-        const now = Date.now();
-        const timeSinceLastEdit = now - lastEditTime;
-
-        if (progressMessage) {
-          // Already have a message -- debounce edits
-          if (timeSinceLastEdit >= PROGRESS_EDIT_INTERVAL_MS) {
-            lastEditTime = now;
-            progressMessage.edit(buildProgressContent()).catch(() => {
-              /* ignore -- message may be deleted */
-            });
-          } else if (!pendingEditHandle) {
-            // Schedule a deferred edit
-            const delay = PROGRESS_EDIT_INTERVAL_MS - timeSinceLastEdit;
-            pendingEditHandle = setTimeout(() => {
-              pendingEditHandle = null;
-              if (progressMessage) {
-                lastEditTime = Date.now();
-                progressMessage.edit(buildProgressContent()).catch(() => {
-                  /* ignore */
-                });
-              }
-            }, delay);
-          }
-        }
-      };
-
-      /** Start the delayed progress message (fires after PROGRESS_DELAY_MS of first tool use) */
-      const scheduleProgressStart = (): void => {
-        if (progressDelayHandle || progressMessage || !discordMessage) return;
-        progressDelayHandle = setTimeout(async () => {
-          progressDelayHandle = null;
-          if (!discordMessage) return;
-          try {
-            const content = buildProgressContent();
+      // Create tool status tracker for progress messages
+      let tracker: ToolStatusTracker | null = null;
+      if (discordMessage) {
+        const channelId = discordMessage.channel.id;
+        let placeholderMsg: Message | null = null;
+        const discordAdapter: PlatformAdapter = {
+          postPlaceholder: async (content: string) => {
             if (hasOwnBot) {
-              progressMessage = await this.multiBotManager.sendAsAgent(
-                agentId,
-                discordMessage.channel.id,
-                content
-              );
+              placeholderMsg = await this.multiBotManager.sendAsAgent(agentId, channelId, content);
             } else if ('send' in discordMessage.channel) {
-              progressMessage = await (
+              placeholderMsg = await (
                 discordMessage.channel as { send: (c: string) => Promise<Message> }
               ).send(content);
             }
-            lastEditTime = Date.now();
-          } catch {
-            /* ignore -- channel may be unavailable */
-          }
-        }, PROGRESS_DELAY_MS);
-      };
-
-      /** Clean up all progress tracking resources */
-      const cleanupProgress = async (): Promise<void> => {
-        if (progressDelayHandle) {
-          clearTimeout(progressDelayHandle);
-          progressDelayHandle = null;
-        }
-        if (pendingEditHandle) {
-          clearTimeout(pendingEditHandle);
-          pendingEditHandle = null;
-        }
-        if (progressMessage) {
-          try {
-            await progressMessage.delete();
-          } catch {
-            /* ignore -- message may already be deleted */
-          }
-          progressMessage = null;
-        }
-      };
+            return placeholderMsg?.id ?? null;
+          },
+          editPlaceholder: async (_handle: string, content: string) => {
+            if (placeholderMsg) {
+              await placeholderMsg.edit(content);
+            }
+          },
+          deletePlaceholder: async (_handle: string) => {
+            if (placeholderMsg) {
+              await placeholderMsg.delete();
+              placeholderMsg = null;
+            }
+          },
+        };
+        tracker = new ToolStatusTracker(discordAdapter, {
+          throttleMs: PROGRESS_EDIT_INTERVAL_MS,
+          initialDelayMs: PROGRESS_DELAY_MS,
+        });
+      }
 
       const onToolUse = discordMessage
-        ? (name: string) => {
-            // Existing emoji reaction behavior
+        ? (name: string, input: Record<string, unknown>) => {
+            // Emoji reaction behavior
             const emoji = toolToPhaseEmoji(name);
             if (emoji && !addedEmojis.has(emoji)) {
               addedEmojis.add(emoji);
@@ -746,10 +692,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
               }
             }
 
-            // Progress message tracking
-            _toolCount++;
-            scheduleProgressStart();
-            updateProgressMessage();
+            // Tool status tracker
+            tracker?.onToolUse(name, input);
           }
         : undefined;
 
@@ -768,7 +712,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           }),
         ]);
       } finally {
-        await cleanupProgress();
+        await tracker?.cleanup();
       }
       if (timeoutHandle) clearTimeout(timeoutHandle);
 
