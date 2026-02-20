@@ -1375,7 +1375,7 @@ You can also paste (Ctrl+V) a response into this area.</div>
     }
 
     function extractSkillMd(text) {
-      var codeMatch = text.match(/```(?:markdown|md|yaml)?\s*\n([\s\S]*)```/);
+      var codeMatch = text.match(/```(?:markdown|md|yaml)?\s*\n([\s\S]*?)```/);
       if (codeMatch) {
         var inner = codeMatch[1].trim();
         if (inner.indexOf('---') === 0) return inner;

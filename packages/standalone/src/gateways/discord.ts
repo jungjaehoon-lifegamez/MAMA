@@ -31,6 +31,8 @@ import type { MessageRouter } from './message-router.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
+import { ToolStatusTracker } from './tool-status-tracker.js';
+import type { PlatformAdapter } from './tool-status-tracker.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as {
@@ -667,7 +669,48 @@ export class DiscordGateway extends BaseGateway {
     if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
       normalizedMessage.contentBlocks = undefined;
     }
-    const routerResult = await this.messageRouter.process(normalizedMessage);
+    // Create tool status tracker for real-time progress
+    const discordAdapter: PlatformAdapter = {
+      postPlaceholder: async (content: string) => {
+        if ('send' in message.channel) {
+          const sent = await (message.channel as { send: (c: string) => Promise<Message> }).send(
+            content
+          );
+          return sent.id;
+        }
+        return null;
+      },
+      editPlaceholder: async (handle: string, content: string) => {
+        try {
+          const msg = await message.channel.messages.fetch(handle);
+          await msg.edit(content);
+        } catch {
+          /* ignore */
+        }
+      },
+      deletePlaceholder: async (handle: string) => {
+        try {
+          const msg = await message.channel.messages.fetch(handle);
+          await msg.delete();
+        } catch {
+          /* ignore */
+        }
+      },
+    };
+    const tracker = new ToolStatusTracker(discordAdapter, {
+      throttleMs: 3000,
+      initialDelayMs: 5000,
+    });
+    const streamCallbacks = tracker.toStreamCallbacks();
+
+    let routerResult;
+    try {
+      routerResult = await this.messageRouter.process(normalizedMessage, {
+        onStream: streamCallbacks,
+      });
+    } finally {
+      await tracker.cleanup();
+    }
     const response = routerResult.response;
     const duration = routerResult.duration;
 

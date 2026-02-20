@@ -152,7 +152,7 @@ async function compressIfNeeded(filePath: string, size: number): Promise<string>
  * Encode Content-Disposition header for safe Unicode filenames (RFC 5987)
  */
 function encodeContentDisposition(filename: string): string {
-  const asciiName = filename.replace(/[^\x20-\x7E]/g, '_');
+  const asciiName = filename.replace(/[^\x20-\x7E]/g, '_').replace(/[\\"]/g, '\\$&');
   const encodedName = encodeURIComponent(filename).replace(/'/g, '%27');
   return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
 }

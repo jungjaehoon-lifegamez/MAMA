@@ -28,6 +28,8 @@ import {
 } from './multi-agent-base.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
+import { ToolStatusTracker } from '../gateways/tool-status-tracker.js';
+import type { PlatformAdapter } from '../gateways/tool-status-tracker.js';
 
 export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
 
@@ -464,12 +466,38 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         `[MultiAgentSlack] Processing agent ${agentId}, prompt length: ${fullPrompt.length}`
       );
 
+      // Create tool status tracker for real-time progress
+      let tracker: ToolStatusTracker | null = null;
+      if (this.mainWebClient) {
+        const webClient = this.mainWebClient;
+        const channelId = context.channelId;
+        const slackAdapter: PlatformAdapter = {
+          postPlaceholder: async (content: string) => {
+            const res = await webClient.chat.postMessage({
+              channel: channelId,
+              text: content,
+            });
+            return res.ts ?? null;
+          },
+          editPlaceholder: async (handle: string, content: string) => {
+            await webClient.chat.update({ channel: channelId, ts: handle, text: content });
+          },
+          deletePlaceholder: async (handle: string) => {
+            await webClient.chat.delete({ channel: channelId, ts: handle });
+          },
+        };
+        tracker = new ToolStatusTracker(slackAdapter, {
+          throttleMs: 1500,
+          initialDelayMs: 3000,
+        });
+      }
+
       // Send message and get response (with timeout, properly cleaned up)
       let timeoutHandle: ReturnType<typeof setTimeout>;
       let result;
       try {
         result = await Promise.race([
-          process.sendMessage(fullPrompt),
+          process.sendMessage(fullPrompt, tracker?.toPromptCallbacks()),
           new Promise<never>((_, reject) => {
             timeoutHandle = setTimeout(
               () =>
@@ -480,6 +508,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         ]);
       } finally {
         clearTimeout(timeoutHandle!);
+        await tracker?.cleanup();
       }
 
       // Check for workflow plan BEFORE executing tool calls (priority)

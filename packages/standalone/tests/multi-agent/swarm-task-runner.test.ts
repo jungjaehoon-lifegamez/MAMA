@@ -57,7 +57,7 @@ describe('SwarmTaskRunner', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(debugLogger, 'warn').mockImplementation(() => {});
+    vi.spyOn(debugLogger, 'warn');
   });
 
   afterEach(() => {

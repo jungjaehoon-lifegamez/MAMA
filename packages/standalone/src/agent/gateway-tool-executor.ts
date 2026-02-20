@@ -12,7 +12,7 @@
  */
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, copyFileSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -597,8 +597,11 @@ export class GatewayToolExecutor {
     // Fallback security for contexts without path restrictions:
     // Only allow reading from ~/.mama/ directory
     if (!this.currentContext?.role.allowedPaths?.length) {
-      const mamaDir = join(homeDir, '.mama');
-      if (!expandedPath.startsWith(mamaDir)) {
+      const mamaDir = resolve(homeDir, '.mama');
+      const resolvedPath = resolve(expandedPath);
+      // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
+      const rel = relative(mamaDir, resolvedPath);
+      if (rel.startsWith('..') || isAbsolute(rel)) {
         return { success: false, error: `Access denied: Can only read files from ${mamaDir}` };
       }
     }
@@ -657,8 +660,11 @@ export class GatewayToolExecutor {
     // Fallback security for contexts without path restrictions:
     // Only allow writing to ~/.mama/ directory
     if (!this.currentContext?.role.allowedPaths?.length) {
-      const mamaDir = join(homeDir, '.mama');
-      if (!expandedPath.startsWith(mamaDir)) {
+      const mamaDir = resolve(homeDir, '.mama');
+      const resolvedPath = resolve(expandedPath);
+      // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
+      const rel = relative(mamaDir, resolvedPath);
+      if (rel.startsWith('..') || isAbsolute(rel)) {
         return { success: false, error: `Access denied: Can only write files to ${mamaDir}` };
       }
     }
@@ -1710,10 +1716,8 @@ export class GatewayToolExecutor {
     try {
       mkdirSync(playgroundsDir, { recursive: true });
 
-      // Save HTML file
-      writeFileSync(htmlPath, html, 'utf-8');
-
-      // Update index.json
+      // Read and validate index FIRST, before writing HTML file
+      // (so if index is corrupt, we don't leave dangling HTML files)
       let index: Array<{
         name: string;
         slug: string;
@@ -1722,7 +1726,13 @@ export class GatewayToolExecutor {
       }> = [];
       if (existsSync(indexPath)) {
         try {
-          index = JSON.parse(readFileSync(indexPath, 'utf-8'));
+          const parsed = JSON.parse(readFileSync(indexPath, 'utf-8'));
+          if (!Array.isArray(parsed)) {
+            throw new Error(
+              `${indexPath} contains invalid data: expected array, got ${typeof parsed}`
+            );
+          }
+          index = parsed;
         } catch (error) {
           throw new Error(
             `Failed to parse ${indexPath}: ${error instanceof Error ? error.message : String(error)}`
@@ -1741,7 +1751,9 @@ export class GatewayToolExecutor {
         created_at: new Date().toISOString(),
       });
 
+      // Write index first, then HTML file (atomic-ish order)
       writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+      writeFileSync(htmlPath, html, 'utf-8');
 
       return { success: true, url: `/playgrounds/${slug}.html`, slug };
     } catch (err) {
@@ -1788,8 +1800,11 @@ export class GatewayToolExecutor {
         // Fallback security for contexts without path restrictions:
         // Only allow reading from ~/.mama/ directory
         if (!this.currentContext?.role.allowedPaths?.length) {
-          const mamaDir = join(homeDir, '.mama');
-          if (!expandedPath.startsWith(mamaDir)) {
+          const mamaDir = resolve(homeDir, '.mama');
+          const resolvedPath = resolve(expandedPath);
+          // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
+          const rel = relative(mamaDir, resolvedPath);
+          if (rel.startsWith('..') || isAbsolute(rel)) {
             return {
               success: false,
               error: `Access denied: Can only copy files from ${mamaDir}`,
