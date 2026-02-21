@@ -58,7 +58,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
     name: 'mama_load_checkpoint',
     description: 'Load last session checkpoint',
     params: [],
-    returnType: '{ summary: string; next_steps: string; open_files: string[] } | null',
+    returnType:
+      '{ summary?: string; next_steps?: string; open_files?: string[]; message?: string }',
     category: 'memory',
   },
   // File I/O
@@ -218,7 +219,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     name: 'os_list_bots',
     description: 'List configured bots',
     params: [],
-    returnType: 'BotStatus[]',
+    returnType: '{ bots?: BotStatus[] }',
     category: 'os',
   },
   {
@@ -272,7 +273,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'pr', type: 'number', required: true },
       { name: 'filter', type: "'unresolved' | 'resolved' | 'all'", required: false },
     ],
-    returnType: 'ReviewThread[]',
+    returnType: '{ threads?: ReviewThread[]; summary?: string }',
     category: 'os',
   },
   // Playground
@@ -295,7 +296,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
 ];
 
-/** Read-only tool names for Tier 2/3 */
+/** Read-only tool names for Tier 3 (strictest) */
 export const READ_ONLY_TOOLS = new Set([
   'mama_search',
   'mama_load_checkpoint',
@@ -306,6 +307,9 @@ export const READ_ONLY_TOOLS = new Set([
   'os_get_config',
   'pr_review_threads',
 ]);
+
+/** Memory-write tools additionally allowed for Tier 2 */
+const MEMORY_WRITE_TOOLS = new Set(['mama_save', 'mama_update']);
 
 export class HostBridge {
   constructor(
@@ -360,6 +364,9 @@ export class HostBridge {
     return TOOL_REGISTRY.filter((meta) => {
       if (tier === 1) {
         return true;
+      }
+      if (tier === 2) {
+        return READ_ONLY_TOOLS.has(meta.name) || MEMORY_WRITE_TOOLS.has(meta.name);
       }
       return READ_ONLY_TOOLS.has(meta.name);
     }).map((meta) => ({
