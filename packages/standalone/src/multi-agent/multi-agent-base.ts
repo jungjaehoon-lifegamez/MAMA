@@ -429,10 +429,7 @@ export abstract class MultiAgentHandlerBase {
    * Remove ```tool_call blocks from text (to avoid showing raw JSON to users).
    */
   protected removeToolCallBlocks(text: string): string {
-    return text
-      .replace(/```tool_call\s*\n[\s\S]*?\n```/g, '')
-      .replace(/```(?:js|javascript)\s*\n[\s\S]*?\n```/g, '')
-      .trim();
+    return text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '').trim();
   }
 
   /**
