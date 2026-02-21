@@ -1697,13 +1697,27 @@ export class GatewayToolExecutor {
 
   private async executePlaygroundCreate(input: {
     name: string;
-    html: string;
+    html?: string;
+    file_path?: string;
     description?: string;
   }): Promise<{ success: boolean; url?: string; slug?: string; error?: string }> {
-    const { name, html, description } = input;
+    const { name, description } = input;
+    let { html } = input;
+
+    // Support file_path as alternative to inline html (avoids escaping issues with large HTML)
+    if (!html && input.file_path) {
+      try {
+        html = readFileSync(input.file_path, 'utf-8');
+      } catch (err) {
+        return {
+          success: false,
+          error: `Failed to read file: ${input.file_path} — ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
 
     if (!name || !html) {
-      return { success: false, error: 'name and html are required' };
+      return { success: false, error: 'name and (html or file_path) are required' };
     }
 
     // Generate slug from name (kebab-case, sanitized)
