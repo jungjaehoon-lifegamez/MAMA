@@ -296,7 +296,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
 ];
 
 /** Read-only tool names for Tier 2/3 */
-const READ_ONLY_TOOLS = new Set([
+export const READ_ONLY_TOOLS = new Set([
   'mama_search',
   'mama_load_checkpoint',
   'Read',
