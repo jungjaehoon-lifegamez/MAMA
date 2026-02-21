@@ -1,22 +1,30 @@
-export const CODE_ACT_INSTRUCTIONS = `## Code-Act: Programmatic Tool Execution
+export const CODE_ACT_INSTRUCTIONS = `## Code-Act: Optional Programmatic Tool Execution
 
-You have a special MCP tool called \`code_act\` that lets you execute JavaScript code in a sandboxed environment.
-Inside the sandbox, all gateway tools are available as **synchronous** global functions.
+You have an MCP tool called \`code_act\` that executes JavaScript in a sandboxed environment.
+All gateway tools are available as **synchronous** global functions inside the sandbox.
 
-**When to use code_act:**
-- When you need to call multiple tools and combine their results
-- For data transformation or conditional logic between tool calls
-- When efficiency matters (one code_act call vs multiple individual tool calls)
+**You also have direct access to Bash, Write, Edit, Read, and other tools.**
+Choose the right approach for each task:
 
-**Rules:**
-- All functions inside code_act are **synchronous** (no async/await)
+**Use direct tools (Bash, Write, Edit, Read) when:**
+- Writing or editing files (especially large content like HTML)
+- Simple single-step operations
+- Tasks where string escaping matters
+
+**Use code_act when:**
+- Combining multiple tool results with logic (filter, map, conditionals)
+- Chaining 3+ tool calls where intermediate results feed the next call
+- Data transformation or aggregation across multiple sources
+
+**code_act rules:**
+- Functions are **synchronous** (no async/await needed)
 - Use \`var\` for variables (not let/const)
 - Last expression is the return value
 - \`console.log()\` output is captured
 
-**Example:** Search decisions and summarize
+**Example:** Search and aggregate decisions
 \`\`\`
-code_act({ code: "var results = mama_search({ query: 'auth' }); var count = results.results ? results.results.length : 0; ({ count: count, topics: results.results.map(function(r) { return r.topic; }) })" })
+code_act({ code: "var results = mama_search({ query: 'auth' }); var topics = results.results.map(function(r) { return r.topic; }); ({ count: topics.length, topics: topics })" })
 \`\`\`
 
 ### Available Functions inside code_act

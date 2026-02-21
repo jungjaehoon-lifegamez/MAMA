@@ -277,10 +277,17 @@ const TOOL_REGISTRY: ToolMeta[] = [
   // Playground
   {
     name: 'playground_create',
-    description: 'Create an interactive HTML playground',
+    description:
+      'Create an interactive HTML playground. Use file_path for large HTML instead of inline.',
     params: [
       { name: 'name', type: 'string', required: true },
-      { name: 'html', type: 'string', required: true },
+      { name: 'html', type: 'string', required: false, description: 'Inline HTML content' },
+      {
+        name: 'file_path',
+        type: 'string',
+        required: false,
+        description: 'Path to HTML file (use instead of html for large content)',
+      },
     ],
     returnType: '{ success: boolean; path: string; url: string }',
     category: 'os',
@@ -317,11 +324,26 @@ export class HostBridge {
 
       sandbox.registerFunction(desc.name, async (...args: unknown[]) => {
         const input = this._buildInput(desc, args);
+
+        // Validate required params before execution
+        const missing = desc.params
+          .filter((p) => p.required && (input[p.name] === undefined || input[p.name] === null))
+          .map((p) => `${p.name}: ${p.type}`);
+        if (missing.length > 0) {
+          const sig = desc.params
+            .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
+            .join(', ');
+          throw new Error(
+            `${desc.name}() missing required param(s): ${missing.join(', ')}. ` +
+              `Usage: ${desc.name}({${sig}}) or ${desc.name}(${desc.params.map((p) => p.name).join(', ')})`
+          );
+        }
+
         const result = await this.executor.execute(desc.name, input as any);
 
         if (!result.success) {
-          const msg = (result as any).message || `${desc.name} failed`;
-          throw new Error(msg);
+          const msg = (result as any).message || (result as any).error || `${desc.name} failed`;
+          throw new Error(`${desc.name}(): ${msg}`);
         }
 
         return result;
