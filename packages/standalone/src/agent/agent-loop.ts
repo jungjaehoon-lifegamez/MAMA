@@ -497,6 +497,7 @@ export class AgentLoop {
   private readonly preCompactHandler: PreCompactHandler | null;
   private preCompactInjected = false;
   private currentStreamCallbacks?: StreamCallbacks;
+  private currentTier: 1 | 2 | 3 = 1;
 
   constructor(
     _oauthManager: OAuthManager,
@@ -856,6 +857,11 @@ export class AgentLoop {
     // Propagate agentContext to executor for tier-aware tool permissions
     if (options?.agentContext) {
       this.mcpExecutor.setAgentContext(options.agentContext);
+      const rawTier = options.agentContext.tier ?? 1;
+      this.currentTier = (rawTier === 1 || rawTier === 2 || rawTier === 3 ? rawTier : 1) as
+        | 1
+        | 2
+        | 3;
     }
 
     // Infinite loop prevention
@@ -1330,7 +1336,10 @@ export class AgentLoop {
       try {
         // Code-Act: execute JS code in sandbox
         if (toolUse.name === CODE_ACT_MARKER) {
-          const codeActResult = await this.executeCodeAct((toolUse.input as { code: string }).code);
+          const codeActResult = await this.executeCodeAct(
+            (toolUse.input as { code: string }).code,
+            this.currentTier
+          );
           result = JSON.stringify(codeActResult, null, 2);
           if (!codeActResult.success) {
             isError = true;
@@ -1503,19 +1512,34 @@ export class AgentLoop {
    * Execute Code-Act JS code in a sandboxed QuickJS environment
    */
   private async executeCodeAct(
-    code: string
+    code: string,
+    tier: 1 | 2 | 3 = 1
   ): Promise<import('./code-act/types.js').ExecutionResult> {
-    const sandbox = new CodeActSandbox();
-    const bridge = new HostBridge(this.mcpExecutor);
-    bridge.injectInto(sandbox, 1);
+    try {
+      const sandbox = new CodeActSandbox();
+      const bridge = new HostBridge(this.mcpExecutor);
+      bridge.injectInto(sandbox, tier);
 
-    const result = await sandbox.execute(code);
+      const result = await sandbox.execute(code);
 
-    if (result.logs.length > 0) {
-      console.log(`[CodeAct] console output: ${result.logs.join('\n')}`);
+      if (result.logs.length > 0) {
+        console.log(`[CodeAct] console output: ${result.logs.join('\n')}`);
+      }
+
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[CodeAct] Sandbox initialization failed: ${message}`);
+      return {
+        success: false,
+        error: {
+          name: 'SandboxError',
+          message: `Failed to initialize Code-Act sandbox: ${message}`,
+        },
+        logs: [],
+        metrics: { durationMs: 0, hostCallCount: 0, memoryUsedBytes: 0 },
+      };
     }
-
-    return result;
   }
 
   /**

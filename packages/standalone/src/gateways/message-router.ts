@@ -307,7 +307,7 @@ This protects your credentials from being exposed in chat logs.`;
       processOptions?.onQueued?.();
 
       // Wait for session to be released (poll with timeout)
-      const maxWaitMs = 600000; // 10 minutes max wait
+      const maxWaitMs = 300000; // 5 minutes max wait
       const pollIntervalMs = 500;
       const waitStart = Date.now();
       let lastLogTime = waitStart;
