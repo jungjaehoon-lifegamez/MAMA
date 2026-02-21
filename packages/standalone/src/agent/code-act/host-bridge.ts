@@ -6,7 +6,7 @@ import type { RoleConfig } from '../../cli/config/types.js';
 import { RoleManager } from '../role-manager.js';
 
 /** Tool metadata for .d.ts generation */
-interface ToolMeta {
+export interface ToolMeta {
   name: string;
   description: string;
   params: { name: string; type: string; required: boolean; description?: string }[];
@@ -25,7 +25,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'type', type: "'decision' | 'checkpoint' | 'all'", required: false },
       { name: 'limit', type: 'number', required: false },
     ],
-    returnType: 'SearchResult[]',
+    returnType: '{ results: SearchResult[]; count: number }',
     category: 'memory',
   },
   {
@@ -66,7 +66,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     name: 'Read',
     description: 'Read file contents',
     params: [{ name: 'path', type: 'string', required: true }],
-    returnType: 'string',
+    returnType: '{ content: string }',
     category: 'file',
   },
   {
@@ -86,7 +86,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'command', type: 'string', required: true },
       { name: 'workdir', type: 'string', required: false },
     ],
-    returnType: '{ stdout: string; stderr: string; exitCode: number }',
+    returnType: '{ output: string }',
     category: 'os',
   },
   // Communication
@@ -348,7 +348,9 @@ export class HostBridge {
           throw new Error(`${desc.name}(): ${msg}`);
         }
 
-        return result;
+        // Unwrap: strip `success` field so return shape matches TOOL_REGISTRY returnType
+        const { success: _, ...payload } = result as unknown as Record<string, unknown>;
+        return Object.keys(payload).length === 0 ? true : payload;
       });
     }
   }

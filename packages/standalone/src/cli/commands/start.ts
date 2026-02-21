@@ -1075,8 +1075,19 @@ export async function runAgentLoop(
     listDecisions: listDecisionsForContext,
   };
 
+  const validBackends = ['claude', 'codex-mcp'] as const;
+  const rawBackend = config.agent.backend;
+  const backend: 'claude' | 'codex-mcp' = validBackends.includes(
+    rawBackend as (typeof validBackends)[number]
+  )
+    ? (rawBackend as 'claude' | 'codex-mcp')
+    : 'claude';
+  if (rawBackend && !validBackends.includes(rawBackend as (typeof validBackends)[number])) {
+    console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
+  }
+
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
-    backend: config.agent.backend as 'claude' | 'codex-mcp',
+    backend,
   });
 
   // Prepare graph handler options (will be populated after gateways init)
@@ -1566,8 +1577,44 @@ export async function runAgentLoop(
         return;
       }
       if (filePath) {
-        console.log(`[Slack Send] Sending file to ${channelId}: ${filePath}`);
-        await slackGateway.sendFile(channelId, filePath, caption);
+        // SECURITY: Path traversal prevention (same pattern as /api/discord/image)
+        const pathMod = await import('path');
+        const fsMod = await import('fs/promises');
+        const workspacePath =
+          config.workspace?.path?.replace('~', process.env.HOME || '') ||
+          `${process.env.HOME}/.mama/workspace`;
+        const tempPath = pathMod.join(workspacePath, 'temp');
+        const tmpPath = '/tmp';
+
+        const resolvedFilePath = pathMod.isAbsolute(filePath)
+          ? pathMod.resolve(filePath)
+          : pathMod.resolve(workspacePath, filePath);
+        const normalizedWorkspace = pathMod.resolve(workspacePath);
+        const normalizedTemp = pathMod.resolve(tempPath);
+
+        const isInWorkspace = resolvedFilePath.startsWith(normalizedWorkspace + pathMod.sep);
+        const isInTemp = resolvedFilePath.startsWith(normalizedTemp + pathMod.sep);
+        const isInTmp = resolvedFilePath.startsWith(tmpPath + '/');
+
+        if (!isInWorkspace && !isInTemp && !isInTmp) {
+          console.warn(
+            `[Slack Send] SECURITY: Path traversal blocked: ${filePath} -> ${resolvedFilePath}`
+          );
+          res
+            .status(400)
+            .json({ error: 'File path must be within workspace, workspace/temp, or /tmp' });
+          return;
+        }
+
+        try {
+          await fsMod.access(resolvedFilePath);
+        } catch {
+          res.status(404).json({ error: 'File not found' });
+          return;
+        }
+
+        console.log(`[Slack Send] Sending file to ${channelId}: ${resolvedFilePath}`);
+        await slackGateway.sendFile(channelId, resolvedFilePath, caption);
       }
       if (message) {
         console.log(`[Slack Send] Sending to ${channelId}: ${message.substring(0, 50)}...`);
@@ -2036,7 +2083,8 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const isFullFile = chunkSize >= stat.size;
       res.json({
         lines,
-        total: isFullFile ? allLines.length : stat.size,
+        total: allLines.length,
+        totalBytes: stat.size,
         mtime: stat.mtimeMs,
         fileSize: stat.size,
         truncated: !isFullFile,

@@ -891,6 +891,9 @@ export class AgentLoop {
         | 1
         | 2
         | 3;
+    } else {
+      this.mcpExecutor.setAgentContext?.(null);
+      this.currentTier = 1;
     }
 
     // Infinite loop prevention
@@ -1378,10 +1381,24 @@ export class AgentLoop {
       try {
         // Code-Act: execute JS code in sandbox
         if (toolUse.name === CODE_ACT_MARKER) {
-          const codeActResult = await this.executeCodeAct(
-            (toolUse.input as { code: string }).code,
-            this.currentTier
-          );
+          const codeInput = toolUse.input as Record<string, unknown> | undefined;
+          const code = typeof codeInput?.code === 'string' ? codeInput.code : '';
+          if (!code) {
+            result = JSON.stringify({
+              success: false,
+              error: {
+                name: 'ValidationError',
+                message: 'Missing or invalid "code" field in code_act input',
+              },
+              logs: [],
+              metrics: { durationMs: 0, hostCallCount: 0, memoryUsedBytes: 0 },
+            });
+            isError = true;
+            this.onToolUse?.(toolUse.name, toolUse.input, { success: false });
+            this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, true);
+            continue;
+          }
+          const codeActResult = await this.executeCodeAct(code, this.currentTier);
           result = JSON.stringify(codeActResult, null, 2);
           if (!codeActResult.success) {
             isError = true;
