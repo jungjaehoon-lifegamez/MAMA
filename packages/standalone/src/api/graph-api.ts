@@ -2738,6 +2738,18 @@ async function handleCodeActRequest(
   options: GraphHandlerOptions = {}
 ): Promise<void> {
   try {
+    // Security: require authentication for code execution endpoint
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          message: 'Authentication required. Set Authorization header with valid token.',
+        })
+      );
+      return;
+    }
+
     if (!options.executeCodeAct) {
       res.writeHead(501, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: true, message: 'Code-Act executor not configured' }));

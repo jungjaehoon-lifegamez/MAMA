@@ -44,13 +44,13 @@ describe('CodeActSandbox Security', () => {
     it('does not affect host Object.prototype', async () => {
       const sandbox = new CodeActSandbox();
       await sandbox.execute('Object.prototype.polluted = true');
-      expect(({} as any).polluted).toBeUndefined();
+      expect('polluted' in {}).toBe(false);
     });
 
     it('does not affect host Array.prototype', async () => {
       const sandbox = new CodeActSandbox();
       await sandbox.execute('Array.prototype.evil = function() { return "bad"; }');
-      expect(([] as any).evil).toBeUndefined();
+      expect('evil' in []).toBe(false);
     });
   });
 
