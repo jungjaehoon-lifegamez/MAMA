@@ -214,6 +214,19 @@ export class ClaudeCLIWrapper {
         args.push('--dangerously-skip-permissions');
       }
 
+      // Wire optional CLI flags for tool/plugin control
+      if (this.options.tools !== undefined) {
+        args.push('--tools', this.options.tools);
+      }
+      if (this.options.pluginDir) {
+        args.push('--plugin-dir', this.options.pluginDir);
+      }
+      if (this.options.disallowedTools && this.options.disallowedTools.length > 0) {
+        for (const tool of this.options.disallowedTools) {
+          args.push('--disallowed-tool', tool);
+        }
+      }
+
       // Add MAMA workspace to allowed directories for image/file access
       const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
       args.push('--add-dir', mamaWorkspace);

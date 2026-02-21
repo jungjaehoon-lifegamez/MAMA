@@ -1188,6 +1188,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: POST /api/code-act - execute code in Code-Act sandbox
     if (pathname === '/api/code-act' && req.method === 'POST') {
+      if (!isAuthenticated(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message: 'Authentication required' }));
+        return true;
+      }
       await handleCodeActRequest(req, res, options);
       return true;
     }

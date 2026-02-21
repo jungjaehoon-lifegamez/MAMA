@@ -21,18 +21,36 @@ async function getModule(): Promise<QuickJSAsyncWASMModule> {
   return _modulePromise;
 }
 
+const MAX_JSON_DEPTH = 32;
+
 /** Convert a JS value to a QuickJS handle using native API (no evalCode) */
-function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown): QuickJSHandle {
+function jsonToHandle(
+  ctx: QuickJSAsyncContext,
+  value: unknown,
+  depth = 0,
+  seen = new WeakSet<object>()
+): QuickJSHandle {
+  if (depth > MAX_JSON_DEPTH) {
+    return ctx.newString('[max depth exceeded]');
+  }
+
   if (value === null || value === undefined) return ctx.undefined;
   if (value === true) return ctx.true;
   if (value === false) return ctx.false;
   if (typeof value === 'string') return ctx.newString(value);
   if (typeof value === 'number') return ctx.newNumber(value);
 
+  if (typeof value === 'object') {
+    if (seen.has(value as object)) {
+      return ctx.newString('[circular reference]');
+    }
+    seen.add(value as object);
+  }
+
   if (Array.isArray(value)) {
     const arr = ctx.newArray();
     for (let i = 0; i < value.length; i++) {
-      const h = jsonToHandle(ctx, value[i]);
+      const h = jsonToHandle(ctx, value[i], depth + 1, seen);
       ctx.setProp(arr, i, h);
       h.dispose();
     }
@@ -42,7 +60,7 @@ function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown): QuickJSHandle {
   if (typeof value === 'object') {
     const obj = ctx.newObject();
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const h = jsonToHandle(ctx, v);
+      const h = jsonToHandle(ctx, v, depth + 1, seen);
       ctx.setProp(obj, k, h);
       h.dispose();
     }

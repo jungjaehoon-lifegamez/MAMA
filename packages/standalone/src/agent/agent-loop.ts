@@ -655,9 +655,8 @@ export class AgentLoop {
         model: options.model!,
         sessionId,
         systemPrompt: defaultSystemPrompt,
-        // Code-Act mode: empty MCP config + strict to block all auto-discovered MCP servers
-        // Hybrid mode: pass MCP config even with Gateway tools enabled
-        // Code-Act mode: keep MCP servers available (slack, notion, etc.)
+        // MCP mode / Hybrid mode: pass MCP config to keep MCP servers available (slack, notion, etc.)
+        // Non-MCP mode: no config path — auto-discovered MCP servers are not loaded
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
         // MAMA OS is a headless daemon (no TTY) — Claude CLI's interactive permission prompts
         // cannot work. Security is enforced by MAMA's own RoleManager layer (config.yaml roles).
@@ -1507,7 +1506,9 @@ export class AgentLoop {
   ): Promise<import('./code-act/types.js').ExecutionResult> {
     const sandbox = new CodeActSandbox();
     const bridge = new HostBridge(this.mcpExecutor);
-    bridge.injectInto(sandbox, 1);
+    const ctx = this.mcpExecutor.getAgentContext();
+    const tier = (ctx?.tier ?? 1) as 1 | 2 | 3;
+    bridge.injectInto(sandbox, tier, ctx?.role);
 
     const result = await sandbox.execute(code);
 
