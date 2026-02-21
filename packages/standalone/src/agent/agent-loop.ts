@@ -910,7 +910,8 @@ export class AgentLoop {
           options.systemPrompt.includes('## Gateway Tools') ||
           options.systemPrompt.includes('# Code Execution');
         let gatewayToolsPrompt = '';
-        if (this.isGatewayMode && !alreadyHasTools) {
+        const isResumingSession = options?.resumeSession === true;
+        if (this.isGatewayMode && !alreadyHasTools && !isResumingSession) {
           if (this.useCodeAct) {
             const typeDefs = TypeDefinitionGenerator.generate(options?.agentContext?.tier ?? 1);
             gatewayToolsPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
