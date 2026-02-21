@@ -901,11 +901,13 @@ export class AgentLoop {
         // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
         const alreadyHasTools =
           options.systemPrompt.includes('## Gateway Tools') ||
-          options.systemPrompt.includes('# Code Execution');
+          options.systemPrompt.includes('# Code Execution') ||
+          options.systemPrompt.includes('// --- '); // Code-Act .d.ts marker
         let gatewayToolsPrompt = '';
         if (this.isGatewayMode && !alreadyHasTools) {
           if (this.useCodeAct) {
-            const typeDefs = TypeDefinitionGenerator.generate(1);
+            const tier = (options.agentContext?.tier ?? 1) as 1 | 2 | 3;
+            const typeDefs = TypeDefinitionGenerator.generate(tier);
             gatewayToolsPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
           } else {
             gatewayToolsPrompt = getGatewayToolsPrompt();
@@ -1523,10 +1525,12 @@ export class AgentLoop {
    * Remove tool_call and code_act blocks from text (to avoid duplication in response)
    */
   private removeToolCallBlocks(text: string): string {
-    return text
-      .replace(/```tool_call\s*\n[\s\S]*?\n```/g, '')
-      .replace(/```(?:js|javascript)\s*\n[\s\S]*?\n```/g, '')
-      .trim();
+    let result = text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '');
+    // Only strip JS fenced blocks when Code-Act is enabled (they are sandbox code)
+    if (this.useCodeAct) {
+      result = result.replace(/```(?:js|javascript)\s*\n[\s\S]*?\n```/g, '');
+    }
+    return result.trim();
   }
 
   private extractTextFromContent(content: ContentBlock[]): string {
