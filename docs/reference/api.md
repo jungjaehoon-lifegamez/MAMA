@@ -342,222 +342,425 @@ export MAMA_EMBEDDING_PORT="3849"
 
 ---
 
-## HTTP API Endpoints (v1.5)
+## HTTP API Endpoints (v0.10.0)
 
-MAMA provides HTTP endpoints for web-based interfaces like the Graph Viewer and Mobile Chat.
+MAMA OS provides **55 HTTP endpoints** for the web dashboard, mobile chat, and programmatic access.
 
-**Base URL:** `http://localhost:3847` (API/UI, configurable via `MAMA_SERVER_PORT`)
+**Base URL:** `http://localhost:3847` (configurable via `MAMA_SERVER_PORT`)
 
-**Embedding URL:** `http://127.0.0.1:3849` (configurable via `MAMA_EMBEDDING_PORT`, legacy alias: `MAMA_HTTP_PORT`)
+**Embedding URL:** `http://127.0.0.1:3849` (configurable via `MAMA_EMBEDDING_PORT`)
 
 **Compatibility:**
 
-| Feature         | Claude Code Plugin | Claude Desktop (MCP) |
-| --------------- | ------------------ | -------------------- |
-| HTTP Endpoints  | ✅                 | ✅                   |
-| Graph Viewer    | ✅                 | ✅                   |
-| **Mobile Chat** | ✅                 | ❌                   |
+| Feature         | MAMA OS | Claude Desktop (MCP) |
+| --------------- | ------- | -------------------- |
+| HTTP Endpoints  | ✅      | ✅                   |
+| Graph Viewer    | ✅      | ✅                   |
+| **Mobile Chat** | ✅      | ❌                   |
 
-**Note:** Mobile Chat requires Claude Code CLI (`claude` command). Claude Desktop only has MCP servers and cannot spawn CLI subprocesses for chat sessions. Graph Viewer works in both environments.
+---
+
+### Health
+
+#### GET /health
+
+Basic health check.
+
+**Response:** `{ "status": "ok", "timestamp": 1732530000 }`
+
+#### GET /api/health
+
+Graph API health check.
+
+**Response:** `{ "status": "ok", "service": "MAMA Graph API" }`
+
+---
 
 ### Checkpoint API
 
 #### POST /api/checkpoint/save
 
-Save a session checkpoint for later resumption.
+Save a session checkpoint.
 
 **Request:**
 
 ```json
 {
   "summary": "Implemented auth module, blocked on rate limiter design",
-  "open_files": ["src/auth/jwt.js", "tests/auth.test.js"],
-  "next_steps": "1. Research token bucket vs leaky bucket\n2. Check Redis compatibility"
+  "open_files": ["src/auth/jwt.js"],
+  "next_steps": "1. Research token bucket vs leaky bucket"
 }
 ```
 
-**Response:**
-
-```json
-{
-  "success": true,
-  "id": 100,
-  "message": "Checkpoint saved successfully"
-}
-```
+**Response:** `{ "success": true, "id": 100, "message": "Checkpoint saved successfully" }`
 
 #### GET /api/checkpoint/load
 
 Load the latest active checkpoint.
 
-**Response:**
+**Response:** `{ "success": true, "checkpoint": { "id": 100, "timestamp": 1732530000000, "summary": "...", "open_files": [...], "next_steps": "...", "status": "active" } }`
 
-```json
-{
-  "success": true,
-  "checkpoint": {
-    "id": 100,
-    "timestamp": 1732530000000,
-    "summary": "Implemented auth module, blocked on rate limiter design",
-    "open_files": ["src/auth/jwt.js", "tests/auth.test.js"],
-    "next_steps": "1. Research token bucket...",
-    "status": "active"
-  }
-}
-```
+**Error (404):** `{ "error": true, "code": "NO_CHECKPOINT", "message": "No checkpoint found" }`
 
-**Error (404):**
+#### GET /api/checkpoints
 
-```json
-{
-  "error": true,
-  "code": "NO_CHECKPOINT",
-  "message": "No checkpoint found"
-}
-```
+List all checkpoints (alias: `GET /checkpoints`).
 
-### MAMA Search API
+---
+
+### Memory API
 
 #### GET /api/mama/search
 
-Semantic search for decisions (used by Memory tab).
+Semantic search for decisions (alias: `GET /api/search`).
 
-**Query Parameters:**
+**Query Parameters:** `q` (required), `limit` (optional, default: 10, max: 20)
 
-- `q` (required): Search query
-- `limit` (optional): Max results (default: 10, max: 20)
-
-**Response:**
-
-```json
-{
-  "query": "authentication",
-  "results": [
-    {
-      "id": "decision_auth_strategy_1732530000_abc",
-      "topic": "auth_strategy",
-      "decision": "Use JWT with refresh tokens",
-      "reasoning": "Need stateless auth for API scaling...",
-      "similarity": 0.87,
-      "created_at": 1732530000000
-    }
-  ],
-  "count": 1
-}
-```
+**Response:** `{ "query": "...", "results": [...], "count": 1 }`
 
 #### POST /api/mama/save
 
-Save a decision from mobile interface.
+Save a decision (alias: `POST /api/save`).
 
-**Request:**
+**Request:** `{ "topic": "auth_strategy", "decision": "Use JWT", "reasoning": "...", "confidence": 0.8 }`
 
-```json
-{
-  "topic": "auth_strategy",
-  "decision": "Use JWT with refresh tokens",
-  "reasoning": "Need stateless auth for API scaling",
-  "confidence": 0.8
-}
-```
+**Response:** `{ "success": true, "id": "decision_auth_strategy_...", "message": "Decision saved successfully" }`
 
-**Response:**
+#### GET /api/memory/export
 
-```json
-{
-  "success": true,
-  "id": "decision_auth_strategy_1732530000_abc",
-  "message": "Decision saved successfully"
-}
-```
+Export decisions as CSV or JSON.
+
+**Query Parameters:** `format` (`csv` | `json`, default: `json`)
+
+---
 
 ### Graph API
 
 #### GET /graph
 
-Get decision graph data (nodes + edges).
+Decision graph data (alias: `GET /api/graph`).
 
-**Query Parameters:**
+**Query Parameters:** `topic` (optional), `cluster` (optional, true/false)
 
-- `topic` (optional): Filter by topic
-- `cluster` (optional): Include similarity edges (true/false)
-
-**Response:**
-
-```json
-{
-  "nodes": [
-    /* decision objects */
-  ],
-  "edges": [
-    /* edge objects */
-  ],
-  "similarityEdges": [
-    /* similarity edges if cluster=true */
-  ],
-  "meta": {
-    "total_nodes": 42,
-    "total_edges": 38,
-    "topics": ["auth_strategy", "caching_strategy"]
-  },
-  "latency": 45
-}
-```
+**Response:** `{ "nodes": [...], "edges": [...], "similarityEdges": [...], "meta": { "total_nodes": 42, "total_edges": 38, "topics": [...] }, "latency": 45 }`
 
 #### GET /graph/similar
 
-Find similar decisions to a given decision.
+Find similar decisions.
 
-**Query Parameters:**
+**Query Parameters:** `id` (required)
 
-- `id` (required): Decision ID
-
-**Response:**
-
-```json
-{
-  "id": "decision_auth_strategy_1732530000_abc",
-  "similar": [
-    {
-      "id": "decision_session_mgmt_1732540000_def",
-      "topic": "session_management",
-      "decision": "Redis for session storage",
-      "similarity": 0.82
-    }
-  ],
-  "count": 1
-}
-```
+**Response:** `{ "id": "...", "similar": [{ "id": "...", "similarity": 0.82 }], "count": 1 }`
 
 #### POST /graph/update
 
-Update decision outcome (used by Graph Viewer).
+Update decision outcome (alias: `POST /api/update`).
+
+**Request:** `{ "id": "decision_...", "outcome": "success", "reason": "..." }`
+
+**Response:** `{ "success": true, "id": "...", "outcome": "SUCCESS" }`
+
+---
+
+### Cron API
+
+#### GET /api/cron
+
+List all scheduled jobs.
+
+**Response:** `{ "jobs": [{ "id": "job_...", "name": "...", "cron_expr": "0 * * * *", "prompt": "...", "enabled": true, "next_run": 1732530000 }] }`
+
+#### POST /api/cron
+
+Create a new scheduled job.
 
 **Request:**
 
 ```json
 {
-  "id": "decision_auth_strategy_1732530000_abc",
-  "outcome": "success",
-  "reason": "JWT auth scaled to 10k users without issues"
+  "name": "Hourly market check",
+  "cron_expr": "0 * * * *",
+  "prompt": "Check crypto prices and report",
+  "enabled": true
 }
 ```
+
+| Field       | Type    | Required | Description                           |
+| ----------- | ------- | -------- | ------------------------------------- |
+| `name`      | string  | Yes      | Job name                              |
+| `cron_expr` | string  | Yes      | Cron expression                       |
+| `prompt`    | string  | Yes      | Prompt to execute                     |
+| `enabled`   | boolean | No       | Whether job is active (default: true) |
+
+**Response:** `{ "id": "job_...", "created": true }`
+
+#### GET /api/cron/:id
+
+Get a specific job.
+
+**Response:** `{ "job": { ... } }`
+
+#### PUT /api/cron/:id
+
+Update a job.
+
+**Request:** `{ "name?": "...", "cron_expr?": "...", "prompt?": "...", "enabled?": false }`
+
+**Response:** `{ "updated": true }`
+
+#### DELETE /api/cron/:id
+
+Delete a job.
+
+**Response:** `{ "deleted": true }`
+
+#### POST /api/cron/:id/run
+
+Run a job immediately (async).
+
+**Response:** `{ "execution_id": "exec_...", "started": true }`
+
+#### GET /api/cron/:id/logs
+
+Get execution logs for a job.
+
+**Query Parameters:** `limit` (default: 20), `offset` (default: 0)
+
+**Response:** `{ "logs": [{ "id": "...", "started_at": 1732530000, "finished_at": 1732530060, "status": "success", "output": "...", "error": null }] }`
+
+---
+
+### Skills API
+
+#### GET /api/skills
+
+List all installed skills.
+
+**Response:** `{ "skills": [...] }`
+
+#### GET /api/skills/catalog
+
+Remote skill catalog.
+
+**Query Parameters:** `source` (`all` | `mama` | `cowork` | `external`, default: `all`)
+
+#### GET /api/skills/search
+
+Search skills.
+
+**Query Parameters:** `q` (required), `source` (optional)
+
+**Response:** `{ "skills": [...] }`
+
+#### POST /api/skills/install
+
+Install a skill from catalog.
+
+**Request:** `{ "source": "cowork", "name": "skill-name" }`
+
+#### POST /api/skills/install-url
+
+Install from GitHub URL.
+
+**Request:** `{ "url": "https://github.com/user/repo/..." }`
+
+#### POST /api/skills
+
+Create a new skill with content.
+
+**Request:** `{ "name": "my-skill", "content": "# Skill content...", "source": "mama" }`
+
+**Response (201):** `{ "success": true, ... }`
+
+#### PUT /api/skills/:name/content
+
+Update skill file content.
+
+**Request:** `{ "content": "# Updated content...", "source": "mama" }`
+
+#### PUT /api/skills/:name
+
+Toggle skill enabled/disabled.
+
+**Request:** `{ "enabled": false, "source": "mama" }`
+
+**Response:** `{ "updated": true }`
+
+#### DELETE /api/skills/:name
+
+Uninstall a skill.
+
+**Query Parameters:** `source` (default: `mama`)
+
+**Response:** `{ "deleted": true }`
+
+#### GET /api/skills/:name/readme
+
+Get SKILL.md content.
+
+**Query Parameters:** `source` (default: `mama`)
+
+**Response:** `{ "content": "# Skill documentation..." }`
+
+---
+
+### Token Usage API
+
+#### GET /api/tokens/summary
+
+Token usage summary: today, 7-day, 30-day totals.
 
 **Response:**
 
 ```json
 {
-  "success": true,
-  "id": "decision_auth_strategy_1732530000_abc",
-  "outcome": "SUCCESS"
+  "today": { "input_tokens": 5000, "output_tokens": 3000, "cache_read_tokens": 1000, "cost_usd": 0.05, "request_count": 10 },
+  "week": { ... },
+  "month": { ... }
 }
 ```
+
+#### GET /api/tokens/by-agent
+
+Per-agent token totals (last 30 days).
+
+**Response:** `{ "agents": [{ "agent_id": "developer", "input_tokens": 50000, "output_tokens": 30000, ... }] }`
+
+#### GET /api/tokens/daily
+
+Daily token breakdown.
+
+**Query Parameters:** `days` (default: 30, max: 90)
+
+**Response:** `{ "daily": [{ "date": "2026-02-22", "input_tokens": 5000, ... }], "days": 30 }`
+
+---
+
+### Heartbeat API
+
+#### GET /api/heartbeat
+
+Get heartbeat status.
+
+**Response:** `{ "status": "active", "active_jobs": 3, "last_execution": { "id": "heartbeat_...", "started_at": 1732530000, "status": "success" } }`
+
+#### POST /api/heartbeat
+
+Trigger manual heartbeat.
+
+**Request:** `{ "prompt": "Generate status report" }` (optional, uses default prompt if omitted)
+
+**Response:** `{ "execution_id": "heartbeat_...", "started": true }`
+
+---
+
+### Upload & Media API
+
+#### POST /api/upload
+
+Upload a file (multipart form, field name: `file`). Rate limited: 10 uploads/minute.
+
+**Allowed types:** JPEG, PNG, GIF, WebP, SVG, PDF, TXT, CSV, Markdown, HTML, JSON, Office docs, ZIP
+
+**Max size:** 20MB (images >500KB auto-compressed)
+
+**Response:** `{ "success": true, "filename": "1732530000_photo.png", "mediaUrl": "/api/media/1732530000_photo.png", "size": 245000, "contentType": "image/png" }`
+
+#### GET /api/media/:filename
+
+Serve uploaded/outbound media file (inline). SVG/HTML/XML are force-downloaded to prevent XSS.
+
+#### GET /api/media/download/:filename
+
+Force-download a media file.
+
+---
+
+### Discord API
+
+#### POST /api/discord/send
+
+Send a text message to a Discord channel.
+
+**Request:** `{ "channelId": "123456789", "message": "Hello!" }`
+
+#### POST /api/discord/cron
+
+Run an agent prompt and send result to Discord.
+
+**Request:** `{ "channelId": "123456789", "prompt": "Generate daily report" }`
+
+**Response:** `{ "success": true, "response": "..." }`
+
+#### POST /api/discord/image
+
+Send an image file to Discord (4-layer path security).
+
+**Request:** `{ "channelId": "123456789", "imagePath": "media/outbound/chart.png", "caption": "Daily chart" }`
+
+**Allowed paths:** Workspace, workspace/temp, /tmp only. Image extensions only (.png, .jpg, .jpeg, .gif, .webp).
+
+#### POST /api/report
+
+Generate heartbeat report via agent and send to Discord.
+
+**Request:** `{ "channelId": "123456789", "reportType": "delta" }` (`delta` | `full`)
+
+#### POST /api/screenshot
+
+Take HTML screenshot and send to Discord.
+
+**Request:** `{ "channelId": "123456789", "htmlFile": "reports/chart.html", "caption": "Chart" }`
+
+**Security:** Relative paths only, must be within workspace directory.
+
+### Slack API
+
+#### POST /api/slack/send
+
+Send a message or file to a Slack channel.
+
+**Request:**
+
+```json
+{
+  "channelId": "C01234567",
+  "message": "Hello from MAMA!",
+  "filePath": "/path/to/attachment.png",
+  "caption": "Check this out"
+}
+```
+
+| Field       | Type   | Required | Description                                    |
+| ----------- | ------ | -------- | ---------------------------------------------- |
+| `channelId` | string | Yes      | Slack channel ID                               |
+| `message`   | string | No       | Text message to send                           |
+| `filePath`  | string | No       | File to upload (workspace, temp, or /tmp only) |
+| `caption`   | string | No       | Caption for file upload                        |
+
+---
+
+### Session API
+
+#### GET /api/sessions/last-active
+
+Return the most recently active session.
+
+**Response:** `{ "session": { ... } }` or `{ "session": null }`
+
+#### GET /api/sessions
+
+List sessions by gateway type.
+
+**Response:** `{ "viewer": [...], "discord": [...], "telegram": [...], "slack": [...] }`
+
+---
 
 ### Code-Act API
 
 #### POST /api/code-act
 
-Execute JavaScript code in a sandboxed QuickJS environment with access to gateway tools.
+Execute JavaScript in a sandboxed QuickJS environment.
 
 **Authentication:** Requires `MAMA_AUTH_TOKEN` if set.
 
@@ -575,72 +778,138 @@ Execute JavaScript code in a sandboxed QuickJS environment with access to gatewa
 | `code`    | string | Yes      | JavaScript code to execute                           |
 | `timeout` | number | No       | Execution timeout in ms (default: 30000, max: 60000) |
 
-**Response:**
+**Response:** `{ "success": true, "result": { ... }, "duration": 245 }`
 
-```json
-{
-  "success": true,
-  "result": { "content": "file contents..." },
-  "duration": 245
-}
-```
+**Security:** QuickJS WASM sandbox. Only Tier 3 (read-only) tools available. No `require()`, `process`, `fs`.
 
-**Security:** Code runs in a QuickJS sandbox (not Node.js). Only Tier 3 (read-only) gateway tools are available. No `require()`, no `process`, no `fs` access.
+---
 
-### Slack API
+### Multi-Agent API
 
-#### POST /api/slack/send
+#### GET /api/multi-agent/status
 
-Send a message to a Slack channel. Requires Slack bot to be configured.
+Get multi-agent system status.
+
+#### GET /api/multi-agent/agents
+
+List all agent configs.
+
+#### PUT /api/multi-agent/agents/:id
+
+Update a specific agent's config.
 
 **Request:**
 
 ```json
 {
-  "channel_id": "C01234567",
-  "message": "Hello from MAMA!",
-  "file_path": "/path/to/attachment.png"
+  "backend": "claude",
+  "model": "claude-opus-4-5-20251101",
+  "tier": 1,
+  "enabled": true,
+  "can_delegate": true
 }
 ```
 
-| Field        | Type   | Required | Description          |
-| ------------ | ------ | -------- | -------------------- |
-| `channel_id` | string | Yes      | Slack channel ID     |
-| `message`    | string | No       | Text message to send |
-| `file_path`  | string | No       | File to upload       |
+All fields optional. See [CLAUDE.md Multi-Agent API](../../CLAUDE.md#multi-agent-api) for details.
 
-**Response:**
+#### GET /api/multi-agent/delegations
 
-```json
-{
-  "success": true,
-  "message": "Message sent to Slack channel C01234567"
-}
-```
+Get recent task delegations / swarm tasks.
+
+---
+
+### Config API
+
+#### GET /api/config
+
+Get current MAMA configuration.
+
+#### PUT /api/config
+
+Update MAMA configuration.
+
+**Request:** Partial config object to merge.
+
+#### GET /api/dashboard/status
+
+Dashboard status: gateways, memory stats, config summary.
+
+#### POST /api/restart
+
+Graceful restart. **Requires authentication.**
+
+---
+
+### MCP Servers API
+
+#### GET /api/mcp-servers
+
+List MCP servers from config.
+
+#### DELETE /api/mcp-servers/:name
+
+Remove an MCP server from config.
+
+---
 
 ### Daemon Logs API
 
-#### GET /api/daemon/logs
+#### GET /api/logs/daemon
 
-Retrieve daemon log file contents with pagination support.
+Read daemon.log with tail support.
 
 **Query Parameters:**
 
-| Field    | Type   | Required | Description                                         |
-| -------- | ------ | -------- | --------------------------------------------------- |
-| `lines`  | number | No       | Number of lines to return (default: 100, max: 1000) |
-| `offset` | number | No       | Line offset from end of file                        |
+| Field   | Type   | Required | Description                                        |
+| ------- | ------ | -------- | -------------------------------------------------- |
+| `tail`  | number | No       | Number of lines from end (default: 200, max: 5000) |
+| `since` | number | No       | mtime threshold (ms) — returns 304 if unchanged    |
 
 **Response:**
 
 ```json
 {
-  "success": true,
   "lines": ["[2026-02-22 10:00:00] Starting MAMA OS...", "..."],
   "total": 5420,
-  "offset": 0
+  "totalBytes": 1234567,
+  "mtime": 1732530000000,
+  "truncated": false
 }
 ```
+
+---
+
+### Playground API
+
+#### GET /api/playgrounds
+
+List playground HTML files from index.json.
+
+**Response:** `[{ "name": "Skill Lab", "slug": "skill-lab", "description": "...", "created_at": "2026-02-22T..." }]`
+
+#### DELETE /api/playgrounds/:slug
+
+Delete a playground HTML file.
+
+**Response:** `{ "success": true }`
+
+---
+
+### Workspace Skills API
+
+#### GET /api/workspace/skills
+
+List installed skill directories in workspace.
+
+**Response:** `{ "skills": [{ "id": "market-monitor" }] }`
+
+#### GET /api/workspace/skills/:name/content
+
+Read SKILL.md content for a workspace skill.
+
+**Response:** `{ "content": "# Skill content..." }`
+
+---
 
 ### Viewer Routes
 
@@ -648,7 +917,18 @@ Retrieve daemon log file contents with pagination support.
 | --------- | ----------------------------- |
 | `/viewer` | Graph Viewer + Mobile Chat UI |
 | `/graph`  | Graph data API                |
+| `/setup`  | Setup wizard                  |
 | `/`       | Redirects to `/viewer`        |
+
+### Route Aliases
+
+| Alias                  | Canonical                                       |
+| ---------------------- | ----------------------------------------------- |
+| `GET /api/graph`       | `GET /graph`                                    |
+| `GET /api/search`      | `GET /api/mama/search` (converts `query` → `q`) |
+| `POST /api/save`       | `POST /api/mama/save`                           |
+| `POST /api/update`     | `POST /graph/update`                            |
+| `GET /api/checkpoints` | `GET /checkpoints`                              |
 
 ---
 
