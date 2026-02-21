@@ -51,7 +51,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'outcome', type: "'success' | 'failed' | 'partial'", required: true },
       { name: 'reason', type: 'string', required: false },
     ],
-    returnType: '{ success: boolean }',
+    returnType: '{ message?: string }',
     category: 'memory',
   },
   {
@@ -76,7 +76,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'path', type: 'string', required: true },
       { name: 'content', type: 'string', required: true },
     ],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'file',
   },
   {
@@ -98,7 +98,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'message', type: 'string', required: false },
       { name: 'file_path', type: 'string', required: false },
     ],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'communication',
   },
   {
@@ -109,7 +109,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'message', type: 'string', required: false },
       { name: 'file_path', type: 'string', required: false },
     ],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'communication',
   },
   {
@@ -120,7 +120,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'file_path', type: 'string', required: false },
       { name: 'session_id', type: 'string', required: false },
     ],
-    returnType: '{ success: boolean; message?: string }',
+    returnType: '{ message?: string }',
     category: 'communication',
   },
   // Browser
@@ -128,7 +128,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     name: 'browser_navigate',
     description: 'Navigate browser to URL',
     params: [{ name: 'url', type: 'string', required: true }],
-    returnType: '{ success: boolean; title: string }',
+    returnType: '{ title: string }',
     category: 'browser',
   },
   {
@@ -138,14 +138,14 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'selector', type: 'string', required: false },
       { name: 'full_page', type: 'boolean', required: false },
     ],
-    returnType: '{ success: boolean; path: string }',
+    returnType: '{ path: string }',
     category: 'browser',
   },
   {
     name: 'browser_click',
     description: 'Click element in browser',
     params: [{ name: 'selector', type: 'string', required: true }],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'browser',
   },
   {
@@ -155,7 +155,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'selector', type: 'string', required: true },
       { name: 'text', type: 'string', required: true },
     ],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'browser',
   },
   {
@@ -169,7 +169,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     name: 'browser_scroll',
     description: 'Scroll browser page',
     params: [{ name: 'direction', type: "'up' | 'down'", required: true }],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'browser',
   },
   {
@@ -179,7 +179,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'selector', type: 'string', required: false },
       { name: 'timeout', type: 'number', required: false },
     ],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'browser',
   },
   {
@@ -193,14 +193,14 @@ const TOOL_REGISTRY: ToolMeta[] = [
     name: 'browser_pdf',
     description: 'Save page as PDF',
     params: [{ name: 'path', type: 'string', required: false }],
-    returnType: '{ success: boolean; path: string }',
+    returnType: '{ path: string }',
     category: 'browser',
   },
   {
     name: 'browser_close',
     description: 'Close browser',
     params: [],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'browser',
   },
   // OS Management
@@ -211,7 +211,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'platform', type: "'discord' | 'slack' | 'telegram'", required: true },
       { name: 'token', type: 'string', required: true },
     ],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'os',
   },
   {
@@ -225,14 +225,14 @@ const TOOL_REGISTRY: ToolMeta[] = [
     name: 'os_restart_bot',
     description: 'Restart a bot',
     params: [{ name: 'platform', type: 'string', required: true }],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'os',
   },
   {
     name: 'os_stop_bot',
     description: 'Stop a bot',
     params: [{ name: 'platform', type: 'string', required: true }],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'os',
   },
   {
@@ -242,7 +242,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'role', type: 'string', required: true },
       { name: 'permissions', type: 'object', required: true },
     ],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'os',
   },
   {
@@ -259,7 +259,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'agent_id', type: 'string', required: true },
       { name: 'model', type: 'string', required: true },
     ],
-    returnType: '{ success: boolean }',
+    returnType: 'true',
     category: 'os',
   },
   // PR Review
@@ -290,7 +290,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
         description: 'Path to HTML file (use instead of html for large content)',
       },
     ],
-    returnType: '{ success: boolean; path: string; url: string }',
+    returnType: '{ path: string; url: string }',
     category: 'os',
   },
 ];
@@ -358,7 +358,9 @@ export class HostBridge {
   /** Get available function descriptors filtered by tier */
   getAvailableFunctions(tier: 1 | 2 | 3 = 1): FunctionDescriptor[] {
     return TOOL_REGISTRY.filter((meta) => {
-      if (tier === 1) return true;
+      if (tier === 1) {
+        return true;
+      }
       return READ_ONLY_TOOLS.has(meta.name);
     }).map((meta) => ({
       name: meta.name,
