@@ -326,11 +326,11 @@ const WS_RECONNECT_DELAY = 3000;
 const WS_MAX_RETRIES = 5;
 const HISTOGRAM_BUCKETS = 30;
 
-const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+const API_BASE = (location.host.split(':')[0] === 'localhost' || location.host.split(':')[0] === '127.0.0.1')
   ? 'http://localhost:3847'
   : location.protocol + '//' + location.host;
 
-const WS_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+const WS_URL = (location.host.split(':')[0] === 'localhost' || location.host.split(':')[0] === '127.0.0.1')
   ? 'ws://localhost:3847/ws'
   : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
 

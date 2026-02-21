@@ -1903,7 +1903,8 @@ export class GatewayToolExecutor {
     const { CodeActSandbox, HostBridge } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
     const bridge = new HostBridge(this);
-    bridge.injectInto(sandbox, 1, this.currentContext?.role);
+    const tier = (this.currentContext?.tier ?? 1) as 1 | 2 | 3;
+    bridge.injectInto(sandbox, tier, this.currentContext?.role);
 
     const result = await sandbox.execute(input.code);
 

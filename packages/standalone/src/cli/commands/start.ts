@@ -1981,19 +1981,12 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       }
       const tail = Math.min(parseInt(req.query.tail as string) || 200, 5000);
 
-      // Avoid OOM: read only last chunk if file is large
-      const CHUNK_SIZE = tail * 200; // estimate 200 bytes per line
-      let raw: string;
-      if (stat.size > CHUNK_SIZE) {
-        const fd = openSync(logPath, 'r');
-        const readSize = Math.min(stat.size, CHUNK_SIZE * 2); // read 2x chunk for safety
-        const buffer = Buffer.alloc(readSize);
-        readSync(fd, buffer, 0, readSize, Math.max(0, stat.size - readSize));
-        closeSync(fd);
-        raw = buffer.toString('utf-8');
-      } else {
-        raw = readFileSync(logPath, 'utf-8');
-      }
+      const chunkSize = Math.min(stat.size, tail * 300);
+      const buffer = Buffer.alloc(chunkSize);
+      const fd = openSync(logPath, 'r');
+      readSync(fd, buffer, 0, chunkSize, Math.max(0, stat.size - chunkSize));
+      closeSync(fd);
+      const raw = buffer.toString('utf-8');
 
       const allLines = raw.split('\n').filter((l) => l.trim());
       const lines = allLines.slice(-tail);
