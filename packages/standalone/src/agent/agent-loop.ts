@@ -597,7 +597,7 @@ export class AgentLoop {
     if (useGatewayMode) {
       if (this.useCodeAct) {
         // Code-Act mode: replace verbose gateway tools markdown with compact .d.ts
-        const typeDefs = TypeDefinitionGenerator.generate(1);
+        const typeDefs = TypeDefinitionGenerator.generate(options.agentContext?.tier ?? 1);
         const codeActPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
         promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
       } else {
@@ -906,7 +906,7 @@ export class AgentLoop {
         let gatewayToolsPrompt = '';
         if (this.isGatewayMode && !alreadyHasTools) {
           if (this.useCodeAct) {
-            const typeDefs = TypeDefinitionGenerator.generate(1);
+            const typeDefs = TypeDefinitionGenerator.generate(options?.agentContext?.tier ?? 1);
             gatewayToolsPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
           } else {
             gatewayToolsPrompt = getGatewayToolsPrompt();
