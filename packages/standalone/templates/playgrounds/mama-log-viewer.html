@@ -575,11 +575,11 @@ function addLines(rawLines, isInitial) {
       if (entry.source) S.sourceCounts[entry.source] = (S.sourceCounts[entry.source] || 0) + 1;
       if (entry.channel) S.channelCounts[entry.channel] = (S.channelCounts[entry.channel] || 0) + 1;
     });
-  }
 
-  for (let j = 0; j < S.logs.length; j++) S.logs[j].n = j;
-  const rows = logArea.querySelectorAll('.ll');
-  for (let k = 0; k < rows.length; k++) rows[k].setAttribute('data-idx', k);
+    for (let j = 0; j < S.logs.length; j++) S.logs[j].n = j;
+    const rows = logArea.querySelectorAll('.ll');
+    for (let k = 0; k < rows.length; k++) rows[k].setAttribute('data-idx', k);
+  }
 
   $('stTotal').textContent = S.logs.length;
   const vis = logArea.querySelectorAll('.ll:not(.hidden)').length;
@@ -699,16 +699,19 @@ function connectWS() {
         // Update mtime/total to prevent polling duplicates
         if (data.mtime) S.lastMtime = data.mtime;
         if (data.total) S.lastTotal = data.total;
+        updateRate();
       } else if (data.type === 'logs' && data.lines) {
         addLines(data.lines, !S.initialized);
         S.initialized = true;
         // Update mtime/total to prevent polling duplicates
         if (data.mtime) S.lastMtime = data.mtime;
         if (data.total) S.lastTotal = data.total;
+        updateRate();
       }
     } catch (e) {
       if (typeof evt.data === 'string' && evt.data.trim()) {
         addLines([evt.data], false);
+        updateRate();
       }
     }
   };
@@ -1186,12 +1189,14 @@ $('autoBtn').addEventListener('click', function() {
   if (S.autoScroll) logArea.scrollTop = logArea.scrollHeight;
 });
 $('clearBtn').addEventListener('click', () => {
-  S.logs = []; S.selected.clear(); S.lastMtime = 0; S.lastTotal = 0; S.initialized = false;
+  S.logs = []; S.selected.clear(); S.pins.clear(); S.lastMtime = 0; S.lastTotal = 0; S.initialized = false;
   S.prevCount = 0; S.rateHistory = []; S.totalReceived = 0; S.sourceCounts = {}; S.channelCounts = {};
   logArea.innerHTML = '<div class="empty" id="emptyState"><div class="ico">&#128203;</div><p>Cleared</p></div>';
   emptyState = $('emptyState');
   $('stTotal').textContent = '0'; $('stShown').textContent = '0';
   $('rateBadge').textContent = '0 l/s'; $('modStats').innerHTML = '';
+  savePins();
+  updatePinUI();
   updateSelectionBar();
   updateMinimap();
   if (S.statsDashOpen) updateStatsDashboard();
@@ -1318,6 +1323,7 @@ $('promptCopy').addEventListener('click', () => {
 });
 
 window.addEventListener('message', (e) => {
+  if (e.origin !== window.location.origin) return;
   if (e.data && e.data.type === 'mama:logs') {
     const lines = e.data.content.split('\n').filter((l) => l.trim());
     addLines(lines, true);

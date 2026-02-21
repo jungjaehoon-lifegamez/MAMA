@@ -1985,17 +1985,22 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const chunkSize = Math.min(stat.size, tail * 300);
       const buffer = Buffer.alloc(chunkSize);
       const fd = openSync(logPath, 'r');
-      readSync(fd, buffer, 0, chunkSize, Math.max(0, stat.size - chunkSize));
-      closeSync(fd);
+      try {
+        readSync(fd, buffer, 0, chunkSize, Math.max(0, stat.size - chunkSize));
+      } finally {
+        closeSync(fd);
+      }
       const raw = buffer.toString('utf-8');
 
       const allLines = raw.split('\n').filter((l) => l.trim());
       const lines = allLines.slice(-tail);
+      const isFullFile = chunkSize >= stat.size;
       res.json({
         lines,
-        total: allLines.length,
+        total: isFullFile ? allLines.length : stat.size,
         mtime: stat.mtimeMs,
         fileSize: stat.size,
+        truncated: !isFullFile,
       });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

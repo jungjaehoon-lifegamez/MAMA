@@ -22,17 +22,26 @@ async function getModule(): Promise<QuickJSAsyncWASMModule> {
 }
 
 /** Convert a JS value to a QuickJS handle using native API (no evalCode) */
-function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown): QuickJSHandle {
+function jsonToHandle(
+  ctx: QuickJSAsyncContext,
+  value: unknown,
+  visited = new Set<unknown>()
+): QuickJSHandle {
   if (value === null || value === undefined) return ctx.undefined;
   if (value === true) return ctx.true;
   if (value === false) return ctx.false;
   if (typeof value === 'string') return ctx.newString(value);
   if (typeof value === 'number') return ctx.newNumber(value);
 
+  if (typeof value === 'object') {
+    if (visited.has(value)) return ctx.newString('[Circular]');
+    visited.add(value);
+  }
+
   if (Array.isArray(value)) {
     const arr = ctx.newArray();
     for (let i = 0; i < value.length; i++) {
-      const h = jsonToHandle(ctx, value[i]);
+      const h = jsonToHandle(ctx, value[i], visited);
       ctx.setProp(arr, i, h);
       h.dispose();
     }
@@ -42,7 +51,7 @@ function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown): QuickJSHandle {
   if (typeof value === 'object') {
     const obj = ctx.newObject();
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const h = jsonToHandle(ctx, v);
+      const h = jsonToHandle(ctx, v, visited);
       ctx.setProp(obj, k, h);
       h.dispose();
     }
