@@ -79,6 +79,12 @@ export interface AgentContext {
    * @example ["Cannot execute Bash", "Cannot write files", "Limited path access"]
    */
   limitations: string[];
+
+  /**
+   * Agent tier level for Code-Act sandbox permission
+   * @default 1
+   */
+  tier?: 1 | 2 | 3;
 }
 
 // ============================================================================

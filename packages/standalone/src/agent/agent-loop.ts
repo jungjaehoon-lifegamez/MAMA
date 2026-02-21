@@ -853,6 +853,11 @@ export class AgentLoop {
     let turn = 0;
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
 
+    // Propagate agentContext to executor for tier-aware tool permissions
+    if (options?.agentContext) {
+      this.mcpExecutor.setAgentContext(options.agentContext);
+    }
+
     // Infinite loop prevention
     let consecutiveToolCalls = 0;
     let lastToolName = '';
@@ -1062,10 +1067,12 @@ export class AgentLoop {
         if (this.isGatewayMode) {
           parsedToolCalls = this.parseToolCallsFromText(piResult.response || '');
 
-          // Code-Act: always parse ```js blocks — system prompt controls whether LLM generates them
-          const codeActCalls = this.parseCodeActBlocks(piResult.response || '');
-          if (codeActCalls.length > 0) {
-            parsedToolCalls.push(...codeActCalls);
+          // Code-Act: parse ```js blocks only if enabled
+          if (this.useCodeAct) {
+            const codeActCalls = this.parseCodeActBlocks(piResult.response || '');
+            if (codeActCalls.length > 0) {
+              parsedToolCalls.push(...codeActCalls);
+            }
           }
 
           const textWithoutToolCalls = this.removeToolCallBlocks(piResult.response || '');
@@ -1346,6 +1353,13 @@ export class AgentLoop {
           );
           result = JSON.stringify(toolResult, null, 2);
 
+          // Check if tool execution failed
+          const hasSuccess = 'success' in toolResult;
+          const toolFailed = hasSuccess && !toolResult.success;
+          if (toolFailed) {
+            isError = true;
+          }
+
           if (contractContext) {
             result = `${contractContext}\n\n---\n\n${result}`;
           }
@@ -1356,8 +1370,8 @@ export class AgentLoop {
           // PostToolUse: auto-extract contracts (fire-and-forget)
           this.postToolHandler?.processInBackground(toolUse.name, toolUse.input, toolResult);
 
-          // Notify stream: tool completed successfully
-          this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, false);
+          // Notify stream: tool completed (check actual status)
+          this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
         }
       } catch (error) {
         isError = true;
