@@ -553,6 +553,95 @@ Update decision outcome (used by Graph Viewer).
 }
 ```
 
+### Code-Act API
+
+#### POST /api/code-act
+
+Execute JavaScript code in a sandboxed QuickJS environment with access to gateway tools.
+
+**Authentication:** Requires `MAMA_AUTH_TOKEN` if set.
+
+**Request:**
+
+```json
+{
+  "code": "const result = await Read('/path/to/file'); return result;",
+  "timeout": 30000
+}
+```
+
+| Field     | Type   | Required | Description                                          |
+| --------- | ------ | -------- | ---------------------------------------------------- |
+| `code`    | string | Yes      | JavaScript code to execute                           |
+| `timeout` | number | No       | Execution timeout in ms (default: 30000, max: 60000) |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "result": { "content": "file contents..." },
+  "duration": 245
+}
+```
+
+**Security:** Code runs in a QuickJS sandbox (not Node.js). Only Tier 3 (read-only) gateway tools are available. No `require()`, no `process`, no `fs` access.
+
+### Slack API
+
+#### POST /api/slack/send
+
+Send a message to a Slack channel. Requires Slack bot to be configured.
+
+**Request:**
+
+```json
+{
+  "channel_id": "C01234567",
+  "message": "Hello from MAMA!",
+  "file_path": "/path/to/attachment.png"
+}
+```
+
+| Field        | Type   | Required | Description          |
+| ------------ | ------ | -------- | -------------------- |
+| `channel_id` | string | Yes      | Slack channel ID     |
+| `message`    | string | No       | Text message to send |
+| `file_path`  | string | No       | File to upload       |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Message sent to Slack channel C01234567"
+}
+```
+
+### Daemon Logs API
+
+#### GET /api/daemon/logs
+
+Retrieve daemon log file contents with pagination support.
+
+**Query Parameters:**
+
+| Field    | Type   | Required | Description                                         |
+| -------- | ------ | -------- | --------------------------------------------------- |
+| `lines`  | number | No       | Number of lines to return (default: 100, max: 1000) |
+| `offset` | number | No       | Line offset from end of file                        |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "lines": ["[2026-02-22 10:00:00] Starting MAMA OS...", "..."],
+  "total": 5420,
+  "offset": 0
+}
+```
+
 ### Viewer Routes
 
 | Route     | Description                   |
@@ -609,5 +698,5 @@ If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
 
 ---
 
-**Last Updated:** 2025-11-28
-**Version:** 1.6.5
+**Last Updated:** 2026-02-22
+**Version:** 0.10.0
