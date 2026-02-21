@@ -354,7 +354,7 @@ const $ = (id) => document.getElementById(id);
 const logArea = $('logArea');
 let emptyState = $('emptyState');
 
-function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function sourceClass(src) { return src ? 'src-' + src.toLowerCase().replace(/[^a-z]/g, '') : ''; }
 function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
@@ -531,9 +531,11 @@ function addLines(rawLines, isInitial) {
   const base = S.logs.length;
   const frag = document.createDocumentFragment();
 
+  let lineNum = base;
   for (let i = 0; i < rawLines.length; i++) {
     if (!rawLines[i].trim()) continue;
-    const entry = parseLine(rawLines[i], base + i);
+    const entry = parseLine(rawLines[i], lineNum);
+    lineNum++;
     if (!isInitial) entry.isNew = true;
     S.logs.push(entry);
     S.totalReceived++;
@@ -665,6 +667,12 @@ function stopPolling() {
 function connectWS() {
   if (S.ws && (S.ws.readyState === WebSocket.OPEN || S.ws.readyState === WebSocket.CONNECTING)) return;
 
+  // Stop polling to prevent duplicate logs
+  if (S.pollTimer) {
+    clearInterval(S.pollTimer);
+    S.pollTimer = null;
+  }
+
   S.wsMode = true;
   $('wsBtn').classList.add('ws-mode');
   setStatus('connecting', 'WS connecting...');
@@ -688,9 +696,15 @@ function connectWS() {
       if (data.type === 'log' && data.line) {
         if (emptyState && emptyState.parentNode) emptyState.remove();
         addLines([data.line], false);
+        // Update mtime/total to prevent polling duplicates
+        if (data.mtime) S.lastMtime = data.mtime;
+        if (data.total) S.lastTotal = data.total;
       } else if (data.type === 'logs' && data.lines) {
         addLines(data.lines, !S.initialized);
         S.initialized = true;
+        // Update mtime/total to prevent polling duplicates
+        if (data.mtime) S.lastMtime = data.mtime;
+        if (data.total) S.lastTotal = data.total;
       }
     } catch (e) {
       if (typeof evt.data === 'string' && evt.data.trim()) {
@@ -729,7 +743,7 @@ function disconnectWS() {
 function fallbackToPolling(reason) {
   disconnectWS();
   setStatus('disconnected', 'WS failed: ' + reason + ' \u2014 switching to polling');
-  if (!S.live) startPolling();
+  if (S.live) startPolling();
 }
 
 /* ===== Export ===== */

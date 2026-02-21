@@ -85,7 +85,8 @@ export class CodeActSandbox {
   async execute(code: string): Promise<ExecutionResult> {
     const startTime = performance.now();
     const logs: string[] = [];
-    let hostCallCount = 0;
+    const inFlightCount = { value: 0 };
+    const totalCallCount = { value: 0 };
 
     const module = await getModule();
     const rt: QuickJSAsyncRuntime = module.newRuntime();
@@ -101,12 +102,14 @@ export class CodeActSandbox {
 
       // Inject registered host functions
       for (const [name, fn] of this.registeredFunctions) {
-        this._injectAsyncFunction(ctx, name, fn, () => {
-          hostCallCount++;
-          if (hostCallCount > this.config.maxConcurrentCalls) {
-            throw new Error(`Host call limit exceeded (max ${this.config.maxConcurrentCalls})`);
-          }
-        });
+        this._injectAsyncFunction(
+          ctx,
+          name,
+          fn,
+          inFlightCount,
+          totalCallCount,
+          this.config.maxConcurrentCalls
+        );
       }
 
       // Execute code
@@ -125,7 +128,7 @@ export class CodeActSandbox {
           success: false,
           error: this._normalizeError(err),
           logs,
-          metrics: { durationMs, hostCallCount, memoryUsedBytes },
+          metrics: { durationMs, hostCallCount: totalCallCount.value, memoryUsedBytes },
         };
       }
 
@@ -145,7 +148,7 @@ export class CodeActSandbox {
             success: false,
             error: this._normalizeError(value.value),
             logs,
-            metrics: { durationMs, hostCallCount, memoryUsedBytes },
+            metrics: { durationMs, hostCallCount: totalCallCount.value, memoryUsedBytes },
           };
         }
       }
@@ -154,7 +157,7 @@ export class CodeActSandbox {
         success: true,
         value,
         logs,
-        metrics: { durationMs, hostCallCount, memoryUsedBytes },
+        metrics: { durationMs, hostCallCount: totalCallCount.value, memoryUsedBytes },
       };
     } catch (err) {
       const durationMs = performance.now() - startTime;
@@ -166,7 +169,7 @@ export class CodeActSandbox {
           stack: err instanceof Error ? err.stack : undefined,
         },
         logs,
-        metrics: { durationMs, hostCallCount, memoryUsedBytes: 0 },
+        metrics: { durationMs, hostCallCount: inFlightCount.value, memoryUsedBytes: 0 },
       };
     } finally {
       ctx.dispose();
@@ -199,10 +202,17 @@ export class CodeActSandbox {
     ctx: QuickJSAsyncContext,
     name: string,
     fn: HostFunction,
-    onCall: () => void
+    inFlightCount: { value: number },
+    totalCallCount: { value: number },
+    maxConcurrentCalls: number
   ): void {
     const handle = ctx.newAsyncifiedFunction(name, async (...argHandles) => {
-      onCall();
+      totalCallCount.value++;
+      if (totalCallCount.value > maxConcurrentCalls) {
+        throw new Error(`Host call limit exceeded (max ${maxConcurrentCalls})`);
+      }
+      // Track in-flight for potential future concurrency reporting
+      inFlightCount.value++;
       const args = argHandles.map((h) => ctx.dump(h));
 
       try {
@@ -221,6 +231,8 @@ export class CodeActSandbox {
         const errMsg = err instanceof Error ? err.message : String(err);
         const errHandle = ctx.newError(errMsg);
         return { error: errHandle } as VmCallResult<QuickJSHandle>;
+      } finally {
+        inFlightCount.value--;
       }
     });
     ctx.setProp(ctx.global, name, handle);
