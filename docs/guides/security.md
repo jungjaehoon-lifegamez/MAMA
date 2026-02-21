@@ -14,6 +14,7 @@
 - [Disabling Features](#disabling-features)
 - [Security Best Practices](#security-best-practices)
 - [Threat Scenarios](#threat-scenarios)
+- [Code-Act Sandbox Security](#code-act-sandbox-security)
 
 ---
 
@@ -881,6 +882,58 @@ echo ".env" >> .gitignore
 
 ---
 
+## Code-Act Sandbox Security
+
+MAMA OS includes a **Code-Act sandbox** — a JavaScript execution environment powered by QuickJS (WebAssembly). This allows agents to run code without Node.js access.
+
+### Security Model
+
+```
+User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 3 only)
+             ↑                      ↑
+             No Node.js APIs        Read-only tools only
+             No file system         No Bash, no Write
+             No network access      No communication tools
+```
+
+**Isolation guarantees:**
+
+- **No Node.js APIs** — `require()`, `process`, `fs`, `child_process` are unavailable
+- **No network access** — No `fetch()`, no `XMLHttpRequest`, no sockets
+- **Execution timeout** — Default 30s, max 60s, enforced at engine level
+- **Memory limit** — QuickJS WASM heap is bounded (default ~256 MB, set by `quickjs-emscripten` WASM allocation)
+- **Tier 3 tools only** — Only read-only gateway tools are exposed via the host bridge
+
+### Available Tools in Sandbox
+
+Only Tier 3 (read-only) tools are injected:
+
+- `mama_search`, `mama_load_checkpoint` — Memory read
+- `Read` — File read
+- `browser_get_text`, `browser_screenshot` — Browser read
+- `os_list_bots`, `os_get_config` — Status read
+- `pr_review_threads` — PR data read
+
+### HTTP API Access
+
+The Code-Act sandbox is accessible via `POST /api/code-act`. This endpoint:
+
+- Requires `MAMA_AUTH_TOKEN` if set
+- Uses Tier 3 (read-only) tools exclusively
+- Has no access to agent persona or conversation context
+
+### Risk Assessment
+
+| Risk                | Mitigation                                   |
+| ------------------- | -------------------------------------------- |
+| Code injection      | QuickJS WASM isolation, no eval of host code |
+| File system access  | Only via `Read` tool (read-only)             |
+| Command execution   | `Bash` tool not available in Tier 3          |
+| Data exfiltration   | No network access, no communication tools    |
+| Resource exhaustion | Timeout + WASM memory bounds                 |
+
+---
+
 ## Support
 
 If you have security concerns or found a vulnerability:
@@ -890,5 +943,5 @@ If you have security concerns or found a vulnerability:
 
 ---
 
-_Last updated: 2025-11-29_
-_MAMA Mobile v1.5_
+_Last updated: 2026-02-22_
+_MAMA OS v0.10.0_

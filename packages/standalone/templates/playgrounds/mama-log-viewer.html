@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAMA OS Log Viewer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--error:#f85149;--warn:#d29922;--info:#58a6ff;--success:#3fb950;--debug:#8b949e;--pin:#f0883e}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.header{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.header h1{font-size:13px;font-weight:600;color:var(--accent);white-space:nowrap}
+.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.status-dot.connected{background:var(--success);box-shadow:0 0 6px var(--success)}
+.status-dot.disconnected{background:var(--error)}
+.status-dot.connecting{background:var(--warn);animation:pulse 1s infinite}
+.status-dot.ws-connected{background:#39d353;box-shadow:0 0 8px #39d353}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes fadeNew{from{background:rgba(59,185,80,.18)}to{background:transparent}}
+.status-text{font-size:11px;color:var(--muted);min-width:100px}
+.rate-badge{font-size:10px;color:var(--muted);background:var(--bg);padding:2px 7px;border-radius:10px;border:1px solid var(--border)}
+.hdr-right{margin-left:auto;display:flex;gap:5px;align-items:center}
+.btn{padding:3px 10px;font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn.paused{background:var(--warn);border-color:var(--warn);color:#000}
+.btn.ws-mode{background:#39d353;border-color:#39d353;color:#000}
+.sel-ctrl{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:3px 5px;color:var(--text);font-size:11px;font-family:inherit;outline:none}
+.toolbar{display:flex;align-items:center;gap:6px;padding:5px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.search-box{flex:1;min-width:120px;display:flex;align-items:center;gap:5px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:3px 7px}
+.search-box input{flex:1;background:none;border:none;color:var(--text);font-size:11px;font-family:'SF Mono','Cascadia Code',Consolas,monospace;outline:none}
+.search-box input::placeholder{color:var(--muted)}
+.search-box .count{font-size:10px;color:var(--muted);white-space:nowrap}
+.search-mode-btn{padding:1px 5px;font-size:9px;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:3px;cursor:pointer;font-family:monospace}
+.search-mode-btn.active{color:var(--accent);border-color:var(--accent);background:rgba(88,166,255,.1)}
+.levels{display:flex;gap:2px}
+.lvl{padding:2px 6px;font-size:10px;font-weight:700;border-radius:3px;cursor:pointer;border:1px solid transparent;user-select:none;transition:all .12s}
+.lvl.off{opacity:.3}
+.lvl-error{color:var(--error);border-color:var(--error)}.lvl-error.on{background:var(--error);color:#fff}
+.lvl-warn{color:var(--warn);border-color:var(--warn)}.lvl-warn.on{background:var(--warn);color:#000}
+.lvl-info{color:var(--accent);border-color:var(--accent)}.lvl-info.on{background:var(--accent);color:#fff}
+.lvl-debug{color:var(--muted);border-color:var(--muted)}.lvl-debug.on{background:var(--muted);color:#000}
+.source-panel{display:none;padding:6px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto}
+.source-panel.active{display:block}
+.source-panel-header{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.source-panel-header span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.source-panel-header button{font-size:10px;color:var(--accent);background:none;border:none;cursor:pointer}
+.source-panel-header button:hover{text-decoration:underline}
+.source-group{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:4px}
+.source-group-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;width:100%;margin-top:4px;margin-bottom:1px}
+.source-chip{padding:2px 8px;font-size:10px;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:10px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.source-chip:hover{border-color:var(--accent);color:var(--text)}
+.source-chip.active{background:rgba(88,166,255,.15);border-color:var(--accent);color:var(--accent)}
+.source-chip.excluded{background:rgba(248,81,73,.1);border-color:var(--error);color:var(--error);text-decoration:line-through;opacity:.6}
+.source-chip .chip-count{font-size:9px;opacity:.6;margin-left:3px}
+.src-toggle{font-size:10px;padding:2px 8px;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:5px;cursor:pointer}
+.src-toggle:hover{color:var(--text);border-color:var(--accent)}
+.src-toggle.open{color:var(--accent);border-color:var(--accent)}
+
+/* Stats dashboard */
+.stats-dashboard{display:none;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;overflow:hidden;transition:all .2s}
+.stats-dashboard.active{display:block}
+.stats-dash-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.stats-dash-header h3{font-size:11px;color:var(--accent);font-weight:600}
+.stats-dash-header button{font-size:10px;color:var(--muted);background:none;border:none;cursor:pointer}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.stats-card{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px}
+.stats-card h4{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.stats-card-counts{display:flex;gap:10px;margin-bottom:6px}
+.stats-count{display:flex;flex-direction:column;align-items:center;gap:2px}
+.stats-count .num{font-size:16px;font-weight:700}
+.stats-count .lbl{font-size:9px;color:var(--muted)}
+.bar-chart{display:flex;flex-direction:column;gap:2px}
+.bar-row{display:flex;align-items:center;gap:5px;font-size:9px}
+.bar-label{min-width:70px;color:var(--muted);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-fill{height:10px;border-radius:2px;transition:width .3s;min-width:2px}
+.bar-value{color:var(--muted);min-width:25px}
+.histogram{display:flex;align-items:flex-end;gap:1px;height:40px}
+.histogram .hist-bar{flex:1;background:var(--accent);border-radius:1px 1px 0 0;min-width:2px;transition:height .3s;cursor:pointer;position:relative}
+.histogram .hist-bar:hover{opacity:.8}
+.histogram .hist-bar .hist-tip{display:none;position:absolute;bottom:calc(100% + 4px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:2px 5px;font-size:9px;white-space:nowrap;color:var(--text);z-index:10}
+.histogram .hist-bar:hover .hist-tip{display:block}
+
+/* Pins panel */
+.pins-panel{display:none;max-height:120px;overflow-y:auto;background:rgba(240,136,62,.05);border-bottom:1px solid var(--pin);flex-shrink:0}
+.pins-panel.active{display:block}
+.pins-header{display:flex;align-items:center;gap:6px;padding:4px 14px;font-size:10px;color:var(--pin)}
+.pins-header span{font-weight:600}
+.pins-header button{font-size:9px;color:var(--muted);background:none;border:none;cursor:pointer;margin-left:auto}
+.pins-header button:hover{color:var(--pin)}
+.pin-line{padding:2px 14px 2px 28px;font-family:'SF Mono','Cascadia Code','Fira Code',Consolas,monospace;font-size:10.5px;line-height:1.4;cursor:pointer;display:flex;gap:6px;border-bottom:1px solid rgba(240,136,62,.1)}
+.pin-line:hover{background:rgba(240,136,62,.08)}
+.pin-line .pin-src{color:var(--pin);font-weight:700;min-width:80px}
+.pin-line .pin-msg{color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pin-line .pin-rm{color:var(--muted);font-size:9px;cursor:pointer;opacity:0;transition:opacity .15s}
+.pin-line:hover .pin-rm{opacity:1}
+
+.stats-bar{display:flex;align-items:center;gap:12px;padding:3px 14px;font-size:10px;color:var(--muted);background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto}
+.stats-bar strong{color:var(--text)}
+.mod-stat{display:flex;align-items:center;gap:3px}
+.mod-stat .dot-sm{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.selection-bar{display:none;align-items:center;gap:8px;padding:6px 14px;background:var(--accent);color:#fff;font-size:12px;flex-shrink:0}
+.selection-bar.active{display:flex}
+.selection-bar .sel-count{font-weight:600}
+.selection-bar button{padding:3px 10px;font-size:11px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.1);color:#fff;border-radius:6px;cursor:pointer}
+.selection-bar button:hover{background:rgba(255,255,255,.25)}
+.selection-bar .send-btn{background:#fff;color:var(--accent);font-weight:600;border:none}
+.selection-bar .send-btn:hover{background:#e6edf3}
+
+/* Log area + minimap */
+.log-wrap{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.log-container{flex:1;display:flex;overflow:hidden;position:relative}
+.log-area{flex:1;overflow-y:auto;padding:2px 0;font-family:'SF Mono','Cascadia Code','Fira Code',Consolas,monospace;font-size:11.5px;line-height:1.5}
+.log-area::-webkit-scrollbar{width:7px}
+.log-area::-webkit-scrollbar-track{background:var(--bg)}
+.log-area::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* Minimap */
+.minimap{width:18px;background:var(--surface);border-left:1px solid var(--border);flex-shrink:0;position:relative;cursor:pointer;overflow:hidden}
+.minimap-marker{position:absolute;width:100%;min-height:2px;border-radius:1px;opacity:.7;transition:opacity .1s}
+.minimap-marker:hover{opacity:1}
+.minimap-marker.error{background:var(--error)}
+.minimap-marker.warn{background:var(--warn)}
+.minimap-marker.pin{background:var(--pin)}
+.minimap-viewport{position:absolute;width:100%;background:rgba(88,166,255,.15);border:1px solid rgba(88,166,255,.3);border-radius:1px;pointer-events:none;transition:top .1s,height .1s}
+
+.ll{padding:1px 14px;display:flex;gap:6px;cursor:pointer;user-select:none;transition:background .08s;border-bottom:1px solid rgba(48,54,61,.2)}
+.ll:hover{background:rgba(88,166,255,.05)}
+.ll.selected{background:rgba(88,166,255,.12);border-left:3px solid var(--accent);padding-left:11px}
+.ll.new-line{animation:fadeNew .8s}
+.ll.level-error{background:rgba(248,81,73,.06);border-left:2px solid var(--error)}
+.ll.level-error.selected{background:rgba(248,81,73,.15);border-left-color:var(--error)}
+.ll.level-warn{background:rgba(210,153,34,.05);border-left:2px solid var(--warn)}
+.ll.level-warn.selected{background:rgba(210,153,34,.12);border-left-color:var(--warn)}
+.ll.hidden{display:none}
+.ll.graphhandler{opacity:.35}.ll.graphhandler:hover{opacity:.7}
+.ll.pinned .pin-icon{display:inline}
+.pin-icon{display:none;color:var(--pin);font-size:10px;cursor:pointer;flex-shrink:0}
+.ln{color:var(--muted);min-width:36px;text-align:right;user-select:none;opacity:.4;font-size:10px}
+.ltime{color:var(--muted);min-width:70px;font-size:10px;opacity:.6}
+.lmod{min-width:90px;font-weight:700;font-size:10.5px;white-space:nowrap}
+.llvl{min-width:32px;font-size:9px;font-weight:700;text-transform:uppercase;opacity:.8}
+.llvl.error{color:var(--error)}.llvl.warn{color:var(--warn)}.llvl.info{color:var(--accent)}.llvl.debug{color:var(--muted)}.llvl.success{color:var(--success)}
+.lmsg{color:var(--text);flex:1;word-break:break-all;white-space:pre-wrap}
+.lmsg mark{background:var(--warn);color:#000;border-radius:2px;padding:0 1px}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--muted);gap:8px}
+.empty .ico{font-size:36px;opacity:.25}
+.empty p{font-size:11px}
+.empty kbd{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px}
+.prompt-panel{border-top:1px solid var(--border);background:var(--surface);flex-shrink:0}
+.prompt-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;cursor:pointer;user-select:none}
+.prompt-hdr h3{font-size:11px;color:var(--accent);font-weight:600}
+.prompt-hdr .arrow{font-size:10px;color:var(--muted);transition:transform .2s}
+.prompt-hdr .arrow.open{transform:rotate(180deg)}
+.prompt-body{padding:0 14px 8px;display:none}
+.prompt-body.open{display:block}
+.presets{display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px}
+.preset{padding:2px 8px;font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--muted);cursor:pointer;transition:all .12s;font-family:inherit}
+.preset:hover{border-color:var(--accent);color:var(--accent)}
+.prompt-row{display:flex;gap:6px}
+.prompt-input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:11px;font-family:inherit;resize:none;outline:none;min-height:40px;max-height:80px}
+.prompt-input:focus{border-color:var(--accent)}
+.prompt-input::placeholder{color:var(--muted)}
+.prompt-actions{display:flex;flex-direction:column;gap:3px}
+.send-btn-prompt{padding:5px 12px;background:var(--accent);color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit}
+.send-btn-prompt:hover{opacity:.9}
+.copy-btn-prompt{padding:5px 12px;background:var(--bg);color:var(--muted);border:1px solid var(--border);border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit}
+.copy-btn-prompt:hover{color:var(--text);border-color:var(--muted)}
+
+/* Export dropdown */
+.export-dropdown{position:relative;display:inline-block}
+.export-menu{display:none;position:absolute;top:100%;right:0;margin-top:4px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 0;z-index:100;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,.4)}
+.export-menu.open{display:block}
+.export-item{display:block;width:100%;padding:5px 12px;font-size:11px;color:var(--text);background:none;border:none;cursor:pointer;text-align:left;font-family:inherit}
+.export-item:hover{background:rgba(88,166,255,.1);color:var(--accent)}
+.export-item .exp-desc{display:block;font-size:9px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="status-dot disconnected" id="statusDot"></div>
+  <h1>MAMA OS Log Viewer</h1>
+  <span class="status-text" id="statusText">Starting...</span>
+  <span class="rate-badge" id="rateBadge" title="Lines per second">0 l/s</span>
+  <div class="hdr-right">
+    <button class="btn" id="liveBtn" title="Toggle live (L)">&#9654; Live</button>
+    <button class="btn" id="wsBtn" title="WebSocket mode (W)">WS</button>
+    <select class="sel-ctrl" id="intervalSel" title="Poll interval">
+      <option value="1000">1s</option>
+      <option value="2000" selected>2s</option>
+      <option value="3000">3s</option>
+      <option value="5000">5s</option>
+    </select>
+    <input type="number" class="sel-ctrl" id="tailN" value="500" min="50" max="5000" style="width:50px;text-align:center" title="Tail lines">
+    <button class="btn active" id="autoBtn" title="Auto-scroll (A)">&#11015;</button>
+    <button class="btn" id="statsBtn" title="Stats dashboard (D)">&#128202;</button>
+    <div class="export-dropdown">
+      <button class="btn" id="exportBtn" title="Export logs (E)">&#128229;</button>
+      <div class="export-menu" id="exportMenu">
+        <button class="export-item" id="exportLog">Export as .log<span class="exp-desc">All visible lines (plain text)</span></button>
+        <button class="export-item" id="exportSelLog">Export selected as .log<span class="exp-desc">Selected lines only</span></button>
+        <button class="export-item" id="exportJson">Export as .json<span class="exp-desc">Structured data (all visible)</span></button>
+        <button class="export-item" id="exportSelJson">Export selected as .json<span class="exp-desc">Structured data (selected)</span></button>
+      </div>
+    </div>
+    <button class="btn" id="clearBtn" title="Clear (C)">&#128465;</button>
+  </div>
+</div>
+<div class="toolbar">
+  <div class="search-box">
+    <span style="opacity:.5">&#128269;</span>
+    <input id="searchInput" placeholder="Filter... (/ or Ctrl+F)" />
+    <button class="search-mode-btn" id="regexToggle" title="Toggle regex mode">.*</button>
+    <span class="count" id="searchCount"></span>
+  </div>
+  <div class="levels">
+    <span class="lvl lvl-error on" data-l="error">ERR</span>
+    <span class="lvl lvl-warn on" data-l="warn">WRN</span>
+    <span class="lvl lvl-info on" data-l="info">INF</span>
+    <span class="lvl lvl-debug on" data-l="debug">DBG</span>
+  </div>
+  <button class="btn active" id="graphToggle" style="font-size:10px" title="GraphHandler toggle">GH</button>
+  <button class="btn" id="pinToggle" style="font-size:10px" title="Show pinned lines">&#128204;</button>
+  <button class="src-toggle" id="srcToggle" title="Source/Channel panel">Sources</button>
+</div>
+<div class="source-panel" id="sourcePanel">
+  <div class="source-panel-header">
+    <span>Sources</span>
+    <div style="flex:1"></div>
+    <button id="showAllBtn">Show All</button>
+    <button id="soloBtn">Solo Selected</button>
+  </div>
+  <div class="source-group" id="sourceChips"></div>
+  <div class="source-group-label">Channels / Lanes</div>
+  <div class="source-group" id="channelChips"></div>
+</div>
+<div class="stats-dashboard" id="statsDashboard">
+  <div class="stats-dash-header">
+    <h3>&#128202; Log Statistics</h3>
+    <button id="closeStats">&#10005; Close</button>
+  </div>
+  <div class="stats-grid">
+    <div class="stats-card">
+      <h4>Level Counts</h4>
+      <div class="stats-card-counts" id="levelCounts"></div>
+    </div>
+    <div class="stats-card">
+      <h4>Top Sources</h4>
+      <div class="bar-chart" id="sourceChart"></div>
+    </div>
+    <div class="stats-card">
+      <h4>Volume (time)</h4>
+      <div class="histogram" id="volumeHistogram"></div>
+    </div>
+  </div>
+</div>
+<div class="pins-panel" id="pinsPanel">
+  <div class="pins-header">
+    <span>&#128204; Pinned Lines</span>
+    <span id="pinCount">0</span>
+    <button id="clearPins">Clear All</button>
+  </div>
+  <div id="pinsList"></div>
+</div>
+<div class="stats-bar">
+  <span>Total: <strong id="stTotal">0</strong></span>
+  <span>Shown: <strong id="stShown">0</strong></span>
+  <span id="modStats"></span>
+  <span id="fileInfo" style="margin-left:auto"></span>
+</div>
+<div class="selection-bar" id="selectionBar">
+  <span class="sel-count" id="selBarCount">0</span> lines selected
+  <div style="flex:1"></div>
+  <button id="selPin" title="Pin selected lines">&#128204; Pin</button>
+  <button id="selCopy">Copy</button>
+  <button class="send-btn" id="selSend">Send to Chat</button>
+  <button id="selClear">Clear</button>
+</div>
+<div class="log-wrap">
+  <div class="log-container">
+    <div class="log-area" id="logArea">
+      <div class="empty" id="emptyState">
+        <div class="ico">&#128203;</div>
+        <p>daemon.log</p>
+        <p><kbd>L</kbd> Live <kbd>W</kbd> WebSocket <kbd>/</kbd> Search <kbd>A</kbd> Auto-scroll <kbd>P</kbd> Pause <kbd>D</kbd> Stats</p>
+      </div>
+    </div>
+    <div class="minimap" id="minimap">
+      <div class="minimap-viewport" id="minimapViewport"></div>
+    </div>
+  </div>
+</div>
+<div class="prompt-panel">
+  <div class="prompt-hdr" id="promptHdr">
+    <h3>&#128172; Send to Chat</h3>
+    <span class="arrow open" id="promptArrow">&#9660;</span>
+  </div>
+  <div class="prompt-body open" id="promptBody">
+    <div class="presets">
+      <button class="preset" data-p="errors">&#128308; 에러 분석</button>
+      <button class="preset" data-p="status">&#128202; 시스템 상태</button>
+      <button class="preset" data-p="slow">&#128012; 느린 작업</button>
+      <button class="preset" data-p="recent">&#128221; 최근 요약</button>
+    </div>
+    <div class="prompt-row">
+      <textarea class="prompt-input" id="promptInput" placeholder="루나에게 요청..."></textarea>
+      <div class="prompt-actions">
+        <button class="send-btn-prompt" id="promptSend">&#128228; Send</button>
+        <button class="copy-btn-prompt" id="promptCopy">&#128203; Copy</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+
+const MAX_LINES = 5000;
+const INITIAL_TAIL = 500;
+const RATE_HISTORY_SIZE = 10;
+const NEW_LINE_ANIM_MS = 900;
+const AUTO_SCROLL_THRESHOLD = 50;
+const MAX_INCREMENTAL_LINES = 200;
+const PINS_STORAGE_KEY = 'mama-log-viewer-pins';
+const WS_RECONNECT_DELAY = 3000;
+const WS_MAX_RETRIES = 5;
+const HISTOGRAM_BUCKETS = 30;
+
+const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1')
+  ? 'http://localhost:3847'
+  : location.protocol + '//' + location.host;
+
+const WS_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1')
+  ? 'ws://localhost:3847/ws'
+  : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+
+const S = {
+  logs: [], autoScroll: true, selected: new Set(), lastClickIdx: -1,
+  live: false, paused: false, pollTimer: null, lastMtime: 0, lastTotal: 0,
+  initialized: false, prevCount: 0, rateHistory: [], totalReceived: 0,
+  levels: {error: true, warn: true, info: true, debug: true}, showGraph: true,
+  sourceCounts: {}, channelCounts: {},
+  activeSources: null, excludedSources: new Set(),
+  activeChannels: null, excludedChannels: new Set(), sourcePanelOpen: false,
+  regexMode: false,
+  wsMode: false, ws: null, wsRetries: 0,
+  pins: new Set(),
+  pinsPanelOpen: false,
+  statsDashOpen: false,
+  exportOpen: false
+};
+
+const $ = (id) => document.getElementById(id);
+const logArea = $('logArea');
+let emptyState = $('emptyState');
+
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function sourceClass(src) { return src ? 'src-' + src.toLowerCase().replace(/[^a-z]/g, '') : ''; }
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+const SRC_COLORS = {
+  agentloop: '#d2a8ff', lane: '#7ee787', contextinjector: '#79c0ff', sessionpool: '#ffa657',
+  mama: '#ff7b72', graphhandler: '#484f58', slackgateway: '#e9b0ff', slackratelimiter: '#e9b0ff',
+  slackmultibotmanager: '#e9b0ff', multiagentslack: '#e9b0ff', discord: '#58a6ff',
+  pluginloader: '#d29922', embeddinghttp: '#3fb950', orchestrator: '#f778ba',
+  systemreminder: '#a5d6ff', backgroundtaskmanager: '#ffd700', messagerouter: '#d29922',
+  cron: '#f0883e', daemon: '#c9d1d9', gateway: '#f778ba', api: '#58a6ff',
+  wsproxy: '#39d353', persistentcliprocess: '#bc8cff', agentprocessmanager: '#bc8cff',
+  swarmcoordinator: '#f778ba', waveengine: '#f778ba'
+};
+
+function srcColor(source) {
+  if (!source) return '#8b949e';
+  return SRC_COLORS[source.toLowerCase().replace(/[^a-z]/g, '')] || '#8b949e';
+}
+
+function classifyLevel(text) {
+  if (/\[ERROR\]|\[ERR\]/i.test(text)) return 'error';
+  if (/\[WARN\]|\[WRN\]/i.test(text)) return 'warn';
+  if (/\[DEBUG\]|\[DBG\]/i.test(text)) return 'debug';
+  const u = text.toUpperCase();
+  if (/\bERROR\b|\bFAIL(ED|URE)?\b|\bECONNREFUSED\b|\bEXCEPTION\b|\bFATAL\b|\bENOENT\b/.test(u)) return 'error';
+  if (/\bWARN(ING)?\b|\bDEPRECATED\b|\bTIMEOUT\b|\bRETRY\b/.test(u)) return 'warn';
+  if (/\u2713|\bSUCCESS\b|\bCONNECTED\b|\bREADY\b|\bSTARTED\b/.test(u)) return 'success';
+  if (/\bDEBUG\b|\bTRACE\b|\bVERBOSE\b/.test(u)) return 'debug';
+  return 'info';
+}
+
+function extractSource(text) {
+  const m = text.match(/\[([^\]]{2,40})\]/);
+  return m ? m[1] : null;
+}
+
+function extractChannel(text) {
+  const m = text.match(/lane=session:([^\s]+)/);
+  if (m) { const p = m[1].split(':'); return p.length >= 2 ? p[0] + ':' + p[1] : m[1]; }
+  const ch = text.match(/channel=([A-Z0-9]+)/);
+  if (ch) return 'ch:' + ch[1];
+  if (text.indexOf('viewer:') >= 0) {
+    const vm = text.match(/(viewer:[^\s\u2192]+)/);
+    if (vm) return vm[1];
+  }
+  return null;
+}
+
+function extractTime(text) {
+  const m = text.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*)/);
+  if (m) return m[1].replace(/^.*T/, '').replace(/\.\d+.*/, '');
+  return '';
+}
+
+function parseLine(raw, idx) {
+  const source = extractSource(raw);
+  const level = classifyLevel(raw);
+  const time = extractTime(raw);
+  const channel = extractChannel(raw);
+  let msg = raw;
+  if (source) msg = raw.replace('[' + source + ']', '').trim();
+  const timePrefix = raw.match(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*\s*/);
+  if (timePrefix) msg = raw.substring(timePrefix[0].length);
+  if (source && msg.indexOf('[' + source + ']') === 0) msg = msg.replace('[' + source + ']', '').trim();
+
+  if (source) S.sourceCounts[source] = (S.sourceCounts[source] || 0) + 1;
+  if (channel) S.channelCounts[channel] = (S.channelCounts[channel] || 0) + 1;
+
+  return { n: idx, raw, source, srcCls: sourceClass(source), level, time, channel, msg, isNew: false };
+}
+
+function shouldShow(entry) {
+  if (!S.showGraph && entry.source === 'GraphHandler') return false;
+  if (!S.levels[entry.level] && entry.level !== 'success') return false;
+  if (S.excludedSources.has(entry.source)) return false;
+  if (S.activeSources && !S.activeSources.has(entry.source)) return false;
+  if (S.excludedChannels.size > 0 && entry.channel) {
+    for (const ec of S.excludedChannels) { if (entry.channel.indexOf(ec) >= 0) return false; }
+  }
+  if (S.activeChannels) {
+    if (!entry.channel) return false;
+    let match = false;
+    for (const ac of S.activeChannels) { if (entry.raw.indexOf(ac) >= 0) { match = true; break; } }
+    if (!match) return false;
+  }
+  return true;
+}
+
+function buildSearchRegex(q) {
+  if (!q) return null;
+  try {
+    if (S.regexMode) return new RegExp(q, 'gi');
+    return new RegExp(escapeRegex(q), 'gi');
+  } catch (e) { return null; }
+}
+
+function highlightMsg(msgHtml, searchRe) {
+  if (!searchRe) return msgHtml;
+  try {
+    const q = $('searchInput').value;
+    let pattern;
+    if (S.regexMode) {
+      pattern = q;
+    } else {
+      pattern = escapeRegex(esc(q));
+    }
+    return msgHtml.replace(new RegExp('(' + pattern + ')', 'gi'), '<mark>$1</mark>');
+  } catch (e) { return msgHtml; }
+}
+
+function renderLine(entry, searchRe) {
+  const div = document.createElement('div');
+  let cls = 'll';
+  if (S.selected.has(entry.n)) cls += ' selected';
+  if (entry.isNew) cls += ' new-line';
+  if (entry.level === 'error' || entry.level === 'warn') cls += ' level-' + entry.level;
+  if (entry.source === 'GraphHandler') cls += ' graphhandler';
+  if (entry.srcCls) cls += ' ' + entry.srcCls;
+  if (S.pins.has(entry.n)) cls += ' pinned';
+  div.className = cls;
+  div.setAttribute('data-idx', entry.n);
+
+  const msgHtml = highlightMsg(esc(entry.msg), searchRe);
+
+  div.innerHTML =
+    '<span class="pin-icon" title="Pinned">&#128204;</span>' +
+    '<span class="ln">' + entry.n + '</span>' +
+    (entry.time ? '<span class="ltime">' + esc(entry.time) + '</span>' : '') +
+    (entry.source ? '<span class="lmod" style="color:' + srcColor(entry.source) + '">' + esc(entry.source) + '</span>' : '<span class="lmod" style="color:#484f58">\u2014</span>') +
+    '<span class="llvl ' + entry.level + '">' + entry.level.substring(0, 3) + '</span>' +
+    '<span class="lmsg">' + msgHtml + '</span>';
+
+  if (entry.isNew) setTimeout(() => { entry.isNew = false; }, NEW_LINE_ANIM_MS);
+  return div;
+}
+
+function applyFilters() {
+  const q = $('searchInput').value.trim();
+  const searchRe = buildSearchRegex(q);
+  let visible = 0;
+  const rows = logArea.querySelectorAll('.ll');
+  for (let i = 0; i < rows.length; i++) {
+    const idx = parseInt(rows[i].getAttribute('data-idx'));
+    const entry = S.logs[idx];
+    if (!entry) { rows[i].classList.add('hidden'); continue; }
+    let show = shouldShow(entry);
+    if (show && searchRe) { searchRe.lastIndex = 0; show = searchRe.test(entry.raw); }
+    rows[i].classList.toggle('hidden', !show);
+    if (show) visible++;
+  }
+  $('stShown').textContent = visible;
+  $('searchCount').textContent = q ? visible + ' matches' : '';
+  updateMinimap();
+}
+
+function updateModStats() {
+  const counts = {};
+  S.logs.forEach((l) => { const k = l.source || 'other'; counts[k] = (counts[k] || 0) + 1; });
+  const parts = [];
+  const sorted = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  sorted.slice(0, 8).forEach((k) => {
+    parts.push('<span class="mod-stat"><span class="dot-sm" style="background:' + srcColor(k) + '"></span>' + k + ':' + counts[k] + '</span>');
+  });
+  $('modStats').innerHTML = parts.join(' ');
+}
+
+function addLines(rawLines, isInitial) {
+  if (!rawLines.length) return;
+  if (emptyState && emptyState.parentNode) emptyState.remove();
+
+  const q = $('searchInput').value.trim();
+  const searchRe = buildSearchRegex(q);
+
+  const base = S.logs.length;
+  const frag = document.createDocumentFragment();
+
+  let lineNum = base;
+  for (let i = 0; i < rawLines.length; i++) {
+    if (!rawLines[i].trim()) continue;
+    const entry = parseLine(rawLines[i], lineNum);
+    lineNum++;
+    if (!isInitial) entry.isNew = true;
+    S.logs.push(entry);
+    S.totalReceived++;
+    const div = renderLine(entry, searchRe);
+    let show = shouldShow(entry);
+    if (show && searchRe) { searchRe.lastIndex = 0; show = searchRe.test(entry.raw); }
+    if (!show) div.classList.add('hidden');
+    frag.appendChild(div);
+  }
+
+  logArea.appendChild(frag);
+
+  while (logArea.children.length > MAX_LINES) logArea.removeChild(logArea.firstChild);
+
+  let trimmedCount = 0;
+  while (S.logs.length > MAX_LINES) {
+    S.logs.shift();
+    trimmedCount++;
+  }
+
+  if (trimmedCount > 0) {
+    const newPins = new Set();
+    S.pins.forEach((idx) => {
+      if (idx >= trimmedCount) newPins.add(idx - trimmedCount);
+    });
+    S.pins = newPins;
+
+    const newSelected = new Set();
+    S.selected.forEach((idx) => {
+      if (idx >= trimmedCount) newSelected.add(idx - trimmedCount);
+    });
+    S.selected = newSelected;
+
+    S.sourceCounts = {};
+    S.channelCounts = {};
+    S.logs.forEach((entry) => {
+      if (entry.source) S.sourceCounts[entry.source] = (S.sourceCounts[entry.source] || 0) + 1;
+      if (entry.channel) S.channelCounts[entry.channel] = (S.channelCounts[entry.channel] || 0) + 1;
+    });
+
+    for (let j = 0; j < S.logs.length; j++) S.logs[j].n = j;
+    const rows = logArea.querySelectorAll('.ll');
+    for (let k = 0; k < rows.length; k++) rows[k].setAttribute('data-idx', k);
+  }
+
+  $('stTotal').textContent = S.logs.length;
+  const vis = logArea.querySelectorAll('.ll:not(.hidden)').length;
+  $('stShown').textContent = vis;
+  updateModStats();
+  if (S.sourcePanelOpen) renderSourceChips();
+  if (S.autoScroll) logArea.scrollTop = logArea.scrollHeight;
+  updateMinimap();
+  if (S.statsDashOpen) updateStatsDashboard();
+}
+
+function updateRate() {
+  const now = S.totalReceived;
+  const diff = now - S.prevCount;
+  S.prevCount = now;
+  S.rateHistory.push(diff);
+  if (S.rateHistory.length > RATE_HISTORY_SIZE) S.rateHistory.shift();
+  const avg = S.rateHistory.reduce((a, b) => a + b, 0) / S.rateHistory.length;
+  const interval = parseInt($('intervalSel').value) / 1000;
+  const perSec = (avg / interval).toFixed(1);
+  $('rateBadge').textContent = perSec + ' l/s';
+}
+
+function setStatus(state, text) {
+  $('statusDot').className = 'status-dot ' + state;
+  $('statusText').textContent = text;
+}
+
+/* ===== Polling ===== */
+function fetchLogs() {
+  if (S.paused) return;
+  const tail = parseInt($('tailN').value) || 500;
+  let url = API_BASE + '/api/logs/daemon?tail=' + (S.initialized ? tail : INITIAL_TAIL);
+  if (S.lastMtime > 0) url += '&since=' + S.lastMtime;
+
+  fetch(url).then((r) => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then((data) => {
+    const modeLabel = S.wsMode ? 'WS+Poll' : 'Polling';
+    setStatus('connected', modeLabel + ' (' + (parseInt($('intervalSel').value) / 1000) + 's) \u2022 ' + data.total + ' total');
+    if (data.fileSize) $('fileInfo').textContent = (data.fileSize / 1024 / 1024).toFixed(1) + 'MB';
+
+    if (!S.initialized) {
+      addLines(data.lines, true);
+      S.lastMtime = data.mtime;
+      S.lastTotal = data.total;
+      S.initialized = true;
+    } else if (data.mtime > S.lastMtime) {
+      const newCount = data.total - S.lastTotal;
+      if (S.ws && S.ws.readyState === WebSocket.OPEN) {
+        S.lastMtime = data.mtime;
+        S.lastTotal = data.total;
+      } else if (newCount > 0 && newCount <= MAX_INCREMENTAL_LINES) {
+        addLines(data.lines.slice(-newCount), false);
+        S.lastMtime = data.mtime;
+        S.lastTotal = data.total;
+      } else if (newCount > MAX_INCREMENTAL_LINES) {
+        S.logs = []; S.sourceCounts = {}; S.channelCounts = {};
+        S.pins = new Set(); S.selected = null;
+        logArea.innerHTML = '';
+        addLines(data.lines, true);
+        S.lastMtime = data.mtime;
+        S.lastTotal = data.total;
+      }
+    }
+    updateRate();
+  }).catch((e) => {
+    setStatus('disconnected', 'Error: ' + e.message);
+  });
+}
+
+function startPolling() {
+  S.live = true;
+  $('liveBtn').className = 'btn active';
+  $('liveBtn').innerHTML = '&#9208; Pause';
+  setStatus('connecting', 'Connecting...');
+  fetchLogs();
+  S.pollTimer = setInterval(fetchLogs, parseInt($('intervalSel').value) || 2000);
+}
+
+function stopPolling() {
+  S.live = false;
+  if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; }
+  $('liveBtn').className = 'btn';
+  $('liveBtn').innerHTML = '&#9654; Live';
+  setStatus('disconnected', 'Stopped \u2014 ' + S.logs.length + ' lines');
+}
+
+/* ===== WebSocket ===== */
+function connectWS() {
+  if (S.ws && (S.ws.readyState === WebSocket.OPEN || S.ws.readyState === WebSocket.CONNECTING)) return;
+
+  // Stop polling to prevent duplicate logs
+  if (S.pollTimer) {
+    clearInterval(S.pollTimer);
+    S.pollTimer = null;
+  }
+
+  S.wsMode = true;
+  $('wsBtn').classList.add('ws-mode');
+  setStatus('connecting', 'WS connecting...');
+
+  try {
+    S.ws = new WebSocket(WS_URL);
+  } catch (e) {
+    fallbackToPolling('WS init failed');
+    return;
+  }
+
+  S.ws.onopen = () => {
+    S.wsRetries = 0;
+    setStatus('ws-connected', 'WebSocket connected');
+    S.ws.send(JSON.stringify({ type: 'subscribe', channel: 'logs' }));
+  };
+
+  S.ws.onmessage = (evt) => {
+    try {
+      const data = JSON.parse(evt.data);
+      if (data.type === 'log' && data.line) {
+        if (emptyState && emptyState.parentNode) emptyState.remove();
+        addLines([data.line], false);
+        // Update mtime/total to prevent polling duplicates
+        if (data.mtime) S.lastMtime = data.mtime;
+        if (data.total) S.lastTotal = data.total;
+        updateRate();
+      } else if (data.type === 'logs' && data.lines) {
+        addLines(data.lines, !S.initialized);
+        S.initialized = true;
+        // Update mtime/total to prevent polling duplicates
+        if (data.mtime) S.lastMtime = data.mtime;
+        if (data.total) S.lastTotal = data.total;
+        updateRate();
+      }
+    } catch (e) {
+      if (typeof evt.data === 'string' && evt.data.trim()) {
+        addLines([evt.data], false);
+        updateRate();
+      }
+    }
+  };
+
+  S.ws.onclose = () => {
+    if (!S.wsMode) return;
+    S.wsRetries++;
+    if (S.wsRetries <= WS_MAX_RETRIES) {
+      setStatus('connecting', 'WS reconnecting (' + S.wsRetries + '/' + WS_MAX_RETRIES + ')...');
+      setTimeout(connectWS, WS_RECONNECT_DELAY);
+    } else {
+      fallbackToPolling('WS max retries reached');
+    }
+  };
+
+  S.ws.onerror = () => {
+    // onclose will fire after onerror
+  };
+}
+
+function disconnectWS() {
+  S.wsMode = false;
+  $('wsBtn').classList.remove('ws-mode');
+  if (S.ws) {
+    S.ws.onclose = null;
+    S.ws.close();
+    S.ws = null;
+  }
+  S.wsRetries = 0;
+}
+
+function fallbackToPolling(reason) {
+  disconnectWS();
+  setStatus('disconnected', 'WS failed: ' + reason + ' \u2014 switching to polling');
+  if (S.live) startPolling();
+}
+
+/* ===== Export ===== */
+function downloadFile(content, filename) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function getVisibleLogs() {
+  const result = [];
+  const rows = logArea.querySelectorAll('.ll:not(.hidden)');
+  rows.forEach((row) => {
+    const idx = parseInt(row.getAttribute('data-idx'));
+    if (S.logs[idx]) result.push(S.logs[idx]);
+  });
+  return result;
+}
+
+function getSelectedLogs() {
+  const result = [];
+  S.selected.forEach((idx) => { if (S.logs[idx]) result.push(S.logs[idx]); });
+  return result;
+}
+
+function exportAsLog(entries) {
+  const lines = entries.map((e) => e.raw).join('\n');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  downloadFile(lines, 'mama-logs-' + ts + '.log');
+}
+
+function exportAsJson(entries) {
+  const data = entries.map((e) => ({
+    line: e.n, time: e.time, source: e.source, level: e.level,
+    channel: e.channel, message: e.msg, raw: e.raw
+  }));
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  downloadFile(JSON.stringify(data, null, 2), 'mama-logs-' + ts + '.json');
+}
+
+$('exportBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  S.exportOpen = !S.exportOpen;
+  $('exportMenu').classList.toggle('open', S.exportOpen);
+});
+document.addEventListener('click', () => { S.exportOpen = false; $('exportMenu').classList.remove('open'); });
+$('exportLog').addEventListener('click', () => { exportAsLog(getVisibleLogs()); S.exportOpen = false; $('exportMenu').classList.remove('open'); });
+$('exportSelLog').addEventListener('click', () => { exportAsLog(getSelectedLogs()); S.exportOpen = false; $('exportMenu').classList.remove('open'); });
+$('exportJson').addEventListener('click', () => { exportAsJson(getVisibleLogs()); S.exportOpen = false; $('exportMenu').classList.remove('open'); });
+$('exportSelJson').addEventListener('click', () => { exportAsJson(getSelectedLogs()); S.exportOpen = false; $('exportMenu').classList.remove('open'); });
+
+/* ===== Bookmarks/Pins ===== */
+function loadPins() {
+  try {
+    const stored = localStorage.getItem(PINS_STORAGE_KEY);
+    if (stored) {
+      const arr = JSON.parse(stored);
+      arr.forEach((p) => S.pins.add(p.line));
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function savePins() {
+  try {
+    const pinData = [];
+    S.pins.forEach((idx) => {
+      if (S.logs[idx]) {
+        pinData.push({ line: idx, raw: S.logs[idx].raw, source: S.logs[idx].source, time: S.logs[idx].time });
+      }
+    });
+    localStorage.setItem(PINS_STORAGE_KEY, JSON.stringify(pinData));
+  } catch (e) { /* ignore */ }
+}
+
+function togglePin(idx) {
+  if (S.pins.has(idx)) S.pins.delete(idx);
+  else S.pins.add(idx);
+  savePins();
+  updatePinUI();
+  updateMinimap();
+}
+
+function updatePinUI() {
+  logArea.querySelectorAll('.ll').forEach((el) => {
+    const idx = parseInt(el.getAttribute('data-idx'));
+    el.classList.toggle('pinned', S.pins.has(idx));
+  });
+  renderPinsPanel();
+}
+
+function renderPinsPanel() {
+  const list = $('pinsList');
+  $('pinCount').textContent = S.pins.size;
+  if (S.pins.size === 0) {
+    list.innerHTML = '';
+    return;
+  }
+  const sorted = [...S.pins].sort((a, b) => a - b);
+  list.innerHTML = sorted.map((idx) => {
+    const entry = S.logs[idx];
+    if (!entry) return '';
+    return '<div class="pin-line" data-pin-idx="' + idx + '">' +
+      '<span class="pin-src" style="color:' + srcColor(entry.source) + '">' + esc(entry.source || '\u2014') + '</span>' +
+      '<span class="pin-msg">' + esc(entry.msg).substring(0, 200) + '</span>' +
+      '<span class="pin-rm" data-rm="' + idx + '">&#10005;</span></div>';
+  }).join('');
+}
+
+$('pinToggle').addEventListener('click', () => {
+  S.pinsPanelOpen = !S.pinsPanelOpen;
+  $('pinsPanel').classList.toggle('active', S.pinsPanelOpen);
+  $('pinToggle').classList.toggle('active', S.pinsPanelOpen);
+  if (S.pinsPanelOpen) renderPinsPanel();
+});
+
+$('clearPins').addEventListener('click', () => {
+  S.pins.clear();
+  savePins();
+  updatePinUI();
+  updateMinimap();
+});
+
+$('pinsList').addEventListener('click', (e) => {
+  const rm = e.target.closest('[data-rm]');
+  if (rm) {
+    const idx = parseInt(rm.getAttribute('data-rm'));
+    S.pins.delete(idx);
+    savePins();
+    updatePinUI();
+    updateMinimap();
+    return;
+  }
+  const line = e.target.closest('.pin-line');
+  if (line) {
+    const idx = parseInt(line.getAttribute('data-pin-idx'));
+    const row = logArea.querySelector('[data-idx="' + idx + '"]');
+    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+});
+
+$('selPin').addEventListener('click', () => {
+  S.selected.forEach((idx) => S.pins.add(idx));
+  savePins();
+  updatePinUI();
+  updateMinimap();
+});
+
+logArea.addEventListener('dblclick', (e) => {
+  const row = e.target.closest('.ll');
+  if (!row) return;
+  const idx = parseInt(row.getAttribute('data-idx'));
+  togglePin(idx);
+});
+
+/* ===== Minimap ===== */
+function updateMinimap() {
+  const minimap = $('minimap');
+  const viewport = $('minimapViewport');
+  const markers = minimap.querySelectorAll('.minimap-marker');
+  markers.forEach((m) => m.remove());
+
+  const total = S.logs.length;
+  if (total === 0) { viewport.style.display = 'none'; return; }
+
+  const mapHeight = minimap.clientHeight;
+  viewport.style.display = 'block';
+
+  for (let i = 0; i < total; i++) {
+    const entry = S.logs[i];
+    if (entry.level !== 'error' && entry.level !== 'warn' && !S.pins.has(i)) continue;
+    const y = (i / total) * mapHeight;
+    const marker = document.createElement('div');
+    marker.className = 'minimap-marker';
+    if (S.pins.has(i)) marker.classList.add('pin');
+    else marker.classList.add(entry.level);
+    marker.style.top = y + 'px';
+    marker.setAttribute('data-idx', i);
+    minimap.appendChild(marker);
+  }
+
+  updateMinimapViewport();
+}
+
+function updateMinimapViewport() {
+  const viewport = $('minimapViewport');
+  const mapHeight = $('minimap').clientHeight;
+  if (!logArea.scrollHeight || logArea.scrollHeight <= logArea.clientHeight) {
+    viewport.style.top = '0';
+    viewport.style.height = mapHeight + 'px';
+    return;
+  }
+  const ratio = logArea.clientHeight / logArea.scrollHeight;
+  const vpHeight = Math.max(ratio * mapHeight, 10);
+  const scrollRatio = logArea.scrollTop / (logArea.scrollHeight - logArea.clientHeight);
+  const vpTop = scrollRatio * (mapHeight - vpHeight);
+  viewport.style.top = vpTop + 'px';
+  viewport.style.height = vpHeight + 'px';
+}
+
+$('minimap').addEventListener('click', (e) => {
+  if (e.target.classList.contains('minimap-marker')) {
+    const idx = parseInt(e.target.getAttribute('data-idx'));
+    const row = logArea.querySelector('[data-idx="' + idx + '"]');
+    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  const rect = $('minimap').getBoundingClientRect();
+  const clickY = e.clientY - rect.top;
+  const ratio = clickY / rect.height;
+  logArea.scrollTop = ratio * (logArea.scrollHeight - logArea.clientHeight);
+});
+
+logArea.addEventListener('scroll', () => {
+  S.autoScroll = logArea.scrollHeight - logArea.scrollTop - logArea.clientHeight < AUTO_SCROLL_THRESHOLD;
+  $('autoBtn').classList.toggle('active', S.autoScroll);
+  updateMinimapViewport();
+});
+
+/* ===== Stats Dashboard ===== */
+function updateStatsDashboard() {
+  const levelMap = { error: 0, warn: 0, info: 0, debug: 0, success: 0 };
+  const sourceMap = {};
+  const timeSlots = {};
+
+  S.logs.forEach((entry) => {
+    if (levelMap[entry.level] !== undefined) levelMap[entry.level]++;
+    else levelMap.info++;
+
+    const src = entry.source || 'other';
+    sourceMap[src] = (sourceMap[src] || 0) + 1;
+
+    if (entry.time) {
+      const hour = entry.time.substring(0, 5);
+      timeSlots[hour] = (timeSlots[hour] || 0) + 1;
+    }
+  });
+
+  // Level counts
+  $('levelCounts').innerHTML = [
+    { lbl: 'ERR', val: levelMap.error, color: 'var(--error)' },
+    { lbl: 'WRN', val: levelMap.warn, color: 'var(--warn)' },
+    { lbl: 'INF', val: levelMap.info, color: 'var(--accent)' },
+    { lbl: 'DBG', val: levelMap.debug, color: 'var(--debug)' }
+  ].map((c) =>
+    '<span class="stats-count"><span class="num" style="color:' + c.color + '">' + c.val + '</span><span class="lbl">' + c.lbl + '</span></span>'
+  ).join('');
+
+  // Source bar chart (top 6)
+  const sortedSrc = Object.entries(sourceMap).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const maxSrc = sortedSrc.length > 0 ? sortedSrc[0][1] : 1;
+  $('sourceChart').innerHTML = sortedSrc.map(([name, count]) => {
+    const w = Math.max((count / maxSrc) * 100, 2);
+    return '<div class="bar-row"><span class="bar-label">' + esc(name) + '</span>' +
+      '<div class="bar-fill" style="width:' + w + '%;background:' + srcColor(name) + '"></div>' +
+      '<span class="bar-value">' + count + '</span></div>';
+  }).join('');
+
+  // Time histogram
+  const sortedTimes = Object.keys(timeSlots).sort();
+  if (sortedTimes.length === 0) {
+    $('volumeHistogram').innerHTML = '<span style="color:var(--muted);font-size:10px">No time data</span>';
+    return;
+  }
+
+  let buckets;
+  if (sortedTimes.length <= HISTOGRAM_BUCKETS) {
+    buckets = sortedTimes.map((t) => ({ label: t, count: timeSlots[t] }));
+  } else {
+    const step = Math.ceil(sortedTimes.length / HISTOGRAM_BUCKETS);
+    buckets = [];
+    for (let i = 0; i < sortedTimes.length; i += step) {
+      const slice = sortedTimes.slice(i, i + step);
+      const total = slice.reduce((s, t) => s + timeSlots[t], 0);
+      buckets.push({ label: slice[0] + '-' + slice[slice.length - 1], count: total });
+    }
+  }
+
+  const maxBucket = Math.max(...buckets.map((b) => b.count), 1);
+  $('volumeHistogram').innerHTML = buckets.map((b) => {
+    const h = Math.max((b.count / maxBucket) * 40, 1);
+    return '<div class="hist-bar" style="height:' + h + 'px"><span class="hist-tip">' + b.label + ': ' + b.count + '</span></div>';
+  }).join('');
+}
+
+$('statsBtn').addEventListener('click', () => {
+  S.statsDashOpen = !S.statsDashOpen;
+  $('statsDashboard').classList.toggle('active', S.statsDashOpen);
+  $('statsBtn').classList.toggle('active', S.statsDashOpen);
+  if (S.statsDashOpen) updateStatsDashboard();
+});
+$('closeStats').addEventListener('click', () => {
+  S.statsDashOpen = false;
+  $('statsDashboard').classList.remove('active');
+  $('statsBtn').classList.remove('active');
+});
+
+/* ===== Source panel ===== */
+function renderSourceChips() {
+  const sorted = Object.entries(S.sourceCounts).sort((a, b) => b[1] - a[1]);
+  $('sourceChips').innerHTML = sorted.map(([name, count]) => {
+    let cls = 'source-chip';
+    if (S.activeSources && S.activeSources.has(name)) cls += ' active';
+    if (S.excludedSources.has(name)) cls += ' excluded';
+    return '<button class="' + cls + '" data-src="' + esc(name) + '" style="border-color:' + srcColor(name) + '">' + esc(name) + '<span class="chip-count">' + count + '</span></button>';
+  }).join('');
+
+  const chSorted = Object.entries(S.channelCounts).sort((a, b) => b[1] - a[1]);
+  $('channelChips').innerHTML = chSorted.map(([name, count]) => {
+    let cls = 'source-chip';
+    if (S.activeChannels && S.activeChannels.has(name)) cls += ' active';
+    if (S.excludedChannels.has(name)) cls += ' excluded';
+    return '<button class="' + cls + '" data-ch="' + esc(name) + '">' + esc(name) + '<span class="chip-count">' + count + '</span></button>';
+  }).join('');
+}
+
+$('sourceChips').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-src]'); if (!btn) return;
+  const name = btn.getAttribute('data-src');
+  if (e.shiftKey) {
+    if (!S.activeSources) S.activeSources = new Set();
+    if (S.activeSources.has(name)) S.activeSources.delete(name); else S.activeSources.add(name);
+    if (S.activeSources.size === 0) S.activeSources = null;
+  } else {
+    if (S.activeSources && S.activeSources.size === 1 && S.activeSources.has(name)) S.activeSources = null;
+    else S.activeSources = new Set([name]);
+  }
+  S.excludedSources.delete(name);
+  renderSourceChips(); applyFilters();
+});
+$('sourceChips').addEventListener('contextmenu', (e) => {
+  const btn = e.target.closest('[data-src]'); if (!btn) return;
+  e.preventDefault();
+  const name = btn.getAttribute('data-src');
+  if (S.excludedSources.has(name)) S.excludedSources.delete(name); else S.excludedSources.add(name);
+  if (S.activeSources) S.activeSources.delete(name);
+  renderSourceChips(); applyFilters();
+});
+$('channelChips').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-ch]'); if (!btn) return;
+  const name = btn.getAttribute('data-ch');
+  if (e.shiftKey) {
+    if (!S.activeChannels) S.activeChannels = new Set();
+    if (S.activeChannels.has(name)) S.activeChannels.delete(name); else S.activeChannels.add(name);
+    if (S.activeChannels.size === 0) S.activeChannels = null;
+  } else {
+    if (S.activeChannels && S.activeChannels.size === 1 && S.activeChannels.has(name)) S.activeChannels = null;
+    else S.activeChannels = new Set([name]);
+  }
+  S.excludedChannels.delete(name);
+  renderSourceChips(); applyFilters();
+});
+$('channelChips').addEventListener('contextmenu', (e) => {
+  const btn = e.target.closest('[data-ch]'); if (!btn) return;
+  e.preventDefault();
+  const name = btn.getAttribute('data-ch');
+  if (S.excludedChannels.has(name)) S.excludedChannels.delete(name); else S.excludedChannels.add(name);
+  if (S.activeChannels) S.activeChannels.delete(name);
+  renderSourceChips(); applyFilters();
+});
+$('showAllBtn').addEventListener('click', () => {
+  S.activeSources = null; S.excludedSources.clear();
+  S.activeChannels = null; S.excludedChannels.clear();
+  renderSourceChips(); applyFilters();
+});
+$('soloBtn').addEventListener('click', () => {
+  if (S.selected.size > 0) {
+    S.activeSources = new Set();
+    S.selected.forEach((idx) => { if (S.logs[idx] && S.logs[idx].source) S.activeSources.add(S.logs[idx].source); });
+    renderSourceChips(); applyFilters();
+  }
+});
+
+/* ===== Selection ===== */
+logArea.addEventListener('click', (e) => {
+  const row = e.target.closest('.ll'); if (!row) return;
+  const idx = parseInt(row.getAttribute('data-idx'));
+  if (e.shiftKey && S.lastClickIdx >= 0) {
+    const start = Math.min(S.lastClickIdx, idx), end = Math.max(S.lastClickIdx, idx);
+    for (let i = start; i <= end; i++) S.selected.add(i);
+  } else if (e.ctrlKey || e.metaKey) {
+    if (S.selected.has(idx)) S.selected.delete(idx); else S.selected.add(idx);
+  } else {
+    if (S.selected.size === 1 && S.selected.has(idx)) S.selected.clear();
+    else { S.selected.clear(); S.selected.add(idx); }
+  }
+  S.lastClickIdx = idx;
+  logArea.querySelectorAll('.ll').forEach((el) => {
+    el.classList.toggle('selected', S.selected.has(parseInt(el.getAttribute('data-idx'))));
+  });
+  updateSelectionBar();
+});
+
+function updateSelectionBar() {
+  $('selBarCount').textContent = S.selected.size;
+  $('selectionBar').classList.toggle('active', S.selected.size > 0);
+}
+
+function getSelectedText() {
+  const texts = [];
+  S.selected.forEach((idx) => { if (S.logs[idx]) texts.push(S.logs[idx].raw); });
+  return texts.join('\n');
+}
+
+$('selCopy').addEventListener('click', () => {
+  navigator.clipboard.writeText(getSelectedText()).then(() => {
+    $('selCopy').textContent = '\u2705'; setTimeout(() => { $('selCopy').textContent = 'Copy'; }, 1200);
+  });
+});
+$('selSend').addEventListener('click', () => {
+  const text = getSelectedText();
+  const msg = '[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + S.selected.size + '\uc904]:\n```\n' + text + '\n```';
+  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, location.origin);
+  S.selected.clear();
+  logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
+  updateSelectionBar();
+});
+$('selClear').addEventListener('click', () => {
+  S.selected.clear();
+  logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
+  updateSelectionBar();
+});
+
+/* ===== Events ===== */
+$('liveBtn').addEventListener('click', () => { S.live ? stopPolling() : startPolling(); });
+$('intervalSel').addEventListener('change', () => { if (S.live) { stopPolling(); startPolling(); } });
+$('searchInput').addEventListener('input', () => { applyFilters(); });
+$('regexToggle').addEventListener('click', () => {
+  S.regexMode = !S.regexMode;
+  $('regexToggle').classList.toggle('active', S.regexMode);
+  $('searchInput').placeholder = S.regexMode ? 'Filter regex... (/ or Ctrl+F)' : 'Filter... (/ or Ctrl+F)';
+  applyFilters();
+});
+$('autoBtn').addEventListener('click', function() {
+  S.autoScroll = !S.autoScroll;
+  this.classList.toggle('active', S.autoScroll);
+  if (S.autoScroll) logArea.scrollTop = logArea.scrollHeight;
+});
+$('clearBtn').addEventListener('click', () => {
+  S.logs = []; S.selected.clear(); S.pins.clear(); S.lastMtime = 0; S.lastTotal = 0; S.initialized = false;
+  S.prevCount = 0; S.rateHistory = []; S.totalReceived = 0; S.sourceCounts = {}; S.channelCounts = {};
+  logArea.innerHTML = '<div class="empty" id="emptyState"><div class="ico">&#128203;</div><p>Cleared</p></div>';
+  emptyState = $('emptyState');
+  $('stTotal').textContent = '0'; $('stShown').textContent = '0';
+  $('rateBadge').textContent = '0 l/s'; $('modStats').innerHTML = '';
+  savePins();
+  updatePinUI();
+  updateSelectionBar();
+  updateMinimap();
+  if (S.statsDashOpen) updateStatsDashboard();
+});
+
+$('wsBtn').addEventListener('click', () => {
+  if (S.wsMode) {
+    disconnectWS();
+    setStatus(S.live ? 'connected' : 'disconnected', S.live ? 'Polling mode' : 'WS disconnected');
+  } else {
+    connectWS();
+    if (!S.live) startPolling();
+  }
+});
+
+document.querySelectorAll('.lvl').forEach((el) => {
+  el.addEventListener('click', () => {
+    const lv = el.getAttribute('data-l');
+    S.levels[lv] = !S.levels[lv];
+    el.classList.toggle('on', S.levels[lv]);
+    el.classList.toggle('off', !S.levels[lv]);
+    applyFilters();
+  });
+});
+
+$('graphToggle').addEventListener('click', function() {
+  S.showGraph = !S.showGraph;
+  this.classList.toggle('active', S.showGraph);
+  applyFilters();
+});
+
+$('srcToggle').addEventListener('click', function() {
+  S.sourcePanelOpen = !S.sourcePanelOpen;
+  $('sourcePanel').classList.toggle('active', S.sourcePanelOpen);
+  this.classList.toggle('open', S.sourcePanelOpen);
+  if (S.sourcePanelOpen) renderSourceChips();
+});
+
+/* ===== Keyboard ===== */
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+    if (e.key === 'Escape') {
+      e.target.blur();
+      if (e.target === $('searchInput')) { $('searchInput').value = ''; applyFilters(); }
+    }
+    return;
+  }
+  if (e.ctrlKey && e.key === 'f') { e.preventDefault(); $('searchInput').focus(); return; }
+  if (e.key === '/') { e.preventDefault(); $('searchInput').focus(); return; }
+  if (e.key === 'l' || e.key === 'L') { S.live ? stopPolling() : startPolling(); }
+  if (e.key === 'w' || e.key === 'W') { $('wsBtn').click(); }
+  if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
+    S.autoScroll = !S.autoScroll;
+    $('autoBtn').classList.toggle('active', S.autoScroll);
+    if (S.autoScroll) logArea.scrollTop = logArea.scrollHeight;
+  }
+  if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    S.logs.forEach((l, i) => { S.selected.add(i); });
+    logArea.querySelectorAll('.ll:not(.hidden)').forEach((el) => { el.classList.add('selected'); });
+    updateSelectionBar();
+  }
+  if (e.key === 'p' || e.key === 'P') {
+    if (S.live) {
+      S.paused = !S.paused;
+      if (S.paused) { $('liveBtn').innerHTML = '&#9654; Resume'; $('liveBtn').classList.add('paused'); }
+      else { $('liveBtn').innerHTML = '&#9208; Pause'; $('liveBtn').classList.remove('paused'); fetchLogs(); }
+    }
+  }
+  if (e.key === 'c' && !e.ctrlKey && !e.metaKey) { $('clearBtn').click(); }
+  if (e.key === 'd' || e.key === 'D') { $('statsBtn').click(); }
+  if (e.key === 'e' && !e.ctrlKey && !e.metaKey) { $('exportBtn').click(); }
+  if (e.key === 'Escape') {
+    if (S.selected.size > 0) {
+      S.selected.clear();
+      logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
+      updateSelectionBar();
+    }
+    if (S.exportOpen) { S.exportOpen = false; $('exportMenu').classList.remove('open'); }
+  }
+});
+
+/* ===== Prompt panel ===== */
+$('promptHdr').addEventListener('click', () => {
+  $('promptBody').classList.toggle('open');
+  $('promptArrow').classList.toggle('open');
+});
+
+const PRESETS = {
+  errors: 'daemon.log\uc5d0\uc11c ERROR, FAIL, ECONNREFUSED \uad00\ub828 \ub85c\uadf8\ub97c \ubd84\uc11d\ud558\uace0 \uc6d0\uc778\uacfc \ud574\uacb0\ubc29\ubc95\uc744 \uc54c\ub824\uc918',
+  status: 'MAMA OS \ud604\uc7ac \uc0c1\ud0dc\ub97c \ud655\uc778\ud574\uc918 (\ud504\ub85c\uc138\uc2a4, \uba54\ubaa8\ub9ac, \uc5c5\ud0c0\uc784, \uc5f0\uacb0 \uc0c1\ud0dc)',
+  slow: 'daemon.log\uc5d0\uc11c \ub290\ub9b0 \uc791\uc5c5(timeout, slow, 1000ms \uc774\uc0c1)\uc744 \ucc3e\uc544\uc11c \uc131\ub2a5 \ubcd1\ubaa9\uc744 \ubd84\uc11d\ud574\uc918',
+  recent: '\ucd5c\uadfc \ub85c\uadf8 50\uc904\uc744 \uc694\uc57d\ud574\uc918 \u2014 \ubb34\uc2a8 \uc77c\uc774 \uc788\uc5c8\ub294\uc9c0, \uc5d0\ub7ec\uac00 \uc788\uc5c8\ub294\uc9c0'
+};
+document.querySelectorAll('.preset').forEach((el) => {
+  el.addEventListener('click', () => {
+    $('promptInput').value = PRESETS[el.getAttribute('data-p')];
+    $('promptInput').focus();
+  });
+});
+
+$('promptSend').addEventListener('click', () => {
+  const text = $('promptInput').value.trim();
+  if (!text) return;
+  let msg = text;
+  if (S.selected.size > 0) {
+    const selLogs = [];
+    S.selected.forEach((idx) => { if (S.logs[idx]) selLogs.push(S.logs[idx].raw); });
+    msg += '\n\n[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + selLogs.length + '\uc904]:\n```\n' + selLogs.join('\n') + '\n```';
+  }
+  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, location.origin);
+  $('promptInput').value = '';
+});
+$('promptCopy').addEventListener('click', () => {
+  let text = $('promptInput').value;
+  if (S.selected.size > 0) {
+    const selLogs = [];
+    S.selected.forEach((idx) => { if (S.logs[idx]) selLogs.push(S.logs[idx].raw); });
+    text += '\n\n```\n' + selLogs.join('\n') + '\n```';
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    $('promptCopy').textContent = '\u2705'; setTimeout(() => { $('promptCopy').innerHTML = '&#128203; Copy'; }, 1200);
+  });
+});
+
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin && e.source !== window.parent) return;
+  if (e.data && e.data.type === 'mama:logs') {
+    const lines = e.data.content.split('\n').filter((l) => l.trim());
+    addLines(lines, true);
+    setStatus('connected', 'Loaded ' + lines.length + ' lines');
+  }
+});
+
+/* ===== Init ===== */
+loadPins();
+startPolling();
+})();
+</script>
+</body>
+</html>

@@ -39,6 +39,8 @@ export interface CodexMCPOptions {
   compactPrompt?: string;
   timeoutMs?: number;
   command?: string;
+  /** Codex home directory (overrides CODEX_HOME env). Forces MAMA-internal config. */
+  codexHome?: string;
 }
 
 export interface PromptCallbacks {
@@ -112,10 +114,15 @@ export class CodexMCPProcess extends EventEmitter {
     }
     logger.info(`Starting Codex MCP server with command: ${command}`);
 
+    // Force CODEX_HOME to MAMA-internal directory so Codex ignores global ~/.codex/config.toml
+    const codexHome = this.options.codexHome || join(homedir(), '.mama', '.codex');
+    const spawnEnv = { ...process.env, CODEX_HOME: codexHome };
+
     try {
       this.process = spawn(command, ['mcp-server'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: this.options.cwd,
+        env: spawnEnv,
       });
     } catch (error) {
       const startError = error instanceof Error ? error : new Error(String(error));

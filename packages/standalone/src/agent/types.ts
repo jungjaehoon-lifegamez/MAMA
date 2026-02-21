@@ -79,6 +79,18 @@ export interface AgentContext {
    * @example ["Cannot execute Bash", "Cannot write files", "Limited path access"]
    */
   limitations: string[];
+
+  /**
+   * Agent tier level for Code-Act sandbox permission
+   * @default 1
+   */
+  tier?: 1 | 2 | 3;
+
+  /**
+   * Backend type for this agent context
+   * Used for backend-specific AGENTS.md injection
+   */
+  backend?: 'claude' | 'codex-mcp';
 }
 
 // ============================================================================
@@ -625,7 +637,9 @@ export type GatewayToolName =
   // Playground tools
   | 'playground_create'
   // Webchat tools
-  | 'webchat_send';
+  | 'webchat_send'
+  // Code-Act sandbox
+  | 'code_act';
 
 // ============================================================================
 // MCP Tool Output Types
@@ -824,6 +838,13 @@ export interface AgentLoopOptions {
    * Called after each API response to track token consumption
    */
   onTokenUsage?: (record: TokenUsageRecord) => void;
+
+  /**
+   * Enable Code-Act mode: LLM writes JS code blocks instead of tool_call blocks
+   * Multiple tools composed in a single QuickJS sandbox execution
+   * @default false
+   */
+  useCodeAct?: boolean;
 
   /** Streaming callbacks for real-time progress events to external consumers */
   streamCallbacks?: StreamCallbacks;
