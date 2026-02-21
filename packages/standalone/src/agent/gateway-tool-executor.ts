@@ -37,6 +37,7 @@ import type {
   LoadCheckpointInput,
   SaveResult,
   SearchResult,
+  SearchResultItem,
   UpdateResult,
   LoadCheckpointResult,
   GatewayToolExecutorOptions,
@@ -491,8 +492,14 @@ export class GatewayToolExecutor {
     // If no query provided, return recent items (listDecisions returns decisions table rows)
     if (!query) {
       const decisions = await api.listDecisions({ limit });
-      const results = Array.isArray(decisions) ? decisions : [];
-      return { success: true, results: results as SearchResult['results'], count: results.length };
+      let results = (Array.isArray(decisions) ? decisions : []) as SearchResultItem[];
+
+      // Filter by type if specified
+      if (type && type !== 'all') {
+        results = results.filter((item) => item.type === type);
+      }
+
+      return { success: true, results, count: results.length };
     }
 
     // Semantic search using suggest
@@ -1706,12 +1713,24 @@ export class GatewayToolExecutor {
 
     // Support file_path as alternative to inline html (avoids escaping issues with large HTML)
     if (!html && input.file_path) {
+      // Expand ~ to home directory
+      const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+      const expandedPath = input.file_path.startsWith('~/')
+        ? join(homeDir, input.file_path.slice(2))
+        : input.file_path;
+
+      // Check path permission based on role
+      const pathPermission = this.checkPathPermission(expandedPath);
+      if (!pathPermission.allowed) {
+        return { success: false, error: pathPermission.error };
+      }
+
       try {
-        html = readFileSync(input.file_path, 'utf-8');
+        html = readFileSync(expandedPath, 'utf-8');
       } catch (err) {
         return {
           success: false,
-          error: `Failed to read file: ${input.file_path} — ${err instanceof Error ? err.message : String(err)}`,
+          error: `Failed to read file: ${expandedPath} — ${err instanceof Error ? err.message : String(err)}`,
         };
       }
     }
@@ -1884,7 +1903,7 @@ export class GatewayToolExecutor {
     const { CodeActSandbox, HostBridge } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
     const bridge = new HostBridge(this);
-    bridge.injectInto(sandbox, 1);
+    bridge.injectInto(sandbox, 1, this.currentContext?.role);
 
     const result = await sandbox.execute(input.code);
 

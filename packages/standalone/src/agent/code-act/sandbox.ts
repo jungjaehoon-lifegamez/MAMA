@@ -1,9 +1,11 @@
 import {
-  newQuickJSAsyncWASMModuleFromVariant,
+  newQuickJSAsyncWASMModule,
   shouldInterruptAfterDeadline,
   type QuickJSAsyncWASMModule,
   type QuickJSAsyncRuntime,
   type QuickJSAsyncContext,
+  type QuickJSHandle,
+  type VmCallResult,
 } from 'quickjs-emscripten';
 
 import type { SandboxConfig, ExecutionResult, HostFunction } from './types.js';
@@ -11,19 +13,16 @@ import { DEFAULT_SANDBOX_CONFIG } from './types.js';
 
 let _modulePromise: Promise<QuickJSAsyncWASMModule> | null = null;
 
-/** Singleton WASM module loader — called once at server start */
+/** Singleton WASM module loader — called once at server start (uses default RELEASE_ASYNC variant) */
 async function getModule(): Promise<QuickJSAsyncWASMModule> {
   if (!_modulePromise) {
-    _modulePromise = (async () => {
-      const variant = await import('@jitl/quickjs-wasmfile-release-asyncify');
-      return newQuickJSAsyncWASMModuleFromVariant(variant.default as any);
-    })();
+    _modulePromise = newQuickJSAsyncWASMModule();
   }
   return _modulePromise;
 }
 
 /** Convert a JS value to a QuickJS handle using native API (no evalCode) */
-function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown): any {
+function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown): QuickJSHandle {
   if (value === null || value === undefined) return ctx.undefined;
   if (value === true) return ctx.true;
   if (value === false) return ctx.false;
@@ -115,7 +114,9 @@ export class CodeActSandbox {
 
       const durationMs = performance.now() - startTime;
       const memUsage = ctx.dump(rt.computeMemoryUsage());
-      const memoryUsedBytes = (memUsage as any)?.malloc_size ?? 0;
+      const memObj = memUsage as Record<string, unknown> | null;
+      const memoryUsedBytes =
+        memObj && typeof memObj.malloc_size === 'number' ? memObj.malloc_size : 0;
 
       if (result.error) {
         const err = ctx.dump(result.error);
@@ -219,7 +220,7 @@ export class CodeActSandbox {
         // Propagate host error to sandbox as a thrown exception
         const errMsg = err instanceof Error ? err.message : String(err);
         const errHandle = ctx.newError(errMsg);
-        return { error: errHandle } as any;
+        return { error: errHandle } as VmCallResult<QuickJSHandle>;
       }
     });
     ctx.setProp(ctx.global, name, handle);

@@ -490,7 +490,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${resolvedPersona}
 
-${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\\n' : ''}${reportBackPrompt ? reportBackPrompt + '\\n' : ''}${this.buildToolsSection(agentConfig)}
+${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}${this.buildToolsSection(agentConfig)}
 
 ${skillsPrompt}## Guidelines
 - Stay in character as ${agentConfig.name}

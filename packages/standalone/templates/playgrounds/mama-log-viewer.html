@@ -328,16 +328,16 @@ const HISTOGRAM_BUCKETS = 30;
 
 const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
   ? 'http://localhost:3847'
-  : location.protocol + '//' + location.hostname;
+  : location.protocol + '//' + location.host;
 
 const WS_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
   ? 'ws://localhost:3847/ws'
-  : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.hostname + '/ws';
+  : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
 
 const S = {
   logs: [], autoScroll: true, selected: new Set(), lastClickIdx: -1,
   live: false, paused: false, pollTimer: null, lastMtime: 0, lastTotal: 0,
-  initialized: false, prevCount: 0, rateHistory: [],
+  initialized: false, prevCount: 0, rateHistory: [], totalReceived: 0,
   levels: {error: true, warn: true, info: true, debug: true}, showGraph: true,
   sourceCounts: {}, channelCounts: {},
   activeSources: null, excludedSources: new Set(),
@@ -536,6 +536,7 @@ function addLines(rawLines, isInitial) {
     const entry = parseLine(rawLines[i], base + i);
     if (!isInitial) entry.isNew = true;
     S.logs.push(entry);
+    S.totalReceived++;
     const div = renderLine(entry, searchRe);
     let show = shouldShow(entry);
     if (show && searchRe) { searchRe.lastIndex = 0; show = searchRe.test(entry.raw); }
@@ -546,7 +547,33 @@ function addLines(rawLines, isInitial) {
   logArea.appendChild(frag);
 
   while (logArea.children.length > MAX_LINES) logArea.removeChild(logArea.firstChild);
-  while (S.logs.length > MAX_LINES) S.logs.shift();
+
+  let trimmedCount = 0;
+  while (S.logs.length > MAX_LINES) {
+    S.logs.shift();
+    trimmedCount++;
+  }
+
+  if (trimmedCount > 0) {
+    const newPins = new Set();
+    S.pins.forEach((idx) => {
+      if (idx >= trimmedCount) newPins.add(idx - trimmedCount);
+    });
+    S.pins = newPins;
+
+    const newSelected = new Set();
+    S.selected.forEach((idx) => {
+      if (idx >= trimmedCount) newSelected.add(idx - trimmedCount);
+    });
+    S.selected = newSelected;
+
+    S.sourceCounts = {};
+    S.channelCounts = {};
+    S.logs.forEach((entry) => {
+      if (entry.source) S.sourceCounts[entry.source] = (S.sourceCounts[entry.source] || 0) + 1;
+      if (entry.channel) S.channelCounts[entry.channel] = (S.channelCounts[entry.channel] || 0) + 1;
+    });
+  }
 
   for (let j = 0; j < S.logs.length; j++) S.logs[j].n = j;
   const rows = logArea.querySelectorAll('.ll');
@@ -563,7 +590,7 @@ function addLines(rawLines, isInitial) {
 }
 
 function updateRate() {
-  const now = S.logs.length;
+  const now = S.totalReceived;
   const diff = now - S.prevCount;
   S.prevCount = now;
   S.rateHistory.push(diff);
@@ -1146,7 +1173,7 @@ $('autoBtn').addEventListener('click', function() {
 });
 $('clearBtn').addEventListener('click', () => {
   S.logs = []; S.selected.clear(); S.lastMtime = 0; S.lastTotal = 0; S.initialized = false;
-  S.prevCount = 0; S.rateHistory = []; S.sourceCounts = {}; S.channelCounts = {};
+  S.prevCount = 0; S.rateHistory = []; S.totalReceived = 0; S.sourceCounts = {}; S.channelCounts = {};
   logArea.innerHTML = '<div class="empty" id="emptyState"><div class="ico">&#128203;</div><p>Cleared</p></div>';
   emptyState = $('emptyState');
   $('stTotal').textContent = '0'; $('stShown').textContent = '0';

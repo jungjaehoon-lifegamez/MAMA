@@ -1,4 +1,5 @@
 import type { GatewayToolExecutor } from '../gateway-tool-executor.js';
+import type { GatewayToolInput, GatewayToolResult } from '../types.js';
 import type { CodeActSandbox } from './sandbox.js';
 import type { FunctionDescriptor } from './types.js';
 import type { RoleConfig } from '../../cli/config/types.js';
@@ -339,10 +340,11 @@ export class HostBridge {
           );
         }
 
-        const result = await this.executor.execute(desc.name, input as any);
+        const result = await this.executor.execute(desc.name, input as GatewayToolInput);
 
         if (!result.success) {
-          const msg = (result as any).message || (result as any).error || `${desc.name} failed`;
+          const r = result as GatewayToolResult & { message?: string; error?: string };
+          const msg = r.message || r.error || `${desc.name} failed`;
           throw new Error(`${desc.name}(): ${msg}`);
         }
 

@@ -16,6 +16,9 @@ import {
   writeFileSync,
   unlinkSync,
   statSync,
+  openSync,
+  readSync,
+  closeSync,
 } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import Database from 'better-sqlite3';
@@ -758,7 +761,7 @@ export async function runAgentLoop(
   // Inherit useCodeAct from Conductor agent config (webchat uses main agentLoop)
   const conductorConfig =
     config.multi_agent?.agents?.conductor || config.multi_agent?.agents?.Conductor;
-  const useCodeAct = (conductorConfig as any)?.useCodeAct === true;
+  const useCodeAct = conductorConfig?.useCodeAct === true;
 
   const agentLoop = new AgentLoop(oauthManager, {
     backend: runtimeBackend,
@@ -1074,10 +1077,7 @@ export async function runAgentLoop(
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);
 
   // Prepare graph handler options (will be populated after gateways init)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const graphHandlerOptions: GraphHandlerOptions & {
-    getSwarmTasks?: (limit?: number) => Array<any>;
-  } = {};
+  const graphHandlerOptions: GraphHandlerOptions = {};
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   graphHandlerOptions.executeCodeAct = async (code: string) => {
@@ -1976,11 +1976,25 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const stat = statSync(logPath);
       const since = parseInt(req.query.since as string) || 0;
       if (since > 0 && stat.mtimeMs <= since) {
-        res.status(304).json({ unchanged: true });
+        res.status(304).end();
         return;
       }
       const tail = Math.min(parseInt(req.query.tail as string) || 200, 5000);
-      const raw = readFileSync(logPath, 'utf-8');
+
+      // Avoid OOM: read only last chunk if file is large
+      const CHUNK_SIZE = tail * 200; // estimate 200 bytes per line
+      let raw: string;
+      if (stat.size > CHUNK_SIZE) {
+        const fd = openSync(logPath, 'r');
+        const readSize = Math.min(stat.size, CHUNK_SIZE * 2); // read 2x chunk for safety
+        const buffer = Buffer.alloc(readSize);
+        readSync(fd, buffer, 0, readSize, Math.max(0, stat.size - readSize));
+        closeSync(fd);
+        raw = buffer.toString('utf-8');
+      } else {
+        raw = readFileSync(logPath, 'utf-8');
+      }
+
       const allLines = raw.split('\n').filter((l) => l.trim());
       const lines = allLines.slice(-tail);
       res.json({
