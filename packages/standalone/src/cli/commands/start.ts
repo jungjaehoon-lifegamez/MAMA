@@ -1111,9 +1111,14 @@ export async function runAgentLoop(
     };
 
     // Pre-warm Code-Act WASM module for fast first execution
-    import('../../agent/code-act/index.js')
-      .then(({ CodeActSandbox }) => CodeActSandbox.warmup())
-      .catch((err: unknown) => console.warn('[CodeAct] WASM warmup failed (non-fatal):', err));
+    (async () => {
+      try {
+        const { CodeActSandbox } = await import('../../agent/code-act/index.js');
+        await CodeActSandbox.warmup();
+      } catch (err: unknown) {
+        console.warn('[CodeAct] WASM warmup failed (non-fatal):', err);
+      }
+    })();
   }
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
