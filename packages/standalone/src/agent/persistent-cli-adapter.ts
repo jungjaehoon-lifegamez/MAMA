@@ -47,6 +47,9 @@ export class PersistentCLIAdapter {
       dangerouslySkipPermissions: options.dangerouslySkipPermissions,
       useGatewayTools: options.useGatewayTools,
       requestTimeout: options.requestTimeout,
+      tools: options.tools,
+      pluginDir: options.pluginDir,
+      disallowedTools: options.disallowedTools,
     });
   }
 
@@ -65,8 +68,10 @@ export class PersistentCLIAdapter {
     options?: { model?: string; resumeSession?: boolean }
   ): Promise<PromptResult> {
     // Get or create process for this channel
+    // NOTE: Do NOT pass sessionId here. The pool generates fresh randomUUID() for --session-id.
+    // Passing the SessionPool UUID would cause Claude CLI to reload disk history on process restart,
+    // leading to "Prompt is too long" errors when accumulated context exceeds the window.
     this.currentProcess = await this.processPool.getProcess(this.channelKey, {
-      sessionId: this.options.sessionId || this.channelKey,
       model: options?.model || this.options.model,
       systemPrompt: this.options.systemPrompt,
       dangerouslySkipPermissions: this.options.dangerouslySkipPermissions,

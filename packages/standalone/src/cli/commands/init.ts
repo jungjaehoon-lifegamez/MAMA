@@ -296,6 +296,22 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
     process.exit(1);
   }
 
+  // Copy backend-specific AGENTS.md templates
+  process.stdout.write('Copying backend AGENTS templates...\n');
+  const agentsTemplatesDir = join(__dirname, '..', '..', '..', 'templates');
+  for (const file of ['AGENTS.claude.md', 'AGENTS.codex.md']) {
+    const dest = expandPath(`~/.mama/${file}`);
+    if (existsSync(dest) && !options.force) {
+      console.log(`  ${file} (already exists)`);
+    } else {
+      const src = join(agentsTemplatesDir, file);
+      if (existsSync(src)) {
+        await copyFile(src, dest);
+        console.log(`  ${file} ✓`);
+      }
+    }
+  }
+
   // Show next steps
   console.log('\nNext steps:');
   console.log('  mama setup    Interactive setup wizard (first run)');

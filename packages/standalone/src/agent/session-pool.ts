@@ -367,21 +367,28 @@ export class SessionPool {
   }
 
   /**
-   * Clean up expired sessions
+   * Clean up expired sessions and force-release stuck inUse sessions
    */
   cleanup(): number {
     const now = Date.now();
     let cleaned = 0;
+    const STUCK_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
 
     for (const [key, entry] of this.sessions) {
       if (now - entry.lastActive > this.config.sessionTimeoutMs) {
         this.sessions.delete(key);
         cleaned++;
+      } else if (entry.inUse && now - entry.lastActive > STUCK_THRESHOLD_MS) {
+        entry.inUse = false;
+        console.log(
+          `[SessionPool] Force-released stuck session for ${key} (inUse for ${Math.round((now - entry.lastActive) / 1000)}s)`
+        );
+        cleaned++;
       }
     }
 
     if (cleaned > 0) {
-      console.log(`[SessionPool] Cleaned up ${cleaned} expired sessions`);
+      console.log(`[SessionPool] Cleaned up ${cleaned} expired/stuck sessions`);
     }
 
     return cleaned;

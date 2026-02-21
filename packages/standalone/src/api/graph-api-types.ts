@@ -54,12 +54,21 @@ export interface DelegationHistoryEntry {
   error: string | null;
 }
 
+export interface CodeActResult {
+  success: boolean;
+  value?: unknown;
+  logs?: string[];
+  error?: string;
+  metrics?: { durationMs: number; hostCallCount: number; memoryUsedBytes: number };
+}
+
 export interface GraphHandlerOptions {
   getAgentStates?: () => Map<string, string>;
   getSwarmTasks?: (limit: number) => SwarmTask[];
   getRecentDelegations?: (limit: number) => DelegationHistoryEntry[];
   applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
   restartMultiAgentAgent?: (agentId: string) => Promise<void>;
+  executeCodeAct?: (code: string) => Promise<CodeActResult>;
 }
 
 export interface SwarmTask {

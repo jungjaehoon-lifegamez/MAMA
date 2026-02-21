@@ -77,6 +77,12 @@ export interface ClaudeCLIWrapperOptions {
   useGatewayTools?: boolean;
   /** Request timeout in ms (default: 120000). Increase for complex/long tasks. */
   requestTimeout?: number;
+  /** Override built-in tool set (--tools CLI flag). Use "" to disable all tools. */
+  tools?: string;
+  /** Override plugin directory (--plugin-dir CLI flag). Use empty dir to disable plugins. */
+  pluginDir?: string;
+  /** Structurally disallowed tools (--disallowedTools CLI flag) */
+  disallowedTools?: string[];
 }
 
 export interface PromptCallbacks {

@@ -1,11 +1,12 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.9.5",
+  "version": "0.10.0",
   "description": "MAMA OS - Your AI Operating System. Control + Visibility for AI-Powered Automation",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "mama": "./dist/cli/index.js"
+    "mama": "./dist/cli/index.js",
+    "mama-code-act-mcp": "./dist/mcp/code-act-server.js"
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
@@ -69,6 +70,8 @@
     "node-telegram-bot-api": "^0.67.0",
     "playwright": "^1.58.1",
     "sharp": "^0.34.5",
+    "quickjs-emscripten": "^0.32.0",
+    "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
