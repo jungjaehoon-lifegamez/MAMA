@@ -163,7 +163,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     name: 'browser_get_text',
     description: 'Get page text content',
     params: [],
-    returnType: 'string',
+    returnType: '{ text: string }',
     category: 'browser',
   },
   {
