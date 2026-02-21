@@ -687,9 +687,7 @@ export class AgentLoop {
         model: options.model!,
         sessionId,
         systemPrompt: defaultSystemPrompt,
-        // Code-Act mode: empty MCP config + strict to block all auto-discovered MCP servers
-        // Hybrid mode: pass MCP config even with Gateway tools enabled
-        // Code-Act mode: keep MCP servers available (slack, notion, etc.)
+        // MCP config: only pass when MCP mode is enabled (gateway mode uses GatewayToolExecutor)
         mcpConfigPath: useMCPMode ? mcpConfigPath : undefined,
         // MAMA OS is a headless daemon (no TTY) — Claude CLI's interactive permission prompts
         // cannot work. Security is enforced by MAMA's own RoleManager layer (config.yaml roles).
@@ -950,7 +948,8 @@ export class AgentLoop {
         // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
         const alreadyHasTools =
           options.systemPrompt.includes('## Gateway Tools') ||
-          options.systemPrompt.includes('# Code Execution');
+          options.systemPrompt.includes('# Code Execution') ||
+          options.systemPrompt.includes('## Code-Act');
         let gatewayToolsPrompt = '';
         const isResumingSession = options?.resumeSession === true;
         if (this.isGatewayMode && !alreadyHasTools && !isResumingSession) {
@@ -1589,10 +1588,11 @@ export class AgentLoop {
    * Remove tool_call and code_act blocks from text (to avoid duplication in response)
    */
   private removeToolCallBlocks(text: string): string {
-    return text
-      .replace(/```tool_call\s*\n[\s\S]*?\n```/g, '')
-      .replace(/```(?:js|javascript)\s*\n[\s\S]*?\n```/g, '')
-      .trim();
+    let result = text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, '');
+    if (this.useCodeAct) {
+      result = result.replace(/```(?:js|javascript)\s*\n[\s\S]*?\n```/g, '');
+    }
+    return result.trim();
   }
 
   private extractTextFromContent(content: ContentBlock[]): string {

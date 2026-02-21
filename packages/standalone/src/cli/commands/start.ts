@@ -1083,11 +1083,12 @@ export async function runAgentLoop(
   const graphHandlerOptions: GraphHandlerOptions = {};
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
+  // Tier 2: read-only tools only (API endpoint has no agent context)
   graphHandlerOptions.executeCodeAct = async (code: string) => {
     const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
     const sandbox = new CodeActSandbox();
     const bridge = new HostBridge(toolExecutor);
-    bridge.injectInto(sandbox, 1);
+    bridge.injectInto(sandbox, 2);
     const result = await sandbox.execute(code);
     return {
       success: result.success,
@@ -1099,6 +1100,13 @@ export async function runAgentLoop(
   };
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
+
+  // Pre-warm Code-Act WASM module for fast first execution
+  if (useCodeAct) {
+    import('../../agent/code-act/index.js')
+      .then(({ CodeActSandbox }) => CodeActSandbox.warmup())
+      .catch((err: unknown) => console.warn('[CodeAct] WASM warmup failed (non-fatal):', err));
+  }
 
   await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
@@ -2005,12 +2013,12 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     }
     try {
       const stat = statSync(logPath);
-      const since = parseInt(req.query.since as string) || 0;
+      const since = parseInt(req.query.since as string, 10) || 0;
       if (since > 0 && stat.mtimeMs <= since) {
         res.status(304).end();
         return;
       }
-      const requestedTail = parseInt(req.query.tail as string);
+      const requestedTail = parseInt(req.query.tail as string, 10);
       const tail = Math.min(Math.max(isNaN(requestedTail) ? 200 : requestedTail, 1), 5000);
 
       const chunkSize = Math.min(stat.size, tail * 300);

@@ -25,7 +25,7 @@
   },
   "overrides": [
     {
-      "files": ["**/tests/**/*.js", "**/*.test.js"],
+      "files": ["**/tests/**/*.js", "**/*.test.js", "**/tests/**/*.ts", "**/*.test.ts"],
       "env": {
         "node": true,
         "es2022": true

@@ -12,6 +12,7 @@
  */
 
 import http from 'http';
+import readline from 'readline';
 
 // MCP servers must use stderr for logging (stdout = JSON-RPC)
 const log = (msg: string) => process.stderr.write(`[code-act-mcp] ${msg}\n`);
@@ -190,8 +191,6 @@ function checkExit(): void {
 }
 
 // Read JSON-RPC messages from stdin (newline-delimited JSON — Claude CLI protocol)
-import readline from 'readline';
-
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
 rl.on('line', (line: string) => {
