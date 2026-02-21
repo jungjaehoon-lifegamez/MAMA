@@ -48,7 +48,9 @@ function callCodeActAPI(
           try {
             resolve(JSON.parse(data));
           } catch {
-            reject(new Error(`Invalid JSON response: ${data.substring(0, 200)}`));
+            reject(
+              new Error(`Invalid JSON response (HTTP ${res.statusCode}): ${data.substring(0, 200)}`)
+            );
           }
         });
       }
@@ -79,8 +81,9 @@ function replyError(id: string | number, code: number, message: string): void {
 const CODE_ACT_TOOL = {
   name: 'code_act',
   description:
-    'Execute JavaScript code in a sandboxed environment with access to MAMA gateway tools. ' +
-    'All gateway tools (mama_search, mama_save, discord_send, Read, Write, Bash, etc.) are available as synchronous functions. ' +
+    'Execute JavaScript code in a sandboxed environment with access to read-only MAMA gateway tools. ' +
+    'Available tools: mama_search, mama_load_checkpoint, Read, Grep, Glob (tier-2 read-only). ' +
+    'Write, Bash, discord_send and other write tools are NOT available. ' +
     'Use var for variables. Last expression is the return value. No async/await.',
   inputSchema: {
     type: 'object',
@@ -88,7 +91,9 @@ const CODE_ACT_TOOL = {
       code: {
         type: 'string',
         description:
-          'JavaScript code to execute. Gateway tools are available as global functions (e.g., mama_search({query:"auth"}), Read({file_path:"/tmp/test.txt"})). Use var for variables. Last expression = return value.',
+          'JavaScript code to execute. Read-only gateway tools are available as global functions ' +
+          '(e.g., mama_search({query:"auth"}), Read({path:"/tmp/test.txt"})). ' +
+          'Use var for variables. Last expression = return value.',
       },
     },
     required: ['code'],
@@ -195,7 +200,9 @@ const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
 rl.on('line', (line: string) => {
   const trimmed = line.trim();
-  if (!trimmed) return;
+  if (!trimmed) {
+    return;
+  }
 
   try {
     const msg = JSON.parse(trimmed);
