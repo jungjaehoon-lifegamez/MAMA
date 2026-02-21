@@ -756,7 +756,16 @@ export async function runAgentLoop(
     }
   }
 
-  const runtimeBackend = config.agent.backend;
+  const validBackends = ['claude', 'codex-mcp'] as const;
+  const rawBackend = config.agent.backend;
+  const runtimeBackend: 'claude' | 'codex-mcp' = validBackends.includes(
+    rawBackend as (typeof validBackends)[number]
+  )
+    ? (rawBackend as 'claude' | 'codex-mcp')
+    : 'claude';
+  if (rawBackend && !validBackends.includes(rawBackend as (typeof validBackends)[number])) {
+    console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
+  }
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
   // Inherit useCodeAct from Conductor agent config (webchat uses main agentLoop)
@@ -1075,49 +1084,39 @@ export async function runAgentLoop(
     listDecisions: listDecisionsForContext,
   };
 
-  const validBackends = ['claude', 'codex-mcp'] as const;
-  const rawBackend = config.agent.backend;
-  const backend: 'claude' | 'codex-mcp' = validBackends.includes(
-    rawBackend as (typeof validBackends)[number]
-  )
-    ? (rawBackend as 'claude' | 'codex-mcp')
-    : 'claude';
-  if (rawBackend && !validBackends.includes(rawBackend as (typeof validBackends)[number])) {
-    console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
-  }
-
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
-    backend,
+    backend: runtimeBackend,
   });
 
   // Prepare graph handler options (will be populated after gateways init)
   const graphHandlerOptions: GraphHandlerOptions = {};
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
-  // Tier 2: read-only tools only (API endpoint has no agent context)
-  graphHandlerOptions.executeCodeAct = async (code: string) => {
-    const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
-    const sandbox = new CodeActSandbox();
-    const bridge = new HostBridge(toolExecutor);
-    bridge.injectInto(sandbox, 2);
-    const result = await sandbox.execute(code);
-    return {
-      success: result.success,
-      value: result.value,
-      logs: result.logs,
-      error: result.error?.message,
-      metrics: result.metrics,
-    };
-  };
-
-  const graphHandler = createGraphHandler(graphHandlerOptions);
-
-  // Pre-warm Code-Act WASM module for fast first execution
+  // Only register when useCodeAct is enabled; otherwise graph-api returns 501
   if (useCodeAct) {
+    // Tier 2: read-only tools only (API endpoint has no agent context)
+    graphHandlerOptions.executeCodeAct = async (code: string) => {
+      const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
+      const sandbox = new CodeActSandbox();
+      const bridge = new HostBridge(toolExecutor);
+      bridge.injectInto(sandbox, 2);
+      const result = await sandbox.execute(code);
+      return {
+        success: result.success,
+        value: result.value,
+        logs: result.logs,
+        error: result.error?.message,
+        metrics: result.metrics,
+      };
+    };
+
+    // Pre-warm Code-Act WASM module for fast first execution
     import('../../agent/code-act/index.js')
       .then(({ CodeActSandbox }) => CodeActSandbox.warmup())
       .catch((err: unknown) => console.warn('[CodeAct] WASM warmup failed (non-fatal):', err));
   }
+
+  const graphHandler = createGraphHandler(graphHandlerOptions);
 
   await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
@@ -1606,6 +1605,15 @@ export async function runAgentLoop(
           return;
         }
 
+        // Block sensitive file types
+        const deniedExtensions = ['.db', '.key', '.pem', '.env', '.sqlite', '.sqlite3'];
+        const ext = pathMod.extname(resolvedFilePath).toLowerCase();
+        if (deniedExtensions.includes(ext)) {
+          console.warn(`[Slack Send] SECURITY: Denied file type blocked: ${ext}`);
+          res.status(400).json({ error: 'File type not allowed' });
+          return;
+        }
+
         try {
           await fsMod.access(resolvedFilePath);
         } catch {
@@ -2083,10 +2091,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const isFullFile = chunkSize >= stat.size;
       res.json({
         lines,
-        total: allLines.length,
+        total: isFullFile ? allLines.length : undefined,
         totalBytes: stat.size,
         mtime: stat.mtimeMs,
-        fileSize: stat.size,
         truncated: !isFullFile,
       });
     } catch (err) {

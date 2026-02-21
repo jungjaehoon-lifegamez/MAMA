@@ -1383,22 +1383,17 @@ export class AgentLoop {
         if (toolUse.name === CODE_ACT_MARKER) {
           const codeInput = toolUse.input as Record<string, unknown> | undefined;
           const code = typeof codeInput?.code === 'string' ? codeInput.code : '';
-          if (!code) {
-            result = JSON.stringify({
-              success: false,
-              error: {
-                name: 'ValidationError',
-                message: 'Missing or invalid "code" field in code_act input',
-              },
-              logs: [],
-              metrics: { durationMs: 0, hostCallCount: 0, memoryUsedBytes: 0 },
-            });
-            isError = true;
-            this.onToolUse?.(toolUse.name, toolUse.input, { success: false });
-            this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, true);
-            continue;
-          }
-          const codeActResult = await this.executeCodeAct(code, this.currentTier);
+          const codeActResult = code
+            ? await this.executeCodeAct(code, this.currentTier)
+            : {
+                success: false,
+                error: {
+                  name: 'ValidationError',
+                  message: 'Missing or invalid "code" field in code_act input',
+                },
+                logs: [] as string[],
+                metrics: { durationMs: 0, hostCallCount: 0, memoryUsedBytes: 0 },
+              };
           result = JSON.stringify(codeActResult, null, 2);
           if (!codeActResult.success) {
             isError = true;
