@@ -24,7 +24,9 @@ export class TypeDefinitionGenerator {
       return readOnly.has(meta.name);
     });
 
-    const lines: string[] = ['// Available tools (call as regular functions)'];
+    const lines: string[] = [
+      '// Call with object: Read({path: "/file"}) or positional: Read("/file")',
+    ];
     let currentCategory = '';
 
     for (const meta of filtered) {

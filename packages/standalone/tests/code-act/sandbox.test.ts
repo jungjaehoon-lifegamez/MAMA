@@ -144,6 +144,68 @@ describe('CodeActSandbox', () => {
     });
   });
 
+  describe('string escaping (jsonToHandle native)', () => {
+    it('handles strings with newlines and special chars', async () => {
+      const sandbox = new CodeActSandbox();
+      sandbox.registerFunction('get_html', async () => {
+        return '<div class="test">\n  <p>Hello\\nWorld</p>\n</div>';
+      });
+
+      const result = await sandbox.execute('get_html()');
+      expect(result.success).toBe(true);
+      expect(result.value).toBe('<div class="test">\n  <p>Hello\\nWorld</p>\n</div>');
+    });
+
+    it('handles large HTML strings without escaping issues', async () => {
+      const sandbox = new CodeActSandbox();
+      const bigHtml = `<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>
+  <script>
+    const x = "hello\\nworld";
+    const y = 'single\\'s';
+    console.log(\`template \${x}\`);
+  </script>
+  <style>
+    .foo { content: "bar\\nbaz"; }
+  </style>
+</body>
+</html>`;
+      sandbox.registerFunction('get_page', async () => bigHtml);
+
+      const result = await sandbox.execute('get_page()');
+      expect(result.success).toBe(true);
+      expect(result.value).toBe(bigHtml);
+    });
+
+    it('handles nested objects with special string values', async () => {
+      const sandbox = new CodeActSandbox();
+      const data = {
+        title: 'Line1\nLine2\nLine3',
+        code: 'if (x === "test") { return true; }',
+        nested: { path: 'C:\\Users\\test', tab: 'col1\tcol2' },
+        items: ['a\nb', 'c"d', "e'f"],
+      };
+      sandbox.registerFunction('get_data', async () => data);
+
+      const result = await sandbox.execute('get_data()');
+      expect(result.success).toBe(true);
+      expect(result.value).toEqual(data);
+    });
+
+    it('handles backticks and template literal chars', async () => {
+      const sandbox = new CodeActSandbox();
+      sandbox.registerFunction('get_code', async () => {
+        return 'const x = `hello ${name}`;\nreturn x;';
+      });
+
+      const result = await sandbox.execute('get_code()');
+      expect(result.success).toBe(true);
+      expect(result.value).toBe('const x = `hello ${name}`;\nreturn x;');
+    });
+  });
+
   describe('data transformation in sandbox', () => {
     it('filters and maps data from host function', async () => {
       const sandbox = new CodeActSandbox();

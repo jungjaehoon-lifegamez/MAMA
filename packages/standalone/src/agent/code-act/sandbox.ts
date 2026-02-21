@@ -22,15 +22,36 @@ async function getModule(): Promise<QuickJSAsyncWASMModule> {
   return _modulePromise;
 }
 
-/** Convert a JS value to a QuickJS handle via JSON round-trip */
-function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown) {
-  const json = JSON.stringify(value);
-  const result = ctx.evalCode(`(${json})`);
-  if (result.error) {
-    result.error.dispose();
-    return ctx.undefined;
+/** Convert a JS value to a QuickJS handle using native API (no evalCode) */
+function jsonToHandle(ctx: QuickJSAsyncContext, value: unknown): any {
+  if (value === null || value === undefined) return ctx.undefined;
+  if (value === true) return ctx.true;
+  if (value === false) return ctx.false;
+  if (typeof value === 'string') return ctx.newString(value);
+  if (typeof value === 'number') return ctx.newNumber(value);
+
+  if (Array.isArray(value)) {
+    const arr = ctx.newArray();
+    for (let i = 0; i < value.length; i++) {
+      const h = jsonToHandle(ctx, value[i]);
+      ctx.setProp(arr, i, h);
+      h.dispose();
+    }
+    return arr;
   }
-  return result.value;
+
+  if (typeof value === 'object') {
+    const obj = ctx.newObject();
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const h = jsonToHandle(ctx, v);
+      ctx.setProp(obj, k, h);
+      h.dispose();
+    }
+    return obj;
+  }
+
+  // Fallback for bigint etc — stringify
+  return ctx.newString(String(value));
 }
 
 export class CodeActSandbox {
