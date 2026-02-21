@@ -758,12 +758,11 @@ export async function runAgentLoop(
 
   const validBackends = ['claude', 'codex-mcp'] as const;
   const rawBackend = config.agent.backend;
-  const runtimeBackend: 'claude' | 'codex-mcp' = validBackends.includes(
-    rawBackend as (typeof validBackends)[number]
-  )
+  const isValidBackend = validBackends.includes(rawBackend as (typeof validBackends)[number]);
+  const runtimeBackend: 'claude' | 'codex-mcp' = isValidBackend
     ? (rawBackend as 'claude' | 'codex-mcp')
     : 'claude';
-  if (rawBackend && !validBackends.includes(rawBackend as (typeof validBackends)[number])) {
+  if (rawBackend && !isValidBackend) {
     console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
   }
 
@@ -1577,22 +1576,21 @@ export async function runAgentLoop(
       }
       if (filePath) {
         // SECURITY: Path traversal prevention (same pattern as /api/discord/image)
-        const pathMod = await import('path');
         const fsMod = await import('fs/promises');
         const workspacePath =
           config.workspace?.path?.replace('~', process.env.HOME || '') ||
           `${process.env.HOME}/.mama/workspace`;
-        const tempPath = pathMod.join(workspacePath, 'temp');
+        const tempPath = path.join(workspacePath, 'temp');
         const tmpPath = '/tmp';
 
-        const resolvedFilePath = pathMod.isAbsolute(filePath)
-          ? pathMod.resolve(filePath)
-          : pathMod.resolve(workspacePath, filePath);
-        const normalizedWorkspace = pathMod.resolve(workspacePath);
-        const normalizedTemp = pathMod.resolve(tempPath);
+        const resolvedFilePath = path.isAbsolute(filePath)
+          ? path.resolve(filePath)
+          : path.resolve(workspacePath, filePath);
+        const normalizedWorkspace = path.resolve(workspacePath);
+        const normalizedTemp = path.resolve(tempPath);
 
-        const isInWorkspace = resolvedFilePath.startsWith(normalizedWorkspace + pathMod.sep);
-        const isInTemp = resolvedFilePath.startsWith(normalizedTemp + pathMod.sep);
+        const isInWorkspace = resolvedFilePath.startsWith(normalizedWorkspace + path.sep);
+        const isInTemp = resolvedFilePath.startsWith(normalizedTemp + path.sep);
         const isInTmp = resolvedFilePath.startsWith(tmpPath + '/');
 
         if (!isInWorkspace && !isInTemp && !isInTmp) {
@@ -1607,7 +1605,7 @@ export async function runAgentLoop(
 
         // Block sensitive file types
         const deniedExtensions = ['.db', '.key', '.pem', '.env', '.sqlite', '.sqlite3'];
-        const ext = pathMod.extname(resolvedFilePath).toLowerCase();
+        const ext = path.extname(resolvedFilePath).toLowerCase();
         if (deniedExtensions.includes(ext)) {
           console.warn(`[Slack Send] SECURITY: Denied file type blocked: ${ext}`);
           res.status(400).json({ error: 'File type not allowed' });

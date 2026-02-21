@@ -9,7 +9,7 @@ function makeExecutor(overrides?: Partial<GatewayToolExecutor>): GatewayToolExec
   return {
     execute: vi.fn().mockResolvedValue({ success: true }),
     ...overrides,
-  } as any;
+  } as unknown as GatewayToolExecutor;
 }
 
 describe('HostBridge', () => {
@@ -43,11 +43,25 @@ describe('HostBridge', () => {
       expect(names).not.toContain('discord_send');
     });
 
-    it('returns only read-only tools for Tier 3', () => {
+    it('tier 2 includes read-only plus memory-write tools', () => {
       const bridge = new HostBridge(makeExecutor());
       const t2 = bridge.getAvailableFunctions(2);
+      const t2Names = t2.map((f) => f.name);
+      expect(t2Names).toContain('mama_search');
+      expect(t2Names).toContain('mama_save');
+      expect(t2Names).toContain('mama_update');
+      expect(t2Names).not.toContain('Write');
+      expect(t2Names).not.toContain('Bash');
+    });
+
+    it('tier 3 is strictly read-only (no memory-write)', () => {
+      const bridge = new HostBridge(makeExecutor());
       const t3 = bridge.getAvailableFunctions(3);
-      expect(t3.map((f) => f.name).sort()).toEqual(t2.map((f) => f.name).sort());
+      const t3Names = t3.map((f) => f.name);
+      expect(t3Names).toContain('mama_search');
+      expect(t3Names).not.toContain('mama_save');
+      expect(t3Names).not.toContain('mama_update');
+      expect(t3Names).not.toContain('Write');
     });
 
     it('returns FunctionDescriptor shape', () => {

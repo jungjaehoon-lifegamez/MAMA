@@ -885,7 +885,7 @@ export class AgentLoop {
 
     // Propagate agentContext to executor for tier-aware tool permissions
     if (options?.agentContext) {
-      this.mcpExecutor.setAgentContext(options.agentContext);
+      this.mcpExecutor.setAgentContext?.(options.agentContext);
       const rawTier = options.agentContext.tier ?? 1;
       this.currentTier = (rawTier === 1 || rawTier === 2 || rawTier === 3 ? rawTier : 1) as
         | 1
