@@ -764,6 +764,7 @@ export async function runAgentLoop(
     : 'claude';
   if (rawBackend && !isValidBackend) {
     console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
+    process.env.MAMA_BACKEND = 'claude';
   }
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
@@ -1093,12 +1094,12 @@ export async function runAgentLoop(
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Only register when useCodeAct is enabled; otherwise graph-api returns 501
   if (useCodeAct) {
-    // Tier 2: read-only tools only (API endpoint has no agent context)
+    // Tier 3: strictly read-only tools (API endpoint has no agent context)
     graphHandlerOptions.executeCodeAct = async (code: string) => {
       const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
       const sandbox = new CodeActSandbox();
       const bridge = new HostBridge(toolExecutor);
-      bridge.injectInto(sandbox, 2);
+      bridge.injectInto(sandbox, 3);
       const result = await sandbox.execute(code);
       return {
         success: result.success,
