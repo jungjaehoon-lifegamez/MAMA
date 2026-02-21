@@ -15,6 +15,7 @@ import {
   copyFileSync,
   writeFileSync,
   unlinkSync,
+  statSync,
 } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import Database from 'better-sqlite3';
@@ -1963,6 +1964,35 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     // Non-blocking: playground seeding is optional
     console.warn('[seedBuiltinPlaygrounds] Playground seeding failed (non-fatal):', err);
   }
+
+  // === Daemon Log API ===
+  apiServer.app.get('/api/logs/daemon', (req, res) => {
+    const logPath = path.join(homedir(), '.mama', 'logs', 'daemon.log');
+    if (!existsSync(logPath)) {
+      res.status(404).json({ error: 'daemon.log not found' });
+      return;
+    }
+    try {
+      const stat = statSync(logPath);
+      const since = parseInt(req.query.since as string) || 0;
+      if (since > 0 && stat.mtimeMs <= since) {
+        res.status(304).json({ unchanged: true });
+        return;
+      }
+      const tail = Math.min(parseInt(req.query.tail as string) || 200, 5000);
+      const raw = readFileSync(logPath, 'utf-8');
+      const allLines = raw.split('\n').filter((l) => l.trim());
+      const lines = allLines.slice(-tail);
+      res.json({
+        lines,
+        total: allLines.length,
+        mtime: stat.mtimeMs,
+        fileSize: stat.size,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
 
   apiServer.app.use('/playgrounds', express.static(playgroundsDir));
 
