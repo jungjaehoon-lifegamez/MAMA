@@ -14,6 +14,7 @@
 - [Disabling Features](#disabling-features)
 - [Security Best Practices](#security-best-practices)
 - [Threat Scenarios](#threat-scenarios)
+- [Code-Act Sandbox Security](#code-act-sandbox-security)
 
 ---
 
@@ -900,7 +901,7 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 3 onl
 - **No Node.js APIs** — `require()`, `process`, `fs`, `child_process` are unavailable
 - **No network access** — No `fetch()`, no `XMLHttpRequest`, no sockets
 - **Execution timeout** — Default 30s, max 60s, enforced at engine level
-- **Memory limit** — QuickJS WASM memory is bounded
+- **Memory limit** — QuickJS WASM heap is bounded (default ~256 MB, set by `quickjs-emscripten` WASM allocation)
 - **Tier 3 tools only** — Only read-only gateway tools are exposed via the host bridge
 
 ### Available Tools in Sandbox
