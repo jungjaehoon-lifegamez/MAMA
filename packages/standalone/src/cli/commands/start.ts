@@ -1075,7 +1075,9 @@ export async function runAgentLoop(
     listDecisions: listDecisionsForContext,
   };
 
-  const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);
+  const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
+    backend: config.agent.backend as 'claude' | 'codex-mcp',
+  });
 
   // Prepare graph handler options (will be populated after gateways init)
   const graphHandlerOptions: GraphHandlerOptions = {};

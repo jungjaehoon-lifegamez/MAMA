@@ -85,6 +85,12 @@ export interface AgentContext {
    * @default 1
    */
   tier?: 1 | 2 | 3;
+
+  /**
+   * Backend type for this agent context
+   * Used for backend-specific AGENTS.md injection
+   */
+  backend?: 'claude' | 'codex-mcp';
 }
 
 // ============================================================================
