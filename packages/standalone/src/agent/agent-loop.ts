@@ -631,10 +631,23 @@ export class AgentLoop {
     }
 
     const backend = options.backend ?? 'claude';
+
+    // Load backend-specific AGENTS.md (e.g., AGENTS.claude.md, AGENTS.codex.md)
+    const backendAgentsMd = loadBackendAgentsMd(backend);
+    if (backendAgentsMd) {
+      promptLayers.push({ name: 'backendAgents', content: backendAgentsMd, priority: 2 });
+    }
+
     if (useGatewayMode) {
       if (this.useCodeAct) {
         // Code-Act mode: replace verbose gateway tools markdown with compact .d.ts
-        const typeDefs = TypeDefinitionGenerator.generate(options.agentContext?.tier ?? 1);
+        const tierForTypeDefs =
+          options.agentContext?.tier === 1 ||
+          options.agentContext?.tier === 2 ||
+          options.agentContext?.tier === 3
+            ? options.agentContext.tier
+            : 1;
+        const typeDefs = TypeDefinitionGenerator.generate(tierForTypeDefs);
         const codeActBackend = backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
         const codeActPrompt =
           getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
@@ -965,7 +978,7 @@ export class AgentLoop {
         const isResumingSession = options?.resumeSession === true;
         if (this.isGatewayMode && !alreadyHasTools && !isResumingSession) {
           if (this.useCodeAct) {
-            const typeDefs = TypeDefinitionGenerator.generate(options?.agentContext?.tier ?? 1);
+            const typeDefs = TypeDefinitionGenerator.generate(this.currentTier);
             const codeActBackend = this.backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
             gatewayToolsPrompt =
               getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
