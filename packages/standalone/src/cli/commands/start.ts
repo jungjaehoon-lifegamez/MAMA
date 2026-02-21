@@ -37,6 +37,7 @@ import { killProcessesOnPorts, killAllMamaDaemons } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import { getSessionPool } from '../../agent/session-pool.js';
 import {
   DiscordGateway,
   SlackGateway,
@@ -2245,6 +2246,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       // Stop agent loop
       agentLoop.stop();
+
+      // Release all CLI sessions
+      getSessionPool().dispose();
 
       // Close session database
       sessionStore.close();

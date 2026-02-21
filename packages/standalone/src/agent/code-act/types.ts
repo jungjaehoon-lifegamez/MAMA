@@ -1,7 +1,7 @@
 export interface SandboxConfig {
   memoryLimitBytes: number; // default: 32MB
   maxStackSizeBytes: number; // default: 512KB
-  timeoutMs: number; // default: 10_000
+  timeoutMs: number; // default: 30_000
   maxConcurrentCalls: number; // default: 50
 }
 
@@ -41,6 +41,6 @@ export interface ParamDescriptor {
 export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
   memoryLimitBytes: 32 * 1024 * 1024,
   maxStackSizeBytes: 512 * 1024,
-  timeoutMs: 10_000,
+  timeoutMs: 30_000,
   maxConcurrentCalls: 50,
 };
