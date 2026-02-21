@@ -363,19 +363,27 @@ export function loadInstalledSkills(
  * Maps backend to file: 'claude' → AGENTS.claude.md, 'codex-mcp' → AGENTS.codex.md
  */
 export function loadBackendAgentsMd(backend?: string, verbose = false): string {
-  if (!backend) return '';
+  if (!backend) {
+    return '';
+  }
   const keyMap: Record<string, string> = {
     claude: 'claude',
     'codex-mcp': 'codex',
   };
   const key = keyMap[backend];
-  if (!key) return '';
+  if (!key) {
+    return '';
+  }
   const filePath = join(homedir(), '.mama', `AGENTS.${key}.md`);
   if (existsSync(filePath)) {
-    if (verbose) console.log(`[AgentLoop] Loaded backend AGENTS.md: AGENTS.${key}.md`);
+    if (verbose) {
+      console.log(`[AgentLoop] Loaded backend AGENTS.md: AGENTS.${key}.md`);
+    }
     return readFileSync(filePath, 'utf-8');
   }
-  if (verbose) console.log(`[AgentLoop] Backend AGENTS.md not found: AGENTS.${key}.md`);
+  if (verbose) {
+    console.log(`[AgentLoop] Backend AGENTS.md not found: AGENTS.${key}.md`);
+  }
   return '';
 }
 
@@ -661,7 +669,7 @@ export class AgentLoop {
       .join('\n\n---\n\n');
 
     // Choose backend (default: claude)
-    this.backend = options.backend!;
+    this.backend = backend;
 
     if (this.backend === 'codex-mcp') {
       // Codex MCP mode: standard MCP protocol
