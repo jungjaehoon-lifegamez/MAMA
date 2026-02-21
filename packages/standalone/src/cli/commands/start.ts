@@ -15,6 +15,10 @@ import {
   copyFileSync,
   writeFileSync,
   unlinkSync,
+  statSync,
+  openSync,
+  readSync,
+  closeSync,
 } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import Database from 'better-sqlite3';
@@ -33,6 +37,7 @@ import { killProcessesOnPorts, killAllMamaDaemons } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import { getSessionPool } from '../../agent/session-pool.js';
 import {
   DiscordGateway,
   SlackGateway,
@@ -54,7 +59,7 @@ import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
 import { createGraphHandler } from '../../api/graph-api.js';
-import type { DelegationHistoryEntry } from '../../api/graph-api-types.js';
+import type { DelegationHistoryEntry, GraphHandlerOptions } from '../../api/graph-api-types.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getEmbeddingDim, getModelName } from '@jungjaehoon/mama-core/config-loader';
@@ -751,14 +756,29 @@ export async function runAgentLoop(
     }
   }
 
-  const runtimeBackend = config.agent.backend;
+  const validBackends = ['claude', 'codex-mcp'] as const;
+  const rawBackend = config.agent.backend;
+  const isValidBackend = validBackends.includes(rawBackend as (typeof validBackends)[number]);
+  const runtimeBackend: 'claude' | 'codex-mcp' = isValidBackend
+    ? (rawBackend as 'claude' | 'codex-mcp')
+    : 'claude';
+  if (rawBackend && !isValidBackend) {
+    console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
+    process.env.MAMA_BACKEND = 'claude';
+  }
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
+  // Inherit useCodeAct from Conductor agent config (webchat uses main agentLoop)
+  const conductorConfig =
+    config.multi_agent?.agents?.conductor || config.multi_agent?.agents?.Conductor;
+  const useCodeAct = conductorConfig?.useCodeAct === true;
+
   const agentLoop = new AgentLoop(oauthManager, {
     backend: runtimeBackend,
     model: config.agent.model,
     timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
+    useCodeAct,
     toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
     useLanes: true, // Enable lane-based concurrency for Discord
     // SECURITY MODEL: MAMA OS is a headless daemon — no TTY for interactive permission prompts.
@@ -1064,17 +1084,42 @@ export async function runAgentLoop(
     listDecisions: listDecisionsForContext,
   };
 
-  const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient);
+  const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
+    backend: runtimeBackend,
+  });
 
   // Prepare graph handler options (will be populated after gateways init)
-  const graphHandlerOptions: {
-    getAgentStates?: () => Map<string, string>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    getSwarmTasks?: (limit?: number) => Array<any>;
-    getRecentDelegations?: (limit?: number) => DelegationHistoryEntry[];
-    applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
-    restartMultiAgentAgent?: (agentId: string) => Promise<void>;
-  } = {};
+  const graphHandlerOptions: GraphHandlerOptions = {};
+
+  // Wire up Code-Act executor for POST /api/code-act endpoint
+  // Only register when useCodeAct is enabled; otherwise graph-api returns 501
+  if (useCodeAct) {
+    // Tier 3: strictly read-only tools (API endpoint has no agent context)
+    graphHandlerOptions.executeCodeAct = async (code: string) => {
+      const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
+      const sandbox = new CodeActSandbox();
+      const bridge = new HostBridge(toolExecutor);
+      bridge.injectInto(sandbox, 3);
+      const result = await sandbox.execute(code);
+      return {
+        success: result.success,
+        value: result.value,
+        logs: result.logs,
+        error: result.error?.message,
+        metrics: result.metrics,
+      };
+    };
+
+    // Pre-warm Code-Act WASM module for fast first execution
+    (async () => {
+      try {
+        const { CodeActSandbox } = await import('../../agent/code-act/index.js');
+        await CodeActSandbox.warmup();
+      } catch (err: unknown) {
+        console.warn('[CodeAct] WASM warmup failed (non-fatal):', err);
+      }
+    })();
+  }
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
 
@@ -1523,6 +1568,78 @@ export async function runAgentLoop(
     }
   });
 
+  // Add Slack message/file sending endpoint
+  apiServer.app.post('/api/slack/send', async (req, res) => {
+    try {
+      const { channelId, message, filePath, caption } = req.body;
+      if (!channelId || (!message && !filePath)) {
+        res.status(400).json({ error: 'channelId and (message or filePath) are required' });
+        return;
+      }
+      if (!slackGateway) {
+        res.status(503).json({ error: 'Slack gateway not connected' });
+        return;
+      }
+      if (filePath) {
+        // SECURITY: Path traversal prevention (same pattern as /api/discord/image)
+        const fsMod = await import('fs/promises');
+        const workspacePath =
+          config.workspace?.path?.replace('~', process.env.HOME || '') ||
+          `${process.env.HOME}/.mama/workspace`;
+        const tempPath = path.join(workspacePath, 'temp');
+        const tmpPath = '/tmp';
+
+        const resolvedFilePath = path.isAbsolute(filePath)
+          ? path.resolve(filePath)
+          : path.resolve(workspacePath, filePath);
+        const normalizedWorkspace = path.resolve(workspacePath);
+        const normalizedTemp = path.resolve(tempPath);
+
+        const isInWorkspace = resolvedFilePath.startsWith(normalizedWorkspace + path.sep);
+        const isInTemp = resolvedFilePath.startsWith(normalizedTemp + path.sep);
+        const isInTmp = resolvedFilePath.startsWith(tmpPath + '/');
+
+        if (!isInWorkspace && !isInTemp && !isInTmp) {
+          console.warn(
+            `[Slack Send] SECURITY: Path traversal blocked: ${filePath} -> ${resolvedFilePath}`
+          );
+          res
+            .status(400)
+            .json({ error: 'File path must be within workspace, workspace/temp, or /tmp' });
+          return;
+        }
+
+        // Block sensitive file types
+        const deniedExtensions = ['.db', '.key', '.pem', '.env', '.sqlite', '.sqlite3'];
+        const ext = path.extname(resolvedFilePath).toLowerCase();
+        if (deniedExtensions.includes(ext)) {
+          console.warn(`[Slack Send] SECURITY: Denied file type blocked: ${ext}`);
+          res.status(400).json({ error: 'File type not allowed' });
+          return;
+        }
+
+        try {
+          await fsMod.access(resolvedFilePath);
+        } catch {
+          res.status(404).json({ error: 'File not found' });
+          return;
+        }
+
+        console.log(`[Slack Send] Sending file to ${channelId}: ${resolvedFilePath}`);
+        await slackGateway.sendFile(channelId, resolvedFilePath, caption);
+      }
+      if (message) {
+        console.log(`[Slack Send] Sending to ${channelId}: ${message.substring(0, 50)}...`);
+        await slackGateway.sendMessage(channelId, message);
+      }
+      console.log(`[Slack Send] Success`);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('[Slack Send] Error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   // Add Discord cron job endpoint (run prompt and send result to Discord)
   apiServer.app.post('/api/discord/cron', async (req, res) => {
     try {
@@ -1946,6 +2063,48 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     console.warn('[seedBuiltinPlaygrounds] Playground seeding failed (non-fatal):', err);
   }
 
+  // === Daemon Log API ===
+  apiServer.app.get('/api/logs/daemon', (req, res) => {
+    const logPath = path.join(homedir(), '.mama', 'logs', 'daemon.log');
+    if (!existsSync(logPath)) {
+      res.status(404).json({ error: 'daemon.log not found' });
+      return;
+    }
+    try {
+      const stat = statSync(logPath);
+      const since = parseInt(req.query.since as string, 10) || 0;
+      if (since > 0 && stat.mtimeMs <= since) {
+        res.status(304).end();
+        return;
+      }
+      const requestedTail = parseInt(req.query.tail as string, 10);
+      const tail = Math.min(Math.max(isNaN(requestedTail) ? 200 : requestedTail, 1), 5000);
+
+      const chunkSize = Math.min(stat.size, tail * 300);
+      const buffer = Buffer.alloc(chunkSize);
+      const fd = openSync(logPath, 'r');
+      try {
+        readSync(fd, buffer, 0, chunkSize, Math.max(0, stat.size - chunkSize));
+      } finally {
+        closeSync(fd);
+      }
+      const raw = buffer.toString('utf-8');
+
+      const allLines = raw.split('\n').filter((l) => l.trim());
+      const lines = allLines.slice(-tail);
+      const isFullFile = chunkSize >= stat.size;
+      res.json({
+        lines,
+        total: isFullFile ? allLines.length : undefined,
+        totalBytes: stat.size,
+        mtime: stat.mtimeMs,
+        truncated: !isFullFile,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   apiServer.app.use('/playgrounds', express.static(playgroundsDir));
 
   apiServer.app.get('/api/playgrounds', (_req, res) => {
@@ -2184,6 +2343,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       // Stop agent loop
       agentLoop.stop();
+
+      // Release all CLI sessions
+      getSessionPool().dispose();
 
       // Close session database
       sessionStore.close();
