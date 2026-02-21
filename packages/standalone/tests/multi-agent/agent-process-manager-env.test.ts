@@ -83,6 +83,7 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('fs', () => ({
   existsSync: vi.fn().mockReturnValue(true),
+  readFileSync: vi.fn().mockReturnValue(''),
 }));
 
 // Now import modules that depend on mocked child_process

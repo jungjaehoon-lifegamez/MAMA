@@ -1,20 +1,48 @@
-export const CODE_ACT_INSTRUCTIONS = `## Code-Act: Optional Programmatic Tool Execution
+export type CodeActBackend = 'claude' | 'codex-mcp';
+
+export function getCodeActInstructions(backend: CodeActBackend): string {
+  const isCodex = backend === 'codex-mcp';
+
+  const blockedToolsSection = isCodex
+    ? `**DO NOT use these built-in tools** (they bypass MAMA's pipeline):
+- \`exec_command\` → use \`code_act({ code: "Bash({command: '...'})" })\` instead
+- \`apply_patch\` → use \`code_act({ code: "Write({file_path: '...', content: '...'})" })\` instead
+- \`request_user_input\` — not available (headless daemon)
+- \`update_plan\` — not available (no plan mode)
+
+`
+    : '';
+
+  const gatewayToolsList = isCodex
+    ? `**USE code_act for ALL gateway tools:**
+- File ops: Read, Write, Edit, Bash
+- Memory: mama_search, mama_save, mama_update
+- Communication: discord_send, slack_send, webchat_send
+- Browser: browser_navigate, browser_click, browser_screenshot
+- System: os_list_bots, os_get_config, os_set_model`
+    : `**USE code_act for these gateway tools** (NOT available as direct tools):
+- Memory: mama_search, mama_save, mama_update
+- Communication: discord_send, slack_send, webchat_send
+- Browser: browser_navigate, browser_click, browser_screenshot
+- System: os_list_bots, os_get_config, os_set_model
+
+**Use your native tools directly** (do NOT wrap in code_act):
+- Read, Write, Edit, Bash — these are your built-in tools, use them normally`;
+
+  return `## Code-Act: Gateway Tool Execution via Sandbox
 
 You have an MCP tool called \`code_act\` that executes JavaScript in a sandboxed environment.
-All gateway tools are available as **synchronous** global functions inside the sandbox.
+The functions listed below are **ONLY available inside code_act** — they are NOT direct MCP tools.
 
-**You also have direct access to Bash, Write, Edit, Read, and other tools.**
-Choose the right approach for each task:
+### IMPORTANT: Tool usage rules
 
-**Use direct tools (Bash, Write, Edit, Read) when:**
-- Writing or editing files (especially large content like HTML)
-- Simple single-step operations
-- Tasks where string escaping matters
+${blockedToolsSection}**USE these MCP tools directly** (normal tool_use calls):
+- \`mcp__code-act__code_act\` — gateway tool execution (see below)
+- \`mcp__brave-search__*\` — web search
+- \`mcp__brave-devtools__*\` — browser control
+- \`mcp__searxng__*\` — search engine
 
-**Use code_act when:**
-- Combining multiple tool results with logic (filter, map, conditionals)
-- Chaining 3+ tool calls where intermediate results feed the next call
-- Data transformation or aggregation across multiple sources
+${gatewayToolsList}
 
 **code_act rules:**
 - Functions are **synchronous** (no async/await needed)
@@ -27,7 +55,13 @@ Choose the right approach for each task:
 code_act({ code: "var results = mama_search({ query: 'auth' }); var topics = results.results.map(function(r) { return r.topic; }); ({ count: topics.length, topics: topics })" })
 \`\`\`
 
-### Available Functions inside code_act
+### Gateway Functions (ONLY inside code_act)
 `;
+}
+
+/**
+ * @deprecated Use getCodeActInstructions(backend) instead
+ */
+export const CODE_ACT_INSTRUCTIONS = getCodeActInstructions('codex-mcp');
 
 export const CODE_ACT_MARKER = 'code_act';

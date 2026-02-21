@@ -11,7 +11,7 @@
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
-import { loadInstalledSkills } from '../agent/agent-loop.js';
+import { loadInstalledSkills, loadBackendAgentsMd } from '../agent/agent-loop.js';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -24,7 +24,7 @@ import { ToolPermissionManager } from './tool-permission-manager.js';
 import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
 import type { EphemeralAgentDef } from './workflow-types.js';
 import { buildBmadPromptBlock } from './bmad-templates.js';
-import { TypeDefinitionGenerator, CODE_ACT_INSTRUCTIONS } from '../agent/code-act/index.js';
+import { TypeDefinitionGenerator, getCodeActInstructions } from '../agent/code-act/index.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -477,6 +477,9 @@ export class AgentProcessManager extends EventEmitter {
     const bmadMs = includeBmadBlock ? Date.now() - bmadStart : 0;
 
     const skillsPrompt = this.buildSkillsPrompt();
+    const agentBackend = this.getAgentBackend(agentConfig, agentId);
+    const backendAgentsMd = loadBackendAgentsMd(agentBackend);
+
     const systemPrompt = `# Agent Identity
 
 You are **${agentConfig.display_name}** (ID: ${agentId}).
@@ -490,7 +493,7 @@ You are **${agentConfig.display_name}** (ID: ${agentId}).
 ## Persona
 ${resolvedPersona}
 
-${bmadBlock}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}${this.buildToolsSection(agentConfig)}
+${bmadBlock}${backendAgentsMd ? `## Backend-Specific Rules\n${backendAgentsMd}\n\n` : ''}${permissionPrompt}${delegationPrompt ? delegationPrompt + '\n' : ''}${reportBackPrompt ? reportBackPrompt + '\n' : ''}${this.buildToolsSection(agentConfig)}
 
 ${skillsPrompt}## Guidelines
 - Stay in character as ${agentConfig.name}
@@ -512,7 +515,9 @@ ${skillsPrompt}## Guidelines
     // Code-Act mode: replace tool_call instructions with Code-Act JS execution
     if (agentConfig.useCodeAct && tier !== 3) {
       const typeDefs = TypeDefinitionGenerator.generate(tier as 1 | 2 | 3);
-      return CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```\n';
+      const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
+      const codeActBackend = backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
+      return getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```\n';
     }
 
     // Default: tool_call JSON block instructions

@@ -20,7 +20,7 @@ import {
   CodeActSandbox,
   HostBridge,
   TypeDefinitionGenerator,
-  CODE_ACT_INSTRUCTIONS,
+  getCodeActInstructions,
   CODE_ACT_MARKER,
 } from './code-act/index.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
@@ -358,6 +358,27 @@ export function loadInstalledSkills(
   return buildSkillCatalog(verbose);
 }
 
+/**
+ * Load backend-specific AGENTS.md from ~/.mama/
+ * Maps backend to file: 'claude' → AGENTS.claude.md, 'codex-mcp' → AGENTS.codex.md
+ */
+export function loadBackendAgentsMd(backend?: string, verbose = false): string {
+  if (!backend) return '';
+  const keyMap: Record<string, string> = {
+    claude: 'claude',
+    'codex-mcp': 'codex',
+  };
+  const key = keyMap[backend];
+  if (!key) return '';
+  const filePath = join(homedir(), '.mama', `AGENTS.${key}.md`);
+  if (existsSync(filePath)) {
+    if (verbose) console.log(`[AgentLoop] Loaded backend AGENTS.md: AGENTS.${key}.md`);
+    return readFileSync(filePath, 'utf-8');
+  }
+  if (verbose) console.log(`[AgentLoop] Backend AGENTS.md not found: AGENTS.${key}.md`);
+  return '';
+}
+
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
@@ -412,6 +433,12 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
         `[AgentLoop] Injecting context prompt for ${context.roleName}@${context.platform}`
       );
     layers.push(contextPrompt);
+  }
+
+  // Load backend-specific AGENTS.md (e.g., AGENTS.claude.md, AGENTS.codex.md)
+  const backendAgentsMd = loadBackendAgentsMd(context?.backend, verbose);
+  if (backendAgentsMd) {
+    layers.push(backendAgentsMd);
   }
 
   // Load CLAUDE.md (base instructions)
@@ -595,11 +622,14 @@ export class AgentLoop {
       ];
     }
 
+    const backend = options.backend ?? 'claude';
     if (useGatewayMode) {
       if (this.useCodeAct) {
         // Code-Act mode: replace verbose gateway tools markdown with compact .d.ts
         const typeDefs = TypeDefinitionGenerator.generate(options.agentContext?.tier ?? 1);
-        const codeActPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
+        const codeActBackend = backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
+        const codeActPrompt =
+          getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
         promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
       } else {
         const gatewayToolsPrompt = getGatewayToolsPrompt();
@@ -648,6 +678,7 @@ export class AgentLoop {
         compactPrompt:
           'Summarize the conversation concisely, preserving key decisions and context.',
         timeoutMs: options.timeoutMs,
+        codexHome: join(homedir(), '.mama', '.codex'),
       });
       logger.debug('Codex MCP backend enabled');
     } else {
@@ -882,11 +913,22 @@ export class AgentLoop {
     let sessionIsNew = options?.resumeSession === undefined ? true : !options.resumeSession;
     let ownedSession = false;
 
-    // Set session ID on the agent (works for both ClaudeCLIWrapper and PersistentCLIAdapter)
+    // Set session ID on the agent
+    // Claude PersistentCLI: process alive → CONTINUE (stdin message), process dead → NEW (spawn with --session-id)
+    // Codex: threadId alive → CONTINUE (codex-reply), threadId null → NEW (codex tool)
+    const isCodex = this.backend === 'codex-mcp';
+
+    const sessionLabel = (isNew: boolean): string => {
+      if (isCodex) {
+        return isNew ? 'NEW thread' : 'CONTINUE thread';
+      }
+      return isNew ? 'NEW process' : 'CONTINUE session';
+    };
+
     if (options?.cliSessionId) {
       this.agent.setSessionId(options.cliSessionId);
       console.log(
-        `[AgentLoop] Using caller session: ${channelKey} → ${options.cliSessionId} (${sessionIsNew ? 'NEW' : 'RESUME'})`
+        `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(sessionIsNew)})`
       );
     } else {
       // Fallback: get session from pool (for direct AgentLoop usage)
@@ -899,7 +941,7 @@ export class AgentLoop {
       ownedSession = true;
       this.agent.setSessionId(cliSessionId);
       console.log(
-        `[AgentLoop] Session pool: ${channelKey} → ${cliSessionId} (${isNew ? 'NEW' : 'RESUME'})`
+        `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(isNew)})`
       );
     }
 
@@ -914,7 +956,9 @@ export class AgentLoop {
         if (this.isGatewayMode && !alreadyHasTools && !isResumingSession) {
           if (this.useCodeAct) {
             const typeDefs = TypeDefinitionGenerator.generate(options?.agentContext?.tier ?? 1);
-            gatewayToolsPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
+            const codeActBackend = this.backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
+            gatewayToolsPrompt =
+              getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
           } else {
             gatewayToolsPrompt = getGatewayToolsPrompt();
           }
@@ -1005,9 +1049,8 @@ export class AgentLoop {
         };
 
         let piResult;
-        // Pass role-specific model and resume flag based on session state
-        // First turn of new session: --session-id (inject system prompt)
-        // Subsequent turns (tool loop) or resumed sessions: --resume (skip system prompt)
+        // Claude: First turn → --session-id (inject system prompt), subsequent → --resume
+        // Codex: resumeSession only controls threadId reset (false=new thread, true=continue)
         const shouldResume = !sessionIsNew || turn > 1;
         // Both Claude PersistentCLI and Codex MCP preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
@@ -1042,8 +1085,7 @@ export class AgentLoop {
             console.log(`[AgentLoop] Session ${reason}, retrying with new session`);
 
             // Reset session in pool so it creates a new one
-            this.sessionPool.resetSession(channelKey);
-            const newSessionId = this.sessionPool.getSessionId(channelKey);
+            const newSessionId = this.sessionPool.resetSession(channelKey);
             this.agent.setSessionId(newSessionId);
 
             // Retry with new session (--session-id instead of --resume)

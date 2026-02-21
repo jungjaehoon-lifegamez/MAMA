@@ -27,7 +27,11 @@ import type {
 } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
-import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
+import {
+  loadComposedSystemPrompt,
+  getGatewayToolsPrompt,
+  loadBackendAgentsMd,
+} from '../agent/agent-loop.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
@@ -190,6 +194,7 @@ export class MessageRouter {
         config.translationTargetLanguage,
         'Korean'
       ),
+      backend: config.backend ?? 'claude',
     };
     this.roleManager = getRoleManager();
     this.promptEnhancer = new PromptEnhancer();
@@ -209,7 +214,7 @@ export class MessageRouter {
     const capabilities = this.roleManager.getCapabilities(role);
     const limitations = this.roleManager.getLimitations(role);
 
-    return createAgentContext(
+    const ctx = createAgentContext(
       message.source,
       roleName,
       role,
@@ -222,6 +227,8 @@ export class MessageRouter {
       capabilities,
       limitations
     );
+    ctx.backend = this.config.backend;
+    return ctx;
   }
 
   /**
@@ -674,6 +681,15 @@ Now the user is responding for the FIRST time. This is their reply to your awake
       prompt += `
 ## Project Knowledge (AGENTS.md)
 ${enhanced.agentsContent}
+`;
+    }
+
+    // Inject backend-specific AGENTS.md (e.g., AGENTS.claude.md)
+    const backendAgentsMd = loadBackendAgentsMd(agentContext?.backend);
+    if (backendAgentsMd) {
+      prompt += `
+## Backend-Specific Rules
+${backendAgentsMd}
 `;
     }
 

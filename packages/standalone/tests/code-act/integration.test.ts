@@ -6,13 +6,15 @@ import { CODE_ACT_INSTRUCTIONS, CODE_ACT_MARKER } from '../../src/agent/code-act
 import { vi } from 'vitest';
 import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function makeExecutor(handler?: (name: string, input: any) => any): GatewayToolExecutor {
   return {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     execute: vi.fn().mockImplementation(async (name: string, input: any) => {
       if (handler) return handler(name, input);
       return { success: true };
     }),
-  } as any;
+  } as unknown as GatewayToolExecutor;
 }
 
 describe('Code-Act Integration', () => {
@@ -113,8 +115,8 @@ describe('Code-Act Integration', () => {
   });
 
   it('CODE_ACT_INSTRUCTIONS includes type definition slot', () => {
-    expect(CODE_ACT_INSTRUCTIONS).toContain('## Available Functions');
-    expect(CODE_ACT_INSTRUCTIONS).toContain('var');
+    expect(CODE_ACT_INSTRUCTIONS).toContain('## Code-Act');
+    expect(CODE_ACT_INSTRUCTIONS).toContain('code_act');
     expect(CODE_ACT_INSTRUCTIONS).toContain('console.log');
   });
 
