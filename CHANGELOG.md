@@ -8,32 +8,32 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Code-Act Sandbox**: QuickJS WASM 기반 JavaScript 샌드박스 엔진
-  - LLM이 코드 실행으로 gateway 도구 호출 가능
-  - Host Bridge: 샌드박스 ↔ MAMA gateway 도구 연결 (Tier 1/2/3 권한 차별화)
-  - MCP Server: stdio `code_act` 도구로 Claude CLI에서 직접 사용
-  - Type Definition Generator: 도구별 `.d.ts` 자동 생성
-- **MAMA Log Viewer**: 빌트인 HTML 플레이그라운드로 데몬 로그 실시간 조회
-- **Daemon Log API**: `GET /api/daemon/logs` 엔드포인트
-- **Slack Send API**: `POST /api/slack/send` — Discord 대비 Slack 파일/메시지 전송
-- **Backend별 AGENTS.md**: `AGENTS.claude.md` / `AGENTS.codex.md` 분리 주입
-- **Playground file_path**: `playground_create`에 `file_path` 파라미터 추가 (대용량 HTML 지원)
+- **Code-Act Sandbox**: QuickJS WASM-based JavaScript sandbox engine
+  - LLM agents can invoke gateway tools via code execution
+  - Host Bridge: sandbox ↔ MAMA gateway tool bridge with Tier 1/2/3 permission differentiation
+  - MCP Server: stdio `code_act` tool for direct use from Claude CLI
+  - Type Definition Generator: auto-generates `.d.ts` per tool
+- **MAMA Log Viewer**: Built-in HTML playground for real-time daemon log viewing
+- **Daemon Log API**: `GET /api/daemon/logs` endpoint with `since` parameter and 304 support
+- **Slack Send API**: `POST /api/slack/send` — Slack file/message sending parity with Discord
+- **Backend-specific AGENTS.md**: Separate `AGENTS.claude.md` / `AGENTS.codex.md` injection per backend
+- **Playground file_path**: Added `file_path` parameter to `playground_create` for large HTML support
 
 ### Changed
 
-- **Tier 차별화**: Tier 2 = read-only + memory-write (`mama_save`/`mama_update`), Tier 3 = strictly read-only
-- **Code-Act API**: Tier 3 (read-only) 권한으로 제한, 인증 필수
-- **ESLint**: `no-explicit-any` 룰 error로 전체 적용
+- **Tier differentiation**: Tier 2 = read-only + memory-write (`mama_save`/`mama_update`), Tier 3 = strictly read-only
+- **Code-Act API**: Restricted to Tier 3 (read-only) permissions, authentication required
+- **ESLint**: `no-explicit-any` rule enforced as error across all packages
 
 ### Fixed
 
-- **Claude API 계약**: `continue`가 `results.push` 건너뛰는 버그 수정
-- **Tier Leak**: `else` 브랜치에서 `currentTier=1` 리셋 누락
-- **Path Traversal**: `/api/slack/send` 경로 순회 방지 (4-layer validation)
-- **Sensitive Files**: Slack 민감 파일 차단 (`.db/.key/.pem/.env/.sqlite`)
-- **Resumed Sessions**: 리줌 세션에서 gateway tools 중복 주입 방지
-- **Backend Fallback**: `process.env.MAMA_BACKEND` fallback 시 동기화
-- **returnType 정확도**: Host-bridge 17개 도구 returnType을 executor 실제 반환 형태에 맞게 수정
+- **Claude API contract**: `continue` no longer skips `results.push`
+- **Tier Leak**: Missing `currentTier=1` reset in `else` branch
+- **Path Traversal**: 4-layer validation on `/api/slack/send` to prevent directory traversal
+- **Sensitive Files**: Block sensitive file types (`.db/.key/.pem/.env/.sqlite`) in Slack send
+- **Resumed Sessions**: Prevent duplicate gateway tools injection on resumed sessions
+- **Backend Fallback**: Sync `process.env.MAMA_BACKEND` on fallback
+- **returnType accuracy**: Fixed 17 host-bridge tool returnTypes to match actual executor return shapes
 
 ### Dependencies
 
