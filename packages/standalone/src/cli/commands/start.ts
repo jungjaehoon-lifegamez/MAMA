@@ -1543,6 +1543,34 @@ export async function runAgentLoop(
     }
   });
 
+  // Add Slack message/file sending endpoint
+  apiServer.app.post('/api/slack/send', async (req, res) => {
+    try {
+      const { channelId, message, filePath, caption } = req.body;
+      if (!channelId || (!message && !filePath)) {
+        res.status(400).json({ error: 'channelId and (message or filePath) are required' });
+        return;
+      }
+      if (!slackGateway) {
+        res.status(503).json({ error: 'Slack gateway not connected' });
+        return;
+      }
+      if (filePath) {
+        console.log(`[Slack Send] Sending file to ${channelId}: ${filePath}`);
+        await slackGateway.sendFile(channelId, filePath, caption);
+      }
+      if (message) {
+        console.log(`[Slack Send] Sending to ${channelId}: ${message.substring(0, 50)}...`);
+        await slackGateway.sendMessage(channelId, message);
+      }
+      console.log(`[Slack Send] Success`);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('[Slack Send] Error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   // Add Discord cron job endpoint (run prompt and send result to Discord)
   apiServer.app.post('/api/discord/cron', async (req, res) => {
     try {
