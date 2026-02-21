@@ -71,7 +71,7 @@ When a user asks to schedule/monitor something periodically, ALWAYS use this API
 
 ## Playground
 
-- **playground_create**(name, html, description?) — Create an interactive HTML playground.
+- **playground_create**(name, html?, file_path?, description?) — Create an interactive HTML playground. Use `file_path` for large HTML instead of inline `html`.
 
 **IMPORTANT:** When the user asks for a playground, explorer, visualizer, interactive tool, or similar, you MUST use this tool.
 Do NOT use Write tool to create HTML files directly — only `playground_create` registers the file in `index.json` so it appears in the Viewer Playground tab.
