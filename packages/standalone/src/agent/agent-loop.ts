@@ -665,8 +665,8 @@ export class AgentLoop {
         dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
-        // Code-Act: block direct Bash/Write/Edit so LLM prefers code_act MCP tool
-        disallowedTools: this.useCodeAct ? ['Bash', 'Write', 'Edit', 'NotebookEdit'] : undefined,
+        // Code-Act: available as optional tool alongside direct tools (no disallowedTools)
+        disallowedTools: undefined,
         // Pass configured timeout (default in PersistentCLI: 120s — too short for complex tasks)
         requestTimeout: options.timeoutMs,
       });

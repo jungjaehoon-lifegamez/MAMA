@@ -270,13 +270,7 @@ export class AgentProcessManager extends EventEmitter {
       options.disallowedTools = permissions.blocked;
     }
 
-    // Code-Act mode: block direct Bash/Write/Edit so LLM uses code_act MCP tool instead.
-    // code_act sandbox has Bash/Read/Write as host functions — accessible through code_act.
-    if (agentConfig.useCodeAct) {
-      const codeActBlocked = ['Bash', 'Write', 'Edit', 'NotebookEdit'];
-      const existing = options.disallowedTools || [];
-      options.disallowedTools = [...new Set([...existing, ...codeActBlocked])];
-    }
+    // Code-Act: available as optional tool alongside direct tools (no forced disallowedTools)
 
     if (agentBackend === 'codex-mcp') {
       const existing = this.codexProcessPool.get(channelKey);
