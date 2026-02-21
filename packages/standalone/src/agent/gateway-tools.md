@@ -71,13 +71,23 @@ When a user asks to schedule/monitor something periodically, ALWAYS use this API
 
 ## Playground
 
-- **playground_create**(name, html?, file_path?, description?) — Create an interactive HTML playground. Use `file_path` for large HTML instead of inline `html`.
+- **playground_create**(name, html?, file_path?, description?) — Create an interactive HTML playground. At least one of `html` or `file_path` is required. If `file_path` is provided, it takes priority over `html`. Use `file_path` for large HTML instead of inline `html`.
 
 **IMPORTANT:** When the user asks for a playground, explorer, visualizer, interactive tool, or similar, you MUST use this tool.
 Do NOT use Write tool to create HTML files directly — only `playground_create` registers the file in `index.json` so it appears in the Viewer Playground tab.
 
+**Inline HTML example:**
+
 ```tool_call
 {"name": "playground_create", "input": {"name": "Color Palette Explorer", "html": "<!doctype html><html>..full HTML..</html>", "description": "Color palette exploration tool"}}
+```
+
+**File path example (preferred for large HTML):**
+
+First write the HTML file to the workspace, then reference it:
+
+```tool_call
+{"name": "playground_create", "input": {"name": "Data Dashboard", "file_path": "~/.mama/workspace/dashboard.html", "description": "Interactive data dashboard"}}
 ```
 
 **HTML requirements:**

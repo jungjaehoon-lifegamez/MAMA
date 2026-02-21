@@ -333,8 +333,8 @@ export MAMA_DB_PATH="$HOME/.claude/mama-memory.db"
 # Server token (for development)
 export MAMA_SERVER_TOKEN="dev-token"
 
-# Server port (default: 3000)
-export MAMA_SERVER_PORT="3000"
+# Server port (default: 3847)
+export MAMA_SERVER_PORT="3847"
 
 # Embedding server port (default: 3849)
 export MAMA_EMBEDDING_PORT="3849"
@@ -344,7 +344,7 @@ export MAMA_EMBEDDING_PORT="3849"
 
 ## HTTP API Endpoints (v0.10.0)
 
-MAMA OS provides **55 HTTP endpoints** for the web dashboard, mobile chat, and programmatic access.
+MAMA OS provides **60 HTTP endpoints** for the web dashboard, mobile chat, and programmatic access.
 
 **Base URL:** `http://localhost:3847` (configurable via `MAMA_SERVER_PORT`)
 
@@ -392,19 +392,21 @@ Save a session checkpoint.
 }
 ```
 
-**Response:** `{ "success": true, "id": 100, "message": "Checkpoint saved successfully" }`
+**Response:** `{ "success": true, "id": 3, "message": "Checkpoint saved successfully" }`
 
 #### GET /api/checkpoint/load
 
 Load the latest active checkpoint.
 
-**Response:** `{ "success": true, "checkpoint": { "id": 100, "timestamp": 1732530000000, "summary": "...", "open_files": [...], "next_steps": "...", "status": "active" } }`
+**Response:** `{ "success": true, "checkpoint": { "id": 3, "timestamp": 1732530000000, "summary": "...", "open_files": [...], "next_steps": "...", "status": "active" } }`
+
+> **Note:** The MCP `load_checkpoint` tool returns `timestamp` in seconds (Unix epoch), while the HTTP API returns milliseconds. The `id` field is a numeric integer in both APIs.
 
 **Error (404):** `{ "error": true, "code": "NO_CHECKPOINT", "message": "No checkpoint found" }`
 
-#### GET /api/checkpoints
+#### GET /checkpoints
 
-List all checkpoints (alias: `GET /checkpoints`).
+List all checkpoints (alias: `GET /api/checkpoints`).
 
 ---
 
@@ -504,7 +506,9 @@ Get a specific job.
 
 Update a job.
 
-**Request:** `{ "name?": "...", "cron_expr?": "...", "prompt?": "...", "enabled?": false }`
+**Request:** `{ "name": "...", "cron_expr": "...", "prompt": "...", "enabled": false }`
+
+All fields are optional.
 
 **Response:** `{ "updated": true }`
 
@@ -768,15 +772,15 @@ Execute JavaScript in a sandboxed QuickJS environment.
 
 ```json
 {
-  "code": "const result = await Read('/path/to/file'); return result;",
+  "code": "const result = await Read('/path/to/file');\nresult;",
   "timeout": 30000
 }
 ```
 
-| Field     | Type   | Required | Description                                          |
-| --------- | ------ | -------- | ---------------------------------------------------- |
-| `code`    | string | Yes      | JavaScript code to execute                           |
-| `timeout` | number | No       | Execution timeout in ms (default: 30000, max: 60000) |
+| Field     | Type   | Required | Description                                                                                                            |
+| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `code`    | string | Yes      | JavaScript code to execute (evaluated as a script, not wrapped in a function — use expression at end for return value) |
+| `timeout` | number | No       | Execution timeout in ms (default: 30000, max: 60000)                                                                   |
 
 **Response:** `{ "success": true, "result": { ... }, "duration": 245 }`
 

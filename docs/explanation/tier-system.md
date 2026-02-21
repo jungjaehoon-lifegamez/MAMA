@@ -6,7 +6,9 @@ The Tier System is MAMA's graceful degradation mechanism. It ensures MAMA always
 
 ## Overview
 
-MAMA operates in **two tiers**:
+MAMA defines multiple tier systems. The first is the **Search Capability Tiers** (2 tiers for graceful degradation), and the second is the **[Tool Permission Tiers](#tool-permission-tiers-multi-agent-system)** (3 tiers for agent access control).
+
+### Search Capability Tiers
 
 | Tier          | Features                        | Accuracy | Latency | Fallback               |
 | ------------- | ------------------------------- | -------- | ------- | ---------------------- |
@@ -309,8 +311,6 @@ function search(query) {
 
 ---
 
----
-
 ## Tool Permission Tiers (Multi-Agent System)
 
 Separate from the search tiers above, the **Multi-Agent System** uses a 3-tier permission model to control which gateway tools each agent can access.
@@ -333,7 +333,7 @@ All gateway tools available: file I/O, bash execution, browser, communication (D
 
 Read-only tools plus memory write tools (`mama_save`, `mama_update`). Cannot execute commands, write files, or send messages.
 
-**Read-only tools:** `mama_search`, `mama_load_checkpoint`, `Read`, `browser_get_text`, `browser_screenshot`, `os_list_bots`, `os_get_config`, `pr_review_threads`
+**Read-only tools:** `mama_search`, `mama_load_checkpoint`, `Read`, `Grep`, `Glob`, `WebSearch`, `WebFetch`, `browser_get_text`, `browser_screenshot`, `os_list_bots`, `os_get_config`, `pr_review_threads`
 
 **Additional for Tier 2:** `mama_save`, `mama_update`
 

@@ -22,6 +22,7 @@ import {
   TypeDefinitionGenerator,
   getCodeActInstructions,
   CODE_ACT_MARKER,
+  type ExecutionResult,
 } from './code-act/index.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
@@ -1586,10 +1587,7 @@ export class AgentLoop {
   /**
    * Execute Code-Act JS code in a sandboxed QuickJS environment
    */
-  private async executeCodeAct(
-    code: string,
-    tier: 1 | 2 | 3 = 1
-  ): Promise<import('./code-act/types.js').ExecutionResult> {
+  private async executeCodeAct(code: string, tier: 1 | 2 | 3 = 1): Promise<ExecutionResult> {
     try {
       const sandbox = new CodeActSandbox();
       const bridge = new HostBridge(this.mcpExecutor);
