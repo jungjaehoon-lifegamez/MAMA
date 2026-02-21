@@ -143,11 +143,13 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - **Agent Loop:** Autonomous conversation handling with Claude API
 - **Gateway Integrations:** Discord, Slack, Telegram bot support
 - **Multi-Agent Swarm:** 3-tier agent hierarchy with delegation and UltraWork mode
+- **Code-Act Sandbox:** QuickJS-based sandboxed code execution for agents (Tier 3 safe)
 - **Onboarding Wizard:** 10-phase autonomous discovery
 - **Cron Scheduler:** Scheduled task execution with heartbeat
-- **MAMA OS Viewer:** Graph viewer and mobile chat interface
+- **MAMA OS Viewer:** Graph viewer, mobile chat, and Log Viewer v2
 - **CLI Commands:** `mama init`, `start`, `stop`, `status`, `run`, `setup`
 - **Runtime Ownership:** Hosts API/UI on `3847` and embedding/chat services on `3849`
+- **Binaries:** `mama` (main CLI), `mama-code-act-mcp` (Code-Act MCP subprocess)
 
 **Dependencies:**
 
@@ -155,6 +157,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - `@anthropic-ai/sdk` - Claude API integration
 - `discord.js`, `@slack/bolt`, `node-telegram-bot-api` - Gateway integrations
 - `express`, `ws` - HTTP/WebSocket server
+- `quickjs-emscripten`, `@jitl/quickjs-wasmfile-release-asyncify` - QuickJS sandbox for Code-Act
 
 **Distribution:** npm package (`@jungjaehoon/mama-os`)
 
@@ -271,7 +274,7 @@ Each package has independent versioning:
 - **mama-core:** 1.1.4 (stable API)
 - **mama-server:** 1.7.6 (follows MAMA version)
 - **claude-code-plugin:** 1.7.13 (follows MAMA version)
-- **mama-os:** 0.9.5 (standalone agent)
+- **mama-os:** 0.10.0 (standalone agent)
 
 ## Distribution Strategy
 
@@ -344,6 +347,23 @@ Existing decisions remain valid across all package updates. SQLite schema change
 
 ## Migration History
 
+### mama-os-0.10.0 (2026-02-22): Code-Act Sandbox & Log Viewer v2
+
+**Changes:**
+
+- Added Code-Act QuickJS sandbox for safe agent code execution
+- Added `mama-code-act-mcp` binary for subprocess isolation
+- Added Log Viewer v2 with real-time daemon log streaming
+- Added backend-specific AGENTS.md injection (AGENTS.claude.md, AGENTS.codex.md)
+- Added 3-tier tool permission enforcement for Code-Act API
+- 55 HTTP API endpoints (45 newly documented)
+
+**Benefits:**
+
+- Agents can execute code safely without shell access (Tier 3 compatible)
+- Real-time log monitoring via Viewer UI
+- Backend-specific instructions prevent tool confusion across Claude/Codex
+
 ### mama-os-0.1.0 (2026-02-01): Five-Package Architecture
 
 **Changes:**
@@ -411,4 +431,4 @@ Existing decisions remain valid across all package updates. SQLite schema change
 
 ---
 
-**Last Updated:** 2026-02-14
+**Last Updated:** 2026-02-22

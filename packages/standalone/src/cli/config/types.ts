@@ -363,6 +363,8 @@ export interface AgentPersonaConfig {
   tool_permissions?: { allowed?: string[]; blocked?: string[] };
   /** Git identity for commits made by this agent */
   git_identity?: { name: string; email: string };
+  /** Enable Code-Act sandbox mode for this agent */
+  useCodeAct?: boolean;
 }
 
 /**

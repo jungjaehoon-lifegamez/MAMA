@@ -25,7 +25,7 @@
   },
   "overrides": [
     {
-      "files": ["**/tests/**/*.js", "**/*.test.js"],
+      "files": ["**/tests/**/*.js", "**/*.test.js", "**/tests/**/*.ts", "**/*.test.ts"],
       "env": {
         "node": true,
         "es2022": true
@@ -60,7 +60,7 @@
             "varsIgnorePattern": "^_"
           }
         ],
-        "@typescript-eslint/no-explicit-any": "warn",
+        "@typescript-eslint/no-explicit-any": "error",
         "@typescript-eslint/no-require-imports": "warn"
       }
     }

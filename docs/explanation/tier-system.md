@@ -6,12 +6,14 @@ The Tier System is MAMA's graceful degradation mechanism. It ensures MAMA always
 
 ## Overview
 
-MAMA operates in **two tiers**:
+MAMA defines multiple tier systems. The first is the **Search Capability Tiers** (2 tiers for graceful degradation), and the second is the **[Tool Permission Tiers](#tool-permission-tiers-multi-agent-system)** (3 tiers for agent access control).
 
-| Tier | Features | Accuracy | Latency | Fallback |
-|------|----------|----------|---------|----------|
-| **🟢 Tier 1** | Vector search + Graph + Recency | 80% | ~89ms | Always attempted first |
-| **🟡 Tier 2** | Exact match (SQL LIKE) | 40% | ~12ms | Automatic fallback |
+### Search Capability Tiers
+
+| Tier          | Features                        | Accuracy | Latency | Fallback               |
+| ------------- | ------------------------------- | -------- | ------- | ---------------------- |
+| **🟢 Tier 1** | Vector search + Graph + Recency | 80%      | ~89ms   | Always attempted first |
+| **🟡 Tier 2** | Exact match (SQL LIKE)          | 40%      | ~12ms   | Automatic fallback     |
 
 **Transparency:** MAMA always shows which tier is active.
 
@@ -132,6 +134,7 @@ All search results show tier status:
 ### Example Query: "How should I handle authentication?"
 
 **Tier 1 results:**
+
 ```
 1. auth_strategy (90% match) - JWT with refresh tokens
 2. session_management (78% match) - Cookie-based sessions
@@ -139,6 +142,7 @@ All search results show tier status:
 ```
 
 **Tier 2 results:**
+
 ```
 1. auth_strategy (exact match) - JWT with refresh tokens
 (No other results - "authentication" doesn't exactly match other topics)
@@ -190,16 +194,19 @@ node --version
 ### Step 2: Install Build Tools
 
 **Ubuntu/Debian:**
+
 ```bash
 sudo apt-get install build-essential python3
 ```
 
 **macOS:**
+
 ```bash
 xcode-select --install
 ```
 
 **Windows:**
+
 ```bash
 npm install --global windows-build-tools
 ```
@@ -234,12 +241,14 @@ npm rebuild better-sqlite3
 ### Why Not Just Fail?
 
 **Bad approach:**
+
 ```
 Error: Embedding model failed to load
 MAMA is unavailable
 ```
 
 **Good approach (our implementation):**
+
 ```
 🟡 Tier 2 (Exact Match Only)
 MAMA continues working with reduced accuracy
@@ -271,9 +280,9 @@ function search(query) {
   const tier = getTier();
 
   if (tier === 'tier1') {
-    return vectorSearch(query);  // 80% accuracy
+    return vectorSearch(query); // 80% accuracy
   } else {
-    return exactMatchSearch(query);  // 40% accuracy
+    return exactMatchSearch(query); // 40% accuracy
   }
 }
 ```
@@ -302,9 +311,58 @@ function search(query) {
 
 ---
 
+## Tool Permission Tiers (Multi-Agent System)
+
+Separate from the search tiers above, the **Multi-Agent System** uses a 3-tier permission model to control which gateway tools each agent can access.
+
+### Overview
+
+| Tier       | Name                | Tools Available                              | Use Case                                    |
+| ---------- | ------------------- | -------------------------------------------- | ------------------------------------------- |
+| **Tier 1** | Full Access         | All gateway tools                            | Conductor, trusted agents                   |
+| **Tier 2** | Read + Memory Write | Read-only tools + `mama_save`, `mama_update` | Advisory agents that need to save decisions |
+| **Tier 3** | Read-Only           | Read-only tools only                         | Code-Act API, untrusted contexts            |
+
+### Tier 1: Full Access
+
+All gateway tools available: file I/O, bash execution, browser, communication (Discord/Slack/webchat), OS management, memory, and playgrounds.
+
+**Agents:** Conductor and agents with `tier: 1` in persona config. Can also delegate tasks (`can_delegate: true`).
+
+### Tier 2: Read + Memory Write
+
+Read-only tools plus memory write tools (`mama_save`, `mama_update`). Cannot execute commands, write files, or send messages.
+
+**Read-only tools:** `mama_search`, `mama_load_checkpoint`, `Read`, `Grep`, `Glob`, `WebSearch`, `WebFetch`, `browser_get_text`, `browser_screenshot`, `os_list_bots`, `os_get_config`, `pr_review_threads`
+
+**Additional for Tier 2:** `mama_save`, `mama_update`
+
+### Tier 3: Strictly Read-Only
+
+Only read-only tools. Used for unauthenticated or untrusted contexts like the Code-Act HTTP API endpoint.
+
+### Configuration
+
+Set tier in agent persona config (`~/.mama/agents/`):
+
+```yaml
+tier: 2 # 1, 2, or 3 (default: 1)
+```
+
+Or via API:
+
+```bash
+curl -X PUT http://localhost:3847/api/multi-agent/agents/reviewer \
+  -H "Content-Type: application/json" \
+  -d '{"tier": 2}'
+```
+
+---
+
 ## See Also
 
-- [Tier 2 Remediation Guide](../guides/tier-2-remediation.md) - How to upgrade to Tier 1
+- [Tier 2 Remediation Guide](../guides/tier-2-remediation.md) - How to upgrade search to Tier 1
 - [Understanding Tiers Tutorial](../tutorials/understanding-tiers.md) - User-facing guide
 - [Performance Characteristics](performance.md) - Latency comparison
 - [Architecture](architecture.md) - Tier detection implementation
+- [Security Guide](../guides/security.md) - Code-Act sandbox security
