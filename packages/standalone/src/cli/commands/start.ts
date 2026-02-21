@@ -1979,7 +1979,8 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         res.status(304).end();
         return;
       }
-      const tail = Math.min(parseInt(req.query.tail as string) || 200, 5000);
+      const requestedTail = parseInt(req.query.tail as string);
+      const tail = Math.min(Math.max(isNaN(requestedTail) ? 200 : requestedTail, 1), 5000);
 
       const chunkSize = Math.min(stat.size, tail * 300);
       const buffer = Buffer.alloc(chunkSize);
