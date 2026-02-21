@@ -88,6 +88,10 @@ export interface PersistentProcessOptions {
   allowedTools?: string[];
   /** Structurally disallowed tools (--disallowedTools CLI flag) */
   disallowedTools?: string[];
+  /** Override built-in tool set (--tools CLI flag). Use "" to disable all tools. */
+  tools?: string;
+  /** Override plugin directory (--plugin-dir CLI flag). Use empty dir to disable plugins. */
+  pluginDir?: string;
   /** Optional callback for recording token usage */
   onTokenUsage?: (record: TokenUsageRecord) => void;
   /** Channel key for token usage tracking */
@@ -321,6 +325,16 @@ export class PersistentClaudeProcess extends EventEmitter {
 
     if (this.options.dangerouslySkipPermissions) {
       args.push('--dangerously-skip-permissions');
+    }
+
+    // Override built-in tool set (e.g. --tools "" to disable all)
+    if (this.options.tools !== undefined) {
+      args.push('--tools', this.options.tools);
+    }
+
+    // Override plugin directory (e.g. empty dir to disable all plugins)
+    if (this.options.pluginDir) {
+      args.push('--plugin-dir', this.options.pluginDir);
     }
 
     // Structural tool enforcement via CLI flags
