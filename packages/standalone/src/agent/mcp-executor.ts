@@ -272,9 +272,14 @@ export class MCPExecutor {
       const decisions = await api.listDecisions({ limit });
       let results = Array.isArray(decisions) ? decisions : [];
 
-      // Filter by type if specified
+      // Filter by type: DB records don't have a 'type' field, infer from id prefix
       if (type && type !== 'all') {
-        results = results.filter((item: unknown) => (item as { type?: string }).type === type);
+        results = results.filter((item: unknown) => {
+          const id = (item as { id?: string }).id ?? '';
+          if (type === 'decision') return id.startsWith('decision_');
+          if (type === 'checkpoint') return id.startsWith('checkpoint_');
+          return true;
+        });
       }
 
       return {
@@ -287,11 +292,16 @@ export class MCPExecutor {
     // Semantic search using suggest
     const result = await api.suggest(query, { limit });
 
-    // Filter by type if specified
+    // Filter by type: DB records don't have a 'type' field, infer from id prefix
     let filteredResults = result.results ?? [];
 
     if (type && type !== 'all') {
-      filteredResults = filteredResults.filter((item: { type?: string }) => item.type === type);
+      filteredResults = filteredResults.filter((item: { id?: string }) => {
+        const id = item.id ?? '';
+        if (type === 'decision') return id.startsWith('decision_');
+        if (type === 'checkpoint') return id.startsWith('checkpoint_');
+        return true;
+      });
     }
 
     return {

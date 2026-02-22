@@ -326,18 +326,16 @@ const WS_RECONNECT_DELAY = 3000;
 const WS_MAX_RETRIES = 5;
 const HISTOGRAM_BUCKETS = 30;
 
-const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1')
-  ? 'http://localhost:3847'
-  : location.protocol + '//' + location.host;
-
-const WS_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1')
+// Use same-origin by default so custom host/IP + non-default port keeps working.
+const API_BASE = location.protocol === 'file:' ? 'http://localhost:3847' : '';
+const WS_URL = location.protocol === 'file:'
   ? 'ws://localhost:3847/ws'
   : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
 
 const S = {
   logs: [], autoScroll: true, selected: new Set(), lastClickIdx: -1,
   live: false, paused: false, pollTimer: null, lastMtime: 0, lastTotal: 0,
-  initialized: false, prevCount: 0, rateHistory: [], totalReceived: 0,
+  initialized: false, prevCount: 0, rateHistory: [],
   levels: {error: true, warn: true, info: true, debug: true}, showGraph: true,
   sourceCounts: {}, channelCounts: {},
   activeSources: null, excludedSources: new Set(),
@@ -354,7 +352,7 @@ const $ = (id) => document.getElementById(id);
 const logArea = $('logArea');
 let emptyState = $('emptyState');
 
-function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function sourceClass(src) { return src ? 'src-' + src.toLowerCase().replace(/[^a-z]/g, '') : ''; }
 function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
@@ -531,14 +529,11 @@ function addLines(rawLines, isInitial) {
   const base = S.logs.length;
   const frag = document.createDocumentFragment();
 
-  let lineNum = base;
   for (let i = 0; i < rawLines.length; i++) {
     if (!rawLines[i].trim()) continue;
-    const entry = parseLine(rawLines[i], lineNum);
-    lineNum++;
+    const entry = parseLine(rawLines[i], base + i);
     if (!isInitial) entry.isNew = true;
     S.logs.push(entry);
-    S.totalReceived++;
     const div = renderLine(entry, searchRe);
     let show = shouldShow(entry);
     if (show && searchRe) { searchRe.lastIndex = 0; show = searchRe.test(entry.raw); }
@@ -549,37 +544,11 @@ function addLines(rawLines, isInitial) {
   logArea.appendChild(frag);
 
   while (logArea.children.length > MAX_LINES) logArea.removeChild(logArea.firstChild);
+  while (S.logs.length > MAX_LINES) S.logs.shift();
 
-  let trimmedCount = 0;
-  while (S.logs.length > MAX_LINES) {
-    S.logs.shift();
-    trimmedCount++;
-  }
-
-  if (trimmedCount > 0) {
-    const newPins = new Set();
-    S.pins.forEach((idx) => {
-      if (idx >= trimmedCount) newPins.add(idx - trimmedCount);
-    });
-    S.pins = newPins;
-
-    const newSelected = new Set();
-    S.selected.forEach((idx) => {
-      if (idx >= trimmedCount) newSelected.add(idx - trimmedCount);
-    });
-    S.selected = newSelected;
-
-    S.sourceCounts = {};
-    S.channelCounts = {};
-    S.logs.forEach((entry) => {
-      if (entry.source) S.sourceCounts[entry.source] = (S.sourceCounts[entry.source] || 0) + 1;
-      if (entry.channel) S.channelCounts[entry.channel] = (S.channelCounts[entry.channel] || 0) + 1;
-    });
-
-    for (let j = 0; j < S.logs.length; j++) S.logs[j].n = j;
-    const rows = logArea.querySelectorAll('.ll');
-    for (let k = 0; k < rows.length; k++) rows[k].setAttribute('data-idx', k);
-  }
+  for (let j = 0; j < S.logs.length; j++) S.logs[j].n = j;
+  const rows = logArea.querySelectorAll('.ll');
+  for (let k = 0; k < rows.length; k++) rows[k].setAttribute('data-idx', k);
 
   $('stTotal').textContent = S.logs.length;
   const vis = logArea.querySelectorAll('.ll:not(.hidden)').length;
@@ -591,8 +560,25 @@ function addLines(rawLines, isInitial) {
   if (S.statsDashOpen) updateStatsDashboard();
 }
 
+function diffTailLines(snapshotLines) {
+  if (!Array.isArray(snapshotLines) || snapshotLines.length === 0) return [];
+  const existing = S.logs.map((l) => l.raw);
+  const maxOverlap = Math.min(existing.length, snapshotLines.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    let same = true;
+    for (let i = 0; i < overlap; i++) {
+      if (existing[existing.length - overlap + i] !== snapshotLines[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return snapshotLines.slice(overlap);
+  }
+  return snapshotLines;
+}
+
 function updateRate() {
-  const now = S.totalReceived;
+  const now = S.logs.length;
   const diff = now - S.prevCount;
   S.prevCount = now;
   S.rateHistory.push(diff);
@@ -619,32 +605,40 @@ function fetchLogs() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).then((data) => {
+    const hasTotal = Number.isFinite(data.total);
+    const displayTotal = hasTotal ? data.total : (data.truncated ? '~' + data.lines.length : data.lines.length);
     const modeLabel = S.wsMode ? 'WS+Poll' : 'Polling';
-    setStatus('connected', modeLabel + ' (' + (parseInt($('intervalSel').value) / 1000) + 's) \u2022 ' + data.total + ' total');
-    if (data.fileSize) $('fileInfo').textContent = (data.fileSize / 1024 / 1024).toFixed(1) + 'MB';
+    setStatus('connected', modeLabel + ' (' + (parseInt($('intervalSel').value) / 1000) + 's) \u2022 ' + displayTotal + ' total');
+    const bytes = data.totalBytes || data.fileSize;
+    if (bytes) $('fileInfo').textContent = (bytes / 1024 / 1024).toFixed(1) + 'MB';
 
     if (!S.initialized) {
       addLines(data.lines, true);
       S.lastMtime = data.mtime;
-      S.lastTotal = data.total;
+      S.lastTotal = hasTotal ? data.total : data.lines.length;
       S.initialized = true;
     } else if (data.mtime > S.lastMtime) {
-      const newCount = data.total - S.lastTotal;
-      if (S.ws && S.ws.readyState === WebSocket.OPEN) {
-        S.lastMtime = data.mtime;
-        S.lastTotal = data.total;
-      } else if (newCount > 0 && newCount <= MAX_INCREMENTAL_LINES) {
-        addLines(data.lines.slice(-newCount), false);
-        S.lastMtime = data.mtime;
-        S.lastTotal = data.total;
-      } else if (newCount > MAX_INCREMENTAL_LINES) {
-        S.logs = []; S.sourceCounts = {}; S.channelCounts = {};
-        S.pins = new Set(); S.selected = null;
-        logArea.innerHTML = '';
-        addLines(data.lines, true);
-        S.lastMtime = data.mtime;
-        S.lastTotal = data.total;
+      if (hasTotal && Number.isFinite(S.lastTotal)) {
+        const newCount = data.total - S.lastTotal;
+        if (newCount > 0 && newCount <= MAX_INCREMENTAL_LINES) {
+          addLines(data.lines.slice(-newCount), false);
+        } else if (newCount > MAX_INCREMENTAL_LINES) {
+          S.logs = []; S.sourceCounts = {}; S.channelCounts = {};
+          logArea.innerHTML = '';
+          addLines(data.lines, true);
+        }
+      } else {
+        const incremental = diffTailLines(data.lines);
+        if (incremental.length > 0 && incremental.length <= MAX_INCREMENTAL_LINES) {
+          addLines(incremental, false);
+        } else if (incremental.length > MAX_INCREMENTAL_LINES) {
+          S.logs = []; S.sourceCounts = {}; S.channelCounts = {};
+          logArea.innerHTML = '';
+          addLines(data.lines, true);
+        }
       }
+      S.lastMtime = data.mtime;
+      S.lastTotal = hasTotal ? data.total : data.lines.length;
     }
     updateRate();
   }).catch((e) => {
@@ -673,12 +667,6 @@ function stopPolling() {
 function connectWS() {
   if (S.ws && (S.ws.readyState === WebSocket.OPEN || S.ws.readyState === WebSocket.CONNECTING)) return;
 
-  // Stop polling to prevent duplicate logs
-  if (S.pollTimer) {
-    clearInterval(S.pollTimer);
-    S.pollTimer = null;
-  }
-
   S.wsMode = true;
   $('wsBtn').classList.add('ws-mode');
   setStatus('connecting', 'WS connecting...');
@@ -702,22 +690,13 @@ function connectWS() {
       if (data.type === 'log' && data.line) {
         if (emptyState && emptyState.parentNode) emptyState.remove();
         addLines([data.line], false);
-        // Update mtime/total to prevent polling duplicates
-        if (data.mtime) S.lastMtime = data.mtime;
-        if (data.total) S.lastTotal = data.total;
-        updateRate();
       } else if (data.type === 'logs' && data.lines) {
         addLines(data.lines, !S.initialized);
         S.initialized = true;
-        // Update mtime/total to prevent polling duplicates
-        if (data.mtime) S.lastMtime = data.mtime;
-        if (data.total) S.lastTotal = data.total;
-        updateRate();
       }
     } catch (e) {
       if (typeof evt.data === 'string' && evt.data.trim()) {
         addLines([evt.data], false);
-        updateRate();
       }
     }
   };
@@ -752,7 +731,7 @@ function disconnectWS() {
 function fallbackToPolling(reason) {
   disconnectWS();
   setStatus('disconnected', 'WS failed: ' + reason + ' \u2014 switching to polling');
-  if (S.live) startPolling();
+  if (!S.live) startPolling();
 }
 
 /* ===== Export ===== */
@@ -1168,7 +1147,7 @@ $('selCopy').addEventListener('click', () => {
 $('selSend').addEventListener('click', () => {
   const text = getSelectedText();
   const msg = '[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + S.selected.size + '\uc904]:\n```\n' + text + '\n```';
-  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, location.origin);
+  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, '*');
   S.selected.clear();
   logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
   updateSelectionBar();
@@ -1195,14 +1174,12 @@ $('autoBtn').addEventListener('click', function() {
   if (S.autoScroll) logArea.scrollTop = logArea.scrollHeight;
 });
 $('clearBtn').addEventListener('click', () => {
-  S.logs = []; S.selected.clear(); S.pins.clear(); S.lastMtime = 0; S.lastTotal = 0; S.initialized = false;
-  S.prevCount = 0; S.rateHistory = []; S.totalReceived = 0; S.sourceCounts = {}; S.channelCounts = {};
+  S.logs = []; S.selected.clear(); S.lastMtime = 0; S.lastTotal = 0; S.initialized = false;
+  S.prevCount = 0; S.rateHistory = []; S.sourceCounts = {}; S.channelCounts = {};
   logArea.innerHTML = '<div class="empty" id="emptyState"><div class="ico">&#128203;</div><p>Cleared</p></div>';
   emptyState = $('emptyState');
   $('stTotal').textContent = '0'; $('stShown').textContent = '0';
   $('rateBadge').textContent = '0 l/s'; $('modStats').innerHTML = '';
-  savePins();
-  updatePinUI();
   updateSelectionBar();
   updateMinimap();
   if (S.statsDashOpen) updateStatsDashboard();
@@ -1313,7 +1290,7 @@ $('promptSend').addEventListener('click', () => {
     S.selected.forEach((idx) => { if (S.logs[idx]) selLogs.push(S.logs[idx].raw); });
     msg += '\n\n[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + selLogs.length + '\uc904]:\n```\n' + selLogs.join('\n') + '\n```';
   }
-  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, location.origin);
+  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, '*');
   $('promptInput').value = '';
 });
 $('promptCopy').addEventListener('click', () => {
@@ -1329,7 +1306,6 @@ $('promptCopy').addEventListener('click', () => {
 });
 
 window.addEventListener('message', (e) => {
-  if (e.origin !== location.origin && e.source !== window.parent) return;
   if (e.data && e.data.type === 'mama:logs') {
     const lines = e.data.content.split('\n').filter((l) => l.trim());
     addLines(lines, true);
