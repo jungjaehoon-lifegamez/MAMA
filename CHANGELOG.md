@@ -8,16 +8,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **`SemanticEdgeItem` interface**: Typed decision graph edges replacing `unknown[]` — `from_id`, `to_id`, `topic`, `decision`, `confidence`, `created_at`, `reason`
-- **`DecisionEdgeRow` interface**: Typed `decision_edges` table rows for `DecisionRecord.edges`
-- **`ConversationMessage` interface**: Typed checkpoint conversation history replacing `unknown[]`
-- **`RecallGraphResult` interface**: Typed return for `recall()` function
-- **`GatewaySessionStore` interface**: Typed session store replacing `any` in `GatewayToolExecutor`
+- **Code-Act sandbox tool visibility**: Viewer reasoning header now shows which tools Codex used (e.g., `mama_search`, `Read`, `Bash`) via `onToolUse` callbacks from HostBridge
+- **Shared MAMA tool handlers** (`mama-tool-handlers.ts`): Extracted `handleSave`, `handleSearch`, `handleUpdate`, `handleLoadCheckpoint` — eliminates duplication between `MCPExecutor` and `GatewayToolExecutor`
+- **Type interfaces**: `SemanticEdgeItem`, `DecisionEdgeRow`, `ConversationMessage`, `RecallGraphResult`, `GatewaySessionStore` — replacing `any`/`unknown[]` throughout
 
 ### Changed
 
-- **Shared MAMA tool handlers**: Extracted `handleSave`, `handleSearch`, `handleUpdate`, `handleLoadCheckpoint` into `mama-tool-handlers.ts` — eliminates duplication between `MCPExecutor` and `GatewayToolExecutor`
 - **Codex streaming optimization**: Simplified system prompt loading, removed `state.json` dependency, conditional `ONBOARDING.md` loading
+- **Multi-agent system prompt**: `buildToolsSection()` now uses full `gateway-tools.md` instead of hardcoded 5-tool subset — fixes Codex OS agent not knowing available tools on startup
 - **Context injection**: Skip `getRelevantContext()` on CONTINUE turns for lower token overhead
 - **Gateway tools cache**: Cache `getGatewayToolsPrompt()` in production, hot-reload in dev
 - **`formatContextForPrompt` hoisted**: 3 calls → 1 call per message route
@@ -26,6 +24,9 @@ All notable changes to this project will be documented in this file.
 
 - **mama_save checkpoint crash**: `sessionStore.getRecentMessages()` didn't exist — `any` type hid the error at compile time. Replaced with `getHistory('current')`
 - **vectorSearch feature detection**: `getPreparedStmt('vectorSearch')` passed non-SQL to SQLite causing syntax error warnings on every search. Replaced with `adapter.vectorSearchEnabled`
+- **checkpoint search**: `mama_search(type='checkpoint')` returned 0 results because it queried decisions table. Now routes to `loadCheckpoint()` for correct checkpoints table
+- **Gateway tool result consistency**: `updateOutcome()`, `saveCheckpoint()`, `loadCheckpoint()` now all return `{ success: true }` — prevents HostBridge from treating valid results as failures
+- **loadCheckpoint HostBridge compatibility**: Added `success` field to raw DB checkpoint results
 - **Type safety**: Removed `any`/`unknown[]` casts throughout `mama-core` — `SemanticEdges`, `addEdge`, `querySemanticEdges` usage, `RawSemanticEdge` eliminated
 - **PR #41 code review fixes** (4 rounds):
   - `esc()` quote escaping for attribute injection safety
