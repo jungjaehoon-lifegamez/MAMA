@@ -172,6 +172,7 @@ export class MessageRouter {
   private config: Required<MessageRouterConfig>;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
+  private cachedGatewayToolsPrompt: string | null = null;
 
   constructor(
     sessionStore: SessionStore,
@@ -352,7 +353,6 @@ This protects your credentials from being exposed in chat logs.`;
     // 4-6. Build system prompt
     // CONTINUE turns: Codex server retains full conversation via threadId,
     // so skip expensive prompt rebuilding (embedding search, DB history, etc.)
-    const context = await this.contextInjector.getRelevantContext(message.text);
     let systemPrompt: string;
 
     // Always enhance for per-message skill/keyword injection
@@ -362,10 +362,14 @@ This protects your credentials from being exposed in chat logs.`;
       : undefined;
     const enhanced = await this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
 
+    // CONTINUE: skip expensive embedding search — Codex retains full conversation via threadId
+    const context = isNewCliSession
+      ? await this.contextInjector.getRelevantContext(message.text)
+      : { prompt: '', decisions: [], hasContext: false };
+
     if (!isNewCliSession) {
-      // CONTINUE: minimal — only high-relevance context hints (no full rebuild)
-      systemPrompt = context.hasContext ? context.prompt : '';
-      logger.info(`CONTINUE turn: ${systemPrompt.length} chars context only`);
+      systemPrompt = '';
+      logger.info('CONTINUE turn: skipping context injection');
     } else {
       // NEW session: full prompt build
       const sessionStartupContext = await this.contextInjector.getSessionStartupContext();
@@ -742,9 +746,11 @@ ${historyContext}
 
     // Include gateway tools directly in system prompt (priority 1 protection)
     // so they don't get truncated by PromptSizeMonitor as a separate layer
-    const gatewayTools = getGatewayToolsPrompt();
-    if (gatewayTools) {
-      prompt += `\n---\n\n${gatewayTools}\n`;
+    if (this.cachedGatewayToolsPrompt === null) {
+      this.cachedGatewayToolsPrompt = getGatewayToolsPrompt() || '';
+    }
+    if (this.cachedGatewayToolsPrompt) {
+      prompt += `\n---\n\n${this.cachedGatewayToolsPrompt}\n`;
     }
 
     return prompt;

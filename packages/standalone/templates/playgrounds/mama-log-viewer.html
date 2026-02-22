@@ -331,10 +331,11 @@ const API_BASE = location.protocol === 'file:' ? 'http://localhost:3847' : '';
 const WS_URL = location.protocol === 'file:'
   ? 'ws://localhost:3847/ws'
   : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+const POST_MSG_ORIGIN = location.protocol === 'file:' ? '*' : location.origin;
 
 const S = {
   logs: [], autoScroll: true, selected: new Set(), lastClickIdx: -1,
-  live: false, paused: false, pollTimer: null, lastMtime: 0, lastTotal: 0,
+  live: false, paused: false, pollTimer: null, lastMtime: 0, lastTotal: 0, lastHadTotal: false,
   initialized: false, prevCount: 0, rateHistory: [],
   levels: {error: true, warn: true, info: true, debug: true}, showGraph: true,
   sourceCounts: {}, channelCounts: {},
@@ -554,6 +555,9 @@ function addLines(rawLines, isInitial) {
     };
     S.pins = shiftSet(S.pins);
     S.selected = shiftSet(S.selected);
+    if (S.lastClickIdx >= 0) {
+      S.lastClickIdx = Math.max(-1, S.lastClickIdx - excess);
+    }
   }
 
   for (let j = 0; j < S.logs.length; j++) S.logs[j].n = j;
@@ -1159,7 +1163,7 @@ $('selCopy').addEventListener('click', () => {
 $('selSend').addEventListener('click', () => {
   const text = getSelectedText();
   const msg = '[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + S.selected.size + '\uc904]:\n```\n' + text + '\n```';
-  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, location.protocol === 'file:' ? '*' : location.origin);
+  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, POST_MSG_ORIGIN);
   S.selected.clear();
   logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
   updateSelectionBar();
@@ -1186,7 +1190,8 @@ $('autoBtn').addEventListener('click', function() {
   if (S.autoScroll) logArea.scrollTop = logArea.scrollHeight;
 });
 $('clearBtn').addEventListener('click', () => {
-  S.logs = []; S.selected.clear(); S.lastMtime = 0; S.lastTotal = 0; S.initialized = false;
+  S.logs = []; S.selected.clear(); S.pins.clear(); S.lastClickIdx = -1;
+  S.lastMtime = 0; S.lastTotal = 0; S.lastHadTotal = false; S.initialized = false;
   S.prevCount = 0; S.rateHistory = []; S.sourceCounts = {}; S.channelCounts = {};
   logArea.innerHTML = '<div class="empty" id="emptyState"><div class="ico">&#128203;</div><p>Cleared</p></div>';
   emptyState = $('emptyState');
@@ -1302,7 +1307,7 @@ $('promptSend').addEventListener('click', () => {
     S.selected.forEach((idx) => { if (S.logs[idx]) selLogs.push(S.logs[idx].raw); });
     msg += '\n\n[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + selLogs.length + '\uc904]:\n```\n' + selLogs.join('\n') + '\n```';
   }
-  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, location.protocol === 'file:' ? '*' : location.origin);
+  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, POST_MSG_ORIGIN);
   $('promptInput').value = '';
 });
 $('promptCopy').addEventListener('click', () => {
