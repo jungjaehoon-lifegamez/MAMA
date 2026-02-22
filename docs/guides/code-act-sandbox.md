@@ -11,7 +11,7 @@ Code-Act Sandbox is an isolated JavaScript execution environment based on QuickJ
 
 ### Traditional Approach vs Code-Act
 
-```
+```text
 Traditional: Message → LLM → 1 tool → History → LLM → 1 tool → ... (5-10 round trips)
 Code-Act: Message → LLM → JavaScript code → Multiple tools + Data processing → 1-2 round trips
 ```
@@ -122,14 +122,14 @@ curl -X POST http://localhost:3847/api/code-act \
 
 The QuickJS WASM engine provides a fully isolated environment.
 
-| Threat                  | Defense                                                |
-| ----------------------- | ------------------------------------------------------ |
-| **Node.js API access**  | `require`, `process`, `fs` not injected (do not exist) |
-| **Network access**      | No `fetch()`, `XMLHttpRequest`, or sockets             |
-| **Infinite loops**      | Engine-level CPU timeout (default 30 seconds)          |
-| **Memory exhaustion**   | `setMemoryLimit()` hard cap (default 32MB)             |
-| **Prototype pollution** | QuickJS isolates from host Object.prototype            |
-| **Code injection**      | Only injected functions are available                  |
+| Threat                  | Defense                                                                            |
+| ----------------------- | ---------------------------------------------------------------------------------- |
+| **Node.js API access**  | `require`, `process`, `fs` not injected (do not exist)                             |
+| **Network access**      | No `fetch()`, `XMLHttpRequest`, or sockets                                         |
+| **Infinite loops**      | Engine-level CPU timeout (default 30 seconds)                                      |
+| **Memory exhaustion**   | `setMemoryLimit()` hard cap (default 256MB via quickjs-emscripten WASM allocation) |
+| **Prototype pollution** | QuickJS isolates from host Object.prototype                                        |
+| **Code injection**      | Only injected functions are available                                              |
 
 ### Tier-Based Access Control
 
@@ -166,8 +166,8 @@ When Code-Act is enabled, auto-generated `.d.ts` type definitions are injected i
 
 Code-Act and traditional `tool_call` can be used simultaneously. The LLM can mix both formats in its response, and CodeBlockRouter handles routing automatically.
 
-- ````tool_call` blocks → Traditional GatewayToolExecutor
-- ``js` / ``javascript` blocks → CodeActSandbox
+- ` ```tool_call ` blocks → Traditional GatewayToolExecutor
+- ` ```js ` / ` ```javascript ` blocks → CodeActSandbox
 
 ---
 
@@ -175,5 +175,5 @@ Code-Act and traditional `tool_call` can be used simultaneously. The LLM can mix
 
 - MCP server: `packages/standalone/src/mcp/code-act-server.ts`
 - Sandbox implementation: `packages/standalone/src/agent/code-act/`
-- Architecture document: `.docs/architecture-code-act-sandbox-2026-02-20.md`
+- Architecture document: `docs/architecture-code-act-sandbox-2026-02-20.md`
 - Security guide: `docs/guides/security.md`

@@ -39,7 +39,7 @@ You can manage all Playgrounds from the Playground tab.
 
 ### API Endpoints
 
-```
+```http
 GET  /api/playgrounds          # List (newest first)
 DELETE /api/playgrounds/{slug}  # Delete
 ```
@@ -52,7 +52,7 @@ Describe the tool you want in chat, and the agent will automatically create it b
 
 ### Request Example
 
-```
+```text
 "Create a Color palette explorer playground.
  Let me pick Primary/Secondary/Accent colors and show a preview with a prompt."
 ```
@@ -100,7 +100,7 @@ Describe the tool you want in chat, and the agent will automatically create it b
 
 ### Pattern: Configure → Preview → Prompt
 
-```
+```text
 ┌──────────────────────────────────────────────┐
 │  Controls (left)    │  Live Preview (center)  │
 │  - Sliders          │  - Real-time rendering  │
@@ -121,13 +121,19 @@ A bidirectional communication API for sending prompts generated in a Playground 
 ### Playground → Chat Sending
 
 ```javascript
+// SECURITY: Always use a restricted targetOrigin instead of '*'.
+// The Viewer origin is derived from the page URL (e.g., 'http://localhost:3847').
+var VIEWER_ORIGIN = window.location.origin;
+
 function sendToChat() {
   var text = document.getElementById('promptText').textContent;
   if (!text || text === 'Using default settings.') return;
 
-  window.parent.postMessage({ type: 'playground:sendToChat', message: text }, '*');
+  window.parent.postMessage({ type: 'playground:sendToChat', message: text }, VIEWER_ORIGIN);
 }
 ```
+
+> **Security note:** Always send `postMessage` to a known origin (not `'*'`). The parent message handler should also validate `event.origin` to only accept messages from the expected Viewer origin.
 
 ### Chat Response → Playground Receiving
 
@@ -161,7 +167,7 @@ window.addEventListener('message', (event) => {
 
 ## Storage Location
 
-```
+```text
 ~/.mama/workspace/playgrounds/
 ├── index.json                   # Metadata array
 ├── wave-visualizer.html
