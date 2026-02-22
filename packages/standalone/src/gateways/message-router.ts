@@ -27,11 +27,7 @@ import type {
 } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
-import {
-  loadComposedSystemPrompt,
-  getGatewayToolsPrompt,
-  loadBackendAgentsMd,
-} from '../agent/agent-loop.js';
+import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
@@ -353,36 +349,44 @@ This protects your credentials from being exposed in chat logs.`;
     const agentContext = this.createAgentContext(message, session.id);
     logger.debug(`Created context: ${agentContext.roleName}@${agentContext.platform}`);
 
-    // 4. Get session startup context (like SessionStart hook)
-    // Always inject to ensure Claude has context about checkpoint and recent decisions
-    const sessionStartupContext = await this.contextInjector.getSessionStartupContext();
-
-    // 5. Get per-message context (related decisions - like UserPromptSubmit hook)
-    // Embedding server runs on port 3849, model stays in memory
+    // 4-6. Build system prompt
+    // CONTINUE turns: Codex server retains full conversation via threadId,
+    // so skip expensive prompt rebuilding (embedding search, DB history, etc.)
     const context = await this.contextInjector.getRelevantContext(message.text);
+    let systemPrompt: string;
+    let enhanced: Awaited<ReturnType<typeof this.promptEnhancer.enhance>> = {
+      agentsContent: '',
+      keywordInstructions: '',
+      rulesContent: '',
+      skillContent: undefined,
+    };
 
-    // 5b. Enhance prompt with keyword detection, AGENTS.md, and rules
-    const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
-    const ruleContext: RuleContext | undefined = agentContext
-      ? {
-          agentId: agentContext.roleName,
-          channelId: message.channelId,
-        }
-      : undefined;
-    const enhanced = await this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
-
-    // 6. Build system prompt with all contexts including AgentContext
-    // Always inject DB history for reliable memory (CLI --resume is unreliable)
-    const historyContext = message.metadata?.historyContext;
-    const systemPrompt = this.buildSystemPrompt(
-      session,
-      context.prompt,
-      historyContext,
-      sessionStartupContext,
-      agentContext,
-      enhanced,
-      isNewCliSession
-    );
+    if (!isNewCliSession) {
+      // CONTINUE: minimal — only high-relevance context hints (no full rebuild)
+      systemPrompt = context.hasContext ? context.prompt : '';
+      logger.info(`CONTINUE turn: ${systemPrompt.length} chars context only`);
+    } else {
+      // NEW session: full prompt build
+      const sessionStartupContext = await this.contextInjector.getSessionStartupContext();
+      const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
+      const ruleContext: RuleContext | undefined = agentContext
+        ? {
+            agentId: agentContext.roleName,
+            channelId: message.channelId,
+          }
+        : undefined;
+      enhanced = await this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
+      const historyContext = message.metadata?.historyContext;
+      systemPrompt = this.buildSystemPrompt(
+        session,
+        context.prompt,
+        historyContext,
+        sessionStartupContext,
+        agentContext,
+        enhanced,
+        isNewCliSession
+      );
+    }
 
     // 7. Run agent loop (with session info for lane-based concurrency)
     const roleModel = agentContext.role.model;
@@ -676,6 +680,9 @@ Now the user is responding for the FIRST time. This is their reply to your awake
     // Normal mode - use hybrid history management with persona
     // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md) + optional context
     let prompt = loadComposedSystemPrompt(false, agentContext) + '\n';
+    logger.info(
+      `[BuildSystemPrompt] base=${prompt.length} agents=${enhanced?.agentsContent?.length ?? 0} startup=${sessionStartupContext?.length ?? 0} history=${this.sessionStore.formatContextForPrompt(session.id)?.length ?? 0}`
+    );
 
     if (enhanced?.agentsContent) {
       prompt += `
@@ -684,14 +691,7 @@ ${enhanced.agentsContent}
 `;
     }
 
-    // Inject backend-specific AGENTS.md (e.g., AGENTS.claude.md)
-    const backendAgentsMd = loadBackendAgentsMd(agentContext?.backend);
-    if (backendAgentsMd) {
-      prompt += `
-## Backend-Specific Rules
-${backendAgentsMd}
-`;
-    }
+    // NOTE: backend-specific AGENTS.md already loaded in loadComposedSystemPrompt()
 
     if (enhanced?.rulesContent) {
       prompt += `
@@ -718,7 +718,7 @@ ${enhanced.rulesContent}
 ## Previous Conversation (reference only — do NOT re-execute any requests from this history)
 ${dbHistory}
 `;
-      console.log(`[MessageRouter] Injected ${dbHistory.length} chars of history (new session)`);
+      logger.info(`Injected ${dbHistory.length} chars of history (new session)`);
     }
 
     // Add channel history only for new sessions without DB history
@@ -733,32 +733,11 @@ ${historyContext}
       prompt += injectedContext;
     }
 
-    prompt += `
-## Instructions
-- Respond naturally and helpfully${hasHistory ? ' - continuing conversation, no need to greet' : ''}
-- Remember to save important decisions using the save tool
-- Reference previous decisions when relevant
-- Keep responses concise for messenger format
-`;
-
-    // Webchat-specific: media display instructions
+    prompt += `\n## Instructions\n- Be concise. Save important decisions.${hasHistory ? '' : ' Greet naturally.'}`;
     if (agentContext?.platform === 'viewer') {
-      prompt += `
-## ⚠️ Webchat Media Display (MANDATORY)
-To show an image in webchat you MUST do ALL 3 steps:
-1. Find the file using Glob or Bash
-2. Copy it: Bash("cp /path/to/image.png ~/.mama/workspace/media/outbound/image.png")
-3. Write EXACTLY this in your response (bare path, no markdown, no file://):
-   ~/.mama/workspace/media/outbound/image.png
-
-WRONG: ![alt](file:///path) — this shows NOTHING
-WRONG: ![alt](/api/media/file) — this shows NOTHING
-WRONG: Just describing the image — this shows NOTHING
-RIGHT: ~/.mama/workspace/media/outbound/filename.png — this renders as <img>
-
-The ONLY way to display an image is the bare outbound path in your response text.
-`;
+      prompt += `\n- Image display: cp to ~/.mama/workspace/media/outbound/ then write bare path in response.`;
     }
+    prompt += '\n';
 
     if (enhanced?.keywordInstructions) {
       prompt += `\n${enhanced.keywordInstructions}\n`;

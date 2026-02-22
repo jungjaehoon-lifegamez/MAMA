@@ -639,6 +639,7 @@ function spawnDaemonChild(): number {
     env: {
       ...cleanEnv,
       MAMA_DAEMON: '1',
+      MAMA_LOG_LEVEL: process.env.MAMA_LOG_LEVEL || 'INFO',
     },
   });
 
@@ -1292,12 +1293,18 @@ export async function runAgentLoop(
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Only register when useCodeAct is enabled; otherwise graph-api returns 501
   if (useCodeAct) {
-    // Tier 3: strictly read-only tools (API endpoint has no agent context)
+    // Tier 1: all gateway tools (Codex already has direct Bash/Write access)
     graphHandlerOptions.executeCodeAct = async (code: string) => {
       const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
       const sandbox = new CodeActSandbox();
       const bridge = new HostBridge(toolExecutor);
-      bridge.injectInto(sandbox, 3);
+      const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
+      bridge.onToolUse = (toolName, input, result) => {
+        if (result !== undefined) {
+          toolCalls.push({ name: toolName, input });
+        }
+      };
+      bridge.injectInto(sandbox, 1);
       const result = await sandbox.execute(code);
       return {
         success: result.success,
@@ -1305,6 +1312,7 @@ export async function runAgentLoop(
         logs: result.logs,
         error: result.error?.message,
         metrics: result.metrics,
+        toolCalls,
       };
     };
 
