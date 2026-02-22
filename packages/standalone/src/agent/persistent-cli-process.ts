@@ -167,6 +167,7 @@ export interface PromptResult {
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
   onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
   onFinal?: (response: { content: string; toolUseBlocks: ToolUseBlock[] }) => void;
   onError?: (error: Error) => void;
 }

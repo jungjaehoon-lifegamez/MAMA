@@ -1071,7 +1071,7 @@ export class AgentLoop {
         // Both Claude PersistentCLI and Codex MCP preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- onFinal signature differs between PersistentCLI and Codex
           piResult = await this.agent.prompt(promptText, callbacks as any, {
             model: options?.model,
             resumeSession: shouldResume,
@@ -1108,7 +1108,7 @@ export class AgentLoop {
             this.agent.setSessionId(newSessionId);
 
             // Retry with new session (--session-id instead of --resume)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- onFinal signature differs between PersistentCLI and Codex
             piResult = await this.agent.prompt(promptText, callbacks as any, {
               model: options?.model,
               resumeSession: false, // Force new session
@@ -1588,9 +1588,23 @@ export class AgentLoop {
       const sandbox = new CodeActSandbox();
       const bridge = new HostBridge(this.mcpExecutor);
       bridge.onToolUse = (toolName, input, result) => {
+        if (result === undefined) {
+          // Tool starting — surface to stream
+          this.currentStreamCallbacks?.onToolUse?.(toolName, input as Record<string, unknown>);
+        }
         if (result !== undefined) {
           // Tool completed — notify callback
           this.onToolUse?.(toolName, input, result);
+          const isError =
+            typeof result === 'object' &&
+            result !== null &&
+            'success' in result &&
+            !(result as { success: boolean }).success;
+          this.currentStreamCallbacks?.onToolComplete?.(
+            toolName,
+            `code_act_sub_${Date.now()}`,
+            isError
+          );
         }
       };
       bridge.injectInto(sandbox, tier);
