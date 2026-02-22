@@ -222,11 +222,14 @@ npm test tests/skills/mama-context-skill.test.js
 npm run test:coverage
 ```
 
-**Test coverage:** 134 tests (100% pass rate)
+**Test coverage:** 328 tests (100% pass rate)
 
-- Unit tests: 62 (core logic)
-- Integration tests: 39 (hooks, workflows)
-- Regression tests: 33 (bug prevention)
+- Unit tests: ~130 (core logic, modules, DB)
+- Integration tests: ~80 (hooks, tools, workflows)
+- Regression tests: 43 (bug prevention)
+- Skills: 28
+- Manifests: 28
+- Commands: 19
 
 **Guide:** [Testing Guide](docs/development/testing.md)
 
