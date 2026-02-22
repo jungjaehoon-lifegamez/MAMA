@@ -249,7 +249,6 @@ export class ClaudeCLIWrapper {
       const claude = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: mamaWorkspace, // ⚠️ NEVER change to os.homedir() — breaks agent isolation
-        detached: true,
       });
 
       // Handle stdin: write content if using stdin mode, otherwise close immediately
@@ -389,6 +388,7 @@ export class ClaudeCLIWrapper {
    */
   resetSession(): void {
     this.sessionId = randomUUID();
+    this.turnCount = 0; // Reset so system prompt is injected on next turn
   }
 
   /**
@@ -396,6 +396,7 @@ export class ClaudeCLIWrapper {
    */
   setSessionId(sessionId: string): void {
     this.sessionId = sessionId;
+    this.turnCount = 0; // Reset so system prompt is injected on next turn
   }
 
   /**

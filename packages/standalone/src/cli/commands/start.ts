@@ -2465,7 +2465,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   if (!apiPortAvailable) {
     console.error(
       `[API] Port ${API_PORT} still in use after 20s. Previous daemon may still be shutting down. ` +
-        `Exiting — Watchdog will retry automatically.`
+        `Exiting — ${process.env.MAMA_DAEMON ? 'Watchdog will retry automatically.' : 'Run "mama stop" first, then retry.'}`
     );
     process.exit(1);
   }
