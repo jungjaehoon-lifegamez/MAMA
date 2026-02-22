@@ -81,11 +81,15 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 │  │  + Floating Chat (global overlay, visible on all tabs)      │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                                                        │
-│  JavaScript Modules                                   │
-│  ┌─────────────┬─────────────┬─────────────────┐    │
-│  │ graph.js    │ chat.js     │ memory.js       │    │
-│  │ (vis.js)    │ (WebSocket) │ (Search API)    │    │
-│  └─────────────┴─────────────┴─────────────────┘    │
+│  JavaScript Modules (viewer.html imports 7 modules)  │
+│  ┌────────────┬────────────┬──────────────┐         │
+│  │ chat.js    │ graph.js   │ memory.js    │         │
+│  │ (WebSocket)│ (vis.js)   │ (Search API) │         │
+│  ├────────────┼────────────┼──────────────┤         │
+│  │dashboard.js│ settings.js│ skills.js    │         │
+│  ├────────────┴────────────┴──────────────┤         │
+│  │ playground.js (iframe + card grid)     │         │
+│  └────────────────────────────────────────┘         │
 │                                                        │
 └──────────────────────────────────────────────────────┘
                       ↕ HTTP/WebSocket
@@ -255,7 +259,7 @@ When an agent responds, a Reasoning Header is displayed above the message. If to
 
 **Features:**
 
-- **Card grid** - Displays registered Playgrounds as a list
+- **Card grid** - Displays registered Playgrounds in a card grid
 - **iframe load** - Clicking a card loads the Playground HTML in an iframe
 - **Open in new tab** - Opens the Playground in a separate browser tab
 - **Delete** - Remove Playgrounds that are no longer needed
@@ -286,7 +290,7 @@ The **Log Viewer** is one of the 4 built-in Playgrounds (not a separate tab). It
 
 **Agent Configuration:**
 
-- **Model** - Claude Sonnet 4, Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku
+- **Model** - Claude Opus 4.6, Claude Sonnet 4.6, Claude Sonnet 4 (available until at least May 14, 2026)
 - **Max turns** - Maximum conversation turns (1-50)
 - **Timeout** - Seconds before timeout (30-600)
 
