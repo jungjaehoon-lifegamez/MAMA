@@ -255,15 +255,14 @@ async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
                 async () => {
                   console.log('[EmbeddingServer] MCP server shutdown requested');
                   // SECURITY P1: Use port polling instead of fixed timeout
-                  const portAvailable = await waitForPortAvailable(port, 5000);
+                  const portAvailable = await waitForPortAvailable(port, 10000);
                   if (portAvailable) {
                     console.log('[EmbeddingServer] Port available, proceeding');
                   } else {
                     console.warn(
-                      `[EmbeddingServer] Warning: Port ${port} still in use after 5s. ` +
-                        'Attempting best-effort cleanup and proceeding.'
+                      `[EmbeddingServer] Warning: Port ${port} still in use after 10s. ` +
+                        'Proceeding anyway — Watchdog will retry if needed.'
                     );
-                    await killProcessesOnPorts([port]);
                   }
                   resolve(false);
                 }
@@ -744,9 +743,29 @@ function spawnDaemon() {
 }
 
 async function tick() {
-  // Check if process is alive
-  const alive = isRunning(currentPid);
+  // If our tracked PID is dead, check if another daemon is alive via PID file.
+  // This handles the case where a Watchdog-spawned daemon failed (e.g. port conflict)
+  // but the original daemon is still running fine.
+  let alive = isRunning(currentPid);
   if (!alive) {
+    try {
+      const pidData = JSON.parse(fs.readFileSync(pidPath, 'utf-8'));
+      if (pidData.pid && pidData.pid !== currentPid && isRunning(pidData.pid)) {
+        log('Tracked PID ' + currentPid + ' is dead, but PID file daemon ' + pidData.pid + ' is alive. Adopting.');
+        currentPid = pidData.pid;
+        alive = true;
+        failures = 0;
+      }
+    } catch {}
+  }
+  if (!alive) {
+    // Also check if port 3847 is responding — another daemon instance may be serving
+    const healthy = await checkHealth();
+    if (healthy) {
+      log('Tracked PID ' + currentPid + ' is dead, but health check passed. Skipping restart.');
+      failures = 0;
+      return;
+    }
     log('Daemon process ' + currentPid + ' not found (dead)');
     failures = MAX_FAILURES; // trigger immediate restart
   } else {
@@ -768,12 +787,14 @@ async function tick() {
     const backoff = Math.min(BACKOFF_BASE * Math.pow(2, restartCount), BACKOFF_MAX);
     log('Restarting daemon (attempt ' + (restartCount + 1) + '/' + MAX_RESTARTS + ', backoff ' + backoff + 'ms)');
 
-    // Kill old process if still lingering
+    // Kill old process if still lingering — wait 5s for graceful shutdown
+    // (Discord/Slack disconnect + session cleanup can take several seconds)
     if (isRunning(currentPid)) {
       try { process.kill(currentPid, 'SIGTERM'); } catch {}
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 5000));
       if (isRunning(currentPid)) {
         try { process.kill(currentPid, 'SIGKILL'); } catch {}
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
 
@@ -2436,17 +2457,17 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   console.log('✓ Viewer UI available at /viewer');
   console.log('✓ Setup wizard available at /setup');
 
-  // Ensure API port is available before starting (prevents EADDRINUSE after unclean shutdown)
-  const apiPortAvailable = await waitForPortAvailable(API_PORT, 8000);
+  // Wait for API port to become available (previous daemon may still be shutting down).
+  // DO NOT kill processes on this port — that causes restart loops when Watchdog spawns
+  // a new daemon while the old one is still releasing the port. Port cleanup is the
+  // responsibility of `mama stop`, not daemon startup.
+  const apiPortAvailable = await waitForPortAvailable(API_PORT, 20000);
   if (!apiPortAvailable) {
-    console.warn(`[API] Port ${API_PORT} still in use, attempting cleanup...`);
-    await killProcessesOnPorts([API_PORT]);
-    const portAvailableAfterCleanup = await waitForPortAvailable(API_PORT, 5000);
-    if (!portAvailableAfterCleanup) {
-      throw new Error(
-        `Failed to free port ${API_PORT} after cleanup. Please check for conflicting processes.`
-      );
-    }
+    console.error(
+      `[API] Port ${API_PORT} still in use after 20s. Previous daemon may still be shutting down. ` +
+        `Exiting — Watchdog will retry automatically.`
+    );
+    process.exit(1);
   }
 
   await apiServer.start();

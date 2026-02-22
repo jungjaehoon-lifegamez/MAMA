@@ -7,7 +7,7 @@ description: Always-on background context injection from MAMA memory. Automatica
 
 ## Overview
 
-This skill provides **automatic background context injection** using MAMA's hook system. It runs silently and surfaces relevant past decisions when you edit code (PreToolUse hook) and tracks changes (PostToolUse hook).
+This skill provides **automatic background context injection** using MAMA's hook system. It runs silently and surfaces relevant past decisions via the UserPromptSubmit hook (~150ms latency with HTTP embedding server).
 
 **Philosophy:** Gentle hints, not intrusive walls of text. Claude sees topic + time, decides if relevant.
 
@@ -17,24 +17,28 @@ This skill provides **automatic background context injection** using MAMA's hook
 
 The skill uses a **multi-hook system** for comprehensive context injection:
 
+**UserPromptSubmit Hook** (active, ~150ms)
+
+- Triggers: On every user message submission
+- Purpose: Inject relevant decisions as context before Claude responds
+- Latency: ~150ms (HTTP embedding server keeps model in memory)
+- Token budget: 40 tokens (teaser format)
+
 **SessionStart Hook** (`scripts/sessionstart-hook.js`)
 
 - Triggers: Once per session
 - Purpose: Initialize MAMA, pre-warm embedding model
 - Timeout: 15s
 
-**PreToolUse Hook** (`scripts/pretooluse-hook.js`)
+**PreToolUse Hook** (`scripts/pretooluse-hook.js`) - **disabled** (script retained)
 
-- Triggers: Before Edit, Write, NotebookEdit operations
-- Purpose: Inject relevant contracts before code changes
-- Similarity threshold: 60%
-- Timeout: 5s
+- Previously: Injected contracts before Edit/Write operations
+- Status: Disabled for performance. Script retained for future use.
 
-**PostToolUse Hook** (`scripts/posttooluse-hook.js`)
+**PostToolUse Hook** (`scripts/posttooluse-hook.js`) - **disabled** (script retained)
 
-- Triggers: After Write, Edit operations
-- Purpose: Track code changes, suggest decision saves
-- Timeout: 5s
+- Previously: Tracked code changes, suggested decision saves
+- Status: Disabled for performance. Script retained for future use.
 
 **PreCompact Hook** (`scripts/precompact-hook.js`)
 
@@ -50,14 +54,14 @@ The skill uses a **multi-hook system** for comprehensive context injection:
 💡 MAMA: 2 related
    • authentication_strategy (85%, 3 days ago)
    • mesh_detail (78%, 1 week ago)
-   /mama-recall <topic> for details
+   /mama:search <topic> for details
 ```
 
 **Why teaser?**
 
 - Hooks fire on code changes → Must be lightweight
 - Claude infers relevance from topic + similarity + time
-- Full details available via `/mama-recall` if needed
+- Full details available via `/mama:search` if needed
 - Avoids token bloat (250 tokens → 40 tokens)
 
 ---
@@ -124,7 +128,7 @@ export MAMA_DISABLE_HOOKS=true
 
 - It's always-on (background process)
 - Hooks handle triggering automatically
-- Use `/mama-recall` for explicit lookups
+- Use `/mama:search` for explicit lookups
 
 ---
 
@@ -132,17 +136,18 @@ export MAMA_DISABLE_HOOKS=true
 
 **Hook Integration:**
 
+- UserPromptSubmit: Active (~150ms, HTTP embedding server)
 - SessionStart: `scripts/sessionstart-hook.js` (initialization)
-- PreToolUse: `scripts/pretooluse-hook.js` (contract injection for Edit/Write)
-- PostToolUse: `scripts/posttooluse-hook.js` (outcome tracking for Write/Edit)
+- PreToolUse: `scripts/pretooluse-hook.js` (disabled, script retained)
+- PostToolUse: `scripts/posttooluse-hook.js` (disabled, script retained)
 - PreCompact: `scripts/precompact-hook.js` (decision preservation)
 
 **Performance:**
 
-- Hook latency: ~1200-1500ms typical (includes embedding model loading)
-- Cold start: ~1500ms (embedding model initialization)
-- Warm: ~300-500ms (model cached)
-- Timeout: 1200ms (graceful degradation if exceeded)
+- Hook latency: ~150ms (HTTP embedding server, model stays in memory)
+- Cold start: ~1500ms (embedding model initialization, first session only)
+- Warm: ~50ms (HTTP embedding request)
+- Timeout: 1800ms (graceful degradation if exceeded)
 
 **Search Algorithm:**
 
@@ -172,7 +177,7 @@ export MAMA_DISABLE_HOOKS=true
 ```
 💡 MAMA: 1 related
    • auth_strategy (90%, 2 days ago)
-   /mama-recall auth_strategy for full decision
+   /mama:search auth_strategy for full decision
 
 🔍 System Status: ✅ Full Features Active (Tier 1)
 ```
@@ -180,7 +185,7 @@ export MAMA_DISABLE_HOOKS=true
 **Claude sees the hint and can:**
 
 1. Ignore (if not relevant)
-2. Suggest `/mama-recall auth_strategy` to user
+2. Suggest `/mama:search auth_strategy` to user
 3. Continue with general advice
 
 ---
@@ -219,7 +224,7 @@ Claude sees context
 3. **Non-intrusive:** Hints, not walls of text
 4. **Opt-out:** User control via config (MAMA_DISABLE_HOOKS)
 5. **Graceful degradation:** Tier 2 fallback if embeddings unavailable
-6. **Multi-hook system:** SessionStart + PreToolUse + PostToolUse + PreCompact
+6. **Multi-hook system:** UserPromptSubmit (active) + SessionStart + PreCompact + PreToolUse/PostToolUse (disabled)
 
 ---
 
