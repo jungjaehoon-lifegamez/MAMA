@@ -28,7 +28,7 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('CodexMCP');
-const DEFAULT_REQUEST_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 60 * 1000;
 
 export interface CodexMCPOptions {

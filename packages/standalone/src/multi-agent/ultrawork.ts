@@ -12,8 +12,8 @@
  * 2. **Freeform Loop** (legacy): Lead agent freely delegates and continues
  *
  * Constraints:
- * - max_duration (default 30 min)
- * - max_steps (default 20)
+ * - max_duration (default 60 min)
+ * - max_steps (default 50)
  * - Lead agent must be Tier 1 with can_delegate
  */
 
@@ -173,9 +173,9 @@ export class UltraWorkManager {
       leadAgentId,
       task,
       currentStep: 0,
-      maxSteps: this.config.max_steps ?? 20,
+      maxSteps: this.config.max_steps ?? 50,
       startTime: Date.now(),
-      maxDuration: this.config.max_duration ?? 1800000, // 30 min
+      maxDuration: this.config.max_duration ?? 3600000, // 60 min
       active: true,
       steps: [],
     };

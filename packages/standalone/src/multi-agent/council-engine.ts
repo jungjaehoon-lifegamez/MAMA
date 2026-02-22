@@ -22,7 +22,7 @@ import type {
 
 const DEFAULT_MAX_ROUNDS = 5;
 const DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000; // 10 minutes
-const DEFAULT_ROUND_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes per agent per round
+const DEFAULT_ROUND_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes per agent per round
 
 export type CouncilStepExecutor = (
   agentId: string,
