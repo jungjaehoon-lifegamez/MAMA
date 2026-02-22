@@ -70,7 +70,7 @@ mama init    # copies default skills to ~/.mama/skills/
 mama start   # opens web dashboard at localhost:3847
 ```
 
-**Package:** `@jungjaehoon/mama-os` 0.10.2
+**Package:** `@jungjaehoon/mama-os` 0.10.3
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -337,10 +337,10 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 | Package                                                          | Version | Description                                  | Distribution       |
 | ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.10.2  | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.10.3  | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.6   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.5   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.13  | Claude Code plugin                           | Claude Marketplace |
+| [mama](packages/claude-code-plugin/README.md)                    | 1.7.14  | Claude Code plugin                           | Claude Marketplace |
 | [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.5.0   | OpenClaw plugin                              | npm                |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
