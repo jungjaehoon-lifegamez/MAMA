@@ -593,7 +593,15 @@ export class GatewayToolExecutor {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.sessionStore.restoreMessages((checkpoint as any).recentConversation);
     }
-    return checkpoint;
+    // Ensure success field is present (HostBridge checks result.success)
+    if (!checkpoint) {
+      return { success: false, message: 'No checkpoint found' };
+    }
+    const cp = checkpoint as unknown as Record<string, unknown>;
+    if (!('success' in cp)) {
+      cp.success = true;
+    }
+    return cp as unknown as LoadCheckpointResult;
   }
 
   /**

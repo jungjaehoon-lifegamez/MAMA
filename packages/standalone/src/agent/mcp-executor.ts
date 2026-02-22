@@ -340,7 +340,16 @@ export class MCPExecutor {
     api: MAMAApiInterface,
     _input: LoadCheckpointInput
   ): Promise<LoadCheckpointResult> {
-    return await api.loadCheckpoint();
+    const checkpoint = await api.loadCheckpoint();
+    // Ensure success field is present (HostBridge checks result.success)
+    if (!checkpoint) {
+      return { success: false, message: 'No checkpoint found' };
+    }
+    const cp = checkpoint as unknown as Record<string, unknown>;
+    if (!('success' in cp)) {
+      cp.success = true;
+    }
+    return cp as unknown as LoadCheckpointResult;
   }
 
   /**
