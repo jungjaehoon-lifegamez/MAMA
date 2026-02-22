@@ -189,6 +189,10 @@ After completion:
 └─────────────────────────────────┘
 ```
 
+**Reasoning Header:**
+
+When an agent responds, a Reasoning Header is displayed above the message. If tools were used via the Code-Act sandbox, the tool call details appear in the header, providing full transparency into which tools the agent combined and how.
+
 **Use case:** Chat with Claude Code while away from your desk. Use voice input while cooking, commuting, or relaxing. See exactly what tools Claude is using in real-time.
 
 ---
@@ -270,12 +274,6 @@ After completion:
 - **Search** - Full-text search within log entries
 
 **Use case:** Monitor agent behavior in real time and debug issues.
-
----
-
-### Reasoning Header
-
-When an agent responds in the Chat tab, a **Reasoning Header** is displayed. If tools were used via the Code-Act sandbox, the tool call details appear in the header, providing full transparency into which tools the agent combined and how.
 
 ---
 
