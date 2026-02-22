@@ -603,7 +603,7 @@ This protects your credentials from being exposed in chat logs.`;
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
     const isOnboarding = !existsSync(soulPath);
 
-    // Always get session history from store
+    // Hoist session history — reuse across onboarding check and prompt build
     const sessionHistory = this.sessionStore.formatContextForPrompt(session.id);
 
     if (isOnboarding) {
@@ -678,7 +678,7 @@ Now the user is responding for the FIRST time. This is their reply to your awake
     // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md) + optional context
     let prompt = loadComposedSystemPrompt(false, agentContext) + '\n';
     logger.info(
-      `[BuildSystemPrompt] base=${prompt.length} agents=${enhanced?.agentsContent?.length ?? 0} startup=${sessionStartupContext?.length ?? 0} history=${this.sessionStore.formatContextForPrompt(session.id)?.length ?? 0}`
+      `[BuildSystemPrompt] base=${prompt.length} agents=${enhanced?.agentsContent?.length ?? 0} startup=${sessionStartupContext?.length ?? 0} history=${sessionHistory?.length ?? 0}`
     );
 
     if (enhanced?.agentsContent) {
@@ -697,9 +697,8 @@ ${enhanced.rulesContent}
 `;
     }
 
-    // Check for existing conversation history FIRST
-    const dbHistory = this.sessionStore.formatContextForPrompt(session.id);
-    const hasHistory = dbHistory && dbHistory !== 'New conversation';
+    // Reuse hoisted sessionHistory from buildSystemPrompt entry
+    const hasHistory = sessionHistory && sessionHistory !== 'New conversation';
 
     // Inject session startup context (checkpoint, recent decisions, greeting instructions)
     // ONLY for NEW conversations - continuing conversations should flow naturally
@@ -713,9 +712,9 @@ ${enhanced.rulesContent}
     if (hasHistory && isNewSession) {
       prompt += `
 ## Previous Conversation (reference only — do NOT re-execute any requests from this history)
-${dbHistory}
+${sessionHistory}
 `;
-      logger.info(`Injected ${dbHistory.length} chars of history (new session)`);
+      logger.info(`Injected ${sessionHistory.length} chars of history (new session)`);
     }
 
     // Add channel history only for new sessions without DB history
@@ -746,7 +745,9 @@ ${historyContext}
 
     // Include gateway tools directly in system prompt (priority 1 protection)
     // so they don't get truncated by PromptSizeMonitor as a separate layer
-    if (this.cachedGatewayToolsPrompt === null) {
+    // Cache in production; re-read in dev for hot-reload of gateway-tools.md
+    const isProduction = process.env.NODE_ENV === 'production';
+    if (!isProduction || this.cachedGatewayToolsPrompt === null) {
       this.cachedGatewayToolsPrompt = getGatewayToolsPrompt() || '';
     }
     if (this.cachedGatewayToolsPrompt) {
