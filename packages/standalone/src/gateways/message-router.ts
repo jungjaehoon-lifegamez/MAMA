@@ -354,12 +354,13 @@ This protects your credentials from being exposed in chat logs.`;
     // so skip expensive prompt rebuilding (embedding search, DB history, etc.)
     const context = await this.contextInjector.getRelevantContext(message.text);
     let systemPrompt: string;
-    let enhanced: Awaited<ReturnType<typeof this.promptEnhancer.enhance>> = {
-      agentsContent: '',
-      keywordInstructions: '',
-      rulesContent: '',
-      skillContent: undefined,
-    };
+
+    // Always enhance for per-message skill/keyword injection
+    const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
+    const ruleContext: RuleContext | undefined = agentContext
+      ? { agentId: agentContext.roleName, channelId: message.channelId }
+      : undefined;
+    const enhanced = await this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
 
     if (!isNewCliSession) {
       // CONTINUE: minimal — only high-relevance context hints (no full rebuild)
@@ -368,14 +369,6 @@ This protects your credentials from being exposed in chat logs.`;
     } else {
       // NEW session: full prompt build
       const sessionStartupContext = await this.contextInjector.getSessionStartupContext();
-      const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
-      const ruleContext: RuleContext | undefined = agentContext
-        ? {
-            agentId: agentContext.roleName,
-            channelId: message.channelId,
-          }
-        : undefined;
-      enhanced = await this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
       const historyContext = message.metadata?.historyContext;
       systemPrompt = this.buildSystemPrompt(
         session,

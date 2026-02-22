@@ -88,6 +88,7 @@ export interface ClaudeCLIWrapperOptions {
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
   onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFinal?: (response: any) => void;
   onError?: (error: Error) => void;
