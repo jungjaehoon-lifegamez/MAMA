@@ -95,13 +95,8 @@ export async function handleSearch(
     const decisions = await api.listDecisions({ limit });
     let results = (Array.isArray(decisions) ? decisions : []) as SearchResultItem[];
 
-    if (type && type !== 'all') {
-      results = results.filter((item) => {
-        const id = item.id ?? '';
-        if (type === 'decision') return id.startsWith('decision_');
-        if (type === 'checkpoint') return id.startsWith('checkpoint_');
-        return true;
-      });
+    if (type === 'decision') {
+      results = results.filter((item) => (item.id ?? '').startsWith('decision_'));
     }
 
     return { success: true, results, count: results.length };
@@ -110,13 +105,11 @@ export async function handleSearch(
   const result = await api.suggest(query, { limit });
   let filteredResults = result.results ?? [];
 
-  if (type && type !== 'all') {
-    filteredResults = filteredResults.filter((item: { id?: string }) => {
-      const id = item.id ?? '';
-      if (type === 'decision') return id.startsWith('decision_');
-      if (type === 'checkpoint') return id.startsWith('checkpoint_');
-      return true;
-    });
+  // type === 'checkpoint' already handled above with early return
+  if (type === 'decision') {
+    filteredResults = filteredResults.filter((item: { id?: string }) =>
+      (item.id ?? '').startsWith('decision_')
+    );
   }
 
   return { success: true, results: filteredResults, count: filteredResults.length };
@@ -128,8 +121,12 @@ export async function handleUpdate(
 ): Promise<UpdateResult> {
   const { id, outcome, reason } = input;
 
-  if (!id) return { success: false, message: 'Update requires: id' };
-  if (!outcome) return { success: false, message: 'Update requires: outcome' };
+  if (!id) {
+    return { success: false, message: 'Update requires: id' };
+  }
+  if (!outcome) {
+    return { success: false, message: 'Update requires: outcome' };
+  }
 
   const normalizedOutcome = outcome.toUpperCase();
   if (!['SUCCESS', 'FAILED', 'PARTIAL'].includes(normalizedOutcome)) {
@@ -167,7 +164,8 @@ export async function handleLoadCheckpoint(
   }
 
   // Ensure success field is present (HostBridge checks result.success)
-  const record = checkpoint as unknown as Record<string, unknown>;
+  // Shallow copy to avoid mutating the original checkpoint object
+  const record = { ...(checkpoint as unknown as Record<string, unknown>) };
   if (!('success' in record)) {
     record.success = true;
   }

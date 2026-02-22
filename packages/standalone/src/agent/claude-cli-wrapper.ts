@@ -221,7 +221,6 @@ export class ClaudeCLIWrapper {
 
       console.log(`[ClaudeCLI] Spawning: claude ${args.join(' ')}`);
       console.log(`[ClaudeCLI] Args count: ${args.length}`);
-      // Prompt size logging moved to debug level
 
       const claude = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
