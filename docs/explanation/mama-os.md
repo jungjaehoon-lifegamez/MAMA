@@ -35,17 +35,16 @@ Each lived in isolation. You couldn't chat while viewing the graph. You couldn't
 
 MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 
-```
-┌─────────────────────────────────────────────────┐
-│              MAMA OS (Browser)                   │
-├─────────────────────────────────────────────────┤
-│  Dashboard  │  Chat  │  Memory  │  Settings     │
-│                                                   │
-│  • System status      • Voice input              │
-│  • Gateway health     • Real-time chat           │
-│  • Memory stats       • Decision search          │
-│  • Agent config       • Graph visualization      │
-└─────────────────────────────────────────────────┘
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│                         MAMA OS (Browser)                            │
+├──────────────────────────────────────────────────────────────────────┤
+│  Dashboard │ Memory │ Skills │ Playground │ Settings  + Floating Chat │
+│                                                                      │
+│  • System status      • Decision search   • Skill management        │
+│  • Gateway health     • Graph visual      • Interactive HTML tools   │
+│  • Memory stats       • Agent config      • Real-time daemon logs   │
+└──────────────────────────────────────────────────────────────────────┘
                       ↕ WebSocket
 ┌─────────────────────────────────────────────────┐
 │         MAMA Standalone Server (Node.js)         │
@@ -76,16 +75,21 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 ├──────────────────────────────────────────────────────┤
 │                                                        │
 │  MAMA OS Viewer (viewer.html)                         │
-│  ┌────────────────────────────────────────────────┐  │
-│  │  Tab Navigation                                 │  │
-│  │  • Dashboard  • Chat  • Memory  • Settings     │  │
-│  └────────────────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Tab Navigation                                             │  │
+│  │  • Dashboard • Memory • Skills • Playground • Settings      │  │
+│  │  + Floating Chat (global overlay, visible on all tabs)      │  │
+│  └─────────────────────────────────────────────────────────────┘  │
 │                                                        │
-│  JavaScript Modules                                   │
-│  ┌─────────────┬─────────────┬─────────────────┐    │
-│  │ graph.js    │ chat.js     │ memory.js       │    │
-│  │ (vis.js)    │ (WebSocket) │ (Search API)    │    │
-│  └─────────────┴─────────────┴─────────────────┘    │
+│  JavaScript Modules (viewer.html imports 7 modules)  │
+│  ┌────────────┬────────────┬──────────────┐         │
+│  │ chat.js    │ graph.js   │ memory.js    │         │
+│  │ (WebSocket)│ (vis.js)   │ (Search API) │         │
+│  ├────────────┼────────────┼──────────────┤         │
+│  │dashboard.js│ settings.js│ skills.js    │         │
+│  ├────────────┴────────────┴──────────────┤         │
+│  │ playground.js (iframe + card grid)     │         │
+│  └────────────────────────────────────────┘         │
 │                                                        │
 └──────────────────────────────────────────────────────┘
                       ↕ HTTP/WebSocket
@@ -107,7 +111,7 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 │  Core Services                                        │
 │  • SQLite + sqlite-vec (vector search)               │
 │  • Transformers.js (local embeddings)                │
-│  • Claude API (autonomous agent)                     │
+│  • Claude Code CLI (subprocess-based agent)           │
 │  • Gateway integrations (Discord, Slack, etc.)       │
 │                                                        │
 └──────────────────────────────────────────────────────┘
@@ -122,7 +126,7 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 
 ---
 
-## The Five Tabs
+## The Tabs
 
 ### 1. Dashboard Tab
 
@@ -139,9 +143,11 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 
 ---
 
-### 2. Chat Tab
+### Floating Chat (Global Overlay)
 
 **Purpose:** Real-time conversation with Claude Code from any device
+
+> **Note:** Chat is not a tab — it's a floating panel accessible from any tab via the bottom-right chat button.
 
 **Features:**
 
@@ -189,11 +195,15 @@ After completion:
 └─────────────────────────────────┘
 ```
 
+**Reasoning Header:**
+
+When an agent responds, a Reasoning Header is displayed above the message. If tools were used via the Code-Act sandbox, the tool call details appear in the header, providing full transparency into which tools the agent combined and how.
+
 **Use case:** Chat with Claude Code while away from your desk. Use voice input while cooking, commuting, or relaxing. See exactly what tools Claude is using in real-time.
 
 ---
 
-### 3. Memory Tab
+### 2. Memory Tab
 
 **Purpose:** Browse, search, and manage your MAMA decision graph
 
@@ -229,7 +239,39 @@ After completion:
 
 ---
 
-### 4. Settings Tab
+### 3. Skills Tab
+
+**Purpose:** Standalone skills management
+
+**What you see:**
+
+- **Skill list** - Card grid of installed skills
+- **Enable/Disable** - Toggle individual skills on/off
+- **Skill Lab integration** - Create and edit skills interactively via the Skill Lab in the Playground tab
+
+**Use case:** Check which skills are active and disable any that are not needed.
+
+---
+
+### 4. Playground Tab
+
+**Purpose:** Interactive HTML tool management and execution
+
+**Features:**
+
+- **Card grid** - Displays registered Playgrounds in a card grid
+- **iframe load** - Clicking a card loads the Playground HTML in an iframe
+- **Open in new tab** - Opens the Playground in a separate browser tab
+- **Delete** - Remove Playgrounds that are no longer needed
+- **4 built-in Playgrounds** - Wave Visualizer, Skill Lab, Cron Workflow Lab, Log Viewer
+
+The **Log Viewer** is one of the 4 built-in Playgrounds (not a separate tab). It provides real-time daemon log streaming via WebSocket, with filtering by level (info, warn, error) and full-text search.
+
+**Use case:** Manage and run custom tools created by agents. See the [Playground Guide](../guides/playgrounds.md) for details.
+
+---
+
+### 5. Settings Tab
 
 **Purpose:** Configure gateways, agent, and heartbeat scheduler
 
@@ -248,7 +290,7 @@ After completion:
 
 **Agent Configuration:**
 
-- **Model** - Claude Sonnet 4, Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku
+- **Model** - Claude Opus 4.6, Claude Sonnet 4.6, Claude Sonnet 4 (available until at least May 14, 2026)
 - **Max turns** - Maximum conversation turns (1-50)
 - **Timeout** - Seconds before timeout (30-600)
 
