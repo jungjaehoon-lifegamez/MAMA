@@ -34,6 +34,7 @@ import type {
   UpdateInput,
   LoadCheckpointInput,
   GatewayToolExecutorOptions,
+  GatewaySessionStore,
   MAMAApiInterface,
   BrowserNavigateInput,
   BrowserScreenshotInput,
@@ -164,8 +165,7 @@ interface GHGraphQLResponse {
 export class GatewayToolExecutor {
   private mamaApi: MAMAApiInterface | null = null;
   private readonly mamaDbPath?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private sessionStore?: any;
+  private sessionStore?: GatewaySessionStore;
   private discordGateway: DiscordGatewayInterface | null = null;
   private slackGateway: SlackGatewayInterface | null = null;
   private browserTool: BrowserTool;
@@ -410,20 +410,16 @@ export class GatewayToolExecutor {
           return await handleSave(
             api,
             input as SaveInput,
-            this.sessionStore ? () => this.sessionStore.getRecentMessages() : undefined
+            this.sessionStore?.getHistory
+              ? () => this.sessionStore!.getHistory!('current')
+              : undefined
           );
         case 'mama_search':
           return await handleSearch(api, input as SearchInput);
         case 'mama_update':
           return await handleUpdate(api, input as UpdateInput);
         case 'mama_load_checkpoint':
-          return await handleLoadCheckpoint(
-            api,
-            input as LoadCheckpointInput,
-            this.sessionStore
-              ? (msgs: unknown[]) => this.sessionStore.restoreMessages(msgs)
-              : undefined
-          );
+          return await handleLoadCheckpoint(api, input as LoadCheckpointInput);
         default:
           throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
       }
