@@ -1,6 +1,6 @@
 # MAMA Plugin - Memory-Augmented MCP Assistant
 
-**Version:** 1.7.11
+**Version:** 1.7.13
 **License:** MIT
 **Author:** SpineLift Team
 
@@ -66,14 +66,14 @@ Add to `claude_desktop_config.json`:
 ### 1. Verify Installation
 
 ```
-/mama-list
+/mama:resume
 # Expected: 🟢 Tier 1 (Full Features Active)
 ```
 
 ### 2. Save Your First Decision
 
 ```
-/mama-save
+/mama:decision
 Topic: test_framework
 Decision: Use Vitest for testing
 Reasoning: Better ESM support than Jest
@@ -90,7 +90,7 @@ You: "How should I handle testing?"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💡 MAMA: 1 related decision
    • test_framework (90%, just now)
-   /mama-recall test_framework for full history
+   /mama:search test_framework for full history
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -100,15 +100,28 @@ You: "How should I handle testing?"
 
 ## 💻 Commands Reference
 
-| Command                    | Purpose                            |
-| -------------------------- | ---------------------------------- |
-| `/mama-save`               | Save a decision with reasoning     |
-| `/mama-recall <topic>`     | View decision evolution history    |
-| `/mama-suggest <question>` | Semantic search across decisions   |
-| `/mama-list [--limit N]`   | List recent decisions (default 10) |
-| `/mama-configure`          | Change embedding model or settings |
+| Command                | Purpose                            |
+| ---------------------- | ---------------------------------- |
+| `/mama:decision`       | Save a decision with reasoning     |
+| `/mama:search <query>` | Semantic search across decisions   |
+| `/mama:checkpoint`     | Save current session state         |
+| `/mama:resume`         | Resume from last checkpoint        |
+| `/mama:configure`      | Change embedding model or settings |
 
 **Full reference:** [Commands Reference](../../docs/reference/commands.md)
+
+---
+
+## 🤖 Agents
+
+MAMA Plugin includes two specialized agents:
+
+| Agent               | Purpose                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------- |
+| **mama-researcher** | Deep research agent that searches decisions, explores codebase, and synthesizes findings |
+| **mama-reviewer**   | Code review agent that checks changes against stored decisions and contracts             |
+
+Agents are invoked automatically by Claude Code when tasks match their specialization.
 
 ---
 
@@ -143,7 +156,7 @@ MAMA operates in **two tiers** with full transparency:
 
 ### Technical Reference
 
-- **[Commands Reference](docs/reference/commands.md)** - All `/mama-*` commands
+- **[Commands Reference](docs/reference/commands.md)** - All `/mama:*` commands
 - **[MCP Tool API](docs/reference/api.md)** - Tool interfaces
 - **[Hooks Reference](docs/reference/hooks.md)** - Hook configuration
 
@@ -176,7 +189,7 @@ export MAMA_DISABLE_HOOKS=true
 ### Change Embedding Model
 
 ```bash
-/mama-configure --model Xenova/all-MiniLM-L6-v2
+/mama:configure --model Xenova/all-MiniLM-L6-v2
 ```
 
 **Full guide:** [Configuration Guide](docs/guides/configuration.md)
@@ -337,4 +350,4 @@ MIT License - see LICENSE file for details
 ---
 
 **Status:** Production-ready
-**Last Updated:** 2026-02-14
+**Last Updated:** 2026-02-22
