@@ -184,9 +184,9 @@ describe('MCPExecutor', () => {
       (mockApi.suggest as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: true,
         results: [
-          { id: '1', type: 'decision', topic: 'a' },
-          { id: '2', type: 'checkpoint', summary: 'b' },
-          { id: '3', type: 'decision', topic: 'c' },
+          { id: 'decision_1', type: 'decision', topic: 'a' },
+          { id: 'checkpoint_2', type: 'checkpoint', summary: 'b' },
+          { id: 'decision_3', type: 'decision', topic: 'c' },
         ],
         count: 3,
       });
