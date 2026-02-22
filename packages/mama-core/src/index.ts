@@ -55,6 +55,7 @@ export {
   type OutcomeData,
   type VectorSearchParams,
   type SemanticEdges,
+  type SemanticEdgeItem,
   type DecisionInput,
 } from './db-manager.js';
 

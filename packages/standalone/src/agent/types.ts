@@ -958,12 +958,20 @@ export type ClaudeHeaders = Record<string, string>;
 /**
  * MCP Executor configuration options
  */
+/**
+ * Minimal session store interface for gateway tool executor.
+ * SessionStore implements getHistory/getHistoryByChannel but NOT getRecentMessages/restoreMessages.
+ */
+export interface GatewaySessionStore {
+  getHistory?(sessionId: string): unknown[];
+  getHistoryByChannel?(source: string, channelId: string): unknown[];
+}
+
 export interface GatewayToolExecutorOptions {
   /** Database path for MAMA (default: ~/.claude/mama-memory.db) */
   mamaDbPath?: string;
   /** Session store for checkpoint conversation access */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sessionStore?: any;
+  sessionStore?: GatewaySessionStore;
   /** Custom MAMA API instance for testing */
   mamaApi?: MAMAApiInterface;
   /** Roles configuration from config.yaml */
