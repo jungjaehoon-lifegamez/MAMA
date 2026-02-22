@@ -50,7 +50,7 @@ The skill uses a **multi-hook system** for comprehensive context injection:
 
 ## Teaser Format (40 tokens)
 
-```
+```text
 💡 MAMA: 2 related
    • authentication_strategy (85%, 3 days ago)
    • mesh_detail (78%, 1 week ago)
@@ -114,6 +114,8 @@ export MAMA_DISABLE_HOOKS=true
 }
 ```
 
+> **Note:** `similarity_threshold` applies to explicit searches (`/mama:search`). The disabled `pretooluse-hook.js` uses a stricter threshold (`SIMILARITY_THRESHOLD = 0.6`) to reduce false positives during automatic injection. The UserPromptSubmit hook delegates search to the MCP server, which uses its own default threshold.
+
 ---
 
 ## When Claude Should Use This
@@ -174,7 +176,7 @@ export MAMA_DISABLE_HOOKS=true
 
 **Skill injects (via UserPromptSubmit hook):**
 
-```
+```text
 💡 MAMA: 1 related
    • auth_strategy (90%, 2 days ago)
    /mama:search auth_strategy for full decision
@@ -196,7 +198,7 @@ export MAMA_DISABLE_HOOKS=true
 
 ```bash
 # Test SessionStart hook (the only testable standalone hook)
-node mama-plugin/scripts/sessionstart-hook.js
+node packages/claude-code-plugin/scripts/sessionstart-hook.js
 
 # UserPromptSubmit hook is triggered automatically by Claude Code
 # on every user message — no manual invocation needed.
