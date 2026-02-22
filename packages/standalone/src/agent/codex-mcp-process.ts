@@ -45,6 +45,8 @@ export interface CodexMCPOptions {
 
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
+  onToolUse?: (tool: string, input: Record<string, unknown>) => void;
+  onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
   onFinal?: (response: { response: string }) => void;
   onError?: (error: Error) => void;
 }
@@ -83,6 +85,7 @@ interface PendingRequest {
 
 export class CodexMCPProcess extends EventEmitter {
   private process: ChildProcess | null = null;
+  private currentCallbacks: PromptCallbacks | null = null;
   private options: CodexMCPOptions;
   private state: 'dead' | 'starting' | 'ready' | 'busy' = 'dead';
   private threadId: string | null = null;
@@ -247,6 +250,7 @@ export class CodexMCPProcess extends EventEmitter {
     }
 
     this.state = 'busy';
+    this.currentCallbacks = callbacks || null;
 
     try {
       let result: {
@@ -289,6 +293,7 @@ export class CodexMCPProcess extends EventEmitter {
       }
 
       const response = result.content || '';
+      this.currentCallbacks = null;
       callbacks?.onFinal?.({ response });
 
       return {
@@ -375,7 +380,6 @@ export class CodexMCPProcess extends EventEmitter {
       _meta?: { usage?: { inputTokens?: number; outputTokens?: number; cachedTokens?: number } };
     };
 
-    // Log full response structure for debugging
     const keys = Object.keys(response);
     logger.debug(`[RESPONSE_KEYS] ${keys.join(', ')}`);
 
@@ -506,9 +510,118 @@ export class CodexMCPProcess extends EventEmitter {
             pending.resolve(msg.result);
           }
         }
+      } else if ('method' in msg) {
+        // Notification (no id) - parse Codex events for tool usage + streaming
+        const notification = msg as { method: string; params?: Record<string, unknown> };
+        this.handleNotification(notification);
       }
     } catch {
       logger.warn('Failed to parse line:', line.substring(0, 100));
+    }
+  }
+
+  /**
+   * Handle Codex MCP notifications (codex/event)
+   * Events: mcp_tool_call_begin, mcp_tool_call_end, agent_message_delta
+   */
+  private handleNotification(notification: {
+    method: string;
+    params?: Record<string, unknown>;
+  }): void {
+    if (notification.method !== 'codex/event') return;
+
+    const params = notification.params as
+      | {
+          _meta?: { requestId?: number; threadId?: string };
+          id?: string;
+          msg?: {
+            type: string;
+            call_id?: string;
+            invocation?: { server?: string; tool?: string; arguments?: Record<string, unknown> };
+            delta?: string;
+            [key: string]: unknown;
+          };
+        }
+      | undefined;
+
+    const msg = params?.msg;
+    if (!msg) return;
+
+    const cb = this.currentCallbacks;
+
+    switch (msg.type) {
+      case 'mcp_tool_call_begin':
+        if (cb?.onToolUse && msg.invocation) {
+          const toolName = msg.invocation.server
+            ? `${msg.invocation.server}:${msg.invocation.tool}`
+            : msg.invocation.tool || 'unknown';
+          cb.onToolUse(toolName, msg.invocation.arguments || {});
+          logger.info(`[TOOL_BEGIN] ${toolName}`);
+        }
+        break;
+
+      case 'mcp_tool_call_end':
+        if (cb?.onToolComplete && msg.call_id) {
+          const toolName = msg.invocation?.tool || 'unknown';
+          const isError = false; // Codex doesn't indicate error in this event
+          cb.onToolComplete(toolName, msg.call_id, isError);
+          logger.info(`[TOOL_END] ${toolName}`);
+        }
+        break;
+
+      case 'agent_message_delta':
+        if (cb?.onDelta && typeof msg.delta === 'string') {
+          cb.onDelta(msg.delta);
+        }
+        break;
+
+      // Codex built-in tools (Bash, Write, Read etc.) — not MCP tools
+      case 'function_call':
+        if (cb?.onToolUse) {
+          const fnName = (msg as { name?: string }).name || 'unknown';
+          let fnArgs: Record<string, unknown> = {};
+          try {
+            const raw = (msg as { arguments?: string }).arguments;
+            if (raw) fnArgs = JSON.parse(raw);
+          } catch {
+            // arguments may not be valid JSON
+          }
+          cb.onToolUse(fnName, fnArgs);
+          logger.info(`[TOOL_BEGIN] ${fnName} (builtin)`);
+        }
+        break;
+
+      case 'function_call_output':
+        if (cb?.onToolComplete) {
+          const callId = msg.call_id || (msg as { id?: string }).id || 'unknown';
+          cb.onToolComplete('builtin', callId as string, false);
+          logger.info(`[TOOL_END] builtin (call_id=${callId})`);
+        }
+        break;
+
+      // raw_response_item wraps function_call for streaming
+      case 'raw_response_item': {
+        const item = (
+          msg as { item?: { type?: string; name?: string; arguments?: string; call_id?: string } }
+        ).item;
+        if (!item) break;
+        if (item.type === 'function_call' && cb?.onToolUse) {
+          const fnName = item.name || 'unknown';
+          let fnArgs: Record<string, unknown> = {};
+          try {
+            if (item.arguments) fnArgs = JSON.parse(item.arguments);
+          } catch {
+            /* */
+          }
+          cb.onToolUse(fnName, fnArgs);
+          logger.info(`[TOOL_BEGIN] ${fnName} (raw_response_item)`);
+        } else if (item.type === 'function_call_output' && cb?.onToolComplete) {
+          const callId = item.call_id || 'unknown';
+          cb.onToolComplete('builtin', callId, false);
+          logger.info(`[TOOL_END] builtin (raw_response_item, call_id=${callId})`);
+        }
+        break;
+      }
     }
   }
 
