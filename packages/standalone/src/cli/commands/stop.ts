@@ -5,6 +5,8 @@
  */
 
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { isDaemonRunning, deletePid, isProcessRunning } from '../utils/pid-manager.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -23,6 +25,9 @@ const logger = new DebugLogger('Stop');
  */
 export async function stopCommand(): Promise<void> {
   console.log('\n🛑 MAMA Standalone Shutdown\n');
+
+  // Stop watchdog first to prevent auto-restart during shutdown
+  await stopWatchdog();
 
   // Check if running
   const runningInfo = await isDaemonRunning();
@@ -288,6 +293,35 @@ async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): 
     console.warn(
       `⚠️  Warning: Port(s) ${stillInUse.join(', ')} still in use after ${maxWaitMs}ms timeout`
     );
+  }
+}
+
+/**
+ * Stop the watchdog process to prevent auto-restart during shutdown
+ */
+async function stopWatchdog(): Promise<void> {
+  const watchdogPidPath = `${homedir()}/.mama/watchdog.pid`;
+  if (!existsSync(watchdogPidPath)) return;
+
+  try {
+    const content = readFileSync(watchdogPidPath, 'utf-8');
+    const { pid } = JSON.parse(content);
+    if (typeof pid === 'number' && isProcessRunning(pid)) {
+      process.kill(pid, 'SIGTERM');
+      await sleep(500);
+      if (isProcessRunning(pid)) {
+        process.kill(pid, 'SIGKILL');
+      }
+      console.log(`✓ Watchdog stopped (PID ${pid})`);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    unlinkSync(watchdogPidPath);
+  } catch {
+    /* ignore */
   }
 }
 
