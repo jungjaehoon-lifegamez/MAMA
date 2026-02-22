@@ -59,7 +59,7 @@ The skill uses a **multi-hook system** for comprehensive context injection:
 
 **Why teaser?**
 
-- Hooks fire on code changes → Must be lightweight
+- Hooks fire on user messages (UserPromptSubmit) → Must be lightweight
 - Claude infers relevance from topic + similarity + time
 - Full details available via `/mama:search` if needed
 - Avoids token bloat (250 tokens → 40 tokens)
@@ -161,7 +161,7 @@ export MAMA_DISABLE_HOOKS=true
 ## Acceptance Criteria Mapping
 
 - ✅ AC1: Declared in plugin.json, references hook outputs
-- ✅ AC2: Similarity thresholds (60%) + token budgets (40/300)
+- ✅ AC2: Similarity thresholds (70%) + token budgets (40/300)
 - ✅ AC3: Disable via config (MAMA_DISABLE_HOOKS)
 - ✅ AC4: Status indicator (Tier 1/2, accuracy, fix instructions)
 - ✅ AC5: Smoke test - fires during normal coding session
@@ -230,6 +230,6 @@ Claude sees context
 ## Related
 
 - Story M3.2 (this skill)
-- Story M2.2 (PreToolUse hook)
+- Story M2.2 (PreToolUse hook — disabled, scripts retained)
 - Story M2.4 (Transparency banner)
 - Architecture: `docs/MAMA-ARCHITECTURE.md` (Decision 4 - Hook Implementation)
