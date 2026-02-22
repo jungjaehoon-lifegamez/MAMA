@@ -88,6 +88,7 @@ export interface ClaudeCLIWrapperOptions {
 export interface PromptCallbacks {
   onDelta?: (text: string) => void;
   onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFinal?: (response: any) => void;
   onError?: (error: Error) => void;
@@ -220,10 +221,6 @@ export class ClaudeCLIWrapper {
 
       console.log(`[ClaudeCLI] Spawning: claude ${args.join(' ')}`);
       console.log(`[ClaudeCLI] Args count: ${args.length}`);
-      console.log(`[ClaudeCLI] Content length: ${content.length} chars`);
-      if (this.options.systemPrompt) {
-        console.log(`[ClaudeCLI] SystemPrompt length: ${this.options.systemPrompt.length} chars`);
-      }
 
       const claude = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],

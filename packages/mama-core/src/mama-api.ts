@@ -26,12 +26,11 @@ import crypto from 'crypto';
 
 // Internal modules
 import { learnDecision, createEdgesFromReasoning, DecisionDetection } from './decision-tracker.js';
-import { DecisionRecord } from './db-manager.js';
+import { DecisionRecord, SemanticEdgeItem } from './db-manager.js';
 import {
   queryDecisionGraph,
   querySemanticEdges,
   getAdapter,
-  getPreparedStmt,
   vectorSearch,
 } from './memory-store.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
@@ -215,16 +214,6 @@ export type OutcomeBadgeMap = Record<string, string | null>;
 /**
  * Raw semantic edge from database
  */
-interface RawSemanticEdge {
-  topic?: string;
-  decision?: string;
-  to_id?: string;
-  from_id?: string;
-  reason?: string;
-  confidence?: number;
-  created_at?: number | string;
-}
-
 /**
  * Recall options
  */
@@ -800,7 +789,56 @@ async function _getReasoningGraphInfo(
  * const markdown = await mama.recall('auth_strategy', { format: 'markdown' });
  * // → "📋 Decision History: auth_strategy\n━━━━━━━━..."
  */
-async function recall(topic: string, options: RecallOptions = {}): Promise<unknown> {
+interface RecallEdgeRef {
+  to_topic?: string;
+  to_decision?: string;
+  to_id?: string;
+  from_topic?: string;
+  from_decision?: string;
+  from_id?: string;
+  reason?: string | null;
+  confidence?: number;
+  created_at?: string | number;
+}
+
+interface RecallGraphResult {
+  topic: string;
+  supersedes_chain: Array<{
+    id: string;
+    decision: string;
+    reasoning?: string | null;
+    confidence?: number;
+    outcome?: string | null;
+    failure_reason?: string | null;
+    created_at: number;
+    updated_at?: number;
+    superseded_by?: string | null;
+    supersedes?: string | null;
+  }>;
+  semantic_edges: {
+    refines: RecallEdgeRef[];
+    refined_by: RecallEdgeRef[];
+    contradicts: RecallEdgeRef[];
+    contradicted_by: RecallEdgeRef[];
+  };
+  meta: {
+    count: number;
+    latest_id?: string;
+    has_supersedes_chain: boolean;
+    has_semantic_edges: boolean;
+    semantic_edges_count: {
+      refines: number;
+      refined_by: number;
+      contradicts: number;
+      contradicted_by: number;
+    };
+  };
+}
+
+async function recall(
+  topic: string,
+  options: RecallOptions = {}
+): Promise<string | RecallGraphResult> {
   if (!topic || typeof topic !== 'string') {
     throw new Error('mama.recall() requires topic (string)');
   }
@@ -818,38 +856,42 @@ async function recall(topic: string, options: RecallOptions = {}): Promise<unkno
         topic,
         supersedes_chain: [],
         semantic_edges: { refines: [], refined_by: [], contradicts: [], contradicted_by: [] },
-        meta: { count: 0 },
+        meta: {
+          count: 0,
+          has_supersedes_chain: false,
+          has_semantic_edges: false,
+          semantic_edges_count: { refines: 0, refined_by: 0, contradicts: 0, contradicted_by: 0 },
+        },
       };
     }
 
     // Query semantic edges for all decisions
     const decisionIds = decisions.map((d: DecisionRecord) => d.id);
-    const rawEdgesResult = await querySemanticEdges(decisionIds);
-    const rawEdges = (rawEdgesResult || {}) as unknown as Record<string, RawSemanticEdge[]>;
+    const rawEdges = await querySemanticEdges(decisionIds);
     const semanticEdges = {
-      refines: (rawEdges.refines || []) as RawSemanticEdge[],
-      refined_by: (rawEdges.refined_by || []) as RawSemanticEdge[],
-      contradicts: (rawEdges.contradicts || []) as RawSemanticEdge[],
-      contradicted_by: (rawEdges.contradicted_by || []) as RawSemanticEdge[],
+      refines: rawEdges.refines || [],
+      refined_by: rawEdges.refined_by || [],
+      contradicts: rawEdges.contradicts || [],
+      contradicted_by: rawEdges.contradicted_by || [],
     };
 
     // Markdown format (for human display)
     if (format === 'markdown') {
       // Pass semantic edges to formatter - transform to expected format
       const formatterEdges: SemanticEdges = {
-        refines: semanticEdges.refines.map((e: RawSemanticEdge) => ({
+        refines: semanticEdges.refines.map((e) => ({
           topic: e.topic || '',
           decision: e.decision || '',
         })),
-        refined_by: semanticEdges.refined_by.map((e: RawSemanticEdge) => ({
+        refined_by: semanticEdges.refined_by.map((e) => ({
           topic: e.topic || '',
           decision: e.decision || '',
         })),
-        contradicts: semanticEdges.contradicts.map((e: RawSemanticEdge) => ({
+        contradicts: semanticEdges.contradicts.map((e) => ({
           topic: e.topic || '',
           decision: e.decision || '',
         })),
-        contradicted_by: semanticEdges.contradicted_by.map((e: RawSemanticEdge) => ({
+        contradicted_by: semanticEdges.contradicted_by.map((e) => ({
           topic: e.topic || '',
           decision: e.decision || '',
         })),
@@ -874,7 +916,7 @@ async function recall(topic: string, options: RecallOptions = {}): Promise<unkno
         supersedes: d.supersedes,
       })),
       semantic_edges: {
-        refines: semanticEdges.refines.map((e: RawSemanticEdge) => ({
+        refines: semanticEdges.refines.map((e) => ({
           to_topic: e.topic,
           to_decision: e.decision,
           to_id: e.to_id,
@@ -882,7 +924,7 @@ async function recall(topic: string, options: RecallOptions = {}): Promise<unkno
           confidence: e.confidence,
           created_at: e.created_at,
         })),
-        refined_by: semanticEdges.refined_by.map((e: RawSemanticEdge) => ({
+        refined_by: semanticEdges.refined_by.map((e) => ({
           from_topic: e.topic,
           from_decision: e.decision,
           from_id: e.from_id,
@@ -890,14 +932,14 @@ async function recall(topic: string, options: RecallOptions = {}): Promise<unkno
           confidence: e.confidence,
           created_at: e.created_at,
         })),
-        contradicts: semanticEdges.contradicts.map((e: RawSemanticEdge) => ({
+        contradicts: semanticEdges.contradicts.map((e) => ({
           to_topic: e.topic,
           to_decision: e.decision,
           to_id: e.to_id,
           reason: e.reason,
           created_at: e.created_at,
         })),
-        contradicted_by: semanticEdges.contradicted_by.map((e: RawSemanticEdge) => ({
+        contradicted_by: semanticEdges.contradicted_by.map((e) => ({
           from_topic: e.topic,
           from_decision: e.decision,
           from_id: e.from_id,
@@ -1088,10 +1130,9 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCan
       };
 
       // Helper to add edge to graph
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic property access with idField
       const addEdge = (
-        edge: any,
-        idField: string,
+        edge: SemanticEdgeItem,
+        idField: 'to_id' | 'from_id',
         source: string,
         rank: number,
         simFactor: number
@@ -1323,8 +1364,10 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     let searchMethod = 'vector';
 
     try {
-      // Check if vectorSearch prepared statement exists
-      getPreparedStmt('vectorSearch');
+      // Check if vector search is available (sqlite-vec loaded)
+      if (!getAdapter().vectorSearchEnabled) {
+        throw new Error('Vector search not available');
+      }
 
       // Generate query embedding
       const queryEmbedding = await generateEmbedding(userQuestion);
@@ -1627,13 +1670,18 @@ async function saveCheckpoint(
  *
  * @returns {Promise<Object|null>} Latest checkpoint or null
  */
+interface ConversationMessage {
+  role: string;
+  content: string | Array<{ type: string; text?: string; [key: string]: unknown }>;
+}
+
 interface CheckpointRow {
   id?: number;
   timestamp?: number;
   summary?: string;
   open_files?: string | string[];
   next_steps?: string;
-  recent_conversation?: string | unknown[];
+  recent_conversation?: string | ConversationMessage[];
   status?: string;
 }
 
