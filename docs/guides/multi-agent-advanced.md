@@ -186,7 +186,7 @@ ultrawork:
 
 Automatically executed when a user message contains a trigger keyword:
 
-```
+```text
 ULTRAWORK: Implement OAuth2 authentication module
 ```
 

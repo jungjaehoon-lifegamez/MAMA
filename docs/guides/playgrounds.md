@@ -140,11 +140,14 @@ function sendToChat() {
 The Viewer automatically relays agent responses to the Playground iframe.
 
 ```javascript
-// Receiving in Playground
+// Receiving in Playground — validate origin before processing
 window.addEventListener('message', (event) => {
+  // Only accept messages from the known Viewer origin
+  if (event.origin !== VIEWER_ORIGIN) return;
+
   if (event.data.type === 'playground:response') {
-    // event.data.content contains the agent response
-    displayResponse(event.data.content);
+    var content = typeof event.data.content === 'string' ? event.data.content : '';
+    displayResponse(content);
   }
 });
 ```
