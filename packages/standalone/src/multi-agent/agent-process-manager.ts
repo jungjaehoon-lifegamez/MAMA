@@ -11,7 +11,11 @@
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
-import { loadInstalledSkills, loadBackendAgentsMd } from '../agent/agent-loop.js';
+import {
+  loadInstalledSkills,
+  loadBackendAgentsMd,
+  getGatewayToolsPrompt,
+} from '../agent/agent-loop.js';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -520,25 +524,8 @@ ${skillsPrompt}## Guidelines
       return getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```\n';
     }
 
-    // Default: tool_call JSON block instructions
-    return `## Gateway Tools
-
-To use gateway tools, output a JSON block in your response:
-
-\`\`\`tool_call
-{"name": "tool_name", "input": {"param1": "value1"}}
-\`\`\`
-
-Available tools:
-- **discord_send**(channel_id, message?, file_path?) — Send message or file to a Discord channel
-- **slack_send**(channel_id, message?, file_path?) — Send message or file to a Slack channel
-- **mama_search**(query?, type?, limit?) — Search decisions in MAMA memory
-- **mama_save**(type, topic?, decision?, reasoning?, summary?, next_steps?) — Save decision or checkpoint
-- **pr_review_threads**(pr_url) — Fetch unresolved PR review threads (grouped by file, with line/body/author). Use this to autonomously analyze PR feedback.
-
-The channel_id for the current conversation is provided in the message context.
-Tool calls are executed automatically. You do NOT need curl or Bash for these.
-`;
+    // Default: load full gateway tools from gateway-tools.md
+    return getGatewayToolsPrompt();
   }
 
   private shouldTracePrompt(agentId: string): boolean {
