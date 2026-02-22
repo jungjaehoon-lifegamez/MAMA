@@ -17,7 +17,7 @@ This skill provides **automatic background context injection** using MAMA's hook
 
 The skill uses a **multi-hook system** for comprehensive context injection:
 
-**UserPromptSubmit Hook** (active, ~150ms)
+**UserPromptSubmit Hook** (`scripts/userpromptsubmit-hook.js` — active, ~150ms)
 
 - Triggers: On every user message submission
 - Purpose: Inject relevant decisions as context before Claude responds
@@ -195,9 +195,11 @@ export MAMA_DISABLE_HOOKS=true
 **Testing:**
 
 ```bash
-# Test UserPromptSubmit hook
-export USER_PROMPT="How should I handle authentication?"
-node mama-plugin/scripts/userpromptsubmit-hook.js
+# Test SessionStart hook (the only testable standalone hook)
+node mama-plugin/scripts/sessionstart-hook.js
+
+# UserPromptSubmit hook is triggered automatically by Claude Code
+# on every user message — no manual invocation needed.
 ```
 
 **Architecture:**
