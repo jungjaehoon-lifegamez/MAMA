@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.3] / plugin [1.7.14] - 2026-02-23
+
+### Fixed
+
+- **4-layer agent isolation** — prevents ~50K token/turn waste from global config injection:
+  - `cwd` scoped to `~/.mama/workspace` (blocks `~/CLAUDE.md` auto-load)
+  - `.git/HEAD` boundary (stops upward CLAUDE.md traversal)
+  - `--plugin-dir` empty directory (blocks global plugin skill loading)
+  - `--setting-sources project,local` (excludes `~/.claude/settings.json` enabledPlugins)
+- **Watchdog restart loop** — removed `killProcessesOnPorts()` from daemon startup that was killing sibling daemons; added PID file adopt + health check fallback
+- **Zombie process cleanup** — `handleTimeout()` now kills timed-out claude processes (SIGTERM → SIGKILL) instead of only resetting state
+- **turnCount reset** — `resetSession()`/`setSessionId()` now re-inject system prompt for new sessions
+- **Detached process removal** — `ClaudeCLIWrapper` no longer spawns with `detached:true` (prevents orphan processes)
+
+### Added
+
+- **New documentation guides:**
+  - `docs/guides/playgrounds.md` — Playground usage, built-in 4 types, sendToChat API
+  - `docs/guides/codex-backend.md` — Codex CLI backend setup, Claude vs Codex comparison
+  - `docs/guides/multi-agent-advanced.md` — Council, Dynamic Workflow, Swarm DB, personas
+  - `docs/guides/code-act-sandbox.md` — QuickJS/WASM sandbox, HostBridge, security model
+- **CLAUDE.md agent isolation section** — documents 5 prohibited modifications with rationale
+
+### Changed
+
+- **mama-os.md** — complete rewrite of tab documentation to match actual Viewer UI (5 tabs + floating chat), updated architecture diagrams, gen-4.x model list
+- **Plugin SKILL.md** — UserPromptSubmit is Claude Code host-side (no plugin script), PreToolUse/PostToolUse marked disabled, teaser format 40 tokens
+- **Plugin README.md** — agents marked as planned (not yet registered), test count 328, version 1.7.14
+
 ## [0.10.2] / mama-core [1.1.5] - 2026-02-22
 
 ### Added
