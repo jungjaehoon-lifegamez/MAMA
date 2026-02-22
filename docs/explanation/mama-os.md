@@ -35,17 +35,17 @@ Each lived in isolation. You couldn't chat while viewing the graph. You couldn't
 
 MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 
-```
-┌─────────────────────────────────────────────────┐
-│              MAMA OS (Browser)                   │
-├─────────────────────────────────────────────────┤
-│  Dashboard  │  Chat  │  Memory  │  Settings     │
-│                                                   │
-│  • System status      • Voice input              │
-│  • Gateway health     • Real-time chat           │
-│  • Memory stats       • Decision search          │
-│  • Agent config       • Graph visualization      │
-└─────────────────────────────────────────────────┘
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│                         MAMA OS (Browser)                            │
+├──────────────────────────────────────────────────────────────────────┤
+│  Dashboard │ Chat │ Memory │ Skills │ Playground │ Log │ Settings   │
+│                                                                      │
+│  • System status      • Voice input       • Skill management        │
+│  • Gateway health     • Real-time chat    • Interactive HTML tools   │
+│  • Memory stats       • Decision search   • Real-time daemon logs   │
+│  • Agent config       • Graph visual      • Graph visualization     │
+└──────────────────────────────────────────────────────────────────────┘
                       ↕ WebSocket
 ┌─────────────────────────────────────────────────┐
 │         MAMA Standalone Server (Node.js)         │
@@ -77,8 +77,8 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 │                                                        │
 │  MAMA OS Viewer (viewer.html)                         │
 │  ┌────────────────────────────────────────────────┐  │
-│  │  Tab Navigation                                 │  │
-│  │  • Dashboard  • Chat  • Memory  • Settings     │  │
+│  │  Tab Navigation                                                │  │
+│  │  • Dashboard • Chat • Memory • Skills • Playground • Log • Settings │  │
 │  └────────────────────────────────────────────────┘  │
 │                                                        │
 │  JavaScript Modules                                   │
