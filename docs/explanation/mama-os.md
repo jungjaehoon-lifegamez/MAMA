@@ -39,12 +39,11 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         MAMA OS (Browser)                            │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Dashboard │ Chat │ Memory │ Skills │ Playground │ Log │ Settings   │
+│  Dashboard │ Memory │ Skills │ Playground │ Settings  + Floating Chat │
 │                                                                      │
-│  • System status      • Voice input       • Skill management        │
-│  • Gateway health     • Real-time chat    • Interactive HTML tools   │
-│  • Memory stats       • Decision search   • Real-time daemon logs   │
-│  • Agent config       • Graph visual      • Graph visualization     │
+│  • System status      • Decision search   • Skill management        │
+│  • Gateway health     • Graph visual      • Interactive HTML tools   │
+│  • Memory stats       • Agent config      • Real-time daemon logs   │
 └──────────────────────────────────────────────────────────────────────┘
                       ↕ WebSocket
 ┌─────────────────────────────────────────────────┐
@@ -76,10 +75,11 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 ├──────────────────────────────────────────────────────┤
 │                                                        │
 │  MAMA OS Viewer (viewer.html)                         │
-│  ┌────────────────────────────────────────────────┐  │
-│  │  Tab Navigation                                                │  │
-│  │  • Dashboard • Chat • Memory • Skills • Playground • Log • Settings │  │
-│  └────────────────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Tab Navigation                                             │  │
+│  │  • Dashboard • Memory • Skills • Playground • Settings      │  │
+│  │  + Floating Chat (global overlay, visible on all tabs)      │  │
+│  └─────────────────────────────────────────────────────────────┘  │
 │                                                        │
 │  JavaScript Modules                                   │
 │  ┌─────────────┬─────────────┬─────────────────┐    │
@@ -139,9 +139,11 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 
 ---
 
-### 2. Chat Tab
+### 2. Floating Chat (Global Overlay)
 
 **Purpose:** Real-time conversation with Claude Code from any device
+
+> **Note:** Chat is not a tab — it's a floating panel accessible from any tab via the bottom-right chat button.
 
 **Features:**
 
@@ -197,7 +199,7 @@ When an agent responds, a Reasoning Header is displayed above the message. If to
 
 ---
 
-### 3. Memory Tab
+### 2. Memory Tab
 
 **Purpose:** Browse, search, and manage your MAMA decision graph
 
@@ -233,7 +235,7 @@ When an agent responds, a Reasoning Header is displayed above the message. If to
 
 ---
 
-### 4. Skills Tab
+### 3. Skills Tab
 
 **Purpose:** Standalone skills management
 
@@ -247,7 +249,7 @@ When an agent responds, a Reasoning Header is displayed above the message. If to
 
 ---
 
-### 5. Playground Tab
+### 4. Playground Tab
 
 **Purpose:** Interactive HTML tool management and execution
 
@@ -259,25 +261,13 @@ When an agent responds, a Reasoning Header is displayed above the message. If to
 - **Delete** - Remove Playgrounds that are no longer needed
 - **4 built-in Playgrounds** - Wave Visualizer, Skill Lab, Cron Workflow Lab, Log Viewer
 
+The **Log Viewer** is one of the 4 built-in Playgrounds (not a separate tab). It provides real-time daemon log streaming via WebSocket, with filtering by level (info, warn, error) and full-text search.
+
 **Use case:** Manage and run custom tools created by agents. See the [Playground Guide](../guides/playgrounds.md) for details.
 
 ---
 
-### 6. Log Viewer
-
-**Purpose:** Real-time daemon log streaming
-
-**Features:**
-
-- **Live logs** - Stream MAMA OS daemon logs via WebSocket
-- **Filtering** - Filter by level (info, warn, error) or module
-- **Search** - Full-text search within log entries
-
-**Use case:** Monitor agent behavior in real time and debug issues.
-
----
-
-### 7. Settings Tab
+### 5. Settings Tab
 
 **Purpose:** Configure gateways, agent, and heartbeat scheduler
 
