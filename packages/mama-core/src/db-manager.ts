@@ -86,17 +86,29 @@ export interface VectorSearchParams {
   timeWindow?: number;
 }
 
+export interface SemanticEdgeItem {
+  from_id: string;
+  to_id: string;
+  relationship: string;
+  reason?: string;
+  topic: string;
+  decision: string;
+  confidence?: number;
+  created_at?: string;
+  approved_by_user?: number | null;
+}
+
 export interface SemanticEdges {
-  refines: unknown[];
-  refined_by: unknown[];
-  contradicts: unknown[];
-  contradicted_by: unknown[];
-  builds_on: unknown[];
-  built_on_by: unknown[];
-  debates: unknown[];
-  debated_by: unknown[];
-  synthesizes: unknown[];
-  synthesized_by: unknown[];
+  refines: SemanticEdgeItem[];
+  refined_by: SemanticEdgeItem[];
+  contradicts: SemanticEdgeItem[];
+  contradicted_by: SemanticEdgeItem[];
+  builds_on: SemanticEdgeItem[];
+  built_on_by: SemanticEdgeItem[];
+  debates: SemanticEdgeItem[];
+  debated_by: SemanticEdgeItem[];
+  synthesizes: SemanticEdgeItem[];
+  synthesized_by: SemanticEdgeItem[];
 }
 
 // Database adapter instance (singleton)
@@ -575,9 +587,7 @@ export async function querySemanticEdges(decisionIds: string[]): Promise<Semanti
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const outgoingEdges = outgoingStmt.all(...decisionIds, ...edgeTypes) as Array<{
-      relationship: string;
-    }>;
+    const outgoingEdges = outgoingStmt.all(...decisionIds, ...edgeTypes) as SemanticEdgeItem[];
 
     // Query incoming edges (to_id = decision)
     const incomingStmt = adapter.prepare(`
@@ -589,9 +599,7 @@ export async function querySemanticEdges(decisionIds: string[]): Promise<Semanti
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const incomingEdges = incomingStmt.all(...decisionIds, ...edgeTypes) as Array<{
-      relationship: string;
-    }>;
+    const incomingEdges = incomingStmt.all(...decisionIds, ...edgeTypes) as SemanticEdgeItem[];
 
     // Categorize edges (original + v1.3 extended)
     const refines = outgoingEdges.filter((e) => e.relationship === 'refines');
