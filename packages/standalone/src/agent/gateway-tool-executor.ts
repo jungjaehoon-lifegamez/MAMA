@@ -469,12 +469,17 @@ export class GatewayToolExecutor {
       }
 
       const recentConversation = this.sessionStore?.getRecentMessages() || [];
-      return await api.saveCheckpoint(
+      const cpResult = await api.saveCheckpoint(
         checkpointInput.summary,
         checkpointInput.open_files ?? [],
         checkpointInput.next_steps ?? '',
         recentConversation
       );
+      // saveCheckpoint returns checkpoint ID (number), wrap with success
+      if (typeof cpResult === 'number' || (cpResult && !('success' in (cpResult as object)))) {
+        return { success: true, id: String(cpResult), message: 'Checkpoint saved' };
+      }
+      return cpResult;
     }
 
     return {
@@ -574,10 +579,15 @@ export class GatewayToolExecutor {
       };
     }
 
-    return await api.updateOutcome(id, {
+    const updateResult = await api.updateOutcome(id, {
       outcome: normalizedOutcome,
       failure_reason: reason,
     });
+    // updateOutcome returns undefined on success, wrap with success field
+    if (!updateResult || !('success' in (updateResult as object))) {
+      return { success: true, message: `Outcome updated to ${normalizedOutcome}` };
+    }
+    return updateResult;
   }
 
   /**
