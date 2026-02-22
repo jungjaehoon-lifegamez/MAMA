@@ -26,7 +26,7 @@ import crypto from 'crypto';
 
 // Internal modules
 import { learnDecision, createEdgesFromReasoning, DecisionDetection } from './decision-tracker.js';
-import { DecisionRecord } from './db-manager.js';
+import { DecisionRecord, SemanticEdgeItem } from './db-manager.js';
 import {
   queryDecisionGraph,
   querySemanticEdges,
@@ -1088,9 +1088,8 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCan
 
       // Helper to add edge to graph
       const addEdge = (
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic property access with idField
-        edge: any,
-        idField: string,
+        edge: SemanticEdgeItem,
+        idField: 'to_id' | 'from_id',
         source: string,
         rank: number,
         simFactor: number
