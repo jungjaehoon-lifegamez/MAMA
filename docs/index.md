@@ -51,6 +51,10 @@ _Step-by-step instructions for specific tasks_
 - [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
 - [Configuration](guides/configuration.md) - Configuration options and setup
 - [Performance Tuning](guides/performance-tuning.md) - Optimize MAMA performance
+- [Playgrounds](guides/playgrounds.md) - Interactive HTML tools in MAMA OS Viewer
+- [Codex Backend](guides/codex-backend.md) - Codex CLI backend setup and mixed swarm
+- [Multi-Agent Advanced](guides/multi-agent-advanced.md) - Council, Workflow DAG, Swarm, UltraWork
+- [Code-Act Sandbox](guides/code-act-sandbox.md) - QuickJS/WASM isolated code execution
 
 ### 📖 [Reference](reference/) - Information-Oriented
 
@@ -123,6 +127,13 @@ _Contributing, testing, and development guidelines_
 3. Configure [Gateway Integrations](guides/gateway-config.md)
 4. Troubleshoot with [Standalone Troubleshooting](guides/standalone-troubleshooting.md)
 
+### 🧪 I Want to Use Advanced Multi-Agent Features
+
+1. Read [Multi-Agent Advanced Guide](guides/multi-agent-advanced.md) - Council, Workflow, Swarm
+2. Set up [Codex Backend](guides/codex-backend.md) for mixed Claude + Codex swarms
+3. Explore [Playgrounds](guides/playgrounds.md) for interactive tools
+4. Learn about [Code-Act Sandbox](guides/code-act-sandbox.md) for efficient code execution
+
 ### 📖 I Need API/Command Reference
 
 - [Commands Reference](reference/commands.md) - All `/mama-*` commands
@@ -140,5 +151,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.9.4 - BMAD Workflows, Workflow Concurrency, Backend Balancing, Council Engine
-**Last Updated:** 2026-02-19
+**Status:** MAMA OS v0.10.2 - Playgrounds, Codex Backend, Code-Act Sandbox, Council Engine, Dynamic Workflow
+**Last Updated:** 2026-02-22
