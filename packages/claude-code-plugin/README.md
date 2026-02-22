@@ -114,14 +114,14 @@ You: "How should I handle testing?"
 
 ## 🤖 Agents
 
-MAMA Plugin includes two specialized agents:
+MAMA Plugin includes two specialized agents (planned, not yet registered):
 
 | Agent               | Purpose                                                                                  |
 | ------------------- | ---------------------------------------------------------------------------------------- |
 | **mama-researcher** | Deep research agent that searches decisions, explores codebase, and synthesizes findings |
 | **mama-reviewer**   | Code review agent that checks changes against stored decisions and contracts             |
 
-Agents are invoked automatically by Claude Code when tasks match their specialization.
+> **Note:** These agents are defined as concepts but not yet registered in the plugin manifest. They will be implemented in a future release.
 
 ---
 
