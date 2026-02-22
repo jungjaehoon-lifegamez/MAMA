@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-02-22
+
+### Added
+
+- **Code-Act sandbox tool visibility**: Viewer reasoning header now shows which tools Codex used (e.g., `mama_search`, `Read`, `Bash`) via `onToolUse` callbacks from HostBridge
+- **Shared MAMA tool handlers** (`mama-tool-handlers.ts`): Extracted `handleSave`, `handleSearch`, `handleUpdate`, `handleLoadCheckpoint` — eliminates duplication between `MCPExecutor` and `GatewayToolExecutor`
+- **`GatewaySessionStore` interface**: Typed session store replacing `any` in `GatewayToolExecutor`
+- **`isSearchResultItem` type guard**: Runtime validation for `listDecisions`/`suggest` results
+
+### Changed
+
+- **Codex streaming optimization**: Simplified system prompt loading, removed `state.json` dependency, conditional `ONBOARDING.md` loading
+- **Multi-agent system prompt**: `buildToolsSection()` now uses full `gateway-tools.md` instead of hardcoded 5-tool subset — fixes Codex OS agent not knowing available tools
+- **Context injection**: Skip `getRelevantContext()` on CONTINUE turns for lower token overhead
+- **Gateway tools cache**: Cache `getGatewayToolsPrompt()` in production, hot-reload in dev
+- **`formatContextForPrompt` hoisted**: 3 calls → 1 call per message route
+
+### Fixed
+
+- **mama_save checkpoint crash**: `sessionStore.getRecentMessages()` didn't exist — `any` type hid it. Replaced with `getHistory('current')`
+- **checkpoint search**: `mama_search(type='checkpoint')` returned 0 results — now routes to correct checkpoints table
+- **Gateway tool result consistency**: All executor results now include `{ success: true }` for HostBridge compatibility
+- **loadCheckpoint HostBridge compatibility**: Added `success` field to raw DB checkpoint results
+- **CONTINUE path skill injection**: Always run prompt enhance regardless of session type
+- **PR #41 code review fixes** (4 rounds):
+  - `esc()` quote escaping for attribute injection safety
+  - Stale pin/selection indices after log trimming
+  - `postMessage` targetOrigin scoped (was wildcard `'*'`)
+  - `in` operator guard against non-object primitives
+  - `savePins()` localStorage sync on clear
+  - `diffTailLines` optimization
+
 ## [0.9.1] - 2026-02-16
 
 ### Added
