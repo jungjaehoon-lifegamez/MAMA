@@ -576,12 +576,14 @@ function addLines(rawLines, isInitial) {
 
 function diffTailLines(snapshotLines) {
   if (!Array.isArray(snapshotLines) || snapshotLines.length === 0) return [];
-  const existing = S.logs.map((l) => l.raw);
-  const maxOverlap = Math.min(existing.length, snapshotLines.length);
+  const existingLen = S.logs.length;
+  const maxOverlap = Math.min(existingLen, snapshotLines.length);
   for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    // Fast pre-check: first candidate line
+    if (S.logs[existingLen - overlap].raw !== snapshotLines[0]) continue;
     let same = true;
-    for (let i = 0; i < overlap; i++) {
-      if (existing[existing.length - overlap + i] !== snapshotLines[i]) {
+    for (let i = 1; i < overlap; i++) {
+      if (S.logs[existingLen - overlap + i].raw !== snapshotLines[i]) {
         same = false;
         break;
       }
@@ -1190,7 +1192,7 @@ $('autoBtn').addEventListener('click', function() {
   if (S.autoScroll) logArea.scrollTop = logArea.scrollHeight;
 });
 $('clearBtn').addEventListener('click', () => {
-  S.logs = []; S.selected.clear(); S.pins.clear(); S.lastClickIdx = -1;
+  S.logs = []; S.selected.clear(); S.pins.clear(); savePins(); S.lastClickIdx = -1;
   S.lastMtime = 0; S.lastTotal = 0; S.lastHadTotal = false; S.initialized = false;
   S.prevCount = 0; S.rateHistory = []; S.sourceCounts = {}; S.channelCounts = {};
   logArea.innerHTML = '<div class="empty" id="emptyState"><div class="ico">&#128203;</div><p>Cleared</p></div>';

@@ -19,6 +19,14 @@ import type {
   MAMAApiInterface,
 } from './types.js';
 
+function isSearchResultItem(value: unknown): value is SearchResultItem {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Record<string, unknown>).id === 'string'
+  );
+}
+
 export async function handleSave(
   api: MAMAApiInterface,
   input: SaveInput,
@@ -93,23 +101,22 @@ export async function handleSearch(
 
   if (!query) {
     const decisions = await api.listDecisions({ limit });
-    let results = (Array.isArray(decisions) ? decisions : []) as SearchResultItem[];
+    const raw = Array.isArray(decisions) ? decisions : [];
+    let results = raw.filter(isSearchResultItem);
 
     if (type === 'decision') {
-      results = results.filter((item) => (item.id ?? '').startsWith('decision_'));
+      results = results.filter((item) => item.id.startsWith('decision_'));
     }
 
     return { success: true, results, count: results.length };
   }
 
   const result = await api.suggest(query, { limit });
-  let filteredResults = result.results ?? [];
+  let filteredResults: SearchResultItem[] = (result.results ?? []).filter(isSearchResultItem);
 
   // type === 'checkpoint' already handled above with early return
   if (type === 'decision') {
-    filteredResults = filteredResults.filter((item: { id?: string }) =>
-      (item.id ?? '').startsWith('decision_')
-    );
+    filteredResults = filteredResults.filter((item) => item.id.startsWith('decision_'));
   }
 
   return { success: true, results: filteredResults, count: filteredResults.length };
@@ -157,10 +164,9 @@ export async function handleLoadCheckpoint(
   }
 
   // Restore conversation if callback provided
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cp = checkpoint as any;
-  if (cp.recentConversation && onRestore) {
-    onRestore(cp.recentConversation);
+  const cpRecord = checkpoint as unknown as Record<string, unknown>;
+  if (onRestore && 'recentConversation' in cpRecord && Array.isArray(cpRecord.recentConversation)) {
+    onRestore(cpRecord.recentConversation);
   }
 
   // Ensure success field is present (HostBridge checks result.success)
