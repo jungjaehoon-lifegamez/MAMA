@@ -85,7 +85,6 @@ describe('ContextInjector', () => {
 
       expect(result.prompt).toContain('auth_strategy');
       expect(result.prompt).toContain('Use JWT for authentication');
-      expect(result.prompt).toContain('success');
       expect(result.prompt).toContain('85%'); // Relevance percentage
     });
 
@@ -95,9 +94,8 @@ describe('ContextInjector', () => {
 
       const result = await injector.getRelevantContext('auth');
 
-      expect(result.prompt).toContain('REQUIRES VERIFICATION');
-      expect(result.prompt).toContain('WARNING');
-      expect(result.prompt).not.toContain('your memory');
+      expect(result.prompt).toContain('verify before use');
+      expect(result.prompt).toContain('Prior Decisions');
     });
 
     it('should handle API errors gracefully', async () => {

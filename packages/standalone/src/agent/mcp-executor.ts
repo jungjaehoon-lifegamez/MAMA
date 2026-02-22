@@ -12,18 +12,18 @@ import { handleSaveIntegrationToken } from '../onboarding/phase-7-integrations.j
 import type {
   GatewayToolName,
   SaveInput,
-  SaveDecisionInput,
-  SaveCheckpointInput,
   SearchInput,
   UpdateInput,
   LoadCheckpointInput,
-  SaveResult,
-  SearchResult,
-  UpdateResult,
-  LoadCheckpointResult,
   MAMAApiInterface,
 } from './types.js';
 import { AgentError } from './types.js';
+import {
+  handleSave,
+  handleSearch,
+  handleUpdate,
+  handleLoadCheckpoint,
+} from './mama-tool-handlers.js';
 
 /**
  * Discord gateway interface for sending messages
@@ -154,13 +154,13 @@ export class MCPExecutor {
 
       switch (toolName as GatewayToolName) {
         case 'mama_save':
-          return await this.executeSave(api, input as SaveInput);
+          return await handleSave(api, input as SaveInput);
         case 'mama_search':
-          return await this.executeSearch(api, input as SearchInput);
+          return await handleSearch(api, input as SearchInput);
         case 'mama_update':
-          return await this.executeUpdate(api, input as UpdateInput);
+          return await handleUpdate(api, input as UpdateInput);
         case 'mama_load_checkpoint':
-          return await this.executeLoadCheckpoint(api, input as LoadCheckpointInput);
+          return await handleLoadCheckpoint(api, input as LoadCheckpointInput);
         default:
           throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
       }
@@ -176,190 +176,6 @@ export class MCPExecutor {
         false
       );
     }
-  }
-
-  /**
-   * Execute save tool (decision or checkpoint)
-   */
-  private async executeSave(api: MAMAApiInterface, input: SaveInput): Promise<SaveResult> {
-    if (input.type === 'decision') {
-      const decisionInput = input as SaveDecisionInput;
-
-      if (!decisionInput.topic || !decisionInput.decision || !decisionInput.reasoning) {
-        return {
-          success: false,
-          message: 'Decision requires: topic, decision, reasoning',
-        };
-      }
-
-      // Map MCP 'decision' type to mama-api 'user_decision' type
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return await api.save({
-        topic: decisionInput.topic,
-        decision: decisionInput.decision,
-        reasoning: decisionInput.reasoning,
-        confidence: decisionInput.confidence ?? 0.5,
-        type: 'user_decision', // mama-api expects 'user_decision' not 'decision'
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any);
-    }
-
-    if (input.type === 'checkpoint') {
-      const checkpointInput = input as SaveCheckpointInput;
-
-      if (!checkpointInput.summary) {
-        return {
-          success: false,
-          message: 'Checkpoint requires: summary',
-        };
-      }
-
-      const cpResult = await api.saveCheckpoint(
-        checkpointInput.summary,
-        checkpointInput.open_files ?? [],
-        checkpointInput.next_steps ?? ''
-      );
-      // saveCheckpoint returns checkpoint ID (number), wrap with success
-      if (typeof cpResult === 'number' || (cpResult && !('success' in (cpResult as object)))) {
-        return { success: true, id: String(cpResult), message: 'Checkpoint saved' };
-      }
-      return cpResult;
-    }
-
-    return {
-      success: false,
-      message: `Invalid save type: ${(input as { type?: string }).type}. Must be 'decision' or 'checkpoint'`,
-    };
-  }
-
-  /**
-   * Execute search tool
-   */
-  private async executeSearch(api: MAMAApiInterface, input: SearchInput): Promise<SearchResult> {
-    const { query, type, limit = 10 } = input;
-
-    // Checkpoint search: checkpoints live in a separate table, not in decisions
-    if (type === 'checkpoint') {
-      const checkpoint = await api.loadCheckpoint();
-      if (checkpoint && typeof checkpoint === 'object' && 'summary' in checkpoint) {
-        const cp = checkpoint as {
-          id?: number;
-          summary?: string;
-          timestamp?: number;
-          next_steps?: string;
-          open_files?: string[];
-        };
-        return {
-          success: true,
-          results: [
-            {
-              id: `checkpoint_${cp.id ?? 'latest'}`,
-              summary: cp.summary,
-              created_at: cp.timestamp
-                ? new Date(cp.timestamp).toISOString()
-                : new Date().toISOString(),
-              type: 'checkpoint' as const,
-            },
-          ] as SearchResult['results'],
-          count: 1,
-        };
-      }
-      return { success: true, results: [], count: 0 };
-    }
-
-    // If no query provided, return recent items using listDecisions
-    if (!query) {
-      const decisions = await api.listDecisions({ limit });
-      let results = Array.isArray(decisions) ? decisions : [];
-
-      // Filter by type if specified
-      if (type && type !== 'all') {
-        results = results.filter((item: unknown) => (item as { type?: string }).type === type);
-      }
-
-      return {
-        success: true,
-        results: results as SearchResult['results'],
-        count: results.length,
-      };
-    }
-
-    // Semantic search using suggest
-    const result = await api.suggest(query, { limit });
-
-    // Filter by type if specified
-    let filteredResults = result.results ?? [];
-
-    if (type && type !== 'all') {
-      filteredResults = filteredResults.filter((item: { type?: string }) => item.type === type);
-    }
-
-    return {
-      success: true,
-      results: filteredResults,
-      count: filteredResults.length,
-    };
-  }
-
-  /**
-   * Execute update tool
-   */
-  private async executeUpdate(api: MAMAApiInterface, input: UpdateInput): Promise<UpdateResult> {
-    const { id, outcome, reason } = input;
-
-    if (!id) {
-      return {
-        success: false,
-        message: 'Update requires: id',
-      };
-    }
-
-    if (!outcome) {
-      return {
-        success: false,
-        message: 'Update requires: outcome',
-      };
-    }
-
-    // Normalize outcome to uppercase
-    const normalizedOutcome = outcome.toUpperCase();
-    const validOutcomes = ['SUCCESS', 'FAILED', 'PARTIAL'];
-
-    if (!validOutcomes.includes(normalizedOutcome)) {
-      return {
-        success: false,
-        message: `Invalid outcome: ${outcome}. Must be one of: success, failed, partial`,
-      };
-    }
-
-    const updateResult = await api.updateOutcome(id, {
-      outcome: normalizedOutcome,
-      failure_reason: reason,
-    });
-    // updateOutcome returns undefined on success, wrap with success field
-    if (!updateResult || !('success' in (updateResult as object))) {
-      return { success: true, message: `Outcome updated to ${normalizedOutcome}` };
-    }
-    return updateResult;
-  }
-
-  /**
-   * Execute load_checkpoint tool
-   */
-  private async executeLoadCheckpoint(
-    api: MAMAApiInterface,
-    _input: LoadCheckpointInput
-  ): Promise<LoadCheckpointResult> {
-    const checkpoint = await api.loadCheckpoint();
-    // Ensure success field is present (HostBridge checks result.success)
-    if (!checkpoint) {
-      return { success: false, message: 'No checkpoint found' };
-    }
-    const cp = checkpoint as unknown as Record<string, unknown>;
-    if (!('success' in cp)) {
-      cp.success = true;
-    }
-    return cp as unknown as LoadCheckpointResult;
   }
 
   /**
