@@ -220,9 +220,14 @@ describe('GatewayToolExecutor', () => {
       (mockApi.suggest as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: true,
         results: [
-          { id: 'decision_1', type: 'decision', topic: 'a' },
-          { id: 'checkpoint_2', type: 'checkpoint', summary: 'b' },
-          { id: 'decision_3', type: 'decision', topic: 'c' },
+          { id: 'decision_1', type: 'decision', topic: 'a', created_at: '2026-01-01T00:00:00Z' },
+          {
+            id: 'checkpoint_2',
+            type: 'checkpoint',
+            summary: 'b',
+            created_at: '2026-01-02T00:00:00Z',
+          },
+          { id: 'decision_3', type: 'decision', topic: 'c', created_at: '2026-01-03T00:00:00Z' },
         ],
         count: 3,
       });
