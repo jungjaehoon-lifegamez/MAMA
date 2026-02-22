@@ -1591,6 +1591,12 @@ export class AgentLoop {
     try {
       const sandbox = new CodeActSandbox();
       const bridge = new HostBridge(this.mcpExecutor);
+      bridge.onToolUse = (toolName, input, result) => {
+        if (result !== undefined) {
+          // Tool completed — notify callback
+          this.onToolUse?.(toolName, input, result);
+        }
+      };
       bridge.injectInto(sandbox, tier);
 
       const result = await sandbox.execute(code);
