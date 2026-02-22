@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-02-22
+
+### Added
+
+- **Watchdog auto-restart**: Daemon process is now monitored by a watchdog that checks `/health` every 30s and auto-restarts on failure (max 10 restarts with exponential backoff)
+- **`mama status` watchdog display**: Shows watchdog PID and active status
+- **`mama stop` watchdog cleanup**: Watchdog is terminated before daemon shutdown to prevent restart during stop
+
+### Changed
+
+- **Timeout tuning**: Rebalanced all timeout values based on actual usage patterns
+  - MCP request: 15min → 3min (single LLM call doesn't need 15min)
+  - Agent response: 15min → 5min
+  - Council round: 2min → 3min (prevent mid-discussion timeout)
+  - Workflow step: 10min → 5min
+  - Workflow total: 10min → 30min (multi-step DAG needs more headroom)
+  - UltraWork total: 30min → 60min (autonomous work sessions need time)
+  - UltraWork max steps: 20 → 50 (delegation + council consume steps fast)
+
 ## [0.10.0] - 2026-02-22
 
 ### Added
