@@ -107,7 +107,7 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 │  Core Services                                        │
 │  • SQLite + sqlite-vec (vector search)               │
 │  • Transformers.js (local embeddings)                │
-│  • Claude API (autonomous agent)                     │
+│  • Claude Code CLI (subprocess-based agent)           │
 │  • Gateway integrations (Discord, Slack, etc.)       │
 │                                                        │
 └──────────────────────────────────────────────────────┘
@@ -139,7 +139,7 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 
 ---
 
-### 2. Floating Chat (Global Overlay)
+### Floating Chat (Global Overlay)
 
 **Purpose:** Real-time conversation with Claude Code from any device
 
