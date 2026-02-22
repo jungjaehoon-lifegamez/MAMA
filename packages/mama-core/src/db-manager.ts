@@ -68,7 +68,7 @@ export interface DecisionRecord {
   refined_from?: string | string[] | null;
   created_at: number;
   updated_at?: number;
-  edges?: unknown[];
+  edges?: DecisionEdgeRow[];
 }
 
 export interface OutcomeData {
@@ -84,6 +84,19 @@ export interface VectorSearchParams {
   limit?: number;
   threshold?: number;
   timeWindow?: number;
+}
+
+export interface DecisionEdgeRow {
+  from_id: string;
+  to_id: string;
+  relationship: string;
+  reason?: string | null;
+  weight?: number;
+  created_at?: number;
+  created_by?: string;
+  approved_by_user?: number | null;
+  decision_id?: string | null;
+  evidence?: string | null;
 }
 
 export interface SemanticEdgeItem {
@@ -519,7 +532,7 @@ export async function queryDecisionGraph(topic: string): Promise<DecisionRecord[
         AND (approved_by_user = 1 OR approved_by_user IS NULL)
     `);
     for (const decision of decisions) {
-      decision.edges = edgesStmt.all(decision.id);
+      decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
 
       // Parse refined_from JSON if exists
       if (decision.refined_from) {
