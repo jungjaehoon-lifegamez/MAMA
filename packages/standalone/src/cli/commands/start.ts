@@ -998,13 +998,17 @@ export async function runAgentLoop(
       }
     },
     onToolUse: (toolName, _input, result) => {
+      // Track tool name (for Code-Act sandbox calls that bypass onTurn)
+      if (!reasoningLog.includes(`🔧 ${toolName}`)) {
+        reasoningLog.push(`🔧 ${toolName}`);
+      }
       // Add tool result summary
       const resultObj = result as { success?: boolean; results?: unknown[]; error?: string };
-      if (resultObj.error) {
+      if (resultObj?.error) {
         reasoningLog.push(`  ❌ ${resultObj.error}`);
-      } else if (resultObj.results && Array.isArray(resultObj.results)) {
+      } else if (resultObj?.results && Array.isArray(resultObj.results)) {
         reasoningLog.push(`  ✓ ${resultObj.results.length} items`);
-      } else if (resultObj.success !== undefined) {
+      } else if (resultObj?.success !== undefined) {
         reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
       }
       console.log(`[Tool] ${toolName} → ${JSON.stringify(result).slice(0, 80)}`);
