@@ -22,9 +22,13 @@ log(`Starting... PID=${process.pid} NODE=${process.execPath}`);
 const MAMA_API_PORT = parseInt(process.env.MAMA_SERVER_PORT || '3847', 10);
 log(`API port: ${MAMA_API_PORT}`);
 
-function callCodeActAPI(
-  code: string
-): Promise<{ success: boolean; value?: unknown; logs?: string[]; error?: string }> {
+function callCodeActAPI(code: string): Promise<{
+  success: boolean;
+  value?: unknown;
+  logs?: string[];
+  error?: string;
+  toolCalls?: { name: string; input: Record<string, unknown> }[];
+}> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ code });
     const req = http.request(
@@ -81,9 +85,8 @@ function replyError(id: string | number, code: number, message: string): void {
 const CODE_ACT_TOOL = {
   name: 'code_act',
   description:
-    'Execute JavaScript code in a sandboxed environment with access to read-only MAMA gateway tools. ' +
-    'Available tools: mama_search, mama_load_checkpoint, Read, Grep, Glob (tier-2 read-only). ' +
-    'Write, Bash, discord_send and other write tools are NOT available. ' +
+    'Execute JavaScript code in a sandboxed environment with all MAMA gateway tools. ' +
+    'Available: mama_search, mama_save, mama_update, mama_load_checkpoint, Read, Write, Grep, Glob, Bash, etc. ' +
     'Use var for variables. Last expression is the return value. No async/await.',
   inputSchema: {
     type: 'object',
@@ -91,8 +94,8 @@ const CODE_ACT_TOOL = {
       code: {
         type: 'string',
         description:
-          'JavaScript code to execute. Read-only gateway tools are available as global functions ' +
-          '(e.g., mama_search({query:"auth"}), Read({path:"/tmp/test.txt"})). ' +
+          'JavaScript code to execute. Gateway tools available as global functions ' +
+          '(e.g., mama_search({query:"auth"}), mama_save({topic:"x",decision:"y",reasoning:"z"}), Read({path:"/tmp/test.txt"})). ' +
           'Use var for variables. Last expression = return value.',
       },
     },
@@ -146,6 +149,12 @@ async function handleRequest(
         const result = await callCodeActAPI(code);
         if (result.success) {
           const output: string[] = [];
+          // Show tool calls executed during code-act
+          if (result.toolCalls && result.toolCalls.length > 0) {
+            output.push(
+              `[tools] ${result.toolCalls.map((t: { name: string }) => t.name).join(', ')}`
+            );
+          }
           if (result.logs && result.logs.length > 0) {
             output.push(`[logs] ${result.logs.join('\n')}`);
           }

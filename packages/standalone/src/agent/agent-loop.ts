@@ -48,7 +48,7 @@ import type {
   AgentContext,
 } from './types.js';
 import { AgentError } from './types.js';
-import { buildContextPrompt } from './context-prompt-builder.js';
+import { buildMinimalContext } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
 import { PreCompactHandler } from './pre-compact-handler.js';
@@ -392,20 +392,6 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
 
-  // Load state for conditional loading (skills + system docs)
-  const stateFile = join(mamaHome, 'skills', 'state.json');
-  let state: Record<string, { enabled?: boolean }> = {};
-  try {
-    if (existsSync(stateFile)) {
-      state = JSON.parse(readFileSync(stateFile, 'utf-8'));
-    }
-  } catch (err) {
-    logger.error(`Failed to parse state file ${stateFile}:`, err);
-    throw new Error(
-      `Failed to parse state file ${stateFile}: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-
   // Load persona files: SOUL.md, IDENTITY.md, USER.md
   const personaFiles = ['SOUL.md', 'IDENTITY.md', 'USER.md'];
   for (const file of personaFiles) {
@@ -434,14 +420,9 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
     if (verbose) console.log(`[AgentLoop] Skill catalog: ${skillCatalog.length} skills`);
   }
 
-  // Add context prompt if AgentContext is provided (role awareness)
+  // Add minimal context if AgentContext is provided (role awareness)
   if (context) {
-    const contextPrompt = buildContextPrompt(context);
-    if (verbose)
-      console.log(
-        `[AgentLoop] Injecting context prompt for ${context.roleName}@${context.platform}`
-      );
-    layers.push(contextPrompt);
+    layers.push(buildMinimalContext(context));
   }
 
   // Load backend-specific AGENTS.md (e.g., AGENTS.claude.md, AGENTS.codex.md)
@@ -454,24 +435,29 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   const claudeMd = loadSystemPrompt(verbose);
   layers.push(claudeMd);
 
-  // Load ONBOARDING.md only if not disabled in state
-  // This contains config schema + bot setup guides - only needed during initial setup
-  if (state['system/onboarding']?.enabled !== false) {
+  // Load ONBOARDING.md only during initial setup (before SOUL.md is created)
+  const soulPath = join(mamaHome, 'SOUL.md');
+  if (!existsSync(soulPath)) {
     const onboardingPath = join(mamaHome, 'ONBOARDING.md');
     if (existsSync(onboardingPath)) {
       const onboardingContent = readFileSync(onboardingPath, 'utf-8');
       layers.push(onboardingContent);
       if (verbose) {
-        logger.debug('Loaded ONBOARDING.md (setup reference)');
+        logger.debug('Loaded ONBOARDING.md (initial setup)');
       }
     }
   } else {
     if (verbose) {
-      logger.debug('Skipped ONBOARDING.md (disabled in state)');
+      logger.debug('Skipped ONBOARDING.md (SOUL.md exists, setup complete)');
     }
   }
 
-  return layers.join('\n\n---\n\n');
+  const result = layers.join('\n\n---\n\n');
+  // Debug: log each layer's size to find what's consuming context
+  logger.debug(
+    `[SystemPrompt] Total: ${result.length} chars, layers: ${layers.map((l, i) => `L${i}=${l.length}`).join(', ')}`
+  );
+  return result;
 }
 
 /**
@@ -594,9 +580,12 @@ export class AgentLoop {
         if (existsSync(p)) personaParts.push(readFileSync(p, 'utf-8'));
       }
       const skillCatalog = loadInstalledSkills();
-      const onboardingPath = join(mamaHome, 'ONBOARDING.md');
-      const onboardingContent = existsSync(onboardingPath)
-        ? readFileSync(onboardingPath, 'utf-8')
+      // Only load ONBOARDING.md during initial setup (before SOUL.md exists)
+      const onboardingContent = !existsSync(join(mamaHome, 'SOUL.md'))
+        ? (() => {
+            const op = join(mamaHome, 'ONBOARDING.md');
+            return existsSync(op) ? readFileSync(op, 'utf-8') : '';
+          })()
         : '';
 
       promptLayers = [
@@ -1057,12 +1046,15 @@ export class AgentLoop {
         let response: ClaudeResponse;
 
         const ext = this.currentStreamCallbacks;
-        const callbacks: StreamCallbacks = {
+        const callbacks = {
           onDelta: (text: string) => {
             ext?.onDelta?.(text);
           },
           onToolUse: (name: string, input: Record<string, unknown>) => {
             ext?.onToolUse?.(name, input);
+          },
+          onToolComplete: (name: string, toolUseId: string, isError: boolean) => {
+            ext?.onToolComplete?.(name, toolUseId, isError);
           },
           onFinal: (finalResponse: ClaudeResponse) => {
             ext?.onFinal?.(finalResponse);
@@ -1079,7 +1071,8 @@ export class AgentLoop {
         // Both Claude PersistentCLI and Codex MCP preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
         try {
-          piResult = await this.agent.prompt(promptText, callbacks, {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- onFinal signature differs between PersistentCLI and Codex
+          piResult = await this.agent.prompt(promptText, callbacks as any, {
             model: options?.model,
             resumeSession: shouldResume,
           });
@@ -1098,7 +1091,9 @@ export class AgentLoop {
           const isPromptTooLong =
             errorMessage.includes('Prompt is too long') ||
             errorMessage.includes('prompt is too long') ||
-            errorMessage.includes('request_too_large');
+            errorMessage.includes('request_too_large') ||
+            errorMessage.includes('context window') ||
+            errorMessage.includes('context_length_exceeded');
 
           if (isSessionNotFound || isSessionInUse || isPromptTooLong) {
             const reason = isSessionNotFound
@@ -1113,7 +1108,8 @@ export class AgentLoop {
             this.agent.setSessionId(newSessionId);
 
             // Retry with new session (--session-id instead of --resume)
-            piResult = await this.agent.prompt(promptText, callbacks, {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- onFinal signature differs between PersistentCLI and Codex
+            piResult = await this.agent.prompt(promptText, callbacks as any, {
               model: options?.model,
               resumeSession: false, // Force new session
             });
@@ -1592,9 +1588,23 @@ export class AgentLoop {
       const sandbox = new CodeActSandbox();
       const bridge = new HostBridge(this.mcpExecutor);
       bridge.onToolUse = (toolName, input, result) => {
+        if (result === undefined) {
+          // Tool starting — surface to stream
+          this.currentStreamCallbacks?.onToolUse?.(toolName, input as Record<string, unknown>);
+        }
         if (result !== undefined) {
           // Tool completed — notify callback
           this.onToolUse?.(toolName, input, result);
+          const isError =
+            typeof result === 'object' &&
+            result !== null &&
+            'success' in result &&
+            !(result as { success: boolean }).success;
+          this.currentStreamCallbacks?.onToolComplete?.(
+            toolName,
+            `code_act_sub_${Date.now()}`,
+            isError
+          );
         }
       };
       bridge.injectInto(sandbox, tier);
