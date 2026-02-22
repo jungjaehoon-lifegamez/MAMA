@@ -489,6 +489,30 @@ export class GatewayToolExecutor {
   private async executeSearch(api: MAMAApiInterface, input: SearchInput): Promise<SearchResult> {
     const { query, type, limit = 10 } = input;
 
+    // Checkpoint search: checkpoints live in a separate table, not in decisions
+    if (type === 'checkpoint') {
+      const checkpoint = await api.loadCheckpoint();
+      if (checkpoint && typeof checkpoint === 'object' && 'summary' in checkpoint) {
+        const cp = checkpoint as {
+          id?: number;
+          summary?: string;
+          timestamp?: number;
+          next_steps?: string;
+          open_files?: string[];
+        };
+        const item: SearchResultItem = {
+          id: `checkpoint_${cp.id ?? 'latest'}`,
+          summary: cp.summary,
+          created_at: cp.timestamp
+            ? new Date(cp.timestamp).toISOString()
+            : new Date().toISOString(),
+          type: 'checkpoint',
+        };
+        return { success: true, results: [item], count: 1 };
+      }
+      return { success: true, results: [], count: 0 };
+    }
+
     // If no query provided, return recent items (listDecisions returns decisions table rows)
     if (!query) {
       const decisions = await api.listDecisions({ limit });
