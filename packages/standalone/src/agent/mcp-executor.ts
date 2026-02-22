@@ -220,7 +220,7 @@ export class MCPExecutor {
         checkpointInput.next_steps ?? ''
       );
       // saveCheckpoint returns checkpoint ID (number), wrap with success
-      if (typeof cpResult === 'number' || (cpResult && !('success' in (cpResult as object)))) {
+      if (typeof cpResult !== 'object' || cpResult === null || !('success' in cpResult)) {
         return { success: true, id: String(cpResult), message: 'Checkpoint saved' };
       }
       return cpResult;
@@ -347,7 +347,7 @@ export class MCPExecutor {
       failure_reason: reason,
     });
     // updateOutcome returns undefined on success, wrap with success field
-    if (!updateResult || !('success' in (updateResult as object))) {
+    if (!updateResult || typeof updateResult !== 'object' || !('success' in updateResult)) {
       return { success: true, message: `Outcome updated to ${normalizedOutcome}` };
     }
     return updateResult;
