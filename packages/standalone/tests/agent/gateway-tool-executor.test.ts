@@ -140,8 +140,7 @@ describe('GatewayToolExecutor', () => {
       expect(mockApi.saveCheckpoint).toHaveBeenCalledWith(
         'Session summary',
         ['file1.ts'],
-        'Next steps',
-        [] // recentConversation (empty when no sessionStore)
+        'Next steps'
       );
       expect(result).toMatchObject({ success: true, type: 'checkpoint' });
     });
@@ -221,9 +220,9 @@ describe('GatewayToolExecutor', () => {
       (mockApi.suggest as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: true,
         results: [
-          { id: '1', type: 'decision', topic: 'a' },
-          { id: '2', type: 'checkpoint', summary: 'b' },
-          { id: '3', type: 'decision', topic: 'c' },
+          { id: 'decision_1', type: 'decision', topic: 'a' },
+          { id: 'checkpoint_2', type: 'checkpoint', summary: 'b' },
+          { id: 'decision_3', type: 'decision', topic: 'c' },
         ],
         count: 3,
       });
