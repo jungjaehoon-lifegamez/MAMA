@@ -233,24 +233,49 @@ export class MCPExecutor {
   private async executeSearch(api: MAMAApiInterface, input: SearchInput): Promise<SearchResult> {
     const { query, type, limit = 10 } = input;
 
+    // Checkpoint search: checkpoints live in a separate table, not in decisions
+    if (type === 'checkpoint') {
+      const checkpoint = await api.loadCheckpoint();
+      if (checkpoint && typeof checkpoint === 'object' && 'summary' in checkpoint) {
+        const cp = checkpoint as {
+          id?: number;
+          summary?: string;
+          timestamp?: number;
+          next_steps?: string;
+          open_files?: string[];
+        };
+        return {
+          success: true,
+          results: [
+            {
+              id: `checkpoint_${cp.id ?? 'latest'}`,
+              summary: cp.summary,
+              created_at: cp.timestamp
+                ? new Date(cp.timestamp).toISOString()
+                : new Date().toISOString(),
+              type: 'checkpoint' as const,
+            },
+          ] as SearchResult['results'],
+          count: 1,
+        };
+      }
+      return { success: true, results: [], count: 0 };
+    }
+
     // If no query provided, return recent items using listDecisions
     if (!query) {
       const decisions = await api.listDecisions({ limit });
-      const results = Array.isArray(decisions) ? decisions : [];
+      let results = Array.isArray(decisions) ? decisions : [];
 
       // Filter by type if specified
-      const filteredResults =
-        type && type !== 'all'
-          ? results.filter((item) => {
-              const typedItem = item as { type?: string };
-              return typedItem.type === type;
-            })
-          : results;
+      if (type && type !== 'all') {
+        results = results.filter((item: unknown) => (item as { type?: string }).type === type);
+      }
 
       return {
         success: true,
-        results: filteredResults as SearchResult['results'],
-        count: filteredResults.length,
+        results: results as SearchResult['results'],
+        count: results.length,
       };
     }
 
@@ -261,7 +286,7 @@ export class MCPExecutor {
     let filteredResults = result.results ?? [];
 
     if (type && type !== 'all') {
-      filteredResults = filteredResults.filter((item) => item.type === type);
+      filteredResults = filteredResults.filter((item: { type?: string }) => item.type === type);
     }
 
     return {
