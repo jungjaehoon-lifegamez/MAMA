@@ -123,7 +123,7 @@ A SQLite-based persistent task queue that supports sequential-parallel execution
 
 ### Wave Execution Model
 
-```
+```text
 Wave 1: [Task A, Task B, Task C]  <- Parallel execution
          | After all complete
 Wave 2: [Task D, Task E]          <- Parallel execution
@@ -137,7 +137,7 @@ Wave 3: [Task F]                  <- Solo execution
 
 ### Task States
 
-```
+```text
 pending -> claimed -> completed
                    -> failed -> (retry) -> pending
 ```
@@ -213,7 +213,7 @@ ULTRAWORK: Implement OAuth2 authentication module
 
 ### State Persistence
 
-```
+```text
 ~/.mama/workspace/ultrawork/{session_id}/
 ├── session.json       # Metadata, current phase
 ├── plan.md            # Phase 1 plan
@@ -263,7 +263,7 @@ Role description
 
 ### Placement
 
-```
+```text
 ~/.mama/agents/           # User custom personas
 ~/.mama/templates/personas/  # Built-in personas
 ```
@@ -283,7 +283,9 @@ multi_agent:
       auto_respond_keywords: [custom, special]
       cooldown_ms: 3000
       tool_permissions:
-        allowed: [Read, Grep, Glob, Bash, mama_search]
+        # Note: tool_permissions only controls Claude CLI built-in tools.
+        # Gateway tools (mama_search, discord_send, etc.) are managed separately by tier.
+        allowed: [Read, Grep, Glob, Bash]
         blocked: [Write, Edit]
 ```
 

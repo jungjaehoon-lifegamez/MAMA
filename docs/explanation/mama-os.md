@@ -231,51 +231,51 @@ After completion:
 
 ### 4. Skills Tab
 
-**Purpose:** Standalone 스킬 관리
+**Purpose:** Standalone skills management
 
 **What you see:**
 
-- **스킬 목록** - 설치된 스킬 카드 그리드
-- **활성화/비활성화** - 토글로 개별 스킬 on/off
-- **Skill Lab 연동** - Playground 탭의 Skill Lab에서 인터랙티브하게 스킬 제작/편집
+- **Skill list** - Card grid of installed skills
+- **Enable/Disable** - Toggle individual skills on/off
+- **Skill Lab integration** - Create and edit skills interactively via the Skill Lab in the Playground tab
 
-**Use case:** 어떤 스킬이 활성화되어 있는지 확인하고, 필요 없는 스킬을 비활성화합니다.
+**Use case:** Check which skills are active and disable any that are not needed.
 
 ---
 
 ### 5. Playground Tab
 
-**Purpose:** 인터랙티브 HTML 도구 관리 및 실행
+**Purpose:** Interactive HTML tool management and execution
 
 **Features:**
 
-- **카드 그리드** - 등록된 Playground 목록 표시
-- **iframe 로드** - 카드 클릭 시 Playground HTML을 iframe으로 로드
-- **Open in new tab** - 별도 탭에서 Playground 열기
-- **삭제** - 불필요한 Playground 제거
-- **빌트인 4종** - Wave Visualizer, Skill Lab, Cron Workflow Lab, Log Viewer
+- **Card grid** - Displays registered Playgrounds as a list
+- **iframe load** - Clicking a card loads the Playground HTML in an iframe
+- **Open in new tab** - Opens the Playground in a separate browser tab
+- **Delete** - Remove Playgrounds that are no longer needed
+- **4 built-in Playgrounds** - Wave Visualizer, Skill Lab, Cron Workflow Lab, Log Viewer
 
-**Use case:** 에이전트가 생성한 커스텀 도구를 관리하고 실행합니다. 자세한 내용은 [Playground 가이드](../guides/playgrounds.md)를 참고하세요.
+**Use case:** Manage and run custom tools created by agents. See the [Playground Guide](../guides/playgrounds.md) for details.
 
 ---
 
 ### 6. Log Viewer
 
-**Purpose:** 실시간 데몬 로그 스트리밍
+**Purpose:** Real-time daemon log streaming
 
 **Features:**
 
-- **실시간 로그** - MAMA OS 데몬의 로그를 WebSocket으로 스트리밍
-- **필터링** - 레벨별(info, warn, error), 모듈별 필터
-- **검색** - 로그 내용 텍스트 검색
+- **Live logs** - Stream MAMA OS daemon logs via WebSocket
+- **Filtering** - Filter by level (info, warn, error) or module
+- **Search** - Full-text search within log entries
 
-**Use case:** 에이전트 동작을 실시간으로 모니터링하고 디버깅합니다.
+**Use case:** Monitor agent behavior in real time and debug issues.
 
 ---
 
 ### Reasoning Header
 
-Chat 탭에서 에이전트 응답 시 **Reasoning Header**가 표시됩니다. Code-Act sandbox를 통해 도구를 사용한 경우 해당 도구 호출 정보가 헤더에 표시되어, 에이전트가 어떤 도구를 어떻게 조합했는지 투명하게 확인할 수 있습니다.
+When an agent responds in the Chat tab, a **Reasoning Header** is displayed. If tools were used via the Code-Act sandbox, the tool call details appear in the header, providing full transparency into which tools the agent combined and how.
 
 ---
 

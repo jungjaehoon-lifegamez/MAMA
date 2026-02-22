@@ -181,13 +181,19 @@ Codex agents call gateway tools using JSON blocks:
 { "name": "mama_search", "input": { "query": "authentication strategy" } }
 ```
 
-### Available Gateway Tools
+### Available Tools (via Gateway Bridge)
+
+**Claude CLI built-in tools:**
+
+- `Read`, `Write`, `Bash`, `Grep`, `Glob`, `Edit`
+
+**Gateway tools** (implemented in `gateway-tool-executor.ts`):
 
 - **Memory**: `mama_search`, `mama_save`, `mama_update`, `mama_load_checkpoint`
 - **Messaging**: `discord_send`, `slack_send`
-- **File**: `Read`, `Write`, `Bash`
+- **Browser**: `browser_get_text`, `browser_screenshot`
 
-> **Note:** Do not use `exec_command` or `apply_patch` in Codex agents. Use only gateway tools.
+> **Note:** Do not use `exec_command` or `apply_patch` in Codex agents. These are Codex-native tools and are not available through the gateway bridge.
 
 ### How to Customize
 
@@ -215,6 +221,32 @@ interface AgentConfig {
   codex_ephemeral?: boolean;
 }
 ```
+
+---
+
+## CLI Backend Evolution
+
+MAMA OS evolved through multiple phases to achieve stable, token-efficient CLI integration for both Claude and Codex backends.
+
+### Claude CLI: 3-Phase Evolution
+
+| Phase       | Approach                                                               | Problem                                                                                                                                                           |
+| ----------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase 1** | One-shot `claude -p`                                                   | No session continuity; system prompt re-sent every turn                                                                                                           |
+| **Phase 2** | `PersistentClaudeProcess` with `--output-format stream-json`           | Session persistence works, but global settings (`~/CLAUDE.md`, plugins from `~/.claude/settings.json`) re-injected every turn — up to ~50K tokens wasted per turn |
+| **Phase 3** | 4-layer isolation (cwd + .git/HEAD + --plugin-dir + --setting-sources) | Fully isolated; system prompt injected once on first turn only                                                                                                    |
+
+Key discovery: `--plugin-dir` alone is **additive** (plugins load from both the specified dir and global settings). The fix was excluding `user` from `--setting-sources` to block `~/.claude/settings.json` entirely.
+
+### Codex CLI: 3-Phase Evolution
+
+| Phase       | Approach                          | Problem                                                                             |
+| ----------- | --------------------------------- | ----------------------------------------------------------------------------------- |
+| **Phase 1** | `codex exec` (one-shot)           | System prompt re-injected every call; no session continuity                         |
+| **Phase 2** | `codex app-server` (HTTP)         | Session persistence, but `developer-instructions` still re-sent on every request    |
+| **Phase 3** | `codex mcp-server` (MCP protocol) | `threadId` for session continuity; `developer-instructions` sent on first turn only |
+
+Both backends now share the same pattern: inject system prompt (persona + skills + tools) on the first turn, then rely on session persistence for subsequent turns.
 
 ---
 
