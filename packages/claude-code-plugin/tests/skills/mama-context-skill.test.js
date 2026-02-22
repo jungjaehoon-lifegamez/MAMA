@@ -76,7 +76,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
 
       // Similarity threshold documented
-      expect(skillContent).toMatch(/60%|0\.6/);
+      expect(skillContent).toMatch(/70%|0\.7/);
     });
 
     it('should document token budgets in SKILL.md', () => {
@@ -92,7 +92,7 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       // Verify teaser format is documented
       expect(skillContent).toContain('Teaser Format');
       expect(skillContent).toContain('💡 MAMA:');
-      expect(skillContent).toContain('/mama-recall');
+      expect(skillContent).toContain('/mama:search');
       expect(skillContent).toContain('40 tokens');
 
       // Verify it explains the transition from 250 to 40 tokens
@@ -216,10 +216,10 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       const preToolContent = fs.readFileSync(PRE_TOOL_HOOK, 'utf8');
 
       // Verify similarity threshold in skill
-      expect(skillContent).toMatch(/60%|0\.6/);
+      expect(skillContent).toMatch(/70%|0\.7/);
 
       // Verify timeout in skill
-      expect(skillContent).toContain('1200ms');
+      expect(skillContent).toContain('1800ms');
 
       // PreToolUse handles decision lookup for Read
       expect(preToolContent).toContain('READ_TOOLS');

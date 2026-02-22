@@ -239,24 +239,24 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "Hotfix: description"
 
 ## Decision Recording
 
-API 계약, 아키텍처 결정, 중요 구현 패턴 변경 시 **반드시 MAMA에 저장**:
+When changing API contracts, architecture decisions, or important implementation patterns, **always save to MAMA**:
 
 ```bash
-/mama:decision topic="api_contract_name" decision="결정 내용" reasoning="이유"
+/mama:decision topic="api_contract_name" decision="decision content" reasoning="reason"
 ```
 
-이렇게 저장하면:
+Once saved:
 
-- 나중에 관련 파일 읽을 때 hook으로 자동 표시됨
-- `/mama:search` 로 검색 가능
-- 결정 이력(evolution graph) 추적 가능
+- Automatically displayed via hook when reading related files later
+- Searchable via `/mama:search`
+- Decision history (evolution graph) can be tracked
 
-**저장해야 할 것들:**
+**Things that should be saved:**
 
-- API endpoint 추가/변경
-- Config 스키마 변경
-- 중요 함수 시그니처 변경
-- 아키텍처 패턴 결정
+- API endpoint additions/changes
+- Config schema changes
+- Important function signature changes
+- Architecture pattern decisions
 
 ## Important Constraints
 
@@ -267,6 +267,30 @@ API 계약, 아키텍처 결정, 중요 구현 패턴 변경 시 **반드시 MAM
 5. **Test before commit** - All tests must pass (`pnpm test`)
 6. **SQLite schema changes** - Require migration scripts
 7. **Embedding model** - Cannot change without breaking existing vectors
+
+## ⚠️ MAMA OS Agent Isolation — Do Not Modify Under Any Circumstances
+
+MAMA OS agents must **operate only within the `.mama` scope**. Global settings must never leak into agents.
+
+**Never modify the following in `persistent-cli-process.ts` + `claude-cli-wrapper.ts`:**
+
+| Setting             | Value                                      | Reason                                                                        |
+| ------------------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
+| `cwd`               | `~/.mama/workspace`                        | Changing to `os.homedir()` causes `~/CLAUDE.md` to be injected every turn     |
+| `.git/HEAD`         | `~/.mama/workspace/.git/HEAD`              | git boundary blocks upward traversal for CLAUDE.md                            |
+| `--plugin-dir`      | `~/.mama/.empty-plugins` (empty directory) | Removing it causes global plugin skills to be injected redundantly every turn |
+| `--setting-sources` | `project,local` (excludes user)            | Including `user` loads enabledPlugins from `~/.claude/settings.json`          |
+| `--system-prompt`   | First turn only (persistent)               | No need for repeated injection in session persistence mode                    |
+
+**Prohibited actions:**
+
+- Reverting `cwd` to `os.homedir()`
+- Removing the `--plugin-dir` flag
+- Adding `user` to `--setting-sources` (loads global plugins)
+- Adding the `--no-session-persistence` flag
+- Removing the `.git/HEAD` creation logic
+
+**Reason:** MAMA already includes persona + skills + gateway tools in `--system-prompt`. If Claude Code CLI reloads the same content from `~/CLAUDE.md` and global plugins, **thousands of tokens are wasted on duplication every turn**.
 
 ## Multi-Agent API
 
@@ -289,8 +313,8 @@ curl -X PUT 'http://localhost:3847/api/multi-agent/agents/developer' \
 
 **Notes:**
 
-- Settings UI에서 각 에이전트별 개별 저장 필요
-- Persona 파일의 하드코딩 모델명은 `buildSystemPrompt()`에서 동적 대체됨
+- Each agent must be saved individually in the Settings UI
+- Hard-coded model names in persona files are dynamically replaced in `buildSystemPrompt()`
 - Hot-reload: `updateConfig()` stops all process pools (processPool, codexProcessPool, agentProcessPool)
 
 ## Getting Help
