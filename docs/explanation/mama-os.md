@@ -122,7 +122,7 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 
 ---
 
-## The Five Tabs
+## The Tabs
 
 ### 1. Dashboard Tab
 
@@ -229,7 +229,57 @@ After completion:
 
 ---
 
-### 4. Settings Tab
+### 4. Skills Tab
+
+**Purpose:** Standalone 스킬 관리
+
+**What you see:**
+
+- **스킬 목록** - 설치된 스킬 카드 그리드
+- **활성화/비활성화** - 토글로 개별 스킬 on/off
+- **Skill Lab 연동** - Playground 탭의 Skill Lab에서 인터랙티브하게 스킬 제작/편집
+
+**Use case:** 어떤 스킬이 활성화되어 있는지 확인하고, 필요 없는 스킬을 비활성화합니다.
+
+---
+
+### 5. Playground Tab
+
+**Purpose:** 인터랙티브 HTML 도구 관리 및 실행
+
+**Features:**
+
+- **카드 그리드** - 등록된 Playground 목록 표시
+- **iframe 로드** - 카드 클릭 시 Playground HTML을 iframe으로 로드
+- **Open in new tab** - 별도 탭에서 Playground 열기
+- **삭제** - 불필요한 Playground 제거
+- **빌트인 4종** - Wave Visualizer, Skill Lab, Cron Workflow Lab, Log Viewer
+
+**Use case:** 에이전트가 생성한 커스텀 도구를 관리하고 실행합니다. 자세한 내용은 [Playground 가이드](../guides/playgrounds.md)를 참고하세요.
+
+---
+
+### 6. Log Viewer
+
+**Purpose:** 실시간 데몬 로그 스트리밍
+
+**Features:**
+
+- **실시간 로그** - MAMA OS 데몬의 로그를 WebSocket으로 스트리밍
+- **필터링** - 레벨별(info, warn, error), 모듈별 필터
+- **검색** - 로그 내용 텍스트 검색
+
+**Use case:** 에이전트 동작을 실시간으로 모니터링하고 디버깅합니다.
+
+---
+
+### Reasoning Header
+
+Chat 탭에서 에이전트 응답 시 **Reasoning Header**가 표시됩니다. Code-Act sandbox를 통해 도구를 사용한 경우 해당 도구 호출 정보가 헤더에 표시되어, 에이전트가 어떤 도구를 어떻게 조합했는지 투명하게 확인할 수 있습니다.
+
+---
+
+### 7. Settings Tab
 
 **Purpose:** Configure gateways, agent, and heartbeat scheduler
 

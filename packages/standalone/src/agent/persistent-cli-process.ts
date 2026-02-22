@@ -27,6 +27,8 @@
 import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import os from 'os';
+import { join } from 'path';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { EventEmitter } from 'events';
 import type { TokenUsageRecord } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -256,10 +258,39 @@ export class PersistentClaudeProcess extends EventEmitter {
       }
     }
 
-    // Use home directory as cwd so agents have broad file access
+    // ============================================================
+    // ⚠️ MAMA OS AGENT ISOLATION — DO NOT MODIFY ⚠️
+    // ============================================================
+    // MAMA OS agents must operate only within the .mama scope, not globally.
+    //
+    // WHY: Claude Code CLI traverses upward from cwd to find CLAUDE.md.
+    //   cwd=os.homedir() → ~/CLAUDE.md gets injected (user's personal config leaks into agent)
+    //   cwd=~/.mama/workspace + git boundary → traversal stops here
+    //
+    // HOW: Create .mama/workspace/.git/HEAD so Claude Code treats it as a git repo root.
+    //   This prevents Claude Code from searching for CLAUDE.md above this directory.
+    //
+    // FILE ACCESS: cwd only restricts CLAUDE.md discovery. If --dangerously-skip-permissions
+    //   is enabled, the agent can still access all files on the system.
+    //
+    // Reverting cwd to os.homedir() or removing the git boundary will cause
+    // ~/CLAUDE.md + global plugins to be re-injected every turn, wasting tokens.
+    // ============================================================
+    const workspaceDir = join(os.homedir(), '.mama', 'workspace');
+    if (!existsSync(workspaceDir)) {
+      mkdirSync(workspaceDir, { recursive: true });
+    }
+    const gitDir = join(workspaceDir, '.git');
+    if (!existsSync(gitDir)) {
+      mkdirSync(gitDir, { recursive: true });
+    }
+    const headFile = join(gitDir, 'HEAD');
+    if (!existsSync(headFile)) {
+      writeFileSync(headFile, 'ref: refs/heads/main\n');
+    }
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: os.homedir(),
+      cwd: workspaceDir, // ⚠️ NEVER change to os.homedir() — breaks agent isolation
       env: { ...cleanEnv, ...(this.options.env || {}) },
     });
 
@@ -300,6 +331,16 @@ export class PersistentClaudeProcess extends EventEmitter {
       'stream-json',
       '--session-id',
       this.options.sessionId,
+      // ============================================================
+      // ⚠️ BLOCK GLOBAL SETTINGS — DO NOT REMOVE ⚠️
+      // ============================================================
+      // Excluding 'user' from --setting-sources prevents loading ~/.claude/settings.json.
+      // That file contains enabledPlugins, so including 'user' causes global plugins
+      // (superpowers, bmad, etc.) to be injected every turn.
+      // --plugin-dir alone is NOT sufficient (it's additive, not an override).
+      // ============================================================
+      '--setting-sources',
+      'project,local',
     ];
 
     if (this.options.model) {
@@ -333,10 +374,21 @@ export class PersistentClaudeProcess extends EventEmitter {
       args.push('--tools', this.options.tools);
     }
 
-    // Override plugin directory (e.g. empty dir to disable all plugins)
-    if (this.options.pluginDir) {
-      args.push('--plugin-dir', this.options.pluginDir);
+    // ============================================================
+    // ⚠️ PLUGIN ISOLATION — DO NOT REMOVE ⚠️
+    // ============================================================
+    // Points --plugin-dir to an empty directory so Claude Code cannot load
+    // global plugins. MAMA already includes everything needed via --system-prompt,
+    // so loading plugins would cause duplicate injection of the same content.
+    //
+    // Removing this causes skills/CLAUDE.md to be re-injected as system-reminder
+    // every turn, wasting thousands of tokens.
+    // ============================================================
+    const pluginDir = this.options.pluginDir ?? join(os.homedir(), '.mama', '.empty-plugins');
+    if (!existsSync(pluginDir)) {
+      mkdirSync(pluginDir, { recursive: true });
     }
+    args.push('--plugin-dir', pluginDir);
 
     // Structural tool enforcement via CLI flags
     if (this.options.allowedTools?.length) {
@@ -685,14 +737,27 @@ export class PersistentClaudeProcess extends EventEmitter {
    * Handle request timeout
    */
   private handleTimeout(): void {
-    console.error(`[PersistentCLI] Request timeout`);
+    console.error(`[PersistentCLI] Request timeout — killing process to prevent zombie`);
 
     if (this.currentReject) {
       this.currentReject(new Error('Request timeout'));
       this.resetRequestState();
     }
 
-    this.state = 'idle';
+    // ⚠️ Timed-out processes MUST be killed.
+    // Setting state to 'idle' without killing leaves zombie processes consuming memory.
+    // When SessionPool creates new sessions without cleaning up old processes,
+    // Claude processes accumulate and exhaust system memory.
+    if (this.process && !this.process.killed) {
+      this.process.kill('SIGTERM');
+      // If SIGTERM doesn't work, force kill after 3 seconds
+      setTimeout(() => {
+        if (this.process && !this.process.killed) {
+          this.process.kill('SIGKILL');
+        }
+      }, 3000);
+    }
+    this.state = 'dead';
     this.emit('idle'); // F7: Trigger message queue drain (after cleanup)
   }
 

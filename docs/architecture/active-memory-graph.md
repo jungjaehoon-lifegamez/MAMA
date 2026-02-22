@@ -6,7 +6,7 @@ MAMA v1.2 shifts the focus from User Experience (UX) to **Agent Experience (AX)*
 The primary "user" of MAMA is not the human, but the **LLM Agent**.
 
 - **Goal**: Optimize for **Easy Retrieval**, **Easy Comprehension**, and **Easy Connection** for the Agent.
-- **Metaphor**: "Fading Memories & Connected Thoughts" (멀수록 희미해지고, 꼬리에 꼬리를 무는 기억)
+- **Metaphor**: "Fading Memories & Connected Thoughts" (the farther away, the fainter they become; memories that lead from one to another)
 
 ---
 
@@ -81,11 +81,11 @@ Score = VectorSim * 0.6 + Recency * 0.3 + GraphConn * 0.1;
 
 ### Scenario: Natural Language Save
 
-**User**: "기억해줘: 이번 프로젝트에서는 Redux 대신 Zustand를 쓰기로 했어. 보일러플레이트가 너무 싫어서."
+**User**: "Remember this: we decided to use Zustand instead of Redux for this project. I really hate the boilerplate."
 
 **LLM (Internal Monologue)**:
 
-1.  _User said "기억해줘". This is a trigger._
+1.  _User said "remember this". This is a trigger._
 2.  _Topic is state management. Let me search if we discussed this before._ -> `mama:search("state management")`
 3.  _Found `decision_redux_101` (We used Redux last year)._
 4.  _I should save this new decision and link it to the old one._
@@ -96,7 +96,7 @@ Score = VectorSim * 0.6 + Recency * 0.3 + GraphConn * 0.1;
     - `related_to`: ["decision_redux_101"]
 
 **MAMA Response (Feedback)**:
-"✅ Saved. Linked to `decision_redux_101`. Your reasoning graph is growing."
+"Saved. Linked to `decision_redux_101`. Your reasoning graph is growing."
 
 ---
 
