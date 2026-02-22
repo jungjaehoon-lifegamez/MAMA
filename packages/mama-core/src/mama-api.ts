@@ -31,7 +31,6 @@ import {
   queryDecisionGraph,
   querySemanticEdges,
   getAdapter,
-  getPreparedStmt,
   vectorSearch,
 } from './memory-store.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
@@ -1088,8 +1087,8 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCan
       };
 
       // Helper to add edge to graph
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic property access with idField
       const addEdge = (
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic property access with idField
         edge: any,
         idField: string,
         source: string,
@@ -1323,8 +1322,10 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     let searchMethod = 'vector';
 
     try {
-      // Check if vectorSearch prepared statement exists
-      getPreparedStmt('vectorSearch');
+      // Check if vector search is available (sqlite-vec loaded)
+      if (!getAdapter().vectorSearchEnabled) {
+        throw new Error('Vector search not available');
+      }
 
       // Generate query embedding
       const queryEmbedding = await generateEmbedding(userQuestion);
