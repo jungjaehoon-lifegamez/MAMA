@@ -17,7 +17,7 @@ This skill provides **automatic background context injection** using MAMA's hook
 
 The skill uses a **multi-hook system** for comprehensive context injection:
 
-**UserPromptSubmit Hook** (`scripts/userpromptsubmit-hook.js` — active, ~150ms)
+**UserPromptSubmit Hook** (active, ~150ms — no plugin-side script; handled by Claude Code host)
 
 - Triggers: On every user message submission
 - Purpose: Inject relevant decisions as context before Claude responds
@@ -138,7 +138,7 @@ export MAMA_DISABLE_HOOKS=true
 
 **Hook Integration:**
 
-- UserPromptSubmit: Active (~150ms, HTTP embedding server)
+- UserPromptSubmit: Active (~150ms, no plugin-side script; handled by Claude Code host via MCP)
 - SessionStart: `scripts/sessionstart-hook.js` (initialization)
 - PreToolUse: `scripts/pretooluse-hook.js` (disabled, script retained)
 - PostToolUse: `scripts/posttooluse-hook.js` (disabled, script retained)
@@ -163,7 +163,7 @@ export MAMA_DISABLE_HOOKS=true
 ## Acceptance Criteria Mapping
 
 - ✅ AC1: Declared in plugin.json, references hook outputs
-- ✅ AC2: Similarity thresholds (70%) + token budgets (40/300)
+- ✅ AC2: Similarity thresholds (70%) + token budgets (40 teaser / 250 full)
 - ✅ AC3: Disable via config (MAMA_DISABLE_HOOKS)
 - ✅ AC4: Status indicator (Tier 1/2, accuracy, fix instructions)
 - ✅ AC5: Smoke test - fires during normal coding session
