@@ -352,7 +352,7 @@ const $ = (id) => document.getElementById(id);
 const logArea = $('logArea');
 let emptyState = $('emptyState');
 
-function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 function sourceClass(src) { return src ? 'src-' + src.toLowerCase().replace(/[^a-z]/g, '') : ''; }
 function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
@@ -544,7 +544,17 @@ function addLines(rawLines, isInitial) {
   logArea.appendChild(frag);
 
   while (logArea.children.length > MAX_LINES) logArea.removeChild(logArea.firstChild);
-  while (S.logs.length > MAX_LINES) S.logs.shift();
+  const excess = S.logs.length - MAX_LINES;
+  if (excess > 0) {
+    S.logs.splice(0, excess);
+    const shiftSet = (s) => {
+      const updated = new Set();
+      s.forEach((idx) => { const ni = idx - excess; if (ni >= 0) updated.add(ni); });
+      return updated;
+    };
+    S.pins = shiftSet(S.pins);
+    S.selected = shiftSet(S.selected);
+  }
 
   for (let j = 0; j < S.logs.length; j++) S.logs[j].n = j;
   const rows = logArea.querySelectorAll('.ll');
@@ -615,10 +625,11 @@ function fetchLogs() {
     if (!S.initialized) {
       addLines(data.lines, true);
       S.lastMtime = data.mtime;
-      S.lastTotal = hasTotal ? data.total : data.lines.length;
+      S.lastTotal = hasTotal ? data.total : null;
+      S.lastHadTotal = hasTotal;
       S.initialized = true;
     } else if (data.mtime > S.lastMtime) {
-      if (hasTotal && Number.isFinite(S.lastTotal)) {
+      if (hasTotal && S.lastHadTotal && Number.isFinite(S.lastTotal)) {
         const newCount = data.total - S.lastTotal;
         if (newCount > 0 && newCount <= MAX_INCREMENTAL_LINES) {
           addLines(data.lines.slice(-newCount), false);
@@ -638,7 +649,8 @@ function fetchLogs() {
         }
       }
       S.lastMtime = data.mtime;
-      S.lastTotal = hasTotal ? data.total : data.lines.length;
+      S.lastTotal = hasTotal ? data.total : null;
+      S.lastHadTotal = hasTotal;
     }
     updateRate();
   }).catch((e) => {
@@ -1147,7 +1159,7 @@ $('selCopy').addEventListener('click', () => {
 $('selSend').addEventListener('click', () => {
   const text = getSelectedText();
   const msg = '[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + S.selected.size + '\uc904]:\n```\n' + text + '\n```';
-  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, '*');
+  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, location.protocol === 'file:' ? '*' : location.origin);
   S.selected.clear();
   logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
   updateSelectionBar();
@@ -1290,7 +1302,7 @@ $('promptSend').addEventListener('click', () => {
     S.selected.forEach((idx) => { if (S.logs[idx]) selLogs.push(S.logs[idx].raw); });
     msg += '\n\n[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + selLogs.length + '\uc904]:\n```\n' + selLogs.join('\n') + '\n```';
   }
-  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, '*');
+  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, location.protocol === 'file:' ? '*' : location.origin);
   $('promptInput').value = '';
 });
 $('promptCopy').addEventListener('click', () => {
