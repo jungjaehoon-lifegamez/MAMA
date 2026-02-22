@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-02-22
+
+### Added
+
+- **`SemanticEdgeItem` interface**: Typed decision graph edges replacing `unknown[]` — `from_id`, `to_id`, `topic`, `decision`, `confidence`, `created_at`, `reason`
+- **`DecisionEdgeRow` interface**: Typed `decision_edges` table rows for `DecisionRecord.edges`
+- **`ConversationMessage` interface**: Typed checkpoint conversation history replacing `unknown[]`
+- **`RecallGraphResult` interface**: Typed return for `recall()` function
+- **`GatewaySessionStore` interface**: Typed session store replacing `any` in `GatewayToolExecutor`
+
+### Changed
+
+- **Shared MAMA tool handlers**: Extracted `handleSave`, `handleSearch`, `handleUpdate`, `handleLoadCheckpoint` into `mama-tool-handlers.ts` — eliminates duplication between `MCPExecutor` and `GatewayToolExecutor`
+- **Codex streaming optimization**: Simplified system prompt loading, removed `state.json` dependency, conditional `ONBOARDING.md` loading
+- **Context injection**: Skip `getRelevantContext()` on CONTINUE turns for lower token overhead
+- **Gateway tools cache**: Cache `getGatewayToolsPrompt()` in production, hot-reload in dev
+- **`formatContextForPrompt` hoisted**: 3 calls → 1 call per message route
+
+### Fixed
+
+- **mama_save checkpoint crash**: `sessionStore.getRecentMessages()` didn't exist — `any` type hid the error at compile time. Replaced with `getHistory('current')`
+- **vectorSearch feature detection**: `getPreparedStmt('vectorSearch')` passed non-SQL to SQLite causing syntax error warnings on every search. Replaced with `adapter.vectorSearchEnabled`
+- **Type safety**: Removed `any`/`unknown[]` casts throughout `mama-core` — `SemanticEdges`, `addEdge`, `querySemanticEdges` usage, `RawSemanticEdge` eliminated
+- **PR #41 code review fixes** (4 rounds):
+  - `esc()` quote escaping for attribute injection safety
+  - Stale pin/selection indices after log trimming
+  - `postMessage` targetOrigin scoped (was wildcard `'*'`)
+  - `in` operator guard against non-object primitives
+  - CONTINUE path dropping skill injection
+  - `savePins()` sync to localStorage on clear
+  - `isSearchResultItem` type guard for runtime validation
+  - `diffTailLines` optimization (removed intermediate array)
+
 ## [0.10.1] - 2026-02-22
 
 ### Added
