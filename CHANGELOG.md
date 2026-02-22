@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.10.2] - 2026-02-22
+## [0.10.2] / mama-core [1.1.5] - 2026-02-22
 
 ### Added
 
@@ -36,6 +36,15 @@ All notable changes to this project will be documented in this file.
   - `savePins()` sync to localStorage on clear
   - `isSearchResultItem` type guard for runtime validation
   - `diffTailLines` optimization (removed intermediate array)
+
+### mama-core 1.1.5
+
+- **`SemanticEdgeItem`**: `SemanticEdges` 배열 타입을 `unknown[]` → `SemanticEdgeItem[]`로 교체
+- **`DecisionEdgeRow`**: `DecisionRecord.edges` 타입을 `unknown[]` → `DecisionEdgeRow[]`로 교체
+- **`ConversationMessage`**: `CheckpointRow.recent_conversation` 타입을 `unknown[]` → `ConversationMessage[]`로 교체
+- **`RecallGraphResult`**: `recall()` 반환 타입을 `unknown` → `string | RecallGraphResult`로 교체
+- **vectorSearch feature detection 수정**: `getPreparedStmt('vectorSearch')` → `getAdapter().vectorSearchEnabled`
+- **`RawSemanticEdge` 제거**: `SemanticEdgeItem`으로 통합, `as unknown as` 캐스트 제거
 
 ## [0.10.1] - 2026-02-22
 
