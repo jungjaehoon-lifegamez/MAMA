@@ -23,6 +23,7 @@
 
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -140,6 +141,7 @@ export interface PromptResult {
 export class ClaudeCLIWrapper {
   private sessionId: string;
   private options: ClaudeCLIWrapperOptions;
+  private turnCount = 0;
 
   constructor(options: ClaudeCLIWrapperOptions = {}) {
     this.options = options;
@@ -176,12 +178,12 @@ export class ClaudeCLIWrapper {
         console.log(`[ClaudeCLI] Using stdin mode (content: ${content.length} chars)`);
       }
 
-      // Session handling: use --no-session-persistence to avoid session locking
-      // This prevents "Session ID already in use" errors during multi-turn tool loops
-      // Trade-off: System prompt sent every time, but reliable memory via DB history
-      args.push('--no-session-persistence');
+      // Session persistence: keeps context across turns, avoids re-injecting system prompt
       args.push('--session-id', this.sessionId);
-      console.log(`[ClaudeCLI] Session: ${this.sessionId} (no-persistence mode)`);
+      // ⚠️ BLOCK GLOBAL SETTINGS — exclude 'user' to prevent loading ~/.claude/settings.json
+      // Prevents global plugins from enabledPlugins being injected every turn
+      args.push('--setting-sources', 'project,local');
+      console.log(`[ClaudeCLI] Session: ${this.sessionId}`);
 
       // Add model flag - per-request override takes precedence
       const model = options?.model || this.options.model;
@@ -196,10 +198,14 @@ export class ClaudeCLIWrapper {
         logger.debug('Effort level:', effort);
       }
 
-      // Always inject system prompt (contains DB history for memory)
-      if (this.options.systemPrompt) {
+      // System prompt: first turn only (session persistence keeps it across turns)
+      if (this.options.systemPrompt && this.turnCount === 0) {
         args.push('--system-prompt', this.options.systemPrompt);
+        console.log(
+          `[ClaudeCLI] System prompt injected (${this.options.systemPrompt.length} chars, first turn)`
+        );
       }
+      this.turnCount++;
 
       // Hybrid mode: MCP + Gateway can both be enabled
       if (this.options.mcpConfigPath) {
@@ -215,8 +221,26 @@ export class ClaudeCLIWrapper {
         args.push('--dangerously-skip-permissions');
       }
 
-      // Add MAMA workspace to allowed directories for image/file access
+      // ============================================================
+      // ⚠️ MAMA OS AGENT ISOLATION — DO NOT MODIFY ⚠️
+      // ============================================================
+      // Sets cwd to ~/.mama/workspace and creates a git boundary to prevent
+      // Claude Code from traversing up to ~/CLAUDE.md and other parent configs.
+      // File access is controlled separately via --add-dir and --dangerously-skip-permissions.
+      // Removing this causes global settings to be re-injected every turn, wasting tokens.
+      // ============================================================
       const mamaWorkspace = path.join(os.homedir(), '.mama', 'workspace');
+      if (!existsSync(mamaWorkspace)) {
+        mkdirSync(mamaWorkspace, { recursive: true });
+      }
+      const gitDir = path.join(mamaWorkspace, '.git');
+      if (!existsSync(gitDir)) {
+        mkdirSync(gitDir, { recursive: true });
+      }
+      const headFile = path.join(gitDir, 'HEAD');
+      if (!existsSync(headFile)) {
+        writeFileSync(headFile, 'ref: refs/heads/main\n');
+      }
       args.push('--add-dir', mamaWorkspace);
 
       console.log(`[ClaudeCLI] Spawning: claude ${args.join(' ')}`);
@@ -224,7 +248,8 @@ export class ClaudeCLIWrapper {
 
       const claude = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        detached: true, // Detach from parent's process group to prevent SIGINT propagation
+        cwd: mamaWorkspace, // ⚠️ NEVER change to os.homedir() — breaks agent isolation
+        detached: true,
       });
 
       // Handle stdin: write content if using stdin mode, otherwise close immediately

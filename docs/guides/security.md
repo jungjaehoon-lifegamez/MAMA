@@ -882,6 +882,55 @@ echo ".env" >> .gitignore
 
 ---
 
+## Agent Process Isolation
+
+MAMA OS agents (Claude CLI subprocesses) must be **isolated to the `.mama` scope**. If global user settings leak into agents, it causes token waste and behavior contamination.
+
+### Isolation Architecture
+
+```
+User's Claude Code Session         MAMA OS Agent
+─────────────────────              ─────────────────
+cwd: ~/project/                    cwd: ~/.mama/workspace/
+CLAUDE.md: ~/CLAUDE.md ✅          CLAUDE.md: none (blocked by git boundary)
+plugins: ~/.claude/plugins/ ✅     plugins: ~/.mama/.empty-plugins/ (empty directory)
+system-prompt: none                system-prompt: persona+skills+tools (injected once)
+```
+
+### Isolation Mechanisms
+
+| #   | Mechanism                             | File                                                 | Effect                                                                                                                                                           |
+| --- | ------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `cwd: ~/.mama/workspace`              | `persistent-cli-process.ts`, `claude-cli-wrapper.ts` | Restricts agent working directory to MAMA workspace                                                                                                              |
+| 2   | `.git/HEAD` creation                  | Same as above                                        | Prevents Claude Code from searching for CLAUDE.md above git repo root                                                                                            |
+| 3   | `--plugin-dir ~/.mama/.empty-plugins` | Same as above                                        | Points plugin directory to an empty folder                                                                                                                       |
+| 4   | `--setting-sources project,local`     | Same as above                                        | Blocks loading `~/.claude/settings.json` (enabledPlugins). `--plugin-dir` alone is insufficient — it's additive, so global plugins are loaded from settings.json |
+
+### Why This Is Needed
+
+MAMA includes everything the agent needs in `--system-prompt`:
+
+- Persona (conductor, developer, etc.)
+- Skill catalog
+- Gateway tool definitions
+
+Without isolation, Claude Code CLI **additionally** injects the following every turn:
+
+- `~/CLAUDE.md` (user's personal settings)
+- Global plugin skills/hooks
+- Duplicates of content already in `--system-prompt`
+
+Result: **thousands of wasted tokens per turn** + agent behavior contaminated by user's personal settings.
+
+### File Access Scope
+
+`cwd` only restricts CLAUDE.md discovery. Agent file access is controlled separately:
+
+- `--dangerously-skip-permissions`: allows all file access (MAMA OS default)
+- `--add-dir`: allows access to specific directories (in permissions mode)
+
+---
+
 ## Code-Act Sandbox Security
 
 MAMA OS includes a **Code-Act sandbox** — a JavaScript execution environment powered by QuickJS (WebAssembly). This allows agents to run code without Node.js access.
