@@ -65,14 +65,14 @@ Add to `claude_desktop_config.json`:
 
 ### 1. Verify Installation
 
-```
+```text
 /mama:resume
 # Expected: 🟢 Tier 1 (Full Features Active)
 ```
 
 ### 2. Save Your First Decision
 
-```
+```text
 /mama:decision
 Topic: test_framework
 Decision: Use Vitest for testing
@@ -84,7 +84,7 @@ Confidence: 0.9
 
 MAMA automatically shows relevant decisions when you ask questions:
 
-```
+```text
 You: "How should I handle testing?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
