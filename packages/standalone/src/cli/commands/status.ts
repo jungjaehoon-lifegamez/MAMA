@@ -4,7 +4,9 @@
  * Show MAMA agent status
  */
 
-import { isDaemonRunning, getUptime } from '../utils/pid-manager.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isDaemonRunning, getUptime, isProcessRunning } from '../utils/pid-manager.js';
 import { loadConfig, configExists, expandPath } from '../config/config-manager.js';
 import { OAuthManager } from '../../auth/index.js';
 
@@ -21,6 +23,14 @@ export async function statusCommand(): Promise<void> {
     console.log(`Status: Running ✓`);
     console.log(`PID: ${runningInfo.pid}`);
     console.log(`Uptime: ${getUptime(runningInfo.startedAt)}`);
+
+    // Watchdog status
+    const watchdogStatus = getWatchdogStatus();
+    if (watchdogStatus) {
+      console.log(`Watchdog: Active ✓ (PID ${watchdogStatus.pid})`);
+    } else {
+      console.log('Watchdog: Inactive ✗');
+    }
   } else {
     console.log('Status: Stopped ✗');
     console.log('To start: mama start');
@@ -100,4 +110,19 @@ export async function statusCommand(): Promise<void> {
   }
 
   console.log('');
+}
+
+function getWatchdogStatus(): { pid: number; startedAt: number } | null {
+  const watchdogPidPath = `${homedir()}/.mama/watchdog.pid`;
+  if (!existsSync(watchdogPidPath)) return null;
+  try {
+    const content = readFileSync(watchdogPidPath, 'utf-8');
+    const info = JSON.parse(content);
+    if (typeof info.pid === 'number' && isProcessRunning(info.pid)) {
+      return info;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }

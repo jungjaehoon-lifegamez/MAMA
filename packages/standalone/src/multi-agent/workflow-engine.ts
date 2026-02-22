@@ -19,9 +19,9 @@ import type {
   EphemeralAgentDef,
 } from './workflow-types.js';
 
-const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_MAX_EPHEMERAL = 20;
-const DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000; // 10 minutes
+const DEFAULT_MAX_DURATION_MS = 30 * 60 * 1000; // 30 minutes
 
 export class StepExecutionError extends Error {
   duration_ms: number;
