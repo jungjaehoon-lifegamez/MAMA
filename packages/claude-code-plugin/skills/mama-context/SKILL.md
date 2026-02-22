@@ -72,7 +72,7 @@ Every injection shows current tier status:
 
 **Tier 1 (Full Features):**
 
-```
+```text
 🔍 System Status: ✅ Full Features Active (Tier 1)
    - Vector Search: ✅ ON (Transformers.js, 3ms latency)
    - Search Quality: HIGH (80% accuracy)
@@ -80,7 +80,7 @@ Every injection shows current tier status:
 
 **Tier 2 (Degraded):**
 
-```
+```text
 🔍 System Status: ⚠️ DEGRADED MODE (Tier 2)
    - Vector Search: ❌ OFF (embedding model failed)
    - Search Quality: BASIC (40% accuracy, exact match only)
@@ -114,7 +114,7 @@ export MAMA_DISABLE_HOOKS=true
 }
 ```
 
-> **Note:** `similarity_threshold` applies to explicit searches (`/mama:search`). The disabled `pretooluse-hook.js` uses a stricter threshold (`SIMILARITY_THRESHOLD = 0.6`) to reduce false positives during automatic injection. The UserPromptSubmit hook delegates search to the MCP server, which uses its own default threshold.
+> **Note:** `similarity_threshold: 0.7` applies to explicit searches (`/mama:search`). The disabled `pretooluse-hook.js` uses a looser `SIMILARITY_THRESHOLD = 0.6` (kept from its original contract-injection design). The active UserPromptSubmit hook delegates search to the MCP server, which uses its own default threshold. Hook thresholds are intentionally separate from the config value shown above.
 
 ---
 
