@@ -172,7 +172,7 @@ export MAMA_DISABLE_HOOKS=true
 
 **User edits a file related to authentication:**
 
-**Skill injects (via PreToolUse hook):**
+**Skill injects (via UserPromptSubmit hook):**
 
 ```
 💡 MAMA: 1 related
@@ -195,22 +195,21 @@ export MAMA_DISABLE_HOOKS=true
 **Testing:**
 
 ```bash
-# Test PreToolUse hook
-export TOOL_NAME="Edit"
-export FILE_PATH="src/auth.ts"
-node mama-plugin/scripts/pretooluse-hook.js
+# Test UserPromptSubmit hook
+export USER_PROMPT="How should I handle authentication?"
+node mama-plugin/scripts/userpromptsubmit-hook.js
 ```
 
 **Architecture:**
 
-```
-Code Edit/Write
+```text
+User submits prompt
     ↓
-PreToolUse Hook (5s timeout)
+UserPromptSubmit Hook (~150ms, 1800ms timeout)
     ↓
-Contract search (generate embedding, search, score)
+Decision search (generate embedding, search, score)
     ↓
-Contract injection to Claude
+Context injection to Claude (40-token teaser)
     ↓
 Claude sees context
 ```

@@ -888,7 +888,7 @@ MAMA OS agents (Claude CLI subprocesses) must be **isolated to the `.mama` scope
 
 ### Isolation Architecture
 
-```
+```text
 User's Claude Code Session         MAMA OS Agent
 ─────────────────────              ─────────────────
 cwd: ~/project/                    cwd: ~/.mama/workspace/
