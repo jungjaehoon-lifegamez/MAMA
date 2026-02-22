@@ -312,6 +312,8 @@ export const READ_ONLY_TOOLS = new Set([
 const MEMORY_WRITE_TOOLS = new Set(['mama_save', 'mama_update']);
 
 export class HostBridge {
+  onToolUse?: (toolName: string, input: Record<string, unknown>, result: unknown) => void;
+
   constructor(
     private executor: GatewayToolExecutor,
     private roleManager?: RoleManager
@@ -344,7 +346,9 @@ export class HostBridge {
           );
         }
 
+        this.onToolUse?.(desc.name, input, undefined);
         const result = await this.executor.execute(desc.name, input as GatewayToolInput);
+        this.onToolUse?.(desc.name, input, result);
 
         if (!result.success) {
           const r = result as GatewayToolResult & { message?: string; error?: string };
