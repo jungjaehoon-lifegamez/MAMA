@@ -34,8 +34,8 @@ import type {
   EphemeralAgentDef,
 } from './workflow-types.js';
 
-/** Default timeout for agent responses (15 minutes -- must accommodate sub-agent spawns) */
-export const AGENT_TIMEOUT_MS = 15 * 60 * 1000;
+/** Default timeout for agent responses (5 minutes) */
+export const AGENT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * Response from a single agent
