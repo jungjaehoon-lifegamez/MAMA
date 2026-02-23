@@ -30,7 +30,7 @@ import os from 'os';
 import { join } from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { EventEmitter } from 'events';
-import type { TokenUsageRecord, PromptCallbacks } from './types.js';
+import type { TokenUsageRecord, PromptCallbacks, ToolUseBlock } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as {
@@ -104,12 +104,7 @@ export interface PersistentProcessOptions {
   effort?: 'low' | 'medium' | 'high' | 'max';
 }
 
-export interface ToolUseBlock {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
+export type { ToolUseBlock } from './types.js';
 
 export interface ContentBlock {
   type: 'text' | 'tool_use' | 'tool_result';

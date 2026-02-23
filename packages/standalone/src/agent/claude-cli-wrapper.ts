@@ -27,7 +27,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-import type { PromptCallbacks } from './types.js';
+import type { PromptCallbacks, ToolUseBlock } from './types.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -87,14 +87,7 @@ export interface ClaudeCLIWrapperOptions {
   disallowedTools?: string[];
 }
 
-export type { PromptCallbacks };
-
-export interface ToolUseBlock {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
+export type { PromptCallbacks, ToolUseBlock } from './types.js';
 
 export interface PromptResult {
   response: string;
