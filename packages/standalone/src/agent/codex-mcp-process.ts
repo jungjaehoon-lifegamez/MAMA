@@ -43,13 +43,8 @@ export interface CodexMCPOptions {
   codexHome?: string;
 }
 
-export interface PromptCallbacks {
-  onDelta?: (text: string) => void;
-  onToolUse?: (tool: string, input: Record<string, unknown>) => void;
-  onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
-  onFinal?: (response: { response: string }) => void;
-  onError?: (error: Error) => void;
-}
+import type { PromptCallbacks } from './types.js';
+export type { PromptCallbacks };
 
 export interface PromptResult {
   response: string;
@@ -294,7 +289,7 @@ export class CodexMCPProcess extends EventEmitter {
 
       const response = result.content || '';
       this.currentCallbacks = null;
-      callbacks?.onFinal?.({ response });
+      callbacks?.onFinal?.({ content: response, toolUseBlocks: [] });
 
       return {
         response,

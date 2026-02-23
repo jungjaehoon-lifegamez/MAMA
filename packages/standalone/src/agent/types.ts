@@ -251,6 +251,27 @@ export interface ContentBlockDelta {
 }
 
 /**
+ * Common response shape passed to onFinal callbacks.
+ * Both PersistentCLI and CodexMCP normalize their output to this format.
+ */
+export interface PromptFinalResponse {
+  content: string;
+  toolUseBlocks: ToolUseBlock[];
+}
+
+/**
+ * Callbacks for PersistentCLI / CodexMCP prompt calls.
+ * Shared across all backend adapters to avoid duplicate definitions.
+ */
+export interface PromptCallbacks {
+  onDelta?: (text: string) => void;
+  onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
+  onFinal?: (response: PromptFinalResponse) => void;
+  onError?: (error: Error) => void;
+}
+
+/**
  * Streaming callbacks for real-time updates
  */
 export interface StreamCallbacks {
@@ -261,7 +282,7 @@ export interface StreamCallbacks {
   /** Called when a tool execution completes */
   onToolComplete?: (toolName: string, toolUseId: string, isError: boolean) => void;
   /** Called when final message arrives */
-  onFinal?: (response: ClaudeResponse) => void;
+  onFinal?: (response: PromptFinalResponse) => void;
   /** Called on error */
   onError?: (error: Error) => void;
 }
