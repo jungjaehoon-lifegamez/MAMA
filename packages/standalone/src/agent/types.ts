@@ -251,20 +251,31 @@ export interface ContentBlockDelta {
 }
 
 /**
- * Streaming callbacks for real-time updates
+ * Common response shape passed to onFinal callbacks.
+ * Both PersistentCLI and CodexMCP normalize their output to this format.
  */
-export interface StreamCallbacks {
-  /** Called when text delta arrives (OpenClaw-style, 150ms throttled by caller) */
+export interface PromptFinalResponse {
+  content: string;
+  toolUseBlocks: ToolUseBlock[];
+}
+
+/**
+ * Callbacks for PersistentCLI / CodexMCP prompt calls.
+ * Shared across all backend adapters to avoid duplicate definitions.
+ */
+export interface PromptCallbacks {
   onDelta?: (text: string) => void;
-  /** Called when a tool use starts */
-  onToolUse?: (toolName: string, input: Record<string, unknown>) => void;
-  /** Called when a tool execution completes */
-  onToolComplete?: (toolName: string, toolUseId: string, isError: boolean) => void;
-  /** Called when final message arrives */
-  onFinal?: (response: ClaudeResponse) => void;
-  /** Called on error */
+  onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
+  onFinal?: (response: PromptFinalResponse) => void;
   onError?: (error: Error) => void;
 }
+
+/**
+ * Streaming callbacks for real-time updates.
+ * Structurally identical to PromptCallbacks — kept as alias for semantic clarity.
+ */
+export type StreamCallbacks = PromptCallbacks;
 
 // ============================================================================
 // Tool Definition Types
