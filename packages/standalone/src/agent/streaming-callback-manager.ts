@@ -6,7 +6,7 @@
  */
 
 import type { Message } from 'discord.js';
-import type { ClaudeResponse } from './types.js';
+import type { PromptFinalResponse } from './types.js';
 
 /**
  * Interface for Discord gateway operations
@@ -77,7 +77,7 @@ export class StreamingCallbackManager {
    * Handle final response from streaming
    * @param _response Final Claude response
    */
-  async onFinal(_response: ClaudeResponse): Promise<void> {
+  async onFinal(_response: PromptFinalResponse): Promise<void> {
     console.log('[Streaming] Stream complete');
     // Final flush handled by Discord gateway's throttle mechanism
   }

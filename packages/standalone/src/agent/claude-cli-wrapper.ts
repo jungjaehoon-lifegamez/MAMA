@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import type { PromptCallbacks, ToolUseBlock } from './types.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -86,21 +87,7 @@ export interface ClaudeCLIWrapperOptions {
   disallowedTools?: string[];
 }
 
-export interface PromptCallbacks {
-  onDelta?: (text: string) => void;
-  onToolUse?: (name: string, input: Record<string, unknown>) => void;
-  onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onFinal?: (response: any) => void;
-  onError?: (error: Error) => void;
-}
-
-export interface ToolUseBlock {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
+export type { PromptCallbacks, ToolUseBlock } from './types.js';
 
 export interface PromptResult {
   response: string;
