@@ -46,9 +46,9 @@ import type {
   GatewayToolExecutorOptions,
   StreamCallbacks,
   AgentContext,
+  PromptFinalResponse,
 } from './types.js';
 import { AgentError } from './types.js';
-import type { PromptFinalResponse } from './types.js';
 import { buildMinimalContext } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';

@@ -272,20 +272,10 @@ export interface PromptCallbacks {
 }
 
 /**
- * Streaming callbacks for real-time updates
+ * Streaming callbacks for real-time updates.
+ * Structurally identical to PromptCallbacks — kept as alias for semantic clarity.
  */
-export interface StreamCallbacks {
-  /** Called when text delta arrives (OpenClaw-style, 150ms throttled by caller) */
-  onDelta?: (text: string) => void;
-  /** Called when a tool use starts */
-  onToolUse?: (toolName: string, input: Record<string, unknown>) => void;
-  /** Called when a tool execution completes */
-  onToolComplete?: (toolName: string, toolUseId: string, isError: boolean) => void;
-  /** Called when final message arrives */
-  onFinal?: (response: PromptFinalResponse) => void;
-  /** Called on error */
-  onError?: (error: Error) => void;
-}
+export type StreamCallbacks = PromptCallbacks;
 
 // ============================================================================
 // Tool Definition Types

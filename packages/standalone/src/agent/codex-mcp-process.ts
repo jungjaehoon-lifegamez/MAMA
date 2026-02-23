@@ -18,6 +18,7 @@ import { accessSync, constants } from 'fs';
 import { homedir } from 'os';
 import { delimiter, join } from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import type { PromptCallbacks } from './types.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -43,7 +44,6 @@ export interface CodexMCPOptions {
   codexHome?: string;
 }
 
-import type { PromptCallbacks } from './types.js';
 export type { PromptCallbacks };
 
 export interface PromptResult {
