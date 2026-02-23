@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-02-23
+
+### Fixed
+
+- **Type safety**: Removed all `callbacks as any` casts by unifying `PromptCallbacks` interface into `types.ts` — single source of truth across Claude CLI, Codex MCP, and Persistent CLI backends
+- **Type drift prevention**: Consolidated duplicated `ToolUseBlock` definitions from 3 files into canonical `types.ts` export
+- **`StreamCallbacks` duplication**: Replaced identical interface with `type StreamCallbacks = PromptCallbacks` alias
+
+### Changed
+
+- **`PromptFinalResponse`**: New shared type `{ content: string; toolUseBlocks: ToolUseBlock[] }` normalizes `onFinal` callback across all backends
+- Codex MCP `onFinal` now emits `{ content, toolUseBlocks: [] }` instead of `{ response }` for backend consistency
+
 ## [0.10.3] / plugin [1.7.14] - 2026-02-23
 
 ### Fixed
