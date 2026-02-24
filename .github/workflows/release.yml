@@ -187,11 +187,16 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
 
-      - name: Install and publish
+      - name: Install dependencies (workspace-level)
+        run: pnpm install --ignore-scripts
+
+      - name: Build
         working-directory: packages/mama-core
-        run: |
-          pnpm install --ignore-scripts
-          npm publish --access public
+        run: pnpm build
+
+      - name: Publish
+        working-directory: packages/mama-core
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -214,8 +219,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
 
-      - name: Install
-        working-directory: packages/mcp-server
+      - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
 
       - name: Replace workspace protocol
@@ -249,11 +253,12 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
 
-      - name: Install and build
+      - name: Install dependencies (workspace-level)
+        run: pnpm install --ignore-scripts
+
+      - name: Build
         working-directory: packages/standalone
-        run: |
-          pnpm install
-          pnpm build
+        run: pnpm build
 
       - name: Replace workspace protocol
         working-directory: packages/standalone
