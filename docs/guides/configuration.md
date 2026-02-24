@@ -8,12 +8,12 @@ This guide covers all configuration options for MAMA plugin, including hooks, em
 
 ## Quick Reference
 
-| Setting | Environment Variable | Config File | Default |
-|---------|---------------------|-------------|---------|
-| Disable Hooks | `MAMA_DISABLE_HOOKS=true` | `disable_hooks: true` | `false` |
-| Embedding Model | - | `embedding_model` | `Xenova/multilingual-e5-small` |
-| Database Path | `MAMA_DB_PATH` | `db_path` | `~/.claude/mama-memory.db` |
-| Search Limit | - | `search_limit` | `10` |
+| Setting         | Environment Variable      | Config File           | Default                        |
+| --------------- | ------------------------- | --------------------- | ------------------------------ |
+| Disable Hooks   | `MAMA_DISABLE_HOOKS=true` | `disable_hooks: true` | `false`                        |
+| Embedding Model | -                         | `embedding_model`     | `Xenova/multilingual-e5-small` |
+| Database Path   | `MAMA_DB_PATH`            | `db_path`             | `~/.claude/mama-memory.db`     |
+| Search Limit    | -                         | `search_limit`        | `10`                           |
 
 ---
 
@@ -74,7 +74,7 @@ export MAMA_DISABLE_HOOKS=true
 ### Via Command
 
 ```bash
-/mama-configure --model Xenova/all-MiniLM-L6-v2
+/mama-configure --model Xenova/multilingual-e5-small
 ```
 
 ### Via Config File
@@ -87,25 +87,28 @@ export MAMA_DISABLE_HOOKS=true
 
 ### Recommended Models
 
-| Model | Size | Speed | Accuracy | Best For |
-|-------|------|-------|----------|----------|
-| `Xenova/multilingual-e5-small` | 120MB | Medium | 80% | Korean + English (default) |
-| `Xenova/all-MiniLM-L6-v2` | 90MB | Fast | 75% | English-only, fast search |
-| `Xenova/gte-large` | 200MB | Slow | 85% | High precision requirements |
+| Model                          | Size        | Speed  | Accuracy | Best For                           |
+| ------------------------------ | ----------- | ------ | -------- | ---------------------------------- |
+| `Xenova/multilingual-e5-small` | ~113MB (q8) | Medium | 80%      | 100+ languages (default)           |
+| `Xenova/all-MiniLM-L6-v2`      | ~90MB       | Fast   | 75%      | Faster cold start, English-focused |
+| `Xenova/gte-large`             | 200MB       | Slow   | 85%      | High precision requirements        |
 
 ### Model Selection Guide
 
-**Choose `multilingual-e5-small` if:**
-- You use both Korean and English
+**Choose `multilingual-e5-small` (default) if:**
+
+- You use multiple languages (100+ supported)
 - You need balanced speed and accuracy
-- 120MB model size is acceptable
+- ~113MB (q8) model size is acceptable
 
 **Choose `all-MiniLM-L6-v2` if:**
-- You only use English
-- You prioritize speed over accuracy
+
+- You primarily use English
+- You need faster cold start times
 - You have limited disk space
 
 **Choose `gte-large` if:**
+
 - You need maximum accuracy
 - Speed is not a priority
 - You have sufficient disk space (200MB)
@@ -159,6 +162,7 @@ Control how many results are returned:
 **Default:** 10 results
 
 **Trade-offs:**
+
 - Higher limit: More comprehensive results, slower
 - Lower limit: Faster queries, may miss relevant items
 
@@ -177,6 +181,7 @@ Configure recency scoring behavior:
 ```
 
 **Parameters:**
+
 - `recency_weight`: How much to favor recent items (0-1, default 0.3)
 - `recency_scale`: Days until recency boost decays (default 7)
 - `recency_decay`: Score at scale point (0-1, default 0.5)
@@ -224,13 +229,17 @@ The PreToolUse hook auto-injects context when you read/edit files.
 ```json
 {
   "hooks": {
-    "PreToolUse": [{
-      "matcher": "Read|Edit|Grep",
-      "hooks": [{
-        "type": "command",
-        "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/inject-mama-context"
-      }]
-    }]
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/inject-mama-context"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
@@ -285,6 +294,7 @@ Use the `/mama-configure` command to change settings interactively:
 ```
 
 **Interactive prompts:**
+
 1. Choose setting to change
 2. Enter new value
 3. Confirm changes

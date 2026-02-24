@@ -170,9 +170,9 @@ You are helping the user view or modify MAMA configuration.
 
 **Alternatives:**
 
-- `Xenova/multilingual-e5-small` (384-dim, 120MB, Korean-English, recommended)
+- `Xenova/multilingual-e5-small` (384-dim, ~113MB q8, 100+ languages, default)
 - `Xenova/multilingual-e5-base` (768-dim, 420MB, better accuracy, slower)
-- `Xenova/all-MiniLM-L6-v2` (384-dim, 80MB, English only, fastest)
+- `Xenova/all-MiniLM-L6-v2` (384-dim, ~90MB, English-focused, faster cold start)
 
 **Change model:** `/mama:configure --model=<name>`
 
