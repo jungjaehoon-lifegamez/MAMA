@@ -32,6 +32,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { EventEmitter } from 'events';
 import type { TokenUsageRecord, PromptCallbacks, ToolUseBlock } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { getConfig } from '../cli/config/config-manager.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -422,7 +423,8 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentReject = reject;
 
       // Set request timeout
-      const timeoutMs = this.options.requestTimeout || 120000;
+      const timeoutMs =
+        this.options.requestTimeout || (getConfig().timeouts?.request_ms ?? 120_000);
       this.requestTimeoutHandle = setTimeout(() => {
         this.handleTimeout();
       }, timeoutMs);
@@ -495,7 +497,8 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentReject = reject;
 
       // Set request timeout
-      const timeoutMs = this.options.requestTimeout || 120000;
+      const timeoutMs =
+        this.options.requestTimeout || (getConfig().timeouts?.request_ms ?? 120_000);
       this.requestTimeoutHandle = setTimeout(() => {
         this.handleTimeout();
       }, timeoutMs);

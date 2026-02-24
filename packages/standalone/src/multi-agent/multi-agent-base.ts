@@ -23,6 +23,7 @@ import { SystemReminderService } from './system-reminder.js';
 import { DelegationManager } from './delegation-manager.js';
 import { WorkTracker } from './work-tracker.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
+import { getConfig } from '../cli/config/config-manager.js';
 import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
 import type { GatewayToolInput } from '../agent/types.js';
 import type { AgentRuntimeProcess } from './runtime-process.js';
@@ -35,7 +36,7 @@ import type {
 } from './workflow-types.js';
 
 /** Default timeout for agent responses (5 minutes) */
-export const AGENT_TIMEOUT_MS = 5 * 60 * 1000;
+export const AGENT_TIMEOUT_MS = () => getConfig().timeouts?.agent_ms ?? 300_000;
 
 /**
  * Response from a single agent
@@ -107,7 +108,9 @@ export abstract class MultiAgentHandlerBase {
   protected processedMentions = new Map<string, number>();
 
   /** TTL for processed mention entries (5 minutes) */
-  protected static readonly MENTION_TTL_MS = 5 * 60 * 1000;
+  protected static get MENTION_TTL_MS() {
+    return getConfig().gateway_tuning?.mention_ttl_ms ?? 300_000;
+  }
 
   /** Platform identifier for process manager calls */
   protected abstract getPlatformName(): 'discord' | 'slack';

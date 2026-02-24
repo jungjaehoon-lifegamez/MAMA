@@ -18,6 +18,7 @@ import { accessSync, constants } from 'fs';
 import { homedir } from 'os';
 import { delimiter, join } from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { getConfig } from '../cli/config/config-manager.js';
 import type { PromptCallbacks } from './types.js';
 
 const { DebugLogger } = debugLogger as {
@@ -29,8 +30,8 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('CodexMCP');
-const DEFAULT_REQUEST_TIMEOUT_MS = 3 * 60 * 1000;
-const DEFAULT_INITIALIZE_TIMEOUT_MS = 60 * 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS = () => getConfig().timeouts?.codex_request_ms ?? 180_000;
+const DEFAULT_INITIALIZE_TIMEOUT_MS = () => getConfig().timeouts?.initialize_ms ?? 60_000;
 
 export interface CodexMCPOptions {
   model?: string;
@@ -189,8 +190,8 @@ export class CodexMCPProcess extends EventEmitter {
         }),
         new Promise((_, reject) => {
           setTimeout(() => {
-            reject(new Error(`MCP initialize timeout after ${DEFAULT_INITIALIZE_TIMEOUT_MS}ms`));
-          }, DEFAULT_INITIALIZE_TIMEOUT_MS);
+            reject(new Error(`MCP initialize timeout after ${DEFAULT_INITIALIZE_TIMEOUT_MS()}ms`));
+          }, DEFAULT_INITIALIZE_TIMEOUT_MS());
         }),
       ]);
 
@@ -462,7 +463,7 @@ export class CodexMCPProcess extends EventEmitter {
     };
 
     return new Promise((resolve, reject) => {
-      const timeoutMs = this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+      const timeoutMs = this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS();
       const timeout = setTimeout(() => {
         const timeoutError = new Error(
           `Request timeout: ${method} (id=${id}, timeoutMs=${timeoutMs})`
