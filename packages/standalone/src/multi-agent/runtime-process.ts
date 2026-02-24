@@ -10,6 +10,7 @@ import type {
   PromptCallbacks as ClaudePromptCallbacks,
   PromptResult as ClaudePromptResult,
 } from '../agent/persistent-cli-process.js';
+import type { IModelRunner, RunnerMetrics, PromptOptions } from '../agent/model-runner.js';
 
 export interface AgentRuntimeProcess {
   sendMessage(content: string, callbacks?: ClaudePromptCallbacks): Promise<ClaudePromptResult>;
@@ -39,12 +40,21 @@ export interface CodexRuntimeProcessOptions {
  * Session-persistent Codex wrapper with the same minimal contract used by
  * multi-agent runtime (sendMessage/isReady/stop + idle events).
  *
+ * Implements both AgentRuntimeProcess (multi-agent) and IModelRunner (agent-loop).
  * Uses CodexMCPProcess for persistent MCP communication.
  */
-export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimeProcess {
+export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimeProcess, IModelRunner {
+  readonly backendType = 'codex-mcp' as const;
+
   private wrapper: CodexMCPProcess;
   private state: 'idle' | 'busy' | 'dead' = 'idle';
   private stoppedDuringExecution = false;
+
+  // ─── Metrics tracking ───
+  private _requestCount = 0;
+  private _failureCount = 0;
+  private _totalLatencyMs = 0;
+  private _lastRequestAt: number | null = null;
 
   constructor(options: CodexRuntimeProcessOptions) {
     super();
@@ -61,6 +71,18 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     this.wrapper = new CodexMCPProcess(wrapperOptions);
   }
 
+  // ─── IModelRunner.prompt() ─────────────────────────────────────────────
+
+  async prompt(
+    content: string,
+    callbacks?: ClaudePromptCallbacks,
+    _options?: PromptOptions
+  ): Promise<ClaudePromptResult> {
+    return this.sendMessage(content, callbacks);
+  }
+
+  // ─── AgentRuntimeProcess.sendMessage() ─────────────────────────────────
+
   async sendMessage(
     content: string,
     callbacks?: ClaudePromptCallbacks
@@ -73,6 +95,10 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     }
 
     this.state = 'busy';
+    const startTime = Date.now();
+    this._requestCount++;
+    this._lastRequestAt = startTime;
+
     try {
       const codexCallbacks: CodexPromptCallbacks | undefined = callbacks
         ? {
@@ -96,8 +122,13 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
         hasToolUse: false,
       };
 
+      this._totalLatencyMs += Date.now() - startTime;
       callbacks?.onFinal?.({ content: normalized.response, toolUseBlocks: [] });
       return normalized;
+    } catch (err) {
+      this._failureCount++;
+      this._totalLatencyMs += Date.now() - startTime;
+      throw err;
     } finally {
       // Only reset to idle if not stopped during execution
       if (!this.stoppedDuringExecution) {
@@ -107,8 +138,34 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     }
   }
 
+  // ─── IModelRunner session management ───────────────────────────────────
+
+  setSessionId(id: string): void {
+    this.wrapper.setSessionId(id);
+  }
+
+  setSystemPrompt(prompt: string): void {
+    this.wrapper.setSystemPrompt(prompt);
+  }
+
+  // ─── IModelRunner health & metrics ─────────────────────────────────────
+
   isReady(): boolean {
     return this.state === 'idle';
+  }
+
+  isHealthy(): boolean {
+    return this.state !== 'dead';
+  }
+
+  getMetrics(): RunnerMetrics {
+    return {
+      requestCount: this._requestCount,
+      failureCount: this._failureCount,
+      avgLatencyMs:
+        this._requestCount > 0 ? Math.round(this._totalLatencyMs / this._requestCount) : 0,
+      lastRequestAt: this._lastRequestAt,
+    };
   }
 
   stop(): void {

@@ -279,10 +279,10 @@ export class AgentProcessManager extends EventEmitter {
         return existing;
       }
 
-      const process = await this.createCodexProcess(options);
-      this.codexProcessPool.set(channelKey, process);
-      this.emit('process-created', { agentId, process });
-      return process;
+      const runner = this.createCodexRunner(options);
+      this.codexProcessPool.set(channelKey, runner);
+      this.emit('process-created', { agentId, process: runner });
+      return runner;
     }
 
     // Claude backend
@@ -298,10 +298,13 @@ export class AgentProcessManager extends EventEmitter {
     return process;
   }
 
-  private async createCodexProcess(
-    options: Partial<PersistentProcessOptions>
-  ): Promise<AgentRuntimeProcess> {
-    const process = new CodexRuntimeProcess({
+  /**
+   * Factory: create a runner for a given backend.
+   * Claude runners are managed by PersistentProcessPool (returned separately).
+   * Codex runners are created here as standalone instances.
+   */
+  private createCodexRunner(options: Partial<PersistentProcessOptions>): AgentRuntimeProcess {
+    return new CodexRuntimeProcess({
       model: options.model || this.runtimeOptions.model,
       systemPrompt: options.systemPrompt,
       cwd: this.runtimeOptions.codexCwd ? resolvePath(this.runtimeOptions.codexCwd) : undefined,
@@ -309,7 +312,6 @@ export class AgentProcessManager extends EventEmitter {
       command: this.runtimeOptions.codexCommand,
       requestTimeout: options.requestTimeout,
     });
-    return process;
   }
 
   /**
