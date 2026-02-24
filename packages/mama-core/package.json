@@ -62,11 +62,8 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.72.1",
     "@huggingface/transformers": "^3.8.1",
     "better-sqlite3": "^11.0.0",
-    "mime-types": "^3.0.2",
-    "sqlite-vec": "^0.1.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {

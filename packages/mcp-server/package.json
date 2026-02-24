@@ -41,13 +41,9 @@
   },
   "dependencies": {
     "@jungjaehoon/mama-core": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.0.1",
-    "better-sqlite3": "^11.0.0",
-    "sqlite-vec": "^0.1.0",
-    "ws": "^8.18.3"
+    "@modelcontextprotocol/sdk": "^1.0.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0",
     "vitest": "^1.0.0"
   },
   "files": [
