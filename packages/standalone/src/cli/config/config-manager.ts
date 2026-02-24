@@ -13,6 +13,154 @@ import * as yaml from 'js-yaml';
 import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
 
+// ============================================================================
+// Sync Config Cache (STORY-002)
+// ============================================================================
+
+let _cachedConfig: MAMAConfig | null = null;
+
+/**
+ * Initialize config: load from disk, apply env overrides, and cache.
+ * Call once at startup (e.g., in mama start).
+ */
+export async function initConfig(): Promise<MAMAConfig> {
+  const config = await loadConfig();
+  _cachedConfig = applyEnvOverrides(config);
+  return _cachedConfig;
+}
+
+/**
+ * Get the cached config synchronously.
+ * Returns DEFAULT_CONFIG if initConfig() hasn't been called yet.
+ */
+export function getConfig(): MAMAConfig {
+  return _cachedConfig ?? DEFAULT_CONFIG;
+}
+
+/**
+ * Override config values at runtime (deep-merge into cache).
+ * Does NOT persist to disk — use saveConfig() for that.
+ */
+export function overrideConfig(overrides: Partial<MAMAConfig>): MAMAConfig {
+  const base = getConfig();
+  _cachedConfig = {
+    ...base,
+    ...overrides,
+    prompt: overrides.prompt ? { ...base.prompt!, ...overrides.prompt } : base.prompt,
+    timeouts: overrides.timeouts ? { ...base.timeouts!, ...overrides.timeouts } : base.timeouts,
+    gateway_tuning: overrides.gateway_tuning
+      ? { ...base.gateway_tuning!, ...overrides.gateway_tuning }
+      : base.gateway_tuning,
+    io: overrides.io ? { ...base.io!, ...overrides.io } : base.io,
+    metrics: overrides.metrics ? { ...base.metrics!, ...overrides.metrics } : base.metrics,
+    agent: overrides.agent ? { ...base.agent, ...overrides.agent } : base.agent,
+    database: overrides.database ? { ...base.database, ...overrides.database } : base.database,
+    logging: overrides.logging ? { ...base.logging, ...overrides.logging } : base.logging,
+  };
+  return _cachedConfig;
+}
+
+/**
+ * Reset cached config (for testing).
+ */
+export function resetConfigCache(): void {
+  _cachedConfig = null;
+}
+
+/**
+ * ENV_MAP: MAMA_* environment variables → config paths.
+ * Format: MAMA_{SECTION}_{FIELD} → config.section.field
+ * Values are parsed as numbers where the target type is number.
+ */
+const ENV_MAP: Array<{
+  env: string;
+  path: [keyof MAMAConfig, string];
+  type: 'number' | 'boolean';
+}> = [
+  // Prompt
+  { env: 'MAMA_PROMPT_WARN_CHARS', path: ['prompt', 'warn_chars'], type: 'number' },
+  { env: 'MAMA_PROMPT_TRUNCATE_CHARS', path: ['prompt', 'truncate_chars'], type: 'number' },
+  { env: 'MAMA_PROMPT_HARD_LIMIT_CHARS', path: ['prompt', 'hard_limit_chars'], type: 'number' },
+  { env: 'MAMA_PROMPT_SKILL_MAX_CHARS', path: ['prompt', 'skill_max_chars'], type: 'number' },
+  // Timeouts
+  { env: 'MAMA_TIMEOUT_REQUEST_MS', path: ['timeouts', 'request_ms'], type: 'number' },
+  { env: 'MAMA_TIMEOUT_CODEX_REQUEST_MS', path: ['timeouts', 'codex_request_ms'], type: 'number' },
+  { env: 'MAMA_TIMEOUT_INITIALIZE_MS', path: ['timeouts', 'initialize_ms'], type: 'number' },
+  { env: 'MAMA_TIMEOUT_SESSION_MS', path: ['timeouts', 'session_ms'], type: 'number' },
+  {
+    env: 'MAMA_TIMEOUT_SESSION_CLEANUP_MS',
+    path: ['timeouts', 'session_cleanup_ms'],
+    type: 'number',
+  },
+  { env: 'MAMA_TIMEOUT_AGENT_MS', path: ['timeouts', 'agent_ms'], type: 'number' },
+  { env: 'MAMA_TIMEOUT_ULTRAWORK_MS', path: ['timeouts', 'ultrawork_ms'], type: 'number' },
+  { env: 'MAMA_TIMEOUT_BUSY_RETRY_MS', path: ['timeouts', 'busy_retry_ms'], type: 'number' },
+  // Gateway
+  { env: 'MAMA_GATEWAY_DEDUP_TTL_MS', path: ['gateway_tuning', 'dedup_ttl_ms'], type: 'number' },
+  {
+    env: 'MAMA_GATEWAY_MENTION_TTL_MS',
+    path: ['gateway_tuning', 'mention_ttl_ms'],
+    type: 'number',
+  },
+  {
+    env: 'MAMA_GATEWAY_MESSAGE_TTL_MS',
+    path: ['gateway_tuning', 'message_ttl_ms'],
+    type: 'number',
+  },
+  {
+    env: 'MAMA_GATEWAY_CLEANUP_INTERVAL_MS',
+    path: ['gateway_tuning', 'cleanup_interval_ms'],
+    type: 'number',
+  },
+  {
+    env: 'MAMA_GATEWAY_HEARTBEAT_INTERVAL_MS',
+    path: ['gateway_tuning', 'heartbeat_interval_ms'],
+    type: 'number',
+  },
+  // IO
+  { env: 'MAMA_IO_MAX_READ_BYTES', path: ['io', 'max_read_bytes'], type: 'number' },
+  {
+    env: 'MAMA_IO_MAX_DYNAMIC_CONTEXT_CHARS',
+    path: ['io', 'max_dynamic_context_chars'],
+    type: 'number',
+  },
+  {
+    env: 'MAMA_IO_CONTEXT_THRESHOLD_TOKENS',
+    path: ['io', 'context_threshold_tokens'],
+    type: 'number',
+  },
+  { env: 'MAMA_IO_MAX_CONTEXT_TOKENS', path: ['io', 'max_context_tokens'], type: 'number' },
+  // Metrics
+  { env: 'MAMA_METRICS_ENABLED', path: ['metrics', 'enabled'], type: 'boolean' },
+  { env: 'MAMA_METRICS_RETENTION_DAYS', path: ['metrics', 'retention_days'], type: 'number' },
+];
+
+/**
+ * Apply MAMA_* environment variable overrides to config.
+ * Env vars take precedence over config.yaml values.
+ */
+function applyEnvOverrides(config: MAMAConfig): MAMAConfig {
+  const result = { ...config };
+
+  for (const { env, path, type } of ENV_MAP) {
+    const value = process.env[env];
+    if (value === undefined) continue;
+
+    const [section, field] = path;
+    const sectionObj = result[section];
+    if (sectionObj && typeof sectionObj === 'object') {
+      const parsed = type === 'boolean' ? value === 'true' || value === '1' : Number(value);
+      if (type === 'number' && isNaN(parsed as number)) continue;
+      (result as Record<string, Record<string, unknown>>)[section] = {
+        ...(sectionObj as Record<string, unknown>),
+        [field]: parsed,
+      };
+    }
+  }
+
+  return result;
+}
+
 /**
  * Error thrown when config validation fails.
  * Contains all validation errors and resolution guidance.
@@ -239,6 +387,17 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     chatwork: config.chatwork ?? DEFAULT_CONFIG.chatwork,
     heartbeat: config.heartbeat ?? DEFAULT_CONFIG.heartbeat,
     multi_agent: multiAgent,
+    prompt: config.prompt ? { ...DEFAULT_CONFIG.prompt!, ...config.prompt } : DEFAULT_CONFIG.prompt,
+    timeouts: config.timeouts
+      ? { ...DEFAULT_CONFIG.timeouts!, ...config.timeouts }
+      : DEFAULT_CONFIG.timeouts,
+    gateway_tuning: config.gateway_tuning
+      ? { ...DEFAULT_CONFIG.gateway_tuning!, ...config.gateway_tuning }
+      : DEFAULT_CONFIG.gateway_tuning,
+    io: config.io ? { ...DEFAULT_CONFIG.io!, ...config.io } : DEFAULT_CONFIG.io,
+    metrics: config.metrics
+      ? { ...DEFAULT_CONFIG.metrics!, ...config.metrics }
+      : DEFAULT_CONFIG.metrics,
   };
 }
 

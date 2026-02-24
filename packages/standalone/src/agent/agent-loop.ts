@@ -13,6 +13,7 @@
 import { readFileSync, existsSync, readdirSync, mkdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
+import { getConfig } from '../cli/config/config-manager.js';
 import { CodexMCPProcess } from './codex-mcp-process.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
@@ -152,7 +153,7 @@ const EXCLUDED_SKILL_FILES = new Set([
 ]);
 
 /** Max chars per skill file to prevent prompt bloat */
-const MAX_SKILL_FILE_CHARS = 4000;
+const MAX_SKILL_FILE_CHARS = () => getConfig().prompt?.skill_max_chars ?? 4_000;
 
 /**
  * Recursively collect all .md files from a directory (sync)
@@ -176,8 +177,8 @@ function collectMarkdownFiles(dir: string, prefix = ''): Array<{ path: string; c
         let content = readFileSync(fullPath, 'utf-8');
         // Only truncate supplementary files, never command files
         const isCommand = relativePath.startsWith('commands/');
-        if (!isCommand && content.length > MAX_SKILL_FILE_CHARS) {
-          content = content.slice(0, MAX_SKILL_FILE_CHARS) + '\n\n[... truncated]';
+        if (!isCommand && content.length > MAX_SKILL_FILE_CHARS()) {
+          content = content.slice(0, MAX_SKILL_FILE_CHARS()) + '\n\n[... truncated]';
         }
         results.push({ path: relativePath, content });
       }
