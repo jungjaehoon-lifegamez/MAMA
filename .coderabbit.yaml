@@ -26,5 +26,5 @@ reviews:
       instructions: |
         MAMA Core shared modules.
         - Embeddings (Transformers.js)
-        - SQLite + sqlite-vec
+        - SQLite + pure-TS cosine similarity
         - Memory Store

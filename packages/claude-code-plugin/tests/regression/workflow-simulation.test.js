@@ -94,13 +94,6 @@ describe('Story M4.2: Workflow Simulation - Regression Harness', () => {
     }
 
     await adapter.prepare('DELETE FROM decisions').run();
-
-    // Clean up embeddings table to prevent "UNIQUE constraint failed" errors
-    try {
-      await adapter.prepare('DELETE FROM embeddings').run();
-    } catch {
-      // embeddings table may not exist yet
-    }
   });
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

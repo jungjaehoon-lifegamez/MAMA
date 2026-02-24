@@ -315,7 +315,7 @@ jobs:
           git commit -m "chore: Sync MAMA plugin v${{ needs.prepare-release.outputs.mama_plugin_version }}"
           git push
 
-  # Step 7: Deploy GitHub Pages
+  # Step 6: Deploy GitHub Pages
   deploy-pages:
     needs: prepare-release
     if: ${{ !inputs.dry_run }}
@@ -340,7 +340,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  # Step 8: Create GitHub Release
+  # Step 7: Create GitHub Release
   create-release:
     needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, sync-plugin, deploy-pages]
     if: ${{ !inputs.dry_run && always() && needs.prepare-release.result == 'success' }}

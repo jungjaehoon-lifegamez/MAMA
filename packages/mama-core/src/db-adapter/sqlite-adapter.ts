@@ -176,7 +176,7 @@ export class SQLiteAdapter extends DatabaseAdapter {
     ).all() as Array<{ name: string }>;
 
     if (tableCheck.length === 0) {
-      return [];
+      throw new Error('Embeddings table missing');
     }
 
     const rows = this.prepare('SELECT rowid, embedding FROM embeddings').all() as Array<{
@@ -339,10 +339,10 @@ export class SQLiteAdapter extends DatabaseAdapter {
           embedding BLOB NOT NULL
         )
       `);
-
-      // Migrate data from vss_memories if it exists (legacy sqlite-vec table)
-      this._migrateFromVssMemories();
     }
+
+    // Always attempt migration — uses INSERT OR IGNORE so safe to run multiple times
+    this._migrateFromVssMemories();
   }
 
   /**
