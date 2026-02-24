@@ -1,0 +1,168 @@
+version: "6.0.0"
+project_name: "mama-os-stability"
+project_level: 3
+current_sprint: 1
+sprint_plan_path: ".docs/sprint-plan-mama-os-stability-2026-02-24.md"
+
+sprints:
+  - sprint_number: 1
+    start_date: "2026-02-24"
+    end_date: "2026-03-02"
+    capacity_points: 15
+    committed_points: 15
+    completed_points: 0
+    status: "not_started"
+    goal: "Config Foundation — 모든 hardcoded 상수를 설정 시스템으로 이관"
+    stories:
+      - story_id: "STORY-001"
+        title: "MAMAConfig type extensions"
+        points: 2
+        status: "not_started"
+        epic: "EPIC-004"
+      - story_id: "STORY-002"
+        title: "Async init + sync cache ConfigManager"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-004"
+      - story_id: "STORY-003"
+        title: "Environment variable override"
+        points: 2
+        status: "not_started"
+        epic: "EPIC-004"
+      - story_id: "STORY-004"
+        title: "Config REST API"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-004"
+      - story_id: "STORY-005"
+        title: "Migrate hardcoded constants"
+        points: 5
+        status: "not_started"
+        epic: "EPIC-004"
+
+  - sprint_number: 2
+    start_date: "2026-03-03"
+    end_date: "2026-03-09"
+    capacity_points: 15
+    committed_points: 17
+    completed_points: 0
+    status: "not_started"
+    goal: "Token Accuracy + Skill Loading"
+    stories:
+      - story_id: "STORY-006"
+        title: "TokenEstimator (js-tiktoken)"
+        points: 5
+        status: "not_started"
+        epic: "EPIC-001"
+      - story_id: "STORY-007"
+        title: "PromptSizeMonitor token migration"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-001"
+      - story_id: "STORY-008"
+        title: "Token budget fail-closed"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-001"
+      - story_id: "STORY-009"
+        title: "SkillLoader extraction"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-002"
+      - story_id: "STORY-010"
+        title: "Semantic skill truncation"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-002"
+
+  - sprint_number: 3
+    start_date: "2026-03-10"
+    end_date: "2026-03-16"
+    capacity_points: 15
+    committed_points: 16
+    completed_points: 0
+    status: "not_started"
+    goal: "CLI Backend Unification"
+    stories:
+      - story_id: "STORY-011"
+        title: "IModelRunner interface"
+        points: 2
+        status: "not_started"
+        epic: "EPIC-003"
+      - story_id: "STORY-012"
+        title: "ClaudeCliRunner implementation"
+        points: 5
+        status: "not_started"
+        epic: "EPIC-003"
+      - story_id: "STORY-013"
+        title: "CodexMcpRunner implementation"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-003"
+      - story_id: "STORY-014"
+        title: "AgentLoop uses IModelRunner"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-003"
+      - story_id: "STORY-015"
+        title: "Process manager refactor"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-003"
+
+  - sprint_number: 4
+    start_date: "2026-03-17"
+    end_date: "2026-03-24"
+    capacity_points: 15
+    committed_points: 24
+    completed_points: 0
+    status: "not_started"
+    goal: "Gateway SSOT + Tool Filtering + Observability"
+    stories:
+      - story_id: "STORY-016"
+        title: "ToolRegistry core"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-005"
+      - story_id: "STORY-017"
+        title: "Build-time gateway-tools.md"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-005"
+      - story_id: "STORY-018"
+        title: "Per-agent allowed_tools filtering"
+        points: 5
+        status: "not_started"
+        epic: "EPIC-005"
+      - story_id: "STORY-019"
+        title: "MetricsStore SQLite"
+        points: 5
+        status: "not_started"
+        epic: "EPIC-006"
+      - story_id: "STORY-020"
+        title: "Metric emission points"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-006"
+      - story_id: "STORY-021"
+        title: "Health score API"
+        points: 3
+        status: "not_started"
+        epic: "EPIC-006"
+      - story_id: "STORY-022"
+        title: "Metrics auto-cleanup"
+        points: 2
+        status: "not_started"
+        epic: "EPIC-006"
+
+velocity:
+  sprint_1: null
+  sprint_2: null
+  sprint_3: null
+  sprint_4: null
+  rolling_average: null
+
+team:
+  size: 1
+  sprint_length_weeks: 1
+  capacity_per_sprint: 15
