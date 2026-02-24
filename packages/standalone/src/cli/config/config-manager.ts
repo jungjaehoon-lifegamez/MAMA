@@ -12,6 +12,7 @@ import * as yaml from 'js-yaml';
 
 import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 
 // ============================================================================
 // Sync Config Cache (STORY-002)
@@ -30,6 +31,7 @@ export async function initConfig(): Promise<MAMAConfig> {
 }
 
 let _warnedUninit = false;
+const configLogger = new DebugLogger('config');
 
 /**
  * Get the cached config synchronously.
@@ -39,13 +41,13 @@ let _warnedUninit = false;
 export function getConfig(): MAMAConfig {
   if (!_cachedConfig && !_warnedUninit) {
     _warnedUninit = true;
-    console.warn('[config] getConfig() called before initConfig(). Using defaults.');
+    configLogger.warn('[config] getConfig() called before initConfig(). Using defaults.');
   }
   return _cachedConfig ?? DEFAULT_CONFIG;
 }
 
 /**
- * Override config values at runtime (deep-merge into cache).
+ * Override config values at runtime (shallow merge into cache).
  * Does NOT persist to disk — use saveConfig() for that.
  */
 export function overrideConfig(overrides: Partial<MAMAConfig>): MAMAConfig {
@@ -146,6 +148,13 @@ const ENV_MAP: Array<{
   // Metrics
   { env: 'MAMA_METRICS_ENABLED', path: ['metrics', 'enabled'], type: 'boolean' },
   { env: 'MAMA_METRICS_RETENTION_DAYS', path: ['metrics', 'retention_days'], type: 'number' },
+  // Token Budget
+  { env: 'MAMA_TOKEN_BUDGET_DAILY_LIMIT', path: ['token_budget', 'daily_limit'], type: 'number' },
+  {
+    env: 'MAMA_TOKEN_BUDGET_ALERT_THRESHOLD',
+    path: ['token_budget', 'alert_threshold'],
+    type: 'number',
+  },
 ];
 
 /**
@@ -411,6 +420,9 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     metrics: config.metrics
       ? { ...DEFAULT_CONFIG.metrics!, ...config.metrics }
       : DEFAULT_CONFIG.metrics,
+    token_budget: config.token_budget
+      ? { ...DEFAULT_CONFIG.token_budget!, ...config.token_budget }
+      : DEFAULT_CONFIG.token_budget,
   };
 }
 

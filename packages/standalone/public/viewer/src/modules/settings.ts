@@ -1273,7 +1273,10 @@ export class SettingsModule {
       const backend = (backendSelect.value || 'claude') as AgentBackend;
       const model = this.getNormalizedModelForBackend(backend, modelSelect.value || '');
       const can_delegate = delegateCheckbox?.checked ?? false;
-      const hasAllTools = allToolsCheckbox?.checked ?? true;
+      // Find agent data for tier-based fallback (fail-closed if DOM missing)
+      const agentData = this.multiAgentData?.agents?.find((a: MultiAgentAgent) => a.id === agentId);
+      const hasAllTools =
+        allToolsCheckbox?.checked ?? (agentData ? (agentData.tier ?? 1) === 1 : false);
 
       // Effort level
       const effortSelect = getElementByIdOrNull<HTMLSelectElement>(`agent-effort-${agentId}`);

@@ -140,7 +140,11 @@ export class PromptSizeMonitor {
     const totalTokens = layerTokens.reduce((sum, t) => sum + t, 0);
 
     if (totalTokens <= maxTokens) {
-      return { layers: [...layers], result: this.check(layers) };
+      const checkResult = this.check(layers);
+      return {
+        layers: [...layers],
+        result: { ...checkResult, withinBudget: totalTokens <= maxTokens },
+      };
     }
 
     // Sort candidates for truncation: highest priority number first, then largest first
@@ -172,21 +176,30 @@ export class PromptSizeMonitor {
         truncatedLayers.push(layer.name);
       } else {
         // Partial truncation: estimate chars to remove based on layer's token density
-        const charsPerToken = tokens > 0 ? layer.content.length / tokens : 4;
-        const charsToRemove = Math.ceil(excess * charsPerToken);
         const truncationMarker = `\n\n[... ${layer.name} truncated: ~${excess} tokens removed ...]`;
-        const safeKeep = Math.max(
-          0,
-          layer.content.length - charsToRemove - truncationMarker.length
-        );
-        const newContent = layer.content.slice(0, safeKeep) + truncationMarker;
-        const newTokens = countTokens(newContent);
-        resultLayers[index] = {
-          ...layer,
-          content: newContent,
-        };
-        currentTokens = currentTokens - tokens + newTokens;
-        truncatedLayers.push(layer.name);
+        const markerTokens = countTokens(truncationMarker);
+
+        if (markerTokens >= excess) {
+          // Marker alone costs more than excess — full removal is better
+          currentTokens -= tokens;
+          resultLayers[index] = { ...layer, content: '' };
+          truncatedLayers.push(layer.name);
+        } else {
+          const charsPerToken = tokens > 0 ? layer.content.length / tokens : 4;
+          const charsToRemove = Math.ceil(excess * charsPerToken);
+          const safeKeep = Math.max(
+            0,
+            layer.content.length - charsToRemove - truncationMarker.length
+          );
+          const newContent = layer.content.slice(0, safeKeep) + truncationMarker;
+          const newTokens = countTokens(newContent);
+          resultLayers[index] = {
+            ...layer,
+            content: newContent,
+          };
+          currentTokens = currentTokens - tokens + newTokens;
+          truncatedLayers.push(layer.name);
+        }
       }
     }
 
