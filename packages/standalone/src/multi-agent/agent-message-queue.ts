@@ -14,6 +14,7 @@
  */
 
 import type { AgentRuntimeProcess } from './runtime-process.js';
+import { getConfig } from '../cli/config/config-manager.js';
 
 /**
  * Message context (from multi-agent-slack.ts or multi-agent-discord.ts)
@@ -51,7 +52,7 @@ export interface QueuedMessage {
 }
 
 const MAX_QUEUE_SIZE = 5;
-const MESSAGE_TTL_MS = 20 * 60 * 1000; // 20 minutes (agents can take 200s+ on complex tasks)
+const MESSAGE_TTL_MS = () => getConfig().gateway_tuning?.message_ttl_ms ?? 1_200_000;
 
 /**
  * Agent Message Queue Manager
@@ -127,9 +128,9 @@ export class AgentMessageQueue {
 
     // Check TTL
     const age = Date.now() - message.enqueuedAt;
-    if (age > MESSAGE_TTL_MS) {
+    if (age > MESSAGE_TTL_MS()) {
       console.warn(
-        `[MessageQueue] Skipping expired message for ${agentId} (age: ${Math.floor(age / 1000)}s, TTL: ${MESSAGE_TTL_MS / 1000}s)`
+        `[MessageQueue] Skipping expired message for ${agentId} (age: ${Math.floor(age / 1000)}s, TTL: ${MESSAGE_TTL_MS() / 1000}s)`
       );
       // Try next message if any
       if (queue.length > 0) {
@@ -202,7 +203,7 @@ export class AgentMessageQueue {
 
     for (const [agentId, queue] of this.queues.entries()) {
       const before = queue.length;
-      const filtered = queue.filter((msg) => now - msg.enqueuedAt < MESSAGE_TTL_MS);
+      const filtered = queue.filter((msg) => now - msg.enqueuedAt < MESSAGE_TTL_MS());
 
       if (filtered.length !== before) {
         this.queues.set(agentId, filtered);
