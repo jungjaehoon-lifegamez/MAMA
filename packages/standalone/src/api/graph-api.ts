@@ -1063,6 +1063,37 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: GET /api/metrics/health - system health report
+    if (pathname === '/api/metrics/health' && req.method === 'GET') {
+      // Prefer HealthCheckService (connection-based) over legacy stats-only service
+      if (options.healthCheckService) {
+        try {
+          const report = await options.healthCheckService.check();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(report));
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: String(e) }));
+        }
+        return true;
+      }
+      // Fallback to legacy HealthScoreService
+      if (!options.healthService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Metrics disabled' }));
+        return true;
+      }
+      try {
+        const report = options.healthService.compute();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(report));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(e) }));
+      }
+      return true;
+    }
+
     // Route: GET /api/dashboard/status - dashboard status
     if (pathname === '/api/dashboard/status' && req.method === 'GET') {
       await handleDashboardStatusRequest(req, res);

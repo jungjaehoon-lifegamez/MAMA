@@ -48,6 +48,12 @@ export interface ApiServerOptions {
   db?: Database.Database;
   /** Skill registry instance */
   skillRegistry?: SkillRegistry;
+  /** Health score service for /api/metrics/health */
+  healthService?: { compute(windowMs?: number): unknown };
+  /** Connection-based health check service */
+  healthCheckService?: {
+    check(): Promise<import('../observability/health-check.js').SystemHealthReport>;
+  };
 }
 
 /**
@@ -79,6 +85,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     enableAutoKillPort = false,
     db,
     skillRegistry,
+    healthService,
   } = options;
 
   const app = express();
@@ -119,9 +126,26 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     app.use('/api/skills', skillsRouter);
   }
 
-  // Health check endpoint
+  // Health check endpoint (watchdog)
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: Date.now() });
+  });
+
+  // Metrics health endpoint (observability)
+  const { healthCheckService } = options;
+  app.get('/api/metrics/health', async (_req, res) => {
+    if (healthCheckService) {
+      try {
+        const report = await healthCheckService.check();
+        res.json(report);
+      } catch (e) {
+        res.status(500).json({ error: String(e) });
+      }
+    } else if (healthService) {
+      res.json(healthService.compute());
+    } else {
+      res.status(503).json({ error: 'Metrics not available' });
+    }
   });
 
   // Note: Error handlers are mounted in start() to allow adding custom routes first
