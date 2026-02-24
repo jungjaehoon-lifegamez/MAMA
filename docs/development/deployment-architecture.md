@@ -8,7 +8,7 @@ This document explains how MAMA is structured, developed, and deployed to users.
 
 ## Architecture Overview
 
-MAMA uses a **3-layer architecture** with **5 packages**:
+MAMA uses a **3-layer architecture** with **4 packages**:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -19,8 +19,7 @@ MAMA uses a **3-layer architecture** with **5 packages**:
 │ │   ├── mama-core/            → npm: @jungjaehoon/mama-core │
 │ │   ├── mcp-server/           → npm: @jungjaehoon/mama-server│
 │ │   ├── claude-code-plugin/   → Claude Code marketplace     │
-│ │   ├── standalone/           → npm: @jungjaehoon/mama-os   │
-│ │   └── openclaw-plugin/      → npm: @jungjaehoon/openclaw-mama│
+│ │   └── standalone/           → npm: @jungjaehoon/mama-os   │
 │ └── docs/                                                   │
 └─────────────────────────────────────────────────────────────┘
                     ↓                    ↓
@@ -31,14 +30,10 @@ MAMA uses a **3-layer architecture** with **5 packages**:
         │ mama-core         │    │                     │
         │ mama-server       │    │ └── plugins/mama/   │
         │ mama-os           │    │                     │
-        │ openclaw-mama     │    │                     │
         └───────────────────┘    └─────────────────────┘
                     ↓                    ↓
         ┌───────────────────────────────────────────┐
         │ User Installation                         │
-        │                                           │
-        │ OpenClaw (Recommended):                   │
-        │   openclaw plugins install @jungjaehoon/openclaw-mama│
         │                                           │
         │ Claude Code:                              │
         │   /plugin marketplace add jungjaehoon/...│
@@ -77,27 +72,20 @@ github.com/jungjaehoon-lifegamez/MAMA
 │   │   └── bin/
 │   │       └── mama-server          # CLI executable
 │   │
-│   ├── claude-code-plugin/          # MAMA plugin (Claude Code)
-│   │   ├── .claude-plugin/
-│   │   │   └── plugin.json
-│   │   ├── .mcp.json                # References @jungjaehoon/mama-server
-│   │   ├── commands/                # /mama-* commands (Markdown)
-│   │   ├── hooks/                   # Hook configurations (JSON)
-│   │   ├── skills/                  # Auto-context skill
-│   │   └── tests/
-│   │
-│   └── openclaw-plugin/             # @jungjaehoon/openclaw-mama
-│       ├── package.json             # npm package
-│       ├── index.ts                 # Plugin entry (lifecycle hooks + tools)
-│       ├── openclaw.plugin.json     # Plugin metadata
-│       └── scripts/                 # Postinstall scripts
+│   └── claude-code-plugin/          # MAMA plugin (Claude Code)
+│       ├── .claude-plugin/
+│       │   └── plugin.json
+│       ├── .mcp.json                # References @jungjaehoon/mama-server
+│       ├── commands/                # /mama-* commands (Markdown)
+│       ├── hooks/                   # Hook configurations (JSON)
+│       ├── skills/                  # Auto-context skill
+│       └── tests/
 │
 ├── .github/
 │   └── workflows/
 │       ├── test.yml                 # CI for all packages
 │       ├── publish-mcp.yml          # npm publish @jungjaehoon/mama-server
-│       ├── sync-plugin.yml          # Claude Code marketplace sync
-│       └── publish-openclaw.yml     # npm publish @jungjaehoon/openclaw-mama
+│       └── sync-plugin.yml          # Claude Code marketplace sync
 │
 └── docs/                            # Shared documentation
     └── ...
@@ -278,23 +266,21 @@ jobs:
 
 ## Key Design Decisions
 
-### Decision: 5-Package Architecture
+### Decision: 4-Package Architecture
 
 **Separation:**
 
-- **MAMA Core** (@jungjaehoon/mama-core): Heavy dependencies (better-sqlite3, @huggingface/transformers, sqlite-vec)
+- **MAMA Core** (@jungjaehoon/mama-core): Heavy dependencies (better-sqlite3, @huggingface/transformers)
 - **MCP Server** (@jungjaehoon/mama-server): Stdio MCP transport + tools (defaults to no HTTP)
 - **Claude Code Plugin** (mama): Lightweight (Markdown + JSON configs)
 - **MAMA OS** (@jungjaehoon/mama-os): API/UI (`3847`) + embedding/chat runtime (`3849`)
-- **OpenClaw Plugin** (@jungjaehoon/openclaw-mama): Native plugin with lifecycle hooks
 
 **Benefits:**
 
-- ✅ Share `mama-core` across MCP server, plugin, standalone, and OpenClaw
-- ✅ Plugin updates don't require MCP server recompilation
-- ✅ MCP server remains focused on stdio MCP delivery
-- ✅ OpenClaw gets native integration with auto-recall
-- ✅ Clear dependency boundaries
+- Share `mama-core` across MCP server, plugin, and standalone
+- Plugin updates don't require MCP server recompilation
+- MCP server remains focused on stdio MCP delivery
+- Clear dependency boundaries
 
 ### Decision: npx for MCP Server Distribution
 

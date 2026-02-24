@@ -2,7 +2,7 @@
  * MAMA Database Manager (SQLite-only)
  *
  * SQLite-exclusive database interface for MAMA Plugin.
- * Uses better-sqlite3 + sqlite-vec for local storage.
+ * Uses better-sqlite3 for local storage.
  *
  * PostgreSQL support is only available in the legacy mcp-server repository.
  *
@@ -10,7 +10,7 @@
  * - WAL mode for better concurrency
  * - synchronous=NORMAL for performance
  * - Automatic migration management
- * - Vector similarity search (when sqlite-vec available)
+ * - Vector similarity search (pure TS cosine similarity)
  *
  * @module db-manager
  * @version 2.1 (Plugin - SQLite-only)
@@ -239,8 +239,7 @@ export async function closeDB(): Promise<void> {
 /**
  * Insert embedding into vector search table
  *
- * Uses sqlite-vec for vector similarity search
- * Gracefully degrades if sqlite-vec is not available
+ * Stores embedding in the embeddings table for vector similarity search
  *
  * @param decisionRowid - SQLite rowid
  * @param embedding - 384-dim embedding vector
@@ -278,7 +277,7 @@ export async function vectorSearch(
   const adapter = getAdapter();
 
   try {
-    // SQLite adapter returns null if sqlite-vec not available
+    // Brute-force cosine similarity over all embeddings
     const results = await adapter.vectorSearch(queryEmbedding, limit * 3);
 
     if (!results || results.length === 0) {

@@ -10,7 +10,7 @@
  *
  * Architecture:
  * - Stdio transport (standard MCP pattern)
- * - SQLite + sqlite-vec for decision storage
+ * - SQLite + pure-TS cosine similarity for decision storage
  * - Transformers.js for local embeddings
  * - No network dependencies (100% local)
  *

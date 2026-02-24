@@ -32,12 +32,11 @@ This directory contains automated workflows for MAMA project CI/CD.
 
 **Trigger:** Push tags matching:
 
-| Tag Pattern                           | Package                      |
-| ------------------------------------- | ---------------------------- |
-| `v*`, `mcp-server-*`                  | `@jungjaehoon/mama-server`   |
-| `core-v*`, `mama-core-*`              | `@jungjaehoon/mama-core`     |
-| `os-v*`, `mama-os-*`, `standalone-v*` | `@jungjaehoon/mama-os`       |
-| `openclaw-v*`, `openclaw-plugin-*`    | `@jungjaehoon/openclaw-mama` |
+| Tag Pattern                           | Package                    |
+| ------------------------------------- | -------------------------- |
+| `v*`, `mcp-server-*`                  | `@jungjaehoon/mama-server` |
+| `core-v*`, `mama-core-*`              | `@jungjaehoon/mama-core`   |
+| `os-v*`, `mama-os-*`, `standalone-v*` | `@jungjaehoon/mama-os`     |
 
 **Example Release:**
 

@@ -61,7 +61,7 @@ Out of scope:
 
 - Keep `@huggingface/transformers` ownership in `mama-core`.
 - Remove direct transformers dependency from `mcp-server` (and verify no direct runtime import remains).
-- Follow-up sweep for `openclaw-plugin` / `claude-code-plugin` direct transformers deps.
+- Follow-up sweep for `claude-code-plugin` direct transformers deps.
 
 6. Docs and runbook
 
