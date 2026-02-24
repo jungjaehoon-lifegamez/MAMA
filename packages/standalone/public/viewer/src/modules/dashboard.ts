@@ -16,6 +16,8 @@ import { escapeAttr, escapeHtml, getElementByIdOrNull, getErrorMessage } from '.
 import { formatModelName } from '../utils/format.js';
 import {
   API,
+  type HealthCheckItem,
+  type HealthReportResponse,
   type McpServer,
   type McpServersResponse,
   type MultiAgentAgent,
@@ -125,6 +127,7 @@ export class DashboardModule {
     }>;
   } | null = null;
   tokenData: DashboardTokenData | null = null;
+  healthData: HealthReportResponse | null = null;
 
   constructor() {
     this.data = null;
@@ -220,6 +223,14 @@ export class DashboardModule {
         this.tokenData = null;
       }
 
+      // Load health report
+      try {
+        this.healthData = await API.getHealthReport();
+      } catch (e) {
+        logger.warn('[Dashboard] Health report unavailable:', e);
+        this.healthData = null;
+      }
+
       // Load MCP servers
       await this.loadMCPServers();
 
@@ -254,6 +265,7 @@ export class DashboardModule {
       return;
     }
 
+    this.renderSystemHealth();
     this.renderGateways();
     this.renderMCPServers();
     this.renderSessions();
@@ -299,33 +311,33 @@ export class DashboardModule {
 
         const statusBadge = isConfigured
           ? isEnabled
-            ? `<span class="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">Enabled</span>`
-            : `<span class="text-xs px-2 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400">Disabled</span>`
-          : `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500">Not Configured</span>`;
+            ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-600 font-medium">Enabled</span>`
+            : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-600 font-medium">Disabled</span>`
+          : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">Not Configured</span>`;
 
         // Get channel info based on gateway type
         let channelInfo = '';
         if (isConfigured) {
           if (gw.key === 'discord' && status.channel) {
-            channelInfo = `<span class="text-[10px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">#${escapeHtml(status.channel)}</span>`;
+            channelInfo = `<span class="text-[10px] bg-mama-lavender-light text-gray-600 px-1.5 py-0.5 rounded">#${escapeHtml(status.channel)}</span>`;
           } else if (gw.key === 'telegram' && status.chats?.length > 0) {
-            channelInfo = `<span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">${status.chats.length} chat(s)</span>`;
+            channelInfo = `<span class="text-[10px] bg-mama-lavender-light text-gray-600 px-1.5 py-0.5 rounded">${status.chats.length} chat(s)</span>`;
           } else if (gw.key === 'slack' && status.channel) {
-            channelInfo = `<span class="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">#${escapeHtml(status.channel)}</span>`;
+            channelInfo = `<span class="text-[10px] bg-mama-lavender-light text-gray-600 px-1.5 py-0.5 rounded">#${escapeHtml(status.channel)}</span>`;
           } else if (gw.key === 'chatwork' && status.rooms?.length > 0) {
-            channelInfo = `<span class="text-[10px] bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded">${status.rooms.length} room(s)</span>`;
+            channelInfo = `<span class="text-[10px] bg-mama-lavender-light text-gray-600 px-1.5 py-0.5 rounded">${status.rooms.length} room(s)</span>`;
           }
         }
 
         return `
-          <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-2xl">${gw.icon}</span>
+          <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="text-lg">${gw.icon}</span>
               ${statusBadge}
             </div>
-            <h3 class="font-semibold text-gray-900 dark:text-gray-100">${gw.name}</h3>
+            <h3 class="font-semibold text-sm text-gray-900">${gw.name}</h3>
             <div class="flex items-center gap-2 mt-1">
-              <p class="text-xs text-gray-500 dark:text-gray-400">
+              <p class="text-[10px] text-gray-500">
                 ${isConfigured ? 'Token ✓' : 'No token'}
               </p>
               ${channelInfo}
@@ -380,7 +392,7 @@ export class DashboardModule {
         const statusText = isHttp ? 'OAuth' : 'Ready';
 
         return `
-          <div class="bg-white border border-gray-200 rounded-lg p-2.5 hover:shadow-md transition-shadow">
+          <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
             <div class="flex items-center justify-between mb-1">
               <div class="flex items-center gap-2">
                 <span class="text-lg">${icon}</span>
@@ -410,7 +422,7 @@ export class DashboardModule {
 
     if (sessions.total === 0) {
       container.innerHTML = `
-        <p class="text-gray-500 dark:text-gray-400 text-sm text-center py-4">
+        <p class="text-gray-500 text-sm text-center py-4">
           No active sessions yet. Start chatting to create sessions.
         </p>
       `;
@@ -474,13 +486,13 @@ export class DashboardModule {
         }
 
         return `
-          <div class="flex items-center justify-between py-1.5 border-b border-gray-100 dark:border-gray-700 last:border-0">
+          <div class="flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0">
             <div class="flex items-center gap-2">
               <span class="${info.color} px-1.5 py-0.5 rounded text-[10px] font-medium" title="${escapeHtml(info.label)}">${info.icon}</span>
-              <span class="text-xs text-gray-700 dark:text-gray-300" title="${escapeHtml(ch.channelId)}">${escapeHtml(channelDisplay)}</span>
+              <span class="text-xs text-gray-700" title="${escapeHtml(ch.channelId)}">${escapeHtml(channelDisplay)}</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="text-[10px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">${ch.messageCount} turns</span>
+              <span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">${ch.messageCount} turns</span>
               <span class="text-[10px] text-gray-400">${lastActive}</span>
             </div>
           </div>
@@ -491,7 +503,7 @@ export class DashboardModule {
     container.innerHTML = `
       <div class="mb-3">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-gray-900 dark:text-gray-100">Sessions by Platform</span>
+          <span class="text-sm font-medium text-gray-900">Sessions by Platform</span>
           <span class="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full">${sessions.total} total</span>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -553,9 +565,9 @@ export class DashboardModule {
     const html = stats
       .map(
         (stat) => `
-        <div class="bg-white border border-gray-200 rounded-lg p-2.5 text-center">
-          <span class="text-lg">${stat.icon}</span>
-          <p class="text-xl font-bold text-gray-900 mt-1">${stat.value}</p>
+        <div class="bg-white border border-gray-200 rounded-lg p-3 text-center">
+          <span class="text-base">${stat.icon}</span>
+          <p class="text-lg font-bold text-gray-900 mt-1">${stat.value}</p>
           <p class="text-[10px] text-gray-500">${stat.label}</p>
         </div>
       `
@@ -579,28 +591,28 @@ export class DashboardModule {
     const friendlyModel = formatModelName(agent.model) || 'Not Set';
 
     container.innerHTML = `
-      <div class="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
+      <div class="mb-3 pb-3 border-b border-gray-200">
         <div class="flex items-center justify-between">
           <div>
             <p class="text-[10px] text-gray-500 uppercase tracking-wide">Current Model</p>
-            <p class="font-bold text-gray-900 dark:text-gray-100 text-lg">${escapeHtml(friendlyModel)}</p>
+            <p class="font-bold text-gray-900 text-sm">${escapeHtml(friendlyModel)}</p>
             <p class="text-[10px] text-gray-400 font-mono">${escapeHtml(agent.model || 'Not configured')}</p>
           </div>
-          <span class="text-3xl">🤖</span>
+          <span class="text-2xl">🤖</span>
         </div>
       </div>
       <div class="grid grid-cols-3 gap-3">
         <div>
           <p class="text-[10px] text-gray-500 uppercase tracking-wide">Max Turns</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-0.5">${agent.maxTurns || 'N/A'}</p>
+          <p class="font-semibold text-gray-900 text-sm mt-0.5">${agent.maxTurns || 'N/A'}</p>
         </div>
         <div>
           <p class="text-[10px] text-gray-500 uppercase tracking-wide">Timeout</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-0.5">${this.formatTimeout(agent.timeout)}</p>
+          <p class="font-semibold text-gray-900 text-sm mt-0.5">${this.formatTimeout(agent.timeout)}</p>
         </div>
         <div>
           <p class="text-[10px] text-gray-500 uppercase tracking-wide">Heartbeat</p>
-          <p class="font-semibold text-gray-900 dark:text-gray-100 text-sm mt-0.5">
+          <p class="font-semibold text-gray-900 text-sm mt-0.5">
             ${heartbeat.enabled ? `${Math.round((heartbeat.interval || 1800000) / 60000)}min` : 'Off'}
           </p>
         </div>
@@ -608,7 +620,7 @@ export class DashboardModule {
       ${
         heartbeat.enabled
           ? `
-        <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+        <div class="mt-2 pt-2 border-t border-gray-200">
           <p class="text-[10px] text-gray-500">
             Quiet hours: ${heartbeat.quiet_start ?? heartbeat.quietStart ?? 23}:00 - ${
               heartbeat.quiet_end ?? heartbeat.quietEnd ?? 8
@@ -635,7 +647,7 @@ export class DashboardModule {
 
     if (!multiAgent.enabled) {
       container.innerHTML = `
-        <p class="text-gray-500 dark:text-gray-400 text-sm text-center py-4">
+        <p class="text-gray-500 text-sm text-center py-4">
           Multi-agent is not enabled. Enable in <a href="/viewer?tab=settings" class="text-indigo-600 hover:underline" data-action="open-settings">Settings</a>.
         </p>
       `;
@@ -646,7 +658,7 @@ export class DashboardModule {
 
     if (agents.length === 0) {
       container.innerHTML = `
-        <p class="text-gray-500 dark:text-gray-400 text-sm text-center py-4">
+        <p class="text-gray-500 text-sm text-center py-4">
           No agents configured yet.
         </p>
       `;
@@ -691,15 +703,15 @@ export class DashboardModule {
         const friendlyModel = formatModelName(agent.model) || agent.model || 'Default';
 
         return `
-          <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 hover:shadow-md transition-shadow">
+          <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
             <div class="flex items-center justify-between mb-1.5">
               <div class="flex items-center gap-2">
-                <span class="${tier.bg} ${tier.text} text-xs font-bold px-1.5 py-0.5 rounded">${tier.label}</span>
-                <span class="text-xs">${statusIcon} ${escapeHtml(statusLabel)}</span>
+                <span class="${tier.bg} ${tier.text} text-[10px] font-bold px-1.5 py-0.5 rounded">${tier.label}</span>
+                <span class="text-[10px]">${statusIcon} ${escapeHtml(statusLabel)}</span>
               </div>
             </div>
-            <h3 class="font-semibold text-gray-900 dark:text-gray-100 text-sm">${escapeHtml(agent.name)}</h3>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(friendlyModel)}</p>
+            <h3 class="font-semibold text-sm text-gray-900">${escapeHtml(agent.name)}</h3>
+            <p class="text-[10px] text-gray-500 mt-0.5">${escapeHtml(friendlyModel)}</p>
             ${
               agent.lastActivity
                 ? `<p class="text-[10px] text-gray-400 mt-1">Last: ${this.formatRelativeTime(agent.lastActivity)}</p>`
@@ -730,7 +742,7 @@ export class DashboardModule {
               const statusColor = statusColors[del.status] || statusColors.pending;
               const timestamp = del.completedAt || del.claimedAt;
               return `
-            <div class="text-xs text-gray-700 dark:text-gray-300 py-1 border-b border-gray-100 dark:border-gray-700 last:border-0">
+            <div class="text-xs text-gray-700 py-1 border-b border-gray-100 last:border-0">
               <span class="${statusColor} text-[10px] font-bold px-1 py-0.5 rounded">${escapeHtml(del.status)}</span>
               <span class="font-medium">${escapeHtml(del.claimedBy || 'unknown')}</span>:
               "${escapeHtml(del.description)}"
@@ -756,12 +768,12 @@ export class DashboardModule {
           ${agentCards}
         </div>
       </div>
-        <div class="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">
+        <div class="mb-2 pb-2 border-b border-gray-200">
         <div class="flex items-center justify-between mb-2">
           <p class="text-xs text-gray-500">Delegation Chain:</p>
           ${chainBadge}
         </div>
-        <div class="bg-gray-50 dark:bg-gray-800 rounded p-2">
+        <div class="bg-mama-lavender-light rounded p-2">
           ${delegationList}
         </div>
       </div>
@@ -781,7 +793,7 @@ export class DashboardModule {
 
     if (topics.length === 0) {
       container.innerHTML = `
-        <p class="text-gray-500 dark:text-gray-400 text-sm">No topics yet. Start making decisions!</p>
+        <p class="text-gray-500 text-sm">No topics yet. Start making decisions!</p>
       `;
       return;
     }
@@ -798,11 +810,11 @@ export class DashboardModule {
         <div class="flex items-center gap-3 mb-2">
           <div class="flex-1">
             <div class="flex justify-between items-center mb-1">
-              <span class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(topic.topic)}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">${safeCount}</span>
+              <span class="text-sm font-medium text-gray-900">${escapeHtml(topic.topic)}</span>
+              <span class="text-xs text-gray-500">${safeCount}</span>
             </div>
-            <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-              <div class="bg-indigo-500 h-2 rounded-full" style="width: ${(safeCount / maxCount) * 100}%"></div>
+            <div class="w-full bg-gray-200 rounded-full h-2">
+              <div class="bg-mama-yellow h-2 rounded-full" style="width: ${(safeCount / maxCount) * 100}%"></div>
             </div>
           </div>
         </div>
@@ -910,6 +922,107 @@ export class DashboardModule {
   }
 
   /**
+   * Render system health section
+   */
+  renderSystemHealth(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-health');
+    if (!container) {
+      return;
+    }
+
+    if (!this.healthData) {
+      container.innerHTML = `
+        <p class="text-gray-500 text-sm text-center py-4">
+          Health data unavailable. Metrics may be disabled.
+        </p>
+      `;
+      return;
+    }
+
+    const h = this.healthData;
+    const scoreColor =
+      h.score >= 80 ? 'text-green-600' : h.score >= 50 ? 'text-yellow-600' : 'text-red-600';
+    const statusBadgeColor =
+      h.status === 'healthy'
+        ? 'bg-green-100 text-green-700'
+        : h.status === 'degraded'
+          ? 'bg-yellow-100 text-yellow-700'
+          : 'bg-red-100 text-red-700';
+
+    // Render checks list (new connection-based health)
+    const checks: HealthCheckItem[] = h.checks || [];
+    const checksHtml =
+      checks.length > 0
+        ? checks
+            .map((c: HealthCheckItem) => {
+              const icon =
+                c.status === 'pass'
+                  ? '<span class="text-green-600">&#10003;</span>'
+                  : c.status === 'skip'
+                    ? '<span class="text-gray-400">&#8212;</span>'
+                    : c.severity === 'critical'
+                      ? '<span class="text-red-600">&#10007;</span>'
+                      : '<span class="text-yellow-600">&#9888;</span>';
+              const bgClass = c.status === 'fail' && c.severity === 'critical' ? 'bg-red-50' : '';
+              return `
+            <div class="flex items-center justify-between py-1 px-2 rounded ${bgClass}">
+              <div class="flex items-center gap-2">
+                <span class="text-sm">${icon}</span>
+                <span class="text-xs font-medium text-gray-700">${escapeHtml(c.name)}</span>
+              </div>
+              <span class="text-[10px] text-gray-500">${escapeHtml(c.message)}</span>
+            </div>
+          `;
+            })
+            .join('')
+        : '';
+
+    // Fallback: legacy component cards if no checks available
+    const rawComponents = h.components || {};
+    let legacyCardsHtml = '';
+    if (checks.length === 0) {
+      const componentEntries = Array.isArray(rawComponents)
+        ? rawComponents.map((c) => ({ name: c.name, score: c.score, detail: c.detail }))
+        : Object.entries(rawComponents).map(([name, val]) => {
+            const v = val as Record<string, unknown>;
+            return {
+              name,
+              score: (v.score as number) ?? 0,
+              detail: (v.details as Record<string, unknown>)?.status as string | undefined,
+            };
+          });
+      legacyCardsHtml = componentEntries
+        .map((c) => {
+          const cColor =
+            c.score >= 80
+              ? 'bg-green-100 text-green-700'
+              : c.score >= 50
+                ? 'bg-yellow-100 text-yellow-700'
+                : 'bg-red-100 text-red-700';
+          return `
+            <div class="bg-white border border-gray-200 rounded-lg p-2 text-center">
+              <p class="text-sm font-bold ${cColor.split(' ')[1]}">${c.score}</p>
+              <p class="text-[10px] text-gray-500">${escapeHtml(c.name)}</p>
+              ${c.detail ? `<p class="text-[9px] text-gray-400">${escapeHtml(c.detail)}</p>` : ''}
+            </div>
+          `;
+        })
+        .join('');
+      if (legacyCardsHtml) {
+        legacyCardsHtml = `<div class="grid grid-cols-3 gap-2">${legacyCardsHtml}</div>`;
+      }
+    }
+
+    container.innerHTML = `
+      <div class="flex items-center gap-3 mb-3">
+        <p class="text-2xl font-bold ${scoreColor}">${h.score}<span class="text-xs font-normal text-gray-400">/100</span></p>
+        <span class="text-[10px] px-2 py-0.5 rounded-full ${statusBadgeColor} font-medium">${escapeHtml(h.status)}</span>
+      </div>
+      ${checksHtml ? `<div class="space-y-0.5">${checksHtml}</div>` : legacyCardsHtml}
+    `;
+  }
+
+  /**
    * Render token usage summary section
    */
   renderTokenSummary(): void {
@@ -975,9 +1088,9 @@ export class DashboardModule {
     const cards = periods
       .map(
         (p) => `
-      <div class="bg-white border border-gray-200 rounded-lg p-2.5 text-center">
-        <span class="text-lg">${p.icon}</span>
-        <p class="text-xl font-bold text-gray-900 mt-1">${formatTokens(p.tokens)}</p>
+      <div class="bg-white border border-gray-200 rounded-lg p-3 text-center">
+        <span class="text-base">${p.icon}</span>
+        <p class="text-lg font-bold text-gray-900 mt-1">${formatTokens(p.tokens)}</p>
         <p class="text-[10px] text-gray-500">${p.label}</p>
         <p class="text-[10px] text-mama-yellow-hover font-medium">${formatCost(p.cost)}</p>
       </div>
@@ -1032,7 +1145,7 @@ export class DashboardModule {
     const statusEl = getElementByIdOrNull<HTMLElement>('dashboard-status');
     if (statusEl) {
       statusEl.textContent = message;
-      statusEl.className = `text-sm text-center py-2 ${type === 'error' ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}`;
+      statusEl.className = `text-xs text-center py-2 ${type === 'error' ? 'text-red-500' : 'text-gray-400'}`;
     }
   }
 

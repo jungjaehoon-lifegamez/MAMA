@@ -77,6 +77,10 @@ type SettingsPayload = {
     daily_limit?: number;
     alert_threshold?: number;
   };
+  metrics: {
+    enabled: boolean;
+    retention_days: number;
+  };
 };
 
 // Model options by backend (single source of truth)
@@ -436,6 +440,9 @@ export class SettingsModule {
 
     // Multi-Agent Team (F3)
     this.populateMultiAgentSection();
+
+    // Metrics
+    this.populateMetricsSection();
 
     // Skills + Token Budget + Cron
     this.populateSkillsSection();
@@ -830,6 +837,10 @@ export class SettingsModule {
           }
         ),
       },
+      metrics: {
+        enabled: this.getCheckbox('settings-metrics-enabled'),
+        retention_days: this.parseIntegerInput('settings-metrics-retention', 1, 90, 7),
+      },
     };
   }
 
@@ -1084,11 +1095,7 @@ export class SettingsModule {
     if (statusEl) {
       statusEl.textContent = message;
       statusEl.className = `text-sm ${
-        type === 'error'
-          ? 'text-red-500'
-          : type === 'success'
-            ? 'text-green-500'
-            : 'text-gray-500 dark:text-gray-400'
+        type === 'error' ? 'text-red-500' : type === 'success' ? 'text-green-500' : 'text-gray-500'
       }`;
     }
   }
@@ -1153,12 +1160,12 @@ export class SettingsModule {
         const hasAllTools = agent.tool_permissions?.allowed?.includes('*') ?? true;
 
         return `
-          <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm hover:shadow-md transition-shadow">
+          <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
             <!-- Header: Tier + Name + Toggle -->
             <div class="flex items-center justify-between mb-2">
               <div class="flex items-center gap-1.5">
-                <span class="${tierColor} text-[10px] font-bold px-1 py-0.5 rounded">T${agent.tier}</span>
-                <span class="font-medium text-gray-900 text-xs truncate max-w-[80px]" title="${escapeAttr(agent.display_name || agent.name)}">${escapeHtml(agent.display_name || agent.name)}</span>
+                <span class="${tierColor} text-[10px] font-bold px-1.5 py-0.5 rounded">T${agent.tier}</span>
+                <span class="font-medium text-gray-900 text-xs" title="${escapeAttr(agent.display_name || agent.name)}">${escapeHtml(agent.display_name || agent.name)}</span>
               </div>
               <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" class="sr-only peer" data-action="agent-toggle" data-agent-id="${escapeAttr(agentId)}" ${agent.enabled ? 'checked' : ''}>
@@ -1166,42 +1173,36 @@ export class SettingsModule {
               </label>
             </div>
 
-            <!-- Backend + Model Row -->
-            <div class="flex gap-1 mb-1">
-              <select id="agent-backend-${escapeAttr(agentId)}" data-action="agent-backend" data-agent-id="${escapeAttr(agentId)}" class="flex-1 text-[10px] rounded border border-gray-200 px-1 py-0.5 bg-gray-50">${backendOptions}</select>
-              <select id="agent-model-${escapeAttr(agentId)}" data-action="agent-model" data-agent-id="${escapeAttr(agentId)}" class="flex-1 text-[10px] rounded border border-gray-200 px-1 py-0.5 bg-gray-50">${modelOptionHtml}</select>
-            </div>
-            <!-- Effort Row (Claude 4.6 only) -->
-            <div id="agent-effort-container-${escapeAttr(agentId)}" class="mb-2" style="display: ${supportsAgentEffort ? 'block' : 'none'}">
-              <select id="agent-effort-${escapeAttr(agentId)}" class="w-full text-[10px] rounded border border-gray-200 px-1 py-0.5 bg-gray-50">${effortOptions}</select>
-            </div>
-
-            <!-- Permissions Row -->
-            <div class="flex items-center gap-2 mb-2 text-[10px] text-gray-600">
-              <label class="flex items-center gap-0.5 cursor-pointer">
-                <input type="checkbox" id="agent-delegate-${escapeAttr(agentId)}" class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400" ${canDelegate ? 'checked' : ''}>
-                <span>Delegate</span>
-              </label>
-              <label class="flex items-center gap-0.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  id="agent-alltools-${escapeAttr(agentId)}"
-                  class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400"
-                  ${hasAllTools ? 'checked' : ''}
-                >
-                <span>All Tools</span>
-              </label>
+            <!-- Backend -->
+            <select id="agent-backend-${escapeAttr(agentId)}" data-action="agent-backend" data-agent-id="${escapeAttr(agentId)}" class="w-full text-[11px] rounded border border-gray-200 px-1.5 py-1 bg-gray-50 mb-1">${backendOptions}</select>
+            <!-- Model -->
+            <select id="agent-model-${escapeAttr(agentId)}" data-action="agent-model" data-agent-id="${escapeAttr(agentId)}" class="w-full text-[11px] rounded border border-gray-200 px-1.5 py-1 bg-gray-50 mb-1">${modelOptionHtml}</select>
+            <!-- Effort (Claude 4.6 only) -->
+            <div id="agent-effort-container-${escapeAttr(agentId)}" class="mb-1" style="display: ${supportsAgentEffort ? 'block' : 'none'}">
+              <select id="agent-effort-${escapeAttr(agentId)}" class="w-full text-[11px] rounded border border-gray-200 px-1.5 py-1 bg-gray-50">${effortOptions}</select>
             </div>
 
-            <!-- Save Button -->
-            <button type="button" data-action="agent-save" data-agent-id="${escapeAttr(agentId)}" class="w-full text-[10px] px-2 py-1 rounded bg-yellow-400 text-black hover:bg-yellow-300 font-medium">Save</button>
+            <!-- Permissions + Save -->
+            <div class="flex items-center justify-between mt-2">
+              <div class="flex items-center gap-2 text-[10px] text-gray-600">
+                <label class="flex items-center gap-0.5 cursor-pointer">
+                  <input type="checkbox" id="agent-delegate-${escapeAttr(agentId)}" class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400" ${canDelegate ? 'checked' : ''}>
+                  <span>Delegate</span>
+                </label>
+                <label class="flex items-center gap-0.5 cursor-pointer">
+                  <input type="checkbox" id="agent-alltools-${escapeAttr(agentId)}" class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400" ${hasAllTools ? 'checked' : ''}>
+                  <span>All Tools</span>
+                </label>
+              </div>
+              <button type="button" data-action="agent-save" data-agent-id="${escapeAttr(agentId)}" class="text-[10px] px-3 py-1 rounded bg-mama-yellow text-mama-black hover:bg-mama-yellow-hover font-medium">Save</button>
+            </div>
           </div>
         `;
       })
       .join('');
 
     // Grid layout: 2 cols on mobile, 3 cols on md+
-    container.innerHTML = `<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">${agentCards}</div>`;
+    container.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">${agentCards}</div>`;
   }
 
   /**
@@ -1498,6 +1499,17 @@ export class SettingsModule {
     } catch (error) {
       showToast(`Failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * Populate metrics section from config
+   */
+  populateMetricsSection(): void {
+    const metrics = (this.config as Record<string, unknown>)?.metrics as
+      | { enabled?: boolean; retention_days?: number }
+      | undefined;
+    this.setCheckbox('settings-metrics-enabled', metrics?.enabled !== false);
+    this.setValue('settings-metrics-retention', metrics?.retention_days ?? 7);
   }
 
   /**
