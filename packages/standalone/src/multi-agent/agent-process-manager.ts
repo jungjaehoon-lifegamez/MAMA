@@ -12,6 +12,7 @@ import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { loadBackendAgentsMd, getGatewayToolsPrompt } from '../agent/agent-loop.js';
+import { ToolRegistry } from '../agent/tool-registry.js';
 import { loadInstalledSkills } from '../agent/skill-loader.js';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
@@ -523,7 +524,13 @@ ${skillsPrompt}## Guidelines
       return getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```\n';
     }
 
-    // Default: load full gateway tools from gateway-tools.md
+    // Per-agent tool filtering via ToolRegistry (STORY-018)
+    const allowedTools = agentConfig.tool_permissions?.allowed;
+    if (allowedTools && !allowedTools.includes('*')) {
+      return ToolRegistry.generatePrompt(allowedTools);
+    }
+
+    // Default: full gateway tools from gateway-tools.md
     return getGatewayToolsPrompt();
   }
 
