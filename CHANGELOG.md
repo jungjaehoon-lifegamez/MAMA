@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] / mama-core [1.2.0] / mcp-server [1.8.0] - 2026-02-24
+
 ### Removed
 
 - **openclaw-plugin** — extracted to standalone repo ([openclaw-mama](https://github.com/jungjaehoon-lifegamez/openclaw-mama))
