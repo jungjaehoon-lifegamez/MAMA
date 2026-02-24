@@ -15,6 +15,7 @@
 
 import Database from 'better-sqlite3';
 import type { MessageAttachment } from './types.js';
+import { getConfig } from '../cli/config/config-manager.js';
 
 /**
  * Single history entry
@@ -167,7 +168,7 @@ export class ChannelHistory {
   private startCleanupTimer(): void {
     if (!this.db) return;
 
-    const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
+    const CLEANUP_INTERVAL = getConfig().gateway_tuning?.history_cleanup_interval_ms ?? 3_600_000;
 
     this.cleanupInterval = setInterval(() => {
       this.cleanupDb();

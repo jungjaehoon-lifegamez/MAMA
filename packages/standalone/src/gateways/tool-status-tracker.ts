@@ -12,6 +12,7 @@
  */
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { getConfig } from '../cli/config/config-manager.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -47,8 +48,9 @@ export interface ToolStatusTrackerOptions {
   maxCompletedTools?: number;
 }
 
-const DEFAULT_THROTTLE_MS = 3000;
-const DEFAULT_INITIAL_DELAY_MS = 5000;
+const DEFAULT_THROTTLE_MS = () => getConfig().gateway_tuning?.tool_status_throttle_ms ?? 3_000;
+const DEFAULT_INITIAL_DELAY_MS = () =>
+  getConfig().gateway_tuning?.tool_status_initial_delay_ms ?? 5_000;
 const DEFAULT_MAX_COMPLETED = 8;
 
 /**
@@ -127,8 +129,8 @@ export class ToolStatusTracker {
 
   constructor(adapter: PlatformAdapter, options?: ToolStatusTrackerOptions) {
     this.adapter = adapter;
-    this.throttleMs = options?.throttleMs ?? DEFAULT_THROTTLE_MS;
-    this.initialDelayMs = options?.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
+    this.throttleMs = options?.throttleMs ?? DEFAULT_THROTTLE_MS();
+    this.initialDelayMs = options?.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS();
     this.maxCompleted = options?.maxCompletedTools ?? DEFAULT_MAX_COMPLETED;
   }
 

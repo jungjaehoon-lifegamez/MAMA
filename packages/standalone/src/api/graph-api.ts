@@ -1532,6 +1532,11 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
             workflow: config.multi_agent.workflow || { enabled: true },
           }
         : undefined,
+      prompt: config.prompt,
+      timeouts: config.timeouts,
+      gateway_tuning: config.gateway_tuning,
+      io: config.io,
+      metrics: config.metrics,
     };
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1831,6 +1836,16 @@ function mergeConfigUpdates(
       if (!isMasked) {
         merged.chatwork.api_token = chatworkUpdates.api_token;
       }
+    }
+  }
+
+  // Tuning sections: shallow merge each
+  for (const section of ['prompt', 'timeouts', 'gateway_tuning', 'io', 'metrics'] as const) {
+    if (updates[section] && typeof updates[section] === 'object') {
+      merged[section] = {
+        ...(current[section] || {}),
+        ...(updates[section] as Record<string, unknown>),
+      };
     }
   }
 

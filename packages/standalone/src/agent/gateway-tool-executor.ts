@@ -64,7 +64,7 @@ import {
 } from './mama-tool-handlers.js';
 import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
-import { loadConfig, saveConfig } from '../cli/config/config-manager.js';
+import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 
@@ -484,7 +484,7 @@ export class GatewayToolExecutor {
 
     try {
       // Guard against reading huge files (e.g. daemon.log) that would blow up the prompt
-      const MAX_READ_BYTES = 200_000; // 200KB
+      const MAX_READ_BYTES = getConfig().io?.max_read_bytes ?? 200_000;
       const fileSize = statSync(expandedPath).size;
       if (fileSize > MAX_READ_BYTES) {
         const truncated = readFileSync(expandedPath, { encoding: 'utf-8', flag: 'r' }).slice(
