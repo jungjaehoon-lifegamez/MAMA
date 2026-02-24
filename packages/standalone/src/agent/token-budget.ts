@@ -56,7 +56,9 @@ export function getModelLimit(model: string): number {
   const limits = { ...DEFAULT_MODEL_LIMITS, ...configLimits };
 
   const lowerModel = model.toLowerCase();
-  for (const [prefix, limit] of Object.entries(limits)) {
+  // Sort by prefix length descending so more specific prefixes match first
+  const sorted = Object.entries(limits).sort((a, b) => b[0].length - a[0].length);
+  for (const [prefix, limit] of sorted) {
     if (lowerModel.startsWith(prefix.toLowerCase())) {
       return limit;
     }

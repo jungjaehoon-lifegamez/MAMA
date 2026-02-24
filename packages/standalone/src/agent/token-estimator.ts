@@ -80,6 +80,7 @@ export function isEncoderActive(): boolean {
 export function resetTokenEstimator(): void {
   _encoder = null;
   _initFailed = false;
+  _initPromise = null;
 }
 
 /**

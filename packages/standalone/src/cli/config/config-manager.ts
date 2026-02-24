@@ -82,6 +82,11 @@ const ENV_MAP: Array<{
   { env: 'MAMA_PROMPT_TRUNCATE_CHARS', path: ['prompt', 'truncate_chars'], type: 'number' },
   { env: 'MAMA_PROMPT_HARD_LIMIT_CHARS', path: ['prompt', 'hard_limit_chars'], type: 'number' },
   { env: 'MAMA_PROMPT_SKILL_MAX_CHARS', path: ['prompt', 'skill_max_chars'], type: 'number' },
+  // Prompt (token-based)
+  { env: 'MAMA_PROMPT_WARN_TOKENS', path: ['prompt', 'warn_tokens'], type: 'number' },
+  { env: 'MAMA_PROMPT_TRUNCATE_TOKENS', path: ['prompt', 'truncate_tokens'], type: 'number' },
+  { env: 'MAMA_PROMPT_HARD_LIMIT_TOKENS', path: ['prompt', 'hard_limit_tokens'], type: 'number' },
+  { env: 'MAMA_PROMPT_SKILL_MAX_TOKENS', path: ['prompt', 'skill_max_tokens'], type: 'number' },
   // Timeouts
   { env: 'MAMA_TIMEOUT_REQUEST_MS', path: ['timeouts', 'request_ms'], type: 'number' },
   { env: 'MAMA_TIMEOUT_CODEX_REQUEST_MS', path: ['timeouts', 'codex_request_ms'], type: 'number' },
