@@ -42,7 +42,7 @@ export interface MetricAggregation {
 }
 
 export class MetricsStore {
-  private static instances = new Map<string, MetricsStore>();
+  private static instances: Map<string, MetricsStore> = new Map<string, MetricsStore>();
   private db: Database.Database;
   private insertStmt: Database.Statement;
 
@@ -71,7 +71,7 @@ export class MetricsStore {
   }
 
   static getInstance(dbPath: string): MetricsStore {
-    let instance = MetricsStore.instances.get(dbPath);
+    let instance: MetricsStore | undefined = MetricsStore.instances.get(dbPath);
     if (!instance) {
       instance = new MetricsStore(dbPath);
       MetricsStore.instances.set(dbPath, instance);
@@ -130,8 +130,9 @@ export class MetricsStore {
     }
 
     let sql = `SELECT id, name, value, labels, timestamp FROM metrics WHERE ${conditions.join(' AND ')} ORDER BY timestamp DESC`;
-    if (options.limit) {
-      sql += ` LIMIT ${options.limit}`;
+    if (options.limit !== undefined) {
+      sql += ' LIMIT ?';
+      params.push(options.limit);
     }
 
     let rows = this.db.prepare(sql).all(...params) as MetricRow[];
@@ -171,7 +172,9 @@ export class MetricsStore {
       max: number | null;
     };
 
-    if (!row || row.count === 0) return null;
+    if (!row || row.count === 0) {
+      return null;
+    }
 
     return {
       name,
