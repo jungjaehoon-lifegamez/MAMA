@@ -21,6 +21,7 @@ import { info, warn, error as logError } from './debug-logger.js';
 export interface MAMAConfig {
   modelName: string;
   embeddingDim: number;
+  quantized: boolean;
   cacheDir: string;
   [key: string]: unknown;
 }
@@ -29,6 +30,7 @@ export interface MAMAConfig {
 export const DEFAULT_CONFIG: MAMAConfig = {
   modelName: 'Xenova/multilingual-e5-small',
   embeddingDim: 384,
+  quantized: true,
   cacheDir: path.join(os.homedir(), '.cache', 'huggingface', 'transformers'),
 };
 
@@ -144,6 +146,14 @@ export function getEmbeddingDim(): number {
 }
 
 /**
+ * Get whether to use quantized model
+ */
+export function getQuantized(): boolean {
+  const config = loadConfig();
+  return config.quantized;
+}
+
+/**
  * Get current cache directory
  */
 export function getCacheDir(): string {
@@ -154,6 +164,7 @@ export function getCacheDir(): string {
 export interface ConfigUpdates {
   modelName?: string;
   embeddingDim?: number;
+  quantized?: boolean;
   cacheDir?: string;
 }
 
