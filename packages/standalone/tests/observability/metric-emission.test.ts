@@ -39,10 +39,12 @@ describe('Metric emission', () => {
   describe('MetricsStore integration with onMetric', () => {
     it('should bridge callback to MetricsStore', async () => {
       const { MetricsStore } = await import('../../src/observability/metrics-store.js');
-      const { join } = await import('path');
+      const { join, dirname } = await import('path');
+      const { fileURLToPath } = await import('url');
       const { mkdirSync, rmSync } = await import('fs');
 
-      const tmpDir = join(__dirname, '..', '.tmp-metric-emit');
+      const __dir = dirname(fileURLToPath(import.meta.url));
+      const tmpDir = join(__dir, '..', '.tmp-metric-emit');
       mkdirSync(tmpDir, { recursive: true });
       const dbPath = join(tmpDir, `emit-${Date.now()}.db`);
 
