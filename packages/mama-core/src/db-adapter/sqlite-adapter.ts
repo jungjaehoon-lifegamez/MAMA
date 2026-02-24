@@ -1,8 +1,8 @@
 /**
  * SQLite Database Adapter
  *
- * Implements DatabaseAdapter interface using better-sqlite3 + sqlite-vec
- * This is the current production implementation extracted from memory-store.js
+ * Implements DatabaseAdapter interface using better-sqlite3
+ * Vector search uses pure TypeScript brute-force cosine similarity (no native extensions)
  *
  * @module sqlite-adapter
  */
@@ -15,16 +15,6 @@ import { DatabaseAdapter, type VectorSearchResult, type RunResult } from './base
 import { SQLiteStatement, type Statement } from './statement.js';
 import { info, warn, error as logError } from '../debug-logger.js';
 import { cosineSimilarity } from '../embeddings.js';
-
-// Try to load sqlite-vec
-let sqliteVec: { load: (db: Database.Database) => void } | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  sqliteVec = require('sqlite-vec');
-} catch {
-  // Defer logging until connect() so we have logger context initialized
-  sqliteVec = null;
-}
 
 // Database paths
 const LEGACY_DB_PATH = path.join(os.homedir(), '.spinelift', 'memories.db');
@@ -41,7 +31,7 @@ interface SQLiteAdapterConfig {
 export class SQLiteAdapter extends DatabaseAdapter {
   private config: SQLiteAdapterConfig;
   private db: Database.Database | null = null;
-  private _vectorSearchEnabled = false;
+  private _vectorSearchEnabled = true; // Always true: pure TS cosine similarity
 
   constructor(config: SQLiteAdapterConfig = {}) {
     super();
@@ -112,21 +102,7 @@ export class SQLiteAdapter extends DatabaseAdapter {
     this.db.pragma('temp_store = MEMORY');
     this.db.pragma('foreign_keys = ON');
 
-    // Load sqlite-vec extension (graceful degradation if unavailable)
-    if (sqliteVec) {
-      try {
-        sqliteVec.load(this.db);
-        this._vectorSearchEnabled = true;
-        info('[sqlite-adapter] Loaded sqlite-vec extension');
-      } catch (err) {
-        this._vectorSearchEnabled = false;
-        const message = err instanceof Error ? err.message : String(err);
-        warn(`[sqlite-adapter] sqlite-vec unavailable (Tier 2 fallback): ${message}`);
-      }
-    } else {
-      this._vectorSearchEnabled = false;
-      warn('[sqlite-adapter] sqlite-vec package not installed; vector search disabled');
-    }
+    info('[sqlite-adapter] Vector search: pure TS cosine similarity (no native extensions)');
 
     return this.db;
   }
@@ -182,77 +158,72 @@ export class SQLiteAdapter extends DatabaseAdapter {
   }
 
   /**
-   * Vector similarity search using sqlite-vec (vec0 virtual table)
+   * Vector similarity search using brute-force cosine similarity
+   * Loads all embeddings from the embeddings table, computes similarity in JS,
+   * and returns top-N results sorted by similarity descending.
    */
   vectorSearch(embedding: Float32Array | number[], limit = 5): VectorSearchResult[] | null {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
-    if (!this._vectorSearchEnabled) {
-      return null;
-    }
-
-    const embeddingJson = JSON.stringify(Array.from(embedding));
-    const stmt = this.prepare(`
-      SELECT
-        rowid,
-        embedding,
-        distance
-      FROM vss_memories
-      WHERE embedding MATCH vec_f32(?)
-      LIMIT ?
-    `);
 
     const queryVector =
       embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
-    const results = stmt.all(embeddingJson, Math.max(limit, 1)) as Array<{
+
+    // Check if embeddings table exists
+    const tableCheck = this.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='embeddings'`
+    ).all() as Array<{ name: string }>;
+
+    if (tableCheck.length === 0) {
+      throw new Error('Embeddings table missing');
+    }
+
+    const rows = this.prepare('SELECT rowid, embedding FROM embeddings').all() as Array<{
       rowid: number;
       embedding: Buffer;
-      distance: number;
     }>;
 
-    return results
-      .map((row): VectorSearchResult | null => {
-        const candidate = bufferToVector(row.embedding);
-        if (!candidate) {
-          return null;
-        }
-        const similarity = cosineSimilarity(candidate, queryVector);
-        return {
-          rowid: row.rowid,
-          similarity,
-          distance: 1 - similarity,
-        };
-      })
-      .filter((r): r is VectorSearchResult => r !== null);
+    const scored: VectorSearchResult[] = [];
+    for (const row of rows) {
+      const candidate = bufferToVector(row.embedding);
+      if (!candidate) continue;
+      if (candidate.length !== queryVector.length) {
+        warn(
+          `Skipping rowid ${row.rowid}: dimension mismatch (${candidate.length} vs ${queryVector.length})`
+        );
+        continue;
+      }
+      const similarity = cosineSimilarity(candidate, queryVector);
+      scored.push({
+        rowid: row.rowid,
+        similarity,
+        distance: 1 - similarity,
+      });
+    }
+
+    // Sort by similarity descending, return top-N
+    scored.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+    return scored.slice(0, Math.max(limit, 1));
   }
 
   /**
-   * Insert vector embedding
+   * Insert vector embedding into the embeddings table (plain BLOB storage)
    */
   insertEmbedding(rowid: number, embedding: Float32Array | number[]): RunResult | null {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
-    if (!this._vectorSearchEnabled) {
-      return null;
-    }
 
-    const embeddingJson = JSON.stringify(Array.from(embedding));
-
-    // CRITICAL FIX: sqlite-vec virtual tables accept rowid as literal but not via ? placeholder
-    // Using template literal with Number() cast for safety (prevents SQL injection)
-    const safeRowid = Number(rowid);
-    if (!Number.isInteger(safeRowid) || safeRowid < 1) {
-      throw new Error(`Invalid rowid: ${rowid}`);
-    }
+    const vec = embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
+    const buffer = Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength);
 
     const stmt = this.prepare(`
-      INSERT OR REPLACE INTO vss_memories(rowid, embedding)
-      VALUES (${safeRowid}, ?)
+      INSERT OR REPLACE INTO embeddings(rowid, embedding)
+      VALUES (?, ?)
     `);
 
-    return stmt.run(embeddingJson);
+    return stmt.run(rowid, buffer);
   }
 
   /**
@@ -263,7 +234,9 @@ export class SQLiteAdapter extends DatabaseAdapter {
       throw new Error('Database not connected');
     }
     // better-sqlite3 provides this via Database instance
-    const result = this.db.prepare('SELECT last_insert_rowid() as rowid').get() as { rowid: number };
+    const result = this.db.prepare('SELECT last_insert_rowid() as rowid').get() as {
+      rowid: number;
+    };
     return result.rowid;
   }
 
@@ -285,9 +258,11 @@ export class SQLiteAdapter extends DatabaseAdapter {
 
     let currentVersion = 0;
     if (tables.length > 0) {
-      const version = this.prepare('SELECT MAX(version) as version FROM schema_version').get() as {
-        version: number | null;
-      } | undefined;
+      const version = this.prepare('SELECT MAX(version) as version FROM schema_version').get() as
+        | {
+            version: number | null;
+          }
+        | undefined;
       currentVersion = version?.version || 0;
     }
 
@@ -357,25 +332,61 @@ export class SQLiteAdapter extends DatabaseAdapter {
       }
     }
 
-    // Create vss_memories table if not exists
-    if (this._vectorSearchEnabled) {
+    // Ensure embeddings table exists (plain table, no native extensions)
+    const embeddingsTables = this.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='embeddings'`
+    ).all() as Array<{ name: string }>;
+
+    if (embeddingsTables.length === 0) {
+      info('[sqlite-adapter] Creating embeddings table');
+      this.exec(`
+        CREATE TABLE embeddings (
+          rowid INTEGER PRIMARY KEY,
+          embedding BLOB NOT NULL
+        )
+      `);
+    }
+
+    // Always attempt migration — uses INSERT OR IGNORE so safe to run multiple times
+    this._migrateFromVssMemories();
+  }
+
+  /**
+   * Attempt to migrate data from legacy vss_memories (sqlite-vec) to embeddings table.
+   * This is best-effort: if sqlite-vec is not loaded, the vss_memories table won't be readable.
+   */
+  private _migrateFromVssMemories(): void {
+    try {
       const vssTables = this.prepare(
-        `
-        SELECT name FROM sqlite_master
-        WHERE type='table' AND name='vss_memories'
-      `
+        `SELECT name FROM sqlite_master WHERE name='vss_memories'`
       ).all() as Array<{ name: string }>;
 
       if (vssTables.length === 0) {
-        info('[sqlite-adapter] Creating vss_memories virtual table via sqlite-vec');
-        this.exec(`
-          CREATE VIRTUAL TABLE vss_memories USING vec0(
-            embedding float[384]
-          )
-        `);
+        return; // No legacy table
       }
-    } else {
-      warn('[sqlite-adapter] Skipping vss_memories creation (sqlite-vec unavailable)');
+
+      // Try to read from vss_memories — will fail if sqlite-vec extension isn't loaded
+      const rows = this.prepare('SELECT rowid, embedding FROM vss_memories').all() as Array<{
+        rowid: number;
+        embedding: Buffer;
+      }>;
+
+      if (rows.length > 0) {
+        const insertStmt = this.prepare(
+          'INSERT OR IGNORE INTO embeddings (rowid, embedding) VALUES (?, ?)'
+        );
+        let migrated = 0;
+        for (const row of rows) {
+          const res = insertStmt.run(row.rowid, row.embedding);
+          if (res.changes > 0) migrated++;
+        }
+        info(`[sqlite-adapter] Migrated ${migrated} embeddings from vss_memories to embeddings`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      warn(
+        `[sqlite-adapter] Could not migrate from vss_memories (expected if sqlite-vec not installed): ${message}`
+      );
     }
   }
 }
@@ -383,9 +394,16 @@ export class SQLiteAdapter extends DatabaseAdapter {
 export default SQLiteAdapter;
 
 function bufferToVector(buffer: Buffer | null): Float32Array | null {
-  if (!buffer) {
+  if (!buffer || buffer.byteLength % 4 !== 0) {
     return null;
   }
-  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  return new Float32Array(arrayBuffer);
+  try {
+    const arrayBuffer = buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength
+    );
+    return new Float32Array(arrayBuffer);
+  } catch {
+    return null;
+  }
 }

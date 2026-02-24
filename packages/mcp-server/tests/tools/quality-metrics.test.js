@@ -89,8 +89,10 @@ describe('Story 4.1: Quality Metrics & Observability', () => {
       await adapter.prepare('DELETE FROM decision_edges').run();
       await adapter.prepare('DELETE FROM decisions').run();
       // Clear vector embeddings to prevent rowid conflicts
-      if (adapter.vectorSearchEnabled) {
-        await adapter.prepare('DELETE FROM vss_memories').run();
+      try {
+        await adapter.prepare('DELETE FROM embeddings').run();
+      } catch {
+        // embeddings table may not exist yet
       }
     } catch (error) {
       console.warn('Error clearing test data:', error.message);

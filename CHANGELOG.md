@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] / mama-core [1.2.0] / mcp-server [1.8.0] - 2026-02-24
+
+### Removed
+
+- **openclaw-plugin** — extracted to standalone repo ([openclaw-mama](https://github.com/jungjaehoon-lifegamez/openclaw-mama))
+- **sqlite-vec** native extension — replaced with pure-TS brute-force cosine similarity (no native dependencies)
+- **better-sqlite3 prebuild** dependency from mcp-server (now only in mama-core)
+
+### Fixed
+
+- **vectorSearch dimension guard** — skip rows with mismatched embedding dimensions instead of throwing
+- **Architecture diagram** — corrected client→server flow (Claude Desktop connects directly to MCP Server, not through Embedding Server)
+- **Tier 2 fallback description** — clarified trigger: `vectorSearch()` throws when `embeddings` table is missing
+- **Stale test count** in deployment guide (removed hardcoded "597")
+- **Package count** in README (five→four after openclaw-plugin extraction)
+
+### Changed
+
+- **CI pnpm version** — removed hardcoded `version: 9` from all workflows; auto-detected from `packageManager` field
+- **sqlite-adapter migration** — `_migrateFromVssMemories()` called unconditionally (not gated by table check)
+
 ## [0.10.4] - 2026-02-23
 
 ### Fixed

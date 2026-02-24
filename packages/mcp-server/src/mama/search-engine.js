@@ -2,7 +2,7 @@
  * MAMA Search Engine - Semantic Vector Search
  *
  * Story 2.2: Narrative Search/Expansion
- * Implements semantic search using sqlite-vec and enhanced embeddings
+ * Implements semantic search using embeddings with brute-force cosine similarity
  *
  * @module search-engine
  * @version 1.0
@@ -17,7 +17,7 @@ const { vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
  * Search Engine for narrative/decision search
  *
  * Provides semantic search capabilities using vector embeddings
- * and sqlite-vec cosine similarity
+ * and brute-force cosine similarity
  */
 class SearchEngine {
   constructor() {

@@ -3,12 +3,17 @@ packages:
 
 enableScripts: true
 
-ignoredBuiltDependencies:
+onlyBuiltDependencies:
   - better-sqlite3
+
+ignoredBuiltDependencies:
   - esbuild
   - node-pty
   - onnxruntime-node
   - protobufjs
   - sharp
+
+overrides:
+  onnxruntime-web: ./empty
 
 unsafePerm: true

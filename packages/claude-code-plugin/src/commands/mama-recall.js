@@ -210,9 +210,9 @@ Topic: mama_architecture
 │  ├─ Outcome: superseded
 │  └─ Reasoning: "Lightweight, no external dependencies"
 │
-└─ Decision 2 (1 day ago): "Use SQLite + sqlite-vec for embeddings"
+└─ Decision 2 (1 day ago): "Use SQLite + pure-TS cosine similarity for embeddings"
    ├─ Outcome: success
-   └─ Reasoning: "Need vector similarity search, sqlite-vec provides this"
+   └─ Reasoning: "Need vector similarity search without native extensions"
    └─ Supersedes: Decision 1
 \`\`\`
 
