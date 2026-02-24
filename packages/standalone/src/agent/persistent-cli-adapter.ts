@@ -19,6 +19,7 @@ import type {
   PromptResult,
   ToolUseBlock,
 } from './claude-cli-wrapper.js';
+import type { IModelRunner, RunnerMetrics } from './model-runner.js';
 
 // Re-export types for convenience
 export type { ClaudeCLIWrapperOptions, PromptCallbacks, PromptResult, ToolUseBlock };
@@ -29,13 +30,21 @@ export type { ClaudeCLIWrapperOptions, PromptCallbacks, PromptResult, ToolUseBlo
  * Implements the same interface but uses persistent CLI processes under the hood.
  * This enables efficient multi-turn conversations without re-sending system prompts.
  */
-export class PersistentCLIAdapter {
+export class PersistentCLIAdapter implements IModelRunner {
+  readonly backendType = 'claude' as const;
+
   private options: ClaudeCLIWrapperOptions;
   private processPool: PersistentProcessPool;
   private channelKey: string;
   private currentProcess: PersistentClaudeProcess | null = null;
   private pendingToolResults: Map<string, { result: string; isError: boolean }> = new Map();
   private lastToolUseBlocks: ToolUseBlock[] = [];
+
+  // ─── Metrics tracking ───
+  private _requestCount = 0;
+  private _failureCount = 0;
+  private _totalLatencyMs = 0;
+  private _lastRequestAt: number | null = null;
 
   constructor(options: ClaudeCLIWrapperOptions = {}) {
     this.options = { ...options };
@@ -102,13 +111,23 @@ export class PersistentCLIAdapter {
       }
     }
 
-    // Send the user message
-    const result = await this.currentProcess.sendMessage(content, callbacks);
+    // Send the user message with metrics tracking
+    const startTime = Date.now();
+    this._requestCount++;
+    this._lastRequestAt = startTime;
+    try {
+      const result = await this.currentProcess.sendMessage(content, callbacks);
+      this._totalLatencyMs += Date.now() - startTime;
 
-    // Track tool use blocks for potential tool result sending
-    this.lastToolUseBlocks = result.toolUseBlocks || [];
+      // Track tool use blocks for potential tool result sending
+      this.lastToolUseBlocks = result.toolUseBlocks || [];
 
-    return result;
+      return result;
+    } catch (err) {
+      this._failureCount++;
+      this._totalLatencyMs += Date.now() - startTime;
+      throw err;
+    }
   }
 
   /**
@@ -205,8 +224,38 @@ export class PersistentCLIAdapter {
     return { ...this.options };
   }
 
+  // ─── IModelRunner implementation ─────────────────────────────────────────
+
   /**
-   * Stop all processes (cleanup)
+   * Check if the adapter has a live process ready to accept prompts.
+   */
+  isHealthy(): boolean {
+    if (!this.currentProcess) return true; // no process yet = can create on demand
+    return this.currentProcess.isAlive();
+  }
+
+  /**
+   * Collect runtime metrics.
+   */
+  getMetrics(): RunnerMetrics {
+    return {
+      requestCount: this._requestCount,
+      failureCount: this._failureCount,
+      avgLatencyMs:
+        this._requestCount > 0 ? Math.round(this._totalLatencyMs / this._requestCount) : 0,
+      lastRequestAt: this._lastRequestAt,
+    };
+  }
+
+  /**
+   * Gracefully stop all processes (IModelRunner.stop).
+   */
+  stop(): void {
+    this.stopAll();
+  }
+
+  /**
+   * Stop all processes (cleanup) — legacy name, delegates to stop().
    */
   stopAll(): void {
     this.processPool.stopAll();

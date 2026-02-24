@@ -14,8 +14,9 @@ import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
 import { loadInstalledSkills } from './skill-loader.js';
-import { CodexMCPProcess } from './codex-mcp-process.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
+import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
+import type { IModelRunner } from './model-runner.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import {
   CodeActSandbox,
@@ -267,7 +268,7 @@ To call a Gateway Tool, output a JSON block:
 }
 
 export class AgentLoop {
-  private readonly agent: PersistentCLIAdapter | CodexMCPProcess;
+  private readonly agent: IModelRunner;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
   private systemPromptOverride?: string;
@@ -458,15 +459,12 @@ export class AgentLoop {
       if (!existsSync(workspaceDir)) {
         mkdirSync(workspaceDir, { recursive: true });
       }
-      this.agent = new CodexMCPProcess({
+      this.agent = new CodexRuntimeProcess({
         model: options.model,
         cwd: workspaceDir,
         sandbox: 'workspace-write',
         systemPrompt: defaultSystemPrompt,
-        compactPrompt:
-          'Summarize the conversation concisely, preserving key decisions and context.',
-        timeoutMs: options.timeoutMs,
-        codexHome: join(homedir(), '.mama', '.codex'),
+        requestTimeout: options.timeoutMs,
       });
       logger.debug('Codex MCP backend enabled');
     } else {
@@ -1556,10 +1554,8 @@ export class AgentLoop {
     this.stopped = true;
 
     try {
-      // Stop persistent CLI if it exists
-      if (this.persistentCLI?.stopAll) {
-        this.persistentCLI.stopAll();
-      }
+      // Stop the model runner
+      this.agent.stop();
 
       // NOTE: sessionPool is a shared global singleton — do NOT dispose here.
       // It will be cleaned up when the process exits or via a global shutdown handler.
