@@ -473,18 +473,29 @@ export interface IntegrationsConfig {
 // ============================================================================
 
 /**
- * Prompt size limits (currently hardcoded in prompt-size-monitor.ts, agent-loop.ts)
- * Note: values are in characters until Sprint 2 token migration (STORY-006/007)
+ * Prompt size limits.
+ * Token-based fields are primary (used by PromptSizeMonitor).
+ * Char-based fields remain for backward compatibility.
  */
 export interface PromptConfig {
-  /** Warn threshold in chars @default 15000 */
+  /** @deprecated Use warn_tokens instead */
   warn_chars: number;
-  /** Truncate threshold in chars @default 25000 */
+  /** @deprecated Use truncate_tokens instead */
   truncate_chars: number;
-  /** Hard limit in chars @default 40000 */
+  /** @deprecated Use hard_limit_tokens instead */
   hard_limit_chars: number;
-  /** Max skill file chars @default 4000 */
+  /** @deprecated Use skill_max_tokens instead */
   skill_max_chars: number;
+  /** Warn threshold in tokens @default 3750 */
+  warn_tokens?: number;
+  /** Truncate threshold in tokens @default 6250 */
+  truncate_tokens?: number;
+  /** Hard limit in tokens @default 10000 */
+  hard_limit_tokens?: number;
+  /** Max skill file tokens @default 2000 */
+  skill_max_tokens?: number;
+  /** Per-model context window limits (tokens). Keys are model name prefixes. */
+  model_limits?: Record<string, number>;
 }
 
 /**
@@ -643,6 +654,15 @@ export const DEFAULT_CONFIG: MAMAConfig = {
     truncate_chars: 25_000,
     hard_limit_chars: 40_000,
     skill_max_chars: 4_000,
+    warn_tokens: 3_750,
+    truncate_tokens: 6_250,
+    hard_limit_tokens: 10_000,
+    skill_max_tokens: 2_000,
+    model_limits: {
+      claude: 180_000,
+      codex: 120_000,
+      gpt: 120_000,
+    },
   },
   timeouts: {
     request_ms: 120_000,

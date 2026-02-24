@@ -4,9 +4,12 @@
  * Monitors system prompt size and provides priority-based graceful truncation.
  * Layers are assigned priorities (1=critical, 6=ephemeral) and truncated
  * from lowest priority first when size limits are exceeded.
+ *
+ * Uses js-tiktoken for accurate token counting (STORY-007).
  */
 
 import { getConfig } from '../cli/config/config-manager.js';
+import { countTokens } from './token-estimator.js';
 
 /**
  * A named layer of the system prompt with a priority level.
@@ -43,8 +46,10 @@ export interface PromptLayer {
 export interface MonitorResult {
   /** Total character count across all layers */
   totalChars: number;
-  /** Estimated token count (chars / 4, rounded up) */
+  /** @deprecated Use totalTokens instead. This uses chars/4 heuristic. */
   estimatedTokens: number;
+  /** Actual token count via tiktoken (or byte-length fallback) */
+  totalTokens: number;
   /** Whether total is within the truncation threshold */
   withinBudget: boolean;
   /** Warning message if approaching or exceeding limits, null otherwise */
@@ -53,15 +58,15 @@ export interface MonitorResult {
   truncatedLayers: string[];
 }
 
-/** Char count at which a warning is emitted */
-const WARN_CHARS = () => getConfig().prompt?.warn_chars ?? 15_000;
-/** Char count at which truncation begins */
-const TRUNCATE_CHARS = () => getConfig().prompt?.truncate_chars ?? 25_000;
+/** Token count at which a warning is emitted */
+const WARN_TOKENS = () => getConfig().prompt?.warn_tokens ?? 3_750;
+/** Token count at which truncation begins */
+const TRUNCATE_TOKENS = () => getConfig().prompt?.truncate_tokens ?? 6_250;
 /** Absolute maximum — anything beyond is force-truncated */
-const HARD_LIMIT_CHARS = () => getConfig().prompt?.hard_limit_chars ?? 40_000;
+const HARD_LIMIT_TOKENS = () => getConfig().prompt?.hard_limit_tokens ?? 10_000;
 
 /**
- * Monitors and enforces system prompt size limits.
+ * Monitors and enforces system prompt size limits using token counting.
  *
  * Uses a priority-based truncation strategy: layers with higher priority
  * numbers (lower importance) are truncated first. Priority 1 layers are
@@ -85,32 +90,34 @@ export class PromptSizeMonitor {
    */
   check(layers: PromptLayer[]): MonitorResult {
     const totalChars = layers.reduce((sum, layer) => sum + layer.content.length, 0);
+    const combined = layers.map((l) => l.content).join('');
+    const totalTokens = countTokens(combined);
     const estimatedTokens = this.estimateTokens(totalChars);
     const truncatedLayers: string[] = [];
 
     let warning: string | null = null;
     let withinBudget = true;
 
-    if (totalChars > HARD_LIMIT_CHARS()) {
+    if (totalTokens > HARD_LIMIT_TOKENS()) {
       warning =
-        `System prompt exceeds hard limit: ${totalChars} chars ` +
-        `(${estimatedTokens} est. tokens) > ${HARD_LIMIT_CHARS()} chars. ` +
+        `System prompt exceeds hard limit: ${totalTokens} tokens ` +
+        `(${totalChars} chars) > ${HARD_LIMIT_TOKENS()} token limit. ` +
         `Force truncation required.`;
       withinBudget = false;
-    } else if (totalChars > TRUNCATE_CHARS()) {
+    } else if (totalTokens > TRUNCATE_TOKENS()) {
       warning =
-        `System prompt exceeds truncation threshold: ${totalChars} chars ` +
-        `(${estimatedTokens} est. tokens) > ${TRUNCATE_CHARS()} chars. ` +
+        `System prompt exceeds truncation threshold: ${totalTokens} tokens ` +
+        `(${totalChars} chars) > ${TRUNCATE_TOKENS()} token limit. ` +
         `Truncation recommended.`;
       withinBudget = false;
-    } else if (totalChars > WARN_CHARS()) {
+    } else if (totalTokens > WARN_TOKENS()) {
       warning =
-        `System prompt approaching limit: ${totalChars} chars ` +
-        `(${estimatedTokens} est. tokens) > ${WARN_CHARS()} chars warning threshold.`;
+        `System prompt approaching limit: ${totalTokens} tokens ` +
+        `(${totalChars} chars) > ${WARN_TOKENS()} token warning threshold.`;
       withinBudget = true;
     }
 
-    return { totalChars, estimatedTokens, withinBudget, warning, truncatedLayers };
+    return { totalChars, estimatedTokens, totalTokens, withinBudget, warning, truncatedLayers };
   }
 
   /**
@@ -121,81 +128,86 @@ export class PromptSizeMonitor {
    * Priority 1 layers are never truncated.
    *
    * @param layers - Prompt layers to enforce limits on
-   * @param maxChars - Maximum allowed characters (defaults to TRUNCATE_CHARS)
+   * @param maxTokens - Maximum allowed tokens (defaults to TRUNCATE_TOKENS)
    * @returns Object with truncated layers array and updated monitor result
    */
   enforce(
     layers: PromptLayer[],
-    maxChars: number = TRUNCATE_CHARS()
+    maxTokens: number = TRUNCATE_TOKENS()
   ): { layers: PromptLayer[]; result: MonitorResult } {
-    const totalChars = layers.reduce((sum, layer) => sum + layer.content.length, 0);
+    // Count tokens per layer
+    const layerTokens = layers.map((l) => countTokens(l.content));
+    const totalTokens = layerTokens.reduce((sum, t) => sum + t, 0);
 
-    if (totalChars <= maxChars) {
+    if (totalTokens <= maxTokens) {
       return { layers: [...layers], result: this.check(layers) };
     }
 
     // Sort candidates for truncation: highest priority number first, then largest first
-    const sortedByExpendability = [...layers]
-      .map((layer, index) => ({ layer, index }))
+    const sortedByExpendability = layers
+      .map((layer, index) => ({ layer, index, tokens: layerTokens[index] }))
       .filter(({ layer }) => layer.priority > 1)
       .sort((a, b) => {
         if (b.layer.priority !== a.layer.priority) {
           return b.layer.priority - a.layer.priority;
         }
-        return b.layer.content.length - a.layer.content.length;
+        return b.tokens - a.tokens;
       });
 
     const truncatedLayers: string[] = [];
     const resultLayers = [...layers];
-    let currentTotal = totalChars;
+    let currentTokens = totalTokens;
 
-    for (const { layer, index } of sortedByExpendability) {
-      if (currentTotal <= maxChars) {
+    for (const { layer, index, tokens } of sortedByExpendability) {
+      if (currentTokens <= maxTokens) {
         break;
       }
 
-      const excess = currentTotal - maxChars;
+      const excess = currentTokens - maxTokens;
 
-      if (layer.content.length <= excess) {
-        currentTotal -= layer.content.length;
+      if (tokens <= excess) {
+        // Full removal
+        currentTokens -= tokens;
         resultLayers[index] = { ...layer, content: '' };
         truncatedLayers.push(layer.name);
       } else {
-        const keepChars = layer.content.length - excess;
-        const truncationMarker = `\n\n[... ${layer.name} truncated: ${excess} chars removed ...]`;
-        const safeKeep = Math.max(0, keepChars - truncationMarker.length);
+        // Partial truncation: estimate chars to remove based on layer's token density
+        const charsPerToken = tokens > 0 ? layer.content.length / tokens : 4;
+        const charsToRemove = Math.ceil(excess * charsPerToken);
+        const truncationMarker = `\n\n[... ${layer.name} truncated: ~${excess} tokens removed ...]`;
+        const safeKeep = Math.max(
+          0,
+          layer.content.length - charsToRemove - truncationMarker.length
+        );
         resultLayers[index] = {
           ...layer,
           content: layer.content.slice(0, safeKeep) + truncationMarker,
         };
-        // Fix: The actual new layer size is safeKeep + truncationMarker.length
-        currentTotal = currentTotal - layer.content.length + safeKeep + truncationMarker.length;
+        currentTokens -= excess; // approximate
         truncatedLayers.push(layer.name);
       }
     }
 
     const finalLayers = resultLayers.filter((layer) => layer.content.length > 0);
-    const finalTotal = finalLayers.reduce((sum, layer) => sum + layer.content.length, 0);
-    const estimatedTokens = this.estimateTokens(finalTotal);
+    const finalCheck = this.check(finalLayers);
 
-    const withinBudget = finalTotal <= maxChars;
+    const withinBudget = finalCheck.totalTokens <= maxTokens;
     let warning: string | null = null;
 
     if (!withinBudget) {
       warning =
-        `System prompt still exceeds limit after truncation: ${finalTotal} chars ` +
-        `(${estimatedTokens} est. tokens). Only priority-1 layers remain.`;
+        `System prompt still exceeds limit after truncation: ${finalCheck.totalTokens} tokens. ` +
+        `Only priority-1 layers remain.`;
     } else if (truncatedLayers.length > 0) {
       warning =
-        `Truncated ${truncatedLayers.length} layer(s) to fit within ${maxChars} chars: ` +
+        `Truncated ${truncatedLayers.length} layer(s) to fit within ${maxTokens} tokens: ` +
         `${truncatedLayers.join(', ')}.`;
     }
 
     return {
       layers: finalLayers,
       result: {
-        totalChars: finalTotal,
-        estimatedTokens,
+        ...finalCheck,
         withinBudget,
         warning,
         truncatedLayers,
@@ -204,12 +216,8 @@ export class PromptSizeMonitor {
   }
 
   /**
-   * Estimate token count from character count.
-   *
-   * Uses the standard ~4 chars per token heuristic for English text.
-   *
-   * @param chars - Character count
-   * @returns Estimated token count (rounded up)
+   * @deprecated Use countTokens() from token-estimator instead.
+   * Estimate token count from character count using chars/4 heuristic.
    */
   estimateTokens(chars: number): number {
     return Math.ceil(chars / 4);
