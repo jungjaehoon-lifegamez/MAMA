@@ -567,6 +567,16 @@ export interface MetricsConfig {
 }
 
 /**
+ * Token budget settings for daily usage monitoring
+ */
+export interface TokenBudgetConfig {
+  /** Daily token limit (input + output combined). 0 = no limit @default 0 */
+  daily_limit: number;
+  /** Alert threshold ratio (0-1). Warn when usage exceeds this ratio of daily_limit @default 0.9 */
+  alert_threshold: number;
+}
+
+/**
  * Full MAMA configuration
  */
 export interface MAMAConfig {
@@ -610,6 +620,8 @@ export interface MAMAConfig {
   io?: IOConfig;
   /** Metrics collection settings */
   metrics?: MetricsConfig;
+  /** Token budget settings */
+  token_budget?: TokenBudgetConfig;
   /** Preserve user-defined sections (scheduling, custom integrations, etc.) */
   [key: string]: unknown;
 }
@@ -693,6 +705,10 @@ export const DEFAULT_CONFIG: MAMAConfig = {
   metrics: {
     enabled: true,
     retention_days: 7,
+  },
+  token_budget: {
+    daily_limit: 0,
+    alert_threshold: 0.9,
   },
 };
 

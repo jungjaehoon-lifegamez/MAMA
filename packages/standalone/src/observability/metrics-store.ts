@@ -192,6 +192,13 @@ export class MetricsStore {
     return row.cnt;
   }
 
+  countSince(startTs: number): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM metrics WHERE timestamp >= ?')
+      .get(startTs) as { cnt: number };
+    return row.cnt;
+  }
+
   close(): void {
     this.db.close();
     // Remove from instances map
