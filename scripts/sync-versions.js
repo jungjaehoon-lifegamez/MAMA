@@ -37,7 +37,6 @@ const PACKAGES = {
     path: 'packages/claude-code-plugin/package.json',
     label: 'Claude Plugin',
   },
-  'openclaw-plugin': { path: 'packages/openclaw-plugin/package.json', label: 'OpenClaw' },
 };
 
 // semver pattern: 0.4.0, 1.7.2, 0.5.0-beta, 2.0.0-rc.1, etc.
@@ -65,10 +64,6 @@ function buildRules(versions) {
           version: versions['mama-server'],
         },
         {
-          regex: new RegExp(`(\\*\\*Package:\\*\\* \`@jungjaehoon/openclaw-mama\` )${SEMVER}`, 'g'),
-          version: versions['openclaw-plugin'],
-        },
-        {
           regex: new RegExp(`(\\*\\*Package:\\*\\* \`@jungjaehoon/mama-core\` )${SEMVER}`, 'g'),
           version: versions['mama-core'],
         },
@@ -91,14 +86,6 @@ function buildRules(versions) {
         {
           regex: new RegExp(`(\\| \\[mama\\][^|]+\\| )${SEMVER}(\\s*\\|)`, 'g'),
           version: versions['claude-code-plugin'],
-          suffix: true,
-        },
-        {
-          regex: new RegExp(
-            `(\\| \\[@jungjaehoon/openclaw-mama\\][^|]+\\| )${SEMVER}(\\s*\\|)`,
-            'g'
-          ),
-          version: versions['openclaw-plugin'],
           suffix: true,
         },
       ],
@@ -147,10 +134,6 @@ function buildRules(versions) {
           ),
           version: versions['claude-code-plugin'],
         },
-        {
-          regex: new RegExp(`(\\| OpenClaw Plugin[^|]+\\|[^|]+\\|[^|]+\\|[^|]+\\| )${SEMVER}`, 'g'),
-          version: versions['openclaw-plugin'],
-        },
         // Version Update Locations table (5 rows by package.json path)
         {
           regex: new RegExp(
@@ -179,13 +162,6 @@ function buildRules(versions) {
             'g'
           ),
           version: versions['claude-code-plugin'],
-        },
-        {
-          regex: new RegExp(
-            `(\\| \`packages/openclaw-plugin/package\\.json\`[^|]+\\|[^|]+\\| )${SEMVER}`,
-            'g'
-          ),
-          version: versions['openclaw-plugin'],
         },
       ],
     },

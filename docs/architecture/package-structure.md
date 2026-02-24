@@ -1,6 +1,6 @@
 # Package Structure
 
-MAMA uses a five-package monorepo architecture with shared core modules to eliminate code duplication and enable independent package updates.
+MAMA uses a four-package monorepo architecture with shared core modules to eliminate code duplication and enable independent package updates.
 
 ## Architecture Overview
 
@@ -28,7 +28,7 @@ MAMA uses a five-package monorepo architecture with shared core modules to elimi
 │           └───────>│   MAMA Core          │              │
 │                    │ @jungjaehoon/mama-core│             │
 │                    │ - Embeddings         │              │
-│                    │ - SQLite+vec         │              │
+│                    │ - SQLite+cosine      │              │
 │                    │ - Decision Graph     │              │
 │                    │ - Memory Store       │              │
 │                    └──────────┬────────────┘             │
@@ -84,7 +84,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 
 - `@huggingface/transformers` - Local embeddings
 - `better-sqlite3` - SQLite database
-- `sqlite-vec` - Vector similarity extension
+- Pure-TS cosine similarity for vector search
 
 **Distribution:** npm (`@jungjaehoon/mama-core`)
 
@@ -162,28 +162,6 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 **Distribution:** npm package (`@jungjaehoon/mama-os`)
 
 **Used by:** Standalone deployment, bot integrations
-
-### 5. @jungjaehoon/openclaw-mama
-
-**Purpose:** OpenClaw/Moltbot native plugin
-
-**Location:** `packages/openclaw-plugin/`
-
-**Key Features:**
-
-- Auto-recall on `before_agent_start`
-- 4 native tools: `mama_search`, `mama_save`, `mama_load_checkpoint`, `mama_update`
-- Auto-capture detection on `agent_end`
-- Context injection via `prependContext`
-
-**Dependencies:**
-
-- `@jungjaehoon/mama-core` (workspace:\*) - Core functionality
-- `@sinclair/typebox` - Schema validation
-
-**Distribution:** npm package (`@jungjaehoon/openclaw-mama`)
-
-**Used by:** OpenClaw, Moltbot gateway systems
 
 ## Code Deduplication
 
@@ -271,10 +249,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 1.1.5 (stable API)
-- **mama-server:** 1.7.6 (follows MAMA version)
+- **mama-core:** 1.2.0 (stable API)
+- **mama-server:** 1.8.0 (follows MAMA version)
 - **claude-code-plugin:** 1.7.14 (follows MAMA version)
-- **mama-os:** 0.10.4 (standalone agent)
+- **mama-os:** 0.11.0 (standalone agent)
 
 ## Distribution Strategy
 
@@ -326,7 +304,7 @@ npx @jungjaehoon/mama-os
 
 ### 2. Code Reuse
 
-All packages share mama-core to eliminate duplication. Heavy dependencies (better-sqlite3, transformers.js, sqlite-vec) live in mama-core.
+All packages share mama-core to eliminate duplication. Heavy dependencies (better-sqlite3, transformers.js) live in mama-core.
 
 ### 3. Independent Updates
 
@@ -364,19 +342,17 @@ Existing decisions remain valid across all package updates. SQLite schema change
 - Real-time log monitoring via Viewer UI
 - Backend-specific instructions prevent tool confusion across Claude/Codex
 
-### mama-os-0.1.0 (2026-02-01): Five-Package Architecture
+### mama-os-0.1.0 (2026-02-01): Four-Package Architecture
 
 **Changes:**
 
 - Added standalone package with autonomous agent capabilities
-- Added openclaw-plugin for native OpenClaw/Moltbot integration
 - Extracted mama-core as shared foundation
 - MCP server remains pure MCP (stdio only)
 
 **Benefits:**
 
 - Autonomous AI agent with gateway integrations
-- Native OpenClaw plugin support
 - Eliminated code duplication
 - Clearer separation of concerns
 - Independent package updates

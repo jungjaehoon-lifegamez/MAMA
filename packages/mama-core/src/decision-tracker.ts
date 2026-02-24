@@ -493,7 +493,7 @@ export async function getSupersededChainDepth(
  * Task 3.5: If previous exists: Create supersedes edge, Update previous superseded_by
  * Task 3.6: If multi-parent refinement: Store refined_from, Calculate combined confidence
  * Task 3.7: Generate enhanced embedding
- * Task 3.8: Store in vss_memories (link via rowid)
+ * Task 3.8: Store embedding (link via rowid)
  *
  * AC #1: Decision stored with outcome=NULL, confidence from LLM
  * AC #2: Supersedes relationship creation
@@ -591,7 +591,7 @@ export async function learnDecision(
       risks: detection.risks || null,
     };
 
-    // Task 3.7, 3.8: Generate enhanced embedding and store in vss_memories
+    // Task 3.7, 3.8: Generate enhanced embedding and store in embeddings table
     // (Handled by insertDecisionWithEmbedding function)
     await insertDecisionWithEmbedding(decision);
 

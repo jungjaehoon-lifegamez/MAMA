@@ -7,35 +7,30 @@
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    MAMA Plugin Ecosystem                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  OpenClaw         Claude Code      Claude Desktop   Others  │
-│  ┌────────────┐   ┌────────────┐   ┌────────────┐          │
-│  │ Native     │   │ Commands   │   │            │          │
-│  │ Plugin     │   │ Skills     │   │ MCP Client │  (Cursor,│
-│  │ (auto-     │   │ Hooks      │   │            │   Aider) │
-│  │  recall)   │   └────────────┘   └────────────┘          │
-│  └──────┬─────┘         │                │                  │
-│         │               │                │                  │
-│         │       ┌───────▼────────────────▼──────────┐      │
-│         │       │  HTTP Embedding Server (3849)     │      │
-│         │       │  Model stays in memory            │      │
-│         │       └───────────────────────────────────┘      │
-│         │                       │                           │
-│         │       ┌───────────────▼───────────────┐          │
-│  Direct │       │   MCP Server (stdio)          │          │
-│  module ├──────▶│   4 Tools: save/search/       │          │
-│  import │       │   update/load_checkpoint      │          │
-│         │       └───────────────────────────────┘          │
-│         │                       │                           │
-│         │       ┌───────────────▼───────────────┐          │
-│         └──────▶│  SQLite + sqlite-vec          │          │
-│                 │  ~/.claude/mama-memory.db     │          │
-│                 └───────────────────────────────┘          │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    MAMA Plugin Ecosystem                      │
+├──────────────────────────────────────────────────────────────┤
+│                                                               │
+│  Claude Code           Claude Desktop     Others              │
+│  ┌────────────┐        ┌────────────┐     ┌──────────────┐   │
+│  │ Commands   │        │            │     │ Cursor, Aider│   │
+│  │ Skills     │──┐     │ MCP Client │     │ (embedding   │   │
+│  │ Hooks      │  │     │            │     │  clients)    │   │
+│  └────────────┘  │     └──────┬─────┘     └──────┬───────┘   │
+│         │        │            │                   │           │
+│         │        │   ┌────────▼───────────────────┘           │
+│         │        │   │  MCP Server (stdio)        │           │
+│         └────────┴──▶│  4 Tools: save/search/     │           │
+│                      │  update/load_checkpoint    │           │
+│                      └──────┬──────────┬──────────┘           │
+│                             │          │                      │
+│            ┌────────────────▼──┐  ┌────▼──────────────────┐   │
+│            │ SQLite + pure-TS  │  │ HTTP Embedding Server │   │
+│            │ cosine similarity │  │ :3847 (model in mem)  │   │
+│            │ mama-memory.db    │  └───────────────────────┘   │
+│            └───────────────────┘                              │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -70,13 +65,7 @@
 - **Tools:** 4 (save, search, update, load_checkpoint)
 - **Performance:** <100ms p99 latency
 
-### OpenClaw Plugin
-
-- **Integration:** Direct module import (no HTTP)
-- **Tools:** 4 (mama_search, mama_save, mama_update, mama_load_checkpoint)
-- **Auto-recall:** Semantic search on `before_agent_start` event
-
-### Database (SQLite + sqlite-vec)
+### Database (SQLite + pure-TS cosine similarity)
 
 - **Decisions table:** topic, decision, reasoning, confidence, outcome
 - **Embeddings:** 384-dimensional vectors (all-MiniLM-L6-v2)
