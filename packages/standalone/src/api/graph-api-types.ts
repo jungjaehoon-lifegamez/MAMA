@@ -69,6 +69,10 @@ export interface GraphHandlerOptions {
   applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
   restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   executeCodeAct?: (code: string) => Promise<CodeActResult>;
+  healthService?: { compute(windowMs?: number): unknown };
+  healthCheckService?: {
+    check(): Promise<import('../observability/health-check.js').SystemHealthReport>;
+  };
 }
 
 export interface SwarmTask {
