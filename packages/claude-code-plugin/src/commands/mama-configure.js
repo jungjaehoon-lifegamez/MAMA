@@ -141,10 +141,11 @@ function getSupportedModels() {
     {
       name: 'Xenova/multilingual-e5-small',
       dimension: 384,
-      size: '~120MB',
+      size: '~113MB (q8)',
       languages: ['English', 'Korean', 'Japanese', 'Chinese', '100+ languages'],
       recommended: true,
-      description: 'Default model - balanced accuracy and performance',
+      description:
+        'Default model - quantized (q8), 100+ languages, balanced accuracy and performance',
     },
     {
       name: 'Xenova/all-MiniLM-L6-v2',
@@ -441,7 +442,7 @@ mamaConfigureCommand({ model: 'Xenova/multilingual-e5-small' })
 
 // Change multiple settings
 mamaConfigureCommand({
-  model: 'Xenova/all-MiniLM-L6-v2',
+  model: 'Xenova/multilingual-e5-small',
   dimension: 384
 })
 \`\`\`
