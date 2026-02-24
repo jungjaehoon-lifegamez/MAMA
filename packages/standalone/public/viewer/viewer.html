@@ -426,7 +426,7 @@
               <!-- Agent Swarm -->
               <section>
                 <h2 class="text-sm font-semibold text-gray-900 mb-2">🎭 Agent Swarm</h2>
-                <div id="dashboard-agent-swarm" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div id="dashboard-agent-swarm" class="bg-white border border-gray-200 rounded-lg p-3">
                   <div class="animate-pulse space-y-1.5">
                     <div class="h-3 bg-gray-100 rounded w-1/2"></div>
                     <div class="h-3 bg-gray-100 rounded w-3/4"></div>
@@ -437,7 +437,7 @@
               <!-- Active Sessions -->
               <section>
                 <h2 class="text-sm font-semibold text-gray-900 mb-2">💬 Active Sessions</h2>
-                <div id="dashboard-sessions" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div id="dashboard-sessions" class="bg-white border border-gray-200 rounded-lg p-3">
                   <div class="animate-pulse space-y-1.5">
                     <div class="h-3 bg-gray-100 rounded w-1/3"></div>
                     <div class="h-3 bg-gray-100 rounded w-full"></div>
@@ -451,7 +451,7 @@
               <!-- Agent Configuration -->
               <section>
                 <h2 class="text-sm font-semibold text-gray-900 mb-2">🤖 Agent Config</h2>
-                <div id="dashboard-agent" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div id="dashboard-agent" class="bg-white border border-gray-200 rounded-lg p-3">
                   <div class="animate-pulse space-y-1.5">
                     <div class="h-3 bg-gray-100 rounded w-1/2"></div>
                     <div class="h-3 bg-gray-100 rounded w-1/3"></div>
@@ -463,20 +463,31 @@
               <section>
                 <h2 class="text-sm font-semibold text-gray-900 mb-2">🧠 Memory</h2>
                 <div id="dashboard-memory" class="grid grid-cols-4 gap-2">
-                  <div class="animate-pulse bg-white rounded-lg h-14"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-14"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-14"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-14"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
+                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
                 </div>
               </section>
             </div>
+
+            <!-- Row 3.5: System Health (full width) -->
+            <section class="mb-4">
+              <h2 class="text-sm font-semibold text-gray-900 mb-2">🩺 System Health</h2>
+              <div id="dashboard-health" class="bg-white border border-gray-200 rounded-lg p-3">
+                <div class="animate-pulse space-y-1.5">
+                  <div class="h-3 bg-gray-100 rounded w-1/3"></div>
+                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
+                </div>
+              </div>
+            </section>
 
             <!-- Row 4: Token + Cron (Usage) -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
               <!-- Token Usage -->
               <section>
                 <h2 class="text-sm font-semibold text-gray-900 mb-2">📊 Token Usage</h2>
-                <div id="dashboard-tokens" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div id="dashboard-tokens" class="bg-white border border-gray-200 rounded-lg p-3">
                   <div class="animate-pulse space-y-1.5">
                     <div class="h-3 bg-gray-100 rounded w-1/2"></div>
                     <div class="h-3 bg-gray-100 rounded w-3/4"></div>
@@ -487,7 +498,7 @@
               <!-- Cron Monitor -->
               <section>
                 <h2 class="text-sm font-semibold text-gray-900 mb-2">⏰ Cron Jobs</h2>
-                <div id="dashboard-cron" class="bg-white border border-gray-200 rounded-lg p-2.5">
+                <div id="dashboard-cron" class="bg-white border border-gray-200 rounded-lg p-3">
                   <div class="animate-pulse space-y-1.5">
                     <div class="h-3 bg-gray-100 rounded w-1/2"></div>
                     <div class="h-3 bg-gray-100 rounded w-3/4"></div>
@@ -499,7 +510,7 @@
             <!-- Row 5: Top Topics (Secondary) -->
             <section class="mb-4">
               <h2 class="text-sm font-semibold text-gray-900 mb-2">📈 Top Topics</h2>
-              <div id="dashboard-topics" class="bg-white border border-gray-200 rounded-lg p-2.5">
+              <div id="dashboard-topics" class="bg-white border border-gray-200 rounded-lg p-3">
                 <div class="animate-pulse space-y-1.5">
                   <div class="h-3 bg-gray-100 rounded w-3/4"></div>
                   <div class="h-3 bg-gray-100 rounded w-1/2"></div>
@@ -689,6 +700,23 @@
                       <div>
                         <label class="block text-[9px] text-gray-500 mb-0.5">Alert ($)</label>
                         <input type="number" id="settings-token-alert-threshold" step="0.01" placeholder="5.00" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Metrics -->
+                <section>
+                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">📊 Metrics</h2>
+                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                    <div class="grid grid-cols-2 gap-1.5">
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Enable metrics</label>
+                        <input type="checkbox" id="settings-metrics-enabled" checked class="w-4 h-4 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400">
+                      </div>
+                      <div>
+                        <label class="block text-[9px] text-gray-500 mb-0.5">Retention (days)</label>
+                        <input type="number" id="settings-metrics-retention" min="1" max="90" value="7" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
                       </div>
                     </div>
                   </div>
@@ -986,28 +1014,28 @@
             <!-- Search Bar -->
             <div class="mb-4">
               <input id="skills-search" type="text"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500"
+                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-mama-yellow focus:ring-2 focus:ring-yellow-200"
                 placeholder="Search skills...">
             </div>
 
             <!-- URL Install -->
             <div class="flex gap-2 mb-4">
               <input id="skills-url-input" type="text"
-                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                class="flex-1 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-mama-yellow focus:ring-2 focus:ring-yellow-200"
                 placeholder="https://github.com/owner/repo">
               <button id="skills-url-install-btn"
-                class="px-4 py-1.5 text-xs rounded-lg bg-purple-600 text-white font-medium hover:bg-purple-700 whitespace-nowrap">
+                class="px-4 py-1.5 text-xs rounded-lg bg-mama-yellow text-mama-black font-medium hover:bg-mama-yellow-hover whitespace-nowrap">
                 Install URL
               </button>
             </div>
 
             <!-- Filter Bar -->
             <div id="skills-filter-bar" class="flex gap-2 mb-4 flex-wrap">
-              <button data-filter="all" class="px-3 py-1 text-xs rounded-full bg-yellow-400 text-gray-900 font-medium">All</button>
-              <button data-filter="installed" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">Installed</button>
-              <button data-filter="mama" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">MAMA</button>
-              <button data-filter="cowork" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">Cowork</button>
-              <button data-filter="external" class="px-3 py-1 text-xs rounded-full bg-gray-700 text-gray-300">External</button>
+              <button data-filter="all" class="px-3 py-1 text-xs rounded-full bg-mama-yellow text-mama-black font-medium">All</button>
+              <button data-filter="installed" class="px-3 py-1 text-xs rounded-full bg-white text-gray-600">Installed</button>
+              <button data-filter="mama" class="px-3 py-1 text-xs rounded-full bg-white text-gray-600">MAMA</button>
+              <button data-filter="cowork" class="px-3 py-1 text-xs rounded-full bg-white text-gray-600">Cowork</button>
+              <button data-filter="external" class="px-3 py-1 text-xs rounded-full bg-white text-gray-600">External</button>
             </div>
 
             <!-- Skills Content (rendered by skills.js) -->
@@ -2223,6 +2251,7 @@ Please explain what can be configured here:
 - Multi-Agent: Per-agent model, backend, tier, and delegation settings
 - Cron: Create, edit, and run scheduled jobs
 - Token Budget: Set daily token limits and alerts
+- Metrics: Enable/disable metrics collection and set retention period
 Be friendly and concise.`,
 
         playground: `The user clicked the help button on the Playground tab.
