@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.1] / mama-core [1.2.1] - 2026-02-24
+
+### Added
+
+- **Quantized embedding model (q8)** — default `dtype: 'q8'` for Transformers.js pipeline; 75% smaller model (449MB → 113MB), 36% faster cold start, <1% quality loss
+- **`quantized` config option** — configurable via `~/.mama/config.json` (`true`=q8, `false`=fp32)
+- **`getQuantized()` API** — exported from mama-core for runtime config access
+
+### Fixed
+
+- **Documentation model name** — corrected all references from `all-MiniLM-L6-v2` to actual model `multilingual-e5-small` across 13 files
+
 ## [0.11.0] / mama-core [1.2.0] / mcp-server [1.8.0] - 2026-02-24
 
 ### Removed

@@ -52,11 +52,11 @@ Embedding: [0.23, -0.45, 0.78, ..., 0.12]  (384 dimensions)
 
 MAMA uses **Transformers.js** (in-browser ML) with pre-trained models:
 
-| Model | Size | Language | Accuracy |
-|-------|------|----------|----------|
-| `Xenova/multilingual-e5-small` | 120MB | Korean + English | 80% (default) |
-| `Xenova/all-MiniLM-L6-v2` | 90MB | English only | 75% |
-| `Xenova/gte-large` | 200MB | English only | 85% |
+| Model                          | Size        | Language                       | Accuracy      |
+| ------------------------------ | ----------- | ------------------------------ | ------------- |
+| `Xenova/multilingual-e5-small` | ~113MB (q8) | 100+ languages (default)       | 80% (default) |
+| `Xenova/all-MiniLM-L6-v2`      | ~90MB       | English + limited multilingual | 75%           |
+| `Xenova/gte-large`             | 200MB       | English only                   | 85%           |
 
 **See also:** [Configuration Guide](../guides/configuration.md#change-embedding-model)
 
@@ -245,6 +245,7 @@ For each decision:
 **Complexity:** O(N) where N = number of decisions
 
 **Acceptable because:**
+
 - Most users have <1000 decisions (~50ms)
 - SQLite is fast enough for this scale
 - No need for ANN (Approximate Nearest Neighbor) yet
@@ -268,6 +269,7 @@ For each decision:
 **Issue:** 384 dimensions (120MB model) is a trade-off
 
 **Trade-off:**
+
 - Smaller model (90MB): Faster, less accurate
 - Larger model (200MB): Slower, more accurate
 

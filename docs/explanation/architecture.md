@@ -68,12 +68,12 @@
 ### Database (SQLite + pure-TS cosine similarity)
 
 - **Decisions table:** topic, decision, reasoning, confidence, outcome
-- **Embeddings:** 384-dimensional vectors (all-MiniLM-L6-v2)
+- **Embeddings:** 384-dimensional vectors (multilingual-e5-small, q8)
 - **Graph:** supersedes/builds_on/debates/synthesizes edges
 
 ### Embeddings
 
-- **Model:** Xenova/all-MiniLM-L6-v2 (~30MB)
+- **Model:** Xenova/multilingual-e5-small (~113MB, quantized q8)
 - **Tier 1:** Transformers.js (ONNX runtime)
 - **Tier 2:** Disabled (fallback to exact match)
 

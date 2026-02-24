@@ -971,7 +971,7 @@ await findSynonyms('영감을 받은'); // Korean: "inspired by"
 // Transformers.js embedding model handles multilingual automatically
 ```
 
-**Why v1.1:** Xenova/all-MiniLM-L6-v2 has built-in multilingual support - zero configuration needed.
+**Why v1.1:** Xenova/multilingual-e5-small has built-in multilingual support (100+ languages) - zero configuration needed.
 
 #### v1.1 Scope Summary
 
