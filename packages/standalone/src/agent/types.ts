@@ -859,6 +859,12 @@ export interface AgentLoopOptions {
 
   /** Streaming callbacks for real-time progress events to external consumers */
   streamCallbacks?: StreamCallbacks;
+
+  /**
+   * Metric recording callback (STORY-020)
+   * Called at key emission points: prompt latency, tool execution, errors
+   */
+  onMetric?: (name: string, value: number, labels?: Record<string, string>) => void;
 }
 
 /**
