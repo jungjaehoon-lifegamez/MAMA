@@ -6,6 +6,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import http from 'node:http';
 import { isDaemonRunning, getUptime, isProcessRunning } from '../utils/pid-manager.js';
 import { loadConfig, configExists, expandPath } from '../config/config-manager.js';
 import { OAuthManager } from '../../auth/index.js';
@@ -23,6 +24,25 @@ export async function statusCommand(): Promise<void> {
     console.log(`Status: Running ✓`);
     console.log(`PID: ${runningInfo.pid}`);
     console.log(`Uptime: ${getUptime(runningInfo.startedAt)}`);
+
+    // Health score
+    const health = await fetchHealthScore();
+    if (health) {
+      console.log(`Health: ${health.score}/100 (${health.status})`);
+      if (health.checks && health.checks.length > 0) {
+        for (const c of health.checks) {
+          const icon =
+            c.status === 'pass'
+              ? '✓'
+              : c.severity === 'critical'
+                ? '✗'
+                : c.status === 'warn' || c.status === 'fail'
+                  ? '⚠'
+                  : 'ℹ';
+          console.log(`  ${icon} ${c.name}: ${c.message}`);
+        }
+      }
+    }
 
     // Watchdog status
     const watchdogStatus = getWatchdogStatus();
@@ -110,6 +130,53 @@ export async function statusCommand(): Promise<void> {
   }
 
   console.log('');
+}
+
+interface HealthCheck {
+  name: string;
+  severity: string;
+  status: string;
+  message: string;
+}
+
+function fetchHealthScore(): Promise<{
+  score: number;
+  status: string;
+  checks?: HealthCheck[];
+} | null> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: 3847,
+        path: '/api/metrics/health',
+        method: 'GET',
+        timeout: 2000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (typeof json.score === 'number' && typeof json.status === 'string') {
+              resolve({ score: json.score, status: json.status, checks: json.checks });
+            } else {
+              resolve(null);
+            }
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
 }
 
 function getWatchdogStatus(): { pid: number; startedAt: number } | null {

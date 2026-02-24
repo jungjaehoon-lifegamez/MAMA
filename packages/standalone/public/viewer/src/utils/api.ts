@@ -322,6 +322,34 @@ export interface CronLogResponse {
   [key: string]: unknown;
 }
 
+export interface HealthComponentReport {
+  name: string;
+  score: number;
+  status: string;
+  detail?: string;
+}
+
+export interface HealthCheckItem {
+  name: string;
+  severity: 'critical' | 'warning' | 'info';
+  status: 'pass' | 'fail' | 'warn' | 'skip';
+  message: string;
+  detail?: string;
+}
+
+export interface HealthReportResponse {
+  score: number;
+  status: string;
+  components?: HealthComponentReport[];
+  checks?: HealthCheckItem[];
+  summary?: {
+    critical: { pass: number; fail: number };
+    warning: { pass: number; fail: number };
+    info: { pass: number; fail: number };
+  };
+  [key: string]: unknown;
+}
+
 export class API {
   /**
    * Base URL for API requests (empty for same origin)
@@ -659,5 +687,13 @@ export class API {
     source = 'mama'
   ): Promise<JsonRecord> {
     return this.put(`/api/skills/${encodeURIComponent(name)}/content`, { content, source });
+  }
+
+  // =============================================
+  // Metrics / Health API
+  // =============================================
+
+  static async getHealthReport(): Promise<HealthReportResponse> {
+    return this.get<HealthReportResponse>('/api/metrics/health');
   }
 }
