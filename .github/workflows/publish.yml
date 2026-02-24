@@ -125,8 +125,9 @@ jobs:
         run: pnpm install --ignore-scripts
         working-directory: ${{ github.workspace }}
 
-      - name: Build
+      - name: Build (workspace-level for dependency ordering)
         run: pnpm build
+        working-directory: ${{ github.workspace }}
 
       - name: Replace workspace protocol for publish
         run: |

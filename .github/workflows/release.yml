@@ -256,8 +256,7 @@ jobs:
       - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
 
-      - name: Build
-        working-directory: packages/standalone
+      - name: Build (workspace-level for dependency ordering)
         run: pnpm build
 
       - name: Replace workspace protocol
