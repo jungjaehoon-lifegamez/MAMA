@@ -139,7 +139,7 @@ MAMA Standalone runs an HTTP embedding server on port 3849 that keeps the model 
 
 ```json
 {
-  "embedding_model": "Xenova/all-MiniLM-L6-v2",
+  "embedding_model": "Xenova/multilingual-e5-small",
   "search_limit": 5,
   "recency_weight": 0.1
 }
@@ -147,8 +147,8 @@ MAMA Standalone runs an HTTP embedding server on port 3849 that keeps the model 
 
 **Expected performance:**
 
-- First query: ~600ms (smaller model)
-- Subsequent: ~60ms (faster inference)
+- Cold start: ~1700ms (q8 quantized model)
+- Warm queries: ~11ms (model in memory)
 
 **Trade-offs:**
 

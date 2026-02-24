@@ -117,11 +117,11 @@ describe('Story 8.3: Typed Error Classes', () => {
 
   describe('EmbeddingError', () => {
     it('should create error for embedding failure', () => {
-      const error = new EmbeddingError('model not loaded', { model: 'all-MiniLM-L6-v2' });
+      const error = new EmbeddingError('model not loaded', { model: 'multilingual-e5-small' });
 
       expect(error.name).toBe('EmbeddingError');
       expect(error.code).toBe('EMBEDDING_ERROR');
-      expect(error.details.model).toBe('all-MiniLM-L6-v2');
+      expect(error.details.model).toBe('multilingual-e5-small');
     });
   });
 

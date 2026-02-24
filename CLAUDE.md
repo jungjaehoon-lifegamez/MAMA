@@ -138,9 +138,9 @@ pnpm vitest run tests/commands/
 
 ### Embeddings
 
-- **Model:** Xenova/all-MiniLM-L6-v2 (Transformers.js)
+- **Model:** Xenova/multilingual-e5-small (Transformers.js, quantized q8, ~113MB)
 - **Dimension:** 384-dimensional vectors
-- **Language:** Cross-lingual (English + Korean)
+- **Language:** Multilingual (100+ languages including Korean + English)
 - **Local-first:** No API calls, runs entirely on device
 
 ### Hook Performance

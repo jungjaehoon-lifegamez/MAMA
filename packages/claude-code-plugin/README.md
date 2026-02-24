@@ -189,7 +189,7 @@ export MAMA_DISABLE_HOOKS=true
 ### Change Embedding Model
 
 ```bash
-/mama:configure --model Xenova/all-MiniLM-L6-v2
+/mama:configure --model Xenova/multilingual-e5-small
 ```
 
 **Full guide:** [Configuration Guide](docs/guides/configuration.md)
