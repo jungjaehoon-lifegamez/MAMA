@@ -34,8 +34,9 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
 
-      - name: Install dependencies
+      - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
+        working-directory: ${{ github.workspace }}
 
       - name: Build
         run: pnpm build
@@ -75,15 +76,14 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
 
-      - name: Install dependencies
+      - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
+        working-directory: ${{ github.workspace }}
 
-      - name: Replace workspace protocol
+      - name: Replace workspace protocol for publish
         run: |
-          # Replace workspace:* with actual version from mama-core
           CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
           sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
-          cat package.json
 
       - name: Publish to npmjs.org
         run: npm publish --access public || echo "Already published on npmjs, skipping"
@@ -121,19 +121,17 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
 
-      - name: Replace workspace protocol before install
-        run: |
-          # Replace workspace:* with actual npm version BEFORE install
-          # This ensures pnpm fetches mama-core from npm, not workspace
-          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
-          sed -i "s/\"workspace:\\*\"/\"^$CORE_VERSION\"/" package.json
-          cat package.json
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+      - name: Install dependencies (workspace-level)
+        run: pnpm install --ignore-scripts
+        working-directory: ${{ github.workspace }}
 
       - name: Build
         run: pnpm build
+
+      - name: Replace workspace protocol for publish
+        run: |
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\\*\"/\"^$CORE_VERSION\"/" package.json
 
       - name: Publish to npmjs.org
         run: npm publish --access public || echo "Already published on npmjs, skipping"
