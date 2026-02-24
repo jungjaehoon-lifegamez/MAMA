@@ -12,7 +12,7 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 
 ```json
 {
-  "embedding_model": "Xenova/all-MiniLM-L6-v2",
+  "embedding_model": "Xenova/multilingual-e5-small",
   "search_limit": 5,
   "recency_weight": 0.1,
   "disable_hooks": false
@@ -20,9 +20,10 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 ```
 
 **Expected results:**
-- First query: ~600ms (smaller model)
-- Subsequent: ~60ms
-- Accuracy: 75% (5% lower than default)
+
+- First query (cold): ~1700ms (q8 quantized model)
+- Subsequent (warm): ~11ms
+- Accuracy: 80% (default)
 
 ---
 
@@ -40,6 +41,7 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 ```
 
 **Expected results:**
+
 - First query: ~1500ms (larger model)
 - Subsequent: ~150ms
 - Accuracy: 85% (5% better than default)
@@ -61,6 +63,7 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 ```
 
 **Expected results:**
+
 - Performance: Same as default (~89ms)
 - Recent items (last 3 days) will dominate results
 
@@ -80,6 +83,7 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 ```
 
 **Expected results:**
+
 - No automatic context injection
 - All saves must be manual via `/mama-save`
 - Same query performance as default
@@ -94,17 +98,17 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 
 **Available models:**
 
-| Model | Size | First Query | Subsequent | Accuracy |
-|-------|------|-------------|------------|----------|
-| `Xenova/all-MiniLM-L6-v2` | 90MB | ~600ms | ~60ms | 75% |
-| `Xenova/multilingual-e5-small` | 120MB | ~987ms | ~89ms | 80% (default) |
-| `Xenova/gte-large` | 200MB | ~1500ms | ~150ms | 85% |
+| Model                          | Size        | First Query | Subsequent | Accuracy      |
+| ------------------------------ | ----------- | ----------- | ---------- | ------------- |
+| `Xenova/all-MiniLM-L6-v2`      | ~90MB       | ~600ms      | ~60ms      | 75%           |
+| `Xenova/multilingual-e5-small` | ~113MB (q8) | ~1700ms     | ~11ms      | 80% (default) |
+| `Xenova/gte-large`             | 200MB       | ~1500ms     | ~150ms     | 85%           |
 
 **How to choose:**
 
 ```bash
 # For speed
-/mama-configure --model Xenova/all-MiniLM-L6-v2
+/mama-configure --model Xenova/multilingual-e5-small
 
 # For accuracy
 /mama-configure --model Xenova/gte-large
@@ -114,6 +118,7 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 ```
 
 **Impact:**
+
 - Affects: First query time, subsequent query time, accuracy
 - Does not affect: Save speed, Tier 2 fallback
 
@@ -135,19 +140,21 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 
 **Trade-offs:**
 
-| Limit | Query Time | Coverage |
-|-------|-----------|----------|
-| 5 | ~60ms | May miss relevant items |
-| 10 | ~89ms | Good balance (default) |
-| 20 | ~130ms | Comprehensive coverage |
-| 50 | ~250ms | Exhaustive (may be noisy) |
+| Limit | Query Time | Coverage                  |
+| ----- | ---------- | ------------------------- |
+| 5     | ~60ms      | May miss relevant items   |
+| 10    | ~89ms      | Good balance (default)    |
+| 20    | ~130ms     | Comprehensive coverage    |
+| 50    | ~250ms     | Exhaustive (may be noisy) |
 
 **When to increase:**
+
 - You have many decisions (>100)
 - You want comprehensive results
 - Query speed is not critical
 
 **When to decrease:**
+
 - You prioritize speed
 - You have few decisions (<50)
 - You use specific topics (don't need broad search)
@@ -157,6 +164,7 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 ### Recency Tuning
 
 **Parameters:**
+
 - `recency_weight`: How much to favor recent items (0-1, default 0.3)
 - `recency_scale`: Days until recency boost decays (default 7)
 - `recency_decay`: Score multiplier at scale point (0-1, default 0.5)
@@ -254,7 +262,8 @@ npm run test:performance
 **Likely cause:** Large embedding model or slow disk.
 
 **Solutions:**
-1. Use smaller model: `Xenova/all-MiniLM-L6-v2`
+
+1. Use smaller model: `Xenova/all-MiniLM-L6-v2` (~90MB, faster cold start)
 2. Use SSD instead of HDD
 3. Reduce search_limit to 5
 
@@ -265,6 +274,7 @@ npm run test:performance
 **Likely cause:** Large database or high search_limit.
 
 **Solutions:**
+
 1. Reduce search_limit to 5-10
 2. Archive old decisions (move to separate DB)
 3. Use Tier 2 fallback (exact match only)
@@ -276,8 +286,9 @@ npm run test:performance
 **Likely cause:** Model loading during hook execution.
 
 **Solutions:**
+
 1. Pre-warm model: Run `/mama-suggest test` before working
-2. Use smaller model: `Xenova/all-MiniLM-L6-v2`
+2. Use smaller model: `Xenova/all-MiniLM-L6-v2` (faster cold start)
 3. Disable hooks: `MAMA_DISABLE_HOOKS=true`
 
 ---
@@ -287,7 +298,8 @@ npm run test:performance
 **Likely cause:** Large embedding model loaded in memory.
 
 **Solutions:**
-1. Use smaller model: `Xenova/all-MiniLM-L6-v2` (90MB vs 200MB)
+
+1. Use smaller model: `Xenova/all-MiniLM-L6-v2` (~90MB vs ~113MB default)
 2. Restart Claude Code periodically
 3. Use Tier 2 fallback (no model loading)
 
@@ -370,7 +382,7 @@ npm run benchmark:models
 
 # Output:
 # all-MiniLM-L6-v2: 62ms avg
-# multilingual-e5-small: 89ms avg
+# multilingual-e5-small (q8): 11ms avg (warm)
 # gte-large: 154ms avg
 ```
 
