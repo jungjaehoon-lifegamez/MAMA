@@ -26,11 +26,5 @@ reviews:
       instructions: |
         MAMA Core shared modules.
         - Embeddings (Transformers.js)
-        - SQLite + sqlite-vec
+        - SQLite + pure-TS cosine similarity
         - Memory Store
-
-    - path: 'packages/openclaw-plugin/**'
-      instructions: |
-        OpenClaw Gateway plugin.
-        - Direct embedding (no HTTP overhead)
-        - 4 native tools

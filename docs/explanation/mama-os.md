@@ -109,7 +109,7 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 │  • Tool execution display                             │
 │                                                        │
 │  Core Services                                        │
-│  • SQLite + sqlite-vec (vector search)               │
+│  • SQLite + pure-TS cosine similarity                │
 │  • Transformers.js (local embeddings)                │
 │  • Claude Code CLI (subprocess-based agent)           │
 │  • Gateway integrations (Discord, Slack, etc.)       │

@@ -21,7 +21,7 @@
 src/core/
 ├── mama-api.js              # High-level API (save/recall/suggest/update)
 ├── embeddings.js            # Local Transformers.js embeddings
-├── db-manager.js            # SQLite + sqlite-vec initialization
+├── db-manager.js            # SQLite + pure-TS cosine similarity initialization
 ├── memory-store.js          # Decision CRUD operations
 ├── decision-tracker.js      # Decision graph management
 ├── relevance-scorer.js      # Semantic similarity scoring

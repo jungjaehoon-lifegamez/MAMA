@@ -10,7 +10,7 @@
 
 Claude Code plugin for MAMA memory system. Provides 5 slash commands, 4 hooks (2 active), and 1 skill. Distributed via Claude Code marketplace. Self-contained (no npm dependencies) — 27 mama-core modules duplicated in `src/core/`.
 
-**Stack:** JavaScript, Vitest, SQLite + sqlite-vec, Transformers.js (local embeddings)
+**Stack:** JavaScript, Vitest, SQLite + pure-TS cosine similarity, Transformers.js (local embeddings)
 
 ---
 
@@ -33,7 +33,7 @@ claude-code-plugin/
 ├── src/core/                       # 27 modules DUPLICATED from mama-core
 │   ├── mama-api.js                 # High-level memory API
 │   ├── embeddings.js               # HTTP client + Transformers.js fallback
-│   ├── db-manager.js               # SQLite + sqlite-vec
+│   ├── db-manager.js               # SQLite + pure-TS cosine similarity
 │   └── ...                         # (24 more modules)
 ├── tests/                          # 134 tests (commands, hooks, core)
 └── .claude-plugin/plugin.json      # Plugin manifest (entry point)

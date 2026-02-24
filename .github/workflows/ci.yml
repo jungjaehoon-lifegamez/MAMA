@@ -46,8 +46,6 @@ jobs:
         with:
           node-version: '22'
       - uses: pnpm/action-setup@v2
-        with:
-          version: 9
       - name: Get pnpm store directory
         shell: bash
         run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
@@ -77,8 +75,6 @@ jobs:
         with:
           node-version: '22'
       - uses: pnpm/action-setup@v2
-        with:
-          version: 9
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -102,8 +98,6 @@ jobs:
         with:
           node-version: '22'
       - uses: pnpm/action-setup@v2
-        with:
-          version: 9
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -132,8 +126,6 @@ jobs:
         with:
           node-version: '22'
       - uses: pnpm/action-setup@v2
-        with:
-          version: 9
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -157,8 +149,6 @@ jobs:
         with:
           node-version: '22'
       - uses: pnpm/action-setup@v2
-        with:
-          version: 9
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -180,8 +170,6 @@ jobs:
         with:
           node-version: '22'
       - uses: pnpm/action-setup@v2
-        with:
-          version: 9
       - run: pnpm install
       - run: pnpm lint
         continue-on-error: true

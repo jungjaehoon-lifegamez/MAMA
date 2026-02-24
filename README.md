@@ -1,9 +1,5 @@
 # MAMA - Memory-Augmented MCP Assistant
 
-<p align="center">
-  <img src="docs/website/assets/mama-icon.svg" alt="MAMA" width="120" height="120">
-</p>
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-2175%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
@@ -70,7 +66,7 @@ mama init    # copies default skills to ~/.mama/skills/
 mama start   # opens web dashboard at localhost:3847
 ```
 
-**Package:** `@jungjaehoon/mama-os` 0.10.4
+**Package:** `@jungjaehoon/mama-os` 0.11.0
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -191,16 +187,6 @@ Interactive HTML playgrounds run directly inside the MAMA dashboard. Create skil
 | **Cron Workflow Lab** | Node-based DAG editor for cron workflows (trigger → prompt → condition → action) |
 | **Wave Visualizer**   | Multi-Agent task execution flow visualizer with Simulation and Live modes        |
 
-<p align="center">
-  <img src="docs/website/assets/screenshot-skill-lab.png" alt="Skill Lab Playground" width="720">
-</p>
-<p align="center">
-  <img src="docs/website/assets/screenshot-cron-workflow.png" alt="Cron Workflow Lab" width="720">
-</p>
-<p align="center">
-  <img src="docs/website/assets/screenshot-wave-visualizer.png" alt="Wave Visualizer" width="720">
-</p>
-
 Skills Tab and Playground Tab are bidirectionally linked — selecting a skill in Skills opens it in Skill Lab, and publishing from Skill Lab refreshes Skills.
 
 ---
@@ -234,7 +220,7 @@ Skills Tab and Playground Tab are bidirectionally linked — selecting a skill i
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` 1.7.6
+**Package:** `@jungjaehoon/mama-server` 1.8.0
 
 **What happens after installation:**
 
@@ -285,33 +271,6 @@ Claude: "I see you have POST /api/auth/login that returns { userId, token, email
 
 ---
 
-### 🦞 Using OpenClaw Gateway?
-
-**→ Direct gateway integration**
-**→ No MCP overhead (~5ms vs ~180ms)**
-**→ Same MAMA features**
-
-**Use:** [OpenClaw MAMA Plugin](packages/openclaw-plugin/README.md)
-
-```bash
-openclaw plugins install @jungjaehoon/openclaw-mama
-```
-
-Add to `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "plugins": {
-    "slots": { "memory": "openclaw-mama" },
-    "entries": { "openclaw-mama": { "enabled": true } }
-  }
-}
-```
-
-**Package:** `@jungjaehoon/openclaw-mama` 0.5.0
-
----
-
 ### 🔧 Building Custom Integration?
 
 **→ Embedding & search APIs**  
@@ -329,19 +288,18 @@ const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
 const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```
 
-**Package:** `@jungjaehoon/mama-core` 1.1.5
+**Package:** `@jungjaehoon/mama-core` 1.2.0
 
 ---
 
 ## 📦 All Packages
 
-| Package                                                          | Version | Description                                  | Distribution       |
-| ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.10.4  | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.6   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.5   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.14  | Claude Code plugin                           | Claude Marketplace |
-| [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.5.0   | OpenClaw plugin                              | npm                |
+| Package                                                   | Version | Description                                  | Distribution       |
+| --------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)     | 0.11.0  | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md) | 1.8.0   | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-core](packages/mama-core/README.md)    | 1.2.0   | Shared core library (embeddings, DB, memory) | npm                |
+| [mama](packages/claude-code-plugin/README.md)             | 1.7.14  | Claude Code plugin                           | Claude Marketplace |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
 
@@ -433,7 +391,7 @@ mama status
 
 ## 🏗️ Project Structure
 
-This is a monorepo containing five packages:
+This is a monorepo containing four packages:
 
 ```
 MAMA/
@@ -441,8 +399,7 @@ MAMA/
 │   ├── standalone/          # @jungjaehoon/mama-os (npm)
 │   ├── mama-core/           # @jungjaehoon/mama-core (npm)
 │   ├── mcp-server/          # @jungjaehoon/mama-server (npm)
-│   ├── claude-code-plugin/  # mama (Claude Code marketplace)
-│   └── openclaw-plugin/     # @jungjaehoon/openclaw-mama (npm)
+│   └── claude-code-plugin/  # mama (Claude Code marketplace)
 └── docs/                    # Documentation
 ```
 
@@ -494,7 +451,7 @@ MAMA OS was inspired by [OpenClaw](https://github.com/openclaw/openclaw) (former
 - **Simplified Setup**: Single `npm install` instead of running a separate gateway server
 - **Direct CLI**: Uses Claude Code CLI directly, avoiding additional abstraction layers
 
-We provide `@jungjaehoon/openclaw-mama` plugin for users who prefer the OpenClaw ecosystem.
+The OpenClaw plugin has been [extracted to a standalone repo](https://github.com/jungjaehoon-lifegamez/openclaw-mama) for users who prefer the OpenClaw ecosystem.
 
 **Multi-Agent Architecture:**
 The Multi-Agent Swarm system was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode), a multi-agent orchestration framework for AI coding assistants. While MAMA's swarm shares the vision of coordinated AI agents with tiered permissions, it was built specifically for **chat platforms** (Discord, Slack, Telegram) rather than CLI environments, enabling collaborative agent teams accessible from anywhere.
@@ -513,7 +470,6 @@ MAMA's Conductor agent integrates workflow templates from [BMAD-METHOD](https://
 - [npm: @jungjaehoon/mama-server](https://www.npmjs.com/package/@jungjaehoon/mama-server)
 - [npm: @jungjaehoon/mama-os](https://www.npmjs.com/package/@jungjaehoon/mama-os)
 - [npm: @jungjaehoon/mama-core](https://www.npmjs.com/package/@jungjaehoon/mama-core)
-- [npm: @jungjaehoon/openclaw-mama](https://www.npmjs.com/package/@jungjaehoon/openclaw-mama)
 
 ---
 

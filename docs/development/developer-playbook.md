@@ -169,7 +169,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 - @huggingface/transformers ^3.0.0 (embedding generation)
 - Xenova/multilingual-e5-small (default model, 384-dim)
-- sqlite-vec ^0.1.0 (vector search extension)
+- Pure-TS cosine similarity (vector search, no native extension)
 
 **MCP:**
 
