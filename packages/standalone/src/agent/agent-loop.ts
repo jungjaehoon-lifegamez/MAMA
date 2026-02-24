@@ -84,22 +84,6 @@ const DEFAULT_TOOLS_CONFIG = {
 };
 
 /**
- * Check if a tool name matches a pattern (supports wildcards like "browser_*")
- * Reserved for future hybrid tool routing
- */
-function _matchToolPattern(toolName: string, pattern: string): boolean {
-  if (pattern === '*') return true;
-  if (pattern.endsWith('*')) {
-    const prefix = pattern.slice(0, -1);
-    return toolName.startsWith(prefix);
-  }
-  return toolName === pattern;
-}
-
-// _matchToolPattern is reserved for future hybrid routing
-void _matchToolPattern;
-
-/**
  * Load CLAUDE.md system prompt
  * Tries multiple paths: project root, ~/.mama, /etc/mama
  */
