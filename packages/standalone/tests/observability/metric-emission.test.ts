@@ -2,12 +2,14 @@
  * Tests for metric emission callback integration (STORY-020)
  */
 
+process.env.MAMA_FORCE_TIER_3 = '1';
+
 import { describe, it, expect } from 'vitest';
 import type { AgentLoopOptions } from '../../src/agent/types.js';
 
-describe('Metric emission', () => {
-  describe('AgentLoopOptions.onMetric', () => {
-    it('should accept onMetric callback in options', () => {
+describe('STORY-020: Metric emission', () => {
+  describe('AC-01: AgentLoopOptions.onMetric', () => {
+    it('AC-01 - should accept onMetric callback in options', () => {
       const metrics: { name: string; value: number; labels?: Record<string, string> }[] = [];
       const opts: Partial<AgentLoopOptions> = {
         onMetric: (name, value, labels) => {
@@ -30,14 +32,14 @@ describe('Metric emission', () => {
       expect(metrics[2].labels?.error_type).toBe('CLI_ERROR');
     });
 
-    it('should be optional', () => {
+    it('AC-01 - should be optional', () => {
       const opts: Partial<AgentLoopOptions> = {};
       expect(opts.onMetric).toBeUndefined();
     });
   });
 
-  describe('MetricsStore integration with onMetric', () => {
-    it('should bridge callback to MetricsStore', async () => {
+  describe('AC-02: MetricsStore integration with onMetric', () => {
+    it('AC-02 - should bridge callback to MetricsStore', async () => {
       const { MetricsStore } = await import('../../src/observability/metrics-store.js');
       const { join, dirname } = await import('path');
       const { fileURLToPath } = await import('url');
