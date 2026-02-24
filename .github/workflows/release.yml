@@ -51,8 +51,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - name: Configure git
         run: |
@@ -188,8 +186,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - name: Install and publish
         working-directory: packages/mama-core
@@ -217,8 +213,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - name: Install
         working-directory: packages/mcp-server
@@ -254,8 +248,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - name: Install and build
         working-directory: packages/standalone
