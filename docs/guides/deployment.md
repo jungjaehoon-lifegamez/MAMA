@@ -104,7 +104,7 @@ pnpm build
 pnpm test
 
 # Stop deployment if tests fail!
-# All 597 tests must pass
+# All tests must pass
 ```
 
 ### Step 3: Update Versions

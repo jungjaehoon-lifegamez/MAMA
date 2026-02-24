@@ -188,6 +188,12 @@ export class SQLiteAdapter extends DatabaseAdapter {
     for (const row of rows) {
       const candidate = bufferToVector(row.embedding);
       if (!candidate) continue;
+      if (candidate.length !== queryVector.length) {
+        warn(
+          `Skipping rowid ${row.rowid}: dimension mismatch (${candidate.length} vs ${queryVector.length})`
+        );
+        continue;
+      }
       const similarity = cosineSimilarity(candidate, queryVector);
       scored.push({
         rowid: row.rowid,

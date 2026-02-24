@@ -253,7 +253,7 @@ Key code path: `AgentProcessManager` (line 81: `defaultPoolSize: 1`) → `AgentP
 ### **Tier System (Automatic, Not User-Selected)**
 
 - **Tier 1:** Vector search + Graph + Recency (80% accuracy) — Requires embedding model
-- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when pure-TS cosine similarity extension fails
+- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when `vectorSearch()` throws (e.g., missing `embeddings` table or no embeddings stored)
 - **Tier 3:** Skip embeddings entirely — Testing mode (`MAMA_FORCE_TIER_3=true`)
 
 Tier degradation happens automatically at runtime (not user-configurable).

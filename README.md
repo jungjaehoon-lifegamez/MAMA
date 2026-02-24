@@ -391,7 +391,7 @@ mama status
 
 ## 🏗️ Project Structure
 
-This is a monorepo containing five packages:
+This is a monorepo containing four packages:
 
 ```
 MAMA/
