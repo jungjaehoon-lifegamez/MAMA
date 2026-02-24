@@ -1,7 +1,7 @@
 version: "6.0.0"
 project_name: "mama-os-stability"
 project_level: 3
-current_sprint: 1
+current_sprint: 2
 sprint_plan_path: ".docs/sprint-plan-mama-os-stability-2026-02-24.md"
 
 sprints:
@@ -45,34 +45,34 @@ sprints:
     end_date: "2026-03-09"
     capacity_points: 15
     committed_points: 17
-    completed_points: 0
-    status: "not_started"
+    completed_points: 17
+    status: "completed"
     goal: "Token Accuracy + Skill Loading"
     stories:
       - story_id: "STORY-006"
         title: "TokenEstimator (js-tiktoken)"
         points: 5
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-001"
       - story_id: "STORY-007"
         title: "PromptSizeMonitor token migration"
         points: 3
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-001"
       - story_id: "STORY-008"
         title: "Token budget fail-closed"
         points: 3
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-001"
       - story_id: "STORY-009"
         title: "SkillLoader extraction"
         points: 3
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-002"
       - story_id: "STORY-010"
         title: "Semantic skill truncation"
         points: 3
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-002"
 
   - sprint_number: 3
@@ -157,7 +157,7 @@ sprints:
 
 velocity:
   sprint_1: 15
-  sprint_2: null
+  sprint_2: 17
   sprint_3: null
   sprint_4: null
   rolling_average: null

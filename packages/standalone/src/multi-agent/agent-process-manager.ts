@@ -11,11 +11,8 @@
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
-import {
-  loadInstalledSkills,
-  loadBackendAgentsMd,
-  getGatewayToolsPrompt,
-} from '../agent/agent-loop.js';
+import { loadBackendAgentsMd, getGatewayToolsPrompt } from '../agent/agent-loop.js';
+import { loadInstalledSkills } from '../agent/skill-loader.js';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
