@@ -10,7 +10,6 @@ MAMA (Memory-Augmented MCP Assistant) is an always-on companion for Claude Code 
 2. **@jungjaehoon/mama-server** - MCP server published to npm (packages/mcp-server/)
 3. **@jungjaehoon/mama-core** - Shared core modules (packages/mama-core/)
 4. **MAMA Plugin** - Claude Code plugin distributed via marketplace (packages/claude-code-plugin/)
-5. **@jungjaehoon/openclaw-mama** - OpenClaw Gateway plugin (packages/openclaw-plugin/)
 
 ## Build & Test Commands
 

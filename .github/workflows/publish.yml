@@ -10,8 +10,6 @@ on:
       - 'os-v*'
       - 'mama-os-*'
       - 'standalone-v*'
-      - 'openclaw-v*'
-      - 'openclaw-plugin-*'
 
 jobs:
   # Publish mama-core first (other packages depend on it)
@@ -67,52 +65,6 @@ jobs:
     defaults:
       run:
         working-directory: packages/mcp-server
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 9
-
-      - name: Install dependencies
-        run: pnpm install --ignore-scripts
-
-      - name: Replace workspace protocol
-        run: |
-          # Replace workspace:* with actual version from mama-core
-          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
-          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
-          cat package.json
-
-      - name: Publish to npmjs.org
-        run: npm publish --access public || echo "Already published on npmjs, skipping"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish to GitHub Packages
-        run: |
-          NPM_RC="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
-          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" > "$NPM_RC"
-          npm publish --registry https://npm.pkg.github.com --access public || echo "Already published on GitHub Packages, skipping"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish-openclaw-plugin:
-    if: startsWith(github.ref, 'refs/tags/openclaw-v') || startsWith(github.ref, 'refs/tags/openclaw-plugin-')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    defaults:
-      run:
-        working-directory: packages/openclaw-plugin
     steps:
       - uses: actions/checkout@v4
 
