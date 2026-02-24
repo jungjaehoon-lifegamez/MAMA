@@ -179,11 +179,13 @@ export class PromptSizeMonitor {
           0,
           layer.content.length - charsToRemove - truncationMarker.length
         );
+        const newContent = layer.content.slice(0, safeKeep) + truncationMarker;
+        const newTokens = countTokens(newContent);
         resultLayers[index] = {
           ...layer,
-          content: layer.content.slice(0, safeKeep) + truncationMarker,
+          content: newContent,
         };
-        currentTokens -= excess; // approximate
+        currentTokens = currentTokens - tokens + newTokens;
         truncatedLayers.push(layer.name);
       }
     }

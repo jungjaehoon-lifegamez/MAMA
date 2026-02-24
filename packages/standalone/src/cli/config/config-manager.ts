@@ -29,11 +29,18 @@ export async function initConfig(): Promise<MAMAConfig> {
   return _cachedConfig;
 }
 
+let _warnedUninit = false;
+
 /**
  * Get the cached config synchronously.
- * Returns DEFAULT_CONFIG if initConfig() hasn't been called yet.
+ * Logs a warning on first call if initConfig() hasn't been called yet,
+ * helping catch initialization order bugs. Returns DEFAULT_CONFIG as fallback.
  */
 export function getConfig(): MAMAConfig {
+  if (!_cachedConfig && !_warnedUninit) {
+    _warnedUninit = true;
+    console.warn('[config] getConfig() called before initConfig(). Using defaults.');
+  }
   return _cachedConfig ?? DEFAULT_CONFIG;
 }
 
@@ -65,6 +72,7 @@ export function overrideConfig(overrides: Partial<MAMAConfig>): MAMAConfig {
  */
 export function resetConfigCache(): void {
   _cachedConfig = null;
+  _warnedUninit = false;
 }
 
 /**
