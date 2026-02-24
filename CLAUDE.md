@@ -131,9 +131,9 @@ pnpm vitest run tests/commands/
 
 ### Decision Storage
 
-- **Database:** SQLite + sqlite-vec extension
+- **Database:** SQLite + pure-TS cosine similarity (no native extensions)
 - **Location:** `~/.claude/mama-memory.db` (configurable via MAMA_DB_PATH)
-- **Schema:** decisions table with embedding_vector column
+- **Schema:** decisions table + embeddings table (BLOB storage)
 - **Graph edges:** `supersedes`, `builds_on`, `debates`, `synthesizes` (v1.3), plus legacy `refines`/`contradicts`
 
 ### Embeddings

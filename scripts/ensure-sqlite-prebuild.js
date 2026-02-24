@@ -2,9 +2,8 @@
 /**
  * Shared utility to ensure better-sqlite3 prebuild is installed
  *
- * This script is called by postinstall scripts in both:
- * - packages/mcp-server
- * - packages/openclaw-plugin
+ * This script is called by postinstall scripts in:
+ * - packages/mama-core
  *
  * It attempts to load better-sqlite3 and if it fails, runs prebuild-install
  * to download the appropriate prebuilt binary for the current Node.js version.

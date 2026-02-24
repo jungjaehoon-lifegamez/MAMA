@@ -285,33 +285,6 @@ Claude: "I see you have POST /api/auth/login that returns { userId, token, email
 
 ---
 
-### 🦞 Using OpenClaw Gateway?
-
-**→ Direct gateway integration**
-**→ No MCP overhead (~5ms vs ~180ms)**
-**→ Same MAMA features**
-
-**Use:** [OpenClaw MAMA Plugin](packages/openclaw-plugin/README.md)
-
-```bash
-openclaw plugins install @jungjaehoon/openclaw-mama
-```
-
-Add to `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "plugins": {
-    "slots": { "memory": "openclaw-mama" },
-    "entries": { "openclaw-mama": { "enabled": true } }
-  }
-}
-```
-
-**Package:** `@jungjaehoon/openclaw-mama` 0.5.0
-
----
-
 ### 🔧 Building Custom Integration?
 
 **→ Embedding & search APIs**  
@@ -335,13 +308,12 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 ## 📦 All Packages
 
-| Package                                                          | Version | Description                                  | Distribution       |
-| ---------------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)            | 0.10.4  | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md)        | 1.7.6   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)           | 1.1.5   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)                    | 1.7.14  | Claude Code plugin                           | Claude Marketplace |
-| [@jungjaehoon/openclaw-mama](packages/openclaw-plugin/README.md) | 0.5.0   | OpenClaw plugin                              | npm                |
+| Package                                                   | Version | Description                                  | Distribution       |
+| --------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)     | 0.10.4  | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md) | 1.7.6   | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-core](packages/mama-core/README.md)    | 1.1.5   | Shared core library (embeddings, DB, memory) | npm                |
+| [mama](packages/claude-code-plugin/README.md)             | 1.7.14  | Claude Code plugin                           | Claude Marketplace |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
 
@@ -441,8 +413,7 @@ MAMA/
 │   ├── standalone/          # @jungjaehoon/mama-os (npm)
 │   ├── mama-core/           # @jungjaehoon/mama-core (npm)
 │   ├── mcp-server/          # @jungjaehoon/mama-server (npm)
-│   ├── claude-code-plugin/  # mama (Claude Code marketplace)
-│   └── openclaw-plugin/     # @jungjaehoon/openclaw-mama (npm)
+│   └── claude-code-plugin/  # mama (Claude Code marketplace)
 └── docs/                    # Documentation
 ```
 
@@ -494,7 +465,7 @@ MAMA OS was inspired by [OpenClaw](https://github.com/openclaw/openclaw) (former
 - **Simplified Setup**: Single `npm install` instead of running a separate gateway server
 - **Direct CLI**: Uses Claude Code CLI directly, avoiding additional abstraction layers
 
-We provide `@jungjaehoon/openclaw-mama` plugin for users who prefer the OpenClaw ecosystem.
+The OpenClaw plugin has been [extracted to a standalone repo](https://github.com/jungjaehoon-lifegamez/openclaw-mama) for users who prefer the OpenClaw ecosystem.
 
 **Multi-Agent Architecture:**
 The Multi-Agent Swarm system was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode), a multi-agent orchestration framework for AI coding assistants. While MAMA's swarm shares the vision of coordinated AI agents with tiered permissions, it was built specifically for **chat platforms** (Discord, Slack, Telegram) rather than CLI environments, enabling collaborative agent teams accessible from anywhere.
@@ -513,7 +484,6 @@ MAMA's Conductor agent integrates workflow templates from [BMAD-METHOD](https://
 - [npm: @jungjaehoon/mama-server](https://www.npmjs.com/package/@jungjaehoon/mama-server)
 - [npm: @jungjaehoon/mama-os](https://www.npmjs.com/package/@jungjaehoon/mama-os)
 - [npm: @jungjaehoon/mama-core](https://www.npmjs.com/package/@jungjaehoon/mama-core)
-- [npm: @jungjaehoon/openclaw-mama](https://www.npmjs.com/package/@jungjaehoon/openclaw-mama)
 
 ---
 

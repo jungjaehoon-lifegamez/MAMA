@@ -14,15 +14,15 @@
 
 ## KEY MODULES
 
-| Module                  | Lines | Purpose                                     | Notes                                   |
-| ----------------------- | ----- | ------------------------------------------- | --------------------------------------- |
-| `mama-api.js`           | 2,615 | High-level memory API (save/search/update)  | **SPLIT CANDIDATE** (CC=175, too large) |
-| `embeddings.js`         | 450   | HTTP client + Transformers.js fallback      | Connects to localhost:3847 server       |
-| `db-manager.js`         | 380   | SQLite + sqlite-vec initialization          | Handles migrations, tier degradation    |
-| `memory-store.js`       | 520   | CRUD + vector search for decisions          | Tier 1: vector, Tier 2: exact match     |
-| `decision-tracker.js`   | 410   | Graph management (builds_on, debates, etc.) | Tracks decision evolution chains        |
-| `relevance-scorer.js`   | 290   | Scoring algorithm for search results        | Combines similarity + recency + graph   |
-| `checkpoint-manager.js` | 340   | Session state persistence                   | Stores summary, next_steps, open_files  |
+| Module                  | Lines | Purpose                                           | Notes                                   |
+| ----------------------- | ----- | ------------------------------------------------- | --------------------------------------- |
+| `mama-api.js`           | 2,615 | High-level memory API (save/search/update)        | **SPLIT CANDIDATE** (CC=175, too large) |
+| `embeddings.js`         | 450   | HTTP client + Transformers.js fallback            | Connects to localhost:3847 server       |
+| `db-manager.js`         | 380   | SQLite + pure-TS cosine similarity initialization | Handles migrations, tier degradation    |
+| `memory-store.js`       | 520   | CRUD + vector search for decisions                | Tier 1: vector, Tier 2: exact match     |
+| `decision-tracker.js`   | 410   | Graph management (builds_on, debates, etc.)       | Tracks decision evolution chains        |
+| `relevance-scorer.js`   | 290   | Scoring algorithm for search results              | Combines similarity + recency + graph   |
+| `checkpoint-manager.js` | 340   | Session state persistence                         | Stores summary, next_steps, open_files  |
 
 ---
 
@@ -55,8 +55,8 @@ src/
 
 ## TIER SYSTEM (AUTOMATIC DEGRADATION)
 
-- **Tier 1:** Vector search + Graph + Recency (80% accuracy) — Requires sqlite-vec extension
-- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when sqlite-vec fails
+- **Tier 1:** Vector search + Graph + Recency (80% accuracy) — Requires pure-TS cosine similarity extension
+- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when pure-TS cosine similarity fails
 - **Tier 3:** Skip embeddings entirely — Testing mode (`MAMA_FORCE_TIER_3=true`)
 
 Tier degradation happens at runtime (not user-configurable). Check `db-manager.js` for logic.

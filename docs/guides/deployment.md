@@ -6,15 +6,14 @@ This document describes the deployment workflow, version management policy, and 
 
 ## Overview
 
-MAMA is a pnpm workspace-based monorepo with five packages:
+MAMA is a pnpm workspace-based monorepo with four packages:
 
-| Package            | Location                       | Deployment Target  | npm Name                     | Version |
-| ------------------ | ------------------------------ | ------------------ | ---------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`       | 0.10.4  |
-| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server`   | 1.7.6   |
-| MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`     | 1.1.5   |
-| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                       | 1.7.14  |
-| OpenClaw Plugin    | `packages/openclaw-plugin/`    | OpenClaw Plugins   | `@jungjaehoon/openclaw-mama` | 0.5.0   |
+| Package            | Location                       | Deployment Target  | npm Name                   | Version |
+| ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.10.4  |
+| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.7.6   |
+| MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`   | 1.1.5   |
+| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.7.14  |
 
 ---
 
@@ -63,7 +62,6 @@ Synchronize versions across these files before deployment:
 | `packages/mcp-server/package.json`         | `version` | 1.7.6           |
 | `packages/mama-core/package.json`          | `version` | 1.1.5           |
 | `packages/claude-code-plugin/package.json` | `version` | 1.7.14          |
-| `packages/openclaw-plugin/package.json`    | `version` | 0.5.0           |
 
 ### Version Update Example
 

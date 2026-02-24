@@ -8,9 +8,9 @@
 
 ## OVERVIEW
 
-MAMA (Memory-Augmented MCP Assistant) — Contract-first memory system for Claude. Tracks WHY you decided, not just WHAT you chose. Prevents vibe coding breakage across sessions. Monorepo with 5 packages: MCP server (npm), Claude Code plugin (marketplace), MAMA OS standalone agent (npm), OpenClaw plugin (npm), shared core (npm).
+MAMA (Memory-Augmented MCP Assistant) — Contract-first memory system for Claude. Tracks WHY you decided, not just WHAT you chose. Prevents vibe coding breakage across sessions. Monorepo with 4 packages: MCP server (npm), Claude Code plugin (marketplace), MAMA OS standalone agent (npm), shared core (npm).
 
-**Stack:** JavaScript (MCP/plugin), TypeScript (standalone), pnpm workspaces, Vitest, SQLite + sqlite-vec, Transformers.js (local embeddings), GitHub Actions
+**Stack:** JavaScript (MCP/plugin), TypeScript (standalone), pnpm workspaces, Vitest, SQLite + pure-TS cosine similarity, Transformers.js (local embeddings), GitHub Actions
 
 ---
 
@@ -22,8 +22,7 @@ MAMA/
 │   ├── mama-core/                  # Shared foundation (32 modules: embeddings, db, memory API)
 │   ├── mcp-server/                 # MCP server for Claude Desktop/Code (4 tools: save/search/update/checkpoint)
 │   ├── claude-code-plugin/         # Claude Code plugin (commands + hooks + local mama-core copies)
-│   ├── standalone/                 # MAMA OS agent (Discord/Slack/Telegram, multi-agent swarm, CLI, web UI)
-│   └── openclaw-plugin/            # OpenClaw gateway plugin
+│   └── standalone/                 # MAMA OS agent (Discord/Slack/Telegram, multi-agent swarm, CLI, web UI)
 ├── docs/                           # User-facing documentation (Diátaxis framework)
 ├── .mama/                          # Project identity (SOUL.md, IDENTITY.md, config.json)
 ├── .sisyphus/                      # Internal planning artifacts (drafts/, plans/)
@@ -38,20 +37,20 @@ MAMA/
 
 ## WHERE TO LOOK
 
-| Task                          | Location                                                      | Notes                                                 |
-| ----------------------------- | ------------------------------------------------------------- | ----------------------------------------------------- |
-| **Add memory feature**        | `packages/mama-core/src/mama-api.js`                          | High-level API (2,615 lines — SPLIT CANDIDATE)        |
-| **Add MCP tool**              | `packages/mcp-server/src/tools/`                              | All tools use `mama-core/mama-api`                    |
-| **Modify embeddings**         | `packages/mama-core/src/embeddings.js`                        | HTTP client + local Transformers.js fallback          |
-| **Modify database**           | `packages/mama-core/src/db-manager.js` + `src/db/migrations/` | SQLite + sqlite-vec, migrations required              |
-| **Add Claude Code command**   | `packages/claude-code-plugin/commands/*.md`                   | Markdown-based command definitions                    |
-| **Modify hooks**              | `packages/claude-code-plugin/scripts/*.js`                    | Hook scripts (must complete <1800ms)                  |
-| **Add gateway integration**   | `packages/standalone/src/gateways/*.ts`                       | Discord, Slack, Telegram handlers                     |
-| **Modify multi-agent**        | `packages/standalone/src/multi-agent/swarm/`                  | Wave-based orchestration (5 waves, tier-based access) |
-| **Fix reuse-first violation** | Check `packages/mcp-server/src/mama/` FIRST                   | CRITICAL: 70% of features already exist here          |
-| **Run all tests**             | `pnpm test` (root)                                            | Single-fork pool required (ONNX/V8 locking)           |
-| **Build all packages**        | `pnpm build` (root)                                           | TypeScript compile for standalone only                |
-| **Lint + format**             | `pnpm lint:fix && pnpm format`                                | ESLint + Prettier auto-fix                            |
+| Task                          | Location                                                      | Notes                                                   |
+| ----------------------------- | ------------------------------------------------------------- | ------------------------------------------------------- |
+| **Add memory feature**        | `packages/mama-core/src/mama-api.js`                          | High-level API (2,615 lines — SPLIT CANDIDATE)          |
+| **Add MCP tool**              | `packages/mcp-server/src/tools/`                              | All tools use `mama-core/mama-api`                      |
+| **Modify embeddings**         | `packages/mama-core/src/embeddings.js`                        | HTTP client + local Transformers.js fallback            |
+| **Modify database**           | `packages/mama-core/src/db-manager.js` + `src/db/migrations/` | SQLite + pure-TS cosine similarity, migrations required |
+| **Add Claude Code command**   | `packages/claude-code-plugin/commands/*.md`                   | Markdown-based command definitions                      |
+| **Modify hooks**              | `packages/claude-code-plugin/scripts/*.js`                    | Hook scripts (must complete <1800ms)                    |
+| **Add gateway integration**   | `packages/standalone/src/gateways/*.ts`                       | Discord, Slack, Telegram handlers                       |
+| **Modify multi-agent**        | `packages/standalone/src/multi-agent/swarm/`                  | Wave-based orchestration (5 waves, tier-based access)   |
+| **Fix reuse-first violation** | Check `packages/mcp-server/src/mama/` FIRST                   | CRITICAL: 70% of features already exist here            |
+| **Run all tests**             | `pnpm test` (root)                                            | Single-fork pool required (ONNX/V8 locking)             |
+| **Build all packages**        | `pnpm build` (root)                                           | TypeScript compile for standalone only                  |
+| **Lint + format**             | `pnpm lint:fix && pnpm format`                                | ESLint + Prettier auto-fix                              |
 
 ---
 
@@ -116,7 +115,6 @@ describe('Story M1.2: SQLite Database Initialization', () => {
 - `src/server.js` (mcp-server)
 - `src/index.js` (mama-core)
 - `dist/index.js` (standalone, compiled)
-- `index.ts` (openclaw-plugin, raw TypeScript)
 - `.claude-plugin/plugin.json` (claude-code-plugin, no main field)
 
 ---
@@ -255,7 +253,7 @@ Key code path: `AgentProcessManager` (line 81: `defaultPoolSize: 1`) → `AgentP
 ### **Tier System (Automatic, Not User-Selected)**
 
 - **Tier 1:** Vector search + Graph + Recency (80% accuracy) — Requires embedding model
-- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when sqlite-vec extension fails
+- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when pure-TS cosine similarity extension fails
 - **Tier 3:** Skip embeddings entirely — Testing mode (`MAMA_FORCE_TIER_3=true`)
 
 Tier degradation happens automatically at runtime (not user-configurable).

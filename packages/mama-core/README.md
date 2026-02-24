@@ -108,7 +108,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 - **@huggingface/transformers** - Local embedding generation
 - **better-sqlite3** - SQLite database
-- **sqlite-vec** - Vector similarity extension
+- **Pure-TS cosine similarity** - Vector search (no native extensions)
 
 ## Development
 
