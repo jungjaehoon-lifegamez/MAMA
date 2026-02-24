@@ -1,9 +1,5 @@
 # MAMA - Memory-Augmented MCP Assistant
 
-<p align="center">
-  <img src="docs/website/assets/mama-icon.svg" alt="MAMA" width="120" height="120">
-</p>
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-2175%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
@@ -190,16 +186,6 @@ Interactive HTML playgrounds run directly inside the MAMA dashboard. Create skil
 | **Skill Lab**         | Create, verify, and publish skills with step-by-step wizard                      |
 | **Cron Workflow Lab** | Node-based DAG editor for cron workflows (trigger → prompt → condition → action) |
 | **Wave Visualizer**   | Multi-Agent task execution flow visualizer with Simulation and Live modes        |
-
-<p align="center">
-  <img src="docs/website/assets/screenshot-skill-lab.png" alt="Skill Lab Playground" width="720">
-</p>
-<p align="center">
-  <img src="docs/website/assets/screenshot-cron-workflow.png" alt="Cron Workflow Lab" width="720">
-</p>
-<p align="center">
-  <img src="docs/website/assets/screenshot-wave-visualizer.png" alt="Wave Visualizer" width="720">
-</p>
 
 Skills Tab and Playground Tab are bidirectionally linked — selecting a skill in Skills opens it in Skill Lab, and publishing from Skill Lab refreshes Skills.
 
