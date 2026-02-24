@@ -218,6 +218,31 @@ When token budget is exceeded, enforce hard cutoff instead of best-effort trunca
 
 ---
 
+### FR-008: Per-Agent MCP Tool Filtering
+
+**Priority:** Should Have
+
+**Description:**
+Each agent subprocess currently receives the full MCP tool catalog in its system prompt, even if it only needs 3-4 tools. Add an `allowed_tools` field per agent config so that only relevant tool descriptions are injected into the subprocess prompt. This reduces token overhead from unnecessary tool definitions (can be thousands of tokens per MCP server) and prevents hallucinated calls to tools the agent shouldn't use.
+
+**Context:** Community feedback (dev.to discussion, signalstack + Mahima) identified this as the next optimization layer after subprocess isolation — preventing *unnecessary* injection complements preventing *repeated* injection.
+
+**Current state:**
+- Tier-based permissions (Tier 1=all, Tier 2/3=read-only) are **prompt-level only** — full tool descriptions still injected
+- Each MCP server's tool catalog loaded in full regardless of agent's actual needs
+
+**Acceptance Criteria:**
+- [ ] Agent persona config supports `allowed_tools?: string[]` field
+- [ ] When `allowed_tools` is set, only matching tool descriptions injected into system prompt
+- [ ] When `allowed_tools` is omitted, current behavior preserved (all tools available)
+- [ ] Tool filtering applies to both gateway tools and MCP server tools
+- [ ] Token savings from filtering reported as `tools_filtered_count` metric
+- [ ] Agents cannot call tools not in their `allowed_tools` list (hard enforcement, not just prompt-based)
+
+**Dependencies:** FR-004 (ToolRegistry), FR-005 (config externalization)
+
+---
+
 ## Non-Functional Requirements
 
 ### NFR-001: Performance — Token Estimation
@@ -374,20 +399,21 @@ Users can tune MAMA OS behavior without code changes. Prerequisite for FR-001, F
 
 ---
 
-### EPIC-005: Gateway Tools SSOT
+### EPIC-005: Gateway Tools SSOT & Tool Filtering
 
 **Description:**
-Consolidate gateway tool definitions into a single source that generates all artifacts.
+Consolidate gateway tool definitions into a single source that generates all artifacts, and add per-agent tool filtering to reduce unnecessary tool description injection.
 
 **Functional Requirements:**
 - FR-004 (Gateway Tools Single Source of Truth)
+- FR-008 (Per-Agent MCP Tool Filtering)
 
-**Story Count Estimate:** 2-3
+**Story Count Estimate:** 4-5
 
 **Priority:** Should Have
 
 **Business Value:**
-Eliminates tool drift bugs. New tool onboarding becomes a single-file change.
+Eliminates tool drift bugs and reduces per-agent token overhead from unnecessary tool descriptions. New tool onboarding becomes a single-file change. Community feedback confirms this is a key optimization for multi-agent setups.
 
 ---
 
@@ -426,8 +452,9 @@ Operators can diagnose issues from metrics. Prerequisite for data-driven optimiz
 - As an operator, I want to tune timeouts and thresholds via config file so that I don't need to modify source code.
 - As an operator, I want runtime config override via API so that I can adjust behavior without restart.
 
-### EPIC-005: Gateway Tools SSOT
+### EPIC-005: Gateway Tools SSOT & Tool Filtering
 - As a developer, I want to add a gateway tool by editing one file so that I don't forget to update fallback or docs.
+- As an operator, I want each agent to only see the tools it needs so that token budget isn't wasted on irrelevant tool descriptions.
 
 ### EPIC-006: Observability
 - As an operator, I want to see turn counts, failure rates, and truncation events so that I can diagnose quality issues.
@@ -571,9 +598,9 @@ After architecture, run `/sprint-planning` to:
 | EPIC-002 | Skill Loading | FR-002 | 2-3 |
 | EPIC-003 | CLI Backend Unification | FR-003 | 4-5 |
 | EPIC-004 | Configuration System | FR-005 | 3-4 |
-| EPIC-005 | Gateway Tools SSOT | FR-004 | 2-3 |
+| EPIC-005 | Gateway Tools SSOT & Tool Filtering | FR-004, FR-008 | 4-5 |
 | EPIC-006 | Observability | FR-006 | 3-4 |
-| **Total** | | **7 FRs** | **18-24 stories** |
+| **Total** | | **8 FRs** | **20-27 stories** |
 
 ---
 
@@ -584,7 +611,7 @@ After architecture, run `/sprint-planning` to:
 | Priority | Count | IDs |
 |----------|-------|-----|
 | Must Have | 4 | FR-001, FR-002, FR-003, FR-005 |
-| Should Have | 3 | FR-004, FR-006, FR-007 |
+| Should Have | 4 | FR-004, FR-006, FR-007, FR-008 |
 | Could Have | 0 | — |
 
 ### Non-Functional Requirements
