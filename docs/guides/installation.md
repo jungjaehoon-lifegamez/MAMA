@@ -73,42 +73,6 @@ mama start
 
 ---
 
-### For OpenClaw Users
-
-Native plugin with **auto-recall** — memories surface automatically during conversation.
-
-**Step 1: Install Plugin**
-
-```bash
-openclaw plugins install @jungjaehoon/openclaw-mama
-```
-
-**Step 2: Enable in config**
-
-Add to `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "plugins": {
-    "slots": { "memory": "openclaw-mama" },
-    "entries": { "openclaw-mama": { "enabled": true } }
-  }
-}
-```
-
-**Step 3: Restart gateway**
-
-```bash
-openclaw gateway restart
-```
-
-**What you get:**
-
-- Auto-recall: relevant decisions injected on every agent start
-- 4 tools: `mama_search`, `mama_save`, `mama_load_checkpoint`, `mama_update`
-
----
-
 ### For Claude Code Users
 
 **Step 1: Install Plugin**
@@ -341,7 +305,7 @@ Then configure with absolute path:
 
 ## Architecture Overview
 
-MAMA uses a **5-package architecture**:
+MAMA uses a **4-package architecture**:
 
 1. **@jungjaehoon/mama-os** (Standalone Agent)
    - Always-on AI agent with gateway support
@@ -351,8 +315,8 @@ MAMA uses a **5-package architecture**:
 
 2. **@jungjaehoon/mama-core** (Core Library)
    - Shared core: embeddings, DB, memory management
-   - Used by standalone, MCP server, and plugins
-   - Contains: better-sqlite3, @huggingface/transformers, sqlite-vec
+   - Used by standalone, MCP server, and plugin
+   - Contains: better-sqlite3, @huggingface/transformers, pure-TS cosine similarity
 
 3. **@jungjaehoon/mama-server** (MCP Server)
    - Independent npm package for Claude Desktop/Code
@@ -365,19 +329,13 @@ MAMA uses a **5-package architecture**:
    - Hooks for automatic context injection
    - References the MCP server via .mcp.json
 
-5. **@jungjaehoon/openclaw-mama** (OpenClaw Plugin)
-   - Native plugin with lifecycle hooks
-   - Auto-recall on agent start
-   - Direct module integration (no HTTP)
-
 **Benefits:**
 
-- ✅ One core library, multiple distribution channels
-- ✅ Standalone agent for always-on use cases
-- ✅ MCP server for Claude Desktop/Code integration
-- ✅ OpenClaw gets native auto-recall
-- ✅ Platform-specific compilation handled automatically
-- ✅ Shared decision database across all tools
+- One core library, multiple distribution channels
+- Standalone agent for always-on use cases
+- MCP server for Claude Desktop/Code integration
+- Platform-specific compilation handled automatically
+- Shared decision database across all tools
 
 ---
 

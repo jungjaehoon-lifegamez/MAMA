@@ -36,7 +36,6 @@ jobs:
       mama_server_version: ${{ steps.versions.outputs.mama_server }}
       mama_os_version: ${{ steps.versions.outputs.mama_os }}
       mama_plugin_version: ${{ steps.versions.outputs.mama_plugin }}
-      openclaw_version: ${{ steps.versions.outputs.openclaw }}
       release_tag: ${{ steps.versions.outputs.release_tag }}
       changelog: ${{ steps.changelog.outputs.content }}
     steps:
@@ -52,8 +51,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - name: Configure git
         run: |
@@ -67,7 +64,7 @@ jobs:
           PACKAGES="${{ inputs.packages }}"
 
           # Validate all package.json files exist
-          for pkg in packages/mama-core packages/mcp-server packages/standalone packages/claude-code-plugin packages/openclaw-plugin; do
+          for pkg in packages/mama-core packages/mcp-server packages/standalone packages/claude-code-plugin; do
             if [[ ! -f "$pkg/package.json" ]]; then
               echo "::error::Package manifest not found: $pkg/package.json"
               exit 1
@@ -90,8 +87,6 @@ jobs:
           SERVER_CURRENT=$(jq -r '.version' packages/mcp-server/package.json)
           OS_CURRENT=$(jq -r '.version' packages/standalone/package.json)
           PLUGIN_CURRENT=$(jq -r '.version' packages/claude-code-plugin/package.json)
-          OPENCLAW_CURRENT=$(jq -r '.version' packages/openclaw-plugin/package.json)
-
           # Calculate new versions
           if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-core"* ]]; then
             CORE_NEW=$(bump_version "$CORE_CURRENT" "$RELEASE_TYPE")
@@ -123,13 +118,6 @@ jobs:
             PLUGIN_NEW=$PLUGIN_CURRENT
           fi
 
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"openclaw"* ]]; then
-            OPENCLAW_NEW=$(bump_version "$OPENCLAW_CURRENT" "$RELEASE_TYPE")
-            jq --arg v "$OPENCLAW_NEW" '.version = $v' packages/openclaw-plugin/package.json > tmp.json && mv tmp.json packages/openclaw-plugin/package.json
-          else
-            OPENCLAW_NEW=$OPENCLAW_CURRENT
-          fi
-
           # Determine release tag (use mama-os version as primary)
           RELEASE_TAG="v${OS_NEW}"
 
@@ -137,7 +125,6 @@ jobs:
           echo "mama_server=$SERVER_NEW" >> $GITHUB_OUTPUT
           echo "mama_os=$OS_NEW" >> $GITHUB_OUTPUT
           echo "mama_plugin=$PLUGIN_NEW" >> $GITHUB_OUTPUT
-          echo "openclaw=$OPENCLAW_NEW" >> $GITHUB_OUTPUT
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
           echo "### Version Summary" >> $GITHUB_STEP_SUMMARY
@@ -147,7 +134,7 @@ jobs:
           echo "| mama-server | $SERVER_CURRENT | $SERVER_NEW |" >> $GITHUB_STEP_SUMMARY
           echo "| mama-os | $OS_CURRENT | $OS_NEW |" >> $GITHUB_STEP_SUMMARY
           echo "| mama-plugin | $PLUGIN_CURRENT | $PLUGIN_NEW |" >> $GITHUB_STEP_SUMMARY
-          echo "| openclaw | $OPENCLAW_CURRENT | $OPENCLAW_NEW |" >> $GITHUB_STEP_SUMMARY
+
 
       - name: Extract changelog
         id: changelog
@@ -199,8 +186,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - name: Install and publish
         working-directory: packages/mama-core
@@ -228,8 +213,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - name: Install
         working-directory: packages/mcp-server
@@ -265,8 +248,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - name: Install and build
         working-directory: packages/standalone
@@ -286,38 +267,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # Step 5: Publish openclaw-plugin
-  publish-openclaw:
-    needs: [prepare-release, publish-mama-core]
-    if: ${{ always() && !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'openclaw')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare-release.outputs.release_tag }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 9
-
-      - name: Install and publish
-        working-directory: packages/openclaw-plugin
-        run: |
-          pnpm install --ignore-scripts
-          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
-          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
-          npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  # Step 6: Sync Claude plugin to marketplace
+  # Step 5: Sync Claude plugin to marketplace
   sync-plugin:
     needs: [prepare-release, publish-mama-server]
     if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-plugin')) }}
@@ -365,7 +315,7 @@ jobs:
           git commit -m "chore: Sync MAMA plugin v${{ needs.prepare-release.outputs.mama_plugin_version }}"
           git push
 
-  # Step 7: Deploy GitHub Pages
+  # Step 6: Deploy GitHub Pages
   deploy-pages:
     needs: prepare-release
     if: ${{ !inputs.dry_run }}
@@ -390,9 +340,9 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  # Step 8: Create GitHub Release
+  # Step 7: Create GitHub Release
   create-release:
-    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, publish-openclaw, sync-plugin, deploy-pages]
+    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, sync-plugin, deploy-pages]
     if: ${{ !inputs.dry_run && always() && needs.prepare-release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
@@ -414,7 +364,6 @@ jobs:
             | @jungjaehoon/mama-core | ${{ needs.prepare-release.outputs.mama_core_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-core)](https://www.npmjs.com/package/@jungjaehoon/mama-core) |
             | @jungjaehoon/mama-server | ${{ needs.prepare-release.outputs.mama_server_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-server)](https://www.npmjs.com/package/@jungjaehoon/mama-server) |
             | @jungjaehoon/mama-os | ${{ needs.prepare-release.outputs.mama_os_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-os)](https://www.npmjs.com/package/@jungjaehoon/mama-os) |
-            | @jungjaehoon/openclaw-mama | ${{ needs.prepare-release.outputs.openclaw_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/openclaw-mama)](https://www.npmjs.com/package/@jungjaehoon/openclaw-mama) |
             | mama (Claude Plugin) | ${{ needs.prepare-release.outputs.mama_plugin_version }} | Claude Marketplace |
 
             ### Installation
@@ -443,7 +392,7 @@ jobs:
 
   # Summary job
   summary:
-    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, publish-openclaw, sync-plugin, deploy-pages, create-release]
+    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, sync-plugin, deploy-pages, create-release]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -457,7 +406,6 @@ jobs:
           echo "| publish-mama-core | ${{ needs.publish-mama-core.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| publish-mama-server | ${{ needs.publish-mama-server.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| publish-mama-os | ${{ needs.publish-mama-os.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| publish-openclaw | ${{ needs.publish-openclaw.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| sync-plugin | ${{ needs.sync-plugin.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| deploy-pages | ${{ needs.deploy-pages.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| create-release | ${{ needs.create-release.result }} |" >> $GITHUB_STEP_SUMMARY

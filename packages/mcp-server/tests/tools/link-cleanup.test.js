@@ -129,8 +129,10 @@ describe('Epic 5.1: Link Cleanup Tools', () => {
     adapter.prepare('DELETE FROM link_audit_log').run();
     adapter.prepare('DELETE FROM decision_edges').run();
     adapter.prepare('DELETE FROM decisions').run();
-    if (adapter.vectorSearchEnabled) {
-      adapter.prepare('DELETE FROM vss_memories').run();
+    try {
+      adapter.prepare('DELETE FROM embeddings').run();
+    } catch {
+      // embeddings table may not exist yet
     }
   });
 
