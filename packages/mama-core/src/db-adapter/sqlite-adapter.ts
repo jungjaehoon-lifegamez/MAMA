@@ -377,8 +377,8 @@ export class SQLiteAdapter extends DatabaseAdapter {
         );
         let migrated = 0;
         for (const row of rows) {
-          insertStmt.run(row.rowid, row.embedding);
-          migrated++;
+          const res = insertStmt.run(row.rowid, row.embedding);
+          if (res.changes > 0) migrated++;
         }
         info(`[sqlite-adapter] Migrated ${migrated} embeddings from vss_memories to embeddings`);
       }
@@ -394,9 +394,16 @@ export class SQLiteAdapter extends DatabaseAdapter {
 export default SQLiteAdapter;
 
 function bufferToVector(buffer: Buffer | null): Float32Array | null {
-  if (!buffer) {
+  if (!buffer || buffer.byteLength % 4 !== 0) {
     return null;
   }
-  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  return new Float32Array(arrayBuffer);
+  try {
+    const arrayBuffer = buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength
+    );
+    return new Float32Array(arrayBuffer);
+  } catch {
+    return null;
+  }
 }
