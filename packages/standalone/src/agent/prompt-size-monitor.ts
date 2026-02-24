@@ -6,6 +6,8 @@
  * from lowest priority first when size limits are exceeded.
  */
 
+import { getConfig } from '../cli/config/config-manager.js';
+
 /**
  * A named layer of the system prompt with a priority level.
  *
@@ -52,11 +54,11 @@ export interface MonitorResult {
 }
 
 /** Char count at which a warning is emitted */
-const WARN_CHARS = 15_000;
+const WARN_CHARS = () => getConfig().prompt?.warn_chars ?? 15_000;
 /** Char count at which truncation begins */
-const TRUNCATE_CHARS = 25_000;
+const TRUNCATE_CHARS = () => getConfig().prompt?.truncate_chars ?? 25_000;
 /** Absolute maximum — anything beyond is force-truncated */
-const HARD_LIMIT_CHARS = 40_000;
+const HARD_LIMIT_CHARS = () => getConfig().prompt?.hard_limit_chars ?? 40_000;
 
 /**
  * Monitors and enforces system prompt size limits.
@@ -89,22 +91,22 @@ export class PromptSizeMonitor {
     let warning: string | null = null;
     let withinBudget = true;
 
-    if (totalChars > HARD_LIMIT_CHARS) {
+    if (totalChars > HARD_LIMIT_CHARS()) {
       warning =
         `System prompt exceeds hard limit: ${totalChars} chars ` +
-        `(${estimatedTokens} est. tokens) > ${HARD_LIMIT_CHARS} chars. ` +
+        `(${estimatedTokens} est. tokens) > ${HARD_LIMIT_CHARS()} chars. ` +
         `Force truncation required.`;
       withinBudget = false;
-    } else if (totalChars > TRUNCATE_CHARS) {
+    } else if (totalChars > TRUNCATE_CHARS()) {
       warning =
         `System prompt exceeds truncation threshold: ${totalChars} chars ` +
-        `(${estimatedTokens} est. tokens) > ${TRUNCATE_CHARS} chars. ` +
+        `(${estimatedTokens} est. tokens) > ${TRUNCATE_CHARS()} chars. ` +
         `Truncation recommended.`;
       withinBudget = false;
-    } else if (totalChars > WARN_CHARS) {
+    } else if (totalChars > WARN_CHARS()) {
       warning =
         `System prompt approaching limit: ${totalChars} chars ` +
-        `(${estimatedTokens} est. tokens) > ${WARN_CHARS} chars warning threshold.`;
+        `(${estimatedTokens} est. tokens) > ${WARN_CHARS()} chars warning threshold.`;
       withinBudget = true;
     }
 
@@ -124,7 +126,7 @@ export class PromptSizeMonitor {
    */
   enforce(
     layers: PromptLayer[],
-    maxChars: number = TRUNCATE_CHARS
+    maxChars: number = TRUNCATE_CHARS()
   ): { layers: PromptLayer[]; result: MonitorResult } {
     const totalChars = layers.reduce((sum, layer) => sum + layer.content.length, 0);
 

@@ -26,6 +26,7 @@ import type { PlatformAdapter } from '../gateways/tool-status-tracker.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { getConfig } from '../cli/config/config-manager.js';
 import {
   MultiAgentHandlerBase,
   AGENT_TIMEOUT_MS,
@@ -56,7 +57,7 @@ const PROGRESS_EDIT_INTERVAL_MS = 3_000;
 const _PHASE_EMOJIS = ['👀', '🔍', '💻', '🔧', '📝', '✅'] as const;
 
 /** Max characters allowed for dynamic context blocks to avoid prompt bloat */
-const MAX_DYNAMIC_CONTEXT_CHARS = 4000;
+const MAX_DYNAMIC_CONTEXT_CHARS = () => getConfig().io?.max_dynamic_context_chars ?? 4_000;
 
 /** Map tool names to phase emojis */
 function toolToPhaseEmoji(toolName: string): (typeof _PHASE_EMOJIS)[number] | null {
@@ -100,7 +101,9 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   /** Cleanup interval period (1 minute) */
-  private static readonly CLEANUP_INTERVAL_MS = 60_000;
+  private static get CLEANUP_INTERVAL_MS() {
+    return getConfig().gateway_tuning?.cleanup_interval_ms ?? 60_000;
+  }
 
   constructor(
     config: MultiAgentConfig,
@@ -590,8 +593,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     const channelInfo = `## Current Channel\nPlatform: Discord\nchannel_id: ${context.channelId}\nUse **discord_send** to send messages/files to this channel.`;
     const dynamicContextRaw = [agentStatus, workSection, channelInfo].filter(Boolean).join('\n');
     const dynamicContext =
-      dynamicContextRaw.length > MAX_DYNAMIC_CONTEXT_CHARS
-        ? `${dynamicContextRaw.slice(0, MAX_DYNAMIC_CONTEXT_CHARS)}\n...`
+      dynamicContextRaw.length > MAX_DYNAMIC_CONTEXT_CHARS()
+        ? `${dynamicContextRaw.slice(0, MAX_DYNAMIC_CONTEXT_CHARS())}\n...`
         : dynamicContextRaw;
     if (dynamicContext) {
       fullPrompt = `${dynamicContext}\n\n${fullPrompt}`;
@@ -710,8 +713,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           new Promise<never>((_, reject) => {
             timeoutHandle = setTimeout(
               () =>
-                reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)),
-              AGENT_TIMEOUT_MS
+                reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS() / 1000}s`)),
+              AGENT_TIMEOUT_MS()
             );
           }),
         ]);
