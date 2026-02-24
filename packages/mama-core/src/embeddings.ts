@@ -15,7 +15,7 @@ import path from 'path';
 import { info } from './debug-logger.js';
 import { logComplete, logLoading } from './progress-indicator.js';
 import { embeddingCache } from './embedding-cache.js';
-import { loadConfig, getModelName, getEmbeddingDim } from './config-loader.js';
+import { loadConfig, getModelName, getEmbeddingDim, getQuantized } from './config-loader.js';
 
 // Shared cache directory (not in node_modules)
 const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.cache', 'huggingface', 'transformers');
@@ -92,12 +92,17 @@ async function loadModel(): Promise<PipelineFunction> {
       env.cacheDir = cacheDir;
       info(`[MAMA] Model cache directory: ${cacheDir}`);
 
-      embeddingPipeline = (await pipeline('feature-extraction', modelName)) as PipelineFunction;
+      const quantized = getQuantized();
+      embeddingPipeline = (await pipeline('feature-extraction', modelName, {
+        dtype: quantized ? 'q8' : 'fp32',
+      })) as PipelineFunction;
       currentModelName = modelName;
 
       const loadTime = Date.now() - startTime;
       const config = loadConfig();
-      logComplete(`Embedding model ready (${loadTime}ms, ${config.embeddingDim}-dim)`);
+      logComplete(
+        `Embedding model ready (${loadTime}ms, ${config.embeddingDim}-dim, ${quantized ? 'q8' : 'fp32'})`
+      );
     } catch (loadErr) {
       modelLoadFailed = true;
       throw loadErr;
@@ -320,4 +325,4 @@ export const EMBEDDING_DIM = getEmbeddingDim();
 export const MODEL_NAME = getModelName();
 
 // Expose config functions for external use
-export { loadConfig, getModelName, getEmbeddingDim };
+export { loadConfig, getModelName, getEmbeddingDim, getQuantized };
