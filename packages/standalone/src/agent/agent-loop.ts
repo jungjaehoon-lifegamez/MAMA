@@ -18,6 +18,7 @@ import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
 import type { IModelRunner } from './model-runner.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
+import { ToolRegistry } from './tool-registry.js';
 import {
   CodeActSandbox,
   HostBridge,
@@ -249,22 +250,9 @@ export function getGatewayToolsPrompt(): string {
     return readFileSync(gatewayToolsPath, 'utf-8');
   }
 
-  // TODO: Consider generating both gateway-tools.md and this fallback from a single source
-  // to prevent tool list drift (CodeRabbit review suggestion)
-  logger.warn('gateway-tools.md not found, using minimal prompt');
-  return `
-## Gateway Tools
-
-To call a Gateway Tool, output a JSON block:
-
-\`\`\`tool_call
-{"name": "tool_name", "input": {"param1": "value1"}}
-\`\`\`
-
-**MAMA Memory:** mama_search, mama_save, mama_update, mama_load_checkpoint
-**Browser:** browser_navigate, browser_screenshot, browser_click, browser_type, browser_get_text, browser_scroll, browser_wait_for, browser_evaluate, browser_pdf, browser_close
-**Utility:** discord_send, Read, Write, Bash
-`;
+  // Fallback generated from ToolRegistry (SSOT) — no manual list to drift
+  logger.warn('gateway-tools.md not found, using registry fallback');
+  return `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
 }
 
 export class AgentLoop {
@@ -284,6 +272,11 @@ export class AgentLoop {
     cache_read_tokens?: number;
     cost_usd?: number;
   }) => void;
+  private readonly onMetric?: (
+    name: string,
+    value: number,
+    labels?: Record<string, string>
+  ) => void;
   private readonly laneManager: LaneManager;
   private readonly useLanes: boolean;
   private sessionKey: string;
@@ -503,6 +496,7 @@ export class AgentLoop {
     this.onTurn = options.onTurn;
     this.onToolUse = options.onToolUse;
     this.onTokenUsage = options.onTokenUsage;
+    this.onMetric = options.onMetric;
 
     this.laneManager = getGlobalLaneManager();
     this.useLanes = options.useLanes ?? false;
@@ -845,10 +839,16 @@ export class AgentLoop {
         const shouldResume = !sessionIsNew || turn > 1;
         // Both Claude PersistentCLI and Codex MCP preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
+        const promptStart = Date.now();
         try {
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
+          });
+          // Emit prompt latency metric
+          this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
+            backend: this.backend,
+            turn: String(turn),
           });
           // After first successful call, mark session as not new for subsequent turns
           if (turn === 1) sessionIsNew = false;
@@ -892,6 +892,7 @@ export class AgentLoop {
             }
             console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
           } else {
+            this.onMetric?.('prompt_error', 1, { backend: this.backend, error_type: 'CLI_ERROR' });
             throw new AgentError(
               `CLI error: ${errorMessage}`,
               'CLI_ERROR',
@@ -1169,6 +1170,7 @@ export class AgentLoop {
         toolUse.input as Record<string, unknown>
       );
 
+      const toolStart = Date.now();
       try {
         // Code-Act: execute JS code in sandbox
         if (toolUse.name === CODE_ACT_MARKER) {
@@ -1227,12 +1229,21 @@ export class AgentLoop {
           // Notify stream: tool completed (check actual status)
           this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
         }
+        // Emit tool execution metric
+        this.onMetric?.('tool_duration_ms', Date.now() - toolStart, {
+          tool: toolUse.name,
+          error: String(isError),
+        });
       } catch (error) {
         isError = true;
         result = error instanceof Error ? error.message : String(error);
 
         // Notify tool use callback with error
         this.onToolUse?.(toolUse.name, toolUse.input, { error: result });
+        this.onMetric?.('tool_duration_ms', Date.now() - toolStart, {
+          tool: toolUse.name,
+          error: 'true',
+        });
 
         // Notify stream: tool completed with error
         this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, true);

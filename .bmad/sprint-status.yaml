@@ -115,52 +115,52 @@ sprints:
     end_date: "2026-03-24"
     capacity_points: 15
     committed_points: 24
-    completed_points: 0
-    status: "not_started"
+    completed_points: 24
+    status: "completed"
     goal: "Gateway SSOT + Tool Filtering + Observability"
     stories:
       - story_id: "STORY-016"
         title: "ToolRegistry core"
         points: 3
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-005"
       - story_id: "STORY-017"
         title: "Build-time gateway-tools.md"
         points: 3
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-005"
       - story_id: "STORY-018"
         title: "Per-agent allowed_tools filtering"
         points: 5
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-005"
       - story_id: "STORY-019"
         title: "MetricsStore SQLite"
         points: 5
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-006"
       - story_id: "STORY-020"
         title: "Metric emission points"
         points: 3
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-006"
       - story_id: "STORY-021"
         title: "Health score API"
         points: 3
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-006"
       - story_id: "STORY-022"
         title: "Metrics auto-cleanup"
         points: 2
-        status: "not_started"
+        status: "completed"
         epic: "EPIC-006"
 
 velocity:
   sprint_1: 15
   sprint_2: 17
   sprint_3: 16
-  sprint_4: null
-  rolling_average: null
+  sprint_4: 24
+  rolling_average: 18
 
 team:
   size: 1

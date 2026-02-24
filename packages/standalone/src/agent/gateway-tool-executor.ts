@@ -87,49 +87,11 @@ export interface SlackGatewayInterface {
 }
 
 /**
- * Valid MAMA gateway tools
- * These tools are executed by GatewayToolExecutor
- * Includes MAMA tools (mama_search, mama_save, mama_update, mama_load_checkpoint)
- * and utility tools (Read, Write, Bash, discord_send)
+ * Valid MAMA gateway tools — derived from ToolRegistry (SSOT).
  */
-const VALID_TOOLS: GatewayToolName[] = [
-  'mama_search',
-  'mama_save',
-  'mama_update',
-  'mama_load_checkpoint',
-  'Read',
-  'Write',
-  'Bash',
-  'discord_send',
-  'slack_send',
-  'browser_navigate',
-  'browser_screenshot',
-  'browser_click',
-  'browser_type',
-  'browser_get_text',
-  'browser_scroll',
-  'browser_wait_for',
-  'browser_evaluate',
-  'browser_pdf',
-  'browser_close',
-  // OS Management tools (viewer-only)
-  'os_add_bot',
-  'os_set_permissions',
-  'os_get_config',
-  'os_set_model',
-  // OS Monitoring tools (viewer-only)
-  'os_list_bots',
-  'os_restart_bot',
-  'os_stop_bot',
-  // PR Review tools
-  'pr_review_threads',
-  // Playground tools
-  'playground_create',
-  // Webchat tools
-  'webchat_send',
-  // Code-Act sandbox
-  'code_act',
-];
+import { ToolRegistry } from './tool-registry.js';
+
+const VALID_TOOLS: GatewayToolName[] = ToolRegistry.getValidToolNames();
 
 /**
  * Sensitive patterns that should be masked in config output
