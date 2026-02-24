@@ -92,20 +92,28 @@ export class MetricsStore {
   }
 
   record(metric: MetricRecord): void {
-    const ts = metric.timestamp ?? Date.now();
-    const labelsJson = metric.labels ? JSON.stringify(metric.labels) : null;
-    this.insertStmt.run(metric.name, metric.value, labelsJson, ts);
+    try {
+      const ts = metric.timestamp ?? Date.now();
+      const labelsJson = metric.labels ? JSON.stringify(metric.labels) : null;
+      this.insertStmt.run(metric.name, metric.value, labelsJson, ts);
+    } catch {
+      // Fire-and-forget: never throw from metrics recording
+    }
   }
 
   recordBatch(metrics: MetricRecord[]): void {
-    const tx = this.db.transaction((items: MetricRecord[]) => {
-      for (const m of items) {
-        const ts = m.timestamp ?? Date.now();
-        const labelsJson = m.labels ? JSON.stringify(m.labels) : null;
-        this.insertStmt.run(m.name, m.value, labelsJson, ts);
-      }
-    });
-    tx(metrics);
+    try {
+      const tx = this.db.transaction((items: MetricRecord[]) => {
+        for (const m of items) {
+          const ts = m.timestamp ?? Date.now();
+          const labelsJson = m.labels ? JSON.stringify(m.labels) : null;
+          this.insertStmt.run(m.name, m.value, labelsJson, ts);
+        }
+      });
+      tx(metrics);
+    } catch {
+      // Fire-and-forget: never throw from metrics recording
+    }
   }
 
   query(options: MetricQueryOptions): MetricRow[] {

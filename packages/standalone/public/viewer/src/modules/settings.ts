@@ -1157,7 +1157,8 @@ export class SettingsModule {
 
         // Permission flags
         const canDelegate = agent.can_delegate ?? false;
-        const hasAllTools = agent.tool_permissions?.allowed?.includes('*') ?? true;
+        const hasAllTools =
+          agent.tool_permissions?.allowed?.includes('*') ?? (agent.tier ?? 1) === 1;
 
         return `
           <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
