@@ -65,7 +65,7 @@ program
   .option('--no-browser', 'Disable automatic browser opening')
   .action(async (options) => {
     await setupCommand({
-      port: parseInt(options.port),
+      port: parseInt(options.port, 10),
       noBrowser: !options.browser,
     });
   });
