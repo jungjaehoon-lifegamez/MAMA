@@ -465,8 +465,13 @@ export class SettingsModule {
    * Populate timeouts section from config
    */
   populateTimeouts(): void {
+    if (!this.config) {
+      return;
+    }
     const t = this.config.timeouts;
-    if (!t) return;
+    if (!t) {
+      return;
+    }
     this.setValue('settings-timeout-request', Math.round((t.request_ms ?? 120000) / 1000));
     this.setValue('settings-timeout-agent', Math.round((t.agent_ms ?? 300000) / 1000));
     this.setValue('settings-timeout-session', Math.round((t.session_ms ?? 1800000) / 60000));
@@ -869,7 +874,7 @@ export class SettingsModule {
       timeouts: {
         request_ms: this.parseIntegerInput('settings-timeout-request', 0, 600, 120) * 1000,
         agent_ms: this.parseIntegerInput('settings-timeout-agent', 0, 3600, 300) * 1000,
-        session_ms: this.parseIntegerInput('settings-timeout-session', 5, 1440, 30) * 60000,
+        session_ms: this.parseIntegerInput('settings-timeout-session', 0, 1440, 30) * 60000,
         workflow_step_ms: this.parseIntegerInput('settings-timeout-wf-step', 0, 7200, 300) * 1000,
         workflow_max_ms: this.parseIntegerInput('settings-timeout-wf-max', 0, 1440, 30) * 60000,
         ultrawork_ms: this.parseIntegerInput('settings-timeout-ultrawork', 0, 7200, 300) * 1000,

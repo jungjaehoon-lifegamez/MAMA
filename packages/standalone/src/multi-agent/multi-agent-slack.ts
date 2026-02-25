@@ -67,7 +67,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   private heartbeatInterval?: ReturnType<typeof setInterval>;
 
   /** Interval handle for periodic cleanup */
-  private mentionCleanupInterval?: ReturnType<typeof setInterval>;
 
   /** Tracks the process used for history seeding per agent:channel */
   private historySeedProcess = new Map<string, AgentRuntimeProcess>();
@@ -82,12 +81,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     super(config, processOptions, runtimeOptions);
     this.multiBotManager = new SlackMultiBotManager(config);
     this.promptEnhancer = new PromptEnhancer();
-
-    // Start periodic cleanup of processed mentions (every 60 seconds)
-    this.mentionCleanupInterval = setInterval(() => {
-      this.cleanupProcessedMentions();
-      this.messageQueue.clearExpired();
-    }, 60_000);
 
     // Setup idle event listeners for all agents (F7: message queue drain)
     this.setupIdleListeners();
@@ -151,10 +144,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
   protected async platformCleanup(): Promise<void> {
     this.stopHeartbeat();
-    if (this.mentionCleanupInterval) {
-      clearInterval(this.mentionCleanupInterval);
-      this.mentionCleanupInterval = undefined;
-    }
     this.historySeedProcess.clear();
     this.channelWebClients.clear();
     await this.multiBotManager.stopAll();
@@ -990,10 +979,13 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       undefined,
       createStepCbs
     );
+    let delegationSource: string | undefined;
     if (workflowResult && !workflowResult.failed) {
       displayResponse = workflowResult.directMessage
         ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
         : workflowResult.result;
+      // Parse delegations only from directMessage (not workflow result output)
+      delegationSource = workflowResult.directMessage;
     } else {
       // Strip workflow/council plan JSON from queued responses
       if (this.workflowEngine?.isEnabled()) {
@@ -1006,8 +998,11 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       displayResponse = await this.executeTextToolCalls(displayResponse);
     }
 
-    // Parse and submit DELEGATE_BG commands from queued responses
-    const delegations = this.delegationManager.parseAllDelegations(agentId, displayResponse);
+    // Parse and submit DELEGATE_BG commands (from directMessage only for workflow results)
+    const delegations = this.delegationManager.parseAllDelegations(
+      agentId,
+      delegationSource ?? displayResponse
+    );
     const bgDelegations = delegations.filter((d) => d.background);
     if (bgDelegations.length > 0) {
       let submittedCount = 0;
