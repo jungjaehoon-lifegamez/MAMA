@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-02-26
+
+### Added
+
+- **Dashboard agent restart/stop** — per-agent Restart and Stop buttons in dashboard agent cards with `POST /api/multi-agent/agents/:id/restart` and `POST /api/multi-agent/agents/:id/stop` endpoints (auth-guarded)
+- **MCP tool access for Codex agents** — `codex-mcp-process.ts` now receives filtered tool list via `--tools` flag based on ToolRegistry permissions
+- **Plugin skill loader** — `skill-loader.ts` supports `.claude-plugin/` directory structure with `skills/` sub-directories and `SKILL.md` files, symlink-safe path traversal guard via `realpathSync`
+- **Configurable workflow timeouts** — `workflow_step_ms` (default 10min) and `workflow_max_ms` externalized to `config.yaml` with Settings UI controls
+- **System reminder cross-platform routing** — batch key scoped by `source:channelId` to prevent Discord reminders leaking to Slack and vice versa
+
+### Fixed
+
+- **Queued workflow execution** — `sendQueuedResponse()` now calls `tryExecuteWorkflow()` and strips plan JSON; previously workflow plans were sent as raw text to chat
+- **Queued delegation parsing** — delegations parsed from `workflowResult.directMessage` only, not the concatenated display string containing workflow output
+- **Message queue drain lock** — per-agent `draining` Set prevents concurrent `drain()` calls from idle event + `tryDrainNow()` race
+- **Message queue atomic re-queue** — busy-agent re-queue creates queue array if concurrent `clearExpired()` removed it
+- **Agent process timeout** — extracted `_getRequestTimeoutMs()` helper with `try/catch` + `Math.max(0, ...)` safety, used in both `sendMessage` and `sendToolResults`
+- **Council step timeout** — passes `workflow_step_ms` override to `getProcess()` during council/workflow execution
+- **Slack duplicate cleanup interval** — removed redundant `mentionCleanupInterval` (base class `cleanupInterval` already handles `clearExpired` + `cleanupProcessedMentions`)
+- **Empty catch blocks** — added `DebugLogger`-based logging to previously silent catch blocks in skill-loader, workflow model resolution, and message queue
+
+### Security
+
+- **Auth guard on agent control endpoints** — `isAuthenticated(req)` check on restart/stop API routes
+- **Symlink escape prevention** — skill loader uses `realpathSync` to block symlink-based path traversal attacks
+
 ## [0.12.0] - 2026-02-25
 
 ### Added
