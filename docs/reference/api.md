@@ -342,7 +342,7 @@ export MAMA_EMBEDDING_PORT="3849"
 
 ---
 
-## HTTP API Endpoints (v0.10.0)
+## HTTP API Endpoints (v0.12.0)
 
 MAMA OS provides **60 HTTP endpoints** for the web dashboard, mobile chat, and programmatic access.
 

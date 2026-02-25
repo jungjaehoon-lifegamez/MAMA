@@ -28,9 +28,10 @@ import { TaskContinuationEnforcer } from './task-continuation.js';
 import { UltraWorkStateManager } from './ultrawork-state.js';
 import * as os from 'os';
 import * as path from 'path';
+import { getConfig } from '../cli/config/config-manager.js';
 
 /** Default timeout for executeCallback (5 minutes) */
-const DEFAULT_EXECUTE_TIMEOUT = 300000;
+const DEFAULT_EXECUTE_TIMEOUT = () => getConfig().timeouts?.ultrawork_ms ?? 300_000;
 
 /**
  * Callback to intercept agent responses for workflow/council plan execution.
@@ -291,7 +292,7 @@ export class UltraWorkManager {
     executeCallback: DelegationExecuteCallback,
     agentId: string,
     prompt: string,
-    timeoutMs: number = DEFAULT_EXECUTE_TIMEOUT
+    timeoutMs: number = DEFAULT_EXECUTE_TIMEOUT()
   ): Promise<{ response: string; duration?: number }> {
     let timeoutHandle: ReturnType<typeof setTimeout>;
 
