@@ -18,6 +18,7 @@ import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
 import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
+import type { SystemHealthReport } from '../observability/health-check.js';
 
 // Re-export types
 export * from './types.js';
@@ -53,7 +54,7 @@ export interface ApiServerOptions {
   healthService?: { compute(windowMs?: number): unknown };
   /** Connection-based health check service */
   healthCheckService?: {
-    check(): Promise<import('../observability/health-check.js').SystemHealthReport>;
+    check(): Promise<SystemHealthReport>;
   };
 }
 
@@ -64,7 +65,7 @@ export interface ApiServer {
   /** Express app instance */
   app: Express;
   /** HTTP server instance */
-  server: ReturnType<(typeof import('express'))['application']['listen']> | null;
+  server: HttpServer | null;
   /** Start the server */
   start(): Promise<void>;
   /** Stop the server */
@@ -87,6 +88,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     db,
     skillRegistry,
     healthService,
+    healthCheckService,
   } = options;
 
   const app = express();
@@ -133,13 +135,13 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   });
 
   // Metrics health endpoint (observability)
-  const { healthCheckService } = options;
   app.get('/api/metrics/health', async (_req, res) => {
     if (healthCheckService) {
       try {
         const report = await healthCheckService.check();
         res.json(report);
       } catch (e) {
+        console.error('[API] /api/metrics/health error:', e);
         res.status(500).json({ error: String(e) });
       }
     } else if (healthService) {
@@ -178,19 +180,31 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       const tryListen = (): Promise<void> =>
         new Promise((resolve, reject) => {
           let settled = false;
+          const candidate = createServer(app);
+
+          const cleanup = () => {
+            candidate.removeAllListeners();
+            try {
+              candidate.close();
+            } catch {
+              /* already closed */
+            }
+          };
+
           try {
-            server = createServer(app);
-            server.on('error', (err: NodeJS.ErrnoException) => {
+            candidate.on('error', (err: NodeJS.ErrnoException) => {
               if (settled) return;
               settled = true;
+              cleanup();
               reject(err);
             });
             // exclusive: false → SO_REUSEADDR, allows binding over TIME_WAIT sockets
-            server.listen({ port: attemptPort, host, exclusive: false }, () => {
+            candidate.listen({ port: attemptPort, host, exclusive: false }, () => {
               if (settled) return;
               settled = true;
-              const addr = server?.address();
+              const addr = candidate.address();
               if (addr && typeof addr === 'object') {
+                server = candidate; // Only assign on success
                 actualPort = addr.port;
                 console.log(`API server listening on http://${host}:${actualPort}`);
                 if (host === '0.0.0.0') {
@@ -199,12 +213,14 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
                 }
                 resolve();
               } else {
+                cleanup();
                 reject(new Error(`Failed to bind to port ${attemptPort}`));
               }
             });
           } catch (error) {
             if (!settled) {
               settled = true;
+              cleanup();
               reject(error);
             }
           }
@@ -312,9 +328,11 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       s.closeAllConnections();
 
       return new Promise<void>((resolve) => {
-        s.close(() => resolve());
-        // If close doesn't resolve in 2s, resolve anyway
-        setTimeout(resolve, 2000);
+        const timeoutId = setTimeout(resolve, 2000);
+        s.close(() => {
+          clearTimeout(timeoutId);
+          resolve();
+        });
       });
     },
   };
