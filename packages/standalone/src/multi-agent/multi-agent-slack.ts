@@ -30,11 +30,12 @@ import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import { ToolStatusTracker } from '../gateways/tool-status-tracker.js';
 import type { PlatformAdapter } from '../gateways/tool-status-tracker.js';
+import { getConfig } from '../cli/config/config-manager.js';
 
 export type { AgentResponse, MultiAgentResponse } from './multi-agent-base.js';
 
 /** Heartbeat interval for status polling (60 seconds) */
-const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = () => getConfig().gateway_tuning?.heartbeat_interval_ms ?? 60_000;
 
 /** Status emoji for each process state */
 const STATE_EMOJI: Record<string, string> = {
@@ -505,8 +506,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           new Promise<never>((_, reject) => {
             timeoutHandle = setTimeout(
               () =>
-                reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)),
-              AGENT_TIMEOUT_MS
+                reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS() / 1000}s`)),
+              AGENT_TIMEOUT_MS()
             );
           }),
         ]);
@@ -1123,10 +1124,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       this.pollAndReport().catch((err) => {
         this.logger.error('[Heartbeat] Poll error:', err);
       });
-    }, HEARTBEAT_INTERVAL_MS);
+    }, HEARTBEAT_INTERVAL_MS());
 
     this.logger.log(
-      `[Heartbeat] Started for channel ${channelId} (${HEARTBEAT_INTERVAL_MS / 1000}s interval)`
+      `[Heartbeat] Started for channel ${channelId} (${HEARTBEAT_INTERVAL_MS() / 1000}s interval)`
     );
   }
 

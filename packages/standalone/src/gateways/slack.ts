@@ -25,6 +25,7 @@ import { getChannelHistory } from './channel-history.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
+import { getConfig } from '../cli/config/config-manager.js';
 
 /**
  * Slack message event structure
@@ -87,7 +88,9 @@ export class SlackGateway extends BaseGateway {
 
   // Dedup: prevent double processing from app_mention + message events
   private processedMessages = new Map<string, number>();
-  private static readonly DEDUP_TTL_MS = 30_000;
+  private static get DEDUP_TTL_MS() {
+    return getConfig().gateway_tuning?.dedup_ttl_ms ?? 30_000;
+  }
 
   // Safe logger instance
   private logger = createSafeLogger('SlackGateway');

@@ -13,6 +13,7 @@
 
 import { randomUUID } from 'crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { getConfig } from '../cli/config/config-manager.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -49,7 +50,7 @@ interface SessionEntry {
  * When exceeded, session will be reset on next request
  * Note: Only applies to Claude CLI backend. Codex MCP handles its own compaction.
  */
-const CONTEXT_THRESHOLD_TOKENS = 160000;
+const CONTEXT_THRESHOLD_TOKENS = () => getConfig().io?.context_threshold_tokens ?? 160_000;
 
 /**
  * Session Pool configuration
@@ -63,9 +64,9 @@ export interface SessionPoolConfig {
   cleanupIntervalMs?: number;
 }
 
-const DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_SESSION_TIMEOUT_MS = () => getConfig().timeouts?.session_ms ?? 1_800_000;
 const DEFAULT_MAX_SESSIONS = 100;
-const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_CLEANUP_INTERVAL_MS = () => getConfig().timeouts?.session_cleanup_ms ?? 300_000;
 
 /**
  * Session Pool for Claude CLI session management
@@ -82,9 +83,9 @@ export class SessionPool {
 
   constructor(config: SessionPoolConfig = {}) {
     this.config = {
-      sessionTimeoutMs: config.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
+      sessionTimeoutMs: config.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS(),
       maxSessions: config.maxSessions ?? DEFAULT_MAX_SESSIONS,
-      cleanupIntervalMs: config.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS,
+      cleanupIntervalMs: config.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS(),
     };
 
     // Start periodic cleanup
@@ -117,7 +118,7 @@ export class SessionPool {
       // Codex MCP handles its own compaction - never reset session based on tokens
       // Only Claude CLI backend uses token-based session reset
       const isContextFull =
-        existing.backend !== 'codex-mcp' && existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS;
+        existing.backend !== 'codex-mcp' && existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS();
 
       if (isExpired) {
         this.sessions.delete(channelKey);
@@ -194,12 +195,12 @@ export class SessionPool {
     // After ~50 messages, context exceeds 200K (max)
     // Force reset to prevent degraded responses from overflowed context
     if (backend === 'codex-mcp') {
-      const MAX_CONTEXT_TOKENS = 200000;
+      const MAX_CONTEXT_TOKENS = getConfig().io?.max_context_tokens ?? 200_000;
       if (inputTokens > MAX_CONTEXT_TOKENS) {
         logger.warn(
           `[Codex] Session overflow: ${inputTokens} tokens > ${MAX_CONTEXT_TOKENS} max, forcing reset`
         );
-        existing.totalInputTokens = CONTEXT_THRESHOLD_TOKENS;
+        existing.totalInputTokens = CONTEXT_THRESHOLD_TOKENS();
         return { totalTokens: existing.totalInputTokens, nearThreshold: true };
       }
     }
@@ -208,7 +209,7 @@ export class SessionPool {
     existing.totalInputTokens = Math.max(existing.totalInputTokens, inputTokens);
 
     // nearThreshold for monitoring (Codex MCP doesn't reset, but we track for UI display)
-    const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS * 0.9; // 90% of 160K
+    const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS() * 0.9; // 90% of threshold
 
     if (nearThreshold) {
       logger.warn(

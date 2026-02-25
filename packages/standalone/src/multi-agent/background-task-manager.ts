@@ -20,6 +20,7 @@
 
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
+import { getConfig } from '../cli/config/config-manager.js';
 
 /**
  * Task status lifecycle
@@ -463,7 +464,7 @@ export class BackgroundTaskManager extends EventEmitter {
     this.emit('task-started', { task } satisfies BackgroundTaskEvent);
 
     const MAX_BUSY_RETRIES = 5;
-    const BUSY_RETRY_DELAY_MS = 5000;
+    const BUSY_RETRY_DELAY_MS = getConfig().timeouts?.busy_retry_ms ?? 5_000;
 
     Promise.resolve()
       .then(() => this.executeTask(task.agentId, task.prompt))
