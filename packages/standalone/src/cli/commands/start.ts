@@ -1007,8 +1007,6 @@ export async function runAgentLoop(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let turnCount = 0;
   let autoRecallUsed = false;
-  let metricErrorCount = 0;
-
   const mamaHome = join(homedir(), '.mama');
 
   // Sync built-in skills on every start (non-destructive — skips existing files)
@@ -1121,13 +1119,7 @@ export async function runAgentLoop(
       }
     },
     onMetric: (name, value, labels) => {
-      try {
-        metricsStore?.record({ name, value, labels });
-      } catch (e) {
-        if (metricErrorCount++ < 3) {
-          console.warn(`[Metrics] Record error: ${e}`);
-        }
-      }
+      metricsStore?.record({ name, value, labels });
     },
   });
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');

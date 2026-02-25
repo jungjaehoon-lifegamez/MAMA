@@ -86,6 +86,11 @@ export interface MamaDecisionPayload {
   confidence?: number;
 }
 
+export interface ApiMetricsConfig {
+  enabled?: boolean;
+  retention_days?: number;
+}
+
 export interface ApiConfigResponse {
   discord?: ApiGatewayConfig;
   slack?: ApiGatewayConfig;
@@ -95,6 +100,7 @@ export interface ApiConfigResponse {
   agent?: ApiAgentConfig;
   roles?: ApiRolesConfig;
   token_budget?: ApiTokenBudgetConfig;
+  metrics?: ApiMetricsConfig;
   [key: string]: unknown;
 }
 

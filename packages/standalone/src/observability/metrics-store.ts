@@ -145,8 +145,12 @@ export class MetricsStore {
         if (!row.labels) {
           return false;
         }
-        const parsed = JSON.parse(row.labels) as Record<string, string>;
-        return filterEntries.every(([k, v]) => parsed[k] === v);
+        try {
+          const parsed = JSON.parse(row.labels) as Record<string, string>;
+          return filterEntries.every(([k, v]) => parsed[k] === v);
+        } catch {
+          return false;
+        }
       });
       if (options.limit !== undefined) {
         rows = rows.slice(0, options.limit);
