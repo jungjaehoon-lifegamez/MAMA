@@ -112,6 +112,13 @@ export async function handleSearch(
   }
 
   const result = await api.suggest(query, { limit });
+  if (!result || typeof result !== 'object') {
+    // suggest() can return null on vector search failure — fallback to list
+    const decisions = await api.listDecisions({ limit });
+    const raw = Array.isArray(decisions) ? decisions : [];
+    const filtered = raw.filter(isSearchResultItem);
+    return { success: true, results: filtered, count: filtered.length };
+  }
   let filteredResults: SearchResultItem[] = (result.results ?? []).filter(isSearchResultItem);
 
   // type === 'checkpoint' already handled above with early return
