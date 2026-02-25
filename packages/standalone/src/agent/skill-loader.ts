@@ -9,10 +9,21 @@
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, normalize } from 'path';
 import { homedir } from 'os';
 import { getConfig } from '../cli/config/config-manager.js';
 import { countTokens } from './token-estimator.js';
+import * as debugLoggerModule from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLoggerModule as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const skillLogger = new DebugLogger('SkillLoader');
 
 /**
  * Files to exclude from skill prompt injection (reduce token bloat)
@@ -325,27 +336,25 @@ export function buildSkillCatalog(verbose = false): string[] {
                 const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : sub.name;
                 catalog.push(`- [${stateKey}/${sub.name}] keywords: ${keywords} | ${description}`);
                 if (verbose)
-                  console.log(`[SkillLoader] Skill catalog (plugin sub): ${stateKey}/${sub.name}`);
+                  skillLogger.debug(`Skill catalog (plugin sub): ${stateKey}/${sub.name}`);
               } catch (e) {
-                if (verbose)
-                  console.warn(`[SkillLoader] Failed to parse sub-skill ${sub.name}:`, e);
+                if (verbose) skillLogger.warn(`Failed to parse sub-skill ${sub.name}:`, e);
               }
             }
           } catch (e) {
-            if (verbose)
-              console.warn(`[SkillLoader] Failed to read sub-skills dir ${subSkillsDir}:`, e);
+            if (verbose) skillLogger.warn(`Failed to read sub-skills dir ${subSkillsDir}:`, e);
           }
           // Also check for plugin-level main file (plugin.json description)
           const pluginJson = join(skillDir, '.claude-plugin', 'plugin.json');
           if (existsSync(pluginJson)) {
             try {
-              const meta = JSON.parse(readFileSync(pluginJson, 'utf-8'));
-              if (meta.description) {
+              const parsed: unknown = JSON.parse(readFileSync(pluginJson, 'utf-8'));
+              const meta = parsed as { description?: string } | null;
+              if (meta?.description) {
                 catalog.push(`- [${stateKey}] keywords: ${entry.name} | ${meta.description}`);
               }
             } catch (e) {
-              if (verbose)
-                console.warn(`[SkillLoader] Failed to parse plugin.json for ${stateKey}:`, e);
+              if (verbose) skillLogger.warn(`Failed to parse plugin.json for ${stateKey}:`, e);
             }
           }
           continue;
@@ -407,18 +416,31 @@ export function buildSkillCatalog(verbose = false): string[] {
  * @returns SkillLoadResult with content and truncation metadata, or null if not found
  */
 export function loadSkillContent(skillId: string): SkillLoadResult | null {
-  const skillsBase = join(homedir(), '.mama', 'skills');
+  const skillsBase = resolve(homedir(), '.mama', 'skills');
+
+  // Validate skillId segments: reject path traversal (.. / empty / absolute / special chars)
+  const skillIdParts = skillId.split('/');
+  for (const segment of skillIdParts) {
+    if (!segment || segment === '.' || segment === '..' || /[/\\:]/.test(segment)) {
+      skillLogger.warn(`Rejected invalid skillId segment: "${segment}" in "${skillId}"`);
+      return null;
+    }
+  }
 
   // Try plugin sub-skill: "cowork/marketing/brand-voice" → skills/cowork/marketing/skills/brand-voice/
-  const skillIdParts = skillId.split('/');
   if (skillIdParts.length >= 3) {
-    const subSkillDir = join(
+    const subSkillDir = resolve(
       skillsBase,
       skillIdParts[0],
       skillIdParts[1],
       'skills',
       skillIdParts.slice(2).join('/')
     );
+    // Ensure resolved path stays within skillsBase
+    if (!normalize(subSkillDir).startsWith(normalize(skillsBase))) {
+      skillLogger.warn(`Path traversal blocked: "${subSkillDir}" escapes "${skillsBase}"`);
+      return null;
+    }
     if (existsSync(subSkillDir)) {
       const mdFiles = collectMarkdownFiles(subSkillDir);
       if (mdFiles.length > 0) {
@@ -433,7 +455,11 @@ export function loadSkillContent(skillId: string): SkillLoadResult | null {
   }
 
   // Try directory skill first
-  const skillDir = join(skillsBase, skillId);
+  const skillDir = resolve(skillsBase, skillId);
+  if (!normalize(skillDir).startsWith(normalize(skillsBase))) {
+    skillLogger.warn(`Path traversal blocked: "${skillDir}" escapes "${skillsBase}"`);
+    return null;
+  }
   if (existsSync(skillDir)) {
     const mdFiles = collectMarkdownFiles(skillDir);
     if (mdFiles.length > 0) {

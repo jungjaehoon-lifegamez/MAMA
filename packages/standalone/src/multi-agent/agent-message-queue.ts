@@ -178,10 +178,12 @@ export class AgentMessageQueue {
         const retries = (message.retryCount ?? 0) + 1;
         if (retries <= 3) {
           message.retryCount = retries;
-          const q = this.queues.get(agentId);
-          if (q) {
-            q.unshift(message);
+          let q = this.queues.get(agentId);
+          if (!q) {
+            q = [];
+            this.queues.set(agentId, q);
           }
+          q.unshift(message);
           console.warn(
             `[MessageQueue] Agent ${agentId} still busy, re-queued (retry ${retries}/3)`
           );

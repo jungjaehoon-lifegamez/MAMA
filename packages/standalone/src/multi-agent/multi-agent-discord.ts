@@ -1029,6 +1029,15 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         }
       }
       this.sharedContext.recordAgentMessage(message.channelId, agent, display, '');
+
+      // Parse delegations from workflow result
+      this.submitBackgroundDelegations(
+        agentId,
+        message.channelId,
+        display,
+        'discord',
+        'MultiAgent queued-workflow'
+      );
       return;
     }
 

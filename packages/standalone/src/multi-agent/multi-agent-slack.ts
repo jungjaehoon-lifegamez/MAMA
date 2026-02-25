@@ -1148,6 +1148,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       agentId: targetAgentId,
       requestedBy: senderAgentId ?? 'main',
       channelId: event.channel,
+      source: 'slack',
       timestamp: Date.now(),
     });
 
