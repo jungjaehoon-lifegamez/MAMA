@@ -194,9 +194,15 @@ export class PersistentClaudeProcess extends EventEmitter {
    * 0 = unlimited (no timeout). Returns the configured or default value.
    */
   private _getRequestTimeoutMs(): number {
-    return this.options.requestTimeout !== undefined && this.options.requestTimeout !== null
-      ? this.options.requestTimeout
-      : (getConfig().timeouts?.request_ms ?? 120_000);
+    if (this.options.requestTimeout !== undefined && this.options.requestTimeout !== null) {
+      return Math.max(0, this.options.requestTimeout);
+    }
+    try {
+      const configTimeout = getConfig().timeouts?.request_ms;
+      return Math.max(0, configTimeout ?? 120_000);
+    } catch {
+      return 120_000;
+    }
   }
 
   constructor(options: PersistentProcessOptions) {

@@ -740,7 +740,15 @@ export abstract class MultiAgentHandlerBase {
           }
         };
         try {
-          process = await this.processManager.getProcess(source, channelId, agentId);
+          // Pass step timeout as requestTimeout override so CLI process won't kill early
+          const processOverrides =
+            timeoutMs > 0 ? { requestTimeout: timeoutMs + 30_000 } : { requestTimeout: 0 };
+          process = await this.processManager.getProcess(
+            source,
+            channelId,
+            agentId,
+            processOverrides
+          );
           const sendPromise = process.sendMessage(prompt);
           const result =
             timeoutMs > 0

@@ -867,7 +867,7 @@ export class SettingsModule {
         retention_days: this.parseIntegerInput('settings-metrics-retention', 1, 90, 7),
       },
       timeouts: {
-        request_ms: this.parseIntegerInput('settings-timeout-request', 10, 600, 120) * 1000,
+        request_ms: this.parseIntegerInput('settings-timeout-request', 0, 600, 120) * 1000,
         agent_ms: this.parseIntegerInput('settings-timeout-agent', 0, 3600, 300) * 1000,
         session_ms: this.parseIntegerInput('settings-timeout-session', 5, 1440, 30) * 60000,
         workflow_step_ms: this.parseIntegerInput('settings-timeout-wf-step', 0, 7200, 300) * 1000,
