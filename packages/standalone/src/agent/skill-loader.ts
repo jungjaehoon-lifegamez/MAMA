@@ -8,7 +8,7 @@
  * are split at section boundaries and lowest-priority sections omitted.
  */
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, realpathSync } from 'fs';
 import { join, resolve, normalize } from 'path';
 import { homedir } from 'os';
 import { getConfig } from '../cli/config/config-manager.js';
@@ -335,14 +335,19 @@ export function buildSkillCatalog(verbose = false): string[] {
                 const description = fm.description || '';
                 const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : sub.name;
                 catalog.push(`- [${stateKey}/${sub.name}] keywords: ${keywords} | ${description}`);
-                if (verbose)
+                if (verbose) {
                   skillLogger.debug(`Skill catalog (plugin sub): ${stateKey}/${sub.name}`);
+                }
               } catch (e) {
-                if (verbose) skillLogger.warn(`Failed to parse sub-skill ${sub.name}:`, e);
+                if (verbose) {
+                  skillLogger.warn(`Failed to parse sub-skill ${sub.name}:`, e);
+                }
               }
             }
           } catch (e) {
-            if (verbose) skillLogger.warn(`Failed to read sub-skills dir ${subSkillsDir}:`, e);
+            if (verbose) {
+              skillLogger.warn(`Failed to read sub-skills dir ${subSkillsDir}:`, e);
+            }
           }
           // Also check for plugin-level main file (plugin.json description)
           const pluginJson = join(skillDir, '.claude-plugin', 'plugin.json');
@@ -369,7 +374,9 @@ export function buildSkillCatalog(verbose = false): string[] {
           const description = fm.description || '';
           const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : entry.name;
           catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
-          if (verbose) console.log(`[SkillLoader] Skill catalog: ${stateKey}`);
+          if (verbose) {
+            skillLogger.debug(`Skill catalog: ${stateKey}`);
+          }
         } catch {
           /* skip unreadable */
         }
@@ -436,12 +443,19 @@ export function loadSkillContent(skillId: string): SkillLoadResult | null {
       'skills',
       skillIdParts.slice(2).join('/')
     );
-    // Ensure resolved path stays within skillsBase
-    if (!normalize(subSkillDir).startsWith(normalize(skillsBase))) {
-      skillLogger.warn(`Path traversal blocked: "${subSkillDir}" escapes "${skillsBase}"`);
-      return null;
-    }
+    // Ensure resolved real path stays within skillsBase (symlink-safe)
     if (existsSync(subSkillDir)) {
+      try {
+        const realSub = realpathSync(subSkillDir);
+        const realBase = realpathSync(skillsBase);
+        if (!normalize(realSub).startsWith(normalize(realBase))) {
+          skillLogger.warn(`Path traversal blocked: "${realSub}" escapes "${realBase}"`);
+          return null;
+        }
+      } catch {
+        skillLogger.warn(`Path validation failed for "${subSkillDir}"`);
+        return null;
+      }
       const mdFiles = collectMarkdownFiles(subSkillDir);
       if (mdFiles.length > 0) {
         const originalChars = mdFiles.reduce((sum, f) => sum + f.content.length, 0);
@@ -456,11 +470,18 @@ export function loadSkillContent(skillId: string): SkillLoadResult | null {
 
   // Try directory skill first
   const skillDir = resolve(skillsBase, skillId);
-  if (!normalize(skillDir).startsWith(normalize(skillsBase))) {
-    skillLogger.warn(`Path traversal blocked: "${skillDir}" escapes "${skillsBase}"`);
-    return null;
-  }
   if (existsSync(skillDir)) {
+    try {
+      const realDir = realpathSync(skillDir);
+      const realBase = realpathSync(skillsBase);
+      if (!normalize(realDir).startsWith(normalize(realBase))) {
+        skillLogger.warn(`Path traversal blocked: "${realDir}" escapes "${realBase}"`);
+        return null;
+      }
+    } catch {
+      skillLogger.warn(`Path validation failed for "${skillDir}"`);
+      return null;
+    }
     const mdFiles = collectMarkdownFiles(skillDir);
     if (mdFiles.length > 0) {
       const originalChars = mdFiles.reduce((sum, f) => sum + f.content.length, 0);

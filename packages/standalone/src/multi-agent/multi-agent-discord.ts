@@ -1007,11 +1007,14 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     // Try executing workflow if this is a conductor response with a workflow_plan
     let cleanedResponse: string;
+    let delegationSource: string | undefined;
     const workflowResult = await this.tryExecuteWorkflow(response, message.channelId, 'discord');
     if (workflowResult && !workflowResult.failed) {
       cleanedResponse = workflowResult.directMessage
         ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
         : workflowResult.result;
+      // Parse delegations only from directMessage (not workflow result output)
+      delegationSource = workflowResult.directMessage;
     } else {
       // Strip workflow/council plan JSON that wasn't executed
       let strippedResponse = response;
@@ -1025,8 +1028,11 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       cleanedResponse = await this.executeAgentToolCalls(agentId, strippedResponse);
     }
 
-    // Parse and submit DELEGATE_BG commands
-    const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
+    // Parse and submit DELEGATE_BG commands (from directMessage only for workflow results)
+    const delegations = this.delegationManager.parseAllDelegations(
+      agentId,
+      delegationSource ?? cleanedResponse
+    );
     let displayResponse = cleanedResponse;
     const hasBackground = delegations.some((delegation) => delegation.background);
     if (delegations.length > 0 && hasBackground) {
