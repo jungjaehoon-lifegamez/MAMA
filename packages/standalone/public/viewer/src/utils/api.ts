@@ -91,6 +91,20 @@ export interface ApiMetricsConfig {
   retention_days?: number;
 }
 
+export interface ApiTimeoutsConfig {
+  request_ms?: number;
+  codex_request_ms?: number;
+  initialize_ms?: number;
+  session_ms?: number;
+  session_cleanup_ms?: number;
+  agent_ms?: number;
+  ultrawork_ms?: number;
+  workflow_step_ms?: number;
+  workflow_max_ms?: number;
+  busy_retry_ms?: number;
+  [key: string]: unknown;
+}
+
 export interface ApiConfigResponse {
   discord?: ApiGatewayConfig;
   slack?: ApiGatewayConfig;
@@ -101,6 +115,7 @@ export interface ApiConfigResponse {
   roles?: ApiRolesConfig;
   token_budget?: ApiTokenBudgetConfig;
   metrics?: ApiMetricsConfig;
+  timeouts?: ApiTimeoutsConfig;
   [key: string]: unknown;
 }
 
@@ -693,6 +708,18 @@ export class API {
     source = 'mama'
   ): Promise<JsonRecord> {
     return this.put(`/api/skills/${encodeURIComponent(name)}/content`, { content, source });
+  }
+
+  // =============================================
+  // Multi-Agent Control API
+  // =============================================
+
+  static async restartAgent(agentId: string): Promise<JsonRecord> {
+    return this.post(`/api/multi-agent/agents/${encodeURIComponent(agentId)}/restart`, {});
+  }
+
+  static async stopAgent(agentId: string): Promise<JsonRecord> {
+    return this.post(`/api/multi-agent/agents/${encodeURIComponent(agentId)}/stop`, {});
   }
 
   // =============================================

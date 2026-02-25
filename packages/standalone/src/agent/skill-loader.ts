@@ -8,11 +8,22 @@
  * are split at section boundaries and lowest-priority sections omitted.
  */
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync, readdirSync, realpathSync } from 'fs';
+import { join, resolve, normalize } from 'path';
 import { homedir } from 'os';
 import { getConfig } from '../cli/config/config-manager.js';
 import { countTokens } from './token-estimator.js';
+import * as debugLoggerModule from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLoggerModule as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const skillLogger = new DebugLogger('SkillLoader');
 
 /**
  * Files to exclude from skill prompt injection (reduce token bloat)
@@ -208,7 +219,7 @@ export function parseSkillFrontmatter(content: string): SkillFrontmatter {
  * Find the main .md file for a directory skill (for frontmatter parsing).
  */
 export function findMainSkillFile(skillDir: string, skillName: string): string | null {
-  for (const name of [`${skillName}.md`, 'skill.md', 'index.md']) {
+  for (const name of [`${skillName}.md`, 'skill.md', 'SKILL.md', 'index.md']) {
     const p = join(skillDir, name);
     if (existsSync(p)) return p;
   }
@@ -307,6 +318,53 @@ export function buildSkillCatalog(verbose = false): string[] {
         if (state[stateKey]?.enabled === false) continue;
 
         const skillDir = join(sourceDir, entry.name);
+
+        // Plugin-structured skill: has skills/ subdirectory with sub-skills
+        const subSkillsDir = join(skillDir, 'skills');
+        if (existsSync(subSkillsDir)) {
+          try {
+            const subEntries = readdirSync(subSkillsDir, { withFileTypes: true });
+            for (const sub of subEntries) {
+              if (!sub.isDirectory()) continue;
+              const subDir = join(subSkillsDir, sub.name);
+              const subMain = findMainSkillFile(subDir, sub.name);
+              if (!subMain) continue;
+              try {
+                const content = readFileSync(subMain, 'utf-8');
+                const fm = parseSkillFrontmatter(content);
+                const description = fm.description || '';
+                const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : sub.name;
+                catalog.push(`- [${stateKey}/${sub.name}] keywords: ${keywords} | ${description}`);
+                if (verbose) {
+                  skillLogger.debug(`Skill catalog (plugin sub): ${stateKey}/${sub.name}`);
+                }
+              } catch (e) {
+                if (verbose) {
+                  skillLogger.warn(`Failed to parse sub-skill ${sub.name}:`, e);
+                }
+              }
+            }
+          } catch (e) {
+            if (verbose) {
+              skillLogger.warn(`Failed to read sub-skills dir ${subSkillsDir}:`, e);
+            }
+          }
+          // Also check for plugin-level main file (plugin.json description)
+          const pluginJson = join(skillDir, '.claude-plugin', 'plugin.json');
+          if (existsSync(pluginJson)) {
+            try {
+              const parsed: unknown = JSON.parse(readFileSync(pluginJson, 'utf-8'));
+              const meta = parsed as { description?: string } | null;
+              if (meta?.description) {
+                catalog.push(`- [${stateKey}] keywords: ${entry.name} | ${meta.description}`);
+              }
+            } catch (e) {
+              if (verbose) skillLogger.warn(`Failed to parse plugin.json for ${stateKey}:`, e);
+            }
+          }
+          continue;
+        }
+
         const mainFile = findMainSkillFile(skillDir, entry.name);
         if (!mainFile) continue;
 
@@ -316,7 +374,9 @@ export function buildSkillCatalog(verbose = false): string[] {
           const description = fm.description || '';
           const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : entry.name;
           catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
-          if (verbose) console.log(`[SkillLoader] Skill catalog: ${stateKey}`);
+          if (verbose) {
+            skillLogger.debug(`Skill catalog: ${stateKey}`);
+          }
         } catch {
           /* skip unreadable */
         }
@@ -363,11 +423,65 @@ export function buildSkillCatalog(verbose = false): string[] {
  * @returns SkillLoadResult with content and truncation metadata, or null if not found
  */
 export function loadSkillContent(skillId: string): SkillLoadResult | null {
-  const skillsBase = join(homedir(), '.mama', 'skills');
+  const skillsBase = resolve(homedir(), '.mama', 'skills');
+
+  // Validate skillId segments: reject path traversal (.. / empty / absolute / special chars)
+  const skillIdParts = skillId.split('/');
+  for (const segment of skillIdParts) {
+    if (!segment || segment === '.' || segment === '..' || /[/\\:]/.test(segment)) {
+      skillLogger.warn(`Rejected invalid skillId segment: "${segment}" in "${skillId}"`);
+      return null;
+    }
+  }
+
+  // Try plugin sub-skill: "cowork/marketing/brand-voice" → skills/cowork/marketing/skills/brand-voice/
+  if (skillIdParts.length >= 3) {
+    const subSkillDir = resolve(
+      skillsBase,
+      skillIdParts[0],
+      skillIdParts[1],
+      'skills',
+      skillIdParts.slice(2).join('/')
+    );
+    // Ensure resolved real path stays within skillsBase (symlink-safe)
+    if (existsSync(subSkillDir)) {
+      try {
+        const realSub = realpathSync(subSkillDir);
+        const realBase = realpathSync(skillsBase);
+        if (!normalize(realSub).startsWith(normalize(realBase))) {
+          skillLogger.warn(`Path traversal blocked: "${realSub}" escapes "${realBase}"`);
+          return null;
+        }
+      } catch {
+        skillLogger.warn(`Path validation failed for "${subSkillDir}"`);
+        return null;
+      }
+      const mdFiles = collectMarkdownFiles(subSkillDir);
+      if (mdFiles.length > 0) {
+        const originalChars = mdFiles.reduce((sum, f) => sum + f.content.length, 0);
+        const truncated = mdFiles.some((f) => f.truncated);
+        const omittedSections = mdFiles.flatMap((f) => f.omittedSections);
+        const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
+        const content = `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
+        return { content, truncated, omittedSections, originalChars };
+      }
+    }
+  }
 
   // Try directory skill first
-  const skillDir = join(skillsBase, skillId);
+  const skillDir = resolve(skillsBase, skillId);
   if (existsSync(skillDir)) {
+    try {
+      const realDir = realpathSync(skillDir);
+      const realBase = realpathSync(skillsBase);
+      if (!normalize(realDir).startsWith(normalize(realBase))) {
+        skillLogger.warn(`Path traversal blocked: "${realDir}" escapes "${realBase}"`);
+        return null;
+      }
+    } catch {
+      skillLogger.warn(`Path validation failed for "${skillDir}"`);
+      return null;
+    }
     const mdFiles = collectMarkdownFiles(skillDir);
     if (mdFiles.length > 0) {
       const originalChars = mdFiles.reduce((sum, f) => sum + f.content.length, 0);
