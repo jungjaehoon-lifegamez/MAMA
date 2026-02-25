@@ -47,6 +47,8 @@ export interface SystemReminder {
   requestedBy: string;
   /** Channel where the task was initiated */
   channelId: string;
+  /** Source platform (discord/slack) — only send to matching callback */
+  source?: 'discord' | 'slack';
   /** Task duration in milliseconds (for completed/failed) */
   duration?: number;
   /** Error message (for failed tasks) */
@@ -303,7 +305,7 @@ export class SystemReminderService {
       reminder.type === 'delegation-completed'
     ) {
       const message = this.formatChatMessage(reminder);
-      await this.sendToAllCallbacks(reminder.channelId, message);
+      await this.sendToAllCallbacks(reminder.channelId, message, reminder.source);
       return;
     }
 
@@ -588,19 +590,29 @@ export class SystemReminderService {
     this.pendingBatches.delete(channelId);
 
     const message = this.formatBatchMessage(reminders);
-    await this.sendToAllCallbacks(channelId, message);
+    // Use source from the first reminder in the batch (all reminders in a batch share the same channel/source)
+    const batchSource = reminders[0]?.source;
+    await this.sendToAllCallbacks(channelId, message, batchSource);
   }
 
   /**
    * Send a message to all registered platform callbacks
    */
-  private async sendToAllCallbacks(channelId: string, message: string): Promise<void> {
+  private async sendToAllCallbacks(
+    channelId: string,
+    message: string,
+    targetSource?: 'discord' | 'slack'
+  ): Promise<void> {
     if (message.length === 0) {
       return;
     }
 
     const promises: Promise<void>[] = [];
     for (const [source, callback] of this.callbacks.entries()) {
+      // If targetSource is specified, only send to the matching platform
+      if (targetSource && source !== targetSource) {
+        continue;
+      }
       promises.push(
         callback(channelId, message, source).catch((error: unknown) => {
           const errorMessage = error instanceof Error ? error.message : String(error);

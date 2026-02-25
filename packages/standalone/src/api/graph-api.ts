@@ -1199,6 +1199,56 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: POST /api/multi-agent/agents/:id/restart - restart a single agent
+    if (pathname.match(/^\/api\/multi-agent\/agents\/[^/]+\/restart$/) && req.method === 'POST') {
+      const agentId = decodeURIComponent(pathname.split('/')[4]);
+      if (!options.restartMultiAgentAgent) {
+        res.writeHead(501, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Restart callback not configured' }));
+        return true;
+      }
+      try {
+        await options.restartMultiAgentAgent(agentId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: `Agent ${agentId} restarted` }));
+      } catch (err) {
+        logger.error(`Agent restart failed for ${agentId}:`, err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      }
+      return true;
+    }
+
+    // Route: POST /api/multi-agent/agents/:id/stop - stop a single agent
+    if (pathname.match(/^\/api\/multi-agent\/agents\/[^/]+\/stop$/) && req.method === 'POST') {
+      const agentId = decodeURIComponent(pathname.split('/')[4]);
+      if (!options.stopMultiAgentAgent) {
+        res.writeHead(501, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Stop callback not configured' }));
+        return true;
+      }
+      try {
+        await options.stopMultiAgentAgent(agentId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: `Agent ${agentId} stopped` }));
+      } catch (err) {
+        logger.error(`Agent stop failed for ${agentId}:`, err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      }
+      return true;
+    }
+
     // Route: GET /api/multi-agent/delegations - get recent delegations
     if (pathname === '/api/multi-agent/delegations' && req.method === 'GET') {
       await handleMultiAgentDelegationsRequest(req, res, options);

@@ -76,7 +76,7 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   method: string;
-  timeout: NodeJS.Timeout;
+  timeout: NodeJS.Timeout | null;
 }
 
 export class CodexMCPProcess extends EventEmitter {
@@ -464,13 +464,17 @@ export class CodexMCPProcess extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const timeoutMs = this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS();
-      const timeout = setTimeout(() => {
-        const timeoutError = new Error(
-          `Request timeout: ${method} (id=${id}, timeoutMs=${timeoutMs})`
-        );
-        this.failPendingRequest(id, timeoutError);
-        this.shutdown(timeoutError, true);
-      }, timeoutMs);
+      // 0 = unlimited (no timeout)
+      const timeout =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              const timeoutError = new Error(
+                `Request timeout: ${method} (id=${id}, timeoutMs=${timeoutMs})`
+              );
+              this.failPendingRequest(id, timeoutError);
+              this.shutdown(timeoutError, true);
+            }, timeoutMs)
+          : null;
 
       this.pendingRequests.set(id, { resolve, reject, method, timeout });
 
@@ -497,7 +501,7 @@ export class CodexMCPProcess extends EventEmitter {
       if ('id' in msg && msg.id !== undefined) {
         const pending = this.pendingRequests.get(msg.id);
         if (pending) {
-          clearTimeout(pending.timeout);
+          if (pending.timeout) clearTimeout(pending.timeout);
           this.pendingRequests.delete(msg.id);
 
           if (msg.error) {
@@ -700,14 +704,14 @@ export class CodexMCPProcess extends EventEmitter {
     if (!pending) {
       return;
     }
-    clearTimeout(pending.timeout);
+    if (pending.timeout) clearTimeout(pending.timeout);
     this.pendingRequests.delete(id);
     pending.reject(error);
   }
 
   private clearPendingRequests(error: Error): void {
     for (const [, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeout);
+      if (pending.timeout) clearTimeout(pending.timeout);
       pending.reject(new Error(`${error.message} (${pending.method})`));
     }
     this.pendingRequests.clear();

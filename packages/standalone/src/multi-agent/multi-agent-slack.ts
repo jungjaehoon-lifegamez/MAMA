@@ -57,6 +57,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
   /** Main Slack WebClient for posting system messages (heartbeat) */
   private mainWebClient: WebClient | null = null;
 
+  /** Per-channel WebClient mapping (for multi-workspace support) */
+  private channelWebClients: Map<string, WebClient> = new Map();
+
   /** Active channel for heartbeat reporting */
   private heartbeatChannelId: string | null = null;
 
@@ -98,10 +101,26 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     return `*${text}*`;
   }
 
+  /**
+   * Get the correct WebClient for a channel (multi-workspace aware).
+   * Returns channel-specific client if registered, otherwise mainWebClient.
+   */
+  private getWebClientForChannel(channelId: string): WebClient | null {
+    return this.channelWebClients.get(channelId) ?? this.mainWebClient;
+  }
+
+  /**
+   * Register a WebClient for a specific channel (call when receiving messages from agent bots)
+   */
+  registerChannelWebClient(channelId: string, client: WebClient): void {
+    this.channelWebClients.set(channelId, client);
+  }
+
   protected async sendChannelNotification(channelId: string, message: string): Promise<void> {
     try {
-      if (this.mainWebClient) {
-        await this.mainWebClient.chat.postMessage({ channel: channelId, text: message });
+      const client = this.getWebClientForChannel(channelId);
+      if (client) {
+        await client.chat.postMessage({ channel: channelId, text: message });
       }
     } catch (err) {
       console.error(`[MultiAgentSlack] Failed to send channel notification:`, err);
@@ -137,6 +156,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       this.mentionCleanupInterval = undefined;
     }
     this.historySeedProcess.clear();
+    this.channelWebClients.clear();
     await this.multiBotManager.stopAll();
   }
 
@@ -147,7 +167,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     if (this.multiBotInitialized) return;
 
     // Register mention callback so agent bots forward mentions to handler
-    this.multiBotManager.onMention(async (agentId, event, _webClient) => {
+    this.multiBotManager.onMention(async (agentId, event, webClient) => {
+      // Register this channel's WebClient for correct workspace routing
+      this.channelWebClients.set(event.channel, webClient);
+
       const cleanContent = event.text.replace(/<@[UW]\w+>/g, '').trim();
       if (!cleanContent) return;
 
@@ -193,6 +216,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           agentId,
           requestedBy: senderAgentId ?? event.user,
           channelId: event.channel,
+          source: 'slack',
           timestamp: Date.now(),
         });
 
@@ -219,6 +243,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
             agentId,
             requestedBy: senderAgentId ?? event.user,
             channelId: event.channel,
+            source: 'slack',
             duration: response.duration,
             timestamp: Date.now(),
           });
@@ -258,9 +283,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
     this.mainWebClient = client;
 
     this.systemReminder.registerCallback(async (channelId, message) => {
+      const webClient = this.getWebClientForChannel(channelId) ?? client;
       const chunks = splitForSlack(message);
       for (const chunk of chunks) {
-        await client.chat.postMessage({ channel: channelId, text: chunk });
+        await webClient.chat.postMessage({ channel: channelId, text: chunk });
       }
     }, 'slack');
   }
@@ -473,8 +499,9 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
       // Create tool status tracker for real-time progress
       let tracker: ToolStatusTracker | null = null;
-      if (this.mainWebClient) {
-        const webClient = this.mainWebClient;
+      const channelClient = this.getWebClientForChannel(context.channelId);
+      if (channelClient) {
+        const webClient = channelClient;
         const channelId = context.channelId;
         const slackAdapter: PlatformAdapter = {
           postPlaceholder: async (content: string) => {
@@ -498,31 +525,38 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       }
 
       // Send message and get response (with timeout, properly cleaned up)
-      let timeoutHandle: ReturnType<typeof setTimeout>;
+      // agent_ms=0 means unlimited (no timeout race)
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       let result;
       try {
-        result = await Promise.race([
-          process.sendMessage(fullPrompt, tracker?.toPromptCallbacks()),
-          new Promise<never>((_, reject) => {
-            timeoutHandle = setTimeout(
-              () =>
-                reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS() / 1000}s`)),
-              AGENT_TIMEOUT_MS()
-            );
-          }),
-        ]);
+        const agentTimeout = AGENT_TIMEOUT_MS();
+        const sendPromise = process.sendMessage(fullPrompt, tracker?.toPromptCallbacks());
+        if (agentTimeout > 0) {
+          result = await Promise.race([
+            sendPromise,
+            new Promise<never>((_, reject) => {
+              timeoutHandle = setTimeout(
+                () => reject(new Error(`Agent ${agentId} timed out after ${agentTimeout / 1000}s`)),
+                agentTimeout
+              );
+            }),
+          ]);
+        } else {
+          result = await sendPromise;
+        }
       } finally {
-        clearTimeout(timeoutHandle!);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         await tracker?.cleanup();
       }
 
       // Check for workflow plan BEFORE executing tool calls (priority)
+      const wfClient = this.getWebClientForChannel(context.channelId);
       const workflowResult = await this.tryExecuteWorkflow(
         result.response,
         context.channelId,
         'slack',
         (event) => {
-          if (!this.mainWebClient) {
+          if (!wfClient) {
             return;
           }
           let msg = '';
@@ -544,16 +578,38 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
             msg = `${event.agentDisplayName}${modelTag}${progress} ❌ 실패: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
-            this.mainWebClient!.chat.postMessage({ channel: context.channelId, text: msg }).catch(
-              () => {}
-            );
+            wfClient.chat.postMessage({ channel: context.channelId, text: msg }).catch(() => {});
           }
-        }
+        },
+        wfClient
+          ? (_stepAgentId: string) => {
+              const chId = context.channelId;
+              const adapter: PlatformAdapter = {
+                postPlaceholder: async (content: string) => {
+                  const res = await wfClient.chat.postMessage({ channel: chId, text: content });
+                  return res.ts ?? null;
+                },
+                editPlaceholder: async (handle: string, content: string) => {
+                  await wfClient.chat.update({ channel: chId, ts: handle, text: content });
+                },
+                deletePlaceholder: async (handle: string) => {
+                  await wfClient.chat.delete({ channel: chId, ts: handle });
+                },
+              };
+              const stepTracker = new ToolStatusTracker(adapter, {
+                throttleMs: 1500,
+                initialDelayMs: 2000,
+              });
+              return {
+                callbacks: stepTracker.toPromptCallbacks(),
+                cleanup: () => stepTracker.cleanup(),
+              };
+            }
+          : undefined
       );
 
       if (workflowResult) {
         if (workflowResult.failed) {
-          // Workflow plan parsed but execution failed — feed error back to Conductor
           this.logger.warn(
             `[MultiAgentSlack] Workflow failed: ${workflowResult.failed}, sending feedback to conductor`
           );
@@ -573,6 +629,35 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         const display = workflowResult.directMessage
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
+
+        // Parse delegations from non-plan content (directMessage may contain DELEGATE commands)
+        if (workflowResult.directMessage) {
+          const wfDelegations = this.delegationManager.parseAllDelegations(
+            agentId,
+            workflowResult.directMessage
+          );
+          for (const delegation of wfDelegations) {
+            if (!delegation.background) continue;
+            const check = this.delegationManager.isDelegationAllowed(
+              delegation.fromAgentId,
+              delegation.toAgentId
+            );
+            if (check.allowed) {
+              this.backgroundTaskManager.submit({
+                description: delegation.task.substring(0, 200),
+                prompt: delegation.task,
+                agentId: delegation.toAgentId,
+                requestedBy: agentId,
+                channelId: context.channelId,
+                source: 'slack',
+              });
+              this.logger.info(
+                `[MultiAgentSlack] Background delegation (post-workflow): ${agentId} -> ${delegation.toAgentId}`
+              );
+            }
+          }
+        }
+
         const formattedResponse = this.formatAgentResponse(agent, display);
         return {
           agentId,
@@ -584,12 +669,13 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       }
 
       // Check for council plan (after workflow, before tool calls)
+      const councilClient = this.getWebClientForChannel(context.channelId);
       const councilResult = await this.tryExecuteCouncil(
         result.response,
         context.channelId,
         'slack',
         async (event) => {
-          if (!this.mainWebClient) {
+          if (!councilClient) {
             return;
           }
           let msg = '';
@@ -603,7 +689,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           }
           if (msg) {
             try {
-              await this.mainWebClient.chat.postMessage({ channel: context.channelId, text: msg });
+              await councilClient.chat.postMessage({ channel: context.channelId, text: msg });
             } catch (err) {
               this.logger?.warn('[MultiAgentSlack] Failed to post council progress:', err);
             }
@@ -615,6 +701,35 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         const display = councilResult.directMessage
           ? `${councilResult.directMessage}\n\n${councilResult.result}`
           : councilResult.result;
+
+        // Parse delegations from non-plan content
+        if (councilResult.directMessage) {
+          const cDelegations = this.delegationManager.parseAllDelegations(
+            agentId,
+            councilResult.directMessage
+          );
+          for (const delegation of cDelegations) {
+            if (!delegation.background) continue;
+            const check = this.delegationManager.isDelegationAllowed(
+              delegation.fromAgentId,
+              delegation.toAgentId
+            );
+            if (check.allowed) {
+              this.backgroundTaskManager.submit({
+                description: delegation.task.substring(0, 200),
+                prompt: delegation.task,
+                agentId: delegation.toAgentId,
+                requestedBy: agentId,
+                channelId: context.channelId,
+                source: 'slack',
+              });
+              this.logger.info(
+                `[MultiAgentSlack] Background delegation (post-council): ${agentId} -> ${delegation.toAgentId}`
+              );
+            }
+          }
+        }
+
         const formattedResponse = this.formatAgentResponse(agent, display);
         return {
           agentId,
@@ -873,29 +988,134 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       return;
     }
 
+    let displayResponse = response;
+
+    // Try executing workflow if this is a conductor response with a workflow_plan
+    const queueClient = this.getWebClientForChannel(message.channelId);
+    const createStepCbs = queueClient
+      ? (_stepAgentId: string) => {
+          const chId = message.channelId;
+          const adapter: PlatformAdapter = {
+            postPlaceholder: async (content: string) => {
+              const res = await queueClient.chat.postMessage({ channel: chId, text: content });
+              return res.ts ?? null;
+            },
+            editPlaceholder: async (handle: string, content: string) => {
+              await queueClient.chat.update({ channel: chId, ts: handle, text: content });
+            },
+            deletePlaceholder: async (handle: string) => {
+              await queueClient.chat.delete({ channel: chId, ts: handle });
+            },
+          };
+          const stepTracker = new ToolStatusTracker(adapter, {
+            throttleMs: 1500,
+            initialDelayMs: 2000,
+          });
+          return {
+            callbacks: stepTracker.toPromptCallbacks(),
+            cleanup: () => stepTracker.cleanup(),
+          };
+        }
+      : undefined;
+    const workflowResult = await this.tryExecuteWorkflow(
+      response,
+      message.channelId,
+      'slack',
+      undefined,
+      createStepCbs
+    );
+    if (workflowResult && !workflowResult.failed) {
+      displayResponse = workflowResult.directMessage
+        ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
+        : workflowResult.result;
+    } else {
+      // Strip workflow/council plan JSON from queued responses
+      if (this.workflowEngine?.isEnabled()) {
+        displayResponse = this.workflowEngine.extractNonPlanContent(displayResponse);
+      }
+      if (this.councilEngine) {
+        displayResponse = this.councilEngine.extractNonPlanContent(displayResponse);
+      }
+      // Execute text-based gateway tool calls
+      displayResponse = await this.executeTextToolCalls(displayResponse);
+    }
+
+    // Parse and submit DELEGATE_BG commands from queued responses
+    const delegations = this.delegationManager.parseAllDelegations(agentId, displayResponse);
+    const bgDelegations = delegations.filter((d) => d.background);
+    if (bgDelegations.length > 0) {
+      let submittedCount = 0;
+      for (const delegation of bgDelegations) {
+        const check = this.delegationManager.isDelegationAllowed(
+          delegation.fromAgentId,
+          delegation.toAgentId
+        );
+        if (check.allowed) {
+          this.backgroundTaskManager.submit({
+            description: delegation.task.substring(0, 200),
+            prompt: delegation.task,
+            agentId: delegation.toAgentId,
+            requestedBy: agentId,
+            channelId: message.channelId,
+            source: 'slack',
+          });
+          this.logger.info(
+            `[MultiAgentSlack] Background delegation (queued): ${agentId} -> ${delegation.toAgentId}`
+          );
+          submittedCount++;
+        }
+      }
+      if (submittedCount > 0) {
+        displayResponse =
+          bgDelegations[0].originalContent || `🔄 ${submittedCount} background task(s) delegated`;
+      }
+    }
+
+    // Handle synchronous delegations via message queue
+    const syncDelegations = delegations.filter((d) => !d.background);
+    for (const delegation of syncDelegations) {
+      const check = this.delegationManager.isDelegationAllowed(
+        delegation.fromAgentId,
+        delegation.toAgentId
+      );
+      if (check.allowed) {
+        this.messageQueue.enqueue(delegation.toAgentId, {
+          prompt: delegation.task,
+          channelId: message.channelId,
+          source: 'slack',
+          enqueuedAt: Date.now(),
+          context: { channelId: message.channelId, userId: 'delegation' },
+        });
+        this.logger.info(
+          `[MultiAgentSlack] Sync delegation (queued path): ${agentId} -> ${delegation.toAgentId}`
+        );
+        this.tryDrainNow(delegation.toAgentId, 'slack', message.channelId).catch(() => {});
+      }
+    }
+
     // Format response with agent prefix
-    const formattedResponse = this.formatAgentResponse(agent, response);
+    const formattedResponse = this.formatAgentResponse(agent, displayResponse);
 
     const agentResponse: AgentResponse = {
       agentId,
       agent,
       content: formattedResponse,
-      rawContent: response,
+      rawContent: displayResponse,
     };
 
-    // Send to channel (pass mainWebClient as fallback for agents without dedicated bots)
+    // Send to channel (use channel-aware WebClient as fallback for agents without dedicated bots)
     await this.sendAgentResponses(
       message.channelId,
       message.threadTs,
       [agentResponse],
-      this.mainWebClient ?? undefined
+      this.getWebClientForChannel(message.channelId) ?? undefined
     );
 
     // Record to shared context
     this.sharedContext.recordAgentMessage(
       message.channelId,
       agent,
-      response,
+      displayResponse,
       agentResponse.messageId || ''
     );
 
@@ -989,6 +1209,7 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           agentId: targetAgentId,
           requestedBy: senderAgentId ?? 'main',
           channelId: event.channel,
+          source: 'slack',
           duration: response.duration,
           timestamp: Date.now(),
         });

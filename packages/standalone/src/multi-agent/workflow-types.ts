@@ -68,8 +68,10 @@ export interface WorkflowConfig {
   enabled: boolean;
   /** Max ephemeral agents per workflow @default 20 */
   max_ephemeral_agents?: number;
-  /** Max total workflow duration in ms @default 600000 (10 min) */
+  /** Max total workflow duration in ms @default 1800000 (30 min). 0 = unlimited */
   max_duration_ms?: number;
+  /** Per-step timeout in ms @default 300000 (5 min). 0 = unlimited */
+  step_timeout_ms?: number;
   /** Max concurrent steps per execution level @default 3 */
   max_concurrent_steps?: number;
   /** Round-robin backend balancing (claude ↔ codex-mcp) @default true */
