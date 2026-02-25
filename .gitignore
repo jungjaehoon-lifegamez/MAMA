@@ -97,7 +97,7 @@ temp/
 dev-docs/
 docs/test/
 docs/.codex_write_test.txt
-*.docx
+docs/*.docx
 .sisyphus/
 
 .gemini/

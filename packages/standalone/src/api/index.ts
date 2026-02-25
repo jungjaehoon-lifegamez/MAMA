@@ -145,7 +145,12 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         res.status(500).json({ error: String(e) });
       }
     } else if (healthService) {
-      res.json(healthService.compute());
+      try {
+        res.json(healthService.compute());
+      } catch (e) {
+        console.error('[API] /api/metrics/health error:', e);
+        res.status(500).json({ error: String(e) });
+      }
     } else {
       res.status(503).json({ error: 'Metrics not available' });
     }
@@ -320,7 +325,9 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       }
     },
     async stop(): Promise<void> {
-      if (!server) return;
+      if (!server) {
+        return;
+      }
       const s = server;
       server = null;
 
