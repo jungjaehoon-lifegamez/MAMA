@@ -96,6 +96,8 @@ temp/
 # Development documentation (local only)
 dev-docs/
 docs/test/
+docs/.codex_write_test.txt
+*.docx
 .sisyphus/
 
 .gemini/
