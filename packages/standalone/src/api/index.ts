@@ -5,6 +5,7 @@
  */
 
 import express, { type Express, type Router } from 'express';
+import { createServer, type Server as HttpServer } from 'node:http';
 import type Database from 'better-sqlite3';
 import { createCronRouter, InMemoryLogStore, type ExecutionLogStore } from './cron-handler.js';
 import {
@@ -17,6 +18,7 @@ import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
 import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
+import type { SystemHealthReport } from '../observability/health-check.js';
 
 // Re-export types
 export * from './types.js';
@@ -48,6 +50,12 @@ export interface ApiServerOptions {
   db?: Database.Database;
   /** Skill registry instance */
   skillRegistry?: SkillRegistry;
+  /** Health score service for /api/metrics/health */
+  healthService?: { compute(windowMs?: number): unknown };
+  /** Connection-based health check service */
+  healthCheckService?: {
+    check(): Promise<SystemHealthReport>;
+  };
 }
 
 /**
@@ -57,7 +65,7 @@ export interface ApiServer {
   /** Express app instance */
   app: Express;
   /** HTTP server instance */
-  server: ReturnType<(typeof import('express'))['application']['listen']> | null;
+  server: HttpServer | null;
   /** Start the server */
   start(): Promise<void>;
   /** Stop the server */
@@ -79,6 +87,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     enableAutoKillPort = false,
     db,
     skillRegistry,
+    healthService,
+    healthCheckService,
   } = options;
 
   const app = express();
@@ -119,14 +129,36 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     app.use('/api/skills', skillsRouter);
   }
 
-  // Health check endpoint
+  // Health check endpoint (watchdog)
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: Date.now() });
   });
 
+  // Metrics health endpoint (observability)
+  app.get('/api/metrics/health', async (_req, res) => {
+    if (healthCheckService) {
+      try {
+        const report = await healthCheckService.check();
+        res.json(report);
+      } catch (e) {
+        console.error('[API] /api/metrics/health error:', e);
+        res.status(500).json({ error: String(e) });
+      }
+    } else if (healthService) {
+      try {
+        res.json(healthService.compute());
+      } catch (e) {
+        console.error('[API] /api/metrics/health error:', e);
+        res.status(500).json({ error: String(e) });
+      }
+    } else {
+      res.status(503).json({ error: 'Metrics not available' });
+    }
+  });
+
   // Note: Error handlers are mounted in start() to allow adding custom routes first
 
-  let server: ReturnType<typeof app.listen> | null = null;
+  let server: HttpServer | null = null;
   let actualPort = port;
   let errorHandlersMounted = false;
 
@@ -153,12 +185,31 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       const tryListen = (): Promise<void> =>
         new Promise((resolve, reject) => {
           let settled = false;
+          const candidate = createServer(app);
+
+          const cleanup = () => {
+            candidate.removeAllListeners();
+            try {
+              candidate.close();
+            } catch {
+              /* already closed */
+            }
+          };
+
           try {
-            server = app.listen(attemptPort, host, () => {
+            candidate.on('error', (err: NodeJS.ErrnoException) => {
               if (settled) return;
               settled = true;
-              const addr = server?.address();
+              cleanup();
+              reject(err);
+            });
+            // exclusive: false → SO_REUSEADDR, allows binding over TIME_WAIT sockets
+            candidate.listen({ port: attemptPort, host, exclusive: false }, () => {
+              if (settled) return;
+              settled = true;
+              const addr = candidate.address();
               if (addr && typeof addr === 'object') {
+                server = candidate; // Only assign on success
                 actualPort = addr.port;
                 console.log(`API server listening on http://${host}:${actualPort}`);
                 if (host === '0.0.0.0') {
@@ -167,17 +218,14 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
                 }
                 resolve();
               } else {
+                cleanup();
                 reject(new Error(`Failed to bind to port ${attemptPort}`));
               }
-            });
-            server.on('error', (err: NodeJS.ErrnoException) => {
-              if (settled) return;
-              settled = true;
-              reject(err);
             });
           } catch (error) {
             if (!settled) {
               settled = true;
+              cleanup();
               reject(error);
             }
           }
@@ -277,20 +325,20 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       }
     },
     async stop(): Promise<void> {
-      return new Promise((resolve, reject) => {
-        if (!server) {
+      if (!server) {
+        return;
+      }
+      const s = server;
+      server = null;
+
+      // Force-close all connections (idle + active)
+      s.closeAllConnections();
+
+      return new Promise<void>((resolve) => {
+        const timeoutId = setTimeout(resolve, 2000);
+        s.close(() => {
+          clearTimeout(timeoutId);
           resolve();
-          return;
-        }
-        // Force-close all open connections so server.close() resolves immediately
-        server.closeAllConnections();
-        server.close((err) => {
-          if (err) {
-            reject(err);
-          } else {
-            server = null;
-            resolve();
-          }
         });
       });
     },

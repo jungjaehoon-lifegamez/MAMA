@@ -5,6 +5,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    setupFiles: ['tests/setup.ts'],
     // Use forks pool with single fork to avoid parallel execution issues
     // with tests that modify HOME environment variable
     pool: 'forks',

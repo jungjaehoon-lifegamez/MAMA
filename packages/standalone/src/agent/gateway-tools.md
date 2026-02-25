@@ -6,24 +6,62 @@ Call tools via JSON block:
 {"name": "tool_name", "input": {"param1": "value1"}}
 ```
 
-## Memory
+## MAMA Memory
 
-- **mama_search** — Search decisions. Params: query?, type?, limit?
-- **mama_save** — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
-- **mama_update** — Update outcome. Params: id, outcome, reason?
-- **mama_load_checkpoint** — Resume session. No params.
+- **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
+- **mama_search**(query?, type?, limit?) — Search decisions
+- **mama_update**(id, outcome, reason?) — Update outcome
+- **mama_load_checkpoint**() — Resume session. No params.
 
 ## Utility
 
 - **Read**(path) — Read file
 - **Write**(path, content) — Write file
 - **Bash**(command, workdir?) — Execute command (60s timeout)
-- **discord_send**(channel_id, message?, file_path?) — Send message or file to Discord. Use file_path to send images/documents (e.g. from ~/.mama/workspace/media/inbound/)
-- **slack_send**(channel_id, message?, file_path?) — Send message or file to a Slack channel
+- **discord_send**(channel_id, message?, file_path?) — Send message or file to Discord
+- **slack_send**(channel_id, message?, file_path?) — Send message or file to Slack
+
+## Browser (Playwright)
+
+- **browser_navigate**(url) — Open URL in headless browser
+- **browser_screenshot**(filename?, fullPage?) — Take screenshot
+- **browser_click**(selector) — Click element by CSS selector
+- **browser_type**(selector, text) — Type text into input
+- **browser_get_text**() — Get all text from page
+- **browser_scroll**(direction, amount?) — Scroll page
+- **browser_wait_for**(selector, timeout?) — Wait for element
+- **browser_evaluate**(script) — Run JavaScript in page
+- **browser_pdf**(filename?) — Save page as PDF
+- **browser_close**() — Close browser
+
+## OS Management (viewer-only)
+
+- **os_add_bot**() — Add a bot platform (Discord/Telegram/Slack/Chatwork)
+- **os_set_permissions**() — Set tool/path permissions for a role
+- **os_get_config**() — Get current configuration
+- **os_set_model**() — Set AI model for a role
+
+## OS Monitoring (viewer-only)
+
+- **os_list_bots**() — List configured bot platforms and status
+- **os_restart_bot**() — Restart a bot platform
+- **os_stop_bot**() — Stop a bot platform
+
+## PR Review
+
+- **pr_review_threads**(pr_url) — Fetch unresolved review threads from GitHub PR
+
+## Playground
+
+- **playground_create**(name, html?, file_path?, description?) — Create an interactive HTML playground
 
 ## Webchat
 
-- **webchat_send**(message?, file_path?, session_id?) — Send a file or message to the webchat viewer. Copies the file to outbound directory and returns the path for inline rendering. The `message` field in the result should be included in your response text so the viewer can render it.
+- **webchat_send**(message?, file_path?, session_id?) — Send message/file to webchat viewer
+
+## Code-Act Sandbox
+
+- **code_act**() — Execute JavaScript in sandboxed QuickJS
 
 ## Sending Media to Webchat
 
@@ -68,55 +106,6 @@ The `prompt` field is what the agent will execute on each cron tick.
 Use cron expressions: `0 * * * *` (hourly), `*/30 * * * *` (every 30min), `0 9 * * *` (daily 9am).
 
 When a user asks to schedule/monitor something periodically, ALWAYS use this API — do NOT create external scripts or system crontab entries.
-
-## Playground
-
-- **playground_create**(name, html?, file_path?, description?) — Create an interactive HTML playground. At least one of `html` or `file_path` is required. If `file_path` is provided, it takes priority over `html`. Use `file_path` for large HTML instead of inline `html`.
-
-**IMPORTANT:** When the user asks for a playground, explorer, visualizer, interactive tool, or similar, you MUST use this tool.
-Do NOT use Write tool to create HTML files directly — only `playground_create` registers the file in `index.json` so it appears in the Viewer Playground tab.
-
-**Inline HTML example:**
-
-```tool_call
-{"name": "playground_create", "input": {"name": "Color Palette Explorer", "html": "<!doctype html><html>..full HTML..</html>", "description": "Color palette exploration tool"}}
-```
-
-**File path example (preferred for large HTML):**
-
-First write the HTML file to the workspace, then reference it:
-
-```tool_call
-{"name": "playground_create", "input": {"name": "Data Dashboard", "file_path": "~/.mama/workspace/dashboard.html", "description": "Interactive data dashboard"}}
-```
-
-**HTML requirements:**
-
-- Self-contained (no external CDN, all CSS/JS inline)
-- Structure: Control panel → Live preview → Prompt output (Copy + Send to Chat buttons)
-- Send to Chat: `window.parent.postMessage({ type: 'playground:sendToChat', message: text }, '*')` — Viewer receives and forwards to chat
-- Never put real newlines inside JS string literals — always use `\n` escape
-
-Returns: `{ success: true, url: "/playgrounds/{slug}.html", slug: "..." }`
-
-## Browser (Playwright)
-
-- **browser_navigate**(url) — Open URL in headless browser. Returns title and final URL.
-- **browser_screenshot**(filename?, fullPage?) — Take screenshot. Saved to /tmp/mama-screenshots/. Use discord_send to share the image.
-- **browser_click**(selector) — Click element by CSS selector.
-- **browser_type**(selector, text) — Type text into input element.
-- **browser_get_text**() — Get all text content from current page.
-- **browser_scroll**(direction, amount?) — Scroll page. direction: up/down/top/bottom.
-- **browser_wait_for**(selector, timeout?) — Wait for element to appear.
-- **browser_evaluate**(script) — Run JavaScript in page context.
-- **browser_pdf**(filename?) — Save page as PDF (Chromium only).
-- **browser_close**() — Close browser. Call when done browsing.
-
-Example workflow: navigate → get_text or screenshot → close.
-
-## PR Review
-
-- **pr_review_threads**(pr_url) — Fetch unresolved review threads from GitHub PR. Returns threads grouped by file with comment body, line, author. Also accepts (owner, repo, pr_number).
 
 ## IMPORTANT: System Info
 

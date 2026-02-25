@@ -28,6 +28,7 @@ import { WebSocketServer } from 'ws';
 
 import {
   loadConfig,
+  initConfig,
   configExists,
   expandPath,
   provisionDefaults,
@@ -55,6 +56,10 @@ import type {
 import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer, insertTokenUsage } from '../../api/index.js';
+import { MetricsStore } from '../../observability/metrics-store.js';
+import { MetricsCleanup } from '../../observability/metrics-cleanup.js';
+import { HealthScoreService } from '../../observability/health-score.js';
+import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
@@ -83,8 +88,8 @@ const API_PORT = 3847;
 const EMBEDDING_PORT = 3849;
 
 // MAMA embedding server (keeps model in memory)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let embeddingServer: any = null;
+import type { Server as HttpServer } from 'node:http';
+let embeddingServer: HttpServer | null = null;
 
 /**
  * Normalize Discord guild config before passing to gateway.
@@ -518,7 +523,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
   // Load config
   let config;
   try {
-    config = await loadConfig();
+    config = await initConfig();
   } catch (error) {
     console.error(
       `Failed to load config: ${error instanceof Error ? error.message : String(error)}\n`
@@ -891,6 +896,78 @@ export async function runAgentLoop(
   const dbPath = expandPath(config.database.path).replace('mama-memory.db', 'mama-sessions.db');
   const db = new Database(dbPath);
 
+  // Initialize metrics store (respects config.metrics.enabled)
+  const metricsEnabled = config.metrics?.enabled !== false;
+  let metricsStore: MetricsStore | null = null;
+  let metricsCleanup: MetricsCleanup | null = null;
+  let healthService: HealthScoreService | null = null;
+  let metricsInterval: ReturnType<typeof setInterval> | null = null;
+  let healthWarningInterval: ReturnType<typeof setInterval> | null = null;
+
+  if (metricsEnabled) {
+    const metricsDbPath = expandPath(config.database.path).replace(
+      'mama-memory.db',
+      'mama-metrics.db'
+    );
+    metricsStore = MetricsStore.getInstance(metricsDbPath);
+    metricsCleanup = new MetricsCleanup(metricsStore, {
+      retentionMs: (config.metrics?.retention_days ?? 7) * 24 * 60 * 60 * 1000,
+    });
+    metricsCleanup.start();
+    healthService = new HealthScoreService(metricsStore);
+    console.log('✓ Metrics store initialized');
+
+    // Periodic metrics summary log (every 5 minutes)
+    const METRICS_LOG_INTERVAL = 5 * 60 * 1000;
+    metricsInterval = setInterval(() => {
+      try {
+        const count = metricsStore!.countSince(Date.now() - METRICS_LOG_INTERVAL);
+        const health = healthService!.compute();
+        startLogger.info(
+          `[Metrics] ${count} recorded (5m), health: ${health.score}/100 (${health.status})`
+        );
+      } catch {
+        /* ignore */
+      }
+    }, METRICS_LOG_INTERVAL);
+  } else {
+    console.log('ℹ Metrics disabled via config');
+  }
+
+  // Initialize connection-based health check service (always active, regardless of metrics config)
+  const healthCheckDbPath = expandPath(config.database.path);
+  const healthCheckService = new HealthCheckService({
+    embeddingPort: EMBEDDING_PORT,
+    db,
+    sessionPool: getSessionPool(),
+    metricsCleanup: metricsCleanup ?? undefined,
+    healthScoreService: healthService ?? undefined,
+    dbPath: healthCheckDbPath,
+    watchdogPidPath: `${homedir()}/.mama/watchdog.pid`,
+  });
+
+  // Wire token budget check (daily usage vs config limit)
+  const tokenBudgetConfig = config.token_budget;
+  if (tokenBudgetConfig && tokenBudgetConfig.daily_limit > 0) {
+    const alertThreshold = tokenBudgetConfig.alert_threshold ?? 0.9;
+    healthCheckService.setGetTokenUsage(() => {
+      try {
+        const result = db
+          .prepare(
+            `
+          SELECT COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens
+          FROM token_usage
+          WHERE created_at >= ?
+        `
+          )
+          .get(Date.now() - 86_400_000) as { total_tokens: number };
+        return { used: result.total_tokens, limit: tokenBudgetConfig.daily_limit, alertThreshold };
+      } catch {
+        return null;
+      }
+    });
+  }
+
   // Ensure swarm_tasks table exists (used by Graph API delegations endpoint)
   db.prepare(
     `
@@ -930,7 +1007,6 @@ export async function runAgentLoop(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let turnCount = 0;
   let autoRecallUsed = false;
-
   const mamaHome = join(homedir(), '.mama');
 
   // Sync built-in skills on every start (non-destructive — skips existing files)
@@ -1041,6 +1117,9 @@ export async function runAgentLoop(
       } catch {
         /* ignore */
       }
+    },
+    onMetric: (name, value, labels) => {
+      metricsStore?.record({ name, value, labels });
     },
   });
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');
@@ -1309,7 +1388,10 @@ export async function runAgentLoop(
   });
 
   // Prepare graph handler options (will be populated after gateways init)
-  const graphHandlerOptions: GraphHandlerOptions = {};
+  const graphHandlerOptions: GraphHandlerOptions = {
+    healthService: healthService ?? undefined,
+    healthCheckService,
+  };
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Only register when useCodeAct is enabled; otherwise graph-api returns 501
@@ -1521,6 +1603,14 @@ export async function runAgentLoop(
     }
   }
 
+  // Wire gateways into health check service
+  if (discordGateway) {
+    healthCheckService.addGateway('discord', discordGateway);
+  }
+  if (slackGateway) {
+    healthCheckService.addGateway('slack', slackGateway);
+  }
+
   // Populate graph handler options with runtime dependencies (F4)
   if (discordGateway || slackGateway) {
     const discordHandler = discordGateway?.getMultiAgentHandler();
@@ -1566,6 +1656,9 @@ export async function runAgentLoop(
         }
       };
 
+      // Share getAgentStates with health check service
+      healthCheckService.setGetAgentStates(graphHandlerOptions.getAgentStates);
+
       // getSwarmTasks: recent delegations from swarm-db
       graphHandlerOptions.getSwarmTasks = (limit = 20) => {
         try {
@@ -1605,6 +1698,16 @@ export async function runAgentLoop(
           );
         }
       };
+
+      // Wire delegation chain count into health check
+      healthCheckService.setGetActiveDelegationCount(() => {
+        try {
+          const dm = multiAgentHandler.getDelegationManager();
+          return dm ? dm.getActiveDelegationCount() : 0;
+        } catch {
+          return 0;
+        }
+      });
 
       // Apply updated multi-agent config at runtime without full daemon restart.
       graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
@@ -1703,6 +1806,30 @@ export async function runAgentLoop(
     console.log('✓ Heartbeat scheduler started');
   }
 
+  // Wire scheduler and heartbeat into health check service
+  healthCheckService.setCronScheduler(scheduler);
+  healthCheckService.setHeartbeat(heartbeatScheduler);
+
+  // Periodic health check warning log (every 5 minutes)
+  healthWarningInterval = setInterval(
+    async () => {
+      try {
+        const report = await healthCheckService.check();
+        const criticalFails = report.checks.filter(
+          (c) => c.severity === 'critical' && c.status === 'fail'
+        );
+        if (criticalFails.length > 0) {
+          startLogger.warn(
+            `[Health] ⚠ ${criticalFails.length} critical issue(s): ${criticalFails.map((c) => c.name).join(', ')}`
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    },
+    5 * 60 * 1000
+  );
+
   // Initialize token keep-alive (prevents OAuth token expiration)
   const tokenKeepAlive = new TokenKeepAlive({
     intervalMs: 6 * 60 * 60 * 1000, // 6 hours
@@ -1726,6 +1853,8 @@ export async function runAgentLoop(
     port: API_PORT,
     db,
     skillRegistry,
+    healthService: healthService ?? undefined,
+    healthCheckService,
     onHeartbeat: async (prompt) => {
       try {
         await agentLoop.run(prompt);
@@ -2540,10 +2669,19 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     shuttingDown = true;
     console.log('\n\n🛑 Shutting down MAMA...');
 
+    // Clear periodic intervals
+    if (metricsInterval) {
+      clearInterval(metricsInterval);
+    }
+    if (healthWarningInterval) {
+      clearInterval(healthWarningInterval);
+    }
+
     // Force exit after 5 seconds if graceful shutdown hangs
+    // exit(0) = intentional stop; systemd Restart=on-failure should NOT restart
     setTimeout(() => {
       console.error('[MAMA] Graceful shutdown timed out, forcing exit');
-      process.exit(1);
+      process.exit(0);
     }, 5000);
 
     try {
@@ -2552,8 +2690,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       heartbeatScheduler.stop();
       tokenKeepAlive.stop();
 
-      // Close embedding server (port 3849) - fast, no await needed
-      if (embeddingServer?.close) {
+      // Close embedding server (port 3849) - drain connections first
+      if (embeddingServer) {
+        embeddingServer.closeAllConnections();
         embeddingServer.close();
       }
 
@@ -2576,6 +2715,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       // Close session database
       sessionStore.close();
+
+      // Stop metrics cleanup
+      metricsCleanup?.stop();
 
       const { deletePid } = await import('../utils/pid-manager.js');
       await deletePid();

@@ -151,5 +151,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.10.2 - Playgrounds, Codex Backend, Code-Act Sandbox, Council Engine, Dynamic Workflow
-**Last Updated:** 2026-02-22
+**Status:** MAMA OS v0.12.0 - Stability, Config System, Observability, Health Check, Runner Unification
+**Last Updated:** 2026-02-25

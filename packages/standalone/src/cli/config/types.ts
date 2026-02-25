@@ -468,6 +468,114 @@ export interface IntegrationsConfig {
   heartbeat?: HeartbeatIntegrationConfig;
 }
 
+// ============================================================================
+// Tuning Configuration Types (Sprint 1 — Config Externalization)
+// ============================================================================
+
+/**
+ * Prompt size limits.
+ * Token-based fields are primary (used by PromptSizeMonitor).
+ * Char-based fields remain for backward compatibility.
+ */
+export interface PromptConfig {
+  /** @deprecated Use warn_tokens instead */
+  warn_chars: number;
+  /** @deprecated Use truncate_tokens instead */
+  truncate_chars: number;
+  /** @deprecated Use hard_limit_tokens instead */
+  hard_limit_chars: number;
+  /** @deprecated Use skill_max_tokens instead */
+  skill_max_chars: number;
+  /** Warn threshold in tokens @default 3750 */
+  warn_tokens?: number;
+  /** Truncate threshold in tokens @default 6250 */
+  truncate_tokens?: number;
+  /** Hard limit in tokens @default 10000 */
+  hard_limit_tokens?: number;
+  /** Max skill file tokens @default 2000 */
+  skill_max_tokens?: number;
+  /** Per-model context window limits (tokens). Keys are model name prefixes. */
+  model_limits?: Record<string, number>;
+}
+
+/**
+ * Timeout settings (currently hardcoded across 6+ files)
+ */
+export interface TimeoutsConfig {
+  /** CLI request timeout @default 120000 */
+  request_ms: number;
+  /** Codex MCP request timeout @default 180000 */
+  codex_request_ms: number;
+  /** MCP initialize timeout @default 60000 */
+  initialize_ms: number;
+  /** Session idle timeout @default 1800000 */
+  session_ms: number;
+  /** Session cleanup interval @default 300000 */
+  session_cleanup_ms: number;
+  /** Agent execution timeout @default 300000 */
+  agent_ms: number;
+  /** UltraWork execution timeout @default 300000 */
+  ultrawork_ms: number;
+  /** Retry delay when agent is busy @default 5000 */
+  busy_retry_ms: number;
+}
+
+/**
+ * Gateway-related timing settings (dedup, TTL, intervals)
+ */
+export interface GatewayConfig {
+  /** Dedup TTL for Slack messages @default 30000 */
+  dedup_ttl_ms: number;
+  /** Mention tracking TTL @default 300000 */
+  mention_ttl_ms: number;
+  /** Message queue TTL @default 1200000 */
+  message_ttl_ms: number;
+  /** Cleanup interval for gateway state @default 60000 */
+  cleanup_interval_ms: number;
+  /** Heartbeat interval for Slack typing @default 60000 */
+  heartbeat_interval_ms: number;
+  /** Channel history cleanup interval @default 3600000 */
+  history_cleanup_interval_ms: number;
+  /** Tool status throttle @default 3000 */
+  tool_status_throttle_ms: number;
+  /** Tool status initial delay @default 5000 */
+  tool_status_initial_delay_ms: number;
+}
+
+/**
+ * IO and data size limits
+ */
+export interface IOConfig {
+  /** Max bytes for file reads @default 200000 */
+  max_read_bytes: number;
+  /** Max chars for dynamic context injection @default 4000 */
+  max_dynamic_context_chars: number;
+  /** Context warning threshold in tokens @default 160000 */
+  context_threshold_tokens: number;
+  /** Max context tokens before forced rotation @default 200000 */
+  max_context_tokens: number;
+}
+
+/**
+ * Metrics collection settings (Sprint 4 — EPIC-006)
+ */
+export interface MetricsConfig {
+  /** Enable metrics collection @default true */
+  enabled: boolean;
+  /** Days to retain metrics data @default 7 */
+  retention_days: number;
+}
+
+/**
+ * Token budget settings for daily usage monitoring
+ */
+export interface TokenBudgetConfig {
+  /** Daily token limit (input + output combined). 0 = no limit @default 0 */
+  daily_limit: number;
+  /** Alert threshold ratio (0-1). Warn when usage exceeds this ratio of daily_limit @default 0.9 */
+  alert_threshold: number;
+}
+
 /**
  * Full MAMA configuration
  */
@@ -502,6 +610,18 @@ export interface MAMAConfig {
   multi_agent?: MultiAgentConfig;
   /** Enable automatic process killing on port conflicts (default: false) */
   enable_auto_kill_port?: boolean;
+  /** Prompt size limits */
+  prompt?: PromptConfig;
+  /** Timeout settings */
+  timeouts?: TimeoutsConfig;
+  /** Gateway timing settings */
+  gateway_tuning?: GatewayConfig;
+  /** IO and data size limits */
+  io?: IOConfig;
+  /** Metrics collection settings */
+  metrics?: MetricsConfig;
+  /** Token budget settings */
+  token_budget?: TokenBudgetConfig;
   /** Preserve user-defined sections (scheduling, custom integrations, etc.) */
   [key: string]: unknown;
 }
@@ -541,6 +661,55 @@ export const DEFAULT_CONFIG: MAMAConfig = {
   chatwork: undefined,
   heartbeat: undefined,
   enable_auto_kill_port: false,
+  prompt: {
+    warn_chars: 15_000,
+    truncate_chars: 25_000,
+    hard_limit_chars: 40_000,
+    skill_max_chars: 4_000,
+    warn_tokens: 3_750,
+    truncate_tokens: 6_250,
+    hard_limit_tokens: 10_000,
+    skill_max_tokens: 2_000,
+    model_limits: {
+      claude: 180_000,
+      codex: 120_000,
+      gpt: 120_000,
+    },
+  },
+  timeouts: {
+    request_ms: 120_000,
+    codex_request_ms: 180_000,
+    initialize_ms: 60_000,
+    session_ms: 1_800_000,
+    session_cleanup_ms: 300_000,
+    agent_ms: 300_000,
+    ultrawork_ms: 300_000,
+    busy_retry_ms: 5_000,
+  },
+  gateway_tuning: {
+    dedup_ttl_ms: 30_000,
+    mention_ttl_ms: 300_000,
+    message_ttl_ms: 1_200_000,
+    cleanup_interval_ms: 60_000,
+    heartbeat_interval_ms: 60_000,
+    history_cleanup_interval_ms: 3_600_000,
+    tool_status_throttle_ms: 3_000,
+    tool_status_initial_delay_ms: 5_000,
+  },
+  io: {
+    max_read_bytes: 200_000,
+    max_dynamic_context_chars: 4_000,
+    context_threshold_tokens: 160_000,
+    max_context_tokens: 200_000,
+  },
+  metrics: {
+    enabled: true,
+    retention_days: 7,
+  },
+  token_budget: {
+    daily_limit: 0,
+    alert_threshold: 0.9,
+  },
 };
 
 /**

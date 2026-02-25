@@ -10,12 +10,15 @@
  * - Loops until stop_reason is "end_turn" or max turns reached
  */
 
-import { readFileSync, existsSync, readdirSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
-import { CodexMCPProcess } from './codex-mcp-process.js';
+import { loadInstalledSkills } from './skill-loader.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
+import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
+import type { IModelRunner } from './model-runner.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
+import { ToolRegistry } from './tool-registry.js';
 import {
   CodeActSandbox,
   HostBridge,
@@ -81,22 +84,6 @@ const DEFAULT_TOOLS_CONFIG = {
 };
 
 /**
- * Check if a tool name matches a pattern (supports wildcards like "browser_*")
- * Reserved for future hybrid tool routing
- */
-function _matchToolPattern(toolName: string, pattern: string): boolean {
-  if (pattern === '*') return true;
-  if (pattern.endsWith('*')) {
-    const prefix = pattern.slice(0, -1);
-    return toolName.startsWith(prefix);
-  }
-  return toolName === pattern;
-}
-
-// _matchToolPattern is reserved for future hybrid routing
-void _matchToolPattern;
-
-/**
  * Load CLAUDE.md system prompt
  * Tries multiple paths: project root, ~/.mama, /etc/mama
  */
@@ -135,231 +122,6 @@ function loadSystemPrompt(verbose = false): string {
  * @param verbose - Enable verbose logging
  * @param context - Optional AgentContext for role-aware prompt injection
  */
-/**
- * Files to exclude from skill prompt injection (reduce token bloat)
- */
-const EXCLUDED_SKILL_FILES = new Set([
-  'CONNECTORS.md',
-  'connectors.md',
-  'LICENSE.md',
-  'license.md',
-  'CHANGELOG.md',
-  'changelog.md',
-  'CONTRIBUTING.md',
-  'contributing.md',
-  'README.md',
-  'readme.md',
-]);
-
-/** Max chars per skill file to prevent prompt bloat */
-const MAX_SKILL_FILE_CHARS = 4000;
-
-/**
- * Recursively collect all .md files from a directory (sync)
- * Filters out non-essential files (LICENSE, CONNECTORS, etc.)
- */
-function collectMarkdownFiles(dir: string, prefix = ''): Array<{ path: string; content: string }> {
-  const results: Array<{ path: string; content: string }> = [];
-  if (!existsSync(dir)) return results;
-
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue;
-      const fullPath = join(dir, entry.name);
-      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-
-      if (entry.isDirectory()) {
-        results.push(...collectMarkdownFiles(fullPath, relativePath));
-      } else if (entry.isFile() && entry.name.endsWith('.md')) {
-        if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
-        let content = readFileSync(fullPath, 'utf-8');
-        // Only truncate supplementary files, never command files
-        const isCommand = relativePath.startsWith('commands/');
-        if (!isCommand && content.length > MAX_SKILL_FILE_CHARS) {
-          content = content.slice(0, MAX_SKILL_FILE_CHARS) + '\n\n[... truncated]';
-        }
-        results.push({ path: relativePath, content });
-      }
-    }
-  } catch {
-    // Read failed
-  }
-  return results;
-}
-
-// ─── Skill On-Demand Injection ───────────────────────────────────────────────
-
-/**
- * Parse YAML frontmatter from skill .md file
- */
-function parseSkillFrontmatter(content: string): {
-  name: string;
-  description: string;
-  keywords: string[];
-} {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return { name: '', description: '', keywords: [] };
-  const block = match[1];
-  const name = (block.match(/^name:\s*(.+)$/m)?.[1] ?? '').trim();
-  const description = (block.match(/^description:\s*(.+)$/m)?.[1] ?? '').trim();
-  const kwBlock = block.match(/^keywords:\n((?:[ \t]+-[ \t]*.+\n?)+)/m);
-  const keywords = kwBlock
-    ? kwBlock[1]
-        .trim()
-        .split('\n')
-        .map((l) => l.replace(/^[ \t]*-[ \t]*/, '').trim())
-        .filter((k) => k.length > 0)
-    : [];
-  return { name, description, keywords };
-}
-
-/**
- * Find the main .md file for a directory skill (for frontmatter parsing)
- */
-function findMainSkillFile(skillDir: string, skillName: string): string | null {
-  for (const name of [`${skillName}.md`, 'skill.md', 'index.md']) {
-    const p = join(skillDir, name);
-    if (existsSync(p)) return p;
-  }
-  try {
-    const entries = readdirSync(skillDir, { withFileTypes: true });
-    for (const e of entries) {
-      if (e.isFile() && e.name.endsWith('.md') && !EXCLUDED_SKILL_FILES.has(e.name)) {
-        return join(skillDir, e.name);
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-/**
- * Build skill catalog (one line per enabled skill) for system prompt.
- * Format: "- [source/skillId] keywords: kw1, kw2 | description"
- */
-function buildSkillCatalog(verbose = false): string[] {
-  const skillsBase = join(homedir(), '.mama', 'skills');
-  const stateFile = join(skillsBase, 'state.json');
-  const catalog: string[] = [];
-
-  let state: Record<string, { enabled: boolean }> = {};
-  try {
-    if (existsSync(stateFile)) {
-      state = JSON.parse(readFileSync(stateFile, 'utf-8'));
-    }
-  } catch {
-    /* no state file */
-  }
-
-  const sources = ['mama', 'cowork', 'external'];
-  for (const source of sources) {
-    const sourceDir = join(skillsBase, source);
-    if (!existsSync(sourceDir)) continue;
-
-    try {
-      const entries = readdirSync(sourceDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const stateKey = `${source}/${entry.name}`;
-        if (state[stateKey]?.enabled === false) continue;
-
-        const skillDir = join(sourceDir, entry.name);
-        const mainFile = findMainSkillFile(skillDir, entry.name);
-        if (!mainFile) continue;
-
-        try {
-          const content = readFileSync(mainFile, 'utf-8');
-          const fm = parseSkillFrontmatter(content);
-          const description = fm.description || '';
-          const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : entry.name;
-          catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
-          if (verbose) console.log(`[AgentLoop] Skill catalog: ${stateKey}`);
-        } catch {
-          /* skip unreadable */
-        }
-      }
-    } catch {
-      /* directory read failed */
-    }
-  }
-
-  // Flat .md files at root
-  try {
-    const rootEntries = readdirSync(skillsBase, { withFileTypes: true });
-    for (const entry of rootEntries) {
-      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-      if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
-
-      const id = entry.name.replace(/\.md$/, '');
-      const stateKey = `mama/${id}`;
-      if (state[stateKey]?.enabled === false) continue;
-      if (catalog.some((l) => l.includes(`[${stateKey}]`))) continue;
-
-      try {
-        const content = readFileSync(join(skillsBase, entry.name), 'utf-8');
-        const fm = parseSkillFrontmatter(content);
-        const description = fm.description || '';
-        const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : id;
-        catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
-        if (verbose) console.log(`[AgentLoop] Skill catalog (flat): ${stateKey}`);
-      } catch {
-        /* skip */
-      }
-    }
-  } catch {
-    /* root directory read failed */
-  }
-
-  return catalog;
-}
-
-/**
- * Load full skill content on-demand for per-message injection.
- * @param skillId - Skill identifier like "mama/playground"
- */
-export function loadSkillContent(skillId: string): string | null {
-  const skillsBase = join(homedir(), '.mama', 'skills');
-
-  // Try directory skill first
-  const skillDir = join(skillsBase, skillId);
-  if (existsSync(skillDir)) {
-    const mdFiles = collectMarkdownFiles(skillDir);
-    if (mdFiles.length > 0) {
-      const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
-      return `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
-    }
-  }
-
-  // Try flat .md file: "mama/playground" → skills/playground.md
-  const idParts = skillId.split('/');
-  if (idParts.length >= 2) {
-    const flatPath = join(skillsBase, `${idParts[idParts.length - 1]}.md`);
-    if (existsSync(flatPath)) {
-      try {
-        return readFileSync(flatPath, 'utf-8');
-      } catch {
-        /* skip */
-      }
-    }
-  }
-
-  return null;
-}
-
-/**
- * Load installed & enabled skills from ~/.mama/skills/
- * Returns skill catalog lines for system prompt injection (on-demand mode).
- * Full skill content is injected per-message via detectSkillMatch() in PromptEnhancer.
- */
-export function loadInstalledSkills(
-  verbose = false,
-  _options: { onlyCommands?: boolean } = {}
-): string[] {
-  return buildSkillCatalog(verbose);
-}
-
 /**
  * Load backend-specific AGENTS.md from ~/.mama/
  * Maps backend to file: 'claude' → AGENTS.claude.md, 'codex-mcp' → AGENTS.codex.md
@@ -472,26 +234,13 @@ export function getGatewayToolsPrompt(): string {
     return readFileSync(gatewayToolsPath, 'utf-8');
   }
 
-  // TODO: Consider generating both gateway-tools.md and this fallback from a single source
-  // to prevent tool list drift (CodeRabbit review suggestion)
-  logger.warn('gateway-tools.md not found, using minimal prompt');
-  return `
-## Gateway Tools
-
-To call a Gateway Tool, output a JSON block:
-
-\`\`\`tool_call
-{"name": "tool_name", "input": {"param1": "value1"}}
-\`\`\`
-
-**MAMA Memory:** mama_search, mama_save, mama_update, mama_load_checkpoint
-**Browser:** browser_navigate, browser_screenshot, browser_click, browser_type, browser_get_text, browser_scroll, browser_wait_for, browser_evaluate, browser_pdf, browser_close
-**Utility:** discord_send, Read, Write, Bash
-`;
+  // Fallback generated from ToolRegistry (SSOT) — no manual list to drift
+  logger.warn('gateway-tools.md not found, using registry fallback');
+  return `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
 }
 
 export class AgentLoop {
-  private readonly agent: PersistentCLIAdapter | CodexMCPProcess;
+  private readonly agent: IModelRunner;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
   private systemPromptOverride?: string;
@@ -507,6 +256,11 @@ export class AgentLoop {
     cache_read_tokens?: number;
     cost_usd?: number;
   }) => void;
+  private readonly onMetric?: (
+    name: string,
+    value: number,
+    labels?: Record<string, string>
+  ) => void;
   private readonly laneManager: LaneManager;
   private readonly useLanes: boolean;
   private sessionKey: string;
@@ -682,15 +436,12 @@ export class AgentLoop {
       if (!existsSync(workspaceDir)) {
         mkdirSync(workspaceDir, { recursive: true });
       }
-      this.agent = new CodexMCPProcess({
+      this.agent = new CodexRuntimeProcess({
         model: options.model,
         cwd: workspaceDir,
         sandbox: 'workspace-write',
         systemPrompt: defaultSystemPrompt,
-        compactPrompt:
-          'Summarize the conversation concisely, preserving key decisions and context.',
-        timeoutMs: options.timeoutMs,
-        codexHome: join(homedir(), '.mama', '.codex'),
+        requestTimeout: options.timeoutMs,
       });
       logger.debug('Codex MCP backend enabled');
     } else {
@@ -729,6 +480,7 @@ export class AgentLoop {
     this.onTurn = options.onTurn;
     this.onToolUse = options.onToolUse;
     this.onTokenUsage = options.onTokenUsage;
+    this.onMetric = options.onMetric;
 
     this.laneManager = getGlobalLaneManager();
     this.useLanes = options.useLanes ?? false;
@@ -1071,10 +823,16 @@ export class AgentLoop {
         const shouldResume = !sessionIsNew || turn > 1;
         // Both Claude PersistentCLI and Codex MCP preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
+        const promptStart = Date.now();
         try {
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
+          });
+          // Emit prompt latency metric
+          this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
+            backend: this.backend,
+            turn: String(turn),
           });
           // After first successful call, mark session as not new for subsequent turns
           if (turn === 1) sessionIsNew = false;
@@ -1118,6 +876,7 @@ export class AgentLoop {
             }
             console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
           } else {
+            this.onMetric?.('prompt_error', 1, { backend: this.backend, error_type: 'CLI_ERROR' });
             throw new AgentError(
               `CLI error: ${errorMessage}`,
               'CLI_ERROR',
@@ -1395,6 +1154,7 @@ export class AgentLoop {
         toolUse.input as Record<string, unknown>
       );
 
+      const toolStart = Date.now();
       try {
         // Code-Act: execute JS code in sandbox
         if (toolUse.name === CODE_ACT_MARKER) {
@@ -1453,12 +1213,21 @@ export class AgentLoop {
           // Notify stream: tool completed (check actual status)
           this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
         }
+        // Emit tool execution metric
+        this.onMetric?.('tool_duration_ms', Date.now() - toolStart, {
+          tool: toolUse.name,
+          error: String(isError),
+        });
       } catch (error) {
         isError = true;
         result = error instanceof Error ? error.message : String(error);
 
         // Notify tool use callback with error
         this.onToolUse?.(toolUse.name, toolUse.input, { error: result });
+        this.onMetric?.('tool_duration_ms', Date.now() - toolStart, {
+          tool: toolUse.name,
+          error: 'true',
+        });
 
         // Notify stream: tool completed with error
         this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, true);
@@ -1780,10 +1549,8 @@ export class AgentLoop {
     this.stopped = true;
 
     try {
-      // Stop persistent CLI if it exists
-      if (this.persistentCLI?.stopAll) {
-        this.persistentCLI.stopAll();
-      }
+      // Stop the model runner
+      this.agent.stop();
 
       // NOTE: sessionPool is a shared global singleton — do NOT dispose here.
       // It will be cleaned up when the process exits or via a global shutdown handler.

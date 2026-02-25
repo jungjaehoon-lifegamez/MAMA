@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-02-25
+
+### Added
+
+- **Layered config system (STORY-001)** — externalized 26 hardcoded constants into `~/.mama/config.yaml` with env override support (`MAMA_*`), deep merge for nested sections, and sync `getConfig()` accessor
+- **Token accuracy & skill loading (Sprint 2)** — per-model token budget with fail-closed enforcement, prompt size monitor migrated from char-based to token-based, semantic skill truncation in agent loop
+- **IModelRunner interface (Sprint 3)** — unified CLI backend abstraction for Claude/Codex with consistent streaming, tool dispatch, and error handling
+- **ToolRegistry SSOT (Sprint 4)** — centralized tool permission source of truth with per-agent MCP tool filtering, gateway tool generation from registry
+- **Observability stack (STORY-019)** — SQLite-backed MetricsStore with WAL mode, batch recording, time-range queries, label filtering, aggregation, and automatic cleanup
+- **HealthScoreService** — composite health score (0-100) computed from metrics window with configurable weights
+- **Connection-based health check (STORY-022)** — 4-tier check system (critical: gateway/embedding, warning: cron/metrics) with `/api/metrics/health` endpoint
+- **Viewer UI improvements** — unified dark mode cards, multi-agent settings panel with tier badges, metrics/token budget config sections
+
+### Fixed
+
+- **Daemon restart loop** — `process.exit(1)` on shutdown timeout caused systemd `Restart=on-failure` loop; changed to `exit(0)`, added `SO_REUSEADDR`, `closeAllConnections()` on stop
+- **Server fd leak in retry loop** — failed server instances now properly closed with `removeAllListeners()` before retry
+- **setTimeout retention in stop()** — guard timer cleared when `s.close()` completes to prevent event loop retention
+- **setInterval cleanup on shutdown** — metrics and health warning intervals captured and cleared during graceful shutdown
+- **JSON.parse safety in metrics query** — label filter wrapped in try/catch for malformed data
+- **Unsafe type casts** — replaced `Record<string, unknown>` cast with typed `ApiMetricsConfig`, `embeddingServer` typed as `HttpServer`
+- **Config initialization order** — `daemon` command now uses `initConfig()` to populate cache before `getSessionPool()` accesses it
+- **systemd service** — moved `StartLimitIntervalSec`/`StartLimitBurst` to `[Unit]` section, added `ExecStop` directive
+
+### Changed
+
+- **Periodic logs** — metrics summary and health warning intervals use `DebugLogger` instead of `console.log/warn`
+- **healthService.compute()** — wrapped in try-catch with error logging in `/api/metrics/health` endpoint
+- **ApiServer.server type** — corrected from Express return type to `HttpServer | null`
+
 ## [0.11.1] / mama-core [1.2.1] - 2026-02-24
 
 ### Added
