@@ -116,7 +116,8 @@ export async function handleSearch(
     // suggest() can return null on vector search failure — fallback to list
     const decisions = await api.listDecisions({ limit });
     const raw = Array.isArray(decisions) ? decisions : [];
-    return { success: true, results: raw.filter(isSearchResultItem), count: raw.length };
+    const filtered = raw.filter(isSearchResultItem);
+    return { success: true, results: filtered, count: filtered.length };
   }
   let filteredResults: SearchResultItem[] = (result.results ?? []).filter(isSearchResultItem);
 

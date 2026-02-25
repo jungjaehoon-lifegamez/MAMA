@@ -326,12 +326,14 @@ export function buildSkillCatalog(verbose = false): string[] {
                 catalog.push(`- [${stateKey}/${sub.name}] keywords: ${keywords} | ${description}`);
                 if (verbose)
                   console.log(`[SkillLoader] Skill catalog (plugin sub): ${stateKey}/${sub.name}`);
-              } catch {
-                /* skip */
+              } catch (e) {
+                if (verbose)
+                  console.warn(`[SkillLoader] Failed to parse sub-skill ${sub.name}:`, e);
               }
             }
-          } catch {
-            /* skip */
+          } catch (e) {
+            if (verbose)
+              console.warn(`[SkillLoader] Failed to read sub-skills dir ${subSkillsDir}:`, e);
           }
           // Also check for plugin-level main file (plugin.json description)
           const pluginJson = join(skillDir, '.claude-plugin', 'plugin.json');
@@ -341,8 +343,9 @@ export function buildSkillCatalog(verbose = false): string[] {
               if (meta.description) {
                 catalog.push(`- [${stateKey}] keywords: ${entry.name} | ${meta.description}`);
               }
-            } catch {
-              /* skip */
+            } catch (e) {
+              if (verbose)
+                console.warn(`[SkillLoader] Failed to parse plugin.json for ${stateKey}:`, e);
             }
           }
           continue;

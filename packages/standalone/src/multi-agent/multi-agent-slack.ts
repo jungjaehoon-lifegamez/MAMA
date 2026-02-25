@@ -632,30 +632,13 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
         // Parse delegations from non-plan content (directMessage may contain DELEGATE commands)
         if (workflowResult.directMessage) {
-          const wfDelegations = this.delegationManager.parseAllDelegations(
+          this.submitBackgroundDelegations(
             agentId,
-            workflowResult.directMessage
+            context.channelId,
+            workflowResult.directMessage,
+            'slack',
+            'MultiAgentSlack post-workflow'
           );
-          for (const delegation of wfDelegations) {
-            if (!delegation.background) continue;
-            const check = this.delegationManager.isDelegationAllowed(
-              delegation.fromAgentId,
-              delegation.toAgentId
-            );
-            if (check.allowed) {
-              this.backgroundTaskManager.submit({
-                description: delegation.task.substring(0, 200),
-                prompt: delegation.task,
-                agentId: delegation.toAgentId,
-                requestedBy: agentId,
-                channelId: context.channelId,
-                source: 'slack',
-              });
-              this.logger.info(
-                `[MultiAgentSlack] Background delegation (post-workflow): ${agentId} -> ${delegation.toAgentId}`
-              );
-            }
-          }
         }
 
         const formattedResponse = this.formatAgentResponse(agent, display);
@@ -704,30 +687,13 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
         // Parse delegations from non-plan content
         if (councilResult.directMessage) {
-          const cDelegations = this.delegationManager.parseAllDelegations(
+          this.submitBackgroundDelegations(
             agentId,
-            councilResult.directMessage
+            context.channelId,
+            councilResult.directMessage,
+            'slack',
+            'MultiAgentSlack post-council'
           );
-          for (const delegation of cDelegations) {
-            if (!delegation.background) continue;
-            const check = this.delegationManager.isDelegationAllowed(
-              delegation.fromAgentId,
-              delegation.toAgentId
-            );
-            if (check.allowed) {
-              this.backgroundTaskManager.submit({
-                description: delegation.task.substring(0, 200),
-                prompt: delegation.task,
-                agentId: delegation.toAgentId,
-                requestedBy: agentId,
-                channelId: context.channelId,
-                source: 'slack',
-              });
-              this.logger.info(
-                `[MultiAgentSlack] Background delegation (post-council): ${agentId} -> ${delegation.toAgentId}`
-              );
-            }
-          }
         }
 
         const formattedResponse = this.formatAgentResponse(agent, display);

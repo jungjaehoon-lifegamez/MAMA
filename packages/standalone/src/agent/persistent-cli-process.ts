@@ -189,6 +189,16 @@ export class PersistentClaudeProcess extends EventEmitter {
   private startPromise: Promise<void> | null = null;
   private onTokenUsage?: (record: TokenUsageRecord) => void;
 
+  /**
+   * Resolve the effective request timeout in ms.
+   * 0 = unlimited (no timeout). Returns the configured or default value.
+   */
+  private _getRequestTimeoutMs(): number {
+    return this.options.requestTimeout !== undefined && this.options.requestTimeout !== null
+      ? this.options.requestTimeout
+      : (getConfig().timeouts?.request_ms ?? 120_000);
+  }
+
   constructor(options: PersistentProcessOptions) {
     super();
     this.options = options;
@@ -423,10 +433,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentReject = reject;
 
       // Set request timeout (0 = unlimited, skip timeout entirely)
-      const timeoutMs =
-        this.options.requestTimeout !== undefined && this.options.requestTimeout !== null
-          ? this.options.requestTimeout
-          : (getConfig().timeouts?.request_ms ?? 120_000);
+      const timeoutMs = this._getRequestTimeoutMs();
       if (timeoutMs > 0) {
         this.requestTimeoutHandle = setTimeout(() => {
           this.handleTimeout();
@@ -501,10 +508,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentReject = reject;
 
       // Set request timeout (0 = unlimited, skip timeout entirely)
-      const timeoutMs =
-        this.options.requestTimeout !== undefined && this.options.requestTimeout !== null
-          ? this.options.requestTimeout
-          : (getConfig().timeouts?.request_ms ?? 120_000);
+      const timeoutMs = this._getRequestTimeoutMs();
       if (timeoutMs > 0) {
         this.requestTimeoutHandle = setTimeout(() => {
           this.handleTimeout();

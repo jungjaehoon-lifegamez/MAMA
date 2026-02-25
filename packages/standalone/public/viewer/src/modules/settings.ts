@@ -467,12 +467,12 @@ export class SettingsModule {
   populateTimeouts(): void {
     const t = this.config.timeouts;
     if (!t) return;
-    this.setValue('settings-timeout-request', Math.round((t.request_ms || 120000) / 1000));
-    this.setValue('settings-timeout-agent', Math.round((t.agent_ms || 300000) / 1000));
-    this.setValue('settings-timeout-session', Math.round((t.session_ms || 1800000) / 60000));
-    this.setValue('settings-timeout-wf-step', Math.round((t.workflow_step_ms || 300000) / 1000));
-    this.setValue('settings-timeout-wf-max', Math.round((t.workflow_max_ms || 1800000) / 60000));
-    this.setValue('settings-timeout-ultrawork', Math.round((t.ultrawork_ms || 300000) / 1000));
+    this.setValue('settings-timeout-request', Math.round((t.request_ms ?? 120000) / 1000));
+    this.setValue('settings-timeout-agent', Math.round((t.agent_ms ?? 300000) / 1000));
+    this.setValue('settings-timeout-session', Math.round((t.session_ms ?? 1800000) / 60000));
+    this.setValue('settings-timeout-wf-step', Math.round((t.workflow_step_ms ?? 300000) / 1000));
+    this.setValue('settings-timeout-wf-max', Math.round((t.workflow_max_ms ?? 1800000) / 60000));
+    this.setValue('settings-timeout-ultrawork', Math.round((t.ultrawork_ms ?? 300000) / 1000));
   }
 
   /**
