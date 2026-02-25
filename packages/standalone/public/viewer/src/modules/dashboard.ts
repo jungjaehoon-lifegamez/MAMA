@@ -744,7 +744,7 @@ export class DashboardModule {
             <div class="flex gap-1 mt-2 pt-2 border-t border-gray-100">
               <button
                 data-action="restart-agent"
-                data-agent-id="${escapeAttr(agent.id || agent.name)}"
+                data-agent-id="${escapeAttr(agent.id)}"
                 class="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
                 title="Restart agent"
               >🔄 Restart</button>
@@ -752,7 +752,7 @@ export class DashboardModule {
                 agent.status === 'busy'
                   ? `<button
                       data-action="stop-agent"
-                      data-agent-id="${escapeAttr(agent.id || agent.name)}"
+                      data-agent-id="${escapeAttr(agent.id)}"
                       class="text-[10px] px-2 py-0.5 rounded bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
                       title="Stop agent"
                     >⏹ Stop</button>`

@@ -102,29 +102,23 @@ export class AgentMessageQueue {
    * @param agentId - Agent identifier
    * @param process - Agent process to send message to
    * @param sendCallback - Callback to handle sending response to platform
-   * @param depth - Recursion depth (internal, for safety)
    */
   async drain(
     agentId: string,
     process: AgentRuntimeProcess,
-    sendCallback: (agentId: string, message: QueuedMessage, response: string) => Promise<void>,
-    depth: number = 0
+    sendCallback: (agentId: string, message: QueuedMessage, response: string) => Promise<void>
   ): Promise<void> {
     // Per-agent drain lock: prevent concurrent drain() from idle event + tryDrainNow
-    if (depth === 0) {
-      if (this.draining.has(agentId)) {
-        console.log(`[MessageQueue] Drain already in progress for ${agentId}, skipping`);
-        return;
-      }
-      this.draining.add(agentId);
+    if (this.draining.has(agentId)) {
+      console.log(`[MessageQueue] Drain already in progress for ${agentId}, skipping`);
+      return;
     }
+    this.draining.add(agentId);
 
     try {
-      await this._drainInternal(agentId, process, sendCallback, depth);
+      await this._drainInternal(agentId, process, sendCallback, 0);
     } finally {
-      if (depth === 0) {
-        this.draining.delete(agentId);
-      }
+      this.draining.delete(agentId);
     }
   }
 
@@ -180,12 +174,14 @@ export class AgentMessageQueue {
       await sendCallback(agentId, message, result.response);
     } catch (err) {
       if (err instanceof Error && err.message.includes('Process is busy')) {
-        // Agent busy - re-queue this message, but continue draining remaining messages
+        // Agent busy - re-queue this message and wait for next idle event to drain
         const retries = (message.retryCount ?? 0) + 1;
         if (retries <= 3) {
           message.retryCount = retries;
           const q = this.queues.get(agentId);
-          if (q) q.unshift(message);
+          if (q) {
+            q.unshift(message);
+          }
           console.warn(
             `[MessageQueue] Agent ${agentId} still busy, re-queued (retry ${retries}/3)`
           );
