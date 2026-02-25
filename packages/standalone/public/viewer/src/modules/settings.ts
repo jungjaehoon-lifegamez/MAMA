@@ -1129,7 +1129,8 @@ export class SettingsModule {
 
     const agentCards = agents
       .map((agent: MultiAgentAgent) => {
-        const tierColor = tierColors[agent.tier || 1] || tierColors[1];
+        const tierValue = Number(agent.tier) || 1;
+        const tierColor = tierColors[tierValue] || tierColors[1];
         const backend = (agent.backend || this.config?.agent?.backend || 'claude') as AgentBackend;
         const normalizedModel = this.getNormalizedModelForBackend(backend, agent.model || '');
         const agentId = agent.id || '';
@@ -1155,17 +1156,16 @@ export class SettingsModule {
         );
         const effortOptions = this.buildEffortOptions(normalizedModel, selectedAgentEffort);
 
-        // Permission flags
+        // Permission flags — only check explicit tool_permissions, not tier
         const canDelegate = agent.can_delegate ?? false;
-        const hasAllTools =
-          agent.tool_permissions?.allowed?.includes('*') ?? (agent.tier ?? 1) === 1;
+        const hasAllTools = agent.tool_permissions?.allowed?.includes('*') ?? false;
 
         return `
           <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
             <!-- Header: Tier + Name + Toggle -->
             <div class="flex items-center justify-between mb-2">
               <div class="flex items-center gap-1.5">
-                <span class="${tierColor} text-[10px] font-bold px-1.5 py-0.5 rounded">T${agent.tier}</span>
+                <span class="${tierColor} text-[10px] font-bold px-1.5 py-0.5 rounded">T${escapeHtml(String(tierValue))}</span>
                 <span class="font-medium text-gray-900 text-xs" title="${escapeAttr(agent.display_name || agent.name)}">${escapeHtml(agent.display_name || agent.name)}</span>
               </div>
               <label class="relative inline-flex items-center cursor-pointer">
