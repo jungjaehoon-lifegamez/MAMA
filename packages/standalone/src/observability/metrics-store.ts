@@ -141,7 +141,9 @@ export class MetricsStore {
     if (options.labels) {
       const filterEntries = Object.entries(options.labels);
       rows = rows.filter((row) => {
-        if (!row.labels) return false;
+        if (!row.labels) {
+          return false;
+        }
         const parsed = JSON.parse(row.labels) as Record<string, string>;
         return filterEntries.every(([k, v]) => parsed[k] === v);
       });
