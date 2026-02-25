@@ -151,5 +151,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.12.0 - Stability, Config System, Observability, Health Check, Runner Unification
-**Last Updated:** 2026-02-25
+**Status:** MAMA OS v0.12.1 - Multi-Agent Stability, MCP Tool Access, Dashboard Agent Control
+**Last Updated:** 2026-02-26
