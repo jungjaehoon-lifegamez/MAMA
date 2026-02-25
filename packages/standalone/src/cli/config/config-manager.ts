@@ -12,8 +12,6 @@ import * as yaml from 'js-yaml';
 
 import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
-import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
-
 // ============================================================================
 // Sync Config Cache (STORY-002)
 // ============================================================================
@@ -30,20 +28,15 @@ export async function initConfig(): Promise<MAMAConfig> {
   return _cachedConfig;
 }
 
-let _warnedUninit = false;
-const configLogger = new DebugLogger('config');
-
 /**
  * Get the cached config synchronously.
- * Logs a warning on first call if initConfig() hasn't been called yet,
- * helping catch initialization order bugs. Returns DEFAULT_CONFIG as fallback.
+ * Throws if initConfig() hasn't been called, catching initialization order bugs early.
  */
 export function getConfig(): MAMAConfig {
-  if (!_cachedConfig && !_warnedUninit) {
-    _warnedUninit = true;
-    configLogger.warn('[config] getConfig() called before initConfig(). Using defaults.');
+  if (!_cachedConfig) {
+    throw new Error('Config not initialized. Call initConfig() at startup.');
   }
-  return _cachedConfig ?? DEFAULT_CONFIG;
+  return _cachedConfig;
 }
 
 /**
@@ -62,6 +55,9 @@ export function overrideConfig(overrides: Partial<MAMAConfig>): MAMAConfig {
       : base.gateway_tuning,
     io: overrides.io ? { ...base.io!, ...overrides.io } : base.io,
     metrics: overrides.metrics ? { ...base.metrics!, ...overrides.metrics } : base.metrics,
+    token_budget: overrides.token_budget
+      ? { ...base.token_budget!, ...overrides.token_budget }
+      : base.token_budget,
     agent: overrides.agent ? { ...base.agent, ...overrides.agent } : base.agent,
     database: overrides.database ? { ...base.database, ...overrides.database } : base.database,
     logging: overrides.logging ? { ...base.logging, ...overrides.logging } : base.logging,
@@ -71,10 +67,10 @@ export function overrideConfig(overrides: Partial<MAMAConfig>): MAMAConfig {
 
 /**
  * Reset cached config (for testing).
+ * @param useDefaults - If true, set cache to DEFAULT_CONFIG instead of null.
  */
-export function resetConfigCache(): void {
-  _cachedConfig = null;
-  _warnedUninit = false;
+export function resetConfigCache(useDefaults = false): void {
+  _cachedConfig = useDefaults ? { ...DEFAULT_CONFIG } : null;
 }
 
 /**
@@ -82,7 +78,7 @@ export function resetConfigCache(): void {
  * Format: MAMA_{SECTION}_{FIELD} → config.section.field
  * Values are parsed as numbers where the target type is number.
  */
-const ENV_MAP: Array<{
+const envMap: Array<{
   env: string;
   path: [keyof MAMAConfig, string];
   type: 'number' | 'boolean';
@@ -164,15 +160,19 @@ const ENV_MAP: Array<{
 function applyEnvOverrides(config: MAMAConfig): MAMAConfig {
   const result = { ...config };
 
-  for (const { env, path, type } of ENV_MAP) {
+  for (const { env, path, type } of envMap) {
     const value = process.env[env];
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
 
     const [section, field] = path;
     const sectionObj = result[section];
     if (sectionObj && typeof sectionObj === 'object') {
       const parsed = type === 'boolean' ? value === 'true' || value === '1' : Number(value);
-      if (type === 'number' && isNaN(parsed as number)) continue;
+      if (type === 'number' && isNaN(parsed as number)) {
+        continue;
+      }
       (result as Record<string, Record<string, unknown>>)[section] = {
         ...(sectionObj as Record<string, unknown>),
         [field]: parsed,
