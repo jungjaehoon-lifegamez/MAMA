@@ -47,6 +47,8 @@ export interface SystemReminder {
   requestedBy: string;
   /** Channel where the task was initiated */
   channelId: string;
+  /** Source platform (discord/slack) — only send to matching callback */
+  source?: 'discord' | 'slack';
   /** Task duration in milliseconds (for completed/failed) */
   duration?: number;
   /** Error message (for failed tasks) */
@@ -303,7 +305,7 @@ export class SystemReminderService {
       reminder.type === 'delegation-completed'
     ) {
       const message = this.formatChatMessage(reminder);
-      await this.sendToAllCallbacks(reminder.channelId, message);
+      await this.sendToAllCallbacks(reminder.channelId, message, reminder.source);
       return;
     }
 
@@ -451,10 +453,12 @@ export class SystemReminderService {
   clearChannel(channelId: string): void {
     this.channelReminders.delete(channelId);
 
-    const pending = this.pendingBatches.get(channelId);
-    if (pending) {
-      clearTimeout(pending.timer);
-      this.pendingBatches.delete(channelId);
+    // Clear all pending batches for this channel (any source)
+    for (const [key, batch] of this.pendingBatches.entries()) {
+      if (key === channelId || key.endsWith(`:${channelId}`)) {
+        clearTimeout(batch.timer);
+        this.pendingBatches.delete(key);
+      }
     }
 
     console.log(`[SystemReminder] Cleared reminders for channel ${channelId}`);
@@ -512,11 +516,13 @@ export class SystemReminderService {
    */
   async destroy(): Promise<void> {
     const flushPromises: Promise<void>[] = [];
-    for (const [channelId, pending] of this.pendingBatches.entries()) {
+    for (const [, pending] of this.pendingBatches.entries()) {
       clearTimeout(pending.timer);
       if (pending.reminders.length > 0) {
         const message = this.formatBatchMessage(pending.reminders);
-        flushPromises.push(this.sendToAllCallbacks(channelId, message));
+        const batchSource = pending.reminders[0]?.source;
+        const channelId = pending.reminders[0]?.channelId ?? '';
+        flushPromises.push(this.sendToAllCallbacks(channelId, message, batchSource));
       }
     }
     await Promise.all(flushPromises);
@@ -552,55 +558,72 @@ export class SystemReminderService {
    * Add a completed/failed reminder to the batch queue for its channel.
    * Starts or extends the batch window timer.
    */
+  /**
+   * Build a scope key for batching: source:channelId to prevent cross-platform mixing.
+   */
+  private getBatchKey(channelId: string, source?: 'discord' | 'slack'): string {
+    return `${source ?? 'unknown'}:${channelId}`;
+  }
+
   private addToBatch(reminder: SystemReminder): void {
-    const { channelId } = reminder;
-    let batch = this.pendingBatches.get(channelId);
+    const scopeKey = this.getBatchKey(reminder.channelId, reminder.source);
+    let batch = this.pendingBatches.get(scopeKey);
 
     if (!batch) {
       batch = {
         reminders: [],
         timer: setTimeout(() => {
-          void this.flushBatch(channelId);
+          void this.flushBatch(scopeKey);
         }, this.batchWindowMs),
       };
-      this.pendingBatches.set(channelId, batch);
+      this.pendingBatches.set(scopeKey, batch);
     }
 
     batch.reminders.push(reminder);
 
     if (batch.reminders.length >= this.maxBatchSize) {
       clearTimeout(batch.timer);
-      void this.flushBatch(channelId);
+      void this.flushBatch(scopeKey);
     }
   }
 
   /**
-   * Flush the pending batch for a channel, sending a combined message
+   * Flush the pending batch for a scope key (source:channelId), sending a combined message
    */
-  private async flushBatch(channelId: string): Promise<void> {
-    const batch = this.pendingBatches.get(channelId);
+  private async flushBatch(scopeKey: string): Promise<void> {
+    const batch = this.pendingBatches.get(scopeKey);
     if (!batch || batch.reminders.length === 0) {
-      this.pendingBatches.delete(channelId);
+      this.pendingBatches.delete(scopeKey);
       return;
     }
 
     const reminders = batch.reminders;
-    this.pendingBatches.delete(channelId);
+    this.pendingBatches.delete(scopeKey);
 
     const message = this.formatBatchMessage(reminders);
-    await this.sendToAllCallbacks(channelId, message);
+    const batchSource = reminders[0]?.source;
+    const channelId = reminders[0]?.channelId ?? '';
+    await this.sendToAllCallbacks(channelId, message, batchSource);
   }
 
   /**
    * Send a message to all registered platform callbacks
    */
-  private async sendToAllCallbacks(channelId: string, message: string): Promise<void> {
+  private async sendToAllCallbacks(
+    channelId: string,
+    message: string,
+    targetSource?: 'discord' | 'slack'
+  ): Promise<void> {
     if (message.length === 0) {
       return;
     }
 
     const promises: Promise<void>[] = [];
     for (const [source, callback] of this.callbacks.entries()) {
+      // If targetSource is specified, only send to the matching platform
+      if (targetSource && source !== targetSource) {
+        continue;
+      }
       promises.push(
         callback(channelId, message, source).catch((error: unknown) => {
           const errorMessage = error instanceof Error ? error.message : String(error);

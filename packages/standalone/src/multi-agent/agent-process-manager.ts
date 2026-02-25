@@ -230,7 +230,8 @@ export class AgentProcessManager extends EventEmitter {
   async getProcess(
     source: string,
     channelId: string,
-    agentId: string
+    agentId: string,
+    overrides?: { requestTimeout?: number }
   ): Promise<AgentRuntimeProcess> {
     const processStart = Date.now();
     const channelKey = this.buildChannelKey(source, channelId, agentId);
@@ -242,7 +243,10 @@ export class AgentProcessManager extends EventEmitter {
       ...this.defaultOptions,
       systemPrompt,
       requestTimeout:
-        this.defaultOptions.requestTimeout ?? this.runtimeOptions.requestTimeout ?? 900000,
+        overrides?.requestTimeout ??
+        this.defaultOptions.requestTimeout ??
+        this.runtimeOptions.requestTimeout ??
+        900000,
     };
 
     if (agentConfig?.model) {
@@ -251,6 +255,12 @@ export class AgentProcessManager extends EventEmitter {
     const effort = agentConfig?.effort || this.runtimeOptions.effort;
     if (effort) {
       options.effort = effort;
+    }
+
+    // MCP config: expose MAMA MCP tools (mama_save, brave-devtools, etc.) to agents
+    const mcpConfigPath = resolve(homedir(), '.mama', 'mama-mcp-config.json');
+    if (existsSync(mcpConfigPath)) {
+      options.mcpConfigPath = mcpConfigPath;
     }
 
     if (tier >= 2) {
@@ -581,7 +591,7 @@ ${skillsPrompt}## Guidelines
    * Scans registered agents to find the first model matching the backend.
    * Falls back to runtimeOptions.model for claude, 'unknown' otherwise.
    */
-  private resolveModelForBackend(backend: string): string {
+  resolveModelForBackend(backend: string): string {
     for (const [, cfg] of Object.entries(this.config.agents)) {
       const agentBackend = this.getAgentBackend(cfg);
       if (agentBackend === backend && cfg.model) {
@@ -781,8 +791,8 @@ Respond to messages in a helpful and professional manner.
    * Register an ephemeral agent definition (for workflow orchestration).
    * The agent is added to config.agents so getProcess() can find it.
    */
-  registerEphemeralAgent(agentDef: EphemeralAgentDef): void {
-    this.config.agents[agentDef.id] = {
+  async registerEphemeralAgent(agentDef: EphemeralAgentDef): Promise<void> {
+    const agentConfig = {
       name: agentDef.display_name,
       display_name: agentDef.display_name,
       trigger_prefix: '', // ephemeral agents have no trigger
@@ -793,8 +803,14 @@ Respond to messages in a helpful and professional manner.
       tool_permissions: agentDef.tool_permissions,
       enabled: true,
     };
-    // Cache the inline system prompt directly
-    this.personaCache.set(agentDef.id, agentDef.system_prompt);
+    this.config.agents[agentDef.id] = agentConfig;
+    // Build full system prompt (with gateway tools, permissions, etc.)
+    const fullPrompt = await this.buildSystemPrompt(
+      agentDef.id,
+      agentConfig,
+      agentDef.system_prompt
+    );
+    this.personaCache.set(agentDef.id, fullPrompt);
   }
 
   /**

@@ -516,6 +516,10 @@ export interface TimeoutsConfig {
   agent_ms: number;
   /** UltraWork execution timeout @default 300000 */
   ultrawork_ms: number;
+  /** Workflow per-step timeout @default 600000 (10 min). 0 = unlimited */
+  workflow_step_ms: number;
+  /** Workflow total duration limit @default 1800000 (30 min). 0 = unlimited */
+  workflow_max_ms: number;
   /** Retry delay when agent is busy @default 5000 */
   busy_retry_ms: number;
 }
@@ -684,6 +688,8 @@ export const DEFAULT_CONFIG: MAMAConfig = {
     session_cleanup_ms: 300_000,
     agent_ms: 300_000,
     ultrawork_ms: 300_000,
+    workflow_step_ms: 600_000,
+    workflow_max_ms: 1_800_000,
     busy_retry_ms: 5_000,
   },
   gateway_tuning: {

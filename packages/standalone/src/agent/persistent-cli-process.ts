@@ -189,6 +189,22 @@ export class PersistentClaudeProcess extends EventEmitter {
   private startPromise: Promise<void> | null = null;
   private onTokenUsage?: (record: TokenUsageRecord) => void;
 
+  /**
+   * Resolve the effective request timeout in ms.
+   * 0 = unlimited (no timeout). Returns the configured or default value.
+   */
+  private _getRequestTimeoutMs(): number {
+    if (this.options.requestTimeout !== undefined && this.options.requestTimeout !== null) {
+      return Math.max(0, this.options.requestTimeout);
+    }
+    try {
+      const configTimeout = getConfig().timeouts?.request_ms;
+      return Math.max(0, configTimeout ?? 120_000);
+    } catch {
+      return 120_000;
+    }
+  }
+
   constructor(options: PersistentProcessOptions) {
     super();
     this.options = options;
@@ -422,12 +438,13 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentResolve = resolve;
       this.currentReject = reject;
 
-      // Set request timeout
-      const timeoutMs =
-        this.options.requestTimeout || (getConfig().timeouts?.request_ms ?? 120_000);
-      this.requestTimeoutHandle = setTimeout(() => {
-        this.handleTimeout();
-      }, timeoutMs);
+      // Set request timeout (0 = unlimited, skip timeout entirely)
+      const timeoutMs = this._getRequestTimeoutMs();
+      if (timeoutMs > 0) {
+        this.requestTimeoutHandle = setTimeout(() => {
+          this.handleTimeout();
+        }, timeoutMs);
+      }
 
       // Strip lone surrogates to prevent API 400 errors
       const safeContent = content.replace(LONE_SURROGATE_RE, '');
@@ -496,12 +513,13 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentResolve = resolve;
       this.currentReject = reject;
 
-      // Set request timeout
-      const timeoutMs =
-        this.options.requestTimeout || (getConfig().timeouts?.request_ms ?? 120_000);
-      this.requestTimeoutHandle = setTimeout(() => {
-        this.handleTimeout();
-      }, timeoutMs);
+      // Set request timeout (0 = unlimited, skip timeout entirely)
+      const timeoutMs = this._getRequestTimeoutMs();
+      if (timeoutMs > 0) {
+        this.requestTimeoutHandle = setTimeout(() => {
+          this.handleTimeout();
+        }, timeoutMs);
+      }
 
       // Strip lone surrogates from tool results to prevent API 400 errors
       const message = {

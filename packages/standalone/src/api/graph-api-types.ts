@@ -68,6 +68,7 @@ export interface GraphHandlerOptions {
   getRecentDelegations?: (limit: number) => DelegationHistoryEntry[];
   applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
   restartMultiAgentAgent?: (agentId: string) => Promise<void>;
+  stopMultiAgentAgent?: (agentId: string) => Promise<void>;
   executeCodeAct?: (code: string) => Promise<CodeActResult>;
   healthService?: { compute(windowMs?: number): unknown };
   healthCheckService?: {

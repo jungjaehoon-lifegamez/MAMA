@@ -25,7 +25,7 @@ import { WorkTracker } from './work-tracker.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import { getConfig } from '../cli/config/config-manager.js';
 import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
-import type { GatewayToolInput } from '../agent/types.js';
+import type { GatewayToolInput, PromptCallbacks } from '../agent/types.js';
 import type { AgentRuntimeProcess } from './runtime-process.js';
 import { WorkflowEngine, type StepExecutor } from './workflow-engine.js';
 import { CouncilEngine } from './council-engine.js';
@@ -107,9 +107,17 @@ export abstract class MultiAgentHandlerBase {
   /** Dedup map for delegation mentions with timestamps (prevents double processing) */
   protected processedMentions = new Map<string, number>();
 
+  /** Cleanup interval handle for periodic tasks (queue expiry + mention dedup) */
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
   /** TTL for processed mention entries (5 minutes) */
   protected static get MENTION_TTL_MS() {
     return getConfig().gateway_tuning?.mention_ttl_ms ?? 300_000;
+  }
+
+  /** Cleanup interval period (1 minute) */
+  protected static get CLEANUP_INTERVAL_MS() {
+    return getConfig().gateway_tuning?.cleanup_interval_ms ?? 60_000;
   }
 
   /** Platform identifier for process manager calls */
@@ -143,7 +151,15 @@ export abstract class MultiAgentHandlerBase {
     this.workTracker = new WorkTracker();
 
     // Always initialize workflow engine (enabled by default)
-    this.workflowEngine = new WorkflowEngine(config.workflow ?? { enabled: true });
+    // Merge global timeout config as fallback for workflow-specific settings
+    const globalTimeouts = getConfig().timeouts;
+    const workflowConfig = {
+      enabled: true,
+      ...config.workflow,
+      step_timeout_ms: config.workflow?.step_timeout_ms ?? globalTimeouts?.workflow_step_ms,
+      max_duration_ms: config.workflow?.max_duration_ms ?? globalTimeouts?.workflow_max_ms,
+    };
+    this.workflowEngine = new WorkflowEngine(workflowConfig);
     this.councilEngine = new CouncilEngine(config.council ?? { enabled: true });
 
     this.backgroundTaskManager = new BackgroundTaskManager(
@@ -171,6 +187,12 @@ export abstract class MultiAgentHandlerBase {
       enableChatNotifications: true,
     });
 
+    // Periodic cleanup of expired queued messages and mention dedup entries
+    this.cleanupInterval = setInterval(() => {
+      this.messageQueue.clearExpired();
+      this.cleanupProcessedMentions();
+    }, MultiAgentHandlerBase.CLEANUP_INTERVAL_MS);
+
     this.backgroundTaskManager.on('task-started', ({ task }: { task: BackgroundTask }) => {
       this.systemReminder.notify({
         type: 'task-started',
@@ -179,6 +201,7 @@ export abstract class MultiAgentHandlerBase {
         agentId: task.agentId,
         requestedBy: task.requestedBy,
         channelId: task.channelId,
+        source: (task.source as 'discord' | 'slack') || undefined,
         timestamp: Date.now(),
       });
 
@@ -200,6 +223,7 @@ export abstract class MultiAgentHandlerBase {
         agentId: task.agentId,
         requestedBy: task.requestedBy,
         channelId: task.channelId,
+        source: (task.source as 'discord' | 'slack') || undefined,
         duration: task.duration,
         timestamp: Date.now(),
       });
@@ -241,6 +265,7 @@ export abstract class MultiAgentHandlerBase {
         agentId: task.agentId,
         requestedBy: task.requestedBy,
         channelId: task.channelId,
+        source: (task.source as 'discord' | 'slack') || undefined,
         error: task.error,
         timestamp: Date.now(),
       });
@@ -506,7 +531,11 @@ export abstract class MultiAgentHandlerBase {
     conductorResponse: string,
     channelId: string,
     source: 'discord' | 'slack',
-    onProgress?: (event: WorkflowProgressEvent) => void
+    onProgress?: (event: WorkflowProgressEvent) => void,
+    createStepCallbacks?: (agentId: string) => {
+      callbacks: PromptCallbacks;
+      cleanup: () => Promise<void>;
+    }
   ): Promise<{ result: string; directMessage: string; failed?: string } | null> {
     if (!this.workflowEngine?.isEnabled()) {
       this.logger.info('[Workflow] Engine not enabled, skipping');
@@ -528,6 +557,25 @@ export abstract class MultiAgentHandlerBase {
     }
 
     const directMessage = this.workflowEngine.extractNonPlanContent(conductorResponse);
+
+    // Normalize model IDs: Conductor may hallucinate old/wrong model IDs.
+    // Replace with actual config models per backend.
+    for (const step of plan.steps) {
+      try {
+        const configModel = this.processManager.resolveModelForBackend(step.agent.backend);
+        if (configModel && configModel !== 'unknown' && step.agent.model !== configModel) {
+          this.logger.info(
+            `[Workflow] Model normalized: ${step.id} ${step.agent.model} → ${configModel}`
+          );
+          step.agent.model = configModel;
+        }
+      } catch (e) {
+        this.logger.warn(
+          `[Workflow] Failed to resolve model for backend ${step.agent.backend}:`,
+          e
+        );
+      }
+    }
 
     this.logger.info(
       `[Workflow] Parsed plan: "${plan.name}" with ${plan.steps.length} steps: ${plan.steps.map((s) => `${s.id}(${s.agent.backend}/${s.agent.model})`).join(', ')}`
@@ -552,9 +600,9 @@ export abstract class MultiAgentHandlerBase {
         this.workflowEngine.on('progress', progressHandler);
       }
 
-      // Register all ephemeral agents
+      // Register all ephemeral agents (builds full system prompt with gateway tools)
       for (const step of plan.steps) {
-        this.processManager.registerEphemeralAgent(step.agent);
+        await this.processManager.registerEphemeralAgent(step.agent);
       }
 
       // Build step executor
@@ -571,22 +619,38 @@ export abstract class MultiAgentHandlerBase {
             timer = undefined;
           }
         };
+        let stepTracker: { callbacks: PromptCallbacks; cleanup: () => Promise<void> } | null = null;
         try {
-          process = await this.processManager.getProcess(source, channelId, agent.id);
-          const result = await Promise.race([
-            process.sendMessage(prompt),
-            new Promise<never>((_, reject) => {
-              timer = setTimeout(
-                () => reject(new Error(`Step timeout (${timeoutMs}ms)`)),
-                timeoutMs
-              );
-            }),
-          ]);
+          // Pass step timeout as requestTimeout override so CLI process won't kill early
+          const processOverrides =
+            timeoutMs > 0 ? { requestTimeout: timeoutMs + 30_000 } : { requestTimeout: 0 };
+          process = await this.processManager.getProcess(
+            source,
+            channelId,
+            agent.id,
+            processOverrides
+          );
+          stepTracker = createStepCallbacks?.(agent.id) ?? null;
+          const sendPromise = process.sendMessage(prompt, stepTracker?.callbacks);
+          // timeoutMs === 0 means unlimited (no timeout race)
+          const result =
+            timeoutMs > 0
+              ? await Promise.race([
+                  sendPromise,
+                  new Promise<never>((_, reject) => {
+                    timer = setTimeout(
+                      () => reject(new Error(`Step timeout (${timeoutMs}ms)`)),
+                      timeoutMs
+                    );
+                  }),
+                ])
+              : await sendPromise;
           clearStepTimeout();
           const cleaned = await this.executeTextToolCalls(result.response);
           return cleaned;
         } finally {
           clearStepTimeout();
+          await stepTracker?.cleanup();
         }
       };
 
@@ -676,16 +740,28 @@ export abstract class MultiAgentHandlerBase {
           }
         };
         try {
-          process = await this.processManager.getProcess(source, channelId, agentId);
-          const result = await Promise.race([
-            process.sendMessage(prompt),
-            new Promise<never>((_, reject) => {
-              timer = setTimeout(
-                () => reject(new Error(`Council agent timeout (${timeoutMs}ms)`)),
-                timeoutMs
-              );
-            }),
-          ]);
+          // Pass step timeout as requestTimeout override so CLI process won't kill early
+          const processOverrides =
+            timeoutMs > 0 ? { requestTimeout: timeoutMs + 30_000 } : { requestTimeout: 0 };
+          process = await this.processManager.getProcess(
+            source,
+            channelId,
+            agentId,
+            processOverrides
+          );
+          const sendPromise = process.sendMessage(prompt);
+          const result =
+            timeoutMs > 0
+              ? await Promise.race([
+                  sendPromise,
+                  new Promise<never>((_, reject) => {
+                    timer = setTimeout(
+                      () => reject(new Error(`Council agent timeout (${timeoutMs}ms)`)),
+                      timeoutMs
+                    );
+                  }),
+                ])
+              : await sendPromise;
           clearStepTimeout();
           const cleaned = await this.executeTextToolCalls(result.response);
           return cleaned;
@@ -730,6 +806,40 @@ export abstract class MultiAgentHandlerBase {
   }
 
   /**
+   * Parse background delegations from content and submit them.
+   * Shared by Discord/Slack after workflow/council execution.
+   */
+  protected submitBackgroundDelegations(
+    sourceAgentId: string,
+    channelId: string,
+    content: string,
+    source: 'discord' | 'slack',
+    logPrefix: string
+  ): void {
+    const delegations = this.delegationManager.parseAllDelegations(sourceAgentId, content);
+    for (const delegation of delegations) {
+      if (!delegation.background) continue;
+      const check = this.delegationManager.isDelegationAllowed(
+        delegation.fromAgentId,
+        delegation.toAgentId
+      );
+      if (check.allowed) {
+        this.backgroundTaskManager.submit({
+          description: delegation.task.substring(0, 200),
+          prompt: delegation.task,
+          agentId: delegation.toAgentId,
+          requestedBy: sourceAgentId,
+          channelId,
+          source,
+        });
+        this.logger.info(
+          `[${logPrefix}] Background delegation: ${sourceAgentId} -> ${delegation.toAgentId}`
+        );
+      }
+    }
+  }
+
+  /**
    * Get chain state for a channel (for debugging)
    */
   getChainState(channelId: string): ChainState {
@@ -740,6 +850,10 @@ export abstract class MultiAgentHandlerBase {
    * Stop all agent processes and bots
    */
   async stopAll(): Promise<void> {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
     this.backgroundTaskManager.destroy();
     this.processManager.stopAll();
     await this.platformCleanup();

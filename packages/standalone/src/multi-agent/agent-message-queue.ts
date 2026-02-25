@@ -15,6 +15,17 @@
 
 import type { AgentRuntimeProcess } from './runtime-process.js';
 import { getConfig } from '../cli/config/config-manager.js';
+import * as debugLoggerModule from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLoggerModule as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const queueLogger = new DebugLogger('MessageQueue');
 
 /**
  * Message context (from multi-agent-slack.ts or multi-agent-discord.ts)
@@ -61,6 +72,8 @@ const MESSAGE_TTL_MS = () => getConfig().gateway_tuning?.message_ttl_ms ?? 1_200
  */
 export class AgentMessageQueue {
   private queues: Map<string, QueuedMessage[]> = new Map();
+  /** Per-agent drain lock to prevent concurrent drain() calls (idle event + tryDrainNow race) */
+  private draining = new Set<string>();
 
   /**
    * Enqueue a message for a busy agent
@@ -82,13 +95,13 @@ export class AgentMessageQueue {
     // Enforce size limit
     if (queue.length > MAX_QUEUE_SIZE) {
       const dropped = queue.shift();
-      console.warn(
-        `[MessageQueue] Queue full for ${agentId}, dropped oldest message (waited ${Math.floor((Date.now() - dropped!.enqueuedAt) / 1000)}s)`
+      queueLogger.warn(
+        `Queue full for ${agentId}, dropped oldest message (waited ${Math.floor((Date.now() - dropped!.enqueuedAt) / 1000)}s)`
       );
     }
 
-    console.log(
-      `[MessageQueue] Enqueued message for ${agentId} (queue size: ${queue.length}/${MAX_QUEUE_SIZE})`
+    queueLogger.info(
+      `Enqueued message for ${agentId} (queue size: ${queue.length}/${MAX_QUEUE_SIZE})`
     );
   }
 
@@ -100,17 +113,35 @@ export class AgentMessageQueue {
    * @param agentId - Agent identifier
    * @param process - Agent process to send message to
    * @param sendCallback - Callback to handle sending response to platform
-   * @param depth - Recursion depth (internal, for safety)
    */
   async drain(
     agentId: string,
     process: AgentRuntimeProcess,
-    sendCallback: (agentId: string, message: QueuedMessage, response: string) => Promise<void>,
-    depth: number = 0
+    sendCallback: (agentId: string, message: QueuedMessage, response: string) => Promise<void>
   ): Promise<void> {
-    // Safety: prevent infinite recursion (should never happen, but defense in depth)
+    // Per-agent drain lock: prevent concurrent drain() from idle event + tryDrainNow
+    if (this.draining.has(agentId)) {
+      queueLogger.debug(`Drain already in progress for ${agentId}, skipping`);
+      return;
+    }
+    this.draining.add(agentId);
+
+    try {
+      await this._drainInternal(agentId, process, sendCallback, 0);
+    } finally {
+      this.draining.delete(agentId);
+    }
+  }
+
+  private async _drainInternal(
+    agentId: string,
+    process: AgentRuntimeProcess,
+    sendCallback: (agentId: string, message: QueuedMessage, response: string) => Promise<void>,
+    depth: number
+  ): Promise<void> {
+    // Safety: prevent infinite recursion
     if (depth >= MAX_QUEUE_SIZE) {
-      console.warn(`[MessageQueue] Drain depth limit reached for ${agentId}, stopping`);
+      queueLogger.warn(`Drain depth limit reached for ${agentId}, stopping`);
       return;
     }
 
@@ -129,12 +160,12 @@ export class AgentMessageQueue {
     // Check TTL
     const age = Date.now() - message.enqueuedAt;
     if (age > MESSAGE_TTL_MS()) {
-      console.warn(
-        `[MessageQueue] Skipping expired message for ${agentId} (age: ${Math.floor(age / 1000)}s, TTL: ${MESSAGE_TTL_MS() / 1000}s)`
+      queueLogger.warn(
+        `Skipping expired message for ${agentId} (age: ${Math.floor(age / 1000)}s, TTL: ${MESSAGE_TTL_MS() / 1000}s)`
       );
       // Try next message if any
       if (queue.length > 0) {
-        await this.drain(agentId, process, sendCallback, depth + 1);
+        await this._drainInternal(agentId, process, sendCallback, depth + 1);
       }
       return;
     }
@@ -142,8 +173,8 @@ export class AgentMessageQueue {
     // Log drain
     const waitedSec = Math.floor(age / 1000);
     const remaining = queue.length;
-    console.log(
-      `[MessageQueue] Delivering queued message to ${agentId} (waited ${waitedSec}s, queue: ${remaining} remaining)`
+    queueLogger.info(
+      `Delivering queued message to ${agentId} (waited ${waitedSec}s, queue: ${remaining} remaining)`
     );
 
     try {
@@ -154,30 +185,31 @@ export class AgentMessageQueue {
       await sendCallback(agentId, message, result.response);
     } catch (err) {
       if (err instanceof Error && err.message.includes('Process is busy')) {
-        // Agent still busy - re-queue at front for retry on next idle event
+        // Agent busy - re-queue this message and wait for next idle event to drain
         const retries = (message.retryCount ?? 0) + 1;
         if (retries <= 3) {
           message.retryCount = retries;
-          const q = this.queues.get(agentId);
-          if (q) q.unshift(message);
-          console.warn(
-            `[MessageQueue] Agent ${agentId} still busy, re-queued (retry ${retries}/3)`
-          );
+          let q = this.queues.get(agentId);
+          if (!q) {
+            q = [];
+            this.queues.set(agentId, q);
+          }
+          q.unshift(message);
+          queueLogger.warn(`Agent ${agentId} still busy, re-queued (retry ${retries}/3)`);
         } else {
-          console.warn(
-            `[MessageQueue] Agent ${agentId} still busy after 3 retries, dropping message`
-          );
+          queueLogger.warn(`Agent ${agentId} still busy after 3 retries, dropping message`);
         }
-        return; // Don't try to drain more — wait for next idle event
+        // Don't drain more when agent is busy — wait for next idle event
+        return;
       } else {
-        // Other error - log and continue
-        console.error(`[MessageQueue] Failed to deliver message to ${agentId}:`, err);
+        // Other error - log and continue to next message
+        queueLogger.error(`Failed to deliver message to ${agentId}:`, err);
       }
     }
 
     // Try draining next message if any
     if (queue.length > 0) {
-      await this.drain(agentId, process, sendCallback, depth + 1);
+      await this._drainInternal(agentId, process, sendCallback, depth + 1);
     }
   }
 
@@ -209,7 +241,7 @@ export class AgentMessageQueue {
         this.queues.set(agentId, filtered);
         const cleared = before - filtered.length;
         totalCleared += cleared;
-        console.log(`[MessageQueue] Cleared ${cleared} expired messages for ${agentId}`);
+        queueLogger.info(`Cleared ${cleared} expired messages for ${agentId}`);
       }
 
       // Remove empty queues
@@ -219,7 +251,7 @@ export class AgentMessageQueue {
     }
 
     if (totalCleared > 0) {
-      console.log(`[MessageQueue] Total expired messages cleared: ${totalCleared}`);
+      queueLogger.info(`Total expired messages cleared: ${totalCleared}`);
     }
   }
 
