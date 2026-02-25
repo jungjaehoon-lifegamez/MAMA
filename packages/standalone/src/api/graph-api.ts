@@ -1201,6 +1201,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: POST /api/multi-agent/agents/:id/restart - restart a single agent
     if (pathname.match(/^\/api\/multi-agent\/agents\/[^/]+\/restart$/) && req.method === 'POST') {
+      if (!isAuthenticated(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Authentication required' }));
+        return true;
+      }
       const agentId = decodeURIComponent(pathname.split('/')[4]);
       if (!options.restartMultiAgentAgent) {
         res.writeHead(501, { 'Content-Type': 'application/json' });
@@ -1226,6 +1231,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: POST /api/multi-agent/agents/:id/stop - stop a single agent
     if (pathname.match(/^\/api\/multi-agent\/agents\/[^/]+\/stop$/) && req.method === 'POST') {
+      if (!isAuthenticated(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Authentication required' }));
+        return true;
+      }
       const agentId = decodeURIComponent(pathname.split('/')[4]);
       if (!options.stopMultiAgentAgent) {
         res.writeHead(501, { 'Content-Type': 'application/json' });
