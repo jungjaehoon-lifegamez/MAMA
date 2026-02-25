@@ -87,8 +87,8 @@ const API_PORT = 3847;
 const EMBEDDING_PORT = 3849;
 
 // MAMA embedding server (keeps model in memory)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let embeddingServer: any = null;
+import type { Server as HttpServer } from 'node:http';
+let embeddingServer: HttpServer | null = null;
 
 /**
  * Normalize Discord guild config before passing to gateway.
@@ -2671,9 +2671,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     console.log('\n\n🛑 Shutting down MAMA...');
 
     // Force exit after 5 seconds if graceful shutdown hangs
+    // exit(0) = intentional stop; systemd Restart=on-failure should NOT restart
     setTimeout(() => {
       console.error('[MAMA] Graceful shutdown timed out, forcing exit');
-      process.exit(1);
+      process.exit(0);
     }, 5000);
 
     try {
@@ -2682,8 +2683,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       heartbeatScheduler.stop();
       tokenKeepAlive.stop();
 
-      // Close embedding server (port 3849) - fast, no await needed
-      if (embeddingServer?.close) {
+      // Close embedding server (port 3849) - drain connections first
+      if (embeddingServer) {
+        embeddingServer.closeAllConnections();
         embeddingServer.close();
       }
 
