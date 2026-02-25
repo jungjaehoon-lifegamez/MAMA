@@ -28,6 +28,7 @@ import { WebSocketServer } from 'ws';
 
 import {
   loadConfig,
+  initConfig,
   configExists,
   expandPath,
   provisionDefaults,
@@ -522,7 +523,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
   // Load config
   let config;
   try {
-    config = await loadConfig();
+    config = await initConfig();
   } catch (error) {
     console.error(
       `Failed to load config: ${error instanceof Error ? error.message : String(error)}\n`
@@ -900,6 +901,8 @@ export async function runAgentLoop(
   let metricsStore: MetricsStore | null = null;
   let metricsCleanup: MetricsCleanup | null = null;
   let healthService: HealthScoreService | null = null;
+  let metricsInterval: ReturnType<typeof setInterval> | null = null;
+  let healthWarningInterval: ReturnType<typeof setInterval> | null = null;
 
   if (metricsEnabled) {
     const metricsDbPath = expandPath(config.database.path).replace(
@@ -916,7 +919,7 @@ export async function runAgentLoop(
 
     // Periodic metrics summary log (every 5 minutes)
     const METRICS_LOG_INTERVAL = 5 * 60 * 1000;
-    setInterval(() => {
+    metricsInterval = setInterval(() => {
       try {
         const count = metricsStore!.countSince(Date.now() - METRICS_LOG_INTERVAL);
         const health = healthService!.compute();
@@ -1609,8 +1612,12 @@ export async function runAgentLoop(
   }
 
   // Wire gateways into health check service
-  if (discordGateway) healthCheckService.addGateway('discord', discordGateway);
-  if (slackGateway) healthCheckService.addGateway('slack', slackGateway);
+  if (discordGateway) {
+    healthCheckService.addGateway('discord', discordGateway);
+  }
+  if (slackGateway) {
+    healthCheckService.addGateway('slack', slackGateway);
+  }
 
   // Populate graph handler options with runtime dependencies (F4)
   if (discordGateway || slackGateway) {
@@ -1812,7 +1819,7 @@ export async function runAgentLoop(
   healthCheckService.setHeartbeat(heartbeatScheduler);
 
   // Periodic health check warning log (every 5 minutes)
-  setInterval(
+  healthWarningInterval = setInterval(
     async () => {
       try {
         const report = await healthCheckService.check();
@@ -2669,6 +2676,14 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     if (shuttingDown) return; // Prevent double shutdown
     shuttingDown = true;
     console.log('\n\n🛑 Shutting down MAMA...');
+
+    // Clear periodic intervals
+    if (metricsInterval) {
+      clearInterval(metricsInterval);
+    }
+    if (healthWarningInterval) {
+      clearInterval(healthWarningInterval);
+    }
 
     // Force exit after 5 seconds if graceful shutdown hangs
     // exit(0) = intentional stop; systemd Restart=on-failure should NOT restart
