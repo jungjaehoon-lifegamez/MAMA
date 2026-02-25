@@ -14,7 +14,7 @@ import { startCommand, runAgentLoop } from './commands/start.js';
 import { stopCommand } from './commands/stop.js';
 import { statusCommand } from './commands/status.js';
 import { runCommand } from './commands/run.js';
-import { loadConfig } from './config/config-manager.js';
+import { initConfig } from './config/config-manager.js';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -107,7 +107,7 @@ program
   .description('Run as daemon (internal use)')
   .action(async () => {
     try {
-      const config = await loadConfig();
+      const config = await initConfig();
       await runAgentLoop(config);
     } catch (error) {
       console.error('Daemon error:', error);
