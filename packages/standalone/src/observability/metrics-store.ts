@@ -130,7 +130,8 @@ export class MetricsStore {
     }
 
     let sql = `SELECT id, name, value, labels, timestamp FROM metrics WHERE ${conditions.join(' AND ')} ORDER BY timestamp DESC`;
-    if (options.limit !== undefined) {
+    // Only apply SQL LIMIT when there's no post-filter, otherwise limit after filtering
+    if (options.limit !== undefined && !options.labels) {
       sql += ' LIMIT ?';
       params.push(options.limit);
     }
@@ -147,6 +148,9 @@ export class MetricsStore {
         const parsed = JSON.parse(row.labels) as Record<string, string>;
         return filterEntries.every(([k, v]) => parsed[k] === v);
       });
+      if (options.limit !== undefined) {
+        rows = rows.slice(0, options.limit);
+      }
     }
 
     return rows;
@@ -213,7 +217,11 @@ export class MetricsStore {
   }
 
   close(): void {
-    this.db.close();
+    try {
+      this.db.close();
+    } catch {
+      /* already closed */
+    }
     // Remove from instances map
     for (const [path, inst] of MetricsStore.instances) {
       if (inst === this) {
