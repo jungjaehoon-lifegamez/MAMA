@@ -136,10 +136,10 @@ export const SkillsModule = {
         this.currentFilter = filter;
         // Update active state
         filterBar.querySelectorAll<HTMLElement>('[data-filter]').forEach((b) => {
-          b.classList.toggle('bg-yellow-400', b.dataset.filter === this.currentFilter);
-          b.classList.toggle('text-gray-900', b.dataset.filter === this.currentFilter);
-          b.classList.toggle('bg-gray-700', b.dataset.filter !== this.currentFilter);
-          b.classList.toggle('text-gray-300', b.dataset.filter !== this.currentFilter);
+          b.classList.toggle('bg-mama-yellow', b.dataset.filter === this.currentFilter);
+          b.classList.toggle('text-mama-black', b.dataset.filter === this.currentFilter);
+          b.classList.toggle('bg-white', b.dataset.filter !== this.currentFilter);
+          b.classList.toggle('text-gray-600', b.dataset.filter !== this.currentFilter);
         });
         this.render();
       });
@@ -170,7 +170,7 @@ export const SkillsModule = {
         installed.length > 0
           ? `
         <div class="mb-6">
-          <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+          <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
             Installed (${installed.length})
           </h3>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -182,7 +182,7 @@ export const SkillsModule = {
       }
 
       <div class="mb-6">
-        <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+        <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
           Available (${available.length})
         </h3>
         ${
@@ -272,40 +272,40 @@ export const SkillsModule = {
    */
   _renderCard(skill: SkillItem, isInstalled: boolean): string {
     const sourceColors = {
-      mama: 'bg-yellow-900/30 text-yellow-400',
-      cowork: 'bg-blue-900/30 text-blue-400',
-      external: 'bg-purple-900/30 text-purple-400',
+      mama: 'bg-mama-yellow/20 text-yellow-700',
+      cowork: 'bg-blue-100 text-blue-700',
+      external: 'bg-purple-100 text-purple-700',
     };
-    const badgeClass = sourceColors[skill.source] || 'bg-gray-700 text-gray-400';
-    const enabledClass = skill.enabled !== false ? 'border-green-500/30' : 'border-gray-700';
+    const badgeClass = sourceColors[skill.source] || 'bg-gray-100 text-gray-600';
+    const enabledClass = skill.enabled !== false ? 'border-green-300' : 'border-gray-200';
 
     return `
-      <div class="bg-gray-800 rounded-lg border ${enabledClass} p-3 cursor-pointer
-        hover:border-yellow-500/50 transition-colors"
+      <div class="bg-white rounded-lg border ${enabledClass} p-3 cursor-pointer
+        hover:border-mama-yellow hover:shadow-md transition-all"
         data-skill-card data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}">
         <div class="flex items-start justify-between mb-2">
-          <h4 class="font-medium text-sm text-white truncate flex-1">${this._escapeHtml(skill.name)}</h4>
-          <span class="text-xs px-1.5 py-0.5 rounded ${badgeClass} ml-2 whitespace-nowrap">
+          <h4 class="font-medium text-sm text-gray-900 truncate flex-1">${this._escapeHtml(skill.name)}</h4>
+          <span class="text-[10px] px-1.5 py-0.5 rounded ${badgeClass} ml-2 whitespace-nowrap font-medium">
             ${this._escapeHtml(skill.source)}
           </span>
         </div>
-        <p class="text-xs text-gray-400 line-clamp-2 mb-3">${this._escapeHtml(skill.description || '')}</p>
+        <p class="text-xs text-gray-500 line-clamp-2 mb-3">${this._escapeHtml(skill.description || '')}</p>
         <div class="flex items-center justify-between">
           ${
             isInstalled
               ? `
             <button data-action="toggle" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
               data-enabled="${skill.enabled !== false}"
-              class="text-xs px-2 py-1 rounded ${skill.enabled !== false ? 'bg-green-900/30 text-green-400' : 'bg-gray-700 text-gray-400'}">
+              class="text-xs px-2 py-1 rounded ${skill.enabled !== false ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">
               ${skill.enabled !== false ? 'Enabled' : 'Disabled'}
             </button>
             <div class="flex gap-1">
               <button data-action="edit" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
-                class="text-xs px-2 py-1 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50">
+                class="text-xs px-2 py-1 rounded bg-blue-100 text-blue-600 hover:bg-blue-200">
                 Edit
               </button>
               <button data-action="uninstall" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
-                class="text-xs px-2 py-1 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50">
+                class="text-xs px-2 py-1 rounded bg-red-100 text-red-600 hover:bg-red-200">
                 Remove
               </button>
             </div>
@@ -313,7 +313,7 @@ export const SkillsModule = {
               : `
             <span></span>
             <button data-action="install" data-id="${this._escapeHtml(skill.id)}" data-source="${this._escapeHtml(skill.source)}"
-              class="text-xs px-2 py-1 rounded bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50">
+              class="text-xs px-2 py-1 rounded bg-mama-yellow text-mama-black hover:bg-mama-yellow-hover font-medium">
               Install
             </button>
           `
@@ -419,23 +419,23 @@ export const SkillsModule = {
       return;
     }
 
-    modalContent.innerHTML = '<p class="text-gray-400">Loading...</p>';
+    modalContent.innerHTML = '<p class="text-gray-500">Loading...</p>';
     modal.classList.remove('hidden');
 
     try {
       const { content } = await API.getSkillContent(name, source);
       modalContent.innerHTML = `
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-lg font-bold text-white">${this._escapeHtml(name)}</h2>
-          <span class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">${this._escapeHtml(source)}</span>
+          <h2 class="text-lg font-bold text-gray-900">${this._escapeHtml(name)}</h2>
+          <span class="text-[10px] px-2 py-1 rounded bg-gray-100 text-gray-600">${this._escapeHtml(source)}</span>
         </div>
-        <div class="prose prose-invert prose-sm max-w-none">
+        <div class="prose prose-sm max-w-none">
           ${this._renderMarkdown(content)}
         </div>
       `;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      modalContent.innerHTML = `<p class="text-red-400">Failed to load: ${this._escapeHtml(message)}</p>`;
+      modalContent.innerHTML = `<p class="text-red-600">Failed to load: ${this._escapeHtml(message)}</p>`;
     }
   },
 
