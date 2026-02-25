@@ -15,6 +15,17 @@
 
 import type { AgentRuntimeProcess } from './runtime-process.js';
 import { getConfig } from '../cli/config/config-manager.js';
+import * as debugLoggerModule from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLoggerModule as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const queueLogger = new DebugLogger('MessageQueue');
 
 /**
  * Message context (from multi-agent-slack.ts or multi-agent-discord.ts)
@@ -84,13 +95,13 @@ export class AgentMessageQueue {
     // Enforce size limit
     if (queue.length > MAX_QUEUE_SIZE) {
       const dropped = queue.shift();
-      console.warn(
-        `[MessageQueue] Queue full for ${agentId}, dropped oldest message (waited ${Math.floor((Date.now() - dropped!.enqueuedAt) / 1000)}s)`
+      queueLogger.warn(
+        `Queue full for ${agentId}, dropped oldest message (waited ${Math.floor((Date.now() - dropped!.enqueuedAt) / 1000)}s)`
       );
     }
 
-    console.log(
-      `[MessageQueue] Enqueued message for ${agentId} (queue size: ${queue.length}/${MAX_QUEUE_SIZE})`
+    queueLogger.info(
+      `Enqueued message for ${agentId} (queue size: ${queue.length}/${MAX_QUEUE_SIZE})`
     );
   }
 
@@ -110,7 +121,7 @@ export class AgentMessageQueue {
   ): Promise<void> {
     // Per-agent drain lock: prevent concurrent drain() from idle event + tryDrainNow
     if (this.draining.has(agentId)) {
-      console.log(`[MessageQueue] Drain already in progress for ${agentId}, skipping`);
+      queueLogger.debug(`Drain already in progress for ${agentId}, skipping`);
       return;
     }
     this.draining.add(agentId);
@@ -130,7 +141,7 @@ export class AgentMessageQueue {
   ): Promise<void> {
     // Safety: prevent infinite recursion
     if (depth >= MAX_QUEUE_SIZE) {
-      console.warn(`[MessageQueue] Drain depth limit reached for ${agentId}, stopping`);
+      queueLogger.warn(`Drain depth limit reached for ${agentId}, stopping`);
       return;
     }
 
@@ -149,8 +160,8 @@ export class AgentMessageQueue {
     // Check TTL
     const age = Date.now() - message.enqueuedAt;
     if (age > MESSAGE_TTL_MS()) {
-      console.warn(
-        `[MessageQueue] Skipping expired message for ${agentId} (age: ${Math.floor(age / 1000)}s, TTL: ${MESSAGE_TTL_MS() / 1000}s)`
+      queueLogger.warn(
+        `Skipping expired message for ${agentId} (age: ${Math.floor(age / 1000)}s, TTL: ${MESSAGE_TTL_MS() / 1000}s)`
       );
       // Try next message if any
       if (queue.length > 0) {
@@ -162,8 +173,8 @@ export class AgentMessageQueue {
     // Log drain
     const waitedSec = Math.floor(age / 1000);
     const remaining = queue.length;
-    console.log(
-      `[MessageQueue] Delivering queued message to ${agentId} (waited ${waitedSec}s, queue: ${remaining} remaining)`
+    queueLogger.info(
+      `Delivering queued message to ${agentId} (waited ${waitedSec}s, queue: ${remaining} remaining)`
     );
 
     try {
@@ -184,19 +195,15 @@ export class AgentMessageQueue {
             this.queues.set(agentId, q);
           }
           q.unshift(message);
-          console.warn(
-            `[MessageQueue] Agent ${agentId} still busy, re-queued (retry ${retries}/3)`
-          );
+          queueLogger.warn(`Agent ${agentId} still busy, re-queued (retry ${retries}/3)`);
         } else {
-          console.warn(
-            `[MessageQueue] Agent ${agentId} still busy after 3 retries, dropping message`
-          );
+          queueLogger.warn(`Agent ${agentId} still busy after 3 retries, dropping message`);
         }
         // Don't drain more when agent is busy — wait for next idle event
         return;
       } else {
         // Other error - log and continue to next message
-        console.error(`[MessageQueue] Failed to deliver message to ${agentId}:`, err);
+        queueLogger.error(`Failed to deliver message to ${agentId}:`, err);
       }
     }
 
@@ -234,7 +241,7 @@ export class AgentMessageQueue {
         this.queues.set(agentId, filtered);
         const cleared = before - filtered.length;
         totalCleared += cleared;
-        console.log(`[MessageQueue] Cleared ${cleared} expired messages for ${agentId}`);
+        queueLogger.info(`Cleared ${cleared} expired messages for ${agentId}`);
       }
 
       // Remove empty queues
@@ -244,7 +251,7 @@ export class AgentMessageQueue {
     }
 
     if (totalCleared > 0) {
-      console.log(`[MessageQueue] Total expired messages cleared: ${totalCleared}`);
+      queueLogger.info(`Total expired messages cleared: ${totalCleared}`);
     }
   }
 

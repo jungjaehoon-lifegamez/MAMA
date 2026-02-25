@@ -1006,52 +1006,24 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     }
 
     // Try executing workflow if this is a conductor response with a workflow_plan
+    let cleanedResponse: string;
     const workflowResult = await this.tryExecuteWorkflow(response, message.channelId, 'discord');
     if (workflowResult && !workflowResult.failed) {
-      const display = workflowResult.directMessage
+      cleanedResponse = workflowResult.directMessage
         ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
         : workflowResult.result;
-      const formattedResponse = this.formatAgentResponse(agent, display);
-      const chunks = splitForDiscord(formattedResponse);
-      const hasOwnBot = this.multiBotManager.hasAgentBot(agentId);
-      for (const chunk of chunks) {
-        try {
-          if (hasOwnBot) {
-            await this.multiBotManager.sendAsAgent(agentId, message.channelId, chunk);
-          } else if (this.discordClient) {
-            const channel = await this.discordClient.channels.fetch(message.channelId);
-            if (channel && 'send' in (channel as Record<string, unknown>)) {
-              await (channel as { send: (content: string) => Promise<unknown> }).send(chunk);
-            }
-          }
-        } catch (err) {
-          console.error(`[MultiAgent] Failed to send workflow result for ${agentId}:`, err);
-        }
+    } else {
+      // Strip workflow/council plan JSON that wasn't executed
+      let strippedResponse = response;
+      if (this.workflowEngine?.isEnabled()) {
+        strippedResponse = this.workflowEngine.extractNonPlanContent(strippedResponse);
       }
-      this.sharedContext.recordAgentMessage(message.channelId, agent, display, '');
-
-      // Parse delegations from workflow result
-      this.submitBackgroundDelegations(
-        agentId,
-        message.channelId,
-        display,
-        'discord',
-        'MultiAgent queued-workflow'
-      );
-      return;
+      if (this.councilEngine) {
+        strippedResponse = this.councilEngine.extractNonPlanContent(strippedResponse);
+      }
+      // Execute gateway tool calls from response
+      cleanedResponse = await this.executeAgentToolCalls(agentId, strippedResponse);
     }
-
-    // Strip workflow/council plan JSON that wasn't executed
-    let strippedResponse = response;
-    if (this.workflowEngine?.isEnabled()) {
-      strippedResponse = this.workflowEngine.extractNonPlanContent(strippedResponse);
-    }
-    if (this.councilEngine) {
-      strippedResponse = this.councilEngine.extractNonPlanContent(strippedResponse);
-    }
-
-    // Execute gateway tool calls from response
-    const cleanedResponse = await this.executeAgentToolCalls(agentId, strippedResponse);
 
     // Parse and submit DELEGATE_BG commands
     const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
