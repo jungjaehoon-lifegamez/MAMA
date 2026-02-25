@@ -422,12 +422,16 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentResolve = resolve;
       this.currentReject = reject;
 
-      // Set request timeout
+      // Set request timeout (0 = unlimited, skip timeout entirely)
       const timeoutMs =
-        this.options.requestTimeout || (getConfig().timeouts?.request_ms ?? 120_000);
-      this.requestTimeoutHandle = setTimeout(() => {
-        this.handleTimeout();
-      }, timeoutMs);
+        this.options.requestTimeout !== undefined && this.options.requestTimeout !== null
+          ? this.options.requestTimeout
+          : (getConfig().timeouts?.request_ms ?? 120_000);
+      if (timeoutMs > 0) {
+        this.requestTimeoutHandle = setTimeout(() => {
+          this.handleTimeout();
+        }, timeoutMs);
+      }
 
       // Strip lone surrogates to prevent API 400 errors
       const safeContent = content.replace(LONE_SURROGATE_RE, '');
@@ -496,12 +500,16 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentResolve = resolve;
       this.currentReject = reject;
 
-      // Set request timeout
+      // Set request timeout (0 = unlimited, skip timeout entirely)
       const timeoutMs =
-        this.options.requestTimeout || (getConfig().timeouts?.request_ms ?? 120_000);
-      this.requestTimeoutHandle = setTimeout(() => {
-        this.handleTimeout();
-      }, timeoutMs);
+        this.options.requestTimeout !== undefined && this.options.requestTimeout !== null
+          ? this.options.requestTimeout
+          : (getConfig().timeouts?.request_ms ?? 120_000);
+      if (timeoutMs > 0) {
+        this.requestTimeoutHandle = setTimeout(() => {
+          this.handleTimeout();
+        }, timeoutMs);
+      }
 
       // Strip lone surrogates from tool results to prevent API 400 errors
       const message = {

@@ -208,7 +208,7 @@ export function parseSkillFrontmatter(content: string): SkillFrontmatter {
  * Find the main .md file for a directory skill (for frontmatter parsing).
  */
 export function findMainSkillFile(skillDir: string, skillName: string): string | null {
-  for (const name of [`${skillName}.md`, 'skill.md', 'index.md']) {
+  for (const name of [`${skillName}.md`, 'skill.md', 'SKILL.md', 'index.md']) {
     const p = join(skillDir, name);
     if (existsSync(p)) return p;
   }
@@ -307,6 +307,47 @@ export function buildSkillCatalog(verbose = false): string[] {
         if (state[stateKey]?.enabled === false) continue;
 
         const skillDir = join(sourceDir, entry.name);
+
+        // Plugin-structured skill: has skills/ subdirectory with sub-skills
+        const subSkillsDir = join(skillDir, 'skills');
+        if (existsSync(subSkillsDir)) {
+          try {
+            const subEntries = readdirSync(subSkillsDir, { withFileTypes: true });
+            for (const sub of subEntries) {
+              if (!sub.isDirectory()) continue;
+              const subDir = join(subSkillsDir, sub.name);
+              const subMain = findMainSkillFile(subDir, sub.name);
+              if (!subMain) continue;
+              try {
+                const content = readFileSync(subMain, 'utf-8');
+                const fm = parseSkillFrontmatter(content);
+                const description = fm.description || '';
+                const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : sub.name;
+                catalog.push(`- [${stateKey}/${sub.name}] keywords: ${keywords} | ${description}`);
+                if (verbose)
+                  console.log(`[SkillLoader] Skill catalog (plugin sub): ${stateKey}/${sub.name}`);
+              } catch {
+                /* skip */
+              }
+            }
+          } catch {
+            /* skip */
+          }
+          // Also check for plugin-level main file (plugin.json description)
+          const pluginJson = join(skillDir, '.claude-plugin', 'plugin.json');
+          if (existsSync(pluginJson)) {
+            try {
+              const meta = JSON.parse(readFileSync(pluginJson, 'utf-8'));
+              if (meta.description) {
+                catalog.push(`- [${stateKey}] keywords: ${entry.name} | ${meta.description}`);
+              }
+            } catch {
+              /* skip */
+            }
+          }
+          continue;
+        }
+
         const mainFile = findMainSkillFile(skillDir, entry.name);
         if (!mainFile) continue;
 
@@ -364,6 +405,29 @@ export function buildSkillCatalog(verbose = false): string[] {
  */
 export function loadSkillContent(skillId: string): SkillLoadResult | null {
   const skillsBase = join(homedir(), '.mama', 'skills');
+
+  // Try plugin sub-skill: "cowork/marketing/brand-voice" → skills/cowork/marketing/skills/brand-voice/
+  const skillIdParts = skillId.split('/');
+  if (skillIdParts.length >= 3) {
+    const subSkillDir = join(
+      skillsBase,
+      skillIdParts[0],
+      skillIdParts[1],
+      'skills',
+      skillIdParts.slice(2).join('/')
+    );
+    if (existsSync(subSkillDir)) {
+      const mdFiles = collectMarkdownFiles(subSkillDir);
+      if (mdFiles.length > 0) {
+        const originalChars = mdFiles.reduce((sum, f) => sum + f.content.length, 0);
+        const truncated = mdFiles.some((f) => f.truncated);
+        const omittedSections = mdFiles.flatMap((f) => f.omittedSections);
+        const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
+        const content = `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
+        return { content, truncated, omittedSections, originalChars };
+      }
+    }
+  }
 
   // Try directory skill first
   const skillDir = join(skillsBase, skillId);

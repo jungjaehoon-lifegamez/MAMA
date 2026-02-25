@@ -61,6 +61,8 @@ const MESSAGE_TTL_MS = () => getConfig().gateway_tuning?.message_ttl_ms ?? 1_200
  */
 export class AgentMessageQueue {
   private queues: Map<string, QueuedMessage[]> = new Map();
+  /** Per-agent drain lock to prevent concurrent drain() calls (idle event + tryDrainNow race) */
+  private draining = new Set<string>();
 
   /**
    * Enqueue a message for a busy agent
@@ -108,7 +110,31 @@ export class AgentMessageQueue {
     sendCallback: (agentId: string, message: QueuedMessage, response: string) => Promise<void>,
     depth: number = 0
   ): Promise<void> {
-    // Safety: prevent infinite recursion (should never happen, but defense in depth)
+    // Per-agent drain lock: prevent concurrent drain() from idle event + tryDrainNow
+    if (depth === 0) {
+      if (this.draining.has(agentId)) {
+        console.log(`[MessageQueue] Drain already in progress for ${agentId}, skipping`);
+        return;
+      }
+      this.draining.add(agentId);
+    }
+
+    try {
+      await this._drainInternal(agentId, process, sendCallback, depth);
+    } finally {
+      if (depth === 0) {
+        this.draining.delete(agentId);
+      }
+    }
+  }
+
+  private async _drainInternal(
+    agentId: string,
+    process: AgentRuntimeProcess,
+    sendCallback: (agentId: string, message: QueuedMessage, response: string) => Promise<void>,
+    depth: number
+  ): Promise<void> {
+    // Safety: prevent infinite recursion
     if (depth >= MAX_QUEUE_SIZE) {
       console.warn(`[MessageQueue] Drain depth limit reached for ${agentId}, stopping`);
       return;
@@ -134,7 +160,7 @@ export class AgentMessageQueue {
       );
       // Try next message if any
       if (queue.length > 0) {
-        await this.drain(agentId, process, sendCallback, depth + 1);
+        await this._drainInternal(agentId, process, sendCallback, depth + 1);
       }
       return;
     }
@@ -154,7 +180,7 @@ export class AgentMessageQueue {
       await sendCallback(agentId, message, result.response);
     } catch (err) {
       if (err instanceof Error && err.message.includes('Process is busy')) {
-        // Agent still busy - re-queue at front for retry on next idle event
+        // Agent busy - re-queue this message, but continue draining remaining messages
         const retries = (message.retryCount ?? 0) + 1;
         if (retries <= 3) {
           message.retryCount = retries;
@@ -168,16 +194,17 @@ export class AgentMessageQueue {
             `[MessageQueue] Agent ${agentId} still busy after 3 retries, dropping message`
           );
         }
-        return; // Don't try to drain more — wait for next idle event
+        // Don't drain more when agent is busy — wait for next idle event
+        return;
       } else {
-        // Other error - log and continue
+        // Other error - log and continue to next message
         console.error(`[MessageQueue] Failed to deliver message to ${agentId}:`, err);
       }
     }
 
     // Try draining next message if any
     if (queue.length > 0) {
-      await this.drain(agentId, process, sendCallback, depth + 1);
+      await this._drainInternal(agentId, process, sendCallback, depth + 1);
     }
   }
 

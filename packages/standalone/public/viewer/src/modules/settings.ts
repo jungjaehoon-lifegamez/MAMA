@@ -81,6 +81,14 @@ type SettingsPayload = {
     enabled: boolean;
     retention_days: number;
   };
+  timeouts: {
+    request_ms: number;
+    agent_ms: number;
+    session_ms: number;
+    workflow_step_ms: number;
+    workflow_max_ms: number;
+    ultrawork_ms: number;
+  };
 };
 
 // Model options by backend (single source of truth)
@@ -432,6 +440,9 @@ export class SettingsModule {
       Math.round((this.config.agent?.timeout || 300000) / 1000)
     );
 
+    // Timeouts
+    this.populateTimeouts();
+
     // Tool Mode
     this.populateToolMode();
 
@@ -448,6 +459,20 @@ export class SettingsModule {
     this.populateSkillsSection();
     this.populateTokenSection();
     this.populateCronSection();
+  }
+
+  /**
+   * Populate timeouts section from config
+   */
+  populateTimeouts(): void {
+    const t = this.config.timeouts;
+    if (!t) return;
+    this.setValue('settings-timeout-request', Math.round((t.request_ms || 120000) / 1000));
+    this.setValue('settings-timeout-agent', Math.round((t.agent_ms || 300000) / 1000));
+    this.setValue('settings-timeout-session', Math.round((t.session_ms || 1800000) / 60000));
+    this.setValue('settings-timeout-wf-step', Math.round((t.workflow_step_ms || 300000) / 1000));
+    this.setValue('settings-timeout-wf-max', Math.round((t.workflow_max_ms || 1800000) / 60000));
+    this.setValue('settings-timeout-ultrawork', Math.round((t.ultrawork_ms || 300000) / 1000));
   }
 
   /**
@@ -840,6 +865,14 @@ export class SettingsModule {
       metrics: {
         enabled: this.getCheckbox('settings-metrics-enabled'),
         retention_days: this.parseIntegerInput('settings-metrics-retention', 1, 90, 7),
+      },
+      timeouts: {
+        request_ms: this.parseIntegerInput('settings-timeout-request', 10, 600, 120) * 1000,
+        agent_ms: this.parseIntegerInput('settings-timeout-agent', 0, 3600, 300) * 1000,
+        session_ms: this.parseIntegerInput('settings-timeout-session', 5, 1440, 30) * 60000,
+        workflow_step_ms: this.parseIntegerInput('settings-timeout-wf-step', 0, 7200, 300) * 1000,
+        workflow_max_ms: this.parseIntegerInput('settings-timeout-wf-max', 0, 1440, 30) * 60000,
+        ultrawork_ms: this.parseIntegerInput('settings-timeout-ultrawork', 0, 7200, 300) * 1000,
       },
     };
   }

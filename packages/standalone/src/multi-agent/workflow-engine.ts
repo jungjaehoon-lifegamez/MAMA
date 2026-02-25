@@ -434,10 +434,13 @@ export class WorkflowEngine extends EventEmitter {
     const totalSteps = plan.steps.length;
     const completedCounter = { count: 0 };
 
-    // Global timeout
-    const globalTimeout = setTimeout(() => {
-      executionState.cancelled = true;
-    }, maxDuration);
+    // Global timeout (0 = unlimited)
+    const globalTimeout =
+      maxDuration > 0
+        ? setTimeout(() => {
+            executionState.cancelled = true;
+          }, maxDuration)
+        : null;
 
     try {
       for (const level of levels) {
@@ -502,7 +505,7 @@ export class WorkflowEngine extends EventEmitter {
         execution.status = 'completed';
       }
     } finally {
-      clearTimeout(globalTimeout);
+      if (globalTimeout) clearTimeout(globalTimeout);
       this.activeExecutions.delete(executionId);
     }
 
@@ -572,7 +575,7 @@ export class WorkflowEngine extends EventEmitter {
 
     // Interpolate previous step results into prompt
     const resolvedPrompt = this.interpolatePrompt(step.prompt, previousResults);
-    const timeout = step.timeout_ms ?? DEFAULT_STEP_TIMEOUT_MS;
+    const timeout = step.timeout_ms ?? this.config.step_timeout_ms ?? DEFAULT_STEP_TIMEOUT_MS;
     const start = Date.now();
 
     try {
