@@ -923,7 +923,7 @@ export async function runAgentLoop(
       try {
         const count = metricsStore!.countSince(Date.now() - METRICS_LOG_INTERVAL);
         const health = healthService!.compute();
-        console.log(
+        startLogger.info(
           `[Metrics] ${count} recorded (5m), health: ${health.score}/100 (${health.status})`
         );
       } catch {
@@ -1819,7 +1819,7 @@ export async function runAgentLoop(
           (c) => c.severity === 'critical' && c.status === 'fail'
         );
         if (criticalFails.length > 0) {
-          console.warn(
+          startLogger.warn(
             `[Health] ⚠ ${criticalFails.length} critical issue(s): ${criticalFails.map((c) => c.name).join(', ')}`
           );
         }
