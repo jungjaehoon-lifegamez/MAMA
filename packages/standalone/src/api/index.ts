@@ -5,6 +5,7 @@
  */
 
 import express, { type Express, type Router } from 'express';
+import { createServer, type Server as HttpServer } from 'node:http';
 import type Database from 'better-sqlite3';
 import { createCronRouter, InMemoryLogStore, type ExecutionLogStore } from './cron-handler.js';
 import {
@@ -150,7 +151,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   // Note: Error handlers are mounted in start() to allow adding custom routes first
 
-  let server: ReturnType<typeof app.listen> | null = null;
+  let server: HttpServer | null = null;
   let actualPort = port;
   let errorHandlersMounted = false;
 
@@ -178,7 +179,14 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         new Promise((resolve, reject) => {
           let settled = false;
           try {
-            server = app.listen(attemptPort, host, () => {
+            server = createServer(app);
+            server.on('error', (err: NodeJS.ErrnoException) => {
+              if (settled) return;
+              settled = true;
+              reject(err);
+            });
+            // exclusive: false → SO_REUSEADDR, allows binding over TIME_WAIT sockets
+            server.listen({ port: attemptPort, host, exclusive: false }, () => {
               if (settled) return;
               settled = true;
               const addr = server?.address();
@@ -193,11 +201,6 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
               } else {
                 reject(new Error(`Failed to bind to port ${attemptPort}`));
               }
-            });
-            server.on('error', (err: NodeJS.ErrnoException) => {
-              if (settled) return;
-              settled = true;
-              reject(err);
             });
           } catch (error) {
             if (!settled) {
@@ -301,21 +304,17 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       }
     },
     async stop(): Promise<void> {
-      return new Promise((resolve, reject) => {
-        if (!server) {
-          resolve();
-          return;
-        }
-        // Force-close all open connections so server.close() resolves immediately
-        server.closeAllConnections();
-        server.close((err) => {
-          if (err) {
-            reject(err);
-          } else {
-            server = null;
-            resolve();
-          }
-        });
+      if (!server) return;
+      const s = server;
+      server = null;
+
+      // Force-close all connections (idle + active)
+      s.closeAllConnections();
+
+      return new Promise<void>((resolve) => {
+        s.close(() => resolve());
+        // If close doesn't resolve in 2s, resolve anyway
+        setTimeout(resolve, 2000);
       });
     },
   };
