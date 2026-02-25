@@ -992,5 +992,5 @@ If you have security concerns or found a vulnerability:
 
 ---
 
-_Last updated: 2026-02-25_
-_MAMA OS v0.12.0_
+_Last updated: 2026-02-26_
+_MAMA OS v0.12.1_

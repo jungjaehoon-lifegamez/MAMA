@@ -12,7 +12,13 @@
 
 /* eslint-env browser */
 
-import { escapeAttr, escapeHtml, getElementByIdOrNull, getErrorMessage } from '../utils/dom.js';
+import {
+  escapeAttr,
+  escapeHtml,
+  getElementByIdOrNull,
+  getErrorMessage,
+  showToast,
+} from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 import {
   API,
@@ -167,6 +173,24 @@ export class DashboardModule {
         const settingsTab = document.querySelector<HTMLElement>('[data-tab="settings"]');
         if (settingsTab) {
           settingsTab.click();
+        }
+        return;
+      }
+
+      const restartBtn = target.closest<HTMLElement>('[data-action="restart-agent"]');
+      if (restartBtn) {
+        const agentId = restartBtn.getAttribute('data-agent-id');
+        if (agentId) {
+          this.restartAgent(agentId);
+        }
+        return;
+      }
+
+      const stopBtn = target.closest<HTMLElement>('[data-action="stop-agent"]');
+      if (stopBtn) {
+        const agentId = stopBtn.getAttribute('data-agent-id');
+        if (agentId) {
+          this.stopAgent(agentId);
         }
       }
     };
@@ -717,6 +741,24 @@ export class DashboardModule {
                 ? `<p class="text-[10px] text-gray-400 mt-1">Last: ${this.formatRelativeTime(agent.lastActivity)}</p>`
                 : ''
             }
+            <div class="flex gap-1 mt-2 pt-2 border-t border-gray-100">
+              <button
+                data-action="restart-agent"
+                data-agent-id="${escapeAttr(agent.id)}"
+                class="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                title="Restart agent"
+              >🔄 Restart</button>
+              ${
+                agent.status === 'busy'
+                  ? `<button
+                      data-action="stop-agent"
+                      data-agent-id="${escapeAttr(agent.id)}"
+                      class="text-[10px] px-2 py-0.5 rounded bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                      title="Stop agent"
+                    >⏹ Stop</button>`
+                  : ''
+              }
+            </div>
           </div>
         `;
       })
@@ -918,6 +960,28 @@ export class DashboardModule {
         const message = getErrorMessage(e);
         statusEl.textContent = `Cron job "${id}" failed: ${message}`;
       }
+    }
+  }
+
+  async restartAgent(agentId: string): Promise<void> {
+    try {
+      await API.restartAgent(agentId);
+      showToast(`Agent "${agentId}" restarted`);
+      await this.loadStatus();
+    } catch (e) {
+      logger.error('[Dashboard] Failed to restart agent:', e);
+      showToast(`Restart failed: ${getErrorMessage(e)}`);
+    }
+  }
+
+  async stopAgent(agentId: string): Promise<void> {
+    try {
+      await API.stopAgent(agentId);
+      showToast(`Agent "${agentId}" stopped`);
+      await this.loadStatus();
+    } catch (e) {
+      logger.error('[Dashboard] Failed to stop agent:', e);
+      showToast(`Stop failed: ${getErrorMessage(e)}`);
     }
   }
 

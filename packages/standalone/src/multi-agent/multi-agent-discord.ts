@@ -97,14 +97,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   /** Tracks which agent:channel combos have received history injection (new session only) */
   private historyInjected = new Set<string>();
 
-  /** Cleanup interval handle for periodic tasks */
-  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
-
-  /** Cleanup interval period (1 minute) */
-  private static get CLEANUP_INTERVAL_MS() {
-    return getConfig().gateway_tuning?.cleanup_interval_ms ?? 60_000;
-  }
-
   constructor(
     config: MultiAgentConfig,
     processOptions: Partial<PersistentProcessOptions> = {},
@@ -113,12 +105,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     super(config, processOptions, runtimeOptions);
     this.multiBotManager = new MultiBotManager(config);
     this.promptEnhancer = new PromptEnhancer();
-
-    // Periodic cleanup of expired queued messages and mention dedup entries
-    this.cleanupInterval = setInterval(() => {
-      this.messageQueue.clearExpired();
-      this.cleanupProcessedMentions();
-    }, MultiAgentDiscordHandler.CLEANUP_INTERVAL_MS);
 
     // Setup idle event listeners for all agents (F7)
     this.setupIdleListeners();
@@ -183,11 +169,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   }
 
   protected async platformCleanup(): Promise<void> {
-    // Clear cleanup interval to prevent memory leaks
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
     await this.multiBotManager.stopAll();
   }
 
@@ -257,6 +238,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           agentId,
           requestedBy: senderAgentId ?? message.author.tag,
           channelId: message.channel.id,
+          source: 'discord',
           timestamp: Date.now(),
         });
 
@@ -284,6 +266,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
             agentId,
             requestedBy: senderAgentId ?? message.author.tag,
             channelId: message.channel.id,
+            source: 'discord',
             duration: mentionResponse.duration,
             timestamp: Date.now(),
           });
@@ -705,19 +688,28 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         : undefined;
 
       // Send message and get response (with timeout, properly cleaned up)
+      // agent_ms=0 means unlimited (no timeout race)
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       let result;
       try {
-        result = await Promise.race([
-          agentProcess.sendMessage(fullPrompt, onToolUse ? { onToolUse } : undefined),
-          new Promise<never>((_, reject) => {
-            timeoutHandle = setTimeout(
-              () =>
-                reject(new Error(`Agent ${agentId} timed out after ${AGENT_TIMEOUT_MS() / 1000}s`)),
-              AGENT_TIMEOUT_MS()
-            );
-          }),
-        ]);
+        const agentTimeout = AGENT_TIMEOUT_MS();
+        const sendPromise = agentProcess.sendMessage(
+          fullPrompt,
+          onToolUse ? { onToolUse } : undefined
+        );
+        if (agentTimeout > 0) {
+          result = await Promise.race([
+            sendPromise,
+            new Promise<never>((_, reject) => {
+              timeoutHandle = setTimeout(
+                () => reject(new Error(`Agent ${agentId} timed out after ${agentTimeout / 1000}s`)),
+                agentTimeout
+              );
+            }),
+          ]);
+        } else {
+          result = await sendPromise;
+        }
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
         await tracker?.cleanup();
@@ -782,6 +774,18 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         const display = workflowResult.directMessage
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
+
+        // Parse delegations from non-plan content (directMessage may contain DELEGATE commands)
+        if (workflowResult.directMessage) {
+          this.submitBackgroundDelegations(
+            agentId,
+            context.channelId,
+            workflowResult.directMessage,
+            'discord',
+            'MultiAgent post-workflow'
+          );
+        }
+
         const formattedResponse = this.formatAgentResponse(agent, display);
         const totalDuration = Date.now() - workflowStart + (result.duration_ms ?? 0);
         return {
@@ -819,6 +823,18 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         const display = councilResult.directMessage
           ? `${councilResult.directMessage}\n\n${councilResult.result}`
           : councilResult.result;
+
+        // Parse delegations from non-plan content (directMessage may contain DELEGATE commands)
+        if (councilResult.directMessage) {
+          this.submitBackgroundDelegations(
+            agentId,
+            context.channelId,
+            councilResult.directMessage,
+            'discord',
+            'MultiAgent post-council'
+          );
+        }
+
         const formattedResponse = this.formatAgentResponse(agent, display);
         return {
           agentId,
@@ -989,11 +1005,34 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       return;
     }
 
-    // Execute gateway tool calls from response
-    const cleanedResponse = await this.executeAgentToolCalls(agentId, response);
+    // Try executing workflow if this is a conductor response with a workflow_plan
+    let cleanedResponse: string;
+    let delegationSource: string | undefined;
+    const workflowResult = await this.tryExecuteWorkflow(response, message.channelId, 'discord');
+    if (workflowResult && !workflowResult.failed) {
+      cleanedResponse = workflowResult.directMessage
+        ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
+        : workflowResult.result;
+      // Parse delegations only from directMessage (not workflow result output)
+      delegationSource = workflowResult.directMessage;
+    } else {
+      // Strip workflow/council plan JSON that wasn't executed
+      let strippedResponse = response;
+      if (this.workflowEngine?.isEnabled()) {
+        strippedResponse = this.workflowEngine.extractNonPlanContent(strippedResponse);
+      }
+      if (this.councilEngine) {
+        strippedResponse = this.councilEngine.extractNonPlanContent(strippedResponse);
+      }
+      // Execute gateway tool calls from response
+      cleanedResponse = await this.executeAgentToolCalls(agentId, strippedResponse);
+    }
 
-    // Parse and submit DELEGATE_BG commands
-    const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
+    // Parse and submit DELEGATE_BG commands (from directMessage only for workflow results)
+    const delegations = this.delegationManager.parseAllDelegations(
+      agentId,
+      delegationSource ?? cleanedResponse
+    );
     let displayResponse = cleanedResponse;
     const hasBackground = delegations.some((delegation) => delegation.background);
     if (delegations.length > 0 && hasBackground) {
@@ -1427,6 +1466,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       agentId: targetAgentId,
       requestedBy: sourceResponse.agentId,
       channelId,
+      source: 'discord',
       timestamp: Date.now(),
     });
 
@@ -1460,6 +1500,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           agentId: targetAgentId,
           requestedBy: sourceResponse.agentId,
           channelId,
+          source: 'discord',
           duration: response.duration,
           timestamp: Date.now(),
         });

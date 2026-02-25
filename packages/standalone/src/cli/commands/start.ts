@@ -1729,6 +1729,14 @@ export async function runAgentLoop(
         discordHandler?.getProcessManager().reloadPersona(agentId);
         slackHandler?.getProcessManager().reloadPersona(agentId);
       };
+
+      // Stop a single agent's processes without restart.
+      graphHandlerOptions.stopMultiAgentAgent = async (agentId: string) => {
+        const discordHandler = discordGateway?.getMultiAgentHandler();
+        const slackHandler = slackGateway?.getMultiAgentHandler();
+        discordHandler?.getProcessManager().stopAgentProcesses(agentId);
+        slackHandler?.getProcessManager().stopAgentProcesses(agentId);
+      };
     }
   }
 
