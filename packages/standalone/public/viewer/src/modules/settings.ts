@@ -1506,9 +1506,7 @@ export class SettingsModule {
    * Populate metrics section from config
    */
   populateMetricsSection(): void {
-    const metrics = (this.config as Record<string, unknown>)?.metrics as
-      | { enabled?: boolean; retention_days?: number }
-      | undefined;
+    const metrics = this.config?.metrics;
     this.setCheckbox('settings-metrics-enabled', metrics?.enabled !== false);
     this.setValue('settings-metrics-retention', metrics?.retention_days ?? 7);
   }
