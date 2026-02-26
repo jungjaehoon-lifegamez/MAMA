@@ -15,6 +15,43 @@ import {
 } from './types.js';
 import { asyncHandler, validateRequired } from './error-handler.js';
 
+const KNOWN_GATEWAYS = ['discord', 'slack', 'viewer'];
+const MAX_PROMPT_LENGTH = 10_000;
+
+function validateChannel(channel: string | undefined): void {
+  if (!channel) return;
+  const idx = channel.indexOf(':');
+  if (idx === -1) {
+    throw new ApiError(
+      'Invalid channel format. Expected "gateway:channelId"',
+      400,
+      'VALIDATION_ERROR'
+    );
+  }
+  const gateway = channel.substring(0, idx);
+  const channelId = channel.substring(idx + 1);
+  if (!KNOWN_GATEWAYS.includes(gateway)) {
+    throw new ApiError(
+      `Unknown gateway "${gateway}". Allowed: ${KNOWN_GATEWAYS.join(', ')}`,
+      400,
+      'VALIDATION_ERROR'
+    );
+  }
+  if (!channelId || channelId.trim().length === 0) {
+    throw new ApiError('Channel ID cannot be empty', 400, 'VALIDATION_ERROR');
+  }
+}
+
+function validatePromptLength(prompt: string | undefined): void {
+  if (prompt && prompt.length > MAX_PROMPT_LENGTH) {
+    throw new ApiError(
+      `Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`,
+      400,
+      'VALIDATION_ERROR'
+    );
+  }
+}
+
 interface ConfigCronJob {
   id: string;
   name: string;
@@ -40,6 +77,7 @@ async function syncJobsToConfig(scheduler: CronScheduler): Promise<void> {
       cron: job.cronExpr,
       prompt: job.prompt,
       enabled: job.enabled,
+      channel: job.channel,
     }));
 
     configAny.scheduling = scheduling;
@@ -167,6 +205,8 @@ export function createCronRouter(
       const body = req.body as CreateCronJobRequest;
 
       validateRequired(body as unknown as Record<string, unknown>, ['name', 'cron_expr', 'prompt']);
+      validatePromptLength(body.prompt);
+      validateChannel(body.channel);
 
       const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -176,6 +216,7 @@ export function createCronRouter(
         cronExpr: body.cron_expr,
         prompt: body.prompt,
         enabled: body.enabled ?? true,
+        channel: body.channel,
       });
 
       await syncJobsToConfig(scheduler);
@@ -214,6 +255,9 @@ export function createCronRouter(
       // First get current values
       const currentJob = scheduler.getJob(id)!;
 
+      validatePromptLength(body.prompt);
+      validateChannel(body.channel);
+
       // Build updated config
       const updatedConfig = {
         id: id,
@@ -221,6 +265,7 @@ export function createCronRouter(
         cronExpr: body.cron_expr ?? currentJob.cronExpr,
         prompt: body.prompt ?? currentJob.prompt,
         enabled: body.enabled ?? currentJob.enabled,
+        channel: body.channel ?? currentJob.channel,
       };
 
       // Remove old job and add updated one

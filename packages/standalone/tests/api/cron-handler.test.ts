@@ -140,6 +140,66 @@ describe('Cron API', () => {
       expect(res.body.error).toContain('Invalid cron');
     });
 
+    it('should return 400 for invalid channel format', async () => {
+      const res = await request(app).post('/api/cron').send({
+        name: 'Test',
+        cron_expr: '0 * * * *',
+        prompt: 'Test',
+        channel: 'no-colon',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('gateway:channelId');
+    });
+
+    it('should return 400 for unknown gateway in channel', async () => {
+      const res = await request(app).post('/api/cron').send({
+        name: 'Test',
+        cron_expr: '0 * * * *',
+        prompt: 'Test',
+        channel: 'telegram:12345',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('telegram');
+    });
+
+    it('should return 400 for empty channel ID', async () => {
+      const res = await request(app).post('/api/cron').send({
+        name: 'Test',
+        cron_expr: '0 * * * *',
+        prompt: 'Test',
+        channel: 'discord:',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('empty');
+    });
+
+    it('should return 400 for prompt exceeding max length', async () => {
+      const res = await request(app)
+        .post('/api/cron')
+        .send({
+          name: 'Test',
+          cron_expr: '0 * * * *',
+          prompt: 'x'.repeat(10_001),
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('maximum length');
+    });
+
+    it('should accept valid channel format', async () => {
+      const res = await request(app).post('/api/cron').send({
+        name: 'Test',
+        cron_expr: '0 * * * *',
+        prompt: 'Test',
+        channel: 'discord:123456',
+      });
+
+      expect(res.status).toBe(200);
+    });
+
     it('should create job with enabled=false', async () => {
       const res = await request(app).post('/api/cron').send({
         name: 'Disabled Job',
@@ -229,6 +289,38 @@ describe('Cron API', () => {
 
       const job = scheduler.getJob('update-job');
       expect(job?.enabled).toBe(false);
+    });
+
+    it('should return 400 for invalid channel on update', async () => {
+      scheduler.addJob({
+        id: 'update-job-chan',
+        name: 'Test',
+        cronExpr: '0 * * * *',
+        prompt: 'Test',
+      });
+
+      const res = await request(app)
+        .put('/api/cron/update-job-chan')
+        .send({ channel: 'telegram:123' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('telegram');
+    });
+
+    it('should return 400 for oversized prompt on update', async () => {
+      scheduler.addJob({
+        id: 'update-job-prompt',
+        name: 'Test',
+        cronExpr: '0 * * * *',
+        prompt: 'Test',
+      });
+
+      const res = await request(app)
+        .put('/api/cron/update-job-prompt')
+        .send({ prompt: 'y'.repeat(10_001) });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('maximum length');
     });
 
     it('should return 404 for non-existent job', async () => {
