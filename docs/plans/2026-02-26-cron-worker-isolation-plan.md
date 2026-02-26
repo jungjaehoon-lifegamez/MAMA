@@ -2,11 +2,11 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Isolate cron job execution from the OS agent by running cron in a dedicated PersistentCLI process with Haiku model, delivering results directly to gateways via EventEmitter.
+**Goal:** Isolate cron job execution from the OS agent by running cron in a dedicated PersistentClaudeProcess process with Haiku model, delivering results directly to gateways via EventEmitter.
 
-**Architecture:** CronWorker manages its own PersistentCLI instance (Haiku, minimal system prompt). CronScheduler calls CronWorker.execute() instead of agentLoop.run(). Results flow through EventEmitter → CronResultRouter → gateway.sendMessage(). OS agent has zero awareness of cron.
+**Architecture:** CronWorker manages its own PersistentClaudeProcess instance (Haiku, minimal system prompt). CronScheduler calls CronWorker.execute() instead of agentLoop.run(). Results flow through EventEmitter → CronResultRouter → gateway.sendMessage(). OS agent has zero awareness of cron.
 
-**Tech Stack:** TypeScript, PersistentCLI, node-cron, EventEmitter, existing gateway interfaces
+**Tech Stack:** TypeScript, PersistentClaudeProcess, node-cron, EventEmitter, existing gateway interfaces
 
 ---
 
@@ -24,9 +24,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CronWorker } from '../../src/scheduler/cron-worker.js';
 import { EventEmitter } from 'events';
 
-// Mock PersistentCLI
+// Mock PersistentClaudeProcess
 vi.mock('../../src/agent/persistent-cli-process.js', () => ({
-  PersistentCLI: vi.fn().mockImplementation(() => ({
+  PersistentClaudeProcess: vi.fn().mockImplementation(() => ({
     sendMessage: vi.fn().mockResolvedValue({
       response: 'task completed',
       tokenUsage: { input: 10, output: 5 },
@@ -71,8 +71,8 @@ describe('CronWorker', () => {
 
   it('should emit cron:failed on error', async () => {
     // Override mock to throw
-    const { PersistentCLI } = await import('../../src/agent/persistent-cli-process.js');
-    (PersistentCLI as any).mockImplementationOnce(() => ({
+    const { PersistentClaudeProcess } = await import('../../src/agent/persistent-cli-process.js');
+    (PersistentClaudeProcess as any).mockImplementationOnce(() => ({
       sendMessage: vi.fn().mockRejectedValue(new Error('CLI crashed')),
       stop: vi.fn(),
       on: vi.fn(),
@@ -105,13 +105,13 @@ Expected: FAIL — module not found
 
 ```typescript
 /**
- * CronWorker - Dedicated PersistentCLI instance for cron job execution.
+ * CronWorker - Dedicated PersistentClaudeProcess instance for cron job execution.
  * Runs with Haiku model and minimal system prompt.
  * Emits results via EventEmitter, fully decoupled from OS agent.
  */
 
 import { EventEmitter } from 'events';
-import { PersistentCLI } from '../agent/persistent-cli-process.js';
+import { PersistentClaudeProcess } from '../agent/persistent-cli-process.js';
 
 const CRON_SYSTEM_PROMPT = `You are a cron job executor. Execute the given task and return the result.
 Available tools: Bash, Read, Write.
@@ -148,7 +148,7 @@ export interface CronFailedEvent {
 }
 
 export class CronWorker {
-  private cli: PersistentCLI | null = null;
+  private cli: PersistentClaudeProcess | null = null;
   private readonly emitter: EventEmitter;
   private readonly model: string;
   private readonly systemPrompt: string;
@@ -159,9 +159,9 @@ export class CronWorker {
     this.systemPrompt = options.systemPrompt ?? CRON_SYSTEM_PROMPT;
   }
 
-  private ensureCLI(): PersistentCLI {
+  private ensureCLI(): PersistentClaudeProcess {
     if (!this.cli) {
-      this.cli = new PersistentCLI({
+      this.cli = new PersistentClaudeProcess({
         sessionId: `cron-worker-${Date.now()}`,
         model: this.model,
         systemPrompt: this.systemPrompt,
@@ -224,7 +224,7 @@ Expected: PASS
 
 ```bash
 git add packages/standalone/src/scheduler/cron-worker.ts packages/standalone/tests/scheduler/cron-worker.test.ts
-git commit -m "feat(cron): add CronWorker with dedicated PersistentCLI instance"
+git commit -m "feat(cron): add CronWorker with dedicated PersistentClaudeProcess instance"
 ```
 
 ---
@@ -470,7 +470,7 @@ export type { CronResultRouterOptions, GatewaySender } from './cron-result-route
 Replace lines 1437-1453 (the old `scheduler.setExecuteCallback` block) with:
 
 ```typescript
-// Initialize cron worker (dedicated PersistentCLI, Haiku model)
+// Initialize cron worker (dedicated PersistentClaudeProcess, Haiku model)
 const cronEmitter = new EventEmitter();
 const cronWorker = new CronWorker({ emitter: cronEmitter });
 
@@ -728,7 +728,7 @@ import { CronWorker } from '../../src/scheduler/cron-worker.js';
 import { CronResultRouter } from '../../src/scheduler/cron-result-router.js';
 
 vi.mock('../../src/agent/persistent-cli-process.js', () => ({
-  PersistentCLI: vi.fn().mockImplementation(() => ({
+  PersistentClaudeProcess: vi.fn().mockImplementation(() => ({
     sendMessage: vi.fn().mockResolvedValue({
       response: 'cron result data',
       tokenUsage: { input: 10, output: 5 },
