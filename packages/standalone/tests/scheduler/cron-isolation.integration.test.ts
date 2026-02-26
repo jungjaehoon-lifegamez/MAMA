@@ -28,6 +28,7 @@ describe('Cron Isolation Integration', () => {
     discordSend = vi.fn().mockResolvedValue(undefined);
     slackSend = vi.fn().mockResolvedValue(undefined);
 
+    // Instantiated for side effects: subscribes to emitter events
     new CronResultRouter({
       emitter,
       gateways: {

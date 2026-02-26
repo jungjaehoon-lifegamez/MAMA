@@ -40,6 +40,7 @@ export class CronWorker {
   private readonly emitter: EventEmitter;
   private readonly model: string;
   private readonly systemPrompt: string;
+  private executionQueue: Promise<void> = Promise.resolve();
 
   constructor(options: CronWorkerOptions) {
     this.emitter = options.emitter;
@@ -61,6 +62,20 @@ export class CronWorker {
   }
 
   async execute(prompt: string, context: CronJobContext = {}): Promise<string> {
+    // Serialize execution to prevent race conditions on shared CLI instance
+    return new Promise<string>((resolve, reject) => {
+      this.executionQueue = this.executionQueue.then(async () => {
+        try {
+          const result = await this.executeInternal(prompt, context);
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  }
+
+  private async executeInternal(prompt: string, context: CronJobContext): Promise<string> {
     const { jobId = 'unknown', jobName = 'unknown', channel } = context;
     const startTime = Date.now();
 
