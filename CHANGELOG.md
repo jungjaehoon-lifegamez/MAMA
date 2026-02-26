@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-02-26
+
+### Added
+
+- **Cron worker isolation** — cron jobs now execute in a dedicated `CronWorker` (separate `PersistentClaudeProcess` with Haiku model), completely decoupled from the OS agent. Eliminates 300s session timeout when OS agent is busy with long-running tasks
+- **CronResultRouter** — delivers cron results directly to gateways via EventEmitter, bypassing the OS agent entirely. Supports `discord`, `slack`, and `viewer` channel routing
+- **Job channel configuration** — new `channel` field in cron job config (`discord:channelId`, `slack:channelId`, `viewer:sessionId`) for result delivery routing
+- **Cron API security validations** — channel format validation (known gateways only), prompt length limit (10,000 chars), and tool restriction (`Bash`, `Read`, `Write`, `Glob`, `Grep` only)
+
+### Changed
+
+- **Cron lane removal** — removed cron-specific lane logic from `agent-loop.ts`; cron jobs no longer flow through the lane system
+- **Scheduler callback signature** — `CronScheduler.setExecuteCallback()` now receives `(prompt, job)` instead of a single string
+
+### Security
+
+- **CronWorker tool restriction** — `allowedTools` limits cron execution to safe tools only, preventing RCE via prompt injection
+- **Channel IDOR prevention** — API validates channel format and rejects unknown gateway names
+
 ## [0.12.2] - 2026-02-26
 
 ### Fixed
