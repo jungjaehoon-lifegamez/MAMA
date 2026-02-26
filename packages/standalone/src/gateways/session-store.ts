@@ -189,6 +189,75 @@ export class SessionStore {
   }
 
   /**
+   * Append a single message (user or assistant) to session history.
+   * - role='user': creates a new turn with empty bot
+   * - role='assistant': fills bot field of last incomplete turn, or creates new turn
+   */
+  appendMessage(
+    sessionId: string,
+    msg: { role: 'user' | 'assistant'; content: string; timestamp: number }
+  ): boolean {
+    const session = this.getById(sessionId);
+    if (!session) return false;
+
+    let history: ConversationTurn[];
+    try {
+      history = JSON.parse(session.context || '[]');
+    } catch {
+      history = [];
+    }
+
+    if (msg.role === 'user') {
+      history.push({ user: msg.content, bot: '', timestamp: msg.timestamp });
+    } else {
+      const lastTurn = history[history.length - 1];
+      if (lastTurn && lastTurn.bot === '') {
+        lastTurn.bot = msg.content;
+        lastTurn.timestamp = msg.timestamp;
+      } else {
+        history.push({ user: '', bot: msg.content, timestamp: msg.timestamp });
+      }
+    }
+
+    const recentHistory = history.slice(-this.maxTurns);
+
+    const result = this.db
+      .prepare('UPDATE messenger_sessions SET context = ?, last_active = ? WHERE id = ?')
+      .run(JSON.stringify(recentHistory), Date.now(), sessionId);
+
+    return result.changes > 0;
+  }
+
+  /**
+   * Flush streaming response to the last incomplete turn.
+   * Called periodically during streaming to persist partial assistant responses.
+   */
+  flushStreamingResponse(sessionId: string, accumulatedText: string): boolean {
+    const session = this.getById(sessionId);
+    if (!session) return false;
+
+    let history: ConversationTurn[];
+    try {
+      history = JSON.parse(session.context || '[]');
+    } catch {
+      history = [];
+    }
+
+    const lastTurn = history[history.length - 1];
+    if (!lastTurn) return false;
+
+    // Update the bot field with accumulated streaming text
+    lastTurn.bot = accumulatedText;
+    lastTurn.timestamp = Date.now();
+
+    const result = this.db
+      .prepare('UPDATE messenger_sessions SET context = ?, last_active = ? WHERE id = ?')
+      .run(JSON.stringify(history), Date.now(), sessionId);
+
+    return result.changes > 0;
+  }
+
+  /**
    * Get conversation history for a session by ID
    */
   getHistory(sessionId: string): ConversationTurn[] {

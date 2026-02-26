@@ -151,7 +151,7 @@ export class ChatModule {
   rafPending = false;
   history: ChatHistoryMessage[] = [];
   historyPrefix = 'mama_chat_history_';
-  maxHistoryMessages = 50;
+  maxHistoryMessages = 200;
   maxDomMessages = 100; // Limit DOM elements for performance
   historyExpiryMs = 24 * 60 * 60 * 1000;
   checkpointCooldown = false;
@@ -230,11 +230,11 @@ export class ChatModule {
     // Check for resumable session first
     await this.checkForResumableSession();
 
-    // Try to get last active server session first
+    // Always try to get the last active viewer session from server
+    // Use it regardless of isAlive — server history is the source of truth
     const lastActiveSession = await API.getLastActiveSession().catch(() => null);
-    if (lastActiveSession && lastActiveSession.id && lastActiveSession.isAlive) {
-      logger.info('Resuming last active session:', lastActiveSession.id);
-      this.addSystemMessage('Resuming previous session...');
+    if (lastActiveSession && lastActiveSession.id) {
+      logger.info('Using server session:', lastActiveSession.id);
       localStorage.setItem('mama_chat_session_id', lastActiveSession.id);
       this.initWebSocket(lastActiveSession.id);
       return;
@@ -1763,7 +1763,7 @@ export class ChatModule {
     }
 
     try {
-      const storageKey = this.historyPrefix + this.sessionId;
+      const storageKey = this.historyPrefix + 'viewer_mama_os_main';
       const storageData = {
         history: this.history,
         savedAt: Date.now(),
@@ -1777,9 +1777,9 @@ export class ChatModule {
   /**
    * Load history from localStorage
    */
-  loadHistory(sessionId: string): ChatHistoryMessage[] | null {
+  loadHistory(_sessionId: string): ChatHistoryMessage[] | null {
     try {
-      const storageKey = this.historyPrefix + sessionId;
+      const storageKey = this.historyPrefix + 'viewer_mama_os_main';
       const stored = localStorage.getItem(storageKey);
 
       if (!stored) {
@@ -1880,13 +1880,24 @@ export class ChatModule {
       return;
     }
 
+    // Merge: use server messages as base, append any local-only messages
+    // that are newer than the last server message
+    const serverTimestamp =
+      messages.length > 0 ? new Date(messages[messages.length - 1].timestamp || 0).getTime() : 0;
+
+    const localOnlyMessages = this.history.filter((msg) => {
+      const msgTime = new Date(msg.timestamp).getTime();
+      return msgTime > serverTimestamp && msg.role !== 'system';
+    });
+
+    const merged = [...messages, ...localOnlyMessages];
+
     container.innerHTML = '';
-    this.history = messages;
+    this.history = merged;
 
     // Use DocumentFragment for batch DOM insertion
     const fragment = document.createDocumentFragment();
-    // Limit to last N messages for DOM performance
-    const messagesToRender = messages.slice(-this.maxDomMessages);
+    const messagesToRender = merged.slice(-this.maxDomMessages);
 
     messagesToRender.forEach((msg) => {
       const msgEl = document.createElement('div');
@@ -1915,15 +1926,41 @@ export class ChatModule {
 
     container.appendChild(fragment);
     scrollToBottom(container);
-    logger.info('Displayed', messagesToRender.length, 'history messages');
+
+    // Save merged history to localStorage
+    this.saveCurrentHistory();
+
+    logger.info(
+      'Displayed',
+      messagesToRender.length,
+      'messages (server:',
+      messages.length,
+      '+ local:',
+      localOnlyMessages.length,
+      ')'
+    );
+  }
+
+  private saveCurrentHistory(): void {
+    if (!this.sessionId) return;
+    try {
+      const storageKey = this.historyPrefix + 'viewer_mama_os_main';
+      const storageData = {
+        history: this.history,
+        savedAt: Date.now(),
+      };
+      localStorage.setItem(storageKey, JSON.stringify(storageData));
+    } catch (e) {
+      logger.warn('Failed to save history:', e);
+    }
   }
 
   /**
    * Clear chat history
    */
-  clearHistory(sessionId: string | null = null): void {
+  clearHistory(_sessionId: string | null = null): void {
     try {
-      const storageKey = this.historyPrefix + (sessionId || this.sessionId);
+      const storageKey = this.historyPrefix + 'viewer_mama_os_main';
       localStorage.removeItem(storageKey);
       this.history = [];
     } catch (e) {
