@@ -71,12 +71,35 @@ python3 스크립트로 크롤링하고 discord_send 도구로 전송.
 
 → 너무 모호함. 어떤 뉴스? 어디로? 몇 개?
 
+## 결과 전달 (channel 필드)
+
+크론잡 결과를 특정 게이트웨이 채널로 자동 전달할 수 있음.
+
+```yaml
+scheduling:
+  jobs:
+    - id: daily_report
+      name: 일일 리포트
+      cron: '0 9 * * *'
+      prompt: '일일 요약 생성'
+      enabled: true
+      channel: discord:123456789 # gateway:channelId 형식
+```
+
+**지원 형식:**
+
+- `discord:채널ID` — Discord 채널로 전달
+- `slack:채널ID` — Slack 채널로 전달
+- `viewer:세션ID` — Viewer UI로 전달
+- 미지정 시 결과는 DB에만 저장
+
 ## 주의사항
 
 - 크론잡은 MAMA 재시작 시 자동 로드됨
 - `enabled: false`로 비활성화 가능
 - 복잡한 작업은 스크립트 파일로 분리 권장
-- 디스코드 전송 시 채널 ID 명시 필요
+- 크론잡은 OS 에이전트와 독립된 전용 프로세스에서 실행됨 (Viewer 메시지 차단 없음)
+- 프롬프트 최대 10,000자 제한
 
 ## 관련 파일
 

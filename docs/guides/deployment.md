@@ -10,7 +10,7 @@ MAMA is a pnpm workspace-based monorepo with four packages:
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.12.2  |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.13.0  |
 | MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.8.0   |
 | MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`   | 1.2.1   |
 | Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.7.14  |
@@ -58,7 +58,7 @@ Synchronize versions across these files before deployment:
 
 | File                                       | Field     | Current Version |
 | ------------------------------------------ | --------- | --------------- |
-| `packages/standalone/package.json`         | `version` | 0.12.2          |
+| `packages/standalone/package.json`         | `version` | 0.13.0          |
 | `packages/mcp-server/package.json`         | `version` | 1.8.0           |
 | `packages/mama-core/package.json`          | `version` | 1.2.1           |
 | `packages/claude-code-plugin/package.json` | `version` | 1.7.14          |
