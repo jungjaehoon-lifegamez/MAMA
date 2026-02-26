@@ -546,12 +546,8 @@ export class AgentLoop {
     return this.sessionKey;
   }
 
-  private resolveGlobalLaneForSession(sessionKey: string): string | undefined {
-    const key = sessionKey.toLowerCase();
-    // Don't let background cron runs block interactive chat.
-    if (key.startsWith('cron:')) {
-      return 'cron';
-    }
+  private resolveGlobalLaneForSession(_sessionKey: string): string | undefined {
+    // Cron jobs no longer flow through agentLoop (uses dedicated CronWorker process)
     return undefined;
   }
 
