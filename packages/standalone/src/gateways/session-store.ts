@@ -8,6 +8,17 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import type { Session, MessageSource, ConversationTurn } from './types.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('SessionStore');
 
 // ============================================================================
 // Database row types
@@ -184,6 +195,82 @@ export class SessionStore {
     `
       )
       .run(JSON.stringify(recentHistory), Date.now(), sessionId);
+
+    return result.changes > 0;
+  }
+
+  /**
+   * Append a single message (user or assistant) to session history.
+   * - role='user': creates a new turn with empty bot
+   * - role='assistant': fills bot field of last incomplete turn, or creates new turn
+   */
+  appendMessage(
+    sessionId: string,
+    msg: { role: 'user' | 'assistant'; content: string; timestamp: number }
+  ): boolean {
+    const session = this.getById(sessionId);
+    if (!session) {
+      return false;
+    }
+
+    let history: ConversationTurn[];
+    try {
+      history = JSON.parse(session.context || '[]');
+    } catch {
+      history = [];
+    }
+
+    if (msg.role === 'user') {
+      history.push({ user: msg.content, bot: '', timestamp: msg.timestamp });
+    } else {
+      const lastTurn = history[history.length - 1];
+      if (lastTurn && lastTurn.bot === '') {
+        lastTurn.bot = msg.content;
+        lastTurn.timestamp = msg.timestamp;
+      } else {
+        logger.warn(`Creating orphan assistant message for session ${sessionId}`);
+        history.push({ user: '', bot: msg.content, timestamp: msg.timestamp });
+      }
+    }
+
+    const recentHistory = history.slice(-this.maxTurns);
+
+    const result = this.db
+      .prepare('UPDATE messenger_sessions SET context = ?, last_active = ? WHERE id = ?')
+      .run(JSON.stringify(recentHistory), Date.now(), sessionId);
+
+    return result.changes > 0;
+  }
+
+  /**
+   * Flush streaming response to the last incomplete turn.
+   * Called periodically during streaming to persist partial assistant responses.
+   */
+  flushStreamingResponse(sessionId: string, accumulatedText: string): boolean {
+    const session = this.getById(sessionId);
+    if (!session) {
+      return false;
+    }
+
+    let history: ConversationTurn[];
+    try {
+      history = JSON.parse(session.context || '[]');
+    } catch {
+      history = [];
+    }
+
+    const lastTurn = history[history.length - 1];
+    if (!lastTurn) {
+      return false;
+    }
+
+    // Update the bot field with accumulated streaming text
+    lastTurn.bot = accumulatedText;
+    lastTurn.timestamp = Date.now();
+
+    const result = this.db
+      .prepare('UPDATE messenger_sessions SET context = ?, last_active = ? WHERE id = ?')
+      .run(JSON.stringify(history), Date.now(), sessionId);
 
     return result.changes > 0;
   }
