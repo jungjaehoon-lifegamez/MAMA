@@ -40,6 +40,7 @@ async function syncJobsToConfig(scheduler: CronScheduler): Promise<void> {
       cron: job.cronExpr,
       prompt: job.prompt,
       enabled: job.enabled,
+      channel: job.channel,
     }));
 
     configAny.scheduling = scheduling;
@@ -176,6 +177,7 @@ export function createCronRouter(
         cronExpr: body.cron_expr,
         prompt: body.prompt,
         enabled: body.enabled ?? true,
+        channel: body.channel,
       });
 
       await syncJobsToConfig(scheduler);
@@ -221,6 +223,7 @@ export function createCronRouter(
         cronExpr: body.cron_expr ?? currentJob.cronExpr,
         prompt: body.prompt ?? currentJob.prompt,
         enabled: body.enabled ?? currentJob.enabled,
+        channel: body.channel ?? currentJob.channel,
       };
 
       // Remove old job and add updated one

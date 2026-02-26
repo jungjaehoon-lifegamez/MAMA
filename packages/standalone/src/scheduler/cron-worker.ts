@@ -1,0 +1,103 @@
+import { EventEmitter } from 'events';
+import { PersistentClaudeProcess } from '../agent/persistent-cli-process.js';
+
+const CRON_SYSTEM_PROMPT = `You are a cron job executor. Execute the given task and return the result.
+Available tools: Bash, Read, Write.
+Be concise. Return only the result.`;
+
+const CRON_MODEL = 'claude-haiku-4-5-20251001';
+
+export interface CronWorkerOptions {
+  emitter: EventEmitter;
+  model?: string;
+  systemPrompt?: string;
+}
+
+export interface CronJobContext {
+  jobId?: string;
+  jobName?: string;
+  channel?: string;
+}
+
+export interface CronCompletedEvent {
+  jobId: string;
+  jobName: string;
+  result: string;
+  duration: number;
+  channel?: string;
+}
+
+export interface CronFailedEvent {
+  jobId: string;
+  jobName: string;
+  error: string;
+  duration: number;
+  channel?: string;
+}
+
+export class CronWorker {
+  private cli: PersistentClaudeProcess | null = null;
+  private readonly emitter: EventEmitter;
+  private readonly model: string;
+  private readonly systemPrompt: string;
+
+  constructor(options: CronWorkerOptions) {
+    this.emitter = options.emitter;
+    this.model = options.model ?? CRON_MODEL;
+    this.systemPrompt = options.systemPrompt ?? CRON_SYSTEM_PROMPT;
+  }
+
+  private ensureCLI(): PersistentClaudeProcess {
+    if (!this.cli) {
+      this.cli = new PersistentClaudeProcess({
+        sessionId: `cron-worker-${Date.now()}`,
+        model: this.model,
+        systemPrompt: this.systemPrompt,
+        dangerouslySkipPermissions: true,
+        pluginDir: undefined,
+      });
+    }
+    return this.cli;
+  }
+
+  async execute(prompt: string, context: CronJobContext = {}): Promise<string> {
+    const { jobId = 'unknown', jobName = 'unknown', channel } = context;
+    const startTime = Date.now();
+
+    try {
+      const cli = this.ensureCLI();
+      const result = await cli.sendMessage(prompt);
+      const duration = Date.now() - startTime;
+
+      this.emitter.emit('cron:completed', {
+        jobId,
+        jobName,
+        result: result.response,
+        duration,
+        channel,
+      } as CronCompletedEvent);
+
+      return result.response;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      this.emitter.emit('cron:failed', {
+        jobId,
+        jobName,
+        error: errorMsg,
+        duration,
+        channel,
+      } as CronFailedEvent);
+
+      throw error;
+    }
+  }
+
+  async stop(): Promise<void> {
+    if (this.cli) {
+      await this.cli.stop();
+      this.cli = null;
+    }
+  }
+}
