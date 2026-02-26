@@ -21,6 +21,8 @@ export interface JobConfig {
   prompt: string;
   /** Whether job is enabled (default: true) */
   enabled?: boolean;
+  /** Target channel for result delivery (e.g., "discord:channelId", "slack:channelId") */
+  channel?: string;
 }
 
 /**
