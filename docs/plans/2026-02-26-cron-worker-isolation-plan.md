@@ -166,6 +166,7 @@ export class CronWorker {
         model: this.model,
         systemPrompt: this.systemPrompt,
         dangerouslySkipPermissions: true,
+        allowedTools: CRON_ALLOWED_TOOLS,
         pluginDir: undefined, // No plugins
       });
     }
@@ -772,12 +773,12 @@ describe('Cron Isolation Integration', () => {
     expect(discordSend).toHaveBeenCalledWith('123456', expect.stringContaining('cron result data'));
   });
 
-  it('should not touch any agentLoop or lane system', async () => {
-    // Verify no agentLoop import/usage
+  it('should not export agentLoop or lane dependencies', async () => {
     const workerModule = await import('../../src/scheduler/cron-worker.js');
-    const source = workerModule.toString();
-    expect(source).not.toContain('agentLoop');
-    expect(source).not.toContain('lane');
+    const exportedKeys = Object.keys(workerModule);
+    expect(exportedKeys).not.toContain('agentLoop');
+    expect(exportedKeys).not.toContain('lane');
+    expect(exportedKeys).toContain('CronWorker');
   });
 });
 ```
