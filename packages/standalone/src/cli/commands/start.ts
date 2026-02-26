@@ -5,6 +5,7 @@
  */
 
 import { spawn, exec } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import {
   accessSync,
   constants,
@@ -53,7 +54,12 @@ import type {
   MamaApiClient,
   SearchResult,
 } from '../../gateways/context-injector.js';
-import { CronScheduler, TokenKeepAlive } from '../../scheduler/index.js';
+import {
+  CronScheduler,
+  CronWorker,
+  CronResultRouter,
+  TokenKeepAlive,
+} from '../../scheduler/index.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer, insertTokenUsage } from '../../api/index.js';
 import { MetricsStore } from '../../observability/metrics-store.js';
@@ -1434,22 +1440,19 @@ export async function runAgentLoop(
 
   await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
-  // Initialize cron scheduler
+  // Initialize cron scheduler with dedicated CronWorker (isolated from OS agent)
+  const cronEmitter = new EventEmitter();
+  const cronWorker = new CronWorker({ emitter: cronEmitter });
   const scheduler = new CronScheduler();
-  scheduler.setExecuteCallback(async (prompt: string) => {
+  scheduler.setExecuteCallback(async (prompt, job) => {
     console.log(`[Cron] Executing: ${prompt.substring(0, 50)}...`);
-    try {
-      // Use dedicated cron session to avoid context pollution from other sources
-      const result = await agentLoop.run(prompt, {
-        source: 'cron',
-        channelId: 'cron_main',
-      });
-      console.log(`[Cron] Completed: ${result.response.substring(0, 100)}...`);
-      return result.response;
-    } catch (error) {
-      console.error(`[Cron] Error: ${error}`);
-      throw error;
-    }
+    const result = await cronWorker.execute(prompt, {
+      jobId: job.id,
+      jobName: job.name,
+      channel: job.channel,
+    });
+    console.log(`[Cron] Completed: ${result.substring(0, 100)}...`);
+    return result;
   });
 
   // Load cron jobs from config.yaml scheduling.jobs
@@ -1476,6 +1479,7 @@ export async function runAgentLoop(
           cronExpr: job.cron,
           prompt: job.prompt,
           enabled: job.enabled ?? true,
+          channel: job.channel,
         });
         loaded++;
       } catch (err) {
@@ -1610,6 +1614,16 @@ export async function runAgentLoop(
   if (slackGateway) {
     healthCheckService.addGateway('slack', slackGateway);
   }
+
+  // Wire cron results directly to gateways (bypasses OS agent entirely)
+  // Instantiated for side effects: subscribes to cronEmitter events
+  new CronResultRouter({
+    emitter: cronEmitter,
+    gateways: {
+      discord: discordGateway ?? undefined,
+      slack: slackGateway ?? undefined,
+    },
+  });
 
   // Populate graph handler options with runtime dependencies (F4)
   if (discordGateway || slackGateway) {
@@ -2693,8 +2707,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     }, 5000);
 
     try {
-      // Stop schedulers first (sync, fast)
+      // Stop schedulers and cron worker first
       scheduler.shutdown();
+      await cronWorker.stop();
       heartbeatScheduler.stop();
       tokenKeepAlive.stop();
 

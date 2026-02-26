@@ -44,3 +44,16 @@ export type {
 } from './types.js';
 
 export { SchedulerError } from './types.js';
+
+// Cron Worker (isolated process)
+export { CronWorker } from './cron-worker.js';
+export type {
+  CronWorkerOptions,
+  CronJobContext,
+  CronCompletedEvent,
+  CronFailedEvent,
+} from './cron-worker.js';
+
+// Cron Result Router (direct gateway delivery)
+export { CronResultRouter } from './cron-result-router.js';
+export type { CronResultRouterOptions, GatewaySender } from './cron-result-router.js';

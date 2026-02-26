@@ -19,6 +19,7 @@ export interface ApiCronJob {
   enabled: boolean;
   last_run: number | null;
   next_run: number | null;
+  channel?: string;
 }
 
 /**
@@ -29,6 +30,7 @@ export interface CreateCronJobRequest {
   cron_expr: string;
   prompt: string;
   enabled?: boolean;
+  channel?: string;
 }
 
 /**
@@ -39,6 +41,7 @@ export interface UpdateCronJobRequest {
   cron_expr?: string;
   prompt?: string;
   enabled?: boolean;
+  channel?: string;
 }
 
 /**
@@ -211,6 +214,7 @@ export function toApiCronJob(job: CronJob): ApiCronJob {
     enabled: job.enabled,
     last_run: job.lastRun ? job.lastRun.getTime() : null,
     next_run: job.nextRun ? job.nextRun.getTime() : null,
+    channel: job.channel,
   };
 }
 
