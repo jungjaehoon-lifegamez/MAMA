@@ -87,6 +87,22 @@
 - **Owner (default):** MAMA Standalone (`@jungjaehoon/mama-os`)
 - **MCP mode:** Optional legacy startup via `MAMA_MCP_START_HTTP_EMBEDDING=true`
 
+### Cron Scheduler & Worker
+
+- **CronWorker:** Dedicated `PersistentClaudeProcess` (Haiku model, minimal prompt)
+- **Isolation:** Completely decoupled from OS agent — no shared sessions or lanes
+- **Result delivery:** `EventEmitter` → `CronResultRouter` → gateway `sendMessage()`
+- **Channel routing:** Job config `channel` field (`discord:id`, `slack:id`, `viewer:id`)
+- **Security:** Tool restriction (`Bash`, `Read`, `Write`, `Glob`, `Grep` only)
+
+```
+CronScheduler ──► CronWorker (Haiku CLI) ──► EventEmitter
+                                                   │
+                                          CronResultRouter
+                                            │      │      │
+                                         Discord  Slack  Viewer
+```
+
 ### Hooks
 
 - **UserPromptSubmit:** Automatic semantic search via HTTP embedding server
