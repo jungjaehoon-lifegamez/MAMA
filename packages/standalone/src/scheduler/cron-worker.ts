@@ -7,6 +7,9 @@ Be concise. Return only the result.`;
 
 const CRON_MODEL = 'claude-haiku-4-5-20251001';
 
+// Restrict cron worker to safe tools only (prevents RCE via prompt injection)
+const CRON_ALLOWED_TOOLS = ['Bash', 'Read', 'Write', 'Glob', 'Grep'];
+
 export interface CronWorkerOptions {
   emitter: EventEmitter;
   model?: string;
@@ -55,6 +58,7 @@ export class CronWorker {
         model: this.model,
         systemPrompt: this.systemPrompt,
         dangerouslySkipPermissions: true,
+        allowedTools: CRON_ALLOWED_TOOLS,
         pluginDir: undefined,
       });
     }
@@ -90,7 +94,7 @@ export class CronWorker {
         result: result.response,
         duration,
         channel,
-      } as CronCompletedEvent);
+      } satisfies CronCompletedEvent);
 
       return result.response;
     } catch (error) {
@@ -103,7 +107,7 @@ export class CronWorker {
         error: errorMsg,
         duration,
         channel,
-      } as CronFailedEvent);
+      } satisfies CronFailedEvent);
 
       throw error;
     }
