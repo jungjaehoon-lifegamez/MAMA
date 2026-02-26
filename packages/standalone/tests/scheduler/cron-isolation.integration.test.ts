@@ -30,8 +30,8 @@ describe('Cron Isolation Integration', () => {
     slackSend = vi.fn().mockResolvedValue(undefined);
     viewerSend = vi.fn().mockResolvedValue(undefined);
 
-    // Instantiated for side effects: subscribes to emitter events
-    new CronResultRouter({
+    // Retained for side effects: subscribes to emitter events
+    const cronResultRouter = new CronResultRouter({
       emitter,
       gateways: {
         discord: { sendMessage: discordSend },
@@ -39,6 +39,7 @@ describe('Cron Isolation Integration', () => {
         viewer: { sendMessage: viewerSend },
       },
     });
+    expect(cronResultRouter).toBeDefined();
   });
 
   afterEach(async () => {

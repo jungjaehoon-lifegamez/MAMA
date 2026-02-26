@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import { PersistentClaudeProcess } from '../agent/persistent-cli-process.js';
 
 const CRON_SYSTEM_PROMPT = `You are a cron job executor. Execute the given task and return the result.
-Available tools: Bash, Read, Write.
+Available tools: Bash, Read, Write, Glob, Grep.
 Be concise. Return only the result.`;
 
 const CRON_MODEL = 'claude-haiku-4-5-20251001';
