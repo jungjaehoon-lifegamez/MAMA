@@ -21,12 +21,14 @@ describe('Cron Isolation Integration', () => {
   let worker: CronWorker;
   let discordSend: ReturnType<typeof vi.fn>;
   let slackSend: ReturnType<typeof vi.fn>;
+  let viewerSend: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     emitter = new EventEmitter();
     worker = new CronWorker({ emitter });
     discordSend = vi.fn().mockResolvedValue(undefined);
     slackSend = vi.fn().mockResolvedValue(undefined);
+    viewerSend = vi.fn().mockResolvedValue(undefined);
 
     // Instantiated for side effects: subscribes to emitter events
     new CronResultRouter({
@@ -34,6 +36,7 @@ describe('Cron Isolation Integration', () => {
       gateways: {
         discord: { sendMessage: discordSend },
         slack: { sendMessage: slackSend },
+        viewer: { sendMessage: viewerSend },
       },
     });
   });
@@ -104,6 +107,21 @@ describe('Cron Isolation Integration', () => {
     );
 
     await failWorker.stop();
+  });
+
+  it('should route to viewer when channel is viewer', async () => {
+    await worker.execute('check dashboard', {
+      jobId: 'viewer-job',
+      jobName: 'Dashboard Update',
+      channel: 'viewer:session-abc',
+    });
+
+    expect(viewerSend).toHaveBeenCalledWith(
+      'session-abc',
+      expect.stringContaining('Dashboard Update')
+    );
+    expect(discordSend).not.toHaveBeenCalled();
+    expect(slackSend).not.toHaveBeenCalled();
   });
 
   it('should handle multiple sequential cron jobs', async () => {
