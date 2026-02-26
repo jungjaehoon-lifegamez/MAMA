@@ -1891,13 +1891,14 @@ export class ChatModule {
     });
 
     const merged = [...messages, ...localOnlyMessages];
+    const boundedHistory = merged.slice(-this.maxHistoryMessages);
 
     container.innerHTML = '';
-    this.history = merged;
+    this.history = boundedHistory;
 
     // Use DocumentFragment for batch DOM insertion
     const fragment = document.createDocumentFragment();
-    const messagesToRender = merged.slice(-this.maxDomMessages);
+    const messagesToRender = boundedHistory.slice(-this.maxDomMessages);
 
     messagesToRender.forEach((msg) => {
       const msgEl = document.createElement('div');
