@@ -6,6 +6,8 @@ function makeMockGateway(): GatewaySender & { sendMessage: ReturnType<typeof vi.
   return { sendMessage: vi.fn().mockResolvedValue(undefined) };
 }
 
+// CronResultRouter is instantiated for side effects (event subscription).
+// Each test creates a new instance that subscribes to emitter events.
 describe('CronResultRouter', () => {
   let emitter: EventEmitter;
   let discord: ReturnType<typeof makeMockGateway>;
