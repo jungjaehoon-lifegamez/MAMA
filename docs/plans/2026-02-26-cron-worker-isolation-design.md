@@ -14,7 +14,7 @@ via EventEmitter, bypassing the OS agent entirely.
 
 ## Architecture
 
-```
+```text
 ┌─ MAMA OS Process ─────────────────────────────────────┐
 │                                                       │
 │  ┌─ OS Agent ──────────┐   ┌─ Cron Worker ──────────┐ │
@@ -61,7 +61,7 @@ via EventEmitter, bypassing the OS agent entirely.
 
 System prompt (~50 tokens):
 
-```
+```text
 You are a cron job executor. Execute the given task and return the result.
 Available tools: Bash, Read, Write.
 Be concise. Return only the result.

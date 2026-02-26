@@ -1,20 +1,7 @@
 import { EventEmitter } from 'events';
+import type { CronCompletedEvent, CronFailedEvent } from './cron-worker.js';
 
-export interface CronCompletedEvent {
-  jobId: string;
-  jobName: string;
-  result: string;
-  duration: number;
-  channel?: string;
-}
-
-export interface CronFailedEvent {
-  jobId: string;
-  jobName: string;
-  error: string;
-  duration: number;
-  channel?: string;
-}
+export type { CronCompletedEvent, CronFailedEvent };
 
 export interface GatewaySender {
   sendMessage(channelId: string, message: string): Promise<void>;
@@ -87,7 +74,12 @@ export class CronResultRouter {
     }
 
     const gw = this.getGateway(target.gateway);
-    if (!gw) return;
+    if (!gw) {
+      console.warn(
+        `[CronRouter] Gateway "${target.gateway}" not available for failed job "${event.jobName}"`
+      );
+      return;
+    }
 
     const message = `\u274c **[Cron] ${event.jobName}** failed (${(event.duration / 1000).toFixed(1)}s)\nError: ${event.error}`;
     gw.sendMessage(target.channelId, message).catch((err) => {

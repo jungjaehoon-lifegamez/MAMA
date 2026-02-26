@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: CronWorker class
+## Task 1: CronWorker class
 
 **Files:**
 
@@ -229,7 +229,7 @@ git commit -m "feat(cron): add CronWorker with dedicated PersistentCLI instance"
 
 ---
 
-### Task 2: CronResultRouter class
+## Task 2: CronResultRouter class
 
 **Files:**
 
@@ -442,7 +442,7 @@ git commit -m "feat(cron): add CronResultRouter for direct gateway delivery"
 
 ---
 
-### Task 3: Wire CronWorker into start.ts, remove agentLoop dependency
+## Task 3: Wire CronWorker into start.ts, remove agentLoop dependency
 
 **Files:**
 
@@ -539,7 +539,7 @@ git commit -m "feat(cron): wire CronWorker into start.ts, remove agentLoop depen
 
 ---
 
-### Task 4: Add `channel` field to JobConfig and CronScheduler
+## Task 4: Add `channel` field to JobConfig and CronScheduler
 
 **Files:**
 
@@ -614,7 +614,7 @@ git commit -m "feat(cron): add channel field to JobConfig, pass job context to c
 
 ---
 
-### Task 5: Remove cron lane logic from agent-loop.ts
+## Task 5: Remove cron lane logic from agent-loop.ts
 
 **Files:**
 
@@ -653,7 +653,7 @@ git commit -m "refactor(cron): remove cron lane logic from agent-loop"
 
 ---
 
-### Task 6: Update cron API handler for channel field
+## Task 6: Update cron API handler for channel field
 
 **Files:**
 
@@ -713,7 +713,7 @@ git commit -m "feat(cron): support channel field in cron API endpoints"
 
 ---
 
-### Task 7: Integration test
+## Task 7: Integration test
 
 **Files:**
 

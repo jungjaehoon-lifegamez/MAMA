@@ -1616,6 +1616,7 @@ export async function runAgentLoop(
   }
 
   // Wire cron results directly to gateways (bypasses OS agent entirely)
+  // Instantiated for side effects: subscribes to cronEmitter events
   new CronResultRouter({
     emitter: cronEmitter,
     gateways: {
