@@ -609,12 +609,17 @@ This protects your credentials from being exposed in chat logs.`;
       });
     }
 
-    // 6. Update session context — save assistant response to last incomplete turn
-    this.sessionStore.appendMessage(session.id, {
-      role: 'assistant',
-      content: response,
-      timestamp: Date.now(),
-    });
+    // 6. Update session context — finalize assistant response
+    // Use flushStreamingResponse first (updates existing turn from periodic flush),
+    // fall back to appendMessage if no turn exists yet (non-streaming path)
+    const flushed = this.sessionStore.flushStreamingResponse(session.id, response);
+    if (!flushed) {
+      this.sessionStore.appendMessage(session.id, {
+        role: 'assistant',
+        content: response,
+        timestamp: Date.now(),
+      });
+    }
 
     // 6. Return result
     return {

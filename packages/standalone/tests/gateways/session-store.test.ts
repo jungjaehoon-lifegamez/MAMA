@@ -235,79 +235,89 @@ describe('SessionStore', () => {
     });
   });
 
-  describe('appendMessage()', () => {
-    it('should append a single user message without bot response', () => {
-      const session = store.getOrCreate('viewer', 'test_channel', 'user1');
-      store.appendMessage(session.id, { role: 'user', content: 'hello', timestamp: Date.now() });
+  describe('Per-message history persistence', () => {
+    describe('appendMessage()', () => {
+      it('should append a single user message without bot response', () => {
+        const session = store.getOrCreate('viewer', 'test_channel', 'user1');
+        store.appendMessage(session.id, { role: 'user', content: 'hello', timestamp: Date.now() });
 
-      const history = store.getHistory(session.id);
-      expect(history).toHaveLength(1);
-      expect(history[0].user).toBe('hello');
-      expect(history[0].bot).toBe('');
-    });
-
-    it('should append a bot message to the last incomplete turn', () => {
-      const session = store.getOrCreate('viewer', 'test_channel2', 'user1');
-      store.appendMessage(session.id, { role: 'user', content: 'hello', timestamp: Date.now() });
-      store.appendMessage(session.id, {
-        role: 'assistant',
-        content: 'hi there',
-        timestamp: Date.now(),
+        const history = store.getHistory(session.id);
+        expect(history).toHaveLength(1);
+        expect(history[0].user).toBe('hello');
+        expect(history[0].bot).toBe('');
       });
 
-      const history = store.getHistory(session.id);
-      expect(history).toHaveLength(1);
-      expect(history[0].user).toBe('hello');
-      expect(history[0].bot).toBe('hi there');
-    });
+      it('should append a bot message to the last incomplete turn', () => {
+        const session = store.getOrCreate('viewer', 'test_channel2', 'user1');
+        store.appendMessage(session.id, { role: 'user', content: 'hello', timestamp: Date.now() });
+        store.appendMessage(session.id, {
+          role: 'assistant',
+          content: 'hi there',
+          timestamp: Date.now(),
+        });
 
-    it('should start a new turn if last turn is complete', () => {
-      const session = store.getOrCreate('viewer', 'test_channel3', 'user1');
-      store.appendMessage(session.id, { role: 'user', content: 'q1', timestamp: Date.now() });
-      store.appendMessage(session.id, { role: 'assistant', content: 'a1', timestamp: Date.now() });
-      store.appendMessage(session.id, { role: 'user', content: 'q2', timestamp: Date.now() });
-
-      const history = store.getHistory(session.id);
-      expect(history).toHaveLength(2);
-      expect(history[1].user).toBe('q2');
-      expect(history[1].bot).toBe('');
-    });
-
-    it('should return false for non-existent session', () => {
-      const result = store.appendMessage('nonexistent', {
-        role: 'user',
-        content: 'hello',
-        timestamp: Date.now(),
+        const history = store.getHistory(session.id);
+        expect(history).toHaveLength(1);
+        expect(history[0].user).toBe('hello');
+        expect(history[0].bot).toBe('hi there');
       });
-      expect(result).toBe(false);
+
+      it('should start a new turn if last turn is complete', () => {
+        const session = store.getOrCreate('viewer', 'test_channel3', 'user1');
+        store.appendMessage(session.id, { role: 'user', content: 'q1', timestamp: Date.now() });
+        store.appendMessage(session.id, {
+          role: 'assistant',
+          content: 'a1',
+          timestamp: Date.now(),
+        });
+        store.appendMessage(session.id, { role: 'user', content: 'q2', timestamp: Date.now() });
+
+        const history = store.getHistory(session.id);
+        expect(history).toHaveLength(2);
+        expect(history[1].user).toBe('q2');
+        expect(history[1].bot).toBe('');
+      });
+
+      it('should return false for non-existent session', () => {
+        const result = store.appendMessage('nonexistent', {
+          role: 'user',
+          content: 'hello',
+          timestamp: Date.now(),
+        });
+        expect(result).toBe(false);
+      });
     });
-  });
 
-  describe('flushStreamingResponse()', () => {
-    it('should update bot field of last turn with accumulated text', () => {
-      const session = store.getOrCreate('viewer', 'flush_test', 'user1');
-      store.appendMessage(session.id, { role: 'user', content: 'question', timestamp: Date.now() });
+    describe('flushStreamingResponse()', () => {
+      it('should update bot field of last turn with accumulated text', () => {
+        const session = store.getOrCreate('viewer', 'flush_test', 'user1');
+        store.appendMessage(session.id, {
+          role: 'user',
+          content: 'question',
+          timestamp: Date.now(),
+        });
 
-      // Simulate periodic flush during streaming
-      store.flushStreamingResponse(session.id, 'partial resp');
-      let history = store.getHistory(session.id);
-      expect(history[0].bot).toBe('partial resp');
+        // Simulate periodic flush during streaming
+        store.flushStreamingResponse(session.id, 'partial resp');
+        let history = store.getHistory(session.id);
+        expect(history[0].bot).toBe('partial resp');
 
-      // Second flush with more text
-      store.flushStreamingResponse(session.id, 'partial response complete');
-      history = store.getHistory(session.id);
-      expect(history[0].bot).toBe('partial response complete');
-    });
+        // Second flush with more text
+        store.flushStreamingResponse(session.id, 'partial response complete');
+        history = store.getHistory(session.id);
+        expect(history[0].bot).toBe('partial response complete');
+      });
 
-    it('should return false for non-existent session', () => {
-      const result = store.flushStreamingResponse('nonexistent', 'text');
-      expect(result).toBe(false);
-    });
+      it('should return false for non-existent session', () => {
+        const result = store.flushStreamingResponse('nonexistent', 'text');
+        expect(result).toBe(false);
+      });
 
-    it('should return false for empty history', () => {
-      const session = store.getOrCreate('viewer', 'flush_empty', 'user1');
-      const result = store.flushStreamingResponse(session.id, 'text');
-      expect(result).toBe(false);
+      it('should return false for empty history', () => {
+        const session = store.getOrCreate('viewer', 'flush_empty', 'user1');
+        const result = store.flushStreamingResponse(session.id, 'text');
+        expect(result).toBe(false);
+      });
     });
   });
 

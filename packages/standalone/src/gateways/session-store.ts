@@ -8,6 +8,17 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import type { Session, MessageSource, ConversationTurn } from './types.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('SessionStore');
 
 // ============================================================================
 // Database row types
@@ -198,7 +209,9 @@ export class SessionStore {
     msg: { role: 'user' | 'assistant'; content: string; timestamp: number }
   ): boolean {
     const session = this.getById(sessionId);
-    if (!session) return false;
+    if (!session) {
+      return false;
+    }
 
     let history: ConversationTurn[];
     try {
@@ -215,6 +228,7 @@ export class SessionStore {
         lastTurn.bot = msg.content;
         lastTurn.timestamp = msg.timestamp;
       } else {
+        logger.warn(`Creating orphan assistant message for session ${sessionId}`);
         history.push({ user: '', bot: msg.content, timestamp: msg.timestamp });
       }
     }
@@ -234,7 +248,9 @@ export class SessionStore {
    */
   flushStreamingResponse(sessionId: string, accumulatedText: string): boolean {
     const session = this.getById(sessionId);
-    if (!session) return false;
+    if (!session) {
+      return false;
+    }
 
     let history: ConversationTurn[];
     try {
@@ -244,7 +260,9 @@ export class SessionStore {
     }
 
     const lastTurn = history[history.length - 1];
-    if (!lastTurn) return false;
+    if (!lastTurn) {
+      return false;
+    }
 
     // Update the bot field with accumulated streaming text
     lastTurn.bot = accumulatedText;
