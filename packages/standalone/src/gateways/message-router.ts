@@ -346,6 +346,13 @@ This protects your credentials from being exposed in chat logs.`;
       acquiredLock = true; // Successfully acquired lock after wait
     }
 
+    // Save user message immediately for crash/refresh resilience
+    this.sessionStore.appendMessage(session.id, {
+      role: 'user',
+      content: message.text,
+      timestamp: Date.now(),
+    });
+
     // 3. Create AgentContext for role-aware execution
     const agentContext = this.createAgentContext(message, session.id);
     logger.debug(`Created context: ${agentContext.roleName}@${agentContext.platform}`);
@@ -414,6 +421,30 @@ This protects your credentials from being exposed in chat logs.`;
       ? this.buildMinimalResumePrompt(context.prompt, agentContext)
       : systemPrompt;
 
+    // Wrap stream callbacks to accumulate deltas and periodically flush to DB
+    let streamAccumulator = '';
+    let streamFlushTimer: ReturnType<typeof setInterval> | null = null;
+    const STREAM_FLUSH_INTERVAL_MS = 5000;
+    const originalOnStream = processOptions?.onStream;
+
+    const wrappedOnStream: typeof originalOnStream = originalOnStream
+      ? {
+          ...originalOnStream,
+          onDelta: (text: string) => {
+            streamAccumulator += text;
+            originalOnStream.onDelta?.(text);
+          },
+        }
+      : undefined;
+
+    if (wrappedOnStream) {
+      streamFlushTimer = setInterval(() => {
+        if (streamAccumulator) {
+          this.sessionStore.flushStreamingResponse(session.id, streamAccumulator);
+        }
+      }, STREAM_FLUSH_INTERVAL_MS);
+    }
+
     const options: AgentLoopOptions = {
       systemPrompt: effectivePrompt,
       userId: message.userId,
@@ -424,7 +455,7 @@ This protects your credentials from being exposed in chat logs.`;
       agentContext,
       resumeSession: shouldResume, // Use --resume flag for continuing sessions
       cliSessionId, // Pass CLI session ID to avoid double-locking
-      streamCallbacks: processOptions?.onStream,
+      streamCallbacks: wrappedOnStream || processOptions?.onStream,
     };
 
     if (shouldResume) {
@@ -538,6 +569,11 @@ This protects your credentials from being exposed in chat logs.`;
       const normalizedError = new Error(String(error));
       throw normalizedError;
     } finally {
+      // Clean up stream flush timer
+      if (streamFlushTimer) {
+        clearInterval(streamFlushTimer);
+        streamFlushTimer = null;
+      }
       // Only release the session lock if we actually acquired it
       if (acquiredLock) {
         sessionPool.releaseSession(channelKey);
@@ -573,8 +609,12 @@ This protects your credentials from being exposed in chat logs.`;
       });
     }
 
-    // 6. Update session context
-    this.sessionStore.updateSession(session.id, message.text, response);
+    // 6. Update session context — save assistant response to last incomplete turn
+    this.sessionStore.appendMessage(session.id, {
+      role: 'assistant',
+      content: response,
+      timestamp: Date.now(),
+    });
 
     // 6. Return result
     return {
