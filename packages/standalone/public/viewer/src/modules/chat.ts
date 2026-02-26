@@ -151,6 +151,9 @@ export class ChatModule {
   rafPending = false;
   history: ChatHistoryMessage[] = [];
   historyPrefix = 'mama_chat_history_';
+  get historyStorageKey(): string {
+    return this.historyPrefix + 'viewer_mama_os_main';
+  }
   maxHistoryMessages = 200;
   maxDomMessages = 100; // Limit DOM elements for performance
   historyExpiryMs = 24 * 60 * 60 * 1000;
@@ -1763,7 +1766,7 @@ export class ChatModule {
     }
 
     try {
-      const storageKey = this.historyPrefix + 'viewer_mama_os_main';
+      const storageKey = this.historyStorageKey;
       const storageData = {
         history: this.history,
         savedAt: Date.now(),
@@ -1779,7 +1782,7 @@ export class ChatModule {
    */
   loadHistory(_sessionId: string): ChatHistoryMessage[] | null {
     try {
-      const storageKey = this.historyPrefix + 'viewer_mama_os_main';
+      const storageKey = this.historyStorageKey;
       const stored = localStorage.getItem(storageKey);
 
       if (!stored) {
@@ -1943,9 +1946,11 @@ export class ChatModule {
   }
 
   private saveCurrentHistory(): void {
-    if (!this.sessionId) return;
+    if (!this.sessionId) {
+      return;
+    }
     try {
-      const storageKey = this.historyPrefix + 'viewer_mama_os_main';
+      const storageKey = this.historyStorageKey;
       const storageData = {
         history: this.history,
         savedAt: Date.now(),
@@ -1961,7 +1966,7 @@ export class ChatModule {
    */
   clearHistory(_sessionId: string | null = null): void {
     try {
-      const storageKey = this.historyPrefix + 'viewer_mama_os_main';
+      const storageKey = this.historyStorageKey;
       localStorage.removeItem(storageKey);
       this.history = [];
     } catch (e) {
