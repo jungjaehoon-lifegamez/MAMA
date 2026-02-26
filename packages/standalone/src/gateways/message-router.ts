@@ -424,7 +424,7 @@ This protects your credentials from being exposed in chat logs.`;
     // Wrap stream callbacks to accumulate deltas and periodically flush to DB
     let streamAccumulator = '';
     let streamFlushTimer: ReturnType<typeof setInterval> | null = null;
-    const STREAM_FLUSH_INTERVAL_MS = 5000;
+    const streamFlushIntervalMs = 5000;
     const originalOnStream = processOptions?.onStream;
 
     const wrappedOnStream: typeof originalOnStream = originalOnStream
@@ -442,7 +442,7 @@ This protects your credentials from being exposed in chat logs.`;
         if (streamAccumulator) {
           this.sessionStore.flushStreamingResponse(session.id, streamAccumulator);
         }
-      }, STREAM_FLUSH_INTERVAL_MS);
+      }, streamFlushIntervalMs);
     }
 
     const options: AgentLoopOptions = {
@@ -562,6 +562,11 @@ This protects your credentials from being exposed in chat logs.`;
         sessionPool.resetSession(channelKey);
       }
 
+      // Release session lock before re-throwing
+      if (acquiredLock) {
+        sessionPool.releaseSession(channelKey);
+      }
+
       // Normalize error to ensure proper Error object is thrown
       if (error instanceof Error) {
         throw error;
@@ -573,10 +578,6 @@ This protects your credentials from being exposed in chat logs.`;
       if (streamFlushTimer) {
         clearInterval(streamFlushTimer);
         streamFlushTimer = null;
-      }
-      // Only release the session lock if we actually acquired it
-      if (acquiredLock) {
-        sessionPool.releaseSession(channelKey);
       }
     }
 
@@ -619,6 +620,11 @@ This protects your credentials from being exposed in chat logs.`;
         content: response,
         timestamp: Date.now(),
       });
+    }
+
+    // Release session lock AFTER final persistence to prevent out-of-order turns
+    if (acquiredLock) {
+      sessionPool.releaseSession(channelKey);
     }
 
     // 6. Return result
