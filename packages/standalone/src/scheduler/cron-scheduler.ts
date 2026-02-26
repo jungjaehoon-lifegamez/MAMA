@@ -40,7 +40,7 @@ export class CronScheduler {
   private readonly lock: JobLock;
   private readonly options: Required<SchedulerOptions>;
   private readonly eventHandlers: JobEventHandler[] = [];
-  private executeCallback?: (prompt: string) => Promise<string>;
+  private executeCallback?: (prompt: string, job: CronJob) => Promise<string>;
 
   constructor(options: SchedulerOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -52,7 +52,7 @@ export class CronScheduler {
    *
    * @param callback - Function to execute for each job
    */
-  setExecuteCallback(callback: (prompt: string) => Promise<string>): void {
+  setExecuteCallback(callback: (prompt: string, job: CronJob) => Promise<string>): void {
     this.executeCallback = callback;
   }
 
@@ -307,7 +307,7 @@ export class CronScheduler {
       let response: string | undefined;
 
       if (this.executeCallback) {
-        response = await this.executeCallback(job.prompt);
+        response = await this.executeCallback(job.prompt, this.toPublicJob(job));
       }
 
       const completedAt = new Date();
