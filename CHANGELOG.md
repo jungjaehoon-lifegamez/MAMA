@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-02-26
+
+### Fixed
+
+- **Viewer conversation history loss on refresh** — user messages now saved to DB immediately before agent loop; streaming responses flushed every 5 seconds via `flushStreamingResponse()`; session lock released only after final persistence to prevent out-of-order turns
+- **localStorage key tied to sessionId** — changed to channel-based fixed key (`viewer_mama_os_main`); history survives server restarts and session ID changes
+- **Server history replacing local history** — `displayHistory()` now merges server + local history by timestamp instead of full DOM replacement
+- **isAlive check preventing session resume** — viewer now uses server session regardless of `isAlive` flag
+- **localStorage history limit** — increased `maxHistoryMessages` from 50 to 200; `displayHistory()` merge respects cap to prevent overflow
+
+### Improved
+
+- **Gateway tools discoverability** — `gateway-tools.md` now explicitly connects `mama_save`/`mama_search` ↔ `code_act`, with usage examples and callouts that these are NOT direct MCP tools
+
 ## [0.12.1] - 2026-02-26
 
 ### Added
