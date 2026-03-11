@@ -5,7 +5,7 @@
 import type { WebSocketServer, WebSocket } from 'ws';
 import { existsSync } from 'node:fs';
 import { PersistentCLIAdapter } from '../agent/persistent-cli-adapter.js';
-import { expandPath } from '../cli/config/config-manager.js';
+import { expandPath, getConfig } from '../cli/config/config-manager.js';
 import { SETUP_SYSTEM_PROMPT } from './setup-prompt.js';
 import { createSetupTools } from './setup-tools.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
@@ -229,9 +229,13 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
 
     let cliAdapter: PersistentCLIAdapter | null = null;
     try {
+      const config = getConfig();
       cliAdapter = new PersistentCLIAdapter({
         sessionId,
+        model: config.agent.model,
         systemPrompt: SETUP_SYSTEM_PROMPT,
+        dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
+        requestTimeout: config.agent.timeout,
       });
     } catch (error) {
       console.error('[Setup] CLI adapter creation failed:', error);

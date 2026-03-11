@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-03-12
+
+### Fixed
+
+- **Onboarding prompt leaking into OS agent** — `COMPLETE_AUTONOMOUS_PROMPT` was injected into the OS agent's system prompt when persona files were missing. Onboarding is now handled exclusively by the Setup Wizard (`/setup`)
+- **Setup wizard config alignment** — Setup wizard now reads `model`, `dangerouslySkipPermissions`, and `requestTimeout` from `config.yaml` instead of hardcoding, matching the agent loop's config path
+
 ## [0.13.1] - 2026-03-12
 
 ### Fixed
