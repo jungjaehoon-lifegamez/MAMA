@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-03-12
+
+### Fixed
+
+- **Setup wizard authentication failure** — Setup wizard was the only component using OAuth direct API (`ClaudeClient`), causing "credentials not found" errors when `~/.claude/.credentials.json` was missing. Replaced with `PersistentCLIAdapter` (CLI subprocess) to match agent loop behavior
+
 ## [0.13.0] - 2026-02-26
 
 ### Added
