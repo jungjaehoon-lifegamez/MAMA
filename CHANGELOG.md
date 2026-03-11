@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-03-12
+
+### Fixed
+
+- **Setup wizard stuck on onboarding screen** — After onboarding completed, browser stayed on `/setup` instead of redirecting to `/viewer`. Now detects onboarding completion by checking for `USER.md` + `SOUL.md` files and sends redirect
+- **Remove dead custom tool handlers from setup wizard** — CLI handles all tool execution directly; removed unused `createAllOnboardingToolsWithHandlers` and `createSetupTools` references
+
 ## [0.13.2] - 2026-03-12
 
 ### Fixed
