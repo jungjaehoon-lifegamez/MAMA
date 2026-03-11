@@ -4,12 +4,11 @@
 
 import type { WebSocketServer, WebSocket } from 'ws';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { PersistentCLIAdapter } from '../agent/persistent-cli-adapter.js';
 import { expandPath, getConfig } from '../cli/config/config-manager.js';
 import { SETUP_SYSTEM_PROMPT } from './setup-prompt.js';
-import { createSetupTools } from './setup-tools.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
-import { createAllOnboardingToolsWithHandlers } from '../onboarding/all-tools.js';
 
 type QuizState = 'idle' | 'awaiting_name' | 'quiz_in_progress' | 'quiz_complete';
 
@@ -122,49 +121,27 @@ function detectProgress(
   return null;
 }
 
-async function processClaudeResponse(
-  clientInfo: ClientInfo,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _tools: any[],
-  _systemPrompt: string,
-  userMessage: string
-): Promise<string> {
+async function processClaudeResponse(clientInfo: ClientInfo, userMessage: string): Promise<string> {
   if (!clientInfo.cliAdapter) {
     throw new Error('CLI adapter not initialized');
   }
 
   const result = await clientInfo.cliAdapter.prompt(userMessage);
+  const assistantText = result.response || '';
 
-  // Extract text from result
-  let assistantText = result.response || '';
+  // Check if onboarding completed (CLI wrote USER.md + SOUL.md via Write tool)
+  const mamaHome = expandPath('~/.mama');
+  const onboardingDone =
+    existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
 
-  // Handle tool use blocks if any (execute tools locally, then send results back)
-  if (result.toolUseBlocks && result.toolUseBlocks.length > 0) {
-    for (const toolBlock of result.toolUseBlocks) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tool = _tools.find((t: any) => t.name === toolBlock.name);
-      if (tool) {
-        try {
-          const toolResult = await tool.handler(toolBlock.input);
-          const resultStr =
-            typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
-          const nextResult = await clientInfo.cliAdapter.sendToolResult(
-            toolBlock.id,
-            resultStr,
-            false
-          );
-          if (nextResult.response) {
-            assistantText += nextResult.response;
-          }
-        } catch (error: unknown) {
-          const errMsg = error instanceof Error ? error.message : String(error);
-          const nextResult = await clientInfo.cliAdapter.sendToolResult(toolBlock.id, errMsg, true);
-          if (nextResult.response) {
-            assistantText += nextResult.response;
-          }
-        }
-      }
-    }
+  if (onboardingDone && clientInfo.isRitualMode) {
+    clientInfo.ws.send(
+      JSON.stringify({
+        type: 'redirect',
+        url: '/viewer',
+        message: 'Onboarding complete! Redirecting to MAMA OS...',
+      })
+    );
   }
 
   return assistantText;
@@ -317,30 +294,6 @@ async function handleClientMessage(clientInfo: ClientInfo, message: any): Promis
     return;
   }
 
-  const isActionPhase = (clientInfo.discoveryPhase ?? 1) >= 7;
-
-  // Create tools with redirect callback for onboarding completion
-  const onboardingTools = clientInfo.isRitualMode
-    ? createAllOnboardingToolsWithHandlers({
-        onOnboardingComplete: () => {
-          // Send redirect message to client
-          clientInfo.ws.send(
-            JSON.stringify({
-              type: 'redirect',
-              url: '/viewer',
-              message: 'Onboarding complete! Redirecting to MAMA OS...',
-            })
-          );
-        },
-      })
-    : [];
-
-  const tools = clientInfo.isRitualMode
-    ? isActionPhase
-      ? onboardingTools
-      : []
-    : createSetupTools(clientInfo);
-
   try {
     const lang = clientInfo.language || 'en';
     const isKorean = lang.startsWith('ko');
@@ -357,12 +310,7 @@ async function handleClientMessage(clientInfo: ClientInfo, message: any): Promis
       clientInfo.cliAdapter.setSystemPrompt(systemPrompt);
     }
 
-    const assistantMessage = await processClaudeResponse(
-      clientInfo,
-      tools,
-      systemPrompt,
-      userMessage
-    );
+    const assistantMessage = await processClaudeResponse(clientInfo, userMessage);
 
     if (assistantMessage) {
       clientInfo.conversationHistory.push({
