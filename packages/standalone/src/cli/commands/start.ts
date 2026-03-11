@@ -68,7 +68,7 @@ import { HealthScoreService } from '../../observability/health-score.js';
 import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
-import { getResumeContext, isOnboardingInProgress } from '../../onboarding/onboarding-state.js';
+// Onboarding state imports removed — onboarding is handled by Setup Wizard only
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { DelegationHistoryEntry, GraphHandlerOptions } from '../../api/graph-api-types.js';
 
@@ -1021,26 +1021,13 @@ export async function runAgentLoop(
   const personaComplete =
     existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
 
-  let systemPrompt = '';
+  const systemPrompt = '';
   let osCapabilities = '';
 
   if (!personaComplete) {
-    console.log('⚙️  Onboarding mode (persona not found)');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const {
-      COMPLETE_AUTONOMOUS_PROMPT,
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-    } = require('../../onboarding/complete-autonomous-prompt.js');
-    systemPrompt = COMPLETE_AUTONOMOUS_PROMPT;
-
-    // Check for resume context (interrupted onboarding)
-    if (isOnboardingInProgress()) {
-      const resumeContext = getResumeContext();
-      if (resumeContext) {
-        console.log('📋 Resuming previous onboarding session...');
-        systemPrompt += '\n\n---\n\n' + resumeContext;
-      }
-    }
+    // Onboarding is handled exclusively by the Setup Wizard (/setup).
+    // OS agent runs in normal mode — no onboarding prompt injection.
+    console.log('⚙️  Onboarding incomplete (use /setup wizard to complete)');
   } else {
     console.log('✓ Persona loaded (chat mode)');
   }
