@@ -4,8 +4,7 @@
 
 import type { WebSocketServer, WebSocket } from 'ws';
 import { existsSync } from 'node:fs';
-import { ClaudeClient } from '../agent/claude-client.js';
-import { OAuthManager } from '../auth/index.js';
+import { PersistentCLIAdapter } from '../agent/persistent-cli-adapter.js';
 import { expandPath } from '../cli/config/config-manager.js';
 import { SETUP_SYSTEM_PROMPT } from './setup-prompt.js';
 import { createSetupTools } from './setup-tools.js';
@@ -17,7 +16,7 @@ type QuizState = 'idle' | 'awaiting_name' | 'quiz_in_progress' | 'quiz_complete'
 interface ClientInfo {
   ws: WebSocket;
   sessionId: string;
-  claudeClient: ClaudeClient | null;
+  cliAdapter: PersistentCLIAdapter | null;
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
   language?: string;
   isRitualMode?: boolean;
@@ -123,87 +122,49 @@ function detectProgress(
   return null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function executeTools(content: any[], tools: any[]): Promise<any[]> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const results: any[] = [];
-
-  for (const block of content) {
-    if (block.type !== 'tool_use') continue;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tool = tools.find((t: any) => t.name === block.name);
-    if (!tool) continue;
-
-    try {
-      const result = await tool.handler(block.input);
-      results.push({
-        type: 'tool_result',
-        tool_use_id: block.id,
-        content: typeof result === 'string' ? result : JSON.stringify(result),
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-      results.push({
-        type: 'tool_result',
-        tool_use_id: block.id,
-        content: error.message,
-        is_error: true,
-      });
-    }
-  }
-
-  return results;
-}
-
 async function processClaudeResponse(
   clientInfo: ClientInfo,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tools: any[],
-  systemPrompt: string,
-  turnCount: number
+  _tools: any[],
+  _systemPrompt: string,
+  userMessage: string
 ): Promise<string> {
-  if (turnCount >= 5) {
-    console.warn('[Setup] Max tool turns reached (5), stopping');
-    return '';
+  if (!clientInfo.cliAdapter) {
+    throw new Error('CLI adapter not initialized');
   }
 
-  const response = await clientInfo.claudeClient!.sendMessage(clientInfo.conversationHistory, {
-    system: systemPrompt,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tools: tools.map((t: any) => ({
-      name: t.name,
-      description: t.description,
-      input_schema: t.input_schema,
-    })),
-    maxTokens: 4096,
-  });
+  const result = await clientInfo.cliAdapter.prompt(userMessage);
 
-  let assistantText = '';
-  for (const block of response.content) {
-    if (block.type === 'text') {
-      assistantText += block.text;
+  // Extract text from result
+  let assistantText = result.response || '';
+
+  // Handle tool use blocks if any (execute tools locally, then send results back)
+  if (result.toolUseBlocks && result.toolUseBlocks.length > 0) {
+    for (const toolBlock of result.toolUseBlocks) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tool = _tools.find((t: any) => t.name === toolBlock.name);
+      if (tool) {
+        try {
+          const toolResult = await tool.handler(toolBlock.input);
+          const resultStr =
+            typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+          const nextResult = await clientInfo.cliAdapter.sendToolResult(
+            toolBlock.id,
+            resultStr,
+            false
+          );
+          if (nextResult.response) {
+            assistantText += nextResult.response;
+          }
+        } catch (error: unknown) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          const nextResult = await clientInfo.cliAdapter.sendToolResult(toolBlock.id, errMsg, true);
+          if (nextResult.response) {
+            assistantText += nextResult.response;
+          }
+        }
+      }
     }
-  }
-
-  if (response.stop_reason === 'end_turn' || tools.length === 0) {
-    return assistantText;
-  }
-
-  if (response.stop_reason === 'tool_use') {
-    const toolResults = await executeTools(response.content, tools);
-
-    clientInfo.conversationHistory.push({
-      role: 'assistant',
-      content: JSON.stringify(response.content),
-    });
-    clientInfo.conversationHistory.push({
-      role: 'user',
-      content: JSON.stringify(toolResults),
-    });
-
-    const nextText = await processClaudeResponse(clientInfo, tools, systemPrompt, turnCount + 1);
-    return assistantText + nextText;
   }
 
   return assistantText;
@@ -265,16 +226,19 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
     console.log('[Setup] Client connected');
 
     const sessionId = `setup_${Date.now()}`;
-    const oauthManager = new OAuthManager();
 
-    let claudeClient: ClaudeClient | null = null;
+    let cliAdapter: PersistentCLIAdapter | null = null;
     try {
-      claudeClient = new ClaudeClient(oauthManager);
-    } catch {
+      cliAdapter = new PersistentCLIAdapter({
+        sessionId,
+        systemPrompt: SETUP_SYSTEM_PROMPT,
+      });
+    } catch (error) {
+      console.error('[Setup] CLI adapter creation failed:', error);
       ws.send(
         JSON.stringify({
           type: 'error',
-          message: 'Claude authentication failed. Please verify you are logged into Claude Code.',
+          message: 'Claude CLI initialization failed. Please verify Claude Code is installed.',
         })
       );
       ws.close();
@@ -284,7 +248,7 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
     const clientInfo: ClientInfo = {
       ws,
       sessionId,
-      claudeClient,
+      cliAdapter,
       conversationHistory: [],
     };
 
@@ -307,6 +271,10 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
 
     ws.on('close', () => {
       console.log('[Setup] Client disconnected');
+      const info = clients.get(ws);
+      if (info?.cliAdapter) {
+        info.cliAdapter.stop();
+      }
       clients.delete(ws);
     });
 
@@ -335,11 +303,11 @@ async function handleClientMessage(clientInfo: ClientInfo, message: any): Promis
     content: userMessage,
   });
 
-  if (!clientInfo.claudeClient) {
+  if (!clientInfo.cliAdapter) {
     clientInfo.ws.send(
       JSON.stringify({
         type: 'error',
-        message: 'Claude client not initialized',
+        message: 'Claude CLI adapter not initialized',
       })
     );
     return;
@@ -380,7 +348,17 @@ async function handleClientMessage(clientInfo: ClientInfo, message: any): Promis
       ? COMPLETE_AUTONOMOUS_PROMPT + languageInstruction
       : SETUP_SYSTEM_PROMPT + languageInstruction;
 
-    const assistantMessage = await processClaudeResponse(clientInfo, tools, systemPrompt, 0);
+    // Update system prompt if needed (ritual vs setup mode)
+    if (clientInfo.cliAdapter) {
+      clientInfo.cliAdapter.setSystemPrompt(systemPrompt);
+    }
+
+    const assistantMessage = await processClaudeResponse(
+      clientInfo,
+      tools,
+      systemPrompt,
+      userMessage
+    );
 
     if (assistantMessage) {
       clientInfo.conversationHistory.push({
