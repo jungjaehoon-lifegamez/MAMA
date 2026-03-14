@@ -30,7 +30,7 @@ Before installing MAMA Standalone, ensure you have:
 
 ### Required
 
-- **Node.js >= 22.0.0** (Standalone requires Node 22+, unlike the plugin which works with 18+)
+- **Node.js >= 22.13.0** (Standalone, plugin, MCP server, and core all require unflagged `node:sqlite`)
 - **At least one authenticated backend CLI**
   - Codex CLI (`codex login`) or
   - Claude CLI (`claude` OAuth login)
@@ -45,7 +45,7 @@ Before installing MAMA Standalone, ensure you have:
 ### Check Prerequisites
 
 ```bash
-# Check Node.js version (must be >= 22.0.0)
+# Check Node.js version (must be >= 22.13.0)
 node --version
 
 # Check Codex CLI (optional but recommended)
@@ -88,13 +88,13 @@ npm install -g @jungjaehoon/mama-os
 - Skills system and cron scheduler
 - MAMA OS viewer (graph viewer + mobile chat)
 
-**Installation time:** 2-3 minutes (includes native module compilation)
+**Installation time:** 1-2 minutes (package download + model cache warm-up)
 
 ### Step 2: Verify Installation
 
 ```bash
 mama --version
-# Should output: @jungjaehoon/mama-os v0.9.x
+# Should output: @jungjaehoon/mama-os v0.14.x
 
 mama --help
 # Should show available commands
@@ -127,7 +127,7 @@ mama init
 
 `mama init` auto-selects the default backend:
 
-- Uses `codex` if `~/.mama/.codex/auth.json` or `~/.codex/auth.json` exists
+- Uses `codex-mcp` if `~/.mama/.codex/auth.json` or `~/.codex/auth.json` exists
 - Falls back to `claude` if `~/.claude/.credentials.json` exists
 - Fails with guidance if neither backend is authenticated
 
@@ -136,7 +136,7 @@ You can override this per user/environment:
 ```bash
 mama init --backend auto    # default: detect installed/authenticated backend
 mama init --backend claude  # force Claude backend if authenticated
-mama init --backend codex   # force Codex backend if authenticated
+mama init --backend codex-mcp # force Codex backend if authenticated
 ```
 
 **Expected output:**
@@ -211,7 +211,7 @@ version: 1
 
 # Agent settings
 agent:
-  backend: claude # claude | codex (set by init auto/override)
+  backend: claude # claude | codex-mcp (set by init auto/override)
   model: claude-sonnet-4-20250514 # Claude model to use
   max_turns: 10 # Maximum conversation turns
   timeout: 300000 # Request timeout (5 minutes)
@@ -274,7 +274,7 @@ If you want MAMA to run with Codex CLI as the backend:
 
 ```yaml
 agent:
-  backend: codex
+  backend: codex-mcp
   model: gpt-5.3-codex
   codex_home: ~/.mama/.codex
   codex_cwd: ~/.mama/workspace
@@ -303,20 +303,20 @@ Notes:
 
 #### Agent Settings
 
-| Option                      | Type   | Default                  | Description                          |
-| --------------------------- | ------ | ------------------------ | ------------------------------------ |
-| `backend`                   | string | claude                   | Agent backend (`claude` or `codex`)  |
-| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend      |
-| `max_turns`                 | number | 10                       | Maximum conversation turns           |
-| `timeout`                   | number | 300000                   | Request timeout in milliseconds      |
-| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory         |
-| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory              |
-| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                   |
-| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard      |
-| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`       |
-| `codex_ephemeral`           | bool   | false                    | Disable session persistence          |
-| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex |
-| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides   |
+| Option                      | Type   | Default                  | Description                             |
+| --------------------------- | ------ | ------------------------ | --------------------------------------- |
+| `backend`                   | string | claude                   | Agent backend (`claude` or `codex-mcp`) |
+| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend         |
+| `max_turns`                 | number | 10                       | Maximum conversation turns              |
+| `timeout`                   | number | 300000                   | Request timeout in milliseconds         |
+| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory            |
+| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory                 |
+| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                      |
+| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard         |
+| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`          |
+| `codex_ephemeral`           | bool   | false                    | Disable session persistence             |
+| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex    |
+| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides      |
 
 ### Codex MCP Tool Notes (Brave)
 

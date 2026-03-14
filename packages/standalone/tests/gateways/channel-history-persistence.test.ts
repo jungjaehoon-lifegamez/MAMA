@@ -10,12 +10,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
+import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { ChannelHistory } from '../../src/gateways/channel-history.js';
 import type { HistoryEntry } from '../../src/gateways/channel-history.js';
 
 describe('ChannelHistory - SQLite Persistence', () => {
-  let db: Database.Database;
+  let db: SQLiteDatabase;
   let history: ChannelHistory;
 
   beforeEach(() => {

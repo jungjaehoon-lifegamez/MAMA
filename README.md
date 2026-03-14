@@ -1,7 +1,7 @@
 # MAMA - Memory-Augmented MCP Assistant
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D22.13.0-brightgreen)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-2175%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://jungjaehoon-lifegamez.github.io/MAMA)
 
@@ -66,7 +66,7 @@ mama init    # copies default skills to ~/.mama/skills/
 mama start   # opens web dashboard at localhost:3847
 ```
 
-**Package:** `@jungjaehoon/mama-os` 0.13.3
+**Package:** `@jungjaehoon/mama-os` 0.14.0
 **Tagline:** _Your AI Operating System_
 
 > ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
@@ -220,7 +220,7 @@ Skills Tab and Playground Tab are bidirectionally linked — selecting a skill i
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` 1.8.0
+**Package:** `@jungjaehoon/mama-server` 1.9.0
 
 **What happens after installation:**
 
@@ -288,7 +288,7 @@ const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
 const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ```
 
-**Package:** `@jungjaehoon/mama-core` 1.2.1
+**Package:** `@jungjaehoon/mama-core` 1.3.0
 
 ---
 
@@ -296,10 +296,10 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 | Package                                                   | Version | Description                                  | Distribution       |
 | --------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)     | 0.13.3  | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md) | 1.8.0   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)    | 1.2.1   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)             | 1.7.14  | Claude Code plugin                           | Claude Marketplace |
+| [@jungjaehoon/mama-os](packages/standalone/README.md)     | 0.14.0  | Your AI Operating System (agent + gateway)   | npm                |
+| [@jungjaehoon/mama-server](packages/mcp-server/README.md) | 1.9.0   | MCP server for Claude Desktop/Code           | npm                |
+| [@jungjaehoon/mama-core](packages/mama-core/README.md)    | 1.3.0   | Shared core library (embeddings, DB, memory) | npm                |
+| [mama](packages/claude-code-plugin/README.md)             | 1.8.0   | Claude Code plugin                           | Claude Marketplace |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
 

@@ -228,7 +228,7 @@ Interactive visualization of your reasoning graph.
 - **Transport:** stdio-based MCP protocol (default) + optional HTTP embedding server (port 3849)
 - **Storage:** ~/.claude/mama-memory.db (configurable via MAMA_DB_PATH)
 - **Port File:** ~/.mama-embedding-port (for client discovery)
-- **Node.js:** >= 18.0.0 required
+- **Node.js:** >= 22.13.0 required
 - **Disk Space:** ~500MB for embedding model cache
 
 ## Related Packages
@@ -254,4 +254,4 @@ MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While 
 ---
 
 **Author:** SpineLift Team
-**Version:** 1.7.1
+**Version:** 1.9.0
