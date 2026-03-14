@@ -14,7 +14,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import * as readline from 'readline';
-import { accessSync, constants } from 'fs';
+import { accessSync, constants, existsSync, mkdirSync, copyFileSync } from 'fs';
 import { homedir } from 'os';
 import { delimiter, join } from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -115,6 +115,7 @@ export class CodexMCPProcess extends EventEmitter {
 
     // Force CODEX_HOME to MAMA-internal directory so Codex ignores global ~/.codex/config.toml
     const codexHome = this.options.codexHome || join(homedir(), '.mama', '.codex');
+    this.ensureCodexHome(codexHome);
     const spawnEnv = { ...process.env, CODEX_HOME: codexHome };
 
     try {
@@ -676,6 +677,29 @@ export class CodexMCPProcess extends EventEmitter {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private ensureCodexHome(codexHome: string): void {
+    if (!existsSync(codexHome)) {
+      mkdirSync(codexHome, { recursive: true });
+    }
+
+    const internalAuthPath = join(codexHome, 'auth.json');
+    if (existsSync(internalAuthPath)) {
+      return;
+    }
+
+    const externalAuthPath = join(homedir(), '.codex', 'auth.json');
+    if (existsSync(externalAuthPath)) {
+      try {
+        copyFileSync(externalAuthPath, internalAuthPath);
+        logger.info(`Bootstrapped Codex auth into ${internalAuthPath}`);
+      } catch (error) {
+        logger.warn(
+          `Failed to bootstrap Codex auth: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
   }
 
