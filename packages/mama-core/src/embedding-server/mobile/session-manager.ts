@@ -117,6 +117,9 @@ export class SessionManager {
   private sessions: Map<string, MemorySession>;
   private db: SQLiteDatabaseLike | null;
   private initialized: boolean;
+  private cleanupPromise: Promise<void> | null;
+  private cleanupHandlersRegistered: boolean;
+  private handleProcessExit: (() => void) | null;
 
   /**
    * Create a new SessionManager instance
@@ -127,6 +130,9 @@ export class SessionManager {
     this.sessions = new Map();
     this.db = null;
     this.initialized = false;
+    this.cleanupPromise = null;
+    this.cleanupHandlersRegistered = false;
+    this.handleProcessExit = null;
   }
 
   /**
@@ -414,17 +420,47 @@ export class SessionManager {
    * @private
    */
   private _setupProcessCleanup(): void {
-    const cleanup = async () => {
-      console.error('[SessionManager] Process exiting, cleaning up sessions...');
-      await this.terminateAll();
-      if (this.db) {
-        this.db.close();
+    if (this.cleanupHandlersRegistered) {
+      return;
+    }
+
+    const cleanup = () => {
+      if (this.cleanupPromise) {
+        return;
       }
+
+      if (this.handleProcessExit) {
+        process.off('exit', this.handleProcessExit);
+      }
+
+      this.cleanupPromise = Promise.resolve().then(() => {
+        console.error('[SessionManager] Process exiting, cleaning up sessions...');
+        if (this.db && this.initialized) {
+          for (const [sessionId, session] of this.sessions.entries()) {
+            try {
+              session.daemon.kill();
+            } catch {
+              // Best effort - process is already exiting.
+            }
+
+            this.sessions.delete(sessionId);
+            const stmt = this.db.prepare(`
+              UPDATE sessions
+              SET status = 'terminated', last_active = datetime('now')
+              WHERE id = ?
+            `);
+            stmt.run(sessionId);
+          }
+        }
+
+        this.close();
+      });
     };
 
-    process.on('exit', () => void cleanup());
-    process.on('SIGINT', () => void cleanup());
-    process.on('SIGTERM', () => void cleanup());
+    this.handleProcessExit = cleanup;
+
+    process.on('exit', this.handleProcessExit);
+    this.cleanupHandlersRegistered = true;
   }
 
   /**
@@ -432,9 +468,10 @@ export class SessionManager {
    */
   close(): void {
     if (this.db) {
-      this.db.close();
+      const db = this.db;
       this.db = null;
       this.initialized = false;
+      db.close();
     }
   }
 }
