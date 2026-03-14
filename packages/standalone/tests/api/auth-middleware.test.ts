@@ -25,10 +25,12 @@ function createRequest({
 describe('auth-middleware', () => {
   const originalToken = process.env.MAMA_AUTH_TOKEN;
   const originalServerToken = process.env.MAMA_SERVER_TOKEN;
+  const originalTrustCloudflareAccess = process.env.MAMA_TRUST_CLOUDFLARE_ACCESS;
 
   beforeEach(() => {
     process.env.MAMA_AUTH_TOKEN = 'top-secret-token';
     delete process.env.MAMA_SERVER_TOKEN;
+    delete process.env.MAMA_TRUST_CLOUDFLARE_ACCESS;
   });
 
   afterEach(() => {
@@ -42,6 +44,12 @@ describe('auth-middleware', () => {
       delete process.env.MAMA_SERVER_TOKEN;
     } else {
       process.env.MAMA_SERVER_TOKEN = originalServerToken;
+    }
+
+    if (originalTrustCloudflareAccess === undefined) {
+      delete process.env.MAMA_TRUST_CLOUDFLARE_ACCESS;
+    } else {
+      process.env.MAMA_TRUST_CLOUDFLARE_ACCESS = originalTrustCloudflareAccess;
     }
   });
 
@@ -90,6 +98,39 @@ describe('auth-middleware', () => {
     const req = createRequest({
       remoteAddress: '127.0.0.1',
       headers: { 'cf-connecting-ip': '198.51.100.7' },
+    });
+
+    expect(isAuthenticated(req)).toBe(false);
+  });
+
+  it('allows trusted Cloudflare Access requests when explicitly enabled', () => {
+    delete process.env.MAMA_AUTH_TOKEN;
+    delete process.env.MAMA_SERVER_TOKEN;
+    process.env.MAMA_TRUST_CLOUDFLARE_ACCESS = 'true';
+
+    const req = createRequest({
+      remoteAddress: '127.0.0.1',
+      headers: {
+        'cf-connecting-ip': '198.51.100.7',
+        'cf-ray': 'ray-123',
+        'cf-access-jwt-assertion': 'jwt-token',
+      },
+    });
+
+    expect(isAuthenticated(req)).toBe(true);
+  });
+
+  it('does not trust Cloudflare Access identity headers from untrusted peers', () => {
+    delete process.env.MAMA_AUTH_TOKEN;
+    delete process.env.MAMA_SERVER_TOKEN;
+    process.env.MAMA_TRUST_CLOUDFLARE_ACCESS = 'true';
+
+    const req = createRequest({
+      remoteAddress: '198.51.100.20',
+      headers: {
+        'cf-access-jwt-assertion': 'jwt-token',
+        'cf-access-authenticated-user-email': 'user@example.com',
+      },
     });
 
     expect(isAuthenticated(req)).toBe(false);
