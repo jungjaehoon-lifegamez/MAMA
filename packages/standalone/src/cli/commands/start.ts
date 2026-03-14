@@ -2868,14 +2868,27 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       );
     };
 
+    const getActiveRequestNames = (): string[] => {
+      const requests = (
+        process as NodeJS.Process & { _getActiveRequests?: () => unknown[] }
+      )._getActiveRequests?.();
+      return (
+        requests
+          ?.map((request) => (request as { constructor?: { name?: string } }).constructor?.name)
+          .filter((name): name is string => typeof name === 'string') ?? []
+      );
+    };
+
     // Force exit after 5 seconds if graceful shutdown hangs
     // exit(0) = intentional stop; systemd Restart=on-failure should NOT restart
     const forceExitTimer = setTimeout(() => {
-      if (getBlockingHandleNames().length === 0) {
+      const blockingHandles = getBlockingHandleNames();
+      const activeRequests = getActiveRequestNames();
+      if (blockingHandles.length === 0 && activeRequests.length === 0) {
         return;
       }
       console.error('[MAMA] Graceful shutdown timed out, forcing exit');
-      process.exit(0);
+      process.kill(process.pid, 'SIGKILL');
     }, 5000);
     forceExitTimer.unref();
 
@@ -2944,8 +2957,16 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       const { deletePid } = await import('../utils/pid-manager.js');
       await deletePid();
-      if (getBlockingHandleNames().length === 0) {
+      const blockingHandles = getBlockingHandleNames();
+      const activeRequests = getActiveRequestNames();
+      if (blockingHandles.length === 0 && activeRequests.length === 0) {
         clearTimeout(forceExitTimer);
+      } else if (
+        blockingHandles.length === 0 &&
+        activeRequests.length > 0 &&
+        activeRequests.every((name) => name === 'FSReqPromise')
+      ) {
+        process.kill(process.pid, 'SIGKILL');
       }
     } catch (error) {
       // Best effort cleanup
