@@ -8,7 +8,7 @@
 
 ## OVERVIEW
 
-27 JavaScript modules duplicated from `@jungjaehoon/mama-core`. Claude Code plugins cannot have npm dependencies—all code must be self-contained. This creates version skew risk between mama-core and plugin snapshots.
+Core runtime modules are duplicated from `@jungjaehoon/mama-core`, but not every internal file is mirrored one-for-one. Claude Code plugins cannot have npm dependencies for the bundled hook/runtime path, so selected modules are copied locally and can drift from mama-core over time.
 
 **Plugin version:** snapshot of mama-core from 2025-11-21  
 **mama-core version:** current
@@ -42,11 +42,6 @@ src/core/
 ├── hook-metrics.js          # Hook performance metrics
 ├── mcp-client.js            # MCP server client (plugin-specific)
 ├── ollama-client.js         # Ollama integration (plugin-specific)
-└── db-adapter/              # Database adapter interface
-    ├── index.js
-    ├── base-adapter.js
-    ├── sqlite-adapter.js
-    └── statement.js
 ```
 
 ---
@@ -57,6 +52,7 @@ src/core/
 
 - `mcp-client.js` - MCP server communication
 - `ollama-client.js` - Ollama embedding fallback
+- Direct SQLite/db-adapter internals are intentionally not mirrored; the plugin uses its own `db-manager.js` path instead.
 
 **Missing from plugin (mama-core only):**
 
@@ -80,7 +76,7 @@ src/core/
 
 ## SYNC REQUIREMENT (CRITICAL)
 
-**MUST DO:** Apply bug fixes to BOTH locations:
+**MUST DO:** Apply bug fixes to BOTH locations for duplicated files:
 
 ```bash
 # Fix in mama-core
