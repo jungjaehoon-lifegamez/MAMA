@@ -14,6 +14,13 @@ All notable changes to this project will be documented in this file.
 
 - **Cloudflare Access external auth** — Standalone now supports an explicit `MAMA_TRUST_CLOUDFLARE_ACCESS=true` mode so trusted Cloudflare Tunnel/Access requests with validated Access identity headers can reach protected `/api/*` routes without also requiring a separate Bearer token; direct remote requests and untrusted forwarded headers remain blocked
 
+## [0.14.3] / mama-core [1.3.3] / mcp-server [1.9.3] / plugin [1.8.3] - 2026-03-14
+
+### Fixed
+
+- **Cloudflare Access WebSocket trust** — external chat sessions behind Cloudflare Zero Trust now apply the same trusted Access identity checks to `/ws` upgrades that were added for `/api/*`, so viewer chat no longer fails with repeated `1006` reconnect loops after Access login
+- **Cloudflare Access operator guidance** — security, deployment, standalone setup, mobile access, and standalone README docs now explain when to use `MAMA_TRUST_CLOUDFLARE_ACCESS=true` versus `MAMA_AUTH_TOKEN`
+
 ## [0.14.0] / mama-core [1.3.0] / mcp-server [1.9.0] / plugin [1.8.0] - 2026-03-14
 
 ### Security

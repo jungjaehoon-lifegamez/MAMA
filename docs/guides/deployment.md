@@ -10,10 +10,10 @@ MAMA is a pnpm workspace-based monorepo with four packages:
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.14.1  |
-| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.9.1   |
-| MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`   | 1.3.1   |
-| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.8.1   |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.14.2  |
+| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.9.2   |
+| MAMA Core          | `packages/mama-core/`          | Internal           | `@jungjaehoon/mama-core`   | 1.3.2   |
+| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.8.2   |
 
 ---
 
@@ -23,6 +23,7 @@ MAMA is a pnpm workspace-based monorepo with four packages:
 - **pnpm**: >= 8.0.0
 - **npm account**: For MCP server deployment (npm publish permissions)
 - **Claude Marketplace account**: For plugin deployment
+- **Cloudflare Access / Tunnel setup**: Recommended if exposing MAMA OS beyond localhost
 
 ---
 
@@ -38,6 +39,7 @@ Verify the following items before deployment:
 - [ ] README.md current (reflect new features/commands)
 - [ ] Environment variables documented (.env.example updated)
 - [ ] Backward compatibility with existing decision data confirmed
+- [ ] If using Cloudflare Zero Trust, `MAMA_TRUST_CLOUDFLARE_ACCESS=true` is set in the runtime environment
 ```
 
 ---
@@ -58,10 +60,10 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.14.1          |
-| `packages/mcp-server/package.json`                       | `version` | 1.9.1           |
-| `packages/mama-core/package.json`                        | `version` | 1.3.1           |
-| `packages/claude-code-plugin/package.json`               | `version` | 1.8.1           |
+| `packages/standalone/package.json`                       | `version` | 0.14.2          |
+| `packages/mcp-server/package.json`                       | `version` | 1.9.2           |
+| `packages/mama-core/package.json`                        | `version` | 1.3.2           |
+| `packages/claude-code-plugin/package.json`               | `version` | 1.8.2           |
 | `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.8.1           |
 
 ### Version Update Example
@@ -256,6 +258,14 @@ MAMA_SERVER_TOKEN=<secure_token>
 MAMA_SERVER_PORT=3000
 MAMA_EMBEDDING_MODEL=Xenova/multilingual-e5-small
 ```
+
+For Cloudflare Zero Trust deployments of MAMA OS, add:
+
+```ini
+MAMA_TRUST_CLOUDFLARE_ACCESS=true
+```
+
+Use `MAMA_AUTH_TOKEN` for non-Access tunnels and temporary test exposure. Without one of those two modes, protected `/api/*` routes will reject external tunnel requests.
 
 **Environment Variable Reference:**
 
