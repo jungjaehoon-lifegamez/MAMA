@@ -78,6 +78,21 @@ describe('downloadFile SSRF guards', () => {
     expect(lookupMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    'https://192.0.2.10/payload.txt',
+    'https://198.51.100.20/payload.txt',
+    'https://203.0.113.30/payload.txt',
+    'https://224.0.0.1/payload.txt',
+    'https://255.255.255.255/payload.txt',
+  ])('blocks additional reserved IPv4 literals: %s', async (url) => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
+
+    await expect(downloadFile(url, 'payload.txt')).rejects.toThrow('private/reserved IP');
+    expect(lookupMock).not.toHaveBeenCalled();
+  });
+
   it('uses manual redirect handling for successful downloads', async () => {
     lookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
     const fetchMock = vi.fn().mockResolvedValue({

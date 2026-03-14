@@ -40,7 +40,13 @@ function assertSafeIpv4(address: string): void {
     (a === 169 && b === 254) || // 169.254.0.0/16 link-local
     (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
     (a === 192 && b === 168) || // 192.168.0.0/16 private
-    (a === 100 && b >= 64 && b <= 127) // 100.64.0.0/10 carrier-grade NAT
+    (a === 100 && b >= 64 && b <= 127) || // 100.64.0.0/10 carrier-grade NAT
+    (a === 192 && b === 0 && octets[2] === 2) || // 192.0.2.0/24 TEST-NET-1
+    (a === 198 && b === 51 && octets[2] === 100) || // 198.51.100.0/24 TEST-NET-2
+    (a === 203 && b === 0 && octets[2] === 113) || // 203.0.113.0/24 TEST-NET-3
+    (a >= 224 && a <= 239) || // 224.0.0.0/4 multicast
+    a >= 240 || // 240.0.0.0/4 reserved/future use (includes broadcast)
+    octets.every((part) => part === 255) // 255.255.255.255 broadcast
   ) {
     throw new Error(`Blocked URL: private/reserved IP "${address}"`);
   }

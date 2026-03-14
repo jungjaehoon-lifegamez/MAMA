@@ -83,6 +83,29 @@ describe('auth-middleware', () => {
     expect(isAuthenticated(req, { allowQueryToken: true })).toBe(true);
   });
 
+  it('rejects tunneled localhost requests when no admin token is configured', () => {
+    delete process.env.MAMA_AUTH_TOKEN;
+    delete process.env.MAMA_SERVER_TOKEN;
+
+    const req = createRequest({
+      remoteAddress: '127.0.0.1',
+      headers: { 'cf-connecting-ip': '198.51.100.7' },
+    });
+
+    expect(isAuthenticated(req)).toBe(false);
+  });
+
+  it('keeps direct localhost access when no admin token is configured', () => {
+    delete process.env.MAMA_AUTH_TOKEN;
+    delete process.env.MAMA_SERVER_TOKEN;
+
+    const req = createRequest({
+      remoteAddress: '127.0.0.1',
+    });
+
+    expect(isAuthenticated(req)).toBe(true);
+  });
+
   it('prefers cf-connecting-ip for attacker address logging', () => {
     const req = createRequest({
       remoteAddress: '127.0.0.1',
