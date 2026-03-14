@@ -95,7 +95,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   const app = express();
 
   // Middleware
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   // CORS: allow only localhost/127.0.0.1 origins
   app.use((req, res, next) => {
