@@ -3,8 +3,13 @@
  * Used by Discord and Slack gateways.
  */
 
+import { lookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { isIP } from 'node:net';
 import type { MessageAttachment, ContentBlock } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { recordSecurityEvent } from '../security/security-monitor.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -15,20 +20,131 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const logger = new DebugLogger('AttachmentUtils');
+const MAX_ATTACHMENT_DOWNLOAD_BYTES = Number(
+  process.env.MAMA_ATTACHMENT_MAX_DOWNLOAD_BYTES || 25 * 1024 * 1024
+);
+const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = Number(
+  process.env.MAMA_ATTACHMENT_DOWNLOAD_TIMEOUT_MS || 15_000
+);
 
 /**
  * Validate that a URL is safe to fetch (SSRF prevention).
  * Blocks requests to internal/private networks, loopback, and suspicious TLDs.
  */
-function assertSafeUrl(url: string): void {
+function assertSafeIpv4(address: string): void {
+  const octets = address.split('.').map((part) => Number(part));
+  if (
+    octets.length !== 4 ||
+    octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
+    throw new Error(`Blocked URL: invalid IPv4 address "${address}"`);
+  }
+
+  const [a, b] = octets;
+  if (
+    a === 0 || // 0.0.0.0/8
+    a === 10 || // 10.0.0.0/8 private
+    a === 127 || // 127.0.0.0/8 loopback
+    (a === 169 && b === 254) || // 169.254.0.0/16 link-local
+    (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
+    (a === 192 && b === 168) || // 192.168.0.0/16 private
+    (a === 100 && b >= 64 && b <= 127) || // 100.64.0.0/10 carrier-grade NAT
+    (a === 192 && b === 0 && octets[2] === 2) || // 192.0.2.0/24 TEST-NET-1
+    (a === 198 && b === 51 && octets[2] === 100) || // 198.51.100.0/24 TEST-NET-2
+    (a === 203 && b === 0 && octets[2] === 113) || // 203.0.113.0/24 TEST-NET-3
+    (a >= 224 && a <= 239) || // 224.0.0.0/4 multicast
+    a >= 240 || // 240.0.0.0/4 reserved/future use (includes broadcast)
+    octets.every((part) => part === 255) // 255.255.255.255 broadcast
+  ) {
+    throw new Error(`Blocked URL: private/reserved IP "${address}"`);
+  }
+}
+
+function assertSafeIpv6(address: string): void {
+  const normalized = address.toLowerCase();
+
+  if (normalized === '::' || normalized === '::1') {
+    throw new Error(`Blocked URL: loopback/internal IPv6 "${address}"`);
+  }
+
+  if (normalized.startsWith('::ffff:')) {
+    const mappedIpv4 = normalized.slice('::ffff:'.length);
+    if (isIP(mappedIpv4) === 4) {
+      assertSafeIpv4(mappedIpv4);
+      return;
+    }
+
+    const hextets = mappedIpv4
+      .split(':')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (hextets.length === 2 && hextets.every((part) => /^[0-9a-f]{1,4}$/i.test(part))) {
+      const values = hextets.map((part) => Number.parseInt(part, 16));
+      const dottedIpv4 = [
+        (values[0] >> 8) & 0xff,
+        values[0] & 0xff,
+        (values[1] >> 8) & 0xff,
+        values[1] & 0xff,
+      ].join('.');
+      assertSafeIpv4(dottedIpv4);
+      return;
+    }
+  }
+
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) {
+    throw new Error(`Blocked URL: unique-local IPv6 "${address}"`);
+  }
+
+  if (/^fe[89ab]/i.test(normalized)) {
+    throw new Error(`Blocked URL: link-local IPv6 "${address}"`);
+  }
+}
+
+function assertSafeIp(address: string): void {
+  const family = isIP(address);
+  if (family === 4) {
+    assertSafeIpv4(address);
+    return;
+  }
+  if (family === 6) {
+    assertSafeIpv6(address);
+    return;
+  }
+  throw new Error(`Blocked URL: unrecognized IP "${address}"`);
+}
+
+interface ResolvedAddress {
+  address: string;
+  family: number;
+}
+
+interface SafeUrlTarget {
+  parsedUrl: URL;
+  hostname: string;
+  resolvedAddresses: ResolvedAddress[];
+}
+
+async function resolveSafeUrlTarget(url: string): Promise<SafeUrlTarget> {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'warn',
+      message: 'Attachment download blocked: invalid URL',
+      details: { url },
+    });
     throw new Error(`Invalid URL: ${url}`);
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'warn',
+      message: 'Attachment download blocked: unsupported protocol',
+      details: { url, protocol: parsed.protocol },
+    });
     throw new Error(`Blocked URL: unsupported protocol "${parsed.protocol}"`);
   }
 
@@ -38,9 +154,15 @@ function assertSafeUrl(url: string): void {
   if (
     hostname === 'localhost' ||
     hostname === '0.0.0.0' ||
-    hostname === '[::]' ||
-    hostname === '[::1]'
+    hostname === '::' ||
+    hostname === '::1'
   ) {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'critical',
+      message: 'Attachment download blocked: loopback/internal hostname',
+      details: { url, hostname },
+    });
     throw new Error(`Blocked URL: loopback/internal hostname "${hostname}"`);
   }
 
@@ -50,24 +172,181 @@ function assertSafeUrl(url: string): void {
     hostname.endsWith('.internal') ||
     hostname.endsWith('.localhost')
   ) {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'critical',
+      message: 'Attachment download blocked: internal domain',
+      details: { url, hostname },
+    });
     throw new Error(`Blocked URL: internal domain "${hostname}"`);
   }
 
-  // Block private/reserved IP ranges
-  const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipMatch) {
-    const [, a, b] = ipMatch.map(Number);
-    if (
-      a === 127 || // 127.0.0.0/8 loopback
-      a === 10 || // 10.0.0.0/8 private
-      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
-      (a === 192 && b === 168) || // 192.168.0.0/16 private
-      a === 0 || // 0.0.0.0/8
-      (a === 169 && b === 254) // 169.254.0.0/16 link-local
-    ) {
-      throw new Error(`Blocked URL: private/reserved IP "${hostname}"`);
+  if (isIP(hostname)) {
+    try {
+      assertSafeIp(hostname);
+    } catch (error) {
+      recordSecurityEvent({
+        type: 'ssrf_blocked',
+        severity: 'critical',
+        message: 'Attachment download blocked: literal IP denied',
+        details: {
+          url,
+          hostname,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw error;
+    }
+    return {
+      parsedUrl: parsed,
+      hostname,
+      resolvedAddresses: [{ address: hostname, family: isIP(hostname) }],
+    };
+  }
+
+  const resolvedAddresses = await lookup(hostname, { all: true, verbatim: true });
+  if (resolvedAddresses.length === 0) {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'warn',
+      message: 'Attachment download blocked: DNS returned no addresses',
+      details: { url, hostname },
+    });
+    throw new Error(`Blocked URL: DNS resolution returned no addresses for "${hostname}"`);
+  }
+
+  for (const record of resolvedAddresses) {
+    try {
+      assertSafeIp(record.address);
+    } catch (error) {
+      recordSecurityEvent({
+        type: 'ssrf_blocked',
+        severity: 'critical',
+        message: 'Attachment download blocked: resolved IP denied',
+        details: {
+          url,
+          hostname,
+          resolvedAddress: record.address,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw error;
     }
   }
+
+  return {
+    parsedUrl: parsed,
+    hostname,
+    resolvedAddresses,
+  };
+}
+
+function createPinnedLookup(resolvedAddresses: ResolvedAddress[]) {
+  let index = 0;
+  return (
+    _hostname: string,
+    _options: unknown,
+    callback: (error: Error | null, address: string, family: number) => void
+  ) => {
+    const record = resolvedAddresses[index % resolvedAddresses.length];
+    index += 1;
+    callback(null, record.address, record.family);
+  };
+}
+
+async function fetchWithPinnedDns(
+  target: SafeUrlTarget,
+  headers: Record<string, string>
+): Promise<{ status: number; headers: Headers; buffer: Buffer }> {
+  return await new Promise((resolve, reject) => {
+    const requester = target.parsedUrl.protocol === 'https:' ? httpsRequest : httpRequest;
+    let settled = false;
+    let totalBytes = 0;
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    const finalizeResolve = (value: { status: number; headers: Headers; buffer: Buffer }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      resolve(value);
+    };
+    const finalizeReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      reject(error);
+    };
+    const req = requester(
+      target.parsedUrl,
+      {
+        method: 'GET',
+        headers,
+        lookup: isIP(target.hostname) ? undefined : createPinnedLookup(target.resolvedAddresses),
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => {
+          const bufferChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          totalBytes += bufferChunk.length;
+          if (totalBytes > MAX_ATTACHMENT_DOWNLOAD_BYTES) {
+            res.destroy?.();
+            req.destroy();
+            finalizeReject(
+              new Error(
+                `Attachment download exceeded maximum size of ${MAX_ATTACHMENT_DOWNLOAD_BYTES} bytes`
+              )
+            );
+            return;
+          }
+          chunks.push(bufferChunk);
+        });
+        res.on('end', () => {
+          const normalizedHeaders = new Headers();
+          Object.entries(res.headers).forEach(([key, value]) => {
+            if (Array.isArray(value)) {
+              normalizedHeaders.set(key, value.join(', '));
+            } else if (typeof value === 'string') {
+              normalizedHeaders.set(key, value);
+            }
+          });
+          finalizeResolve({
+            status: res.statusCode || 0,
+            headers: normalizedHeaders,
+            buffer: Buffer.concat(chunks),
+          });
+        });
+        res.on('error', (error) => {
+          finalizeReject(error instanceof Error ? error : new Error(String(error)));
+        });
+      }
+    );
+
+    timeoutHandle = setTimeout(() => {
+      req.destroy();
+      finalizeReject(
+        new Error(`Attachment download timed out after ${ATTACHMENT_DOWNLOAD_TIMEOUT_MS}ms`)
+      );
+    }, ATTACHMENT_DOWNLOAD_TIMEOUT_MS);
+    req.setTimeout?.(ATTACHMENT_DOWNLOAD_TIMEOUT_MS, () => {
+      req.destroy();
+      finalizeReject(
+        new Error(`Attachment download timed out after ${ATTACHMENT_DOWNLOAD_TIMEOUT_MS}ms`)
+      );
+    });
+    req.on('error', (error) => {
+      finalizeReject(error instanceof Error ? error : new Error(String(error)));
+    });
+    req.end();
+  });
 }
 
 /**
@@ -96,16 +375,28 @@ export async function downloadFile(
   const timestamp = Date.now();
   const localPath = path.join(mediaDir, `${timestamp}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`);
 
-  assertSafeUrl(url);
+  const safeTarget = await resolveSafeUrlTarget(url);
 
   const headers: Record<string, string> = { ...authHeaders };
-  const response = await fetch(url, { headers });
-  if (!response.ok) {
+  const response = await fetchWithPinnedDns(safeTarget, headers);
+  if (response.status >= 300 && response.status < 400) {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'critical',
+      message: 'Attachment download blocked: redirect response',
+      details: {
+        url,
+        status: response.status,
+        location: response.headers.get('location'),
+      },
+    });
+    throw new Error(`Blocked redirect while downloading attachment: ${response.status}`);
+  }
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(`Failed to download: ${response.status}`);
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  await fs.writeFile(localPath, buffer);
+  await fs.writeFile(localPath, response.buffer);
 
   return localPath;
 }

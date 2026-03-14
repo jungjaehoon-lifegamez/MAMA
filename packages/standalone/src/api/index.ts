@@ -16,10 +16,11 @@ import {
 import { createTokenRouter, initTokenUsageTable } from './token-handler.js';
 import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
-import { requireAuthForWrites } from './auth-middleware.js';
+import { requireAuth } from './auth-middleware.js';
 import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
+import { createSecurityMiddleware } from '../security/security-monitor.js';
 
 // Re-export types
 export * from './types.js';
@@ -104,6 +105,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   // Middleware
   app.use(express.json({ limit: '1mb' }));
+  app.use(createSecurityMiddleware());
 
   // CORS: allow only localhost/127.0.0.1 origins
   app.use((req, res, next) => {
@@ -123,7 +125,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   // Global auth gate for ALL /api/* routes
   // When MAMA_AUTH_TOKEN is set, every /api request must carry a valid Bearer token.
   // Without token configured, only localhost is allowed (isAuthenticated handles this).
-  app.use('/api', requireAuthForWrites);
+  app.use('/api', requireAuth);
 
   // Set Content-Type header for API responses only (exclude media endpoints)
   app.use('/api', (req, res, next) => {
@@ -142,20 +144,20 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     onHeartbeat,
   });
 
-  app.use('/api/cron', requireAuthForWrites, cronRouter);
-  app.use('/api/heartbeat', requireAuthForWrites, heartbeatRouter);
+  app.use('/api/cron', cronRouter);
+  app.use('/api/heartbeat', heartbeatRouter);
 
   // Mount token router if database is available
   if (db) {
     initTokenUsageTable(db);
     const tokenRouter = createTokenRouter(db);
-    app.use('/api/tokens', requireAuthForWrites, tokenRouter);
+    app.use('/api/tokens', tokenRouter);
   }
 
   // Mount skills router if registry is available
   if (skillRegistry) {
     const skillsRouter = createSkillsRouter(skillRegistry);
-    app.use('/api/skills', requireAuthForWrites, skillsRouter);
+    app.use('/api/skills', skillsRouter);
   }
 
   // Health check endpoint (watchdog)

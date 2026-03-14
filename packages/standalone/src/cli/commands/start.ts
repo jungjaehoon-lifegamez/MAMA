@@ -67,7 +67,18 @@ import { MetricsCleanup } from '../../observability/metrics-cleanup.js';
 import { HealthScoreService } from '../../observability/health-score.js';
 import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
-import { requireAuth, isAuthenticated, isLocalRequest } from '../../api/auth-middleware.js';
+import {
+  requireAuth,
+  isAuthenticated,
+  isLocalRequest,
+  getSecurityLogContext,
+  logUnauthorizedAttempt,
+} from '../../api/auth-middleware.js';
+import {
+  formatSecurityAlert,
+  recordSecurityEvent,
+  setSecurityAlertSender,
+} from '../../security/security-monitor.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 // Onboarding state imports removed — onboarding is handled by Setup Wizard only
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -93,6 +104,46 @@ import http from 'node:http';
 const API_PORT = 3847;
 /** Internal embedding server port (model inference, mobile chat, graph) */
 const EMBEDDING_PORT = 3849;
+
+interface SecurityAlertTarget {
+  gateway: 'discord' | 'slack';
+  channelId: string;
+}
+
+function parseSecurityAlertTargets(config: {
+  discord?: { default_channel_id?: string };
+  slack?: unknown;
+}): SecurityAlertTarget[] {
+  const rawTargets = process.env.MAMA_SECURITY_ALERT_CHANNELS;
+  if (rawTargets && rawTargets.trim()) {
+    return rawTargets
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [gateway, channelId] = entry.split(':', 2);
+        if ((gateway === 'discord' || gateway === 'slack') && channelId) {
+          return { gateway, channelId } as SecurityAlertTarget;
+        }
+        return null;
+      })
+      .filter((target): target is SecurityAlertTarget => target !== null);
+  }
+
+  if (config.discord?.default_channel_id) {
+    return [{ gateway: 'discord', channelId: config.discord.default_channel_id }];
+  }
+
+  const slackConfig = config.slack as
+    | { default_channel?: string; default_channel_id?: string }
+    | undefined;
+  const slackDefaultChannel = slackConfig?.default_channel || slackConfig?.default_channel_id;
+  if (slackDefaultChannel) {
+    return [{ gateway: 'slack', channelId: slackDefaultChannel }];
+  }
+
+  return [];
+}
 
 // MAMA embedding server (keeps model in memory)
 import type { Server as HttpServer } from 'node:http';
@@ -1602,6 +1653,45 @@ export async function runAgentLoop(
     healthCheckService.addGateway('slack', slackGateway);
   }
 
+  const securityAlertTargets = parseSecurityAlertTargets(config).filter((target) => {
+    if (target.gateway === 'discord') {
+      return !!discordGateway;
+    }
+    return !!slackGateway;
+  });
+  if (securityAlertTargets.length > 0) {
+    setSecurityAlertSender(async (event) => {
+      const message = formatSecurityAlert(event);
+      const results = await Promise.allSettled(
+        securityAlertTargets.map(async (target) => {
+          if (target.gateway === 'discord' && discordGateway) {
+            await discordGateway.sendMessage(target.channelId, message);
+            return;
+          }
+          if (target.gateway === 'slack' && slackGateway) {
+            await slackGateway.sendMessage(target.channelId, message);
+          }
+        })
+      );
+
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          const target = securityAlertTargets[index];
+          startLogger.warn('[SECURITY] Failed to deliver security alert to target', {
+            gateway: target?.gateway || 'unknown',
+            channelId: target?.channelId || 'unknown',
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          });
+        }
+      });
+    });
+  } else {
+    setSecurityAlertSender(null);
+    startLogger.warn(
+      '[SECURITY] No active security alert target configured. Set MAMA_SECURITY_ALERT_CHANNELS or configure an active Discord/Slack default channel.'
+    );
+  }
+
   // Wire cron results directly to gateways (bypasses OS agent entirely)
   // Instantiated for side effects: subscribes to cronEmitter events
   new CronResultRouter({
@@ -2315,6 +2405,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   apiServer.app.use('/graph', (req, res, next) => {
     const isRead = req.method === 'GET' || req.method === 'HEAD';
     if (!isRead && !isAuthenticated(req)) {
+      logUnauthorizedAttempt(req);
       res.status(401).json({
         error: true,
         code: 'UNAUTHORIZED',
@@ -2634,13 +2725,62 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     // Handle ALL WebSocket upgrades manually
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     apiServer.server.on('upgrade', (request: any, socket: any, head: any) => {
-      const url = new URL(request.url || '', `http://${request.headers.host}`);
+      let url: URL;
+      try {
+        url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+      } catch (error) {
+        startLogger.warn('[SECURITY] Malformed WebSocket upgrade URL rejected', {
+          rawUrl: request.url || null,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        socket.destroy();
+        return;
+      }
 
-      // WebSocket auth: require token for non-localhost connections
-      // Browsers can't set Authorization headers on WebSocket, so localhost is allowed
+      // WebSocket auth: require token for non-localhost connections.
+      // Browsers cannot set Authorization headers on WebSocket upgrades,
+      // so we allow query-string token auth for this path only.
       const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
-      if (adminToken && !isLocalRequest(request) && !isAuthenticated(request)) {
+      const context = getSecurityLogContext(request);
+      const isTrustedLocalUpgrade = isLocalRequest(request) && !context.viaTunnel;
+      if (adminToken && !isAuthenticated(request, { allowQueryToken: true })) {
+        const details = { hasQueryToken: url.searchParams.has('token') };
+        startLogger.warn('[SECURITY] Unauthorized WebSocket upgrade blocked', {
+          ...context,
+          ...details,
+          path: url.pathname,
+        });
+        recordSecurityEvent({
+          type: 'unauthorized_websocket_upgrade',
+          severity: 'warn',
+          message: 'Unauthorized WebSocket upgrade blocked',
+          ...context,
+          path: url.pathname,
+          details,
+        });
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      if (!adminToken && !isTrustedLocalUpgrade) {
+        const details = { hasQueryToken: url.searchParams.has('token') };
+        startLogger.warn(
+          '[SECURITY] Accepting non-localhost WebSocket upgrade without auth token configured',
+          {
+            ...context,
+            ...details,
+            path: url.pathname,
+          }
+        );
+        recordSecurityEvent({
+          type: 'unprotected_websocket_upgrade',
+          severity: 'critical',
+          message: 'Non-localhost WebSocket upgrade accepted without auth token configured',
+          ...context,
+          path: url.pathname,
+          details,
+        });
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
         socket.destroy();
         return;
       }
