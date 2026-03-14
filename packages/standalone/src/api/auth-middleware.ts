@@ -77,18 +77,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 }
 
 /**
- * Express middleware that rejects unauthenticated requests for write operations only.
- * GET/HEAD requests from localhost are allowed without auth.
- * POST/PUT/DELETE always require auth from non-localhost.
+ * Express middleware: localhost requests pass freely, tunnel/remote require auth for ALL methods.
+ * - Real localhost GET/POST/PUT/DELETE: allowed (local dashboard)
+ * - Tunnel/remote GET/POST/PUT/DELETE: requires Bearer token
  */
 export function requireAuthForWrites(req: Request, res: Response, next: NextFunction): void {
-  const isRead = req.method === 'GET' || req.method === 'HEAD';
-
-  if (isRead && isLocalRequest(req)) {
-    next();
-    return;
-  }
-
   if (!isAuthenticated(req)) {
     res.status(401).json({
       error: true,
