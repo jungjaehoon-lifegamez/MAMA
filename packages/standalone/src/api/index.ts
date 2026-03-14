@@ -112,6 +112,11 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     next();
   });
 
+  // Global auth gate for ALL /api/* routes
+  // When MAMA_AUTH_TOKEN is set, every /api request must carry a valid Bearer token.
+  // Without token configured, only localhost is allowed (isAuthenticated handles this).
+  app.use('/api', requireAuthForWrites);
+
   // Set Content-Type header for API responses only (exclude media endpoints)
   app.use('/api', (req, res, next) => {
     if (!req.path.startsWith('/media')) {
