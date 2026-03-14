@@ -391,7 +391,7 @@ pnpm vitest run -t "relevance scorer"
 
 ---
 
-**Node.js:** >= 22.0.0  
+**Node.js:** >= 22.13.0  
 **pnpm:** >= 8.0.0  
 **License:** MIT  
 **Author:** SpineLift Team
