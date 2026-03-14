@@ -89,7 +89,7 @@ npm install
 
 **Symptoms:**
 
-```
+```text
 Error: Cannot find module 'node:sqlite'
 ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite
 Could not load the "sharp" module using the current runtime

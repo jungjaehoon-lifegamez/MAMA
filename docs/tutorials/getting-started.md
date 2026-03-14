@@ -203,12 +203,6 @@ Expected: Before Claude responds, you'll see:
 /mama-list --limit 20
 ```
 
-# List 20 recent decisions
-
-/mama-list --limit 20
-
-````
-
 ---
 
 ## Step 6: Session Continuity 🔄
@@ -221,7 +215,7 @@ MAMA helps you pick up exactly where you left off:
 
 # When starting a new session:
 /mama-resume
-````
+```
 
 **What happens:**
 
