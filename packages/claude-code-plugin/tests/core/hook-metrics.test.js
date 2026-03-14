@@ -591,7 +591,7 @@ describe('Story M2.5: Hook Metrics & Logging', () => {
         fs.unlinkSync(METRICS_FILE);
       }
       if (fs.existsSync(LOG_DIR)) {
-        fs.rmdirSync(LOG_DIR, { recursive: true });
+        fs.rmSync(LOG_DIR, { recursive: true, force: true });
       }
 
       // Should create directory on first log
