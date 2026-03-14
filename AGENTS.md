@@ -356,7 +356,7 @@ pnpm vitest run -t "relevance scorer"
 
 5. **Backward Compatibility Checks Legacy Paths:** Database adapter checks `~/.spinelift/memories.db` for users upgrading from SpineLift. Auto-migration without user action.
 
-6. **Dead Code (PostgreSQL Statement Class):** `claude-code-plugin/src/core/db-adapter/statement.js` has PostgreSQL statement class that's never instantiated. Remove or complete multi-database support.
+6. **Plugin/Core Drift Risk:** `claude-code-plugin/src/core/` is a selective snapshot of `mama-core`, not a full 1:1 mirror. Verify duplicated-file assumptions before applying fixes across both trees.
 
 7. **Metrics Logged But Not Analyzed:** Hook metrics written to files (`mama-core/src/mama/hook-metrics.js`) but never aggregated or analyzed. Missing observability.
 

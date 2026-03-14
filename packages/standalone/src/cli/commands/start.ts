@@ -254,7 +254,10 @@ async function waitForPortAvailable(port: number, maxWaitMs: number = 5000): Pro
  * SECURITY P1: Validates health response before reuse
  * SECURITY P1: Uses port polling instead of fixed timeout
  */
-async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
+async function checkAndTakeoverExistingServer(
+  port: number,
+  shutdownToken: string | null
+): Promise<boolean> {
   const targetModel = getModelName();
   const targetDim = getEmbeddingDim();
   return new Promise((resolve) => {
@@ -313,10 +316,18 @@ async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
                   timeout: 2000,
                   // SECURITY P1: Pass shutdown token
                   headers: {
-                    'X-Shutdown-Token': process.env.MAMA_SHUTDOWN_TOKEN || '',
+                    'X-Shutdown-Token': shutdownToken || process.env.MAMA_SHUTDOWN_TOKEN || '',
                   },
                 },
-                async () => {
+                async (shutdownRes) => {
+                  if ((shutdownRes.statusCode ?? 0) < 200 || (shutdownRes.statusCode ?? 0) >= 300) {
+                    console.warn(
+                      `[EmbeddingServer] Takeover shutdown rejected with HTTP ${shutdownRes.statusCode ?? 0}`
+                    );
+                    resolve(false);
+                    return;
+                  }
+
                   console.log('[EmbeddingServer] MCP server shutdown requested');
                   // SECURITY P1: Use port polling instead of fixed timeout
                   const portAvailable = await waitForPortAvailable(port, 10000);
@@ -364,19 +375,20 @@ async function startEmbeddingServerIfAvailable(
   const port = EMBEDDING_PORT;
 
   try {
-    // Check if server already running
-    const existingHasChat = await checkAndTakeoverExistingServer(port);
-    if (existingHasChat) {
-      // Another Standalone is running with chat, no need to start
-      return;
-    }
-
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const embeddingServerModule = require('@jungjaehoon/mama-core/embedding-server');
     embeddingShutdownToken =
       typeof embeddingServerModule.SHUTDOWN_TOKEN === 'string'
         ? embeddingServerModule.SHUTDOWN_TOKEN
         : null;
+
+    // Check if server already running
+    const existingHasChat = await checkAndTakeoverExistingServer(port, embeddingShutdownToken);
+    if (existingHasChat) {
+      // Another Standalone is running with chat, no need to start
+      return;
+    }
+
     embeddingServer = await embeddingServerModule.startEmbeddingServer(port, {
       messageRouter,
       sessionStore,
