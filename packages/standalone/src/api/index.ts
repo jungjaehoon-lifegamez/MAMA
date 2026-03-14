@@ -94,6 +94,14 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   const app = express();
 
+  // Security headers
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    next();
+  });
+
   // Middleware
   app.use(express.json({ limit: '1mb' }));
 
