@@ -28,28 +28,12 @@ export interface AdapterConfig {
  */
 export function createAdapter(config: AdapterConfig = {}): DatabaseAdapter {
   const dbPath = config.dbPath || process.env.MAMA_DB_PATH;
-  const driver = process.env.MAMA_SQLITE_DRIVER || 'auto';
+  const driver = process.env.MAMA_SQLITE_DRIVER || 'node-sqlite';
 
-  if (driver === 'better-sqlite3') {
-    info('[db-adapter] Using better-sqlite3 adapter');
-    return new SQLiteAdapter({ dbPath });
+  if (driver !== 'node-sqlite' && driver !== 'auto') {
+    throw new Error(`Unsupported SQLite driver "${driver}". MAMA now requires node:sqlite.`);
   }
 
-  if (driver === 'node-sqlite') {
-    info('[db-adapter] Using node:sqlite adapter');
-    return new NodeSQLiteAdapter({ dbPath });
-  }
-
-  try {
-    const majorVersion = Number.parseInt(process.versions.node.split('.')[0], 10);
-    if (majorVersion >= 22) {
-      info('[db-adapter] Using node:sqlite adapter (auto)');
-      return new NodeSQLiteAdapter({ dbPath });
-    }
-  } catch {
-    // Fall through to better-sqlite3.
-  }
-
-  info('[db-adapter] Using better-sqlite3 adapter (auto fallback)');
+  info('[db-adapter] Using node:sqlite adapter');
   return new SQLiteAdapter({ dbPath });
 }

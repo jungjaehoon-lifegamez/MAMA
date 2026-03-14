@@ -52,10 +52,6 @@ importers:
       vitest:
         specifier: ^1.0.0
         version: 1.6.1(@types/node@25.3.0)
-    optionalDependencies:
-      better-sqlite3:
-        specifier: ^11.0.0
-        version: 11.10.0
 
   packages/mama-core:
     dependencies:
@@ -66,9 +62,6 @@ importers:
         specifier: ^8.19.0
         version: 8.19.0
     devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.0
-        version: 7.6.13
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.11
@@ -81,10 +74,6 @@ importers:
       vitest:
         specifier: ^1.0.0
         version: 1.6.1(@types/node@22.19.11)
-    optionalDependencies:
-      better-sqlite3:
-        specifier: ^11.0.0
-        version: 11.10.0
 
   packages/mcp-server:
     dependencies:
@@ -156,9 +145,6 @@ importers:
         specifier: ^8.18.0
         version: 8.19.0
     devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
@@ -198,10 +184,6 @@ importers:
       vitest:
         specifier: ^1.0.0
         version: 1.6.1(@types/node@22.19.11)
-    optionalDependencies:
-      better-sqlite3:
-        specifier: ^11.10.0
-        version: 11.10.0
 
 packages:
 
@@ -986,9 +968,6 @@ packages:
   '@slack/web-api@7.14.1':
     resolution: {integrity: sha512-RoygyteJeFswxDPJjUMESn9dldWVMD2xUcHHd9DenVavSfVC6FeVnSdDerOO7m8LLvw4Q132nQM4hX8JiF7dng==}
     engines: {node: '>= 18', npm: '>= 8.6.0'}
-
-  '@types/better-sqlite3@7.6.13':
-    resolution: {integrity: sha512-NMv9ASNARoKksWtsq/SHakpYAYnhBrQgGD8zkLYk/jaK8jUGn08CfEdTRgYhMypUQAfzSP8W6gNLe0q19/t4VA==}
 
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
@@ -3850,10 +3829,6 @@ snapshots:
       retry: 0.13.1
     transitivePeerDependencies:
       - debug
-
-  '@types/better-sqlite3@7.6.13':
-    dependencies:
-      '@types/node': 22.19.11
 
   '@types/body-parser@1.19.6':
     dependencies:
