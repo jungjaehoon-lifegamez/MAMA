@@ -50,11 +50,11 @@ function isTunnelRequest(req: IncomingMessage): boolean {
   return !!(req.headers['cf-connecting-ip'] || req.headers['cf-ray']);
 }
 
-function isCloudflareAccessEnabled(): boolean {
+export function isCloudflareAccessEnabled(): boolean {
   return process.env.MAMA_TRUST_CLOUDFLARE_ACCESS === 'true';
 }
 
-function hasCloudflareAccessIdentity(req: IncomingMessage): boolean {
+export function hasCloudflareAccessIdentity(req: IncomingMessage): boolean {
   const headers = req.headers;
   return (
     typeof headers['cf-access-jwt-assertion'] === 'string' ||
@@ -63,7 +63,7 @@ function hasCloudflareAccessIdentity(req: IncomingMessage): boolean {
   );
 }
 
-function isTrustedCloudflareAccessRequest(req: IncomingMessage): boolean {
+export function isTrustedCloudflareAccessRequest(req: IncomingMessage): boolean {
   if (!isCloudflareAccessEnabled()) {
     return false;
   }

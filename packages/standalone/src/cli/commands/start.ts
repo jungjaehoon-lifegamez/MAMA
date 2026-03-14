@@ -70,6 +70,7 @@ import {
   requireAuth,
   isAuthenticated,
   isLocalRequest,
+  isTrustedCloudflareAccessRequest,
   getSecurityLogContext,
   logUnauthorizedAttempt,
 } from '../../api/auth-middleware.js';
@@ -2760,7 +2761,12 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
       const context = getSecurityLogContext(request);
       const isTrustedLocalUpgrade = isLocalRequest(request) && !context.viaTunnel;
-      if (adminToken && !isAuthenticated(request, { allowQueryToken: true })) {
+      const isTrustedCloudflareUpgrade = isTrustedCloudflareAccessRequest(request);
+      if (
+        adminToken &&
+        !isAuthenticated(request, { allowQueryToken: true }) &&
+        !isTrustedCloudflareUpgrade
+      ) {
         const details = { hasQueryToken: url.searchParams.has('token') };
         startLogger.warn('[SECURITY] Unauthorized WebSocket upgrade blocked', {
           ...context,
@@ -2779,10 +2785,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         socket.destroy();
         return;
       }
-      if (!adminToken && !isTrustedLocalUpgrade) {
+      if (!adminToken && !isTrustedLocalUpgrade && !isTrustedCloudflareUpgrade) {
         const details = { hasQueryToken: url.searchParams.has('token') };
         startLogger.warn(
-          '[SECURITY] Accepting non-localhost WebSocket upgrade without auth token configured',
+          '[SECURITY] Blocking non-localhost WebSocket upgrade without auth token configured',
           {
             ...context,
             ...details,
@@ -2792,7 +2798,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         recordSecurityEvent({
           type: 'unprotected_websocket_upgrade',
           severity: 'critical',
-          message: 'Non-localhost WebSocket upgrade accepted without auth token configured',
+          message: 'Non-localhost WebSocket upgrade blocked without auth token configured',
           ...context,
           path: url.pathname,
           details,
