@@ -15,8 +15,24 @@
 
 import path from 'path';
 import os from 'os';
-import type Database from 'better-sqlite3';
 import { ClaudeDaemon } from './daemon.js';
+
+interface SQLiteRunResult {
+  changes: number;
+  lastInsertRowid: number | bigint;
+}
+
+interface SQLiteStatementLike {
+  all: (...params: unknown[]) => unknown[];
+  get: (...params: unknown[]) => unknown;
+  run: (...params: unknown[]) => SQLiteRunResult;
+}
+
+interface SQLiteDatabaseLike {
+  exec: (sql: string) => void;
+  prepare: (sql: string) => SQLiteStatementLike;
+  close: () => void;
+}
 
 /**
  * Default database path
@@ -99,7 +115,7 @@ export interface CreateSessionResult {
 export class SessionManager {
   private dbPath: string;
   private sessions: Map<string, MemorySession>;
-  private db: Database.Database | null;
+  private db: SQLiteDatabaseLike | null;
   private initialized: boolean;
 
   /**
@@ -122,10 +138,29 @@ export class SessionManager {
     }
 
     try {
-      // Dynamically import better-sqlite3 to handle cases where it's not installed
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const Database = require('better-sqlite3') as typeof import('better-sqlite3');
-      this.db = new Database(this.dbPath);
+      // Prefer node:sqlite on Node 22+, fall back to optional better-sqlite3.
+      let db: SQLiteDatabaseLike | null = null;
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { DatabaseSync } = require('node:sqlite') as {
+          DatabaseSync: new (dbPath: string) => SQLiteDatabaseLike;
+        };
+        db = new DatabaseSync(this.dbPath);
+      } catch {
+        // Fall through to better-sqlite3.
+      }
+
+      if (!db) {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const Database = require('better-sqlite3') as
+          | (new (dbPath: string) => SQLiteDatabaseLike)
+          | { default: new (dbPath: string) => SQLiteDatabaseLike };
+        const DatabaseCtor = 'default' in Database ? Database.default : Database;
+        db = new DatabaseCtor(this.dbPath);
+      }
+
+      this.db = db;
 
       // Create sessions table if not exists
       this.db.exec(CREATE_SESSIONS_TABLE);

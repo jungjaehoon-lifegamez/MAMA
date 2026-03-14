@@ -5,9 +5,9 @@
  * Singleton per database path; uses WAL mode for concurrent reads.
  */
 
-import Database from 'better-sqlite3';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
+import Database, { type SQLiteDatabase, type SQLiteStatement } from '../sqlite.js';
 
 export interface MetricRecord {
   name: string;
@@ -43,8 +43,8 @@ export interface MetricAggregation {
 
 export class MetricsStore {
   private static instances: Map<string, MetricsStore> = new Map<string, MetricsStore>();
-  private db: Database.Database;
-  private insertStmt: Database.Statement;
+  private db: SQLiteDatabase;
+  private insertStmt: SQLiteStatement;
 
   private constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });

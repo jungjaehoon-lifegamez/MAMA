@@ -3,14 +3,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
+import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
 import { createMockMamaApi, type SearchResult } from '../../src/gateways/context-injector.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
 
 describe('MessageRouter', () => {
-  let db: Database.Database;
+  let db: SQLiteDatabase;
   let sessionStore: SessionStore;
   let router: MessageRouter;
 
