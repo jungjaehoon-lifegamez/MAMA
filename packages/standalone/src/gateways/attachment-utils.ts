@@ -20,6 +20,12 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const logger = new DebugLogger('AttachmentUtils');
+const MAX_ATTACHMENT_DOWNLOAD_BYTES = Number(
+  process.env.MAMA_ATTACHMENT_MAX_DOWNLOAD_BYTES || 25 * 1024 * 1024
+);
+const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = Number(
+  process.env.MAMA_ATTACHMENT_DOWNLOAD_TIMEOUT_MS || 15_000
+);
 
 /**
  * Validate that a URL is safe to fetch (SSRF prevention).
@@ -65,6 +71,22 @@ function assertSafeIpv6(address: string): void {
     const mappedIpv4 = normalized.slice('::ffff:'.length);
     if (isIP(mappedIpv4) === 4) {
       assertSafeIpv4(mappedIpv4);
+      return;
+    }
+
+    const hextets = mappedIpv4
+      .split(':')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (hextets.length === 2 && hextets.every((part) => /^[0-9a-f]{1,4}$/i.test(part))) {
+      const values = hextets.map((part) => Number.parseInt(part, 16));
+      const dottedIpv4 = [
+        (values[0] >> 8) & 0xff,
+        values[0] & 0xff,
+        (values[1] >> 8) & 0xff,
+        values[1] & 0xff,
+      ].join('.');
+      assertSafeIpv4(dottedIpv4);
       return;
     }
   }
@@ -238,6 +260,31 @@ async function fetchWithPinnedDns(
 ): Promise<{ status: number; headers: Headers; buffer: Buffer }> {
   return await new Promise((resolve, reject) => {
     const requester = target.parsedUrl.protocol === 'https:' ? httpsRequest : httpRequest;
+    let settled = false;
+    let totalBytes = 0;
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    const finalizeResolve = (value: { status: number; headers: Headers; buffer: Buffer }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      resolve(value);
+    };
+    const finalizeReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      reject(error);
+    };
     const req = requester(
       target.parsedUrl,
       {
@@ -248,7 +295,19 @@ async function fetchWithPinnedDns(
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          const bufferChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          totalBytes += bufferChunk.length;
+          if (totalBytes > MAX_ATTACHMENT_DOWNLOAD_BYTES) {
+            res.destroy?.();
+            req.destroy();
+            finalizeReject(
+              new Error(
+                `Attachment download exceeded maximum size of ${MAX_ATTACHMENT_DOWNLOAD_BYTES} bytes`
+              )
+            );
+            return;
+          }
+          chunks.push(bufferChunk);
         });
         res.on('end', () => {
           const normalizedHeaders = new Headers();
@@ -259,16 +318,33 @@ async function fetchWithPinnedDns(
               normalizedHeaders.set(key, value);
             }
           });
-          resolve({
+          finalizeResolve({
             status: res.statusCode || 0,
             headers: normalizedHeaders,
             buffer: Buffer.concat(chunks),
           });
         });
+        res.on('error', (error) => {
+          finalizeReject(error instanceof Error ? error : new Error(String(error)));
+        });
       }
     );
 
-    req.on('error', reject);
+    timeoutHandle = setTimeout(() => {
+      req.destroy();
+      finalizeReject(
+        new Error(`Attachment download timed out after ${ATTACHMENT_DOWNLOAD_TIMEOUT_MS}ms`)
+      );
+    }, ATTACHMENT_DOWNLOAD_TIMEOUT_MS);
+    req.setTimeout?.(ATTACHMENT_DOWNLOAD_TIMEOUT_MS, () => {
+      req.destroy();
+      finalizeReject(
+        new Error(`Attachment download timed out after ${ATTACHMENT_DOWNLOAD_TIMEOUT_MS}ms`)
+      );
+    });
+    req.on('error', (error) => {
+      finalizeReject(error instanceof Error ? error : new Error(String(error)));
+    });
     req.end();
   });
 }

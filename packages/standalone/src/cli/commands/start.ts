@@ -2780,6 +2780,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
           path: url.pathname,
           details,
         });
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        socket.destroy();
+        return;
       }
 
       if (url.pathname === '/setup-ws') {

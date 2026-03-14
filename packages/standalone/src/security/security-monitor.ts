@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Request, Response, NextFunction } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { getForwardedClientAddress, isLocalAddress } from './trusted-proxy.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -78,16 +79,8 @@ let alertSender: SecurityAlertSender | null = null;
 const lastAlertAt = new Map<string, number>();
 const incidentIds = new Map<string, string>();
 const pendingTasks = new Set<Promise<void>>();
-const TRUSTED_PROXY_IPS = new Set([
-  '127.0.0.1',
-  '::1',
-  '::ffff:127.0.0.1',
-  ...(process.env.MAMA_TRUSTED_PROXY_IPS || '')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean),
-]);
 let denylistWriteChain: Promise<void> = Promise.resolve();
+const incidentUpdateChains = new Map<string, Promise<void>>();
 
 function buildFingerprint(event: SecurityEvent): string {
   return JSON.stringify([
@@ -127,14 +120,6 @@ function getRiskWeight(severity: SecuritySeverity): number {
   }
 }
 
-function isLocalAddress(address: string | null | undefined): boolean {
-  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
-}
-
-function isTrustedProxyPeer(address: string | null | undefined): boolean {
-  return !!address && TRUSTED_PROXY_IPS.has(address);
-}
-
 function pruneSuspicionScores(now = Date.now()): void {
   for (const [key, value] of suspicionScores.entries()) {
     if (now - value.updatedAt > SECURITY_CACHE_ENTRY_TTL_MS) {
@@ -169,22 +154,7 @@ function getClientAddressFromRequestLike(req: {
   headers: Record<string, unknown>;
   socket?: { remoteAddress?: string | null };
 }): string {
-  const remoteAddress = req.socket?.remoteAddress || null;
-  if (!isTrustedProxyPeer(remoteAddress)) {
-    return remoteAddress || 'unknown';
-  }
-
-  const cfConnectingIp = req.headers['cf-connecting-ip'];
-  if (typeof cfConnectingIp === 'string' && cfConnectingIp.trim()) {
-    return cfConnectingIp.trim();
-  }
-
-  const forwardedFor = req.headers['x-forwarded-for'];
-  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
-    return forwardedFor.split(',')[0].trim();
-  }
-
-  return req.socket?.remoteAddress || 'unknown';
+  return getForwardedClientAddress(req);
 }
 
 function getPathFromRequestLike(req: {
@@ -535,12 +505,41 @@ async function withSerializedDenylistWrite<T>(operation: () => Promise<T>): Prom
 
   await previous.catch(() => undefined);
 
-  const releaseLock = await acquireDenylistLock();
+  let releaseLock: (() => Promise<void>) | null = null;
+  try {
+    releaseLock = await acquireDenylistLock();
+  } catch (error) {
+    releaseQueue();
+    throw error;
+  }
   try {
     return await operation();
   } finally {
-    await releaseLock().catch(() => undefined);
+    await releaseLock?.().catch(() => undefined);
     releaseQueue();
+  }
+}
+
+async function withSerializedIncidentUpdate<T>(
+  incidentId: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previous = incidentUpdateChains.get(incidentId) || Promise.resolve();
+  let releaseQueue!: () => void;
+  const nextChain = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  incidentUpdateChains.set(incidentId, nextChain);
+
+  await previous.catch(() => undefined);
+
+  try {
+    return await operation();
+  } finally {
+    releaseQueue();
+    if (incidentUpdateChains.get(incidentId) === nextChain) {
+      incidentUpdateChains.delete(incidentId);
+    }
   }
 }
 
@@ -633,41 +632,43 @@ async function preserveEvidence(event: SecurityEvent): Promise<IncidentSummary> 
   await mkdir(incidentDir, { recursive: true });
   await appendFile(timelinePath, `${JSON.stringify(event)}\n`, 'utf8');
 
-  const previous = await readIncidentSummary(summaryPath);
-  const highestSeverity =
-    previous && getRiskWeight(previous.highestSeverity) > getRiskWeight(event.severity)
-      ? previous.highestSeverity
-      : event.severity;
+  return await withSerializedIncidentUpdate(incidentId, async () => {
+    const previous = await readIncidentSummary(summaryPath);
+    const highestSeverity =
+      previous && getRiskWeight(previous.highestSeverity) > getRiskWeight(event.severity)
+        ? previous.highestSeverity
+        : event.severity;
 
-  const summary: IncidentSummary = {
-    incidentId,
-    clientAddress: event.clientAddress || previous?.clientAddress || null,
-    remoteAddress: event.remoteAddress || previous?.remoteAddress || null,
-    forwardedFor: event.forwardedFor || previous?.forwardedFor || null,
-    cfConnectingIp: event.cfConnectingIp || previous?.cfConnectingIp || null,
-    cfRay: event.cfRay || previous?.cfRay || null,
-    path: event.path || previous?.path || null,
-    method: event.method || previous?.method || null,
-    firstSeen: previous?.firstSeen || event.timestamp || new Date().toISOString(),
-    lastSeen: event.timestamp || new Date().toISOString(),
-    eventCount: (previous?.eventCount || 0) + 1,
-    highestSeverity,
-    summary: `${event.message} (${event.type})`,
-    latestEvent: event,
-    attribution: previous?.attribution || attribution,
-    evidenceJsonPath: summaryPath,
-    timelinePath,
-    abuseReportPath,
-    denylistCandidatePath: getDenylistJsonPath(),
-    cloudflareCustomListPath: getCloudflareCustomListCsvPath(),
-    cloudflareWafExpressionPath: getCloudflareWafExpressionPath(),
-  };
+    const summary: IncidentSummary = {
+      incidentId,
+      clientAddress: event.clientAddress || previous?.clientAddress || null,
+      remoteAddress: event.remoteAddress || previous?.remoteAddress || null,
+      forwardedFor: event.forwardedFor || previous?.forwardedFor || null,
+      cfConnectingIp: event.cfConnectingIp || previous?.cfConnectingIp || null,
+      cfRay: event.cfRay || previous?.cfRay || null,
+      path: event.path || previous?.path || null,
+      method: event.method || previous?.method || null,
+      firstSeen: previous?.firstSeen || event.timestamp || new Date().toISOString(),
+      lastSeen: event.timestamp || new Date().toISOString(),
+      eventCount: (previous?.eventCount || 0) + 1,
+      highestSeverity,
+      summary: `${event.message} (${event.type})`,
+      latestEvent: event,
+      attribution: previous?.attribution || attribution,
+      evidenceJsonPath: summaryPath,
+      timelinePath,
+      abuseReportPath,
+      denylistCandidatePath: getDenylistJsonPath(),
+      cloudflareCustomListPath: getCloudflareCustomListCsvPath(),
+      cloudflareWafExpressionPath: getCloudflareWafExpressionPath(),
+    };
 
-  await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8');
-  await writeFile(abuseReportPath, formatAbuseReport(incidentId, summary), 'utf8');
-  await writeDenylistCandidate(summary);
+    await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf8');
+    await writeFile(abuseReportPath, formatAbuseReport(incidentId, summary), 'utf8');
+    await writeDenylistCandidate(summary);
 
-  return summary;
+    return summary;
+  });
 }
 
 export function setSecurityAlertSender(sender: SecurityAlertSender | null): void {
@@ -684,6 +685,7 @@ export function resetSecurityMonitorForTests(): void {
   incidentIds.clear();
   attributionCache.clear();
   denylistWriteChain = Promise.resolve();
+  incidentUpdateChains.clear();
 }
 
 export async function flushSecurityMonitor(): Promise<void> {
