@@ -112,6 +112,7 @@ interface SecurityAlertTarget {
 
 function parseSecurityAlertTargets(config: {
   discord?: { default_channel_id?: string };
+  slack?: unknown;
 }): SecurityAlertTarget[] {
   const rawTargets = process.env.MAMA_SECURITY_ALERT_CHANNELS;
   if (rawTargets && rawTargets.trim()) {
@@ -131,6 +132,14 @@ function parseSecurityAlertTargets(config: {
 
   if (config.discord?.default_channel_id) {
     return [{ gateway: 'discord', channelId: config.discord.default_channel_id }];
+  }
+
+  const slackConfig = config.slack as
+    | { default_channel?: string; default_channel_id?: string }
+    | undefined;
+  const slackDefaultChannel = slackConfig?.default_channel || slackConfig?.default_channel_id;
+  if (slackDefaultChannel) {
+    return [{ gateway: 'slack', channelId: slackDefaultChannel }];
   }
 
   return [];
@@ -1644,7 +1653,12 @@ export async function runAgentLoop(
     healthCheckService.addGateway('slack', slackGateway);
   }
 
-  const securityAlertTargets = parseSecurityAlertTargets(config);
+  const securityAlertTargets = parseSecurityAlertTargets(config).filter((target) => {
+    if (target.gateway === 'discord') {
+      return !!discordGateway;
+    }
+    return !!slackGateway;
+  });
   if (securityAlertTargets.length > 0) {
     setSecurityAlertSender(async (event) => {
       const message = formatSecurityAlert(event);
@@ -1659,7 +1673,7 @@ export async function runAgentLoop(
   } else {
     setSecurityAlertSender(null);
     startLogger.warn(
-      '[SECURITY] No security alert target configured. Set MAMA_SECURITY_ALERT_CHANNELS or discord.default_channel_id.'
+      '[SECURITY] No active security alert target configured. Set MAMA_SECURITY_ALERT_CHANNELS or configure an active Discord/Slack default channel.'
     );
   }
 
@@ -2702,9 +2716,9 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       // Browsers cannot set Authorization headers on WebSocket upgrades,
       // so we allow query-string token auth for this path only.
       const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
-      const isLocalUpgrade = isLocalRequest(request);
-      if (adminToken && !isLocalUpgrade && !isAuthenticated(request, { allowQueryToken: true })) {
-        const context = getSecurityLogContext(request);
+      const context = getSecurityLogContext(request);
+      const isTrustedLocalUpgrade = isLocalRequest(request) && !context.viaTunnel;
+      if (adminToken && !isAuthenticated(request, { allowQueryToken: true })) {
         const details = { hasQueryToken: url.searchParams.has('token') };
         startLogger.warn('[SECURITY] Unauthorized WebSocket upgrade blocked', {
           ...context,
@@ -2723,8 +2737,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
         socket.destroy();
         return;
       }
-      if (!adminToken && !isLocalUpgrade) {
-        const context = getSecurityLogContext(request);
+      if (!adminToken && !isTrustedLocalUpgrade) {
         const details = { hasQueryToken: url.searchParams.has('token') };
         startLogger.warn(
           '[SECURITY] Accepting non-localhost WebSocket upgrade without auth token configured',

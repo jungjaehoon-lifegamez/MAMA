@@ -623,12 +623,12 @@ export function recordSecurityEvent(event: SecurityEvent): void {
       })
   );
 
-  if (!shouldSendAlert(normalized)) {
+  if (!shouldSendAlert(normalized) || !alertSender) {
     return;
   }
 
   trackBackgroundTask(
-    alertSender!(normalized).catch((error) => {
+    alertSender(normalized).catch((error) => {
       logger.error('Failed to deliver security alert', error);
     })
   );

@@ -594,7 +594,9 @@ describe('GatewayToolExecutor', () => {
   describe('Bash safety checks', () => {
     it.each([
       ['rm -rf $HOME', 'Cannot stop mama-os'],
+      ['rm --recursive --force /', 'Cannot stop mama-os'],
       ['chmod u+s /tmp/evil', 'Blocked: command contains a restricted pattern'],
+      ['chmod 4755 /tmp/evil', 'Blocked: command contains a restricted pattern'],
       ["python -c 'print(1)'", 'Blocked: command contains a restricted pattern'],
       ["php -r 'echo 1;'", 'Blocked: command contains a restricted pattern'],
       [
@@ -611,6 +613,19 @@ describe('GatewayToolExecutor', () => {
       expect(result).toMatchObject({
         success: false,
         error: expect.stringContaining(expectedError),
+      });
+    });
+
+    it('allows non-setuid chmod octal modes', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setAgentContext(createViewerContext());
+
+      const result = await executor.execute('Bash', {
+        command: 'chmod 0755 does-not-exist || true',
+      });
+
+      expect(result).toMatchObject({
+        success: true,
       });
     });
   });

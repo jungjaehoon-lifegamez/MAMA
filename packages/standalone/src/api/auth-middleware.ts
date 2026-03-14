@@ -141,14 +141,14 @@ function getRequestToken(req: IncomingMessage, options: AuthOptions = {}): strin
 /**
  * Check if request is authenticated.
  *
- * - If no token configured: allows localhost only
+ * - If no token configured: allows direct localhost only
  * - If token configured + real localhost (no tunnel headers): allows without token
  * - If token configured + tunnel/remote: requires Bearer token
  */
 export function isAuthenticated(req: IncomingMessage, options: AuthOptions = {}): boolean {
   const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
   if (!adminToken) {
-    return isLocalRequest(req);
+    return isLocalRequest(req) && !isTunnelRequest(req);
   }
 
   // Real localhost (not via tunnel) — allow without token for local dashboard
