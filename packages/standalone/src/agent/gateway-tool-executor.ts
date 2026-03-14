@@ -21,6 +21,7 @@ import {
   unlinkSync,
   realpathSync,
 } from 'fs';
+import { createHash } from 'crypto';
 import { join, dirname, resolve, relative, isAbsolute, basename } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
@@ -76,6 +77,19 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const securityLogger = new DebugLogger('SecurityAudit');
+
+function sanitizeCommandForAudit(command: string): { commandHash: string; commandPreview: string } {
+  const commandHash = createHash('sha256').update(command).digest('hex');
+  const commandPreview = command
+    .replace(
+      /\b(token|password|secret|key|authorization|auth)\b\s*(=|:)\s*([^\s"'`|;&]+)/gi,
+      '$1$2***'
+    )
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/=-]+\b/gi, '$1 ***')
+    .slice(0, 200);
+
+  return { commandHash, commandPreview };
+}
 
 /**
  * Discord gateway interface for sending messages
@@ -539,9 +553,10 @@ export class GatewayToolExecutor {
     const destructive =
       /(systemctl\s+(?:--user\s+)?(?:stop|disable)\s+mama(?:-os)?\b|(?:kill|pkill|killall)\b[^\n]*\bmama(?:-os)?\b|\brm\b(?:\s+(?:-[^\n\s]*[rf][^\n\s]*|--recursive|--force))+\s+(?:\/(?:\s|$)|~(?:\/|\s|$)|\$HOME(?:\/|\s|$)|\/home(?:\/|\s|$)))/i;
     if (destructive.test(command)) {
+      const audit = sanitizeCommandForAudit(command);
       const details = {
         category: 'destructive',
-        command,
+        ...audit,
         source: this.currentContext?.source || null,
         sessionId: this.currentContext?.session?.sessionId || null,
       };
@@ -579,10 +594,11 @@ export class GatewayToolExecutor {
 
     for (const pattern of dangerousPatterns) {
       if (pattern.test(command)) {
+        const audit = sanitizeCommandForAudit(command);
         const details = {
           category: 'pattern',
           pattern: pattern.toString(),
-          command,
+          ...audit,
           source: this.currentContext?.source || null,
           sessionId: this.currentContext?.session?.sessionId || null,
         };
