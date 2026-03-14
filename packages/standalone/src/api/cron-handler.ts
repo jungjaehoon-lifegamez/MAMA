@@ -42,6 +42,17 @@ function validateChannel(channel: string | undefined): void {
   }
 }
 
+function validateCronFrequency(cronExpr: string): void {
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length >= 6) {
+    throw new ApiError(
+      'Sub-minute cron schedules are not allowed. Use a standard 5-part cron expression (minimum interval: 1 minute).',
+      400,
+      'VALIDATION_ERROR'
+    );
+  }
+}
+
 function validatePromptLength(prompt: string | undefined): void {
   if (prompt && prompt.length > MAX_PROMPT_LENGTH) {
     throw new ApiError(
@@ -205,6 +216,7 @@ export function createCronRouter(
       const body = req.body as CreateCronJobRequest;
 
       validateRequired(body as unknown as Record<string, unknown>, ['name', 'cron_expr', 'prompt']);
+      validateCronFrequency(body.cron_expr);
       validatePromptLength(body.prompt);
       validateChannel(body.channel);
 
@@ -255,6 +267,9 @@ export function createCronRouter(
       // First get current values
       const currentJob = scheduler.getJob(id)!;
 
+      if (body.cron_expr) {
+        validateCronFrequency(body.cron_expr);
+      }
       validatePromptLength(body.prompt);
       validateChannel(body.channel);
 

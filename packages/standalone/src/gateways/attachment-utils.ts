@@ -17,6 +17,60 @@ const { DebugLogger } = debugLogger as unknown as {
 const logger = new DebugLogger('AttachmentUtils');
 
 /**
+ * Validate that a URL is safe to fetch (SSRF prevention).
+ * Blocks requests to internal/private networks, loopback, and suspicious TLDs.
+ */
+function assertSafeUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Blocked URL: unsupported protocol "${parsed.protocol}"`);
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  // Block loopback and well-known internal hostnames
+  if (
+    hostname === 'localhost' ||
+    hostname === '0.0.0.0' ||
+    hostname === '[::]' ||
+    hostname === '[::1]'
+  ) {
+    throw new Error(`Blocked URL: loopback/internal hostname "${hostname}"`);
+  }
+
+  // Block suspicious TLDs
+  if (
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.internal') ||
+    hostname.endsWith('.localhost')
+  ) {
+    throw new Error(`Blocked URL: internal domain "${hostname}"`);
+  }
+
+  // Block private/reserved IP ranges
+  const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipMatch) {
+    const [, a, b] = ipMatch.map(Number);
+    if (
+      a === 127 || // 127.0.0.0/8 loopback
+      a === 10 || // 10.0.0.0/8 private
+      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
+      (a === 192 && b === 168) || // 192.168.0.0/16 private
+      a === 0 || // 0.0.0.0/8
+      (a === 169 && b === 254) // 169.254.0.0/16 link-local
+    ) {
+      throw new Error(`Blocked URL: private/reserved IP "${hostname}"`);
+    }
+  }
+}
+
+/**
  * Download a file from URL to local inbound media directory.
  *
  * @param url - File URL to download
@@ -41,6 +95,8 @@ export async function downloadFile(
 
   const timestamp = Date.now();
   const localPath = path.join(mediaDir, `${timestamp}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`);
+
+  assertSafeUrl(url);
 
   const headers: Record<string, string> = { ...authHeaders };
   const response = await fetch(url, { headers });

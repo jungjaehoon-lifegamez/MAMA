@@ -16,6 +16,7 @@ import {
 import { createTokenRouter, initTokenUsageTable } from './token-handler.js';
 import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
+import { requireAuthForWrites } from './auth-middleware.js';
 import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
@@ -93,8 +94,36 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   const app = express();
 
+  // Security headers
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    next();
+  });
+
   // Middleware
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
+
+  // CORS: allow only localhost/127.0.0.1 origins
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
+  // Global auth gate for ALL /api/* routes
+  // When MAMA_AUTH_TOKEN is set, every /api request must carry a valid Bearer token.
+  // Without token configured, only localhost is allowed (isAuthenticated handles this).
+  app.use('/api', requireAuthForWrites);
 
   // Set Content-Type header for API responses only (exclude media endpoints)
   app.use('/api', (req, res, next) => {
@@ -113,20 +142,20 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     onHeartbeat,
   });
 
-  app.use('/api/cron', cronRouter);
-  app.use('/api/heartbeat', heartbeatRouter);
+  app.use('/api/cron', requireAuthForWrites, cronRouter);
+  app.use('/api/heartbeat', requireAuthForWrites, heartbeatRouter);
 
   // Mount token router if database is available
   if (db) {
     initTokenUsageTable(db);
     const tokenRouter = createTokenRouter(db);
-    app.use('/api/tokens', tokenRouter);
+    app.use('/api/tokens', requireAuthForWrites, tokenRouter);
   }
 
   // Mount skills router if registry is available
   if (skillRegistry) {
     const skillsRouter = createSkillsRouter(skillRegistry);
-    app.use('/api/skills', skillsRouter);
+    app.use('/api/skills', requireAuthForWrites, skillsRouter);
   }
 
   // Health check endpoint (watchdog)
@@ -278,6 +307,9 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
               // Auto-kill process if explicitly enabled (opt-in)
               if (enableAutoKillPort && processInfo.trim()) {
+                if (!Number.isInteger(attemptPort)) {
+                  throw new Error(`Invalid port number: ${attemptPort}`);
+                }
                 console.warn(
                   `⚠️  AUTO-KILL ENABLED: Attempting to kill process on port ${attemptPort}`
                 );
