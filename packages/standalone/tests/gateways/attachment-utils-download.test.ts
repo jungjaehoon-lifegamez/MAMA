@@ -32,6 +32,7 @@ function queueRequestResponse(
     const req = new EventEmitter() as EventEmitter & {
       end: () => void;
       destroy: () => void;
+      setTimeout: (_ms: number, _callback: () => void) => void;
     };
     req.end = () => {
       const res = new EventEmitter() as EventEmitter & {
@@ -47,6 +48,7 @@ function queueRequestResponse(
       res.emit('end');
     };
     req.destroy = () => undefined;
+    req.setTimeout = () => undefined;
     return req;
   });
 }
@@ -100,6 +102,16 @@ describe('downloadFile SSRF guards', () => {
 
   it('blocks IPv6-mapped IPv4 loopback addresses', async () => {
     lookupMock.mockResolvedValue([{ address: '::ffff:127.0.0.1', family: 6 }]);
+
+    const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
+
+    await expect(
+      downloadFile('https://attacker.example/payload.txt', 'payload.txt')
+    ).rejects.toThrow('private/reserved IP "127.0.0.1"');
+  });
+
+  it('blocks hex-form IPv4-mapped IPv6 loopback addresses', async () => {
+    lookupMock.mockResolvedValue([{ address: '::ffff:7f00:1', family: 6 }]);
 
     const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
 
