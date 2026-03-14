@@ -973,6 +973,15 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // ── Auth gate: all routes below require authentication ──
+    // Static assets (viewer, css, js, icons) are served above without auth.
+    // All data API routes below must pass isAuthenticated().
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, code: 'UNAUTHORIZED', message: 'Authentication required.' }));
+      return true;
+    }
+
     // Route: GET /graph/similar - find similar decisions (check before /graph)
     if (pathname === '/graph/similar' && req.method === 'GET') {
       console.log('[GraphHandler] Routing to handleSimilarRequest');
