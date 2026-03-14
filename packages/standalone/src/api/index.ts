@@ -16,6 +16,7 @@ import {
 import { createTokenRouter, initTokenUsageTable } from './token-handler.js';
 import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
+import { requireAuthForWrites } from './auth-middleware.js';
 import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
@@ -128,20 +129,20 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     onHeartbeat,
   });
 
-  app.use('/api/cron', cronRouter);
-  app.use('/api/heartbeat', heartbeatRouter);
+  app.use('/api/cron', requireAuthForWrites, cronRouter);
+  app.use('/api/heartbeat', requireAuthForWrites, heartbeatRouter);
 
   // Mount token router if database is available
   if (db) {
     initTokenUsageTable(db);
     const tokenRouter = createTokenRouter(db);
-    app.use('/api/tokens', tokenRouter);
+    app.use('/api/tokens', requireAuthForWrites, tokenRouter);
   }
 
   // Mount skills router if registry is available
   if (skillRegistry) {
     const skillsRouter = createSkillsRouter(skillRegistry);
-    app.use('/api/skills', skillsRouter);
+    app.use('/api/skills', requireAuthForWrites, skillsRouter);
   }
 
   // Health check endpoint (watchdog)
