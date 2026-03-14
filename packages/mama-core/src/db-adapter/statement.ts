@@ -103,6 +103,8 @@ export class SQLiteStatement extends Statement {
   }
 }
 
+export { NodeSQLiteStatement } from './node-sqlite-statement.js';
+
 /**
  * PostgreSQL statement wrapper (pg)
  *
