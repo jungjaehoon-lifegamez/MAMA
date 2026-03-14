@@ -433,28 +433,27 @@ export class SessionManager {
         process.off('exit', this.handleProcessExit);
       }
 
-      this.cleanupPromise = Promise.resolve().then(() => {
-        console.error('[SessionManager] Process exiting, cleaning up sessions...');
-        if (this.db && this.initialized) {
-          for (const [sessionId, session] of this.sessions.entries()) {
-            try {
-              session.daemon.kill();
-            } catch {
-              // Best effort - process is already exiting.
-            }
-
-            this.sessions.delete(sessionId);
-            const stmt = this.db.prepare(`
-              UPDATE sessions
-              SET status = 'terminated', last_active = datetime('now')
-              WHERE id = ?
-            `);
-            stmt.run(sessionId);
+      this.cleanupPromise = Promise.resolve();
+      console.error('[SessionManager] Process exiting, cleaning up sessions...');
+      if (this.db && this.initialized) {
+        for (const [sessionId, session] of this.sessions.entries()) {
+          try {
+            session.daemon.kill();
+          } catch {
+            // Best effort - process is already exiting.
           }
-        }
 
-        this.close();
-      });
+          this.sessions.delete(sessionId);
+          const stmt = this.db.prepare(`
+            UPDATE sessions
+            SET status = 'terminated', last_active = datetime('now')
+            WHERE id = ?
+          `);
+          stmt.run(sessionId);
+        }
+      }
+
+      this.close();
     };
 
     this.handleProcessExit = cleanup;
