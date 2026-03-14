@@ -455,7 +455,7 @@ export class AgentLoop {
         // MAMA OS is a headless daemon (no TTY) — Claude CLI's interactive permission prompts
         // cannot work. Security is enforced by MAMA's own RoleManager layer (config.yaml roles).
         // DO NOT gate this on env vars — MAMA manages permissions via its config, not Claude CLI.
-        dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? false,
+        dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? true,
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
         // Code-Act: available as optional tool alongside direct tools (no disallowedTools)
