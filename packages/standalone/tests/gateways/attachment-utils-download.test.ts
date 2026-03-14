@@ -21,6 +21,10 @@ describe('downloadFile SSRF guards', () => {
   });
 
   afterEach(async () => {
+    const { flushSecurityMonitor, resetSecurityMonitorForTests } =
+      await import('../../src/security/security-monitor.js');
+    await flushSecurityMonitor();
+    resetSecurityMonitorForTests();
     if (originalHome === undefined) {
       delete process.env.HOME;
     } else {

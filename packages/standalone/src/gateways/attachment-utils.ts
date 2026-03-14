@@ -7,6 +7,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { MessageAttachment, ContentBlock } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { recordSecurityEvent } from '../security/security-monitor.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -87,10 +88,22 @@ async function assertSafeUrl(url: string): Promise<void> {
   try {
     parsed = new URL(url);
   } catch {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'warn',
+      message: 'Attachment download blocked: invalid URL',
+      details: { url },
+    });
     throw new Error(`Invalid URL: ${url}`);
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'warn',
+      message: 'Attachment download blocked: unsupported protocol',
+      details: { url, protocol: parsed.protocol },
+    });
     throw new Error(`Blocked URL: unsupported protocol "${parsed.protocol}"`);
   }
 
@@ -103,6 +116,12 @@ async function assertSafeUrl(url: string): Promise<void> {
     hostname === '::' ||
     hostname === '::1'
   ) {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'critical',
+      message: 'Attachment download blocked: loopback/internal hostname',
+      details: { url, hostname },
+    });
     throw new Error(`Blocked URL: loopback/internal hostname "${hostname}"`);
   }
 
@@ -112,21 +131,62 @@ async function assertSafeUrl(url: string): Promise<void> {
     hostname.endsWith('.internal') ||
     hostname.endsWith('.localhost')
   ) {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'critical',
+      message: 'Attachment download blocked: internal domain',
+      details: { url, hostname },
+    });
     throw new Error(`Blocked URL: internal domain "${hostname}"`);
   }
 
   if (isIP(hostname)) {
-    assertSafeIp(hostname);
+    try {
+      assertSafeIp(hostname);
+    } catch (error) {
+      recordSecurityEvent({
+        type: 'ssrf_blocked',
+        severity: 'critical',
+        message: 'Attachment download blocked: literal IP denied',
+        details: {
+          url,
+          hostname,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw error;
+    }
     return;
   }
 
   const resolvedAddresses = await lookup(hostname, { all: true, verbatim: true });
   if (resolvedAddresses.length === 0) {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'warn',
+      message: 'Attachment download blocked: DNS returned no addresses',
+      details: { url, hostname },
+    });
     throw new Error(`Blocked URL: DNS resolution returned no addresses for "${hostname}"`);
   }
 
   for (const record of resolvedAddresses) {
-    assertSafeIp(record.address);
+    try {
+      assertSafeIp(record.address);
+    } catch (error) {
+      recordSecurityEvent({
+        type: 'ssrf_blocked',
+        severity: 'critical',
+        message: 'Attachment download blocked: resolved IP denied',
+        details: {
+          url,
+          hostname,
+          resolvedAddress: record.address,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw error;
+    }
   }
 }
 
@@ -161,6 +221,16 @@ export async function downloadFile(
   const headers: Record<string, string> = { ...authHeaders };
   const response = await fetch(url, { headers, redirect: 'manual' });
   if (response.status >= 300 && response.status < 400) {
+    recordSecurityEvent({
+      type: 'ssrf_blocked',
+      severity: 'critical',
+      message: 'Attachment download blocked: redirect response',
+      details: {
+        url,
+        status: response.status,
+        location: response.headers.get('location'),
+      },
+    });
     throw new Error(`Blocked redirect while downloading attachment: ${response.status}`);
   }
   if (!response.ok) {
