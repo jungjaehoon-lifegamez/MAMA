@@ -21,24 +21,18 @@ export function isLocalRequest(req: IncomingMessage): boolean {
  * Check if request is authenticated.
  *
  * - If MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN is set: requires valid Authorization header
+ *   (localhost bypass DISABLED — Cloudflare Tunnel makes all requests appear local)
  * - If no token is configured: allows localhost requests only
  */
 export function isAuthenticated(req: IncomingMessage): boolean {
   const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
   if (!adminToken) {
-    if (isLocalRequest(req)) {
-      return true;
-    }
-    return false;
+    return isLocalRequest(req);
   }
 
-  // Token is configured — always require it (even for localhost when tunnel may be proxying)
+  // Token is configured — ALWAYS require Bearer token, no localhost bypass
   const authHeader = req.headers.authorization;
   if (!authHeader) {
-    // Allow localhost without header when token is set (backward compat for local dashboard)
-    if (isLocalRequest(req)) {
-      return true;
-    }
     return false;
   }
 
