@@ -67,6 +67,7 @@ import { MetricsCleanup } from '../../observability/metrics-cleanup.js';
 import { HealthScoreService } from '../../observability/health-score.js';
 import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
+import { requireAuth } from '../../api/auth-middleware.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 // Onboarding state imports removed — onboarding is handled by Setup Wizard only
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -1912,7 +1913,7 @@ export async function runAgentLoop(
   });
 
   // Add Discord message sending endpoint
-  apiServer.app.post('/api/discord/send', async (req, res) => {
+  apiServer.app.post('/api/discord/send', requireAuth, async (req, res) => {
     try {
       const { channelId, message } = req.body;
       if (!channelId || !message) {
@@ -1934,7 +1935,7 @@ export async function runAgentLoop(
   });
 
   // Add Slack message/file sending endpoint
-  apiServer.app.post('/api/slack/send', async (req, res) => {
+  apiServer.app.post('/api/slack/send', requireAuth, async (req, res) => {
     try {
       const { channelId, message, filePath, caption } = req.body;
       if (!channelId || (!message && !filePath)) {
@@ -2006,7 +2007,7 @@ export async function runAgentLoop(
   });
 
   // Add Discord cron job endpoint (run prompt and send result to Discord)
-  apiServer.app.post('/api/discord/cron', async (req, res) => {
+  apiServer.app.post('/api/discord/cron', requireAuth, async (req, res) => {
     try {
       const { channelId, prompt } = req.body;
       if (!channelId || !prompt) {
@@ -2028,7 +2029,7 @@ export async function runAgentLoop(
   });
 
   // Report endpoint - collect data and generate report (OpenClaw migration)
-  apiServer.app.post('/api/report', async (req, res) => {
+  apiServer.app.post('/api/report', requireAuth, async (req, res) => {
     const { exec } = await import('child_process');
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
@@ -2116,7 +2117,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   });
 
   // Screenshot endpoint - take HTML screenshot and send to Discord
-  apiServer.app.post('/api/screenshot', async (req, res) => {
+  apiServer.app.post('/api/screenshot', requireAuth, async (req, res) => {
     const { spawn } = await import('child_process');
     const path = await import('path');
 
@@ -2224,7 +2225,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   // Send image endpoint
   // SECURITY P0: Path traversal prevention with 4-layer validation
-  apiServer.app.post('/api/discord/image', async (req, res) => {
+  apiServer.app.post('/api/discord/image', requireAuth, async (req, res) => {
     const path = await import('path');
     const fs = await import('fs/promises');
     try {
@@ -2505,8 +2506,8 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     }
   });
 
-  apiServer.app.delete('/api/playgrounds/:slug', (req, res) => {
-    const { slug } = req.params;
+  apiServer.app.delete('/api/playgrounds/:slug', requireAuth, (req, res) => {
+    const slug = req.params.slug as string;
     if (!slug || /[^a-z0-9-]/.test(slug)) {
       res.status(400).json({ error: 'Invalid slug' });
       return;
