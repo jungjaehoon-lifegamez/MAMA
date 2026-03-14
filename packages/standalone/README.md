@@ -34,7 +34,7 @@ npx @jungjaehoon/mama-os init
 
 ## Prerequisites
 
-- **Node.js** >= 22.0.0 (required for native TypeScript support)
+- **Node.js** >= 22.13.0 (required for unflagged `node:sqlite` support)
 - **At least one authenticated backend CLI**
   - Claude CLI: `npm install -g @anthropic-ai/claude-code` then `claude`
   - Codex CLI: `npm install -g @openai/codex` then `codex login`
