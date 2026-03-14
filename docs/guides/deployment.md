@@ -62,7 +62,7 @@ Synchronize versions across these files before deployment:
 | `packages/mcp-server/package.json`                       | `version` | 1.9.1           |
 | `packages/mama-core/package.json`                        | `version` | 1.3.1           |
 | `packages/claude-code-plugin/package.json`               | `version` | 1.8.1           |
-| `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.8.0           |
+| `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.8.1           |
 
 ### Version Update Example
 
