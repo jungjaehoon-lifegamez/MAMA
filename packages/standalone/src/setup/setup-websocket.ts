@@ -211,7 +211,7 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
         sessionId,
         model: config.agent.model,
         systemPrompt: SETUP_SYSTEM_PROMPT,
-        dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? false,
+        dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
         requestTimeout: config.agent.timeout,
       });
     } catch (error) {
