@@ -8,7 +8,7 @@
  * - Writes refreshed tokens back to file
  */
 
-import { readFile, writeFile, rename } from 'node:fs/promises';
+import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -291,7 +291,16 @@ export class OAuthManager {
       // Atomic write: write to temp file, then rename to prevent corruption on crash
       const tmpPath = `${this.credentialsPath}.${randomBytes(4).toString('hex')}.tmp`;
       await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
-      await rename(tmpPath, this.credentialsPath);
+      try {
+        await rename(tmpPath, this.credentialsPath);
+      } catch (renameError) {
+        try {
+          await unlink(tmpPath);
+        } catch {
+          // Ignore cleanup failure and rethrow original rename error below.
+        }
+        throw renameError;
+      }
     } catch (error) {
       if (error instanceof OAuthError) {
         throw error;
