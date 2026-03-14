@@ -57,7 +57,7 @@ export class CronWorker {
         sessionId: `cron-worker-${Date.now()}`,
         model: this.model,
         systemPrompt: this.systemPrompt,
-        dangerouslySkipPermissions: process.env.MAMA_TRUSTED_ENV === 'true',
+        dangerouslySkipPermissions: true,
         allowedTools: CRON_ALLOWED_TOOLS,
         pluginDir: undefined,
       });
