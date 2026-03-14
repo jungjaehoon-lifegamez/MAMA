@@ -74,6 +74,17 @@ export class CronScheduler {
       throw new SchedulerError(`Invalid cron expression: ${config.cronExpr}`, 'INVALID_CRON');
     }
 
+    // Reject sub-minute schedules (6-part cron expressions with seconds field)
+    // Standard 5-part expressions have a minimum interval of 1 minute.
+    // 6-part expressions (with seconds) allow sub-minute scheduling which can cause DoS.
+    const parts = config.cronExpr.trim().split(/\s+/);
+    if (parts.length >= 6) {
+      throw new SchedulerError(
+        'Sub-minute cron schedules are not allowed. Use a standard 5-part cron expression (minimum interval: 1 minute).',
+        'INVALID_CRON'
+      );
+    }
+
     // Create job
     const job: InternalJob = {
       ...config,

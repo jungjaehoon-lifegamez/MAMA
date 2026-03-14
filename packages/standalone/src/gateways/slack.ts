@@ -125,7 +125,6 @@ export class SlackGateway extends BaseGateway {
       this.multiAgentHandler = new MultiAgentSlackHandler(
         options.multiAgentConfig,
         {
-          // Headless daemon — no interactive permission prompts possible
           dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
         },
         options.multiAgentRuntime
@@ -820,7 +819,6 @@ export class SlackGateway extends BaseGateway {
         this.multiAgentHandler = new MultiAgentSlackHandler(
           config,
           {
-            // Headless daemon — no interactive permission prompts possible
             dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
           },
           this.multiAgentRuntime

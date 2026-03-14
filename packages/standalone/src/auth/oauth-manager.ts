@@ -8,10 +8,11 @@
  * - Writes refreshed tokens back to file
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 import type {
   ClaudeCredentialsFile,
@@ -287,7 +288,10 @@ export class OAuthManager {
         expiresAt: token.expiresAt,
       };
 
-      await writeFile(this.credentialsPath, JSON.stringify(data, null, 2), 'utf-8');
+      // Atomic write: write to temp file, then rename to prevent corruption on crash
+      const tmpPath = `${this.credentialsPath}.${randomBytes(4).toString('hex')}.tmp`;
+      await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+      await rename(tmpPath, this.credentialsPath);
     } catch (error) {
       if (error instanceof OAuthError) {
         throw error;

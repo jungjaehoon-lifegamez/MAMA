@@ -9,9 +9,9 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { timingSafeEqual } from 'node:crypto';
 import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
+import { isAuthenticated } from './auth-middleware.js';
 import type {
   GraphNode,
   GraphEdge,
@@ -973,6 +973,15 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // ── Auth gate: all routes below require authentication ──
+    // Static assets (viewer, css, js, icons) are served above without auth.
+    // All data API routes below must pass isAuthenticated().
+    if (!isAuthenticated(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, code: 'UNAUTHORIZED', message: 'Authentication required.' }));
+      return true;
+    }
+
     // Route: GET /graph/similar - find similar decisions (check before /graph)
     if (pathname === '/graph/similar' && req.method === 'GET') {
       console.log('[GraphHandler] Routing to handleSimilarRequest');
@@ -1745,38 +1754,7 @@ function maskToken(token: string): string {
   return '***[redacted]***';
 }
 
-function isLocalRequest(req: IncomingMessage): boolean {
-  const remoteAddr = req.socket?.remoteAddress;
-  return remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1';
-}
-
-function isAuthenticated(req: IncomingMessage): boolean {
-  const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
-  if (!adminToken) {
-    // Allow local requests without token (setup wizard, local dashboard)
-    if (isLocalRequest(req)) {
-      return true;
-    }
-    console.warn(
-      '[GraphAPI] No admin token configured. Set MAMA_AUTH_TOKEN or MAMA_SERVER_TOKEN environment variable.'
-    );
-    return false;
-  }
-
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return false;
-  }
-
-  // Support both "Bearer token" and "token" formats
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-
-  // Use timing-safe comparison to prevent timing side-channel attacks
-  if (token.length !== adminToken.length) {
-    return false;
-  }
-  return timingSafeEqual(Buffer.from(token), Buffer.from(adminToken));
-}
+// isLocalRequest and isAuthenticated imported from ./auth-middleware.js
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function maskAgentsTokens(agents: Record<string, any>): Record<string, any> {
