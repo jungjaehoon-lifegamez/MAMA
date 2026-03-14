@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 - **GitHub Actions runtime refresh** — CI, publish, release, pages, and marketplace sync workflows now use current `actions/checkout`, `actions/setup-node`, and `pnpm/action-setup` releases; GitHub release creation moved from `softprops/action-gh-release` to `gh release create` to avoid deprecated Node 20 action runtimes in future runs
 
+## [0.14.2] / mama-core [1.3.2] / mcp-server [1.9.2] / plugin [1.8.2] - 2026-03-14
+
+### Fixed
+
+- **Cloudflare Access external auth** — Standalone now supports an explicit `MAMA_TRUST_CLOUDFLARE_ACCESS=true` mode so trusted Cloudflare Tunnel/Access requests with validated Access identity headers can reach protected `/api/*` routes without also requiring a separate Bearer token; direct remote requests and untrusted forwarded headers remain blocked
+
 ## [0.14.0] / mama-core [1.3.0] / mcp-server [1.9.0] / plugin [1.8.0] - 2026-03-14
 
 ### Security
