@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { IncomingMessage } from 'node:http';
-import { isAuthenticated } from '../../src/api/auth-middleware.js';
+import {
+  getClientAddress,
+  getSecurityLogContext,
+  isAuthenticated,
+} from '../../src/api/auth-middleware.js';
 
 function createRequest({
   remoteAddress,
@@ -77,5 +81,39 @@ describe('auth-middleware', () => {
 
     expect(isAuthenticated(req)).toBe(false);
     expect(isAuthenticated(req, { allowQueryToken: true })).toBe(true);
+  });
+
+  it('prefers cf-connecting-ip for attacker address logging', () => {
+    const req = createRequest({
+      remoteAddress: '127.0.0.1',
+      headers: {
+        'cf-connecting-ip': '198.51.100.7',
+        'x-forwarded-for': '203.0.113.9, 127.0.0.1',
+        'cf-ray': 'ray-123',
+      },
+      url: '/api/config?token=test',
+    });
+
+    expect(getClientAddress(req)).toBe('198.51.100.7');
+    expect(getSecurityLogContext(req)).toMatchObject({
+      clientAddress: '198.51.100.7',
+      remoteAddress: '127.0.0.1',
+      forwardedFor: '203.0.113.9, 127.0.0.1',
+      cfConnectingIp: '198.51.100.7',
+      cfRay: 'ray-123',
+      path: '/api/config',
+      viaTunnel: true,
+    });
+  });
+
+  it('falls back to x-forwarded-for when cf-connecting-ip is absent', () => {
+    const req = createRequest({
+      remoteAddress: '127.0.0.1',
+      headers: {
+        'x-forwarded-for': '203.0.113.9, 127.0.0.1',
+      },
+    });
+
+    expect(getClientAddress(req)).toBe('203.0.113.9');
   });
 });

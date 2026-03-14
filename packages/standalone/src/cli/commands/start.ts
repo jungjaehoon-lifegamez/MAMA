@@ -67,7 +67,18 @@ import { MetricsCleanup } from '../../observability/metrics-cleanup.js';
 import { HealthScoreService } from '../../observability/health-score.js';
 import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
-import { requireAuth, isAuthenticated, isLocalRequest } from '../../api/auth-middleware.js';
+import {
+  requireAuth,
+  isAuthenticated,
+  isLocalRequest,
+  getSecurityLogContext,
+  logUnauthorizedAttempt,
+} from '../../api/auth-middleware.js';
+import {
+  formatSecurityAlert,
+  recordSecurityEvent,
+  setSecurityAlertSender,
+} from '../../security/security-monitor.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 // Onboarding state imports removed — onboarding is handled by Setup Wizard only
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -93,6 +104,37 @@ import http from 'node:http';
 const API_PORT = 3847;
 /** Internal embedding server port (model inference, mobile chat, graph) */
 const EMBEDDING_PORT = 3849;
+
+interface SecurityAlertTarget {
+  gateway: 'discord' | 'slack';
+  channelId: string;
+}
+
+function parseSecurityAlertTargets(config: {
+  discord?: { default_channel_id?: string };
+}): SecurityAlertTarget[] {
+  const rawTargets = process.env.MAMA_SECURITY_ALERT_CHANNELS;
+  if (rawTargets && rawTargets.trim()) {
+    return rawTargets
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [gateway, channelId] = entry.split(':', 2);
+        if ((gateway === 'discord' || gateway === 'slack') && channelId) {
+          return { gateway, channelId } as SecurityAlertTarget;
+        }
+        return null;
+      })
+      .filter((target): target is SecurityAlertTarget => target !== null);
+  }
+
+  if (config.discord?.default_channel_id) {
+    return [{ gateway: 'discord', channelId: config.discord.default_channel_id }];
+  }
+
+  return [];
+}
 
 // MAMA embedding server (keeps model in memory)
 import type { Server as HttpServer } from 'node:http';
@@ -1602,6 +1644,25 @@ export async function runAgentLoop(
     healthCheckService.addGateway('slack', slackGateway);
   }
 
+  const securityAlertTargets = parseSecurityAlertTargets(config);
+  if (securityAlertTargets.length > 0) {
+    setSecurityAlertSender(async (event) => {
+      const message = formatSecurityAlert(event);
+      for (const target of securityAlertTargets) {
+        if (target.gateway === 'discord' && discordGateway) {
+          await discordGateway.sendMessage(target.channelId, message);
+        } else if (target.gateway === 'slack' && slackGateway) {
+          await slackGateway.sendMessage(target.channelId, message);
+        }
+      }
+    });
+  } else {
+    setSecurityAlertSender(null);
+    startLogger.warn(
+      '[SECURITY] No security alert target configured. Set MAMA_SECURITY_ALERT_CHANNELS or discord.default_channel_id.'
+    );
+  }
+
   // Wire cron results directly to gateways (bypasses OS agent entirely)
   // Instantiated for side effects: subscribes to cronEmitter events
   new CronResultRouter({
@@ -2315,6 +2376,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   apiServer.app.use('/graph', (req, res, next) => {
     const isRead = req.method === 'GET' || req.method === 'HEAD';
     if (!isRead && !isAuthenticated(req)) {
+      logUnauthorizedAttempt(req);
       res.status(401).json({
         error: true,
         code: 'UNAUTHORIZED',
@@ -2642,18 +2704,44 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
       const isLocalUpgrade = isLocalRequest(request);
       if (adminToken && !isLocalUpgrade && !isAuthenticated(request, { allowQueryToken: true })) {
+        const context = getSecurityLogContext(request);
+        const details = { hasQueryToken: url.searchParams.has('token') };
+        startLogger.warn('[SECURITY] Unauthorized WebSocket upgrade blocked', {
+          ...context,
+          ...details,
+          path: url.pathname,
+        });
+        recordSecurityEvent({
+          type: 'unauthorized_websocket_upgrade',
+          severity: 'warn',
+          message: 'Unauthorized WebSocket upgrade blocked',
+          ...context,
+          path: url.pathname,
+          details,
+        });
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
       }
       if (!adminToken && !isLocalUpgrade) {
+        const context = getSecurityLogContext(request);
+        const details = { hasQueryToken: url.searchParams.has('token') };
         startLogger.warn(
-          '[WS] Accepting non-localhost WebSocket upgrade without auth token configured',
+          '[SECURITY] Accepting non-localhost WebSocket upgrade without auth token configured',
           {
-            remoteAddress: request.socket?.remoteAddress,
+            ...context,
+            ...details,
             path: url.pathname,
           }
         );
+        recordSecurityEvent({
+          type: 'unprotected_websocket_upgrade',
+          severity: 'critical',
+          message: 'Non-localhost WebSocket upgrade accepted without auth token configured',
+          ...context,
+          path: url.pathname,
+          details,
+        });
       }
 
       if (url.pathname === '/setup-ws') {
