@@ -6,7 +6,7 @@
 
 import express, { type Express, type Router } from 'express';
 import { createServer, type Server as HttpServer } from 'node:http';
-import type Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../sqlite.js';
 import { createCronRouter, InMemoryLogStore, type ExecutionLogStore } from './cron-handler.js';
 import {
   createHeartbeatRouter,
@@ -49,7 +49,7 @@ export interface ApiServerOptions {
   /** Enable automatic process killing on port conflicts (default: false) */
   enableAutoKillPort?: boolean;
   /** Sessions database instance (for token tracking) */
-  db?: Database.Database;
+  db?: SQLiteDatabase;
   /** Skill registry instance */
   skillRegistry?: SkillRegistry;
   /** Health score service for /api/metrics/health */

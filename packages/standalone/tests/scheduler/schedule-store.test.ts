@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
+import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { ScheduleStore } from '../../src/scheduler/schedule-store.js';
 import { CronScheduler } from '../../src/scheduler/cron-scheduler.js';
 import {
@@ -13,7 +13,7 @@ import {
 } from '../../src/scheduler/recovery.js';
 
 describe('ScheduleStore', () => {
-  let db: Database.Database;
+  let db: SQLiteDatabase;
   let store: ScheduleStore;
 
   beforeEach(() => {
@@ -517,7 +517,7 @@ describe('ScheduleStore', () => {
 });
 
 describe('Recovery', () => {
-  let db: Database.Database;
+  let db: SQLiteDatabase;
   let store: ScheduleStore;
   let scheduler: CronScheduler;
 

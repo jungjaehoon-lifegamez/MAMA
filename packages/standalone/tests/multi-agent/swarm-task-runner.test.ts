@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { unlinkSync, existsSync } from 'fs';
-import type _Database from 'better-sqlite3';
+import type { SQLiteDatabase as _Database } from '../../src/sqlite.js';
 
 describe('SwarmTaskRunner', () => {
   let runner: SwarmTaskRunner;

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../../src/sqlite.js';
 import {
   initSwarmDb,
   createTask,
@@ -19,7 +19,7 @@ import {
 import type { CreateTaskParams } from '../../src/multi-agent/swarm/swarm-db.js';
 
 describe('Swarm DB', () => {
-  let db: Database.Database;
+  let db: SQLiteDatabase;
 
   beforeEach(() => {
     // Use in-memory SQLite for each test

@@ -14,7 +14,7 @@
  * @version 1.0
  */
 
-import Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../../sqlite.js';
 import { randomUUID } from 'crypto';
 import {
   initSwarmDb,
@@ -45,7 +45,7 @@ export interface SwarmProgress {
  * Provides high-level APIs for task registration, progress tracking, and wave advancement.
  */
 export class SwarmManager {
-  private db: Database.Database;
+  private db: SQLiteDatabase;
   private _closed = false;
 
   /**
@@ -229,7 +229,7 @@ export class SwarmManager {
    *
    * @returns Database instance
    */
-  getDatabase(): Database.Database {
+  getDatabase(): SQLiteDatabase {
     this.ensureOpen();
     return this.db;
   }
