@@ -113,6 +113,13 @@ async function main() {
     process.exit(0);
   }
 
+  // Test mode: skip embeddings entirely for deterministic, fast hook tests.
+  if (process.env.MAMA_FORCE_TIER_3 === 'true') {
+    markFileEdited(filePath);
+    console.error(JSON.stringify({ decision: 'allow', reason: '' }));
+    process.exit(0);
+  }
+
   try {
     await initDB();
 
