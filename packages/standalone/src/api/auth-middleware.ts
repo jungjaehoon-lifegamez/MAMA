@@ -10,7 +10,7 @@ import type { IncomingMessage } from 'http';
 import type { Request, Response, NextFunction } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { recordSecurityEvent } from '../security/security-monitor.js';
-import { getForwardedClientAddress } from '../security/trusted-proxy.js';
+import { getForwardedClientAddress, isTrustedProxyPeer } from '../security/trusted-proxy.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -48,6 +48,31 @@ export function isLocalRequest(req: IncomingMessage): boolean {
  */
 function isTunnelRequest(req: IncomingMessage): boolean {
   return !!(req.headers['cf-connecting-ip'] || req.headers['cf-ray']);
+}
+
+function isCloudflareAccessEnabled(): boolean {
+  return process.env.MAMA_TRUST_CLOUDFLARE_ACCESS === 'true';
+}
+
+function hasCloudflareAccessIdentity(req: IncomingMessage): boolean {
+  const headers = req.headers;
+  return (
+    typeof headers['cf-access-jwt-assertion'] === 'string' ||
+    typeof headers['cf-access-authenticated-user-email'] === 'string' ||
+    typeof headers['cf-access-authenticated-user-uuid'] === 'string'
+  );
+}
+
+function isTrustedCloudflareAccessRequest(req: IncomingMessage): boolean {
+  if (!isCloudflareAccessEnabled()) {
+    return false;
+  }
+
+  if (!isTrustedProxyPeer(req.socket?.remoteAddress || null)) {
+    return false;
+  }
+
+  return hasCloudflareAccessIdentity(req);
 }
 
 export function getClientAddress(req: IncomingMessage): string {
@@ -143,11 +168,18 @@ function getRequestToken(req: IncomingMessage, options: AuthOptions = {}): strin
 export function isAuthenticated(req: IncomingMessage, options: AuthOptions = {}): boolean {
   const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
   if (!adminToken) {
+    if (isTrustedCloudflareAccessRequest(req)) {
+      return true;
+    }
     return isLocalRequest(req) && !isTunnelRequest(req);
   }
 
   // Real localhost (not via tunnel) — allow without token for local dashboard
   if (isLocalRequest(req) && !isTunnelRequest(req)) {
+    return true;
+  }
+
+  if (isTrustedCloudflareAccessRequest(req)) {
     return true;
   }
 
