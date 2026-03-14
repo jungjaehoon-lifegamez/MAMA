@@ -31,7 +31,7 @@ v1.1 introduces a new **Link Governance** policy:
 ## Prerequisites
 
 - MAMA v0 installed
-- Node.js >= 18.0.0
+- Node.js >= 22.0.0
 - pnpm >= 8.0.0
 - DB file access permissions
 
@@ -435,7 +435,7 @@ node scripts/verify-migration.js
 
 ```bash
 # Check Node version
-node --version  # >= 18.0.0
+node --version  # >= 22.0.0
 
 # Reinstall dependencies
 pnpm install

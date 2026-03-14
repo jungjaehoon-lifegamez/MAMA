@@ -4,7 +4,7 @@
  * Centralized tier validation module for MAMA.
  * Validates system requirements and determines tier status (1 or 2).
  *
- * Tier 1: Full features (Node.js 18+, SQLite, Embeddings, Database)
+ * Tier 1: Full features (Node.js 22+, SQLite, Embeddings, Database)
  * Tier 2: Degraded mode (missing one or more requirements)
  *
  * @module tier-validator
@@ -36,7 +36,7 @@ export function checkNodeVersion(): CheckResult {
     const nodeVersion = process.versions.node;
     const majorVersion = parseInt(nodeVersion.split('.')[0], 10);
 
-    if (majorVersion >= 18) {
+    if (majorVersion >= 22) {
       return {
         status: 'pass',
         details: `v${nodeVersion}`,
@@ -45,7 +45,7 @@ export function checkNodeVersion(): CheckResult {
 
     return {
       status: 'fail',
-      details: `v${nodeVersion} (requires 18+)`,
+      details: `v${nodeVersion} (requires 22+)`,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

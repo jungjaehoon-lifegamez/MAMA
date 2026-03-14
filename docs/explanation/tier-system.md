@@ -31,8 +31,8 @@ MAMA defines multiple tier systems. The first is the **Search Capability Tiers**
 
 ### Requirements
 
-1. **Node.js >= 18.0.0** - Required for native modules
-2. **Build tools installed** - For better-sqlite3 compilation
+1. **Node.js >= 22.0.0** - Required for built-in `node:sqlite`
+2. **Embedding model available** - Model downloads on first successful run
 3. **Embedding model loaded** - First query loads model (~987ms)
 
 ### Performance
@@ -56,7 +56,7 @@ MAMA defines multiple tier systems. The first is the **Search Capability Tiers**
 Tier 2 automatically activates when:
 
 1. **Embedding model fails to load**
-   - Missing native modules
+   - Missing or incompatible Node.js runtime
    - Incompatible Node.js version
    - Insufficient memory
 
@@ -199,23 +199,13 @@ node --version
 sudo apt-get install build-essential python3
 ```
 
-**macOS:**
-
-```bash
-xcode-select --install
-```
-
-**Windows:**
-
-```bash
-npm install --global windows-build-tools
-```
-
-### Step 3: Rebuild Native Modules
+### Step 3: Reinstall with Node 22+ and optional image packages
 
 ```bash
 cd ~/.claude/plugins/mama
-npm rebuild better-sqlite3
+rm -rf node_modules package-lock.json
+npm install
+npm install --include=optional sharp
 ```
 
 ### Step 4: Verify Upgrade

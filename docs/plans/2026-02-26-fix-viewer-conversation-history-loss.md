@@ -6,7 +6,7 @@
 
 **Architecture:** Three-layer fix: (1) Server streams accumulator that persists partial responses on `stream_end`, (2) Server history endpoint returns per-message granularity instead of `{user, bot}` pairs, (3) Frontend merges server history with localStorage instead of replacing.
 
-**Tech Stack:** TypeScript, SQLite (better-sqlite3), WebSocket (ws), Vitest
+**Tech Stack:** TypeScript, SQLite, WebSocket (ws), Vitest
 
 ---
 
