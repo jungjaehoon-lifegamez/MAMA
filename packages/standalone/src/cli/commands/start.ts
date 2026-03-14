@@ -1662,13 +1662,28 @@ export async function runAgentLoop(
   if (securityAlertTargets.length > 0) {
     setSecurityAlertSender(async (event) => {
       const message = formatSecurityAlert(event);
-      for (const target of securityAlertTargets) {
-        if (target.gateway === 'discord' && discordGateway) {
-          await discordGateway.sendMessage(target.channelId, message);
-        } else if (target.gateway === 'slack' && slackGateway) {
-          await slackGateway.sendMessage(target.channelId, message);
+      const results = await Promise.allSettled(
+        securityAlertTargets.map(async (target) => {
+          if (target.gateway === 'discord' && discordGateway) {
+            await discordGateway.sendMessage(target.channelId, message);
+            return;
+          }
+          if (target.gateway === 'slack' && slackGateway) {
+            await slackGateway.sendMessage(target.channelId, message);
+          }
+        })
+      );
+
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          const target = securityAlertTargets[index];
+          startLogger.warn('[SECURITY] Failed to deliver security alert to target', {
+            gateway: target?.gateway || 'unknown',
+            channelId: target?.channelId || 'unknown',
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          });
         }
-      }
+      });
     });
   } else {
     setSecurityAlertSender(null);
@@ -2710,7 +2725,17 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     // Handle ALL WebSocket upgrades manually
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     apiServer.server.on('upgrade', (request: any, socket: any, head: any) => {
-      const url = new URL(request.url || '', `http://${request.headers.host}`);
+      let url: URL;
+      try {
+        url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+      } catch (error) {
+        startLogger.warn('[SECURITY] Malformed WebSocket upgrade URL rejected', {
+          rawUrl: request.url || null,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        socket.destroy();
+        return;
+      }
 
       // WebSocket auth: require token for non-localhost connections.
       // Browsers cannot set Authorization headers on WebSocket upgrades,
