@@ -28,7 +28,6 @@ export interface AdapterConfig {
  */
 export function createAdapter(config: AdapterConfig = {}): DatabaseAdapter {
   const configuredDriver = process.env.MAMA_SQLITE_DRIVER;
-  const dbPath = config.dbPath || process.env.MAMA_DB_PATH;
 
   if (
     configuredDriver &&
@@ -41,7 +40,7 @@ export function createAdapter(config: AdapterConfig = {}): DatabaseAdapter {
     );
   }
 
-  // "auto" is retained only for backward compatibility and resolves here.
   info('[db-adapter] Using node:sqlite adapter');
+  const dbPath = config.dbPath || process.env.MAMA_DB_PATH;
   return new SQLiteAdapter({ dbPath });
 }
