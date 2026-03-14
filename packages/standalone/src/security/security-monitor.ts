@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Request, Response, NextFunction } from 'express';
@@ -19,9 +19,15 @@ const MAX_TARPIT_DELAY_MS = Number(process.env.MAMA_TARPIT_MAX_DELAY_MS || 5_000
 const SECURITY_ENRICHMENT_TIMEOUT_MS = Number(
   process.env.MAMA_SECURITY_ENRICHMENT_TIMEOUT_MS || 4_000
 );
+const MAX_SECURITY_CACHE_ENTRIES = Number(process.env.MAMA_SECURITY_CACHE_MAX_ENTRIES || 1_024);
+const SECURITY_CACHE_ENTRY_TTL_MS = Number(
+  process.env.MAMA_SECURITY_CACHE_ENTRY_TTL_MS || 60 * 60 * 1000
+);
+const DENYLIST_LOCK_TIMEOUT_MS = Number(process.env.MAMA_DENYLIST_LOCK_TIMEOUT_MS || 5_000);
+const DENYLIST_LOCK_STALE_MS = Number(process.env.MAMA_DENYLIST_LOCK_STALE_MS || 30_000);
 
 const suspicionScores = new Map<string, { score: number; updatedAt: number }>();
-const attributionCache = new Map<string, NetworkAttribution | null>();
+const attributionCache = new Map<string, { value: NetworkAttribution | null; updatedAt: number }>();
 const HONEYPOT_PATTERNS = [
   /^\/\.git(?:\/|$)/i,
   /^\/\.env(?:\.|$)/i,
@@ -72,6 +78,16 @@ let alertSender: SecurityAlertSender | null = null;
 const lastAlertAt = new Map<string, number>();
 const incidentIds = new Map<string, string>();
 const pendingTasks = new Set<Promise<void>>();
+const TRUSTED_PROXY_IPS = new Set([
+  '127.0.0.1',
+  '::1',
+  '::ffff:127.0.0.1',
+  ...(process.env.MAMA_TRUSTED_PROXY_IPS || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean),
+]);
+let denylistWriteChain: Promise<void> = Promise.resolve();
 
 function buildFingerprint(event: SecurityEvent): string {
   return JSON.stringify([
@@ -115,10 +131,49 @@ function isLocalAddress(address: string | null | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 }
 
+function isTrustedProxyPeer(address: string | null | undefined): boolean {
+  return !!address && TRUSTED_PROXY_IPS.has(address);
+}
+
+function pruneSuspicionScores(now = Date.now()): void {
+  for (const [key, value] of suspicionScores.entries()) {
+    if (now - value.updatedAt > SECURITY_CACHE_ENTRY_TTL_MS) {
+      suspicionScores.delete(key);
+    }
+  }
+  while (suspicionScores.size > MAX_SECURITY_CACHE_ENTRIES) {
+    const oldestKey = suspicionScores.keys().next().value as string | undefined;
+    if (!oldestKey) {
+      break;
+    }
+    suspicionScores.delete(oldestKey);
+  }
+}
+
+function pruneAttributionCache(now = Date.now()): void {
+  for (const [key, value] of attributionCache.entries()) {
+    if (now - value.updatedAt > SECURITY_CACHE_ENTRY_TTL_MS) {
+      attributionCache.delete(key);
+    }
+  }
+  while (attributionCache.size > MAX_SECURITY_CACHE_ENTRIES) {
+    const oldestKey = attributionCache.keys().next().value as string | undefined;
+    if (!oldestKey) {
+      break;
+    }
+    attributionCache.delete(oldestKey);
+  }
+}
+
 function getClientAddressFromRequestLike(req: {
   headers: Record<string, unknown>;
   socket?: { remoteAddress?: string | null };
 }): string {
+  const remoteAddress = req.socket?.remoteAddress || null;
+  if (!isTrustedProxyPeer(remoteAddress)) {
+    return remoteAddress || 'unknown';
+  }
+
   const cfConnectingIp = req.headers['cf-connecting-ip'];
   if (typeof cfConnectingIp === 'string' && cfConnectingIp.trim()) {
     return cfConnectingIp.trim();
@@ -153,9 +208,11 @@ function rememberSuspiciousClient(
     return;
   }
 
+  const now = Date.now();
+  pruneSuspicionScores(now);
   const existing = suspicionScores.get(clientAddress);
   const nextScore = Math.min(20, (existing?.score || 0) + getRiskWeight(severity));
-  suspicionScores.set(clientAddress, { score: nextScore, updatedAt: Date.now() });
+  suspicionScores.set(clientAddress, { score: nextScore, updatedAt: now });
 }
 
 export function getTarpitDelayMs(clientAddress: string | null | undefined): number {
@@ -163,11 +220,14 @@ export function getTarpitDelayMs(clientAddress: string | null | undefined): numb
     return 0;
   }
 
+  const now = Date.now();
+  pruneSuspicionScores(now);
   const entry = suspicionScores.get(clientAddress);
   if (!entry || entry.score < 3) {
     return 0;
   }
 
+  entry.updatedAt = now;
   return Math.min(MAX_TARPIT_DELAY_MS, entry.score * 250);
 }
 
@@ -243,12 +303,16 @@ async function lookupNetworkAttribution(ip: string): Promise<NetworkAttribution 
     return null;
   }
 
+  const now = Date.now();
+  pruneAttributionCache(now);
   if (attributionCache.has(ip)) {
-    return attributionCache.get(ip)!;
+    const cached = attributionCache.get(ip)!;
+    cached.updatedAt = now;
+    return cached.value;
   }
 
   if (process.env.MAMA_SECURITY_ENRICHMENT === 'false') {
-    attributionCache.set(ip, null);
+    attributionCache.set(ip, { value: null, updatedAt: now });
     return null;
   }
 
@@ -261,7 +325,7 @@ async function lookupNetworkAttribution(ip: string): Promise<NetworkAttribution 
       headers: { Accept: 'application/rdap+json, application/json' },
     });
     if (!res.ok) {
-      attributionCache.set(ip, null);
+      attributionCache.set(ip, { value: null, updatedAt: now });
       return null;
     }
 
@@ -300,11 +364,12 @@ async function lookupNetworkAttribution(ip: string): Promise<NetworkAttribution 
       handle: typeof rdap.handle === 'string' ? rdap.handle : null,
     };
 
-    attributionCache.set(ip, attribution);
+    pruneAttributionCache(now);
+    attributionCache.set(ip, { value: attribution, updatedAt: now });
     return attribution;
   } catch (error) {
     logger.warn('Network attribution lookup failed', { ip, error: String(error) });
-    attributionCache.set(ip, null);
+    attributionCache.set(ip, { value: null, updatedAt: now });
     return null;
   } finally {
     clearTimeout(timeout);
@@ -423,6 +488,62 @@ function getCloudflareWafExpressionPath(): string {
   return join(getSecurityLogDir(), 'cloudflare-waf-expression.txt');
 }
 
+function getDenylistLockPath(): string {
+  return join(getSecurityLogDir(), 'security-denylist.lock');
+}
+
+async function acquireDenylistLock(): Promise<() => Promise<void>> {
+  await mkdir(getSecurityLogDir(), { recursive: true });
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < DENYLIST_LOCK_TIMEOUT_MS) {
+    try {
+      const handle = await open(getDenylistLockPath(), 'wx');
+      return async () => {
+        await handle.close().catch(() => undefined);
+        await unlink(getDenylistLockPath()).catch(() => undefined);
+      };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') {
+        throw error;
+      }
+
+      try {
+        const existing = await stat(getDenylistLockPath());
+        if (Date.now() - existing.mtimeMs > DENYLIST_LOCK_STALE_MS) {
+          await unlink(getDenylistLockPath()).catch(() => undefined);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  throw new Error('Timed out acquiring denylist lock');
+}
+
+async function withSerializedDenylistWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = denylistWriteChain;
+  let releaseQueue!: () => void;
+  denylistWriteChain = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+
+  await previous.catch(() => undefined);
+
+  const releaseLock = await acquireDenylistLock();
+  try {
+    return await operation();
+  } finally {
+    await releaseLock().catch(() => undefined);
+    releaseQueue();
+  }
+}
+
 async function readIncidentSummary(path: string): Promise<IncidentSummary | null> {
   try {
     const content = await readFile(path, 'utf8');
@@ -438,39 +559,45 @@ async function writeDenylistCandidate(summary: IncidentSummary): Promise<void> {
     return;
   }
 
-  const denylistJsonPath = getDenylistJsonPath();
-  const denylistTxtPath = getDenylistTxtPath();
-  const raw = await readFile(denylistJsonPath, 'utf8').catch(() => '[]');
-  let candidates: DenylistCandidate[] = [];
-  try {
-    candidates = JSON.parse(raw) as DenylistCandidate[];
-  } catch {
-    candidates = [];
-  }
+  await withSerializedDenylistWrite(async () => {
+    const denylistJsonPath = getDenylistJsonPath();
+    const denylistTxtPath = getDenylistTxtPath();
+    const raw = await readFile(denylistJsonPath, 'utf8').catch(() => '[]');
+    let candidates: DenylistCandidate[] = [];
+    try {
+      candidates = JSON.parse(raw) as DenylistCandidate[];
+    } catch {
+      candidates = [];
+    }
 
-  const existing = candidates.find((candidate) => candidate.ip === ip);
-  const updated: DenylistCandidate = {
-    ip,
-    firstSeen: existing?.firstSeen || summary.firstSeen,
-    lastSeen: summary.lastSeen,
-    eventCount: Math.max(existing?.eventCount || 0, summary.eventCount),
-    highestSeverity:
-      existing && getRiskWeight(existing.highestSeverity) > getRiskWeight(summary.highestSeverity)
-        ? existing.highestSeverity
-        : summary.highestSeverity,
-    reasons: Array.from(new Set([...(existing?.reasons || []), summary.summary])),
-    suggestedAction: 'Review and block via Cloudflare/WAF if malicious activity is confirmed.',
-    attribution: summary.attribution || existing?.attribution || null,
-  };
+    const existing = candidates.find((candidate) => candidate.ip === ip);
+    const updated: DenylistCandidate = {
+      ip,
+      firstSeen: existing?.firstSeen || summary.firstSeen,
+      lastSeen: summary.lastSeen,
+      eventCount: Math.max(existing?.eventCount || 0, summary.eventCount),
+      highestSeverity:
+        existing && getRiskWeight(existing.highestSeverity) > getRiskWeight(summary.highestSeverity)
+          ? existing.highestSeverity
+          : summary.highestSeverity,
+      reasons: Array.from(new Set([...(existing?.reasons || []), summary.summary])),
+      suggestedAction: 'Review and block via Cloudflare/WAF if malicious activity is confirmed.',
+      attribution: summary.attribution || existing?.attribution || null,
+    };
 
-  const next = candidates.filter((candidate) => candidate.ip !== ip);
-  next.push(updated);
-  next.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+    const next = candidates.filter((candidate) => candidate.ip !== ip);
+    next.push(updated);
+    next.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
 
-  await mkdir(getSecurityLogDir(), { recursive: true });
-  await writeFile(denylistJsonPath, JSON.stringify(next, null, 2), 'utf8');
-  await writeFile(denylistTxtPath, `${next.map((candidate) => candidate.ip).join('\n')}\n`, 'utf8');
-  await writeCloudflareExports(next);
+    await mkdir(getSecurityLogDir(), { recursive: true });
+    await writeFile(denylistJsonPath, JSON.stringify(next, null, 2), 'utf8');
+    await writeFile(
+      denylistTxtPath,
+      `${next.map((candidate) => candidate.ip).join('\n')}\n`,
+      'utf8'
+    );
+    await writeCloudflareExports(next);
+  });
 }
 
 async function writeCloudflareExports(candidates: DenylistCandidate[]): Promise<void> {
@@ -556,6 +683,7 @@ export function resetSecurityMonitorForTests(): void {
   suspicionScores.clear();
   incidentIds.clear();
   attributionCache.clear();
+  denylistWriteChain = Promise.resolve();
 }
 
 export async function flushSecurityMonitor(): Promise<void> {

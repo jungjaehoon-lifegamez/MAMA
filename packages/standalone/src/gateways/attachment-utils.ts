@@ -4,6 +4,8 @@
  */
 
 import { lookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import type { MessageAttachment, ContentBlock } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -89,7 +91,18 @@ function assertSafeIp(address: string): void {
   throw new Error(`Blocked URL: unrecognized IP "${address}"`);
 }
 
-async function assertSafeUrl(url: string): Promise<void> {
+interface ResolvedAddress {
+  address: string;
+  family: number;
+}
+
+interface SafeUrlTarget {
+  parsedUrl: URL;
+  hostname: string;
+  resolvedAddresses: ResolvedAddress[];
+}
+
+async function resolveSafeUrlTarget(url: string): Promise<SafeUrlTarget> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -162,7 +175,11 @@ async function assertSafeUrl(url: string): Promise<void> {
       });
       throw error;
     }
-    return;
+    return {
+      parsedUrl: parsed,
+      hostname,
+      resolvedAddresses: [{ address: hostname, family: isIP(hostname) }],
+    };
   }
 
   const resolvedAddresses = await lookup(hostname, { all: true, verbatim: true });
@@ -194,6 +211,66 @@ async function assertSafeUrl(url: string): Promise<void> {
       throw error;
     }
   }
+
+  return {
+    parsedUrl: parsed,
+    hostname,
+    resolvedAddresses,
+  };
+}
+
+function createPinnedLookup(resolvedAddresses: ResolvedAddress[]) {
+  let index = 0;
+  return (
+    _hostname: string,
+    _options: unknown,
+    callback: (error: Error | null, address: string, family: number) => void
+  ) => {
+    const record = resolvedAddresses[index % resolvedAddresses.length];
+    index += 1;
+    callback(null, record.address, record.family);
+  };
+}
+
+async function fetchWithPinnedDns(
+  target: SafeUrlTarget,
+  headers: Record<string, string>
+): Promise<{ status: number; headers: Headers; buffer: Buffer }> {
+  return await new Promise((resolve, reject) => {
+    const requester = target.parsedUrl.protocol === 'https:' ? httpsRequest : httpRequest;
+    const req = requester(
+      target.parsedUrl,
+      {
+        method: 'GET',
+        headers,
+        lookup: isIP(target.hostname) ? undefined : createPinnedLookup(target.resolvedAddresses),
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        res.on('end', () => {
+          const normalizedHeaders = new Headers();
+          Object.entries(res.headers).forEach(([key, value]) => {
+            if (Array.isArray(value)) {
+              normalizedHeaders.set(key, value.join(', '));
+            } else if (typeof value === 'string') {
+              normalizedHeaders.set(key, value);
+            }
+          });
+          resolve({
+            status: res.statusCode || 0,
+            headers: normalizedHeaders,
+            buffer: Buffer.concat(chunks),
+          });
+        });
+      }
+    );
+
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 /**
@@ -222,10 +299,10 @@ export async function downloadFile(
   const timestamp = Date.now();
   const localPath = path.join(mediaDir, `${timestamp}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`);
 
-  await assertSafeUrl(url);
+  const safeTarget = await resolveSafeUrlTarget(url);
 
   const headers: Record<string, string> = { ...authHeaders };
-  const response = await fetch(url, { headers, redirect: 'manual' });
+  const response = await fetchWithPinnedDns(safeTarget, headers);
   if (response.status >= 300 && response.status < 400) {
     recordSecurityEvent({
       type: 'ssrf_blocked',
@@ -239,12 +316,11 @@ export async function downloadFile(
     });
     throw new Error(`Blocked redirect while downloading attachment: ${response.status}`);
   }
-  if (!response.ok) {
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(`Failed to download: ${response.status}`);
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  await fs.writeFile(localPath, buffer);
+  await fs.writeFile(localPath, response.buffer);
 
   return localPath;
 }

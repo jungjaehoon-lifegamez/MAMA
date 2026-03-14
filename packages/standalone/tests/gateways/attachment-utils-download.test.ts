@@ -1,13 +1,55 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const lookupMock = vi.fn();
+const httpsRequestMock = vi.fn();
+const httpRequestMock = vi.fn();
 
 vi.mock('node:dns/promises', () => ({
   lookup: lookupMock,
 }));
+
+vi.mock('node:https', () => ({
+  request: httpsRequestMock,
+}));
+
+vi.mock('node:http', () => ({
+  request: httpRequestMock,
+}));
+
+function queueRequestResponse(
+  mock: typeof httpsRequestMock,
+  response: {
+    statusCode: number;
+    headers?: Record<string, string>;
+    body?: Uint8Array;
+  }
+) {
+  mock.mockImplementationOnce((_url, _options, callback) => {
+    const req = new EventEmitter() as EventEmitter & {
+      end: () => void;
+      destroy: () => void;
+    };
+    req.end = () => {
+      const res = new EventEmitter() as EventEmitter & {
+        statusCode?: number;
+        headers: Record<string, string>;
+      };
+      res.statusCode = response.statusCode;
+      res.headers = response.headers || {};
+      callback(res);
+      if (response.body) {
+        res.emit('data', Buffer.from(response.body));
+      }
+      res.emit('end');
+    };
+    req.destroy = () => undefined;
+    return req;
+  });
+}
 
 describe('downloadFile SSRF guards', () => {
   const originalHome = process.env.HOME;
@@ -17,6 +59,8 @@ describe('downloadFile SSRF guards', () => {
     testHome = await mkdtemp(join(tmpdir(), 'mama-attachment-download-'));
     process.env.HOME = testHome;
     lookupMock.mockReset();
+    httpsRequestMock.mockReset();
+    httpRequestMock.mockReset();
     vi.resetModules();
   });
 
@@ -36,7 +80,6 @@ describe('downloadFile SSRF guards', () => {
 
   it('blocks DNS results that resolve to loopback IPv4', async () => {
     lookupMock.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
-    vi.stubGlobal('fetch', vi.fn());
 
     const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
 
@@ -47,7 +90,6 @@ describe('downloadFile SSRF guards', () => {
 
   it('blocks DNS results that resolve to IPv6 loopback', async () => {
     lookupMock.mockResolvedValue([{ address: '::1', family: 6 }]);
-    vi.stubGlobal('fetch', vi.fn());
 
     const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
 
@@ -58,7 +100,6 @@ describe('downloadFile SSRF guards', () => {
 
   it('blocks IPv6-mapped IPv4 loopback addresses', async () => {
     lookupMock.mockResolvedValue([{ address: '::ffff:127.0.0.1', family: 6 }]);
-    vi.stubGlobal('fetch', vi.fn());
 
     const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
 
@@ -68,8 +109,6 @@ describe('downloadFile SSRF guards', () => {
   });
 
   it('blocks carrier-grade NAT IPv4 literals', async () => {
-    vi.stubGlobal('fetch', vi.fn());
-
     const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
 
     await expect(downloadFile('https://100.64.10.20/payload.txt', 'payload.txt')).rejects.toThrow(
@@ -85,8 +124,6 @@ describe('downloadFile SSRF guards', () => {
     'https://224.0.0.1/payload.txt',
     'https://255.255.255.255/payload.txt',
   ])('blocks additional reserved IPv4 literals: %s', async (url) => {
-    vi.stubGlobal('fetch', vi.fn());
-
     const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
 
     await expect(downloadFile(url, 'payload.txt')).rejects.toThrow('private/reserved IP');
@@ -95,32 +132,30 @@ describe('downloadFile SSRF guards', () => {
 
   it('uses manual redirect handling for successful downloads', async () => {
     lookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
-    const fetchMock = vi.fn().mockResolvedValue({
-      status: 200,
-      ok: true,
-      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+    queueRequestResponse(httpsRequestMock, {
+      statusCode: 200,
+      body: new Uint8Array([1, 2, 3]),
     });
-    vi.stubGlobal('fetch', fetchMock);
 
     const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
 
     const localPath = await downloadFile('https://example.com/file.bin', 'file.bin');
 
     expect(localPath).toContain('.mama/workspace/media/inbound/');
-    expect(fetchMock).toHaveBeenCalledWith('https://example.com/file.bin', {
+    expect(httpsRequestMock).toHaveBeenCalledTimes(1);
+    expect(httpsRequestMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
       headers: {},
-      redirect: 'manual',
     });
+    expect(typeof httpsRequestMock.mock.calls[0]?.[1]?.lookup).toBe('function');
   });
 
   it('blocks HTTP redirects during download', async () => {
     lookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
-    const fetchMock = vi.fn().mockResolvedValue({
-      status: 302,
-      ok: false,
-      headers: new Headers({ location: 'http://127.0.0.1/secret' }),
+    queueRequestResponse(httpsRequestMock, {
+      statusCode: 302,
+      headers: { location: 'http://127.0.0.1/secret' },
     });
-    vi.stubGlobal('fetch', fetchMock);
 
     const { downloadFile } = await import('../../src/gateways/attachment-utils.js');
 
