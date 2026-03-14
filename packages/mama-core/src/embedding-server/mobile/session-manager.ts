@@ -138,29 +138,11 @@ export class SessionManager {
     }
 
     try {
-      // Prefer node:sqlite on Node 22+, fall back to optional better-sqlite3.
-      let db: SQLiteDatabaseLike | null = null;
-
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { DatabaseSync } = require('node:sqlite') as {
-          DatabaseSync: new (dbPath: string) => SQLiteDatabaseLike;
-        };
-        db = new DatabaseSync(this.dbPath);
-      } catch {
-        // Fall through to better-sqlite3.
-      }
-
-      if (!db) {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const Database = require('better-sqlite3') as
-          | (new (dbPath: string) => SQLiteDatabaseLike)
-          | { default: new (dbPath: string) => SQLiteDatabaseLike };
-        const DatabaseCtor = 'default' in Database ? Database.default : Database;
-        db = new DatabaseCtor(this.dbPath);
-      }
-
-      this.db = db;
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { DatabaseSync } = require('node:sqlite') as {
+        DatabaseSync: new (dbPath: string) => SQLiteDatabaseLike;
+      };
+      this.db = new DatabaseSync(this.dbPath);
 
       // Create sessions table if not exists
       this.db.exec(CREATE_SESSIONS_TABLE);
