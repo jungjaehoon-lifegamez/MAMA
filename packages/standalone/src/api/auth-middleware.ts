@@ -10,6 +10,7 @@ import type { IncomingMessage } from 'http';
 import type { Request, Response, NextFunction } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { recordSecurityEvent } from '../security/security-monitor.js';
+import { getForwardedClientAddress } from '../security/trusted-proxy.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -50,17 +51,7 @@ function isTunnelRequest(req: IncomingMessage): boolean {
 }
 
 export function getClientAddress(req: IncomingMessage): string {
-  const cfConnectingIp = req.headers['cf-connecting-ip'];
-  if (typeof cfConnectingIp === 'string' && cfConnectingIp.trim()) {
-    return cfConnectingIp.trim();
-  }
-
-  const forwardedFor = req.headers['x-forwarded-for'];
-  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
-    return forwardedFor.split(',')[0].trim();
-  }
-
-  return req.socket?.remoteAddress || 'unknown';
+  return getForwardedClientAddress(req);
 }
 
 export function getSecurityLogContext(req: IncomingMessage): SecurityLogContext {

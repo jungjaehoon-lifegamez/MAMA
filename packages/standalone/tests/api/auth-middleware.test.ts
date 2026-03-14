@@ -139,4 +139,16 @@ describe('auth-middleware', () => {
 
     expect(getClientAddress(req)).toBe('203.0.113.9');
   });
+
+  it('ignores spoofed forwarding headers from untrusted peers', () => {
+    const req = createRequest({
+      remoteAddress: '198.51.100.20',
+      headers: {
+        'cf-connecting-ip': '203.0.113.9',
+        'x-forwarded-for': '203.0.113.9, 127.0.0.1',
+      },
+    });
+
+    expect(getClientAddress(req)).toBe('198.51.100.20');
+  });
 });

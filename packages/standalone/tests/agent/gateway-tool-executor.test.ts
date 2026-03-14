@@ -598,6 +598,7 @@ describe('GatewayToolExecutor', () => {
         ['rm --recursive --force /', 'Cannot stop mama-os'],
         ['chmod u+s /tmp/evil', 'Blocked: command contains a restricted pattern'],
         ['chmod 4755 /tmp/evil', 'Blocked: command contains a restricted pattern'],
+        ['chmod 3755 /tmp/evil', 'Blocked: command contains a restricted pattern'],
         ["python -c 'print(1)'", 'Blocked: command contains a restricted pattern'],
         ["php -r 'echo 1;'", 'Blocked: command contains a restricted pattern'],
         [
