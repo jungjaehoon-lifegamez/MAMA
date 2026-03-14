@@ -152,6 +152,7 @@ curl http://localhost:3847/health
 - ✅ Only YOUR email can access
 - ✅ No token management needed
 - ✅ Enterprise-grade security (FREE!)
+- ✅ Protected `/api/*` routes work without a second Bearer token when MAMA trusts Cloudflare Access
 
 #### Quick Setup (15 minutes)
 
@@ -212,6 +213,9 @@ Go to **Cloudflare Dashboard** → **Zero Trust** → **Access** → **Applicati
 **Step 6: Start Everything**
 
 ```bash
+# Trust Cloudflare Access identity headers from the local tunnel process
+export MAMA_TRUST_CLOUDFLARE_ACCESS=true
+
 # Start MAMA OS
 mama start &
 
@@ -233,6 +237,8 @@ https://mama.yourdomain.com/viewer
 **Free Tier:** Up to 50 users, unlimited bandwidth, all features!
 
 📖 **Full Guide:** See [Security Guide - Cloudflare Zero Trust](./security.md#cloudflare-zero-trust-recommended-for-production)
+
+**Important:** Cloudflare Access login by itself is not enough for protected MAMA API routes. Start MAMA with `MAMA_TRUST_CLOUDFLARE_ACCESS=true` so Access-authenticated requests are accepted without a second Bearer token.
 
 ---
 
@@ -271,6 +277,7 @@ cloudflared tunnel --url http://localhost:3847 --no-autoupdate
 - ⚠️ Tunnel expires randomly
 - ⚠️ URL changes on restart
 - ⚠️ Anyone with token + URL = full access
+- ⚠️ Use token mode here because quick tunnels do not provide Cloudflare Access identity headers
 
 ---
 
