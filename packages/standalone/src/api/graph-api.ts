@@ -1492,26 +1492,27 @@ function getSessionStats(): SessionStats {
     const Database = require('../sqlite.js').default;
     const sessionsDb = new Database(sessionsDbPath);
 
-    const bySourceRows = sessionsDb
-      .prepare(
-        `
+    try {
+      const bySourceRows = sessionsDb
+        .prepare(
+          `
         SELECT source, COUNT(*) as count
         FROM messenger_sessions
         GROUP BY source
       `
-      )
-      .all() as Array<{ source: string; count: number }>;
+        )
+        .all() as Array<{ source: string; count: number }>;
 
-    const bySource: Record<string, number> = {};
-    let total = 0;
-    for (const row of bySourceRows) {
-      bySource[row.source] = row.count;
-      total += row.count;
-    }
+      const bySource: Record<string, number> = {};
+      let total = 0;
+      for (const row of bySourceRows) {
+        bySource[row.source] = row.count;
+        total += row.count;
+      }
 
-    const channelRows = sessionsDb
-      .prepare(
-        `
+      const channelRows = sessionsDb
+        .prepare(
+          `
         SELECT
           source,
           channel_id,
@@ -1522,26 +1523,27 @@ function getSessionStats(): SessionStats {
         ORDER BY last_active DESC
         LIMIT 10
       `
-      )
-      .all() as Array<{
-      source: string;
-      channel_id: string;
-      channel_name: string | null;
-      last_active: number;
-      message_count: number;
-    }>;
+        )
+        .all() as Array<{
+        source: string;
+        channel_id: string;
+        channel_name: string | null;
+        last_active: number;
+        message_count: number;
+      }>;
 
-    const channels = channelRows.map((row) => ({
-      source: row.source,
-      channelId: row.channel_id,
-      channelName: row.channel_name || null,
-      lastActive: row.last_active,
-      messageCount: row.message_count || 0,
-    }));
+      const channels = channelRows.map((row) => ({
+        source: row.source,
+        channelId: row.channel_id,
+        channelName: row.channel_name || null,
+        lastActive: row.last_active,
+        messageCount: row.message_count || 0,
+      }));
 
-    sessionsDb.close();
-
-    return { total, bySource, channels };
+      return { total, bySource, channels };
+    } finally {
+      sessionsDb.close();
+    }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[GraphAPI] Session stats error:', message);

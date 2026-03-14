@@ -75,7 +75,7 @@ You can enable multiple gateways at once. MAMA will handle messages from all ena
 
 1. **Discord account** - Free account at https://discord.com
 2. **Server admin access** - You need permission to add bots
-3. **Node.js >= 22.0.0** - Required for MAMA Standalone
+3. **Node.js >= 22.13.0** - Required for MAMA Standalone
 
 ### Getting Your Bot Token
 
@@ -240,7 +240,7 @@ MAMA: [translates text from image to English]
 
 1. **Slack workspace** - Admin access or permission to install apps
 2. **Slack account** - Free or paid workspace
-3. **Node.js >= 22.0.0** - Required for MAMA Standalone
+3. **Node.js >= 22.13.0** - Required for MAMA Standalone
 
 ### Getting Your Tokens
 
@@ -388,7 +388,7 @@ MAMA: [replies in thread, preserving context]
 ### Prerequisites
 
 1. **Telegram account** - Free account via mobile app
-2. **Node.js >= 22.0.0** - Required for MAMA Standalone
+2. **Node.js >= 22.13.0** - Required for MAMA Standalone
 
 ### Getting Your Bot Token
 
@@ -506,7 +506,7 @@ MAMA: [searches memory and recalls decision]
 
 1. **Chatwork account** - Business account with API access
 2. **API token** - From Chatwork settings
-3. **Node.js >= 22.0.0** - Required for MAMA Standalone
+3. **Node.js >= 22.13.0** - Required for MAMA Standalone
 
 ### Getting Your API Token
 

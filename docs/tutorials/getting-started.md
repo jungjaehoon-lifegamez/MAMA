@@ -94,7 +94,7 @@ npm install @jungjaehoon/mama-core
 
 Before starting this tutorial, ensure you have:
 
-- ✅ Node.js >= 22.0.0 installed
+- ✅ Node.js >= 22.13.0 installed
 - ✅ Claude Code (latest version) installed
 - ✅ MAMA plugin installed (see [Installation Guide](../guides/installation.md))
 - ✅ Claude Code restarted after installation
