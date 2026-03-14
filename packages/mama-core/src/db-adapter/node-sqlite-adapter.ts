@@ -192,13 +192,16 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         ((typeof result === 'object' && result !== null) || typeof result === 'function') &&
         typeof (result as { then?: unknown }).then === 'function'
       ) {
-        this.exec('ROLLBACK');
         throw new Error('DatabaseAdapter.transaction() callbacks must be synchronous');
       }
       this.exec('COMMIT');
       return result;
     } catch (error) {
-      this.exec('ROLLBACK');
+      try {
+        this.exec('ROLLBACK');
+      } catch {
+        // Preserve the original transaction failure when rollback also fails.
+      }
       throw error;
     }
   }
@@ -389,15 +392,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     ).all() as Array<{ name: string }>;
 
     if (embeddingsTables.length === 0) {
-      warn(
-        '[node-sqlite-adapter] Embeddings migration missing; creating embeddings table as defensive fallback'
+      throw new Error(
+        'Embeddings table is missing after migrations. Add the required embeddings migration.'
       );
-      this.exec(`
-        CREATE TABLE embeddings (
-          rowid INTEGER PRIMARY KEY,
-          embedding BLOB NOT NULL
-        )
-      `);
     }
 
     this.migrateFromVssMemories();
