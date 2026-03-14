@@ -16,6 +16,15 @@
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { MessageAttachment } from './types.js';
 import { getConfig } from '../cli/config/config-manager.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('ChannelHistory');
 
 /**
  * Single history entry
@@ -193,7 +202,7 @@ export class ChannelHistory {
 
     const result = stmt.run(cutoff);
     if (result.changes > 0) {
-      console.log(`[ChannelHistory] Cleaned up ${result.changes} old messages from DB`);
+      logger.debug(`Cleaned up ${result.changes} old messages from DB`);
     }
   }
 
@@ -235,7 +244,7 @@ export class ChannelHistory {
           entry.isBot ? 1 : 0
         );
       } catch (err) {
-        console.error('[ChannelHistory] Failed to save to DB:', err);
+        logger.error('Failed to save to DB:', err);
       }
     }
   }

@@ -7,6 +7,7 @@
 ## Table of Contents
 
 - [Security Model](#security-model)
+- [Built-in Detection and Response](#built-in-detection-and-response)
 - [Localhost-Only Mode (Default)](#localhost-only-mode-default)
 - [External Access via Tunnels](#external-access-via-tunnels)
 - [🌟 Cloudflare Zero Trust (Recommended for Production)](#cloudflare-zero-trust-recommended-for-production)

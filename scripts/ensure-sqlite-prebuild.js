@@ -24,7 +24,7 @@ function ensureSqliteRuntime(options = {}) {
     return true;
   } catch (err) {
     console.error(`${prefix} SQLite runtime unavailable:`, err.message);
-    console.error(`${prefix} MAMA now requires Node.js 22+ with built-in node:sqlite.`);
+    console.error(`${prefix} MAMA now requires Node.js 22.13+ with built-in node:sqlite.`);
     return false;
   }
 }

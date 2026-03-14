@@ -5,7 +5,7 @@
  * Story M3.4: Installation & Tier Detection
  *
  * Checks:
- * 1. Node.js version (>=22.0.0)
+ * 1. Node.js version (>=22.13.0)
  * 2. Disk space (>=100MB)
  * 3. SQLite support (node:sqlite)
  * 4. Embedding support (via @jungjaehoon/mama-core)
@@ -64,7 +64,7 @@ function printBox(title, content, color = colors.green) {
  * AC1: engines.node >=22 check with descriptive errors
  */
 function checkNodeVersion() {
-  const requiredVersion = '22.0.0';
+  const requiredVersion = '22.13.0';
   const currentVersion = process.version.replace('v', '');
 
   log(colors.cyan, `🔍 Checking Node.js version...`);
@@ -80,7 +80,7 @@ function checkNodeVersion() {
   ) {
     log(colors.red, `\n❌ Node.js ${requiredVersion}+ required (found: ${process.version})`);
     log(colors.yellow, `\nFix options:`);
-    log(colors.yellow, `  • Using nvm: nvm install 22 && nvm use 22`);
+    log(colors.yellow, `  • Using nvm: nvm install 22.13.0 && nvm use 22.13.0`);
     log(colors.yellow, `  • Download: https://nodejs.org`);
     log(colors.yellow, `  • Package manager:`);
     log(colors.yellow, `    - macOS: brew install node@22`);
@@ -148,10 +148,11 @@ function checkSQLite() {
     log(colors.green, '✅ SQLite support available via node:sqlite\n');
     return { available: true, tier: 1, driver: 'node:sqlite' };
   } catch (nodeSqliteError) {
-    const nodeSqliteMessage = nodeSqliteError.message;
+    const nodeSqliteMessage =
+      nodeSqliteError instanceof Error ? nodeSqliteError.message : String(nodeSqliteError);
     log(colors.yellow, `⚠️  SQLite support unavailable: node:sqlite failed (${nodeSqliteMessage})`);
     log(colors.yellow, `\nFalling back to Tier 2 (degraded mode)`);
-    log(colors.yellow, `\nTo fix: use Node 22+ with built-in node:sqlite`);
+    log(colors.yellow, `\nTo fix: use Node 22.13+ with built-in node:sqlite`);
     log(colors.yellow, `\nTier 2 features:`);
     log(colors.yellow, `  - Exact match search only (no vector search)`);
     log(colors.yellow, `  - 40% accuracy (vs 80% in Tier 1)`);
