@@ -761,7 +761,25 @@ export class CodexMCPProcess extends EventEmitter {
     this.state = 'dead';
     this.clearPendingRequests(error);
     if (shouldKillProcess && this.process) {
-      this.process.kill();
+      const processToKill = this.process;
+      const forceKillTimer = setTimeout(() => {
+        try {
+          processToKill.kill('SIGKILL');
+        } catch {
+          // Process already exited.
+        }
+      }, 1000);
+      forceKillTimer.unref();
+
+      processToKill.once('close', () => {
+        clearTimeout(forceKillTimer);
+      });
+
+      try {
+        processToKill.kill();
+      } catch {
+        clearTimeout(forceKillTimer);
+      }
     }
     if (this.rl) {
       this.rl.close();

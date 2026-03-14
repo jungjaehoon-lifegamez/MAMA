@@ -148,6 +148,7 @@ function parseSecurityAlertTargets(config: {
 // MAMA embedding server (keeps model in memory)
 import type { Server as HttpServer } from 'node:http';
 let embeddingServer: HttpServer | null = null;
+let embeddingShutdownToken: string | null = null;
 
 /**
  * Normalize Discord guild config before passing to gateway.
@@ -372,6 +373,10 @@ async function startEmbeddingServerIfAvailable(
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const embeddingServerModule = require('@jungjaehoon/mama-core/embedding-server');
+    embeddingShutdownToken =
+      typeof embeddingServerModule.SHUTDOWN_TOKEN === 'string'
+        ? embeddingServerModule.SHUTDOWN_TOKEN
+        : null;
     embeddingServer = await embeddingServerModule.startEmbeddingServer(port, {
       messageRouter,
       sessionStore,
@@ -2849,12 +2854,30 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       clearInterval(healthWarningInterval);
     }
 
+    const getBlockingHandleNames = (): string[] => {
+      const handles = (
+        process as NodeJS.Process & { _getActiveHandles?: () => unknown[] }
+      )._getActiveHandles?.();
+      const ignoredHandles = new Set(['WriteStream', 'ReadStream', 'TTY', 'TTYWrap']);
+      return (
+        handles
+          ?.map((handle) => (handle as { constructor?: { name?: string } }).constructor?.name)
+          .filter(
+            (name): name is string => typeof name === 'string' && !ignoredHandles.has(name)
+          ) ?? []
+      );
+    };
+
     // Force exit after 5 seconds if graceful shutdown hangs
     // exit(0) = intentional stop; systemd Restart=on-failure should NOT restart
-    setTimeout(() => {
+    const forceExitTimer = setTimeout(() => {
+      if (getBlockingHandleNames().length === 0) {
+        return;
+      }
       console.error('[MAMA] Graceful shutdown timed out, forcing exit');
       process.exit(0);
     }, 5000);
+    forceExitTimer.unref();
 
     try {
       // Stop schedulers and cron worker first
@@ -2865,8 +2888,31 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       // Close embedding server (port 3849) - drain connections first
       if (embeddingServer) {
-        embeddingServer.closeAllConnections();
-        embeddingServer.close();
+        await new Promise<void>((resolve) => {
+          const shutdownReq = http.request(
+            {
+              hostname: '127.0.0.1',
+              port: EMBEDDING_PORT,
+              path: '/shutdown',
+              method: 'POST',
+              timeout: 2000,
+              headers: {
+                'X-Shutdown-Token': embeddingShutdownToken || process.env.MAMA_SHUTDOWN_TOKEN || '',
+              },
+            },
+            async () => {
+              await waitForPortAvailable(EMBEDDING_PORT, 5000);
+              resolve();
+            }
+          );
+          shutdownReq.on('error', () => resolve());
+          shutdownReq.on('timeout', () => {
+            shutdownReq.destroy();
+            resolve();
+          });
+          shutdownReq.end();
+        });
+        embeddingServer = null;
       }
 
       // Stop all gateways with per-gateway 2s timeout
@@ -2881,7 +2927,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       );
 
       // Stop agent loop
-      agentLoop.stop();
+      await agentLoop.stop();
 
       // Release all CLI sessions
       getSessionPool().dispose();
@@ -2892,14 +2938,22 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       // Stop metrics cleanup
       metricsCleanup?.stop();
 
+      metricsStore?.close();
+
+      db.close();
+
       const { deletePid } = await import('../utils/pid-manager.js');
       await deletePid();
+      if (getBlockingHandleNames().length === 0) {
+        clearTimeout(forceExitTimer);
+      }
     } catch (error) {
       // Best effort cleanup
       console.warn('[MAMA] Cleanup error during shutdown:', error);
     }
 
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   };
 
   process.on('SIGINT', shutdown);
