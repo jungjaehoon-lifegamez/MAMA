@@ -67,7 +67,7 @@ import { MetricsCleanup } from '../../observability/metrics-cleanup.js';
 import { HealthScoreService } from '../../observability/health-score.js';
 import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
-import { requireAuth } from '../../api/auth-middleware.js';
+import { requireAuth, isAuthenticated } from '../../api/auth-middleware.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 // Onboarding state imports removed — onboarding is handled by Setup Wizard only
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -1072,9 +1072,8 @@ export async function runAgentLoop(
     //   - config.yaml roles.definitions.*.allowedTools / blockedTools / allowedPaths
     //   - Multi-agent ToolPermissionManager (tier-based tool access)
     //   - Source-based role mapping (viewer=os_agent, discord=chat_bot, etc.)
-    // Claude CLI's interactive permission system is bypassed because it cannot work without a TTY.
-    // This is controlled solely by config.yaml (multi_agent.dangerouslySkipPermissions, default: true).
-    // DO NOT add env-var gates here — MAMA manages its own security via config.yaml roles.
+    // Headless daemon — no TTY for interactive permission prompts.
+    // Security is enforced at the API/network layer (auth-middleware), not Claude CLI permissions.
     dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
     sessionKey: 'default', // Will be updated per message
     systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
@@ -2622,6 +2621,13 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     apiServer.server.on('upgrade', (request: any, socket: any, head: any) => {
       const url = new URL(request.url || '', `http://${request.headers.host}`);
+
+      // WebSocket auth: when token is configured, require Bearer token
+      if (!isAuthenticated(request)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
 
       if (url.pathname === '/setup-ws') {
         // Handle setup WebSocket locally
