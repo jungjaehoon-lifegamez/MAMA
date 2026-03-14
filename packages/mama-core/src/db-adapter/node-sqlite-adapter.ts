@@ -37,6 +37,7 @@ type NodeSQLiteDatabaseCtor = new (path: string) => NodeSQLiteDatabaseLike;
 let DatabaseSync: NodeSQLiteDatabaseCtor | null = null;
 
 try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   ({ DatabaseSync } = require('node:sqlite') as {
     DatabaseSync: NodeSQLiteDatabaseCtor;
   });
@@ -127,7 +128,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     }
 
     if (!DatabaseSync) {
-      throw new Error('node:sqlite is not available in this Node.js runtime. Use Node 22+.');
+      throw new Error('node:sqlite is not available in this Node.js runtime. Use Node 22.13+.');
     }
 
     const dbPath = this.getDbPath();
@@ -187,6 +188,13 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     this.exec('BEGIN TRANSACTION');
     try {
       const result = fn();
+      if (
+        ((typeof result === 'object' && result !== null) || typeof result === 'function') &&
+        typeof (result as { then?: unknown }).then === 'function'
+      ) {
+        this.exec('ROLLBACK');
+        throw new Error('DatabaseAdapter.transaction() callbacks must be synchronous');
+      }
       this.exec('COMMIT');
       return result;
     } catch (error) {
@@ -211,31 +219,61 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       throw new Error('Embeddings table missing');
     }
 
-    const rows = this.prepare('SELECT rowid, embedding FROM embeddings').all() as Array<{
-      rowid: number;
-      embedding: Uint8Array;
-    }>;
+    const effectiveLimit = Math.max(limit, 1);
+    const batchSize = 500;
+    const bestMatches: VectorSearchResult[] = [];
+    let offset = 0;
 
-    const scored: VectorSearchResult[] = [];
-    for (const row of rows) {
-      const candidate = bytesToVector(row.embedding);
-      if (!candidate) continue;
-      if (candidate.length !== queryVector.length) {
-        warn(
-          `Skipping rowid ${row.rowid}: dimension mismatch (${candidate.length} vs ${queryVector.length})`
-        );
+    let hasMoreRows = true;
+    while (hasMoreRows) {
+      const rows = this.prepare('SELECT rowid, embedding FROM embeddings LIMIT ? OFFSET ?').all(
+        batchSize,
+        offset
+      ) as Array<{
+        rowid: number;
+        embedding: Uint8Array;
+      }>;
+
+      if (rows.length === 0) {
+        hasMoreRows = false;
         continue;
       }
-      const similarity = cosineSimilarity(candidate, queryVector);
-      scored.push({
-        rowid: row.rowid,
-        similarity,
-        distance: 1 - similarity,
-      });
+
+      for (const row of rows) {
+        const candidate = bytesToVector(row.embedding);
+        if (!candidate) continue;
+        if (candidate.length !== queryVector.length) {
+          warn(
+            `Skipping rowid ${row.rowid}: dimension mismatch (${candidate.length} vs ${queryVector.length})`
+          );
+          continue;
+        }
+
+        const similarity = cosineSimilarity(candidate, queryVector);
+        const scoredRow: VectorSearchResult = {
+          rowid: row.rowid,
+          similarity,
+          distance: 1 - similarity,
+        };
+
+        if (bestMatches.length < effectiveLimit) {
+          bestMatches.push(scoredRow);
+          bestMatches.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+          continue;
+        }
+
+        const weakestMatch = bestMatches[bestMatches.length - 1];
+        if ((scoredRow.similarity ?? 0) > (weakestMatch.similarity ?? 0)) {
+          bestMatches.pop();
+          bestMatches.push(scoredRow);
+          bestMatches.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+        }
+      }
+
+      offset += rows.length;
     }
 
-    scored.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
-    return scored.slice(0, Math.max(limit, 1));
+    return bestMatches;
   }
 
   insertEmbedding(rowid: number, embedding: Float32Array | number[]): RunResult | null {
@@ -351,7 +389,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     ).all() as Array<{ name: string }>;
 
     if (embeddingsTables.length === 0) {
-      info('[node-sqlite-adapter] Creating embeddings table');
+      warn(
+        '[node-sqlite-adapter] Embeddings migration missing; creating embeddings table as defensive fallback'
+      );
       this.exec(`
         CREATE TABLE embeddings (
           rowid INTEGER PRIMARY KEY,

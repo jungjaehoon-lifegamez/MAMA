@@ -6,18 +6,18 @@
 
 ## System Requirements
 
-- **Node.js** >= 22.0.0 (Recommended: 22.13.0+ or current 25.x)
+- **Node.js** >= 22.13.0 (Recommended: current 25.x)
 - **Claude Code** (latest version) or **Claude Desktop**
 - **Disk Space**: ~500MB (npm cache + model cache + database)
 - **Optional platform runtimes**:
   - `sharp` prebuilt binaries for image features
-  - No SQLite compiler toolchain is required (`node:sqlite` is built into Node 22+)
+  - No SQLite compiler toolchain is required (`node:sqlite` is built into Node 22.13+)
 
 **Check Node.js version:**
 
 ```bash
 node --version
-# Required: >= 22.0.0
+# Required: >= 22.13.0
 ```
 
 ---
@@ -65,7 +65,7 @@ mama start
 
 **Prerequisites:**
 
-- Node.js >= 22.0.0
+- Node.js >= 22.13.0
 - Claude CLI installed and authenticated (`npm i -g @anthropic-ai/claude-code && claude`)
 
 **See full setup guide:** [Standalone Setup Guide](standalone-setup.md)
@@ -230,7 +230,7 @@ After installation, try saving your first decision:
 
 ```bash
 node --version
-# Must be >= 22.0.0
+# Must be >= 22.13.0
 ```
 
 **Try manual installation:**
@@ -259,7 +259,7 @@ If install or first run fails, check these in order:
 
 ```bash
 node --version
-# Must be >= 22.0.0
+# Must be >= 22.13.0
 ```
 
 2. **Optional image runtime**
@@ -328,7 +328,7 @@ MAMA uses a **4-package architecture**:
 - One core library, multiple distribution channels
 - Standalone agent for always-on use cases
 - MCP server for Claude Desktop/Code integration
-- Node 22+ ships SQLite support directly
+- Node 22.13+ ships unflagged SQLite support directly
 - Optional image binaries are handled separately from the database runtime
 - Shared decision database across all tools
 

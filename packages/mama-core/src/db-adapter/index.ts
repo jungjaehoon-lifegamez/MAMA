@@ -27,13 +27,21 @@ export interface AdapterConfig {
  * @returns Configured SQLite adapter instance
  */
 export function createAdapter(config: AdapterConfig = {}): DatabaseAdapter {
+  const configuredDriver = process.env.MAMA_SQLITE_DRIVER;
   const dbPath = config.dbPath || process.env.MAMA_DB_PATH;
-  const driver = process.env.MAMA_SQLITE_DRIVER || 'node-sqlite';
 
-  if (driver !== 'node-sqlite' && driver !== 'auto') {
-    throw new Error(`Unsupported SQLite driver "${driver}". MAMA now requires node:sqlite.`);
+  if (
+    configuredDriver &&
+    configuredDriver !== 'node-sqlite' &&
+    configuredDriver !== 'node:sqlite' &&
+    configuredDriver !== 'auto'
+  ) {
+    throw new Error(
+      `Unsupported SQLite driver "${configuredDriver}". MAMA now requires node:sqlite.`
+    );
   }
 
+  // "auto" is retained only for backward compatibility and resolves here.
   info('[db-adapter] Using node:sqlite adapter');
   return new SQLiteAdapter({ dbPath });
 }

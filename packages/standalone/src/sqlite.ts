@@ -2,6 +2,8 @@
  * SQLite wrapper for standalone using Node's built-in node:sqlite runtime.
  */
 
+type NonPromise<T> = T extends Promise<unknown> ? never : T;
+
 type NodeSqliteRunResult = { changes: number; lastInsertRowid: number | bigint };
 type NodeSqliteStatementLike = {
   all: (...params: unknown[]) => unknown[];
@@ -36,6 +38,7 @@ function loadNodeSqliteCtor(): NodeSqliteCtor | null {
   }
 
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     ({ DatabaseSync: cachedNodeSqliteCtor } = require('node:sqlite') as {
       DatabaseSync: NodeSqliteCtor;
     });
@@ -77,11 +80,18 @@ class NodeSqliteConnection {
     return stmt.all();
   }
 
-  transaction<T extends (...args: never[]) => unknown>(fn: T): T {
+  transaction<T extends (...args: never[]) => NonPromise<unknown>>(fn: T): T {
     const wrapped = ((...args: Parameters<T>) => {
       this.exec('BEGIN TRANSACTION');
       try {
         const result = fn(...args);
+        if (
+          ((typeof result === 'object' && result !== null) || typeof result === 'function') &&
+          typeof (result as { then?: unknown }).then === 'function'
+        ) {
+          this.exec('ROLLBACK');
+          throw new Error('Database.transaction() callbacks must be synchronous');
+        }
         this.exec('COMMIT');
         return result;
       } catch (error) {
@@ -110,17 +120,21 @@ class NodeSqliteConnection {
 }
 
 function resolveDatabaseDriver(): { driver: 'node:sqlite'; ctor: NodeSqliteCtor } {
-  const configuredDriver = process.env.MAMA_SQLITE_DRIVER || 'node-sqlite';
+  const configuredDriver = process.env.MAMA_SQLITE_DRIVER;
+  const normalizedDriver =
+    configuredDriver === 'node-sqlite' || configuredDriver === 'node:sqlite'
+      ? 'node:sqlite'
+      : (configuredDriver ?? 'node:sqlite');
   const nodeCtor = loadNodeSqliteCtor();
 
-  if (configuredDriver !== 'node-sqlite' && configuredDriver !== 'auto') {
+  if (!nodeCtor) {
+    throw new Error('node:sqlite is not available in this Node.js runtime. Use Node 22.13+.');
+  }
+
+  if (normalizedDriver !== 'node:sqlite' && normalizedDriver !== 'auto') {
     throw new Error(
       `Unsupported SQLite driver "${configuredDriver}". MAMA OS now requires node:sqlite.`
     );
-  }
-
-  if (!nodeCtor) {
-    throw new Error('node:sqlite is not available in this Node.js runtime');
   }
 
   return { driver: 'node:sqlite', ctor: nodeCtor };
@@ -148,7 +162,7 @@ export default class Database {
     return this.connection.pragma(sql, options);
   }
 
-  transaction<T extends (...args: never[]) => unknown>(fn: T): T {
+  transaction<T extends (...args: never[]) => NonPromise<unknown>>(fn: T): T {
     return this.connection.transaction(fn);
   }
 

@@ -2855,9 +2855,14 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     }
 
     const getBlockingHandleNames = (): string[] => {
-      const handles = (
-        process as NodeJS.Process & { _getActiveHandles?: () => unknown[] }
-      )._getActiveHandles?.();
+      const processWithHandles = process as NodeJS.Process & {
+        _getActiveHandles?: () => unknown[];
+      };
+      const getActiveHandles = processWithHandles._getActiveHandles;
+      if (typeof getActiveHandles !== 'function') {
+        return ['unknown'];
+      }
+      const handles = getActiveHandles.call(processWithHandles);
       const ignoredHandles = new Set(['WriteStream', 'ReadStream', 'TTY', 'TTYWrap']);
       return (
         handles
@@ -2869,9 +2874,14 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     };
 
     const getActiveRequestNames = (): string[] => {
-      const requests = (
-        process as NodeJS.Process & { _getActiveRequests?: () => unknown[] }
-      )._getActiveRequests?.();
+      const processWithRequests = process as NodeJS.Process & {
+        _getActiveRequests?: () => unknown[];
+      };
+      const getActiveRequests = processWithRequests._getActiveRequests;
+      if (typeof getActiveRequests !== 'function') {
+        return ['unknown'];
+      }
+      const requests = getActiveRequests.call(processWithRequests);
       return (
         requests
           ?.map((request) => (request as { constructor?: { name?: string } }).constructor?.name)
@@ -2913,8 +2923,21 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
                 'X-Shutdown-Token': embeddingShutdownToken || process.env.MAMA_SHUTDOWN_TOKEN || '',
               },
             },
-            async () => {
-              await waitForPortAvailable(EMBEDDING_PORT, 5000);
+            async (response) => {
+              const statusCode = response.statusCode ?? 0;
+              const released = await waitForPortAvailable(EMBEDDING_PORT, 5000);
+              if (statusCode >= 200 && statusCode < 300 && released) {
+                resolve();
+                return;
+              }
+
+              startLogger.warn(
+                `[EmbeddingServer] Shutdown endpoint did not fully stop server (status=${statusCode}, released=${released})`
+              );
+              if (embeddingServer) {
+                embeddingServer.close(() => resolve());
+                return;
+              }
               resolve();
             }
           );

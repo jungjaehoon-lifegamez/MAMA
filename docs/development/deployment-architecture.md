@@ -1,6 +1,6 @@
 # Deployment Architecture
 
-**Last Updated:** 2026-02-13
+**Last Updated:** 2026-03-14
 
 This document explains how MAMA is structured, developed, and deployed to users.
 
@@ -9,6 +9,11 @@ This document explains how MAMA is structured, developed, and deployed to users.
 ## Architecture Overview
 
 MAMA uses a **3-layer architecture** with **4 packages**:
+
+## Prerequisites
+
+- **Node.js:** 22.13.0 or higher (required for built-in `node:sqlite`)
+- **pnpm:** 8.0.0 or higher
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -270,7 +275,7 @@ jobs:
 
 **Separation:**
 
-- **MAMA Core** (@jungjaehoon/mama-core): Heavy runtime pieces (`node:sqlite`, @huggingface/transformers)
+- **MAMA Core** (@jungjaehoon/mama-core): Database and embeddings runtime (`node:sqlite`, `@huggingface/transformers`)
 - **MCP Server** (@jungjaehoon/mama-server): Stdio MCP transport + tools (defaults to no HTTP)
 - **Claude Code Plugin** (mama): Lightweight (Markdown + JSON configs)
 - **MAMA OS** (@jungjaehoon/mama-os): API/UI (`3847`) + embedding/chat runtime (`3849`)
@@ -294,7 +299,7 @@ jobs:
 
 - ✅ Auto-downloads on first use
 - ✅ Caches locally (~/.npm/\_npx/)
-- ✅ Uses Node's built-in SQLite runtime on Node 22+
+- ✅ Uses Node's built-in SQLite runtime on Node 22.13+
 - ✅ Can still download optional platform packages when needed
 - ✅ Official MCP servers use this pattern
 

@@ -3,7 +3,7 @@
  * MAMA Installation Verification Script
  *
  * Verifies MAMA installation by checking:
- * - Node.js version (>= 22.0.0)
+ * - Node.js version (>= 22.13.0)
  * - SQLite availability (node:sqlite)
  * - Embedding model cache
  * - Database file accessibility

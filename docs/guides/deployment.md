@@ -19,7 +19,7 @@ MAMA is a pnpm workspace-based monorepo with four packages:
 
 ## Prerequisites
 
-- **Node.js**: >= 22.0.0
+- **Node.js**: >= 22.13.0
 - **pnpm**: >= 8.0.0
 - **npm account**: For MCP server deployment (npm publish permissions)
 - **Claude Marketplace account**: For plugin deployment
@@ -56,12 +56,13 @@ MAMA follows [Semantic Versioning 2.0.0](https://semver.org/):
 
 Synchronize versions across these files before deployment:
 
-| File                                       | Field     | Current Version |
-| ------------------------------------------ | --------- | --------------- |
-| `packages/standalone/package.json`         | `version` | 0.14.0          |
-| `packages/mcp-server/package.json`         | `version` | 1.9.0           |
-| `packages/mama-core/package.json`          | `version` | 1.3.0           |
-| `packages/claude-code-plugin/package.json` | `version` | 1.8.0           |
+| File                                                     | Field     | Current Version |
+| -------------------------------------------------------- | --------- | --------------- |
+| `packages/standalone/package.json`                       | `version` | 0.14.0          |
+| `packages/mcp-server/package.json`                       | `version` | 1.9.0           |
+| `packages/mama-core/package.json`                        | `version` | 1.3.0           |
+| `packages/claude-code-plugin/package.json`               | `version` | 1.8.0           |
+| `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.8.0           |
 
 ### Version Update Example
 
