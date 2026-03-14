@@ -127,9 +127,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     }
 
     if (!DatabaseSync) {
-      throw new Error(
-        'node:sqlite is not available in this Node.js runtime. Use Node 22+ or set MAMA_SQLITE_DRIVER=better-sqlite3.'
-      );
+      throw new Error('node:sqlite is not available in this Node.js runtime. Use Node 22+.');
     }
 
     const dbPath = this.getDbPath();

@@ -59,17 +59,13 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "ws": "^8.19.0"
   },
-  "optionalDependencies": {
-    "better-sqlite3": "^11.0.0"
-  },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
     "typescript": "^5.4.0",
