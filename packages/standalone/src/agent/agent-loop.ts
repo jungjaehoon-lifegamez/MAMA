@@ -638,7 +638,7 @@ export class AgentLoop {
     options?: AgentLoopOptions
   ): Promise<AgentLoopResult> {
     if (this.stopped) {
-      throw new AgentError('Agent loop is stopping', 'CLI_ERROR', undefined, false);
+      throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
     }
 
     this.currentStreamCallbacks = options?.streamCallbacks;

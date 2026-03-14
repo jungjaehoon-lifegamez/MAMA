@@ -30,7 +30,7 @@ Before installing MAMA Standalone, ensure you have:
 
 ### Required
 
-- **Node.js >= 22.0.0** (Standalone, plugin, MCP server, and core all require Node 22+)
+- **Node.js >= 22.13.0** (Standalone, plugin, MCP server, and core all require unflagged `node:sqlite`)
 - **At least one authenticated backend CLI**
   - Codex CLI (`codex login`) or
   - Claude CLI (`claude` OAuth login)
@@ -45,7 +45,7 @@ Before installing MAMA Standalone, ensure you have:
 ### Check Prerequisites
 
 ```bash
-# Check Node.js version (must be >= 22.0.0)
+# Check Node.js version (must be >= 22.13.0)
 node --version
 
 # Check Codex CLI (optional but recommended)

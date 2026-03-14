@@ -304,7 +304,7 @@ npx @jungjaehoon/mama-os
 
 ### 2. Code Reuse
 
-All packages share mama-core to eliminate duplication. Heavy runtime pieces (`node:sqlite`, transformers.js) live in mama-core.
+All packages share mama-core to eliminate duplication. The shared runtime lives in mama-core, including the SQLite layer (`node:sqlite`) and embedding stack (`transformers.js`).
 
 ### 3. Independent Updates
 
