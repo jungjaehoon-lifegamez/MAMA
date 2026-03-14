@@ -7,7 +7,7 @@
  * Checks:
  * 1. Node.js version (>=18.0.0)
  * 2. Disk space (>=100MB)
- * 3. SQLite native module (better-sqlite3)
+ * 3. SQLite support (node:sqlite or better-sqlite3)
  * 4. Embedding support (via @jungjaehoon/mama-core)
  * 5. Tier detection and reporting
  *
@@ -133,45 +133,70 @@ function checkDiskSpace() {
 }
 
 /**
- * Check SQLite native module
- * AC2: Attempt to load better-sqlite3, enable Tier 2 on failure
+ * Check SQLite support
+ * AC2: Attempt to load node:sqlite first, then better-sqlite3, enable Tier 2 on failure
  */
 function checkSQLite() {
-  log(colors.cyan, '🔍 Checking SQLite native module (better-sqlite3)...');
+  log(colors.cyan, '🔍 Checking SQLite support (node:sqlite / better-sqlite3)...');
 
   try {
-    const Database = require('better-sqlite3');
-
-    // Quick smoke test: create in-memory DB
-    const db = new Database(':memory:');
+    const { DatabaseSync } = require('node:sqlite');
+    const db = new DatabaseSync(':memory:');
     db.exec('CREATE TABLE test (id INTEGER)');
     db.close();
 
-    log(colors.green, '✅ SQLite native module working\n');
-    return { available: true, tier: 1 };
-  } catch (error) {
-    log(colors.yellow, `⚠️  SQLite native module failed: ${error.message}`);
-    log(colors.yellow, `\nFalling back to Tier 2 (degraded mode)`);
-    log(colors.yellow, `\nTo fix (optional - for better performance):`);
+    log(colors.green, '✅ SQLite support available via node:sqlite\n');
+    return { available: true, tier: 1, driver: 'node:sqlite' };
+  } catch (nodeSqliteError) {
+    try {
+      const Database = require('better-sqlite3');
 
-    const platform = process.platform;
-    if (platform === 'darwin') {
-      log(colors.yellow, `  • macOS: xcode-select --install`);
-      log(colors.yellow, `  • Then: npm rebuild better-sqlite3`);
-    } else if (platform === 'linux') {
-      log(colors.yellow, `  • Linux: sudo apt install build-essential python3`);
-      log(colors.yellow, `  • Then: npm rebuild better-sqlite3`);
-    } else if (platform === 'win32') {
-      log(colors.yellow, `  • Windows: npm install --global windows-build-tools`);
-      log(colors.yellow, `  • Then: npm rebuild better-sqlite3`);
+      const db = new Database(':memory:');
+      db.exec('CREATE TABLE test (id INTEGER)');
+      db.close();
+
+      log(colors.green, '✅ SQLite support available via better-sqlite3\n');
+      return { available: true, tier: 1, driver: 'better-sqlite3' };
+    } catch (betterSqliteError) {
+      const nodeSqliteMessage = nodeSqliteError.message;
+      const betterSqliteMessage = betterSqliteError.message;
+      log(
+        colors.yellow,
+        `⚠️  SQLite support unavailable: node:sqlite failed (${nodeSqliteMessage}); better-sqlite3 failed (${betterSqliteMessage})`
+      );
+      log(colors.yellow, `\nFalling back to Tier 2 (degraded mode)`);
+      log(colors.yellow, `\nTo fix (optional - for better performance):`);
+
+      const platform = process.platform;
+      if (platform === 'darwin') {
+        log(colors.yellow, `  • Recommended: use Node 22+ or 25+ for built-in node:sqlite`);
+        log(colors.yellow, `  • Or install build tools: xcode-select --install`);
+        log(colors.yellow, `  • Then: npm rebuild better-sqlite3`);
+      } else if (platform === 'linux') {
+        log(colors.yellow, `  • Recommended: use Node 22+ or 25+ for built-in node:sqlite`);
+        log(colors.yellow, `  • Or install build tools: sudo apt install build-essential python3`);
+        log(colors.yellow, `  • Then: npm rebuild better-sqlite3`);
+      } else if (platform === 'win32') {
+        log(colors.yellow, `  • Recommended: use Node 22+ or 25+ for built-in node:sqlite`);
+        log(colors.yellow, `  • Or install build tools: npm install --global windows-build-tools`);
+        log(colors.yellow, `  • Then: npm rebuild better-sqlite3`);
+      }
+
+      log(colors.yellow, `\nTier 2 features:`);
+      log(colors.yellow, `  - Exact match search only (no vector search)`);
+      log(colors.yellow, `  - 40% accuracy (vs 80% in Tier 1)`);
+      log(colors.yellow, `  - All data still saved and retrievable\n`);
+
+      return {
+        available: false,
+        tier: 2,
+        reason: 'SQLite support unavailable',
+        details: {
+          nodeSqlite: nodeSqliteMessage,
+          betterSqlite: betterSqliteMessage,
+        },
+      };
     }
-
-    log(colors.yellow, `\nTier 2 features:`);
-    log(colors.yellow, `  - Exact match search only (no vector search)`);
-    log(colors.yellow, `  - 40% accuracy (vs 80% in Tier 1)`);
-    log(colors.yellow, `  - All data still saved and retrievable\n`);
-
-    return { available: false, tier: 2, reason: 'SQLite native module unavailable' };
   }
 }
 
