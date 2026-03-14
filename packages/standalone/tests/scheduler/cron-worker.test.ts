@@ -52,7 +52,7 @@ describe('CronWorker', () => {
         expect.objectContaining({
           sessionId: expect.stringMatching(/^cron-worker-\d+$/),
           model: 'claude-haiku-4-5-20251001',
-          dangerouslySkipPermissions: false,
+          dangerouslySkipPermissions: true,
           allowedTools: ['Bash', 'Read', 'Write', 'Glob', 'Grep'],
         })
       );
