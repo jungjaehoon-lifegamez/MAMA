@@ -16,7 +16,7 @@ jobs:
       plugin: ${{ steps.filter.outputs.plugin }}
       mcp_server: ${{ steps.filter.outputs.mcp_server }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -41,11 +41,11 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v4
       - name: Get pnpm store directory
         shell: bash
         run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
@@ -70,11 +70,11 @@ jobs:
     if: ${{ github.event_name == 'push' || needs.changes.outputs.core == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v4
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -93,11 +93,11 @@ jobs:
     if: ${{ github.event_name == 'push' || needs.changes.outputs.standalone == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v4
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -121,11 +121,11 @@ jobs:
     if: ${{ github.event_name == 'push' || needs.changes.outputs.plugin == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v4
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -144,11 +144,11 @@ jobs:
     if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp_server == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v4
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -165,11 +165,11 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v4
       - run: pnpm install
       - run: pnpm lint
         continue-on-error: true
