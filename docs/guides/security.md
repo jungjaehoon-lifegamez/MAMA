@@ -32,11 +32,12 @@ MAMA follows a **localhost-first security model**:
 
 2. **Optional: External Access**
    - Requires manual tunnel setup (ngrok, Cloudflare, etc.)
-   - **Requires `MAMA_AUTH_TOKEN` for security**
+   - **Requires either `MAMA_AUTH_TOKEN` or explicit Cloudflare Access trust mode**
    - User must explicitly choose to expose MAMA
 
 3. **Defense in Depth**
    - Token-based authentication for external requests
+   - Optional trusted Cloudflare Access integration for Zero Trust deployments
    - Rate limiting on failed auth attempts
    - Security warnings when external access detected
 
@@ -156,6 +157,33 @@ User → Cloudflare Zero Trust → Tunnel → MAMA (localhost)
 ```
 
 **MAMA sees all requests as localhost** - No code changes needed!
+
+That statement now has one important caveat for protected API routes:
+
+- Browser/UI access through Cloudflare Access works after login
+- Protected `/api/*` routes still require MAMA to trust Cloudflare Access identity headers
+- To enable that mode, start MAMA with `MAMA_TRUST_CLOUDFLARE_ACCESS=true`
+
+### Cloudflare Access Trust Mode
+
+For Cloudflare Zero Trust deployments, run MAMA like this:
+
+```bash
+export MAMA_TRUST_CLOUDFLARE_ACCESS=true
+mama start
+```
+
+What this does:
+
+- Trusts Cloudflare Access identity headers only when the direct peer is a trusted proxy
+- Allows Access-authenticated tunnel requests to reach protected `/api/*` routes without adding a second Bearer token
+- Keeps direct remote requests, spoofed forwarded headers, and non-Access tunnel traffic blocked
+
+Use `MAMA_AUTH_TOKEN` instead when:
+
+- You are using temporary tunnels without Cloudflare Access
+- You are using ngrok or another provider that does not inject Cloudflare Access identity headers
+- You want temporary testing access rather than Zero Trust policy-based access
 
 ### Step-by-Step Setup
 
@@ -348,6 +376,9 @@ Include:
 #### Step 7: Start Tunnel
 
 ```bash
+# Trust Cloudflare Access identity headers from the local tunnel process
+export MAMA_TRUST_CLOUDFLARE_ACCESS=true
+
 # Start MAMA OS
 mama start &
 
@@ -380,6 +411,7 @@ https://mama.yourdomain.com/viewer
 # Should redirect to Google login
 # After login with allowed email → Access granted
 # After login with non-allowed email → Access denied (403)
+# Protected /api/* routes should also return 200 without adding Authorization: Bearer ...
 ```
 
 **2. Test with Different Accounts:**
@@ -403,17 +435,17 @@ https://mama.yourdomain.com/viewer
 
 ### Advantages Over Token Auth
 
-| Feature                | Token Auth            | Cloudflare Zero Trust |
-| ---------------------- | --------------------- | --------------------- |
-| Brute Force Protection | Manual rate limiting  | ✅ Automatic          |
-| 2FA Support            | Manual implementation | ✅ Automatic          |
-| Account-based          | ❌ No                 | ✅ Yes                |
-| Email restriction      | ❌ No                 | ✅ Yes                |
-| Session management     | Manual                | ✅ Automatic          |
-| DDoS protection        | ❌ No                 | ✅ Yes                |
-| Audit logs             | Manual                | ✅ Built-in           |
-| Revoke access          | Change token          | ✅ One click          |
-| MAMA code changes      | Required              | ✅ None needed        |
+| Feature                | Token Auth            | Cloudflare Zero Trust               |
+| ---------------------- | --------------------- | ----------------------------------- |
+| Brute Force Protection | Manual rate limiting  | ✅ Automatic                        |
+| 2FA Support            | Manual implementation | ✅ Automatic                        |
+| Account-based          | ❌ No                 | ✅ Yes                              |
+| Email restriction      | ❌ No                 | ✅ Yes                              |
+| Session management     | Manual                | ✅ Automatic                        |
+| DDoS protection        | ❌ No                 | ✅ Yes                              |
+| Audit logs             | Manual                | ✅ Built-in                         |
+| Revoke access          | Change token          | ✅ One click                        |
+| MAMA-side config       | `MAMA_AUTH_TOKEN`     | `MAMA_TRUST_CLOUDFLARE_ACCESS=true` |
 
 ### Free vs Paid
 
@@ -540,14 +572,16 @@ When MAMA detects external access, it will show warnings:
 ⚠️  Your MAMA server is being accessed from outside localhost.
 ⚠️  This likely means you are using a tunnel (ngrok, Cloudflare, etc.)
 ⚠️
-⚠️  ❌ CRITICAL: MAMA_AUTH_TOKEN is NOT set!
+⚠️  ❌ CRITICAL: Neither MAMA_AUTH_TOKEN nor Cloudflare Access trust mode is set!
 ⚠️  Anyone with your tunnel URL can access your:
 ⚠️    - Chat sessions with Claude Code
 ⚠️    - Decision database (~/.claude/mama-memory.db)
 ⚠️    - Local file system (via Claude Code)
 ⚠️
-⚠️  To secure your server, set MAMA_AUTH_TOKEN:
+⚠️  To secure your server, either set MAMA_AUTH_TOKEN:
 ⚠️    export MAMA_AUTH_TOKEN="your-secret-token"
+⚠️  Or, if you are using Cloudflare Zero Trust:
+⚠️    export MAMA_TRUST_CLOUDFLARE_ACCESS=true
 ⚠️
 ⚠️  ========================================
 ```
@@ -566,14 +600,18 @@ if (req.remoteAddress === '127.0.0.1') {
   return true;
 }
 
-// External request -> Check MAMA_AUTH_TOKEN
-if (!MAMA_AUTH_TOKEN) {
+// External request -> Check MAMA_AUTH_TOKEN or trusted Cloudflare Access
+if (!MAMA_AUTH_TOKEN && !MAMA_TRUST_CLOUDFLARE_ACCESS) {
   return false; // Deny
 }
 
 // Verify token from header or query param
 if (req.headers.authorization === `Bearer ${MAMA_AUTH_TOKEN}`) {
   return true; // Allow
+}
+
+if (trustedProxyPeer && req.headers['cf-access-jwt-assertion']) {
+  return true; // Allow via Cloudflare Access
 }
 ```
 
@@ -724,15 +762,16 @@ mama start
 ### ✅ DO
 
 1. **Use localhost only** unless you absolutely need external access
-2. **Set strong `MAMA_AUTH_TOKEN`** before using tunnels
+2. **Set strong `MAMA_AUTH_TOKEN`** before using tunnels, unless you are explicitly using Cloudflare Zero Trust trust mode
 3. **Use HTTPS tunnels** (ngrok, Cloudflare provide this automatically)
 4. **Keep tunnel URLs private** - treat them like passwords
 5. **Close tunnels** when not in use
 6. **Rotate tokens** if you suspect compromise
 7. **Monitor logs** for suspicious access attempts
 8. **Use temporary tunnels** (Cloudflare Quick Tunnel expires automatically)
-9. **Review security logs** (`~/.mama/logs/security-events.jsonl`) after any external probing
-10. **Wire alert channels** with `MAMA_SECURITY_ALERT_CHANNELS` before public exposure
+9. **If using Cloudflare Zero Trust, set `MAMA_TRUST_CLOUDFLARE_ACCESS=true`** in the same environment that starts MAMA
+10. **Review security logs** (`~/.mama/logs/security-events.jsonl`) after any external probing
+11. **Wire alert channels** with `MAMA_SECURITY_ALERT_CHANNELS` before public exposure
 
 ### ❌ DON'T
 
@@ -883,7 +922,8 @@ echo ".env" >> .gitignore
 ### Quick Security Checklist
 
 - [ ] Using localhost only? → No token needed
-- [ ] Using tunnel? → **MUST set `MAMA_AUTH_TOKEN`**
+- [ ] Using Cloudflare Zero Trust? → Set `MAMA_TRUST_CLOUDFLARE_ACCESS=true`
+- [ ] Using other tunnels? → **MUST set `MAMA_AUTH_TOKEN`**
 - [ ] Token is strong? → Minimum 32 characters, random
 - [ ] Tunnel URL private? → Don't share publicly
 - [ ] Using HTTPS tunnel? → ngrok/Cloudflare provide this

@@ -198,6 +198,17 @@ mama setup
 - You're setting up in a headless environment
 - You don't need gateway integrations
 
+### External Access Note
+
+If you plan to expose MAMA OS behind Cloudflare Zero Trust, start it with:
+
+```bash
+export MAMA_TRUST_CLOUDFLARE_ACCESS=true
+mama start
+```
+
+Use `MAMA_AUTH_TOKEN` instead for temporary tunnels that do not provide Cloudflare Access identity headers.
+
 ---
 
 ## Configuration
@@ -298,6 +309,7 @@ Notes:
 
 - Codex native config normally lives under `~/.codex`, but with `codex_home` you can isolate runtime state in `~/.mama/.codex`.
 - MCP config location for MAMA tool routing is `agent.tools.mcp_config` and is backend-independent (same for Claude/Codex when running through MAMA).
+- For Cloudflare Zero Trust external access, set `MAMA_TRUST_CLOUDFLARE_ACCESS=true` in the shell or service that starts `mama`.
 
 ### Configuration Options Reference
 

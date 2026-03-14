@@ -721,6 +721,7 @@ If you want to access MAMA OS from outside localhost (e.g., from your phone):
 
 1. **Recommended:** Use Cloudflare Zero Trust tunnel with authentication
 2. **Testing only:** Use `cloudflared tunnel --url http://localhost:3847`
+3. **If using Cloudflare Zero Trust:** start MAMA with `MAMA_TRUST_CLOUDFLARE_ACCESS=true` so Access-authenticated `/api/*` requests are not blocked by a second auth layer
 
 ⚠️ **Never expose MAMA OS to the internet without authentication** - Anyone with access can control your system via your backend session.
 
