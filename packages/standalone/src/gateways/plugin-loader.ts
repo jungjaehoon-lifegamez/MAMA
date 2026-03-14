@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { pathToFileURL } from 'url';
 import type {
   PluginManifest,
@@ -85,6 +85,14 @@ export class PluginLoader {
           continue;
         }
 
+        // Validate plugin ID to prevent path traversal via crafted IDs
+        if (!/^[a-zA-Z0-9_-]+$/.test(manifest.id)) {
+          console.warn(
+            `[PluginLoader] Invalid plugin id "${manifest.id}" in ${entry.name}: must match /^[a-zA-Z0-9_-]+$/`
+          );
+          continue;
+        }
+
         manifests.push(manifest);
 
         // Store plugin info
@@ -127,6 +135,17 @@ export class PluginLoader {
     }
 
     const entryPath = join(plugin.path, plugin.manifest.main);
+
+    // Prevent path traversal: ensure entryPath stays within the plugin directory
+    const resolvedEntry = resolve(entryPath);
+    const resolvedPluginDir = resolve(plugin.path) + sep;
+    if (!resolvedEntry.startsWith(resolvedPluginDir)) {
+      console.error(
+        `[PluginLoader] Path traversal detected in plugin ${pluginId}: ${plugin.manifest.main}`
+      );
+      return null;
+    }
+
     if (!existsSync(entryPath)) {
       console.error(`[PluginLoader] Entry point not found: ${entryPath}`);
       return null;
