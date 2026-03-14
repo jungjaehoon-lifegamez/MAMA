@@ -10,11 +10,41 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import Database from 'better-sqlite3';
 import { DatabaseAdapter, type VectorSearchResult, type RunResult } from './base-adapter.js';
 import { SQLiteStatement, type Statement } from './statement.js';
 import { info, warn, error as logError } from '../debug-logger.js';
 import { cosineSimilarity } from '../embeddings.js';
+
+interface BetterSQLiteDatabaseLike {
+  readonly open: boolean;
+  pragma: (sql: string, options?: { simple?: boolean }) => unknown;
+  prepare: (sql: string) => BetterSQLiteStatementLike;
+  exec: (sql: string) => void;
+  transaction: <T>(fn: () => T) => () => T;
+  close: () => void;
+}
+
+interface BetterSQLiteStatementLike {
+  all: (...params: unknown[]) => unknown[];
+  get: (...params: unknown[]) => unknown;
+  run: (...params: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
+}
+
+type BetterSQLiteDatabaseCtor = new (
+  path: string,
+  options?: { verbose?: ((message?: unknown, ...optionalParams: unknown[]) => void) | undefined }
+) => BetterSQLiteDatabaseLike;
+
+let BetterSQLiteDatabase: BetterSQLiteDatabaseCtor | null = null;
+
+try {
+  const required = require('better-sqlite3') as
+    | BetterSQLiteDatabaseCtor
+    | { default: BetterSQLiteDatabaseCtor };
+  BetterSQLiteDatabase = 'default' in required ? required.default : required;
+} catch {
+  BetterSQLiteDatabase = null;
+}
 
 // Database paths
 const LEGACY_DB_PATH = path.join(os.homedir(), '.spinelift', 'memories.db');
@@ -30,7 +60,7 @@ interface SQLiteAdapterConfig {
 
 export class SQLiteAdapter extends DatabaseAdapter {
   private config: SQLiteAdapterConfig;
-  private db: Database.Database | null = null;
+  private db: BetterSQLiteDatabaseLike | null = null;
   private _vectorSearchEnabled = true; // Always true: pure TS cosine similarity
 
   constructor(config: SQLiteAdapterConfig = {}) {
@@ -76,9 +106,15 @@ export class SQLiteAdapter extends DatabaseAdapter {
   /**
    * Connect to SQLite database
    */
-  connect(): Database.Database {
+  connect(): BetterSQLiteDatabaseLike {
     if (this.db) {
       return this.db;
+    }
+
+    if (!BetterSQLiteDatabase) {
+      throw new Error(
+        'better-sqlite3 is not installed. Install the optional dependency or set MAMA_SQLITE_DRIVER=node-sqlite.'
+      );
     }
 
     const dbPath = this.getDbPath();
@@ -91,7 +127,7 @@ export class SQLiteAdapter extends DatabaseAdapter {
     }
 
     // Open database
-    this.db = new Database(dbPath, { verbose: undefined });
+    this.db = new BetterSQLiteDatabase(dbPath, { verbose: undefined });
     info(`[sqlite-adapter] Opened database at: ${dbPath}`);
 
     // Production configuration
