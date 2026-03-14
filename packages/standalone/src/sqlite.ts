@@ -121,16 +121,16 @@ class NodeSqliteConnection {
 
 function resolveDatabaseDriver(): { driver: 'node:sqlite'; ctor: NodeSqliteCtor } {
   const configuredDriver = process.env.MAMA_SQLITE_DRIVER;
-  const normalizedDriver =
-    configuredDriver === 'node-sqlite' || configuredDriver === 'node:sqlite'
-      ? 'node:sqlite'
-      : (configuredDriver ?? 'node:sqlite');
   const nodeCtor = loadNodeSqliteCtor();
 
   if (!nodeCtor) {
     throw new Error('node:sqlite is not available in this Node.js runtime. Use Node 22.13+.');
   }
 
+  const normalizedDriver =
+    configuredDriver === 'node-sqlite' || configuredDriver === 'node:sqlite'
+      ? 'node:sqlite'
+      : (configuredDriver ?? 'node:sqlite');
   if (normalizedDriver !== 'node:sqlite' && normalizedDriver !== 'auto') {
     throw new Error(
       `Unsupported SQLite driver "${configuredDriver}". MAMA OS now requires node:sqlite.`

@@ -2841,6 +2841,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   // Handle graceful shutdown with timeout
   let shuttingDown = false;
+  let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
   const shutdown = async () => {
     if (shuttingDown) return; // Prevent double shutdown
     shuttingDown = true;
@@ -2852,6 +2853,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     }
     if (healthWarningInterval) {
       clearInterval(healthWarningInterval);
+    }
+    if (keepAliveInterval) {
+      clearInterval(keepAliveInterval);
+      keepAliveInterval = null;
     }
 
     const getBlockingHandleNames = (): string[] => {
@@ -3023,7 +3028,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   // Keep process alive using setInterval
   // This ensures the Node.js event loop stays active
-  setInterval(() => {
+  keepAliveInterval = setInterval(() => {
     // Heartbeat - keeps the process running
   }, 30000); // Every 30 seconds
 }
