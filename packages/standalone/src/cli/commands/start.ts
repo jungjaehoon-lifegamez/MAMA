@@ -2636,13 +2636,24 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     apiServer.server.on('upgrade', (request: any, socket: any, head: any) => {
       const url = new URL(request.url || '', `http://${request.headers.host}`);
 
-      // WebSocket auth: require token for non-localhost connections
-      // Browsers can't set Authorization headers on WebSocket, so localhost is allowed
+      // WebSocket auth: require token for non-localhost connections.
+      // Browsers cannot set Authorization headers on WebSocket upgrades,
+      // so we allow query-string token auth for this path only.
       const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
-      if (adminToken && !isLocalRequest(request) && !isAuthenticated(request)) {
+      const isLocalUpgrade = isLocalRequest(request);
+      if (adminToken && !isLocalUpgrade && !isAuthenticated(request, { allowQueryToken: true })) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
+      }
+      if (!adminToken && !isLocalUpgrade) {
+        startLogger.warn(
+          '[WS] Accepting non-localhost WebSocket upgrade without auth token configured',
+          {
+            remoteAddress: request.socket?.remoteAddress,
+            path: url.pathname,
+          }
+        );
       }
 
       if (url.pathname === '/setup-ws') {
