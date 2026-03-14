@@ -42,7 +42,7 @@ You are helping the user view or modify MAMA configuration.
    - Note: Does NOT migrate existing data
 
 5. For `--tier-check`:
-   - Re-run tier detection (check SQLite native module, Transformers.js)
+   - Re-run tier detection (node:sqlite is built into supported Node 22.13+ runtimes; verify Transformers.js availability)
    - Update config with detected tier
    - Show remediation steps if Tier 2
 
@@ -275,7 +275,7 @@ This will:
 
 ## Important Notes
 
-- **Tier 1 vs Tier 2**: Automatic detection based on native module availability
+- **Tier 1 vs Tier 2**: On Node 22.13+, `node:sqlite` is built in; fallback to Tier 2 now happens when Transformers.js embeddings are unavailable
 - **Model change**: Clears cache, will reload on next search (~3s first time)
 - **DB path change**: Does NOT migrate data (manual migration required)
 - **Config location**: `~/.mama/config.json` (user-specific)
