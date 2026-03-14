@@ -2311,6 +2311,20 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   // Upload/download media endpoints
   apiServer.app.use('/api', createUploadRouter());
 
+  // Auth gate for /graph/* write endpoints (not covered by /api middleware)
+  apiServer.app.use('/graph', (req, res, next) => {
+    const isRead = req.method === 'GET' || req.method === 'HEAD';
+    if (!isRead && !isAuthenticated(req)) {
+      res.status(401).json({
+        error: true,
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required.',
+      });
+      return;
+    }
+    next();
+  });
+
   apiServer.app.use(async (req, res, next) => {
     const handled = await graphHandler(req, res);
     if (!handled) next();
