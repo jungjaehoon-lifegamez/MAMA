@@ -527,13 +527,36 @@ export class GatewayToolExecutor {
     }
 
     // Block destructive commands (stop/kill) - these would permanently kill the agent
-    const destructive = /(systemctl\s+--user\s+stop\s+mama-os|kill\s.*mama|pkill\s.*mama)/i;
+    const destructive = /(systemctl\s+(?:--user\s+)?(?:stop|disable)\s+mama|(?:kill|pkill|killall)\s.*mama|rm\s+-rf?\s+(?:\/|~\/?\s|\/home))/i;
     if (destructive.test(command)) {
       return {
         success: false,
         error:
           'Cannot stop mama-os from within the agent. Ask the user to run this command from their terminal.',
       };
+    }
+
+    // Block commands that can escape sandbox or escalate privileges
+    const dangerousPatterns = [
+      /\bsudo\b/i,
+      /\bchmod\s+[+0-7]*s/i,          // setuid/setgid
+      /\bchown\b/i,
+      /\bcurl\b.*\|\s*(?:ba)?sh/i,     // curl pipe to shell
+      /\bwget\b.*\|\s*(?:ba)?sh/i,     // wget pipe to shell
+      /\beval\b/,                       // eval in shell
+      /\bnc\s+-[el]/i,                 // netcat listener (reverse shell)
+      /\b(?:python|node|ruby|perl|php)\s+-e/i, // inline code execution
+      />\s*\/dev\/tcp\//,              // bash /dev/tcp reverse shell
+      /\bmkfifo\b/,                    // named pipe (often used in reverse shells)
+    ];
+
+    for (const pattern of dangerousPatterns) {
+      if (pattern.test(command)) {
+        return {
+          success: false,
+          error: `Blocked: command contains a restricted pattern. Use appropriate MAMA tools instead.`,
+        };
+      }
     }
 
     // Block sandbox escape via cd command using path-based validation
