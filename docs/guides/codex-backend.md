@@ -35,6 +35,8 @@ export CODEX_COMMAND=/path/to/codex
 export CODEX_HOME=~/.mama/.codex
 ```
 
+If `~/.mama/.codex/auth.json` does not exist yet, MAMA OS will bootstrap it from `~/.codex/auth.json` automatically on first `codex-mcp` startup.
+
 MAMA searches for the Codex binary in the following order:
 
 1. The `command` option in the configuration
@@ -246,7 +248,7 @@ Key discovery: `--plugin-dir` alone is **additive** (plugins load from both the 
 | **Phase 2** | `codex app-server` (HTTP)         | Session persistence, but `developer-instructions` still re-sent on every request    |
 | **Phase 3** | `codex mcp-server` (MCP protocol) | `threadId` for session continuity; `developer-instructions` sent on first turn only |
 
-Both backends now share the same pattern: inject system prompt (persona + skills + tools) on the first turn, then rely on session persistence for subsequent turns.
+Both backends now share the same pattern: inject system prompt (persona + skills + tools) on the first turn, then rely on session persistence for subsequent turns. Current Standalone builds also harden the shutdown path so `mama stop` can tear down the `codex-mcp` backend cleanly without restarting into a crash loop.
 
 ---
 
