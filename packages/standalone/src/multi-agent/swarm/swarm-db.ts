@@ -15,7 +15,7 @@
  * @version 1.0
  */
 
-import Database from 'better-sqlite3';
+import Database, { type SQLiteDatabase } from '../../sqlite.js';
 import { randomUUID } from 'crypto';
 
 /**
@@ -61,7 +61,7 @@ export interface CreateTaskParams {
  * @returns Database instance
  * @throws {Error} If database file cannot be opened (invalid path, permissions, etc.)
  */
-export function initSwarmDb(dbPath: string): Database.Database {
+export function initSwarmDb(dbPath: string): SQLiteDatabase {
   const db = new Database(dbPath);
 
   // Create swarm_tasks table
@@ -102,7 +102,7 @@ export function initSwarmDb(dbPath: string): Database.Database {
  * @param params - Task parameters
  * @returns Task ID (UUID)
  */
-export function createTask(db: Database.Database, params: CreateTaskParams): string {
+export function createTask(db: SQLiteDatabase, params: CreateTaskParams): string {
   const id = randomUUID();
   const priority = params.priority ?? 0;
   const files_owned = params.files_owned ? JSON.stringify(params.files_owned) : null;
@@ -139,7 +139,7 @@ export function createTask(db: Database.Database, params: CreateTaskParams): str
  * @param agentId - Agent claiming the task
  * @returns true if claimed successfully, false if already claimed
  */
-export function claimTask(db: Database.Database, taskId: string, agentId: string): boolean {
+export function claimTask(db: SQLiteDatabase, taskId: string, agentId: string): boolean {
   const claim = db.transaction(() => {
     // Check if task exists and is pending
     const task = db.prepare(`SELECT status FROM swarm_tasks WHERE id = ?`).get(taskId) as
@@ -176,7 +176,7 @@ export function claimTask(db: Database.Database, taskId: string, agentId: string
  * @param result - Optional result data (JSON string or plain text)
  * @returns true if updated successfully
  */
-export function completeTask(db: Database.Database, taskId: string, result?: string): boolean {
+export function completeTask(db: SQLiteDatabase, taskId: string, result?: string): boolean {
   const now = Date.now();
   const updateResult = db
     .prepare(
@@ -199,7 +199,7 @@ export function completeTask(db: Database.Database, taskId: string, result?: str
  * @param result - Optional error message or failure details
  * @returns true if updated successfully
  */
-export function failTask(db: Database.Database, taskId: string, result?: string): boolean {
+export function failTask(db: SQLiteDatabase, taskId: string, result?: string): boolean {
   const now = Date.now();
   const updateResult = db
     .prepare(
@@ -224,7 +224,7 @@ export function failTask(db: Database.Database, taskId: string, result?: string)
  * @param result - Optional error message or failure details
  * @returns true if updated successfully
  */
-export function failPendingTask(db: Database.Database, taskId: string, result?: string): boolean {
+export function failPendingTask(db: SQLiteDatabase, taskId: string, result?: string): boolean {
   const now = Date.now();
   const updateResult = db
     .prepare(
@@ -249,7 +249,7 @@ export function failPendingTask(db: Database.Database, taskId: string, result?: 
  * @param taskId - Task ID
  * @returns true if task was reset to pending
  */
-export function retryTask(db: Database.Database, taskId: string): boolean {
+export function retryTask(db: SQLiteDatabase, taskId: string): boolean {
   const result = db
     .prepare(
       `
@@ -273,7 +273,7 @@ export function retryTask(db: Database.Database, taskId: string): boolean {
  * @param taskId - Task ID to defer
  * @returns true if task was deferred, false otherwise
  */
-export function deferTask(db: Database.Database, taskId: string): boolean {
+export function deferTask(db: SQLiteDatabase, taskId: string): boolean {
   const result = db
     .prepare(
       `
@@ -294,7 +294,7 @@ export function deferTask(db: Database.Database, taskId: string): boolean {
  * @param sessionId - Session ID
  * @returns Array of tasks
  */
-export function getTasksBySession(db: Database.Database, sessionId: string): SwarmTask[] {
+export function getTasksBySession(db: SQLiteDatabase, sessionId: string): SwarmTask[] {
   return db
     .prepare(`SELECT * FROM swarm_tasks WHERE session_id = ? ORDER BY wave, priority DESC`)
     .all(sessionId) as SwarmTask[];
@@ -310,11 +310,7 @@ export function getTasksBySession(db: Database.Database, sessionId: string): Swa
  * @param wave - Optional wave number filter
  * @returns Array of pending tasks
  */
-export function getPendingTasks(
-  db: Database.Database,
-  sessionId: string,
-  wave?: number
-): SwarmTask[] {
+export function getPendingTasks(db: SQLiteDatabase, sessionId: string, wave?: number): SwarmTask[] {
   if (wave !== undefined) {
     return db
       .prepare(
@@ -340,10 +336,7 @@ export function getPendingTasks(
  * @param maxAgeMs - Maximum age for claimed tasks (default: 15 minutes)
  * @returns Number of expired tasks
  */
-export function expireStaleLeases(
-  db: Database.Database,
-  maxAgeMs: number = 15 * 60 * 1000
-): number {
+export function expireStaleLeases(db: SQLiteDatabase, maxAgeMs: number = 15 * 60 * 1000): number {
   const expireThreshold = Date.now() - maxAgeMs;
 
   const result = db

@@ -57,15 +57,31 @@ export function checkNodeVersion(): CheckResult {
 }
 
 /**
- * Validates SQLite (better-sqlite3) availability
+ * Validates SQLite availability (node:sqlite preferred, better-sqlite3 fallback)
  */
 export function checkSQLite(): CheckResult {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Database = require('better-sqlite3');
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { DatabaseSync } = require('node:sqlite') as {
+        DatabaseSync: new (path: string) => { close: () => void };
+      };
+      const testDb = new DatabaseSync(':memory:');
+      testDb.close();
+      return {
+        status: 'pass',
+        details: 'node:sqlite built-in driver ready',
+      };
+    } catch {
+      // Fall through to better-sqlite3.
+    }
 
-    // Test instantiation with in-memory database
-    const testDb = new Database(':memory:');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require('better-sqlite3') as
+      | (new (path: string) => { close: () => void })
+      | { default: new (path: string) => { close: () => void } };
+    const DatabaseCtor = 'default' in Database ? Database.default : Database;
+    const testDb = new DatabaseCtor(':memory:');
     testDb.close();
 
     return {
@@ -76,7 +92,7 @@ export function checkSQLite(): CheckResult {
     const message = error instanceof Error ? error.message : String(error);
     return {
       status: 'fail',
-      details: `better-sqlite3 not available: ${message}`,
+      details: `SQLite drivers unavailable: ${message}`,
     };
   }
 }
