@@ -1,8 +1,8 @@
 /**
  * Tests for Story M3.4: Installation & Tier Detection
  *
- * AC1: engines.node >=18 check with descriptive errors
- * AC2: Attempt to load node:sqlite or better-sqlite3, Tier 2 fallback on failure
+ * AC1: engines.node >=22 check with descriptive errors
+ * AC2: Attempt to load node:sqlite, Tier 2 fallback on failure
  * AC3: Success message with detected tier
  * AC4: Disk space checks, OS-specific instructions
  * AC5: CI smoke test - npm install assertions
@@ -23,12 +23,12 @@ const PACKAGE_JSON = path.join(PLUGIN_ROOT, 'package.json');
 
 describe('M3.4: Installation & Tier Detection', () => {
   describe('AC1: Node version check with descriptive errors', () => {
-    it('should have engines.node set to >=18', () => {
+    it('should have engines.node set to >=22', () => {
       const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON, 'utf8'));
 
       expect(pkg.engines).toBeDefined();
       expect(pkg.engines.node).toBeDefined();
-      expect(pkg.engines.node).toMatch(/>=18/);
+      expect(pkg.engines.node).toMatch(/>=22/);
     });
 
     it('should have postinstall script configured', () => {
@@ -73,7 +73,7 @@ describe('M3.4: Installation & Tier Detection', () => {
 
       if (result.available) {
         expect(result.tier).toBe(1);
-        expect(['node:sqlite', 'better-sqlite3']).toContain(result.driver);
+        expect(result.driver).toBe('node:sqlite');
       } else {
         expect(result.tier).toBe(2);
         expect(result.reason).toBeDefined();
@@ -336,7 +336,7 @@ describe('M3.4: Installation & Tier Detection', () => {
       expect(scriptContent).not.toContain('${BASH');
 
       // Should use Node.js APIs only
-      expect(scriptContent).toContain('process.platform');
+      expect(scriptContent).toContain('process.version');
       expect(scriptContent).toContain('process.env');
     });
 
@@ -349,7 +349,6 @@ describe('M3.4: Installation & Tier Detection', () => {
 
       // Should have remediation steps
       expect(scriptContent).toContain('nvm install');
-      expect(scriptContent).toContain('npm rebuild');
       expect(scriptContent).toContain('node:sqlite');
     });
   });
