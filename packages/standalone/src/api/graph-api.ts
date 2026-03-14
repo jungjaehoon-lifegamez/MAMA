@@ -976,9 +976,12 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // ── Auth gate: all routes below require authentication ──
     // Static assets (viewer, css, js, icons) are served above without auth.
     // All data API routes below must pass isAuthenticated().
+    // Note: /graph/* write endpoints are also gated in start.ts for defense-in-depth.
     if (!isAuthenticated(req)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: true, code: 'UNAUTHORIZED', message: 'Authentication required.' }));
+      res.end(
+        JSON.stringify({ error: true, code: 'UNAUTHORIZED', message: 'Authentication required.' })
+      );
       return true;
     }
 

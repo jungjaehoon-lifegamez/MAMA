@@ -527,7 +527,8 @@ export class GatewayToolExecutor {
     }
 
     // Block destructive commands (stop/kill) - these would permanently kill the agent
-    const destructive = /(systemctl\s+(?:--user\s+)?(?:stop|disable)\s+mama|(?:kill|pkill|killall)\s.*mama|rm\s+-rf?\s+(?:\/|~\/?\s|\/home))/i;
+    const destructive =
+      /(systemctl\s+(?:--user\s+)?(?:stop|disable)\s+mama(?:-os)?\b|(?:kill|pkill|killall)\b[^\n]*\bmama(?:-os)?\b|\brm\b(?:\s+-[^\n\s]*[rf][^\n\s]*)+\s+(?:\/(?:\s|$)|~(?:\/|\s|$)|\$HOME(?:\/|\s|$)|\/home(?:\/|\s|$)))/i;
     if (destructive.test(command)) {
       return {
         success: false,
@@ -539,15 +540,19 @@ export class GatewayToolExecutor {
     // Block commands that can escape sandbox or escalate privileges
     const dangerousPatterns = [
       /\bsudo\b/i,
-      /\bchmod\s+[+0-7]*s/i,          // setuid/setgid
+      /\bchmod\s+(?:[ugoa]*[+-]s|[0-7]{4})\b/i, // setuid/setgid (symbolic + octal)
       /\bchown\b/i,
-      /\bcurl\b.*\|\s*(?:ba)?sh/i,     // curl pipe to shell
-      /\bwget\b.*\|\s*(?:ba)?sh/i,     // wget pipe to shell
-      /\beval\b/,                       // eval in shell
-      /\bnc\s+-[el]/i,                 // netcat listener (reverse shell)
-      /\b(?:python|node|ruby|perl|php)\s+-e/i, // inline code execution
-      />\s*\/dev\/tcp\//,              // bash /dev/tcp reverse shell
-      /\bmkfifo\b/,                    // named pipe (often used in reverse shells)
+      /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh|fish)\b/i, // pipe to shell
+      /\beval\b/i, // eval in shell
+      /\bnc\s+-[el]/i, // netcat listener (reverse shell)
+      /\bpython(?:3)?\s+-c\b/i, // python inline code
+      /\bnode\s+-e\b/i, // node inline code
+      /\bruby\s+-e\b/i, // ruby inline code
+      /\bperl\s+-e\b/i, // perl inline code
+      /\bphp\s+-r\b/i, // php inline code
+      /\b(?:bash|sh|zsh)\b\s+-[cix]\b/i, // shell inline/interactive execution
+      />\s*\/dev\/tcp\//i, // bash /dev/tcp reverse shell
+      /\bmkfifo\b/i, // named pipe (often used in reverse shells)
     ];
 
     for (const pattern of dangerousPatterns) {

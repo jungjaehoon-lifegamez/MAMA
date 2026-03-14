@@ -668,8 +668,8 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
 
   async start() {
     try {
-      setupLogging();
       validateEnvironment();
+      setupLogging();
 
       // Initialize database
       console.error('[MAMA MCP] Initializing database...');

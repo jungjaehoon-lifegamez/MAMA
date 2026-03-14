@@ -9,6 +9,10 @@ import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'http';
 import type { Request, Response, NextFunction } from 'express';
 
+interface AuthOptions {
+  allowQueryToken?: boolean;
+}
+
 /**
  * Check if request originates from localhost
  */
@@ -25,6 +29,28 @@ function isTunnelRequest(req: IncomingMessage): boolean {
   return !!(req.headers['cf-connecting-ip'] || req.headers['cf-ray']);
 }
 
+function safeTokenEqual(token: string, adminToken: string): boolean {
+  if (token.length !== adminToken.length) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(token), Buffer.from(adminToken));
+}
+
+function getRequestToken(req: IncomingMessage, options: AuthOptions = {}): string | null {
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    return authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+  }
+
+  if (options.allowQueryToken && req.url) {
+    const host = req.headers.host || 'localhost';
+    const url = new URL(req.url, `http://${host}`);
+    return url.searchParams.get('token');
+  }
+
+  return null;
+}
+
 /**
  * Check if request is authenticated.
  *
@@ -32,7 +58,7 @@ function isTunnelRequest(req: IncomingMessage): boolean {
  * - If token configured + real localhost (no tunnel headers): allows without token
  * - If token configured + tunnel/remote: requires Bearer token
  */
-export function isAuthenticated(req: IncomingMessage): boolean {
+export function isAuthenticated(req: IncomingMessage, options: AuthOptions = {}): boolean {
   const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
   if (!adminToken) {
     return isLocalRequest(req);
@@ -44,17 +70,11 @@ export function isAuthenticated(req: IncomingMessage): boolean {
   }
 
   // Remote or tunnel request — require Bearer token
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
+  const token = getRequestToken(req, options);
+  if (!token) {
     return false;
   }
-
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-
-  if (token.length !== adminToken.length) {
-    return false;
-  }
-  return timingSafeEqual(Buffer.from(token), Buffer.from(adminToken));
+  return safeTokenEqual(token, adminToken);
 }
 
 /**
@@ -70,23 +90,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
       error: true,
       code: 'UNAUTHORIZED',
       message: 'Authentication required. Provide Authorization: Bearer <token> header.',
-    });
-    return;
-  }
-  next();
-}
-
-/**
- * Express middleware: localhost requests pass freely, tunnel/remote require auth for ALL methods.
- * - Real localhost GET/POST/PUT/DELETE: allowed (local dashboard)
- * - Tunnel/remote GET/POST/PUT/DELETE: requires Bearer token
- */
-export function requireAuthForWrites(req: Request, res: Response, next: NextFunction): void {
-  if (!isAuthenticated(req)) {
-    res.status(401).json({
-      error: true,
-      code: 'UNAUTHORIZED',
-      message: 'Authentication required for this operation.',
     });
     return;
   }
