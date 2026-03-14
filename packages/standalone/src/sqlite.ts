@@ -1,26 +1,6 @@
 /**
- * SQLite compatibility wrapper for standalone.
- *
- * Prefers Node's built-in node:sqlite on Node 22+ and falls back to the
- * optional better-sqlite3 addon when explicitly requested or when node:sqlite
- * is unavailable.
+ * SQLite wrapper for standalone using Node's built-in node:sqlite runtime.
  */
-
-type BetterSqliteRunResult = { changes: number; lastInsertRowid: number | bigint };
-type BetterSqliteStatementLike = {
-  all: (...params: unknown[]) => unknown[];
-  get: (...params: unknown[]) => unknown;
-  run: (...params: unknown[]) => BetterSqliteRunResult;
-};
-type BetterSqliteDatabaseLike = {
-  readonly open: boolean;
-  pragma: (sql: string, options?: { simple?: boolean }) => unknown;
-  prepare: (sql: string) => BetterSqliteStatementLike;
-  exec: (sql: string) => void;
-  transaction: <T extends (...args: never[]) => unknown>(fn: T) => T;
-  close: () => void;
-};
-type BetterSqliteCtor = new (path: string) => BetterSqliteDatabaseLike;
 
 type NodeSqliteRunResult = { changes: number; lastInsertRowid: number | bigint };
 type NodeSqliteStatementLike = {
@@ -48,23 +28,7 @@ export interface SQLiteStatement {
 
 export type SQLiteDatabase = Database;
 
-let cachedBetterSqliteCtor: BetterSqliteCtor | null | undefined;
 let cachedNodeSqliteCtor: NodeSqliteCtor | null | undefined;
-
-function loadBetterSqliteCtor(): BetterSqliteCtor | null {
-  if (cachedBetterSqliteCtor !== undefined) {
-    return cachedBetterSqliteCtor;
-  }
-
-  try {
-    const required = require('better-sqlite3') as BetterSqliteCtor | { default: BetterSqliteCtor };
-    cachedBetterSqliteCtor = 'default' in required ? required.default : required;
-  } catch {
-    cachedBetterSqliteCtor = null;
-  }
-
-  return cachedBetterSqliteCtor;
-}
 
 function loadNodeSqliteCtor(): NodeSqliteCtor | null {
   if (cachedNodeSqliteCtor !== undefined) {
@@ -145,56 +109,35 @@ class NodeSqliteConnection {
   }
 }
 
-type SQLiteConnection = BetterSqliteDatabaseLike | NodeSqliteConnection;
-
-function resolveDatabaseDriver():
-  | { driver: 'node:sqlite'; ctor: NodeSqliteCtor }
-  | { driver: 'better-sqlite3'; ctor: BetterSqliteCtor } {
-  const configuredDriver = process.env.MAMA_SQLITE_DRIVER || 'auto';
+function resolveDatabaseDriver(): { driver: 'node:sqlite'; ctor: NodeSqliteCtor } {
+  const configuredDriver = process.env.MAMA_SQLITE_DRIVER || 'node-sqlite';
   const nodeCtor = loadNodeSqliteCtor();
-  const betterCtor = loadBetterSqliteCtor();
 
-  if (configuredDriver === 'node-sqlite') {
-    if (!nodeCtor) {
-      throw new Error('node:sqlite is not available in this Node.js runtime');
-    }
-    return { driver: 'node:sqlite', ctor: nodeCtor };
+  if (configuredDriver !== 'node-sqlite' && configuredDriver !== 'auto') {
+    throw new Error(
+      `Unsupported SQLite driver "${configuredDriver}". MAMA OS now requires node:sqlite.`
+    );
   }
 
-  if (configuredDriver === 'better-sqlite3') {
-    if (!betterCtor) {
-      throw new Error('better-sqlite3 is not installed');
-    }
-    return { driver: 'better-sqlite3', ctor: betterCtor };
+  if (!nodeCtor) {
+    throw new Error('node:sqlite is not available in this Node.js runtime');
   }
 
-  if (nodeCtor) {
-    return { driver: 'node:sqlite', ctor: nodeCtor };
-  }
-
-  if (betterCtor) {
-    return { driver: 'better-sqlite3', ctor: betterCtor };
-  }
-
-  throw new Error('No SQLite driver available (node:sqlite or better-sqlite3)');
+  return { driver: 'node:sqlite', ctor: nodeCtor };
 }
 
 export default class Database {
-  private connection: SQLiteConnection;
-  readonly driver: 'node:sqlite' | 'better-sqlite3';
+  private connection: NodeSqliteConnection;
+  readonly driver: 'node:sqlite';
 
   constructor(path: string) {
     const resolved = resolveDatabaseDriver();
     this.driver = resolved.driver;
-    if (resolved.driver === 'node:sqlite') {
-      this.connection = new NodeSqliteConnection(new resolved.ctor(path));
-    } else {
-      this.connection = new resolved.ctor(path);
-    }
+    this.connection = new NodeSqliteConnection(new resolved.ctor(path));
   }
 
   prepare(sql: string): SQLiteStatement {
-    return this.connection.prepare(sql) as SQLiteStatement;
+    return this.connection.prepare(sql);
   }
 
   exec(sql: string): void {
