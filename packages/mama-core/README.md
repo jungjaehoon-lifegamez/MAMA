@@ -107,7 +107,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ## Dependencies
 
 - **@huggingface/transformers** - Local embedding generation
-- **better-sqlite3** - SQLite database
+- **node:sqlite** - Built-in SQLite runtime (Node.js 22+)
 - **Pure-TS cosine similarity** - Vector search (no native extensions)
 
 ## Development

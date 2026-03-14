@@ -1,7 +1,7 @@
 # Troubleshooting Guide
 
 **Audience:** All users experiencing issues
-**Common Problems:** Plugin not loading, SQLite build failures, disk space, hooks not firing, database corruption, model download failures
+**Common Problems:** Plugin not loading, Node runtime mismatch, optional dependency issues, disk space, hooks not firing, database corruption, model download failures
 
 ---
 
@@ -30,18 +30,18 @@ node scripts/validate-manifests.js
 ```bash
 node --version
 
-# Required: >= 18.0.0
-# Recommended: >= 20.0.0
+# Required: >= 22.0.0
+# Recommended: >= 22.13.0
 ```
 
 **If Node too old:**
 
 ```bash
-# Install Node 20 LTS via nvm
+# Install Node 22 LTS via nvm
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-nvm install 20
-nvm use 20
-nvm alias default 20
+nvm install 22
+nvm use 22
+nvm alias default 22
 ```
 
 ### Check 2: Plugin Structure
@@ -70,7 +70,7 @@ cd ~/.claude/plugins/mama
 npm install
 
 # Check for errors in output
-# Common issue: better-sqlite3 compilation failure (see section below)
+# Common issue: old Node runtime or missing optional image runtime (see section below)
 ```
 
 ### Check 4: Claude Code Logs
@@ -85,71 +85,49 @@ npm install
 
 ---
 
-## 2. SQLite Build Failures (better-sqlite3)
+## 2. Node.js Runtime and Optional Dependency Issues
 
 **Symptoms:**
 
 ```
-npm ERR! node-gyp rebuild
-npm ERR! gyp ERR! stack Error: Python executable "python" is not found
+Error: Cannot find module 'node:sqlite'
+ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite
+Could not load the "sharp" module using the current runtime
 ```
 
 **Why this happens:**
-`better-sqlite3` is a native module that needs C++ compilation. Build tools may be missing.
+MAMA now uses Node's built-in `node:sqlite`, so SQLite itself does not need compilation anymore. These failures mean either:
 
-### Solutions by Platform
+1. Your Node.js version is too old for `node:sqlite`
+2. Optional image dependencies such as `sharp` were omitted or installed for the wrong platform
 
-#### macOS
+### Fix 1: Upgrade Node.js to 22+
 
 ```bash
-# Install Xcode Command Line Tools
-xcode-select --install
+node --version
+# Must be >= 22.0.0
+```
 
-# If already installed, reset it
-sudo rm -rf /Library/Developer/CommandLineTools
-xcode-select --install
+If not, upgrade Node and reinstall dependencies:
 
-# Then reinstall mama-plugin
+```bash
 cd ~/.claude/plugins/mama
 rm -rf node_modules package-lock.json
 npm install
 ```
 
-#### Linux (Ubuntu/Debian)
+### Fix 2: Restore optional image runtime packages
+
+If OCR, image upload, or checkpoint narrative expansion reports `sharp` runtime errors:
 
 ```bash
-# Install build essentials
-sudo apt-get update
-sudo apt-get install -y build-essential python3
-
-# Then reinstall
 cd ~/.claude/plugins/mama
-rm -rf node_modules package-lock.json
-npm install
+npm install --include=optional sharp
 ```
 
-#### Windows
+### Fix 3: Avoid `--omit=optional`
 
-```powershell
-# Install build tools (run as Administrator)
-npm install --global windows-build-tools
-
-# Or install Visual Studio Build Tools manually
-# https://visualstudio.microsoft.com/downloads/
-
-# Then reinstall
-cd %USERPROFILE%\.claude\plugins\mama
-rmdir /s node_modules
-del package-lock.json
-npm install
-```
-
-### Alternative: Use Prebuilt Binaries
-
-```bash
-# If compilation keeps failing, try prebuilt binaries
-npm install better-sqlite3 --build-from-source=false
-```
+Do not install MAMA packages with `npm install --omit=optional` unless you intentionally want to disable optional image features. That flag skips platform packages used by `sharp`.
 
 ---
 

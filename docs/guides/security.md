@@ -39,6 +39,22 @@ MAMA follows a **localhost-first security model**:
    - Rate limiting on failed auth attempts
    - Security warnings when external access detected
 
+### Built-in Detection and Response
+
+Recent MAMA OS builds add a defensive monitoring layer for exposed deployments:
+
+- Unauthorized API and WebSocket attempts are logged with client IP context
+- Honeypot paths and tarpit delays slow down obvious scanners
+- SSRF and dangerous Bash patterns generate security events
+- Structured events are written to `~/.mama/logs/security-events.jsonl`
+- Incident evidence and abuse-report drafts are written under `~/.mama/logs/security-incidents/`
+
+To route alerts to chat, set:
+
+```bash
+export MAMA_SECURITY_ALERT_CHANNELS="discord:CHANNEL_ID,slack:C123456"
+```
+
 ---
 
 ## Localhost-Only Mode (Default)
@@ -58,6 +74,7 @@ By default, MAMA OS listens on:
 - ✅ No external access possible
 - ✅ No authentication needed
 - ✅ Safe for development and local use
+- ✅ Sensitive `/api/*` routes stay blocked from non-local clients unless authenticated
 
 ### Accessing from Your Computer
 
@@ -96,6 +113,7 @@ When you use a tunnel to expose MAMA to the internet, **an attacker with access 
 
 - ✅ **Use Cloudflare Zero Trust** (See below) - Google/GitHub account protection
 - ⛔ **DO NOT use token authentication alone**
+- ✅ Treat tunnel URLs, access policies, and `MAMA_AUTH_TOKEN` as secrets
 
 **For TESTING only (temporary access):**
 
@@ -712,6 +730,8 @@ mama start
 6. **Rotate tokens** if you suspect compromise
 7. **Monitor logs** for suspicious access attempts
 8. **Use temporary tunnels** (Cloudflare Quick Tunnel expires automatically)
+9. **Review security logs** (`~/.mama/logs/security-events.jsonl`) after any external probing
+10. **Wire alert channels** with `MAMA_SECURITY_ALERT_CHANNELS` before public exposure
 
 ### ❌ DON'T
 
