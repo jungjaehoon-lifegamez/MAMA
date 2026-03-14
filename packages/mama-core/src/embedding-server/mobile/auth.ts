@@ -14,6 +14,7 @@
  * }
  */
 
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'http';
 
 // WebSocket type for authentication
@@ -30,6 +31,27 @@ export const AUTH_TOKEN: string | undefined = process.env.MAMA_AUTH_TOKEN;
  * Track if we've warned about missing auth token
  */
 let hasWarnedAboutToken = false;
+
+/**
+ * Track if we've warned about query parameter token usage
+ */
+let hasWarnedAboutQueryToken = false;
+
+/**
+ * HMAC key for timing-safe token comparison
+ */
+const hmacKey = randomBytes(32);
+
+/**
+ * Timing-safe string comparison using HMAC to prevent timing attacks.
+ * Both strings are hashed with HMAC-SHA256 before comparison,
+ * ensuring constant-time evaluation regardless of input.
+ */
+function safeTokenEqual(a: string, b: string): boolean {
+  const hmacA = createHmac('sha256', hmacKey).update(a).digest();
+  const hmacB = createHmac('sha256', hmacKey).update(b).digest();
+  return timingSafeEqual(hmacA, hmacB);
+}
 
 /**
  * Check if request is from localhost
@@ -107,7 +129,7 @@ export function authenticate(req: IncomingMessage): boolean {
   const authHeader = req.headers['authorization'];
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
-    if (token === AUTH_TOKEN) {
+    if (safeTokenEqual(token, AUTH_TOKEN)) {
       console.error(`[Auth] External access granted via Bearer token from ${remoteAddress}`);
       return true;
     }
@@ -116,7 +138,15 @@ export function authenticate(req: IncomingMessage): boolean {
   // Check URL query parameter
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const queryToken = url.searchParams.get('token');
-  if (queryToken === AUTH_TOKEN) {
+  if (queryToken && safeTokenEqual(queryToken, AUTH_TOKEN)) {
+    if (!hasWarnedAboutQueryToken) {
+      console.warn(
+        '[Auth] DEPRECATION WARNING: Authentication via query parameter (?token=...) is deprecated. ' +
+          'Token in URL may leak through server logs, browser history, and Referer headers. ' +
+          'Please use the Authorization header instead: "Authorization: Bearer <token>"'
+      );
+      hasWarnedAboutQueryToken = true;
+    }
     console.error(`[Auth] External access granted via query token from ${remoteAddress}`);
     return true;
   }

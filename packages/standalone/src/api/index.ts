@@ -96,6 +96,21 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   // Middleware
   app.use(express.json());
 
+  // CORS: allow only localhost/127.0.0.1 origins
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
   // Set Content-Type header for API responses only (exclude media endpoints)
   app.use('/api', (req, res, next) => {
     if (!req.path.startsWith('/media')) {
@@ -278,6 +293,9 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
               // Auto-kill process if explicitly enabled (opt-in)
               if (enableAutoKillPort && processInfo.trim()) {
+                if (!Number.isInteger(attemptPort)) {
+                  throw new Error(`Invalid port number: ${attemptPort}`);
+                }
                 console.warn(
                   `⚠️  AUTO-KILL ENABLED: Attempting to kill process on port ${attemptPort}`
                 );
