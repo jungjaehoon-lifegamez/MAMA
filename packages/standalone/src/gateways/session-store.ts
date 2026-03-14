@@ -5,7 +5,7 @@
  * for cross-platform messenger integration.
  */
 
-import Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../sqlite.js';
 import { randomUUID } from 'crypto';
 import type { Session, MessageSource, ConversationTurn } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -43,10 +43,10 @@ interface SessionRow {
  * SQLite-backed session store for messenger conversations
  */
 export class SessionStore {
-  private db: Database.Database;
+  private db: SQLiteDatabase;
   private maxTurns: number;
 
-  constructor(db: Database.Database, options: { maxTurns?: number } = {}) {
+  constructor(db: SQLiteDatabase, options: { maxTurns?: number } = {}) {
     this.db = db;
     this.maxTurns = options.maxTurns ?? 1000; // Store unlimited turns in DB
     this.runMigration();

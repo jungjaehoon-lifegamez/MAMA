@@ -22,7 +22,6 @@ import {
   closeSync,
 } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import Database from 'better-sqlite3';
 import express from 'express';
 import path, { join } from 'node:path';
 import { WebSocketServer } from 'ws';
@@ -98,6 +97,7 @@ const { DebugLogger } = debugLogger as unknown as {
 const startLogger = new DebugLogger('start');
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
+import Database from '../../sqlite.js';
 
 // Port configuration — single source of truth
 /** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
