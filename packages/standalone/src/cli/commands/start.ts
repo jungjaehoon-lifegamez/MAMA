@@ -67,7 +67,7 @@ import { MetricsCleanup } from '../../observability/metrics-cleanup.js';
 import { HealthScoreService } from '../../observability/health-score.js';
 import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
-import { requireAuth, isAuthenticated } from '../../api/auth-middleware.js';
+import { requireAuth, isAuthenticated, isLocalRequest } from '../../api/auth-middleware.js';
 import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 // Onboarding state imports removed — onboarding is handled by Setup Wizard only
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -2636,8 +2636,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     apiServer.server.on('upgrade', (request: any, socket: any, head: any) => {
       const url = new URL(request.url || '', `http://${request.headers.host}`);
 
-      // WebSocket auth: when token is configured, require Bearer token
-      if (!isAuthenticated(request)) {
+      // WebSocket auth: require token for non-localhost connections
+      // Browsers can't set Authorization headers on WebSocket, so localhost is allowed
+      const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
+      if (adminToken && !isLocalRequest(request) && !isAuthenticated(request)) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
