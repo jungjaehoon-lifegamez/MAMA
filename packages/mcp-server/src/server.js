@@ -74,7 +74,6 @@ async function isEmbeddingServerRunning(port) {
 
 // Default values for development
 const ENV_DEFAULTS = {
-  MAMA_SERVER_TOKEN: 'dev-token-12345',
   MAMA_DB_PATH: process.env.HOME
     ? `${process.env.HOME}/.claude/mama-memory.db`
     : './mama-memory.db',
@@ -133,7 +132,14 @@ function validateEnvironment() {
         missingVars.join(', ')
       );
       missingVars.forEach((key) => {
-        process.env[key] = ENV_DEFAULTS[key];
+        if (key === 'MAMA_SERVER_TOKEN') {
+          const generatedToken = require('crypto').randomBytes(16).toString('hex');
+          process.env[key] = generatedToken;
+          const masked = generatedToken.slice(0, 8) + '...' + generatedToken.slice(-4);
+          console.error(`[MAMA MCP] Generated random dev token: ${masked}`);
+        } else {
+          process.env[key] = ENV_DEFAULTS[key];
+        }
       });
       return;
     }
