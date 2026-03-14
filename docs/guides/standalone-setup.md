@@ -136,7 +136,7 @@ You can override this per user/environment:
 ```bash
 mama init --backend auto    # default: detect installed/authenticated backend
 mama init --backend claude  # force Claude backend if authenticated
-mama init --backend codex   # force Codex backend if authenticated
+mama init --backend codex-mcp # force Codex backend if authenticated
 ```
 
 **Expected output:**
@@ -274,7 +274,7 @@ If you want MAMA to run with Codex CLI as the backend:
 
 ```yaml
 agent:
-  backend: codex
+  backend: codex-mcp
   model: gpt-5.3-codex
   codex_home: ~/.mama/.codex
   codex_cwd: ~/.mama/workspace
@@ -303,20 +303,20 @@ Notes:
 
 #### Agent Settings
 
-| Option                      | Type   | Default                  | Description                          |
-| --------------------------- | ------ | ------------------------ | ------------------------------------ |
-| `backend`                   | string | claude                   | Agent backend (`claude` or `codex`)  |
-| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend      |
-| `max_turns`                 | number | 10                       | Maximum conversation turns           |
-| `timeout`                   | number | 300000                   | Request timeout in milliseconds      |
-| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory         |
-| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory              |
-| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                   |
-| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard      |
-| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`       |
-| `codex_ephemeral`           | bool   | false                    | Disable session persistence          |
-| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex |
-| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides   |
+| Option                      | Type   | Default                  | Description                             |
+| --------------------------- | ------ | ------------------------ | --------------------------------------- |
+| `backend`                   | string | claude                   | Agent backend (`claude` or `codex-mcp`) |
+| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend         |
+| `max_turns`                 | number | 10                       | Maximum conversation turns              |
+| `timeout`                   | number | 300000                   | Request timeout in milliseconds         |
+| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory            |
+| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory                 |
+| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                      |
+| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard         |
+| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`          |
+| `codex_ephemeral`           | bool   | false                    | Disable session persistence             |
+| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex    |
+| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides      |
 
 ### Codex MCP Tool Notes (Brave)
 
