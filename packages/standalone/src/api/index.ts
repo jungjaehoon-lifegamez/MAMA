@@ -20,6 +20,7 @@ import { requireAuth } from './auth-middleware.js';
 import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
+import { createSecurityMiddleware } from '../security/security-monitor.js';
 
 // Re-export types
 export * from './types.js';
@@ -104,6 +105,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   // Middleware
   app.use(express.json({ limit: '1mb' }));
+  app.use(createSecurityMiddleware());
 
   // CORS: allow only localhost/127.0.0.1 origins
   app.use((req, res, next) => {
