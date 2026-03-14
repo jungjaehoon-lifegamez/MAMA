@@ -107,7 +107,7 @@ git push origin os-v0.1.1
 
 1. Create new `.yml` file in this directory
 2. Follow GitHub Actions syntax
-3. Use `actions/checkout@v4` for latest stable version
+3. Use `actions/checkout@v6` for latest stable version
 4. Document in this README
 
 ## Troubleshooting
