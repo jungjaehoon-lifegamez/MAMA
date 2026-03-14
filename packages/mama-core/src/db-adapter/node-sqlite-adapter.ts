@@ -13,10 +13,6 @@ import { type Statement } from './statement.js';
 import { info, warn, error as logError } from '../debug-logger.js';
 import { cosineSimilarity } from '../embeddings.js';
 
-const { DatabaseSync } = require('node:sqlite') as {
-  DatabaseSync: new (path: string) => NodeSQLiteDatabaseLike;
-};
-
 const LEGACY_DB_PATH = path.join(os.homedir(), '.spinelift', 'memories.db');
 const DEFAULT_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
 
@@ -34,6 +30,18 @@ interface NodeSQLiteStatementLike {
   all: (...params: unknown[]) => unknown[];
   get: (...params: unknown[]) => unknown;
   run: (...params: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
+}
+
+type NodeSQLiteDatabaseCtor = new (path: string) => NodeSQLiteDatabaseLike;
+
+let DatabaseSync: NodeSQLiteDatabaseCtor | null = null;
+
+try {
+  ({ DatabaseSync } = require('node:sqlite') as {
+    DatabaseSync: NodeSQLiteDatabaseCtor;
+  });
+} catch {
+  DatabaseSync = null;
 }
 
 class NodeSQLiteConnection {
@@ -116,6 +124,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   connect(): NodeSQLiteConnection {
     if (this.db) {
       return this.db;
+    }
+
+    if (!DatabaseSync) {
+      throw new Error(
+        'node:sqlite is not available in this Node.js runtime. Use Node 22+ or set MAMA_SQLITE_DRIVER=better-sqlite3.'
+      );
     }
 
     const dbPath = this.getDbPath();
