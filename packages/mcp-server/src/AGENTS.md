@@ -83,4 +83,4 @@ src/
 - **Hook metrics:** `mama/hook-metrics.js` tracks PreToolUse/PostToolUse timing (Claude Code plugin only)
 - **HTTP server:** Embedding server runs on port 3847 (shared across all MCP clients)
 - **Database:** `~/.claude/mama-memory.db` (configurable via `MAMA_DB_PATH`)
-- **Node.js:** >= 22.0.0 required
+- **Node.js:** >= 22.13.0 required

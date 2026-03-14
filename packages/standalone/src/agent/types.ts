@@ -919,6 +919,7 @@ export interface AgentLoopResult {
 export type AgentErrorCode =
   | 'API_ERROR'
   | 'CLI_ERROR'
+  | 'AGENT_STOPPED'
   | 'AUTH_ERROR'
   | 'RATE_LIMIT'
   | 'MAX_TOKENS'

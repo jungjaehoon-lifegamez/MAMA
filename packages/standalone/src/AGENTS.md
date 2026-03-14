@@ -302,7 +302,7 @@ Phase 3: Retrospective
 
 ---
 
-**Node.js:** >= 22.0.0 (native TypeScript support)  
+**Node.js:** >= 22.13.0 (native TypeScript support and unflagged `node:sqlite`)  
 **pnpm:** >= 8.0.0  
 **License:** MIT  
 **Author:** SpineLift Team

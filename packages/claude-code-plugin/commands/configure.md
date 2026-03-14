@@ -227,34 +227,28 @@ You are helping the user view or modify MAMA configuration.
 
 ### macOS
 ```bash
-# Install Xcode Command Line Tools
-xcode-select --install
-
-# Rebuild native module
+# Reinstall dependencies with Node 22.13+
 cd {plugin_path}
-npm rebuild better-sqlite3
+npm install
+npm install --include=optional sharp
 ````
 
 ### Linux
 
 ```bash
-# Install build tools
-sudo apt install build-essential python3
-
-# Rebuild native module
+# Reinstall dependencies with Node 22.13+
 cd {plugin_path}
-npm rebuild better-sqlite3
+npm install
+npm install --include=optional sharp
 ```
 
 ### Windows
 
 ```bash
-# Install build tools
-npm install --global windows-build-tools
-
-# Rebuild native module
+# Reinstall dependencies with Node 22.13+
 cd {plugin_path}
-npm rebuild better-sqlite3
+npm install
+npm install --include=optional sharp
 ```
 
 After fixing, run: `/mama:configure --tier-check`

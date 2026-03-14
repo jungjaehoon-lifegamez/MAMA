@@ -23,7 +23,7 @@ MAMA prevents vibe coding breakage by tracking your decisions with reasoning. Wh
 
 ## 🚀 Quick Install
 
-**Prerequisites:** Node.js >= 22.0.0
+**Prerequisites:** Node.js >= 22.13.0
 
 ### Claude Code
 
@@ -201,7 +201,7 @@ export MAMA_DISABLE_HOOKS=true
 **Common issues:**
 
 - **Commands not appearing:** Restart Claude Code, check [Plugin Not Loading](docs/guides/troubleshooting.md#1-plugin-not-loading)
-- **Runtime dependency issues:** Check Node 22+ and optional image runtime notes in [Troubleshooting Guide](docs/guides/troubleshooting.md#2-nodejs-runtime-and-optional-dependency-issues)
+- **Runtime dependency issues:** Check Node 22.13+ and optional image runtime notes in [Troubleshooting Guide](docs/guides/troubleshooting.md#2-nodejs-runtime-and-optional-dependency-issues)
 - **Tier 2 detected:** Follow [Tier 2 Remediation Guide](docs/guides/tier-2-remediation.md)
 - **Hooks not firing:** Check permissions, see [Hooks Not Firing](docs/guides/troubleshooting.md#4-hooks-not-firing)
 

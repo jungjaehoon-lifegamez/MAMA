@@ -30,7 +30,7 @@ node scripts/validate-manifests.js
 ```bash
 node --version
 
-# Required: >= 22.0.0
+# Required: >= 22.13.0
 # Recommended: >= 22.13.0
 ```
 
@@ -101,11 +101,11 @@ MAMA now uses Node's built-in `node:sqlite`, so SQLite itself does not need comp
 1. Your Node.js version is too old for `node:sqlite`
 2. Optional image dependencies such as `sharp` were omitted or installed for the wrong platform
 
-### Fix 1: Upgrade Node.js to 22+
+### Fix 1: Upgrade Node.js to 22.13+
 
 ```bash
 node --version
-# Must be >= 22.0.0
+# Must be >= 22.13.0
 ```
 
 If not, upgrade Node and reinstall dependencies:

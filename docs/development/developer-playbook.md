@@ -162,7 +162,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 **Runtime:**
 
-- Node.js >= 22.0.0
+- Node.js >= 22.13.0
 - SQLite 3 via Node's built-in `node:sqlite`
 
 **AI/ML:**
@@ -188,7 +188,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 ### Prerequisites
 
-- **Node.js**: >= 22.0.0
+- **Node.js**: >= 22.13.0
 - **Git**: For version control
 - **Claude Code**: Latest version (for testing plugin integration)
 
