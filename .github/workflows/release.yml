@@ -39,18 +39,18 @@ jobs:
       release_tag: ${{ steps.versions.outputs.release_tag }}
       changelog: ${{ steps.changelog.outputs.content }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
 
       - name: Configure git
         run: |
@@ -174,18 +174,18 @@ jobs:
     if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-core')) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
@@ -206,18 +206,18 @@ jobs:
     if: ${{ always() && !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-server')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
@@ -240,18 +240,18 @@ jobs:
     if: ${{ always() && !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-os')) && (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
@@ -278,13 +278,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout MAMA
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
           path: mama
 
       - name: Checkout claude-plugins
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: jungjaehoon-lifegamez/claude-plugins
           token: ${{ secrets.PLUGIN_DEPLOY_TOKEN }}
@@ -328,7 +328,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
@@ -350,49 +350,50 @@ jobs:
     if: ${{ !inputs.dry_run && always() && needs.prepare-release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare-release.outputs.release_tag }}
-          name: MAMA ${{ needs.prepare-release.outputs.release_tag }}
-          body: |
-            ## MAMA ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## MAMA ${{ needs.prepare-release.outputs.release_tag }}
 
-            ### Package Versions
-            | Package | Version | npm |
-            |---------|---------|-----|
-            | @jungjaehoon/mama-core | ${{ needs.prepare-release.outputs.mama_core_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-core)](https://www.npmjs.com/package/@jungjaehoon/mama-core) |
-            | @jungjaehoon/mama-server | ${{ needs.prepare-release.outputs.mama_server_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-server)](https://www.npmjs.com/package/@jungjaehoon/mama-server) |
-            | @jungjaehoon/mama-os | ${{ needs.prepare-release.outputs.mama_os_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-os)](https://www.npmjs.com/package/@jungjaehoon/mama-os) |
-            | mama (Claude Plugin) | ${{ needs.prepare-release.outputs.mama_plugin_version }} | Claude Marketplace |
+          ### Package Versions
+          | Package | Version | npm |
+          |---------|---------|-----|
+          | @jungjaehoon/mama-core | ${{ needs.prepare-release.outputs.mama_core_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-core)](https://www.npmjs.com/package/@jungjaehoon/mama-core) |
+          | @jungjaehoon/mama-server | ${{ needs.prepare-release.outputs.mama_server_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-server)](https://www.npmjs.com/package/@jungjaehoon/mama-server) |
+          | @jungjaehoon/mama-os | ${{ needs.prepare-release.outputs.mama_os_version }} | [![npm](https://img.shields.io/npm/v/@jungjaehoon/mama-os)](https://www.npmjs.com/package/@jungjaehoon/mama-os) |
+          | mama (Claude Plugin) | ${{ needs.prepare-release.outputs.mama_plugin_version }} | Claude Marketplace |
 
-            ### Installation
+          ### Installation
 
-            ```bash
-            # MAMA OS (Always-on Agent)
-            npm install -g @jungjaehoon/mama-os
+          ```bash
+          # MAMA OS (Always-on Agent)
+          npm install -g @jungjaehoon/mama-os
 
-            # MCP Server (Claude Desktop/Code)
-            npx @jungjaehoon/mama-server
+          # MCP Server (Claude Desktop/Code)
+          npx @jungjaehoon/mama-server
 
-            # Claude Code Plugin
-            /plugin marketplace add jungjaehoon-lifegamez/claude-plugins
-            /plugin install mama
-            ```
+          # Claude Code Plugin
+          /plugin marketplace add jungjaehoon-lifegamez/claude-plugins
+          /plugin install mama
+          ```
 
-            ### Changelog
-            ${{ needs.prepare-release.outputs.changelog }}
+          ### Changelog
+          ${{ needs.prepare-release.outputs.changelog }}
 
-            ---
-            📚 [Documentation](https://jungjaehoon-lifegamez.github.io/MAMA)
-          draft: false
-          prerelease: false
+          ---
+          📚 [Documentation](https://jungjaehoon-lifegamez.github.io/MAMA)
+          EOF
+
+          gh release create "${{ needs.prepare-release.outputs.release_tag }}" \
+            --title "MAMA ${{ needs.prepare-release.outputs.release_tag }}" \
+            --notes-file release-notes.md \
+            --verify-tag
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Summary job
   summary:
