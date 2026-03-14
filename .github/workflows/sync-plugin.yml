@@ -13,12 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout MAMA
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: mama
 
       - name: Checkout claude-plugins
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: jungjaehoon-lifegamez/claude-plugins
           token: ${{ secrets.PLUGIN_DEPLOY_TOKEN }}
