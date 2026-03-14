@@ -4,7 +4,7 @@
  * Centralized tier validation module for MAMA.
  * Validates system requirements and determines tier status (1 or 2).
  *
- * Tier 1: Full features (Node.js 18+, SQLite, Embeddings, Database)
+ * Tier 1: Full features (Node.js 22.13+, SQLite, Embeddings, Database)
  * Tier 2: Degraded mode (missing one or more requirements)
  *
  * @module tier-validator
@@ -34,9 +34,9 @@ export interface TierValidation {
 export function checkNodeVersion(): CheckResult {
   try {
     const nodeVersion = process.versions.node;
-    const majorVersion = parseInt(nodeVersion.split('.')[0], 10);
+    const [majorVersion, minorVersion] = nodeVersion.split('.').map((part) => parseInt(part, 10));
 
-    if (majorVersion >= 18) {
+    if (majorVersion > 22 || (majorVersion === 22 && minorVersion >= 13)) {
       return {
         status: 'pass',
         details: `v${nodeVersion}`,
@@ -45,7 +45,7 @@ export function checkNodeVersion(): CheckResult {
 
     return {
       status: 'fail',
-      details: `v${nodeVersion} (requires 18+)`,
+      details: `v${nodeVersion} (requires 22.13+)`,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -57,26 +57,26 @@ export function checkNodeVersion(): CheckResult {
 }
 
 /**
- * Validates SQLite (better-sqlite3) availability
+ * Validates SQLite availability (node:sqlite)
  */
 export function checkSQLite(): CheckResult {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Database = require('better-sqlite3');
-
-    // Test instantiation with in-memory database
-    const testDb = new Database(':memory:');
+    const { DatabaseSync } = require('node:sqlite') as {
+      DatabaseSync: new (path: string) => { close: () => void };
+    };
+    const testDb = new DatabaseSync(':memory:');
     testDb.close();
 
     return {
       status: 'pass',
-      details: 'better-sqlite3 native module ready',
+      details: 'node:sqlite built-in driver ready',
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
       status: 'fail',
-      details: `better-sqlite3 not available: ${message}`,
+      details: `node:sqlite not available: ${message}`,
     };
   }
 }

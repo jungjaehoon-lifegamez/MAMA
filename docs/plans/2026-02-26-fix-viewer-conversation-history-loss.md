@@ -1,12 +1,13 @@
 # Fix Viewer Conversation History Loss on Refresh/Navigation
 
+> **Migration note:** This plan predates the 2026-03-14 SQLite runtime migration from `better-sqlite3` to Node's built-in `node:sqlite`. The approach still applies, but future implementations should re-check any driver-specific transaction or statement assumptions.
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Ensure MAMA OS viewer conversations survive page refresh and navigation without losing intermediate messages.
 
 **Architecture:** Three-layer fix: (1) Server streams accumulator that persists partial responses on `stream_end`, (2) Server history endpoint returns per-message granularity instead of `{user, bot}` pairs, (3) Frontend merges server history with localStorage instead of replacing.
 
-**Tech Stack:** TypeScript, SQLite (better-sqlite3), WebSocket (ws), Vitest
+**Tech Stack:** TypeScript, SQLite, WebSocket (ws), Vitest
 
 ---
 

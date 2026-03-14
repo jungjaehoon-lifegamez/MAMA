@@ -6,19 +6,18 @@
 
 ## System Requirements
 
-- **Node.js** >= 18.0.0 (Recommended: 20.0.0+)
+- **Node.js** >= 22.13.0 (Recommended: current 25.x)
 - **Claude Code** (latest version) or **Claude Desktop**
 - **Disk Space**: ~500MB (npm cache + model cache + database)
-- **Build Tools** (for native module compilation):
-  - macOS: Xcode Command Line Tools
-  - Linux: build-essential, python3
-  - Windows: windows-build-tools
+- **Optional platform runtimes**:
+  - `sharp` prebuilt binaries for image features
+  - No SQLite compiler toolchain is required (`node:sqlite` is built into Node 22.13+)
 
 **Check Node.js version:**
 
 ```bash
 node --version
-# Required: >= 18.0.0
+# Required: >= 22.13.0
 ```
 
 ---
@@ -66,7 +65,7 @@ mama start
 
 **Prerequisites:**
 
-- Node.js >= 22.0.0
+- Node.js >= 22.13.0
 - Claude CLI installed and authenticated (`npm i -g @anthropic-ai/claude-code && claude`)
 
 **See full setup guide:** [Standalone Setup Guide](standalone-setup.md)
@@ -93,7 +92,8 @@ On first use, MAMA's MCP server will be automatically downloaded and set up via 
 **What happens:**
 
 - npx downloads `@jungjaehoon/mama-server`
-- Native modules (better-sqlite3) compile for your platform
+- `node:sqlite` is available from your Node runtime immediately
+- Optional platform binaries such as `sharp` may download automatically
 - Embedding models download to npm cache
 - Server starts automatically
 - Future sessions start instantly
@@ -207,7 +207,7 @@ After installation, try saving your first decision:
 **First time will take 1-2 minutes:**
 
 - MCP server downloads automatically
-- Native modules compile
+- No SQLite compilation step is required
 - Embedding models download
 
 **Subsequent uses:** Instant!
@@ -230,7 +230,7 @@ After installation, try saving your first decision:
 
 ```bash
 node --version
-# Must be >= 18.0.0
+# Must be >= 22.13.0
 ```
 
 **Try manual installation:**
@@ -251,33 +251,27 @@ npm install -g @jungjaehoon/mama-server
 }
 ```
 
-### Native module build fails
+### Runtime dependency issues
 
-**Install build tools:**
+If install or first run fails, check these in order:
 
-**macOS:**
-
-```bash
-xcode-select --install
-```
-
-**Ubuntu/Debian:**
+1. **Node version**
 
 ```bash
-sudo apt-get install build-essential python3
+node --version
+# Must be >= 22.13.0
 ```
 
-**Windows:**
+2. **Optional image runtime**
 
 ```bash
-npm install --global windows-build-tools
+# Restores platform image support when sharp was skipped
+npm install --include=optional sharp
 ```
 
-Then retry:
+3. **Avoid `--omit=optional`**
 
-```bash
-npm install -g @jungjaehoon/mama-server --force
-```
+That flag skips optional image packages used by `sharp`. SQLite does not need compilation anymore, but image features still rely on optional platform packages.
 
 ### Windows-specific issues
 
@@ -316,7 +310,7 @@ MAMA uses a **4-package architecture**:
 2. **@jungjaehoon/mama-core** (Core Library)
    - Shared core: embeddings, DB, memory management
    - Used by standalone, MCP server, and plugin
-   - Contains: better-sqlite3, @huggingface/transformers, pure-TS cosine similarity
+   - Contains: node:sqlite runtime usage, @huggingface/transformers, pure-TS cosine similarity
 
 3. **@jungjaehoon/mama-server** (MCP Server)
    - Independent npm package for Claude Desktop/Code
@@ -334,7 +328,8 @@ MAMA uses a **4-package architecture**:
 - One core library, multiple distribution channels
 - Standalone agent for always-on use cases
 - MCP server for Claude Desktop/Code integration
-- Platform-specific compilation handled automatically
+- Node 22.13+ ships unflagged SQLite support directly
+- Optional image binaries are handled separately from the database runtime
 - Shared decision database across all tools
 
 ---

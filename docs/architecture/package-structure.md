@@ -83,7 +83,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 **Dependencies:**
 
 - `@huggingface/transformers` - Local embeddings
-- `better-sqlite3` - SQLite database
+- `node:sqlite` - Built-in SQLite runtime (Node.js 22+)
 - Pure-TS cosine similarity for vector search
 
 **Distribution:** npm (`@jungjaehoon/mama-core`)
@@ -249,10 +249,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 1.2.1 (stable API)
-- **mama-server:** 1.8.0 (follows MAMA version)
-- **claude-code-plugin:** 1.7.14 (follows MAMA version)
-- **mama-os:** 0.13.3 (standalone agent)
+- **mama-core:** 1.3.0 (stable API)
+- **mama-server:** 1.9.0 (follows MAMA version)
+- **claude-code-plugin:** 1.8.0 (follows MAMA version)
+- **mama-os:** 0.14.0 (standalone agent)
 
 ## Distribution Strategy
 
@@ -304,7 +304,7 @@ npx @jungjaehoon/mama-os
 
 ### 2. Code Reuse
 
-All packages share mama-core to eliminate duplication. Heavy dependencies (better-sqlite3, transformers.js) live in mama-core.
+All packages share mama-core to eliminate duplication. The shared runtime lives in mama-core, including the SQLite layer (`node:sqlite`) and embedding stack (`transformers.js`).
 
 ### 3. Independent Updates
 

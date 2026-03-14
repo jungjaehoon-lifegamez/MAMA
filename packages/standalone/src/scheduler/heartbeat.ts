@@ -30,6 +30,7 @@ export class HeartbeatScheduler {
   private config: HeartbeatConfig;
   private agentLoop: AgentLoop;
   private timer: NodeJS.Timeout | null = null;
+  private startupTimer: NodeJS.Timeout | null = null;
   private running = false;
   private sendNotification?: (channelId: string, message: string) => Promise<void>;
 
@@ -56,7 +57,10 @@ export class HeartbeatScheduler {
     console.log(`[Heartbeat] Started (interval: ${this.config.interval / 1000}s)`);
 
     // Run first heartbeat after a short delay
-    setTimeout(() => this.tick(), 5000);
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = null;
+      void this.tick();
+    }, 5000);
 
     // Schedule regular heartbeats
     this.timer = setInterval(() => this.tick(), this.config.interval);
@@ -66,6 +70,10 @@ export class HeartbeatScheduler {
    * Stop the heartbeat scheduler
    */
   stop(): void {
+    if (this.startupTimer) {
+      clearTimeout(this.startupTimer);
+      this.startupTimer = null;
+    }
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;

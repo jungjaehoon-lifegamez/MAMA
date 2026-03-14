@@ -31,8 +31,8 @@ MAMA defines multiple tier systems. The first is the **Search Capability Tiers**
 
 ### Requirements
 
-1. **Node.js >= 18.0.0** - Required for native modules
-2. **Build tools installed** - For better-sqlite3 compilation
+1. **Node.js >= 22.13.0** - Required for built-in `node:sqlite`
+2. **Embedding model available** - Model downloads on first successful run
 3. **Embedding model loaded** - First query loads model (~987ms)
 
 ### Performance
@@ -56,8 +56,7 @@ MAMA defines multiple tier systems. The first is the **Search Capability Tiers**
 Tier 2 automatically activates when:
 
 1. **Embedding model fails to load**
-   - Missing native modules
-   - Incompatible Node.js version
+   - Missing or incompatible Node.js runtime
    - Insufficient memory
 
 2. **User explicitly disables vector search**
@@ -79,7 +78,7 @@ Tier 2 automatically activates when:
 ```
 1. User runs /mama-suggest "authentication strategy"
 2. MAMA attempts Tier 1:
-   ├── Load embedding model... ❌ FAILED (missing native module)
+   ├── Load embedding model... ❌ FAILED (`node:sqlite` unavailable in this runtime)
    └── Fall back to Tier 2
 3. MAMA runs Tier 2:
    ├── SQL query: SELECT * WHERE topic LIKE '%authentication%'
@@ -188,34 +187,18 @@ On machines with limited RAM or old CPUs:
 
 ```bash
 node --version
-# Required: v18.0.0 or higher
+# Required: v22.13.0 or higher
 ```
 
-### Step 2: Install Build Tools
+### Step 2: Reinstall dependencies with a supported runtime
 
-**Ubuntu/Debian:**
-
-```bash
-sudo apt-get install build-essential python3
-```
-
-**macOS:**
-
-```bash
-xcode-select --install
-```
-
-**Windows:**
-
-```bash
-npm install --global windows-build-tools
-```
-
-### Step 3: Rebuild Native Modules
+### Step 3: Restore optional image packages if needed
 
 ```bash
 cd ~/.claude/plugins/mama
-npm rebuild better-sqlite3
+rm -rf node_modules package-lock.json
+npm install
+npm install --include=optional sharp
 ```
 
 ### Step 4: Verify Upgrade

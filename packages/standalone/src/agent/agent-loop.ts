@@ -637,6 +637,10 @@ export class AgentLoop {
     content: ContentBlock[],
     options?: AgentLoopOptions
   ): Promise<AgentLoopResult> {
+    if (this.stopped) {
+      throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
+    }
+
     this.currentStreamCallbacks = options?.streamCallbacks;
     const history: Message[] = [];
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
@@ -1540,13 +1544,18 @@ export class AgentLoop {
    */
   private stopped = false;
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
 
     try {
       // Stop the model runner
       this.agent.stop();
+
+      const waitUntil = Date.now() + 5000;
+      while (this.laneManager.getTotalQueueSize() > 0 && Date.now() < waitUntil) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
 
       // NOTE: sessionPool is a shared global singleton — do NOT dispose here.
       // It will be cleaned up when the process exits or via a global shutdown handler.

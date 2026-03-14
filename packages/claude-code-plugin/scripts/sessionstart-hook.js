@@ -284,10 +284,18 @@ function writeEnvStatus(status) {
  */
 async function ensureDependencies() {
   const nodeModulesPath = path.join(PLUGIN_ROOT, 'node_modules');
-  const betterSqlitePath = path.join(nodeModulesPath, 'better-sqlite3');
+  const mamaCorePath = path.join(nodeModulesPath, '@jungjaehoon', 'mama-core');
+  let nodeSqliteAvailable = false;
+
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    nodeSqliteAvailable = typeof DatabaseSync === 'function';
+  } catch {
+    nodeSqliteAvailable = false;
+  }
 
   // Check if critical dependencies exist
-  if (fs.existsSync(betterSqlitePath)) {
+  if (fs.existsSync(mamaCorePath) && nodeSqliteAvailable) {
     return { installed: false }; // Already installed
   }
 

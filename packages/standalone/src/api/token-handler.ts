@@ -6,7 +6,7 @@
  */
 
 import { Router } from 'express';
-import type Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../sqlite.js';
 import { asyncHandler } from './error-handler.js';
 
 /**
@@ -24,7 +24,7 @@ export interface TokenUsageRecord {
 /**
  * Initialize token_usage table in the sessions database
  */
-export function initTokenUsageTable(db: Database.Database): void {
+export function initTokenUsageTable(db: SQLiteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS token_usage (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +49,7 @@ export function initTokenUsageTable(db: Database.Database): void {
 /**
  * Insert a token usage record
  */
-export function insertTokenUsage(db: Database.Database, record: TokenUsageRecord): void {
+export function insertTokenUsage(db: SQLiteDatabase, record: TokenUsageRecord): void {
   const stmt = db.prepare(`
     INSERT INTO token_usage (channel_key, agent_id, input_tokens, output_tokens, cache_read_tokens, cost_usd, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -68,7 +68,7 @@ export function insertTokenUsage(db: Database.Database, record: TokenUsageRecord
 /**
  * Create token usage API router
  */
-export function createTokenRouter(db: Database.Database): Router {
+export function createTokenRouter(db: SQLiteDatabase): Router {
   const router = Router();
 
   // GET /api/tokens/summary — today / 7d / 30d totals

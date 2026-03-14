@@ -162,8 +162,8 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 **Runtime:**
 
-- Node.js >= 22.0.0
-- SQLite 3 (better-sqlite3 ^11.0.0)
+- Node.js >= 22.13.0
+- SQLite 3 via Node's built-in `node:sqlite`
 
 **AI/ML:**
 
@@ -188,7 +188,7 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 ### Prerequisites
 
-- **Node.js**: >= 22.0.0
+- **Node.js**: >= 22.13.0
 - **Git**: For version control
 - **Claude Code**: Latest version (for testing plugin integration)
 
@@ -764,7 +764,7 @@ npx vitest run tests/core/mama-api.test.js --reporter=verbose
 
 ```javascript
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
+import { DatabaseSync as Database } from 'node:sqlite';
 import { saveDecision, recallDecision } from '../src/core/mama-api.js';
 
 describe('Decision Evolution Graph', () => {

@@ -94,7 +94,7 @@ npm install @jungjaehoon/mama-core
 
 Before starting this tutorial, ensure you have:
 
-- ✅ Node.js >= 22.0.0 installed
+- ✅ Node.js >= 22.13.0 installed
 - ✅ Claude Code (latest version) installed
 - ✅ MAMA plugin installed (see [Installation Guide](../guides/installation.md))
 - ✅ Claude Code restarted after installation
@@ -203,12 +203,6 @@ Expected: Before Claude responds, you'll see:
 /mama-list --limit 20
 ```
 
-# List 20 recent decisions
-
-/mama-list --limit 20
-
-````
-
 ---
 
 ## Step 6: Session Continuity 🔄
@@ -221,7 +215,7 @@ MAMA helps you pick up exactly where you left off:
 
 # When starting a new session:
 /mama-resume
-````
+```
 
 **What happens:**
 

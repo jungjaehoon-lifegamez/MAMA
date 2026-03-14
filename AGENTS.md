@@ -28,7 +28,7 @@ MAMA/
 ├── .sisyphus/                      # Internal planning artifacts (drafts/, plans/)
 ├── .docs/                          # Development docs (PRDs, tech specs, epics, stories)
 ├── .claude-plugin/                 # Local dev marketplace config
-├── scripts/                        # Build utilities (verify-install.js, sync-check.js, ensure-sqlite-prebuild.js)
+├── scripts/                        # Build utilities (verify-install.js, sync-check.js)
 ├── .husky/                         # Git hooks (pre-commit: lint-staged + gitleaks + typecheck + tests)
 └── CLAUDE.md                       # Claude Code guidance (CRITICAL: read this before editing)
 ```
@@ -106,8 +106,8 @@ describe('Story M1.2: SQLite Database Initialization', () => {
 
 ### **pnpm Workspace**
 
-- **Ignored built dependencies:** `better-sqlite3`, `esbuild`, `node-pty`, `onnxruntime-node`, `protobufjs`, `sharp` (native modules)
-- **Unsafe permissions:** Enabled (`unsafePerm: true`) for native module compilation
+- **Ignored built dependencies:** `esbuild`, `node-pty`, `onnxruntime-node`, `protobufjs`, `sharp` (native modules)
+- **Unsafe permissions:** Enabled (`unsafePerm: true`) for optional platform packages such as `sharp`
 - **GitHub Packages:** `@jungjaehoon/*` packages published to GitHub Packages (not npm)
 
 ### **Entry Point Naming (INCONSISTENT)**
@@ -356,7 +356,7 @@ pnpm vitest run -t "relevance scorer"
 
 5. **Backward Compatibility Checks Legacy Paths:** Database adapter checks `~/.spinelift/memories.db` for users upgrading from SpineLift. Auto-migration without user action.
 
-6. **Dead Code (PostgreSQL Statement Class):** `claude-code-plugin/src/core/db-adapter/statement.js` has PostgreSQL statement class that's never instantiated. Remove or complete multi-database support.
+6. **Plugin/Core Drift Risk:** `claude-code-plugin/src/core/` is a selective snapshot of `mama-core`, not a full 1:1 mirror. Verify duplicated-file assumptions before applying fixes across both trees.
 
 7. **Metrics Logged But Not Analyzed:** Hook metrics written to files (`mama-core/src/mama/hook-metrics.js`) but never aggregated or analyzed. Missing observability.
 
@@ -391,7 +391,7 @@ pnpm vitest run -t "relevance scorer"
 
 ---
 
-**Node.js:** >= 22.0.0  
+**Node.js:** >= 22.13.0  
 **pnpm:** >= 8.0.0  
 **License:** MIT  
 **Author:** SpineLift Team

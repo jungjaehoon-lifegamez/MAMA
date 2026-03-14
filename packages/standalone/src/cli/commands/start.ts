@@ -22,7 +22,6 @@ import {
   closeSync,
 } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import Database from 'better-sqlite3';
 import express from 'express';
 import path, { join } from 'node:path';
 import { WebSocketServer } from 'ws';
@@ -98,6 +97,7 @@ const { DebugLogger } = debugLogger as unknown as {
 const startLogger = new DebugLogger('start');
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
+import Database from '../../sqlite.js';
 
 // Port configuration — single source of truth
 /** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
@@ -148,6 +148,7 @@ function parseSecurityAlertTargets(config: {
 // MAMA embedding server (keeps model in memory)
 import type { Server as HttpServer } from 'node:http';
 let embeddingServer: HttpServer | null = null;
+let embeddingShutdownToken: string | null = null;
 
 /**
  * Normalize Discord guild config before passing to gateway.
@@ -253,7 +254,10 @@ async function waitForPortAvailable(port: number, maxWaitMs: number = 5000): Pro
  * SECURITY P1: Validates health response before reuse
  * SECURITY P1: Uses port polling instead of fixed timeout
  */
-async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
+async function checkAndTakeoverExistingServer(
+  port: number,
+  shutdownToken: string | null
+): Promise<boolean> {
   const targetModel = getModelName();
   const targetDim = getEmbeddingDim();
   return new Promise((resolve) => {
@@ -312,10 +316,18 @@ async function checkAndTakeoverExistingServer(port: number): Promise<boolean> {
                   timeout: 2000,
                   // SECURITY P1: Pass shutdown token
                   headers: {
-                    'X-Shutdown-Token': process.env.MAMA_SHUTDOWN_TOKEN || '',
+                    'X-Shutdown-Token': shutdownToken || process.env.MAMA_SHUTDOWN_TOKEN || '',
                   },
                 },
-                async () => {
+                async (shutdownRes) => {
+                  if ((shutdownRes.statusCode ?? 0) < 200 || (shutdownRes.statusCode ?? 0) >= 300) {
+                    console.warn(
+                      `[EmbeddingServer] Takeover shutdown rejected with HTTP ${shutdownRes.statusCode ?? 0}`
+                    );
+                    resolve(false);
+                    return;
+                  }
+
                   console.log('[EmbeddingServer] MCP server shutdown requested');
                   // SECURITY P1: Use port polling instead of fixed timeout
                   const portAvailable = await waitForPortAvailable(port, 10000);
@@ -363,15 +375,20 @@ async function startEmbeddingServerIfAvailable(
   const port = EMBEDDING_PORT;
 
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const embeddingServerModule = require('@jungjaehoon/mama-core/embedding-server');
+    embeddingShutdownToken =
+      typeof embeddingServerModule.SHUTDOWN_TOKEN === 'string'
+        ? embeddingServerModule.SHUTDOWN_TOKEN
+        : null;
+
     // Check if server already running
-    const existingHasChat = await checkAndTakeoverExistingServer(port);
+    const existingHasChat = await checkAndTakeoverExistingServer(port, embeddingShutdownToken);
     if (existingHasChat) {
       // Another Standalone is running with chat, no need to start
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const embeddingServerModule = require('@jungjaehoon/mama-core/embedding-server');
     embeddingServer = await embeddingServerModule.startEmbeddingServer(port, {
       messageRouter,
       sessionStore,
@@ -2836,6 +2853,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   // Handle graceful shutdown with timeout
   let shuttingDown = false;
+  let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
   const shutdown = async () => {
     if (shuttingDown) return; // Prevent double shutdown
     shuttingDown = true;
@@ -2848,13 +2866,58 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     if (healthWarningInterval) {
       clearInterval(healthWarningInterval);
     }
+    if (keepAliveInterval) {
+      clearInterval(keepAliveInterval);
+      keepAliveInterval = null;
+    }
+
+    const getBlockingHandleNames = (): string[] => {
+      const processWithHandles = process as NodeJS.Process & {
+        _getActiveHandles?: () => unknown[];
+      };
+      const getActiveHandles = processWithHandles._getActiveHandles;
+      if (typeof getActiveHandles !== 'function') {
+        return ['unknown'];
+      }
+      const handles = getActiveHandles.call(processWithHandles);
+      const ignoredHandles = new Set(['WriteStream', 'ReadStream', 'TTY', 'TTYWrap']);
+      return (
+        handles
+          ?.map((handle) => (handle as { constructor?: { name?: string } }).constructor?.name)
+          .filter(
+            (name): name is string => typeof name === 'string' && !ignoredHandles.has(name)
+          ) ?? []
+      );
+    };
+
+    const getActiveRequestNames = (): string[] => {
+      const processWithRequests = process as NodeJS.Process & {
+        _getActiveRequests?: () => unknown[];
+      };
+      const getActiveRequests = processWithRequests._getActiveRequests;
+      if (typeof getActiveRequests !== 'function') {
+        return ['unknown'];
+      }
+      const requests = getActiveRequests.call(processWithRequests);
+      return (
+        requests
+          ?.map((request) => (request as { constructor?: { name?: string } }).constructor?.name)
+          .filter((name): name is string => typeof name === 'string') ?? []
+      );
+    };
 
     // Force exit after 5 seconds if graceful shutdown hangs
     // exit(0) = intentional stop; systemd Restart=on-failure should NOT restart
-    setTimeout(() => {
+    const forceExitTimer = setTimeout(() => {
+      const blockingHandles = getBlockingHandleNames();
+      const activeRequests = getActiveRequestNames();
+      if (blockingHandles.length === 0 && activeRequests.length === 0) {
+        return;
+      }
       console.error('[MAMA] Graceful shutdown timed out, forcing exit');
-      process.exit(0);
+      process.kill(process.pid, 'SIGKILL');
     }, 5000);
+    forceExitTimer.unref();
 
     try {
       // Stop schedulers and cron worker first
@@ -2865,8 +2928,44 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
       // Close embedding server (port 3849) - drain connections first
       if (embeddingServer) {
-        embeddingServer.closeAllConnections();
-        embeddingServer.close();
+        await new Promise<void>((resolve) => {
+          const shutdownReq = http.request(
+            {
+              hostname: '127.0.0.1',
+              port: EMBEDDING_PORT,
+              path: '/shutdown',
+              method: 'POST',
+              timeout: 2000,
+              headers: {
+                'X-Shutdown-Token': embeddingShutdownToken || process.env.MAMA_SHUTDOWN_TOKEN || '',
+              },
+            },
+            async (response) => {
+              const statusCode = response.statusCode ?? 0;
+              const released = await waitForPortAvailable(EMBEDDING_PORT, 5000);
+              if (statusCode >= 200 && statusCode < 300 && released) {
+                resolve();
+                return;
+              }
+
+              startLogger.warn(
+                `[EmbeddingServer] Shutdown endpoint did not fully stop server (status=${statusCode}, released=${released})`
+              );
+              if (embeddingServer) {
+                embeddingServer.close(() => resolve());
+                return;
+              }
+              resolve();
+            }
+          );
+          shutdownReq.on('error', () => resolve());
+          shutdownReq.on('timeout', () => {
+            shutdownReq.destroy();
+            resolve();
+          });
+          shutdownReq.end();
+        });
+        embeddingServer = null;
       }
 
       // Stop all gateways with per-gateway 2s timeout
@@ -2881,7 +2980,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       );
 
       // Stop agent loop
-      agentLoop.stop();
+      await agentLoop.stop();
 
       // Release all CLI sessions
       getSessionPool().dispose();
@@ -2892,14 +2991,30 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       // Stop metrics cleanup
       metricsCleanup?.stop();
 
+      metricsStore?.close();
+
+      db.close();
+
       const { deletePid } = await import('../utils/pid-manager.js');
       await deletePid();
+      const blockingHandles = getBlockingHandleNames();
+      const activeRequests = getActiveRequestNames();
+      if (blockingHandles.length === 0 && activeRequests.length === 0) {
+        clearTimeout(forceExitTimer);
+      } else if (
+        blockingHandles.length === 0 &&
+        activeRequests.length > 0 &&
+        activeRequests.every((name) => name === 'FSReqPromise')
+      ) {
+        process.kill(process.pid, 'SIGKILL');
+      }
     } catch (error) {
       // Best effort cleanup
       console.warn('[MAMA] Cleanup error during shutdown:', error);
     }
 
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   };
 
   process.on('SIGINT', shutdown);
@@ -2925,7 +3040,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   // Keep process alive using setInterval
   // This ensures the Node.js event loop stays active
-  setInterval(() => {
+  keepAliveInterval = setInterval(() => {
     // Heartbeat - keeps the process running
   }, 30000); // Every 30 seconds
 }

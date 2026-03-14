@@ -59,7 +59,7 @@
   },
   "packageManager": "pnpm@10.28.2",
   "engines": {
-    "node": ">=22.0.0",
+    "node": ">=22.13.0",
     "pnpm": ">=8.0.0"
   },
   "dependencies": {

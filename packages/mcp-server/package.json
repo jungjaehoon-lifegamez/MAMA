@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-server",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "MAMA MCP Server - Memory-Augmented MCP Assistant for Claude Code & Desktop",
   "main": "src/server.js",
   "bin": {
@@ -36,7 +36,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "@jungjaehoon/mama-core": "workspace:*",

@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] / mama-core [1.3.0] / mcp-server [1.9.0] / plugin [1.8.0] - 2026-03-14
+
+### Security
+
+- **Default-deny external API hardening** — sensitive `/api/*` reads now require auth consistently, non-local WebSocket upgrades are rejected, and trusted proxy checks prevent spoofed `cf-connecting-ip` / `x-forwarded-for` attribution
+- **Security event pipeline** — unauthorized requests, SSRF blocks, risky Bash patterns, honeypot hits, and WebSocket violations now write structured JSONL events with client IP metadata, alert fan-out, incident summaries, and abuse-report drafts
+- **Tarpit + honeypot response** — repeated probing and known trap paths now trigger delayed responses, evidence retention, and denylist candidate generation for Cloudflare/WAF workflows
+
+### Changed
+
+- **SQLite runtime** — all shipped packages now use Node's built-in `node:sqlite`; `better-sqlite3` support and prebuild handling were removed
+- **Node.js baseline** — all public packages now require Node.js 22+
+- **Plugin/MCP install path** — first-run setup no longer depends on compiling SQLite native addons; Codex and Claude clients use the same shared SQLite file through `node:sqlite`
+- **Codex MCP bootstrap** — Standalone now bootstraps its internal `CODEX_HOME` from `~/.codex/auth.json` when needed, so `codex-mcp` startup works on fresh MAMA installs without manual copy steps
+
+### Fixed
+
+- **Codex MCP backend startup** — fixed `Process not running` failures caused by missing internal `CODEX_HOME`
+- **Daemon shutdown path** — `mama stop` now completes the embedded server shutdown flow, cancels the initial heartbeat timeout, drains in-flight agent work, and avoids the previous `libc++abi` abort from forced shutdown on pending SQLite/fs cleanup
+- **Live database compatibility** — Codex-installed MCP server verified against the existing `~/.claude/mama-memory.db` for search, decision save, checkpoint save, and checkpoint load without `better-sqlite3`
+
 ## [0.13.3] - 2026-03-12
 
 ### Fixed

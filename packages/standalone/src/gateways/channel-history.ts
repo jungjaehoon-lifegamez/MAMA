@@ -13,9 +13,18 @@
  * - SQLite backup for persistence across restarts (Sprint 3 F5)
  */
 
-import Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../sqlite.js';
 import type { MessageAttachment } from './types.js';
 import { getConfig } from '../cli/config/config-manager.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    debug: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('ChannelHistory');
 
 /**
  * Single history entry
@@ -46,7 +55,7 @@ export interface ChannelHistoryConfig {
   /** Maximum age in ms before auto-cleanup (default: 10 minutes) */
   maxAgeMs?: number;
   /** Optional SQLite database for persistence */
-  db?: Database.Database;
+  db?: SQLiteDatabase;
   /** Messages to preload from DB on startup per channel (default: 5) */
   preloadLimit?: number;
 }
@@ -64,7 +73,7 @@ const DB_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours (DB retention)
 export class ChannelHistory {
   private histories: Map<string, HistoryEntry[]> = new Map();
   private config: Required<Omit<ChannelHistoryConfig, 'db'>>;
-  private db?: Database.Database;
+  private db?: SQLiteDatabase;
   private preloadLimit: number;
   private cleanupInterval?: NodeJS.Timeout;
 
@@ -193,7 +202,7 @@ export class ChannelHistory {
 
     const result = stmt.run(cutoff);
     if (result.changes > 0) {
-      console.log(`[ChannelHistory] Cleaned up ${result.changes} old messages from DB`);
+      logger.debug(`Cleaned up ${result.changes} old messages from DB`);
     }
   }
 
@@ -235,7 +244,7 @@ export class ChannelHistory {
           entry.isBot ? 1 : 0
         );
       } catch (err) {
-        console.error('[ChannelHistory] Failed to save to DB:', err);
+        logger.error('Failed to save to DB:', err);
       }
     }
   }
@@ -431,7 +440,7 @@ export function setChannelHistory(history: ChannelHistory): void {
  * Should be called once at startup before any gateway initialization.
  */
 export function initChannelHistory(
-  db: Database.Database,
+  db: SQLiteDatabase,
   config?: ChannelHistoryConfig
 ): ChannelHistory {
   if (globalChannelHistory) {
