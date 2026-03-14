@@ -11,7 +11,7 @@ import path from 'path';
 import os from 'os';
 import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
-import { isAuthenticated } from './auth-middleware.js';
+import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
 import type {
   GraphNode,
   GraphEdge,
@@ -978,6 +978,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // All data API routes below must pass isAuthenticated().
     // Note: /graph/* write endpoints are also gated in start.ts for defense-in-depth.
     if (!isAuthenticated(req)) {
+      logUnauthorizedAttempt(req);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({ error: true, code: 'UNAUTHORIZED', message: 'Authentication required.' })
@@ -1127,6 +1128,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/restart - graceful restart via mama CLI
     if (pathname === '/api/restart' && req.method === 'POST') {
       if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({ error: true, code: 'UNAUTHORIZED', message: 'Authentication required' })
@@ -1214,6 +1216,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/multi-agent/agents/:id/restart - restart a single agent
     if (pathname.match(/^\/api\/multi-agent\/agents\/[^/]+\/restart$/) && req.method === 'POST') {
       if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'Authentication required' }));
         return true;
@@ -1244,6 +1247,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/multi-agent/agents/:id/stop - stop a single agent
     if (pathname.match(/^\/api\/multi-agent\/agents\/[^/]+\/stop$/) && req.method === 'POST') {
       if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'Authentication required' }));
         return true;
@@ -1666,6 +1670,7 @@ async function handleUpdateConfigRequest(
   try {
     // Verify authentication for config modifications
     if (!isAuthenticated(req)) {
+      logUnauthorizedAttempt(req);
       res.writeHead(401, {
         'Content-Type': 'application/json',
         'WWW-Authenticate': 'Bearer realm="MAMA API"',
@@ -2337,6 +2342,7 @@ async function handleMultiAgentUpdateAgentRequest(
   try {
     // Security: require authentication for config-writing endpoint
     if (!isAuthenticated(req)) {
+      logUnauthorizedAttempt(req);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -2681,6 +2687,7 @@ async function handleMCPServersRequest(req: IncomingMessage, res: ServerResponse
   try {
     // Security: require authentication for config endpoint
     if (!isAuthenticated(req)) {
+      logUnauthorizedAttempt(req);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -2747,6 +2754,7 @@ async function handleDeleteMCPServerRequest(
   try {
     // Security: require authentication for config-writing endpoint
     if (!isAuthenticated(req)) {
+      logUnauthorizedAttempt(req);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
