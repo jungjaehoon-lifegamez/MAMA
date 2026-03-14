@@ -28,7 +28,7 @@ MAMA/
 ├── .sisyphus/                      # Internal planning artifacts (drafts/, plans/)
 ├── .docs/                          # Development docs (PRDs, tech specs, epics, stories)
 ├── .claude-plugin/                 # Local dev marketplace config
-├── scripts/                        # Build utilities (verify-install.js, sync-check.js, ensure-sqlite-prebuild.js)
+├── scripts/                        # Build utilities (verify-install.js, sync-check.js)
 ├── .husky/                         # Git hooks (pre-commit: lint-staged + gitleaks + typecheck + tests)
 └── CLAUDE.md                       # Claude Code guidance (CRITICAL: read this before editing)
 ```
@@ -106,8 +106,8 @@ describe('Story M1.2: SQLite Database Initialization', () => {
 
 ### **pnpm Workspace**
 
-- **Ignored built dependencies:** `better-sqlite3`, `esbuild`, `node-pty`, `onnxruntime-node`, `protobufjs`, `sharp` (native modules)
-- **Unsafe permissions:** Enabled (`unsafePerm: true`) for native module compilation
+- **Ignored built dependencies:** `esbuild`, `node-pty`, `onnxruntime-node`, `protobufjs`, `sharp` (native modules)
+- **Unsafe permissions:** Enabled (`unsafePerm: true`) for optional platform packages such as `sharp`
 - **GitHub Packages:** `@jungjaehoon/*` packages published to GitHub Packages (not npm)
 
 ### **Entry Point Naming (INCONSISTENT)**

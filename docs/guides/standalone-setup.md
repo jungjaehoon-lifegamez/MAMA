@@ -30,7 +30,7 @@ Before installing MAMA Standalone, ensure you have:
 
 ### Required
 
-- **Node.js >= 22.0.0** (Standalone requires Node 22+, unlike the plugin which works with 18+)
+- **Node.js >= 22.0.0** (Standalone, plugin, MCP server, and core all require Node 22+)
 - **At least one authenticated backend CLI**
   - Codex CLI (`codex login`) or
   - Claude CLI (`claude` OAuth login)
@@ -88,13 +88,13 @@ npm install -g @jungjaehoon/mama-os
 - Skills system and cron scheduler
 - MAMA OS viewer (graph viewer + mobile chat)
 
-**Installation time:** 2-3 minutes (includes native module compilation)
+**Installation time:** 1-2 minutes (package download + model cache warm-up)
 
 ### Step 2: Verify Installation
 
 ```bash
 mama --version
-# Should output: @jungjaehoon/mama-os v0.9.x
+# Should output: @jungjaehoon/mama-os v0.14.x
 
 mama --help
 # Should show available commands
@@ -127,7 +127,7 @@ mama init
 
 `mama init` auto-selects the default backend:
 
-- Uses `codex` if `~/.mama/.codex/auth.json` or `~/.codex/auth.json` exists
+- Uses `codex-mcp` if `~/.mama/.codex/auth.json` or `~/.codex/auth.json` exists
 - Falls back to `claude` if `~/.claude/.credentials.json` exists
 - Fails with guidance if neither backend is authenticated
 
@@ -211,7 +211,7 @@ version: 1
 
 # Agent settings
 agent:
-  backend: claude # claude | codex (set by init auto/override)
+  backend: claude # claude | codex-mcp (set by init auto/override)
   model: claude-sonnet-4-20250514 # Claude model to use
   max_turns: 10 # Maximum conversation turns
   timeout: 300000 # Request timeout (5 minutes)
