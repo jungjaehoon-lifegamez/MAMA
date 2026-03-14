@@ -3,6 +3,8 @@
  * Used by Discord and Slack gateways.
  */
 
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import type { MessageAttachment, ContentBlock } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -20,7 +22,67 @@ const logger = new DebugLogger('AttachmentUtils');
  * Validate that a URL is safe to fetch (SSRF prevention).
  * Blocks requests to internal/private networks, loopback, and suspicious TLDs.
  */
-function assertSafeUrl(url: string): void {
+function assertSafeIpv4(address: string): void {
+  const octets = address.split('.').map((part) => Number(part));
+  if (
+    octets.length !== 4 ||
+    octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
+    throw new Error(`Blocked URL: invalid IPv4 address "${address}"`);
+  }
+
+  const [a, b] = octets;
+  if (
+    a === 0 || // 0.0.0.0/8
+    a === 10 || // 10.0.0.0/8 private
+    a === 127 || // 127.0.0.0/8 loopback
+    (a === 169 && b === 254) || // 169.254.0.0/16 link-local
+    (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
+    (a === 192 && b === 168) || // 192.168.0.0/16 private
+    (a === 100 && b >= 64 && b <= 127) // 100.64.0.0/10 carrier-grade NAT
+  ) {
+    throw new Error(`Blocked URL: private/reserved IP "${address}"`);
+  }
+}
+
+function assertSafeIpv6(address: string): void {
+  const normalized = address.toLowerCase();
+
+  if (normalized === '::' || normalized === '::1') {
+    throw new Error(`Blocked URL: loopback/internal IPv6 "${address}"`);
+  }
+
+  if (normalized.startsWith('::ffff:')) {
+    const mappedIpv4 = normalized.slice('::ffff:'.length);
+    if (isIP(mappedIpv4) === 4) {
+      assertSafeIpv4(mappedIpv4);
+      return;
+    }
+  }
+
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) {
+    throw new Error(`Blocked URL: unique-local IPv6 "${address}"`);
+  }
+
+  if (/^fe[89ab]/i.test(normalized)) {
+    throw new Error(`Blocked URL: link-local IPv6 "${address}"`);
+  }
+}
+
+function assertSafeIp(address: string): void {
+  const family = isIP(address);
+  if (family === 4) {
+    assertSafeIpv4(address);
+    return;
+  }
+  if (family === 6) {
+    assertSafeIpv6(address);
+    return;
+  }
+  throw new Error(`Blocked URL: unrecognized IP "${address}"`);
+}
+
+async function assertSafeUrl(url: string): Promise<void> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -38,8 +100,8 @@ function assertSafeUrl(url: string): void {
   if (
     hostname === 'localhost' ||
     hostname === '0.0.0.0' ||
-    hostname === '[::]' ||
-    hostname === '[::1]'
+    hostname === '::' ||
+    hostname === '::1'
   ) {
     throw new Error(`Blocked URL: loopback/internal hostname "${hostname}"`);
   }
@@ -53,20 +115,18 @@ function assertSafeUrl(url: string): void {
     throw new Error(`Blocked URL: internal domain "${hostname}"`);
   }
 
-  // Block private/reserved IP ranges
-  const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipMatch) {
-    const [, a, b] = ipMatch.map(Number);
-    if (
-      a === 127 || // 127.0.0.0/8 loopback
-      a === 10 || // 10.0.0.0/8 private
-      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
-      (a === 192 && b === 168) || // 192.168.0.0/16 private
-      a === 0 || // 0.0.0.0/8
-      (a === 169 && b === 254) // 169.254.0.0/16 link-local
-    ) {
-      throw new Error(`Blocked URL: private/reserved IP "${hostname}"`);
-    }
+  if (isIP(hostname)) {
+    assertSafeIp(hostname);
+    return;
+  }
+
+  const resolvedAddresses = await lookup(hostname, { all: true, verbatim: true });
+  if (resolvedAddresses.length === 0) {
+    throw new Error(`Blocked URL: DNS resolution returned no addresses for "${hostname}"`);
+  }
+
+  for (const record of resolvedAddresses) {
+    assertSafeIp(record.address);
   }
 }
 
@@ -96,10 +156,13 @@ export async function downloadFile(
   const timestamp = Date.now();
   const localPath = path.join(mediaDir, `${timestamp}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`);
 
-  assertSafeUrl(url);
+  await assertSafeUrl(url);
 
   const headers: Record<string, string> = { ...authHeaders };
-  const response = await fetch(url, { headers });
+  const response = await fetch(url, { headers, redirect: 'manual' });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`Blocked redirect while downloading attachment: ${response.status}`);
+  }
   if (!response.ok) {
     throw new Error(`Failed to download: ${response.status}`);
   }
