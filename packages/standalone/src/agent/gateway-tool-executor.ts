@@ -577,7 +577,7 @@ export class GatewayToolExecutor {
     // Block commands that can escape sandbox or escalate privileges
     const dangerousPatterns = [
       /\bsudo\b/i,
-      /\bchmod\s+(?:[ugoa]*[+-]s|0?[246][0-7]{3})\b/i, // setuid/setgid (symbolic + octal)
+      /\bchmod\s+(?:[ugoa]*[+-]s|0?[2-7][0-7]{3})\b/i, // setuid/setgid (symbolic + octal)
       /\bchown\b/i,
       /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh|fish)\b/i, // pipe to shell
       /\beval\b/i, // eval in shell
