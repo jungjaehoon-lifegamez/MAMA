@@ -13,7 +13,7 @@
  * - SQLite backup for persistence across restarts (Sprint 3 F5)
  */
 
-import Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../sqlite.js';
 import type { MessageAttachment } from './types.js';
 import { getConfig } from '../cli/config/config-manager.js';
 
@@ -46,7 +46,7 @@ export interface ChannelHistoryConfig {
   /** Maximum age in ms before auto-cleanup (default: 10 minutes) */
   maxAgeMs?: number;
   /** Optional SQLite database for persistence */
-  db?: Database.Database;
+  db?: SQLiteDatabase;
   /** Messages to preload from DB on startup per channel (default: 5) */
   preloadLimit?: number;
 }
@@ -64,7 +64,7 @@ const DB_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours (DB retention)
 export class ChannelHistory {
   private histories: Map<string, HistoryEntry[]> = new Map();
   private config: Required<Omit<ChannelHistoryConfig, 'db'>>;
-  private db?: Database.Database;
+  private db?: SQLiteDatabase;
   private preloadLimit: number;
   private cleanupInterval?: NodeJS.Timeout;
 
@@ -431,7 +431,7 @@ export function setChannelHistory(history: ChannelHistory): void {
  * Should be called once at startup before any gateway initialization.
  */
 export function initChannelHistory(
-  db: Database.Database,
+  db: SQLiteDatabase,
   config?: ChannelHistoryConfig
 ): ChannelHistory {
   if (globalChannelHistory) {

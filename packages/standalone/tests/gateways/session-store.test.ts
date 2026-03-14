@@ -3,11 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
+import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
 
 describe('SessionStore', () => {
-  let db: Database.Database;
+  let db: SQLiteDatabase;
   let store: SessionStore;
 
   beforeEach(() => {

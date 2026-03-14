@@ -1489,7 +1489,7 @@ function getSessionStats(): SessionStats {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Database = require('better-sqlite3');
+    const Database = require('../sqlite.js').default;
     const sessionsDb = new Database(sessionsDbPath);
 
     const bySourceRows = sessionsDb
