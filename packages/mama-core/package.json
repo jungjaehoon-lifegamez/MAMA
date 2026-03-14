@@ -63,8 +63,10 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
-    "better-sqlite3": "^11.0.0",
     "ws": "^8.19.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
