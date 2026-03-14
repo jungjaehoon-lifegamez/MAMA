@@ -130,9 +130,13 @@ function getRequestToken(req: IncomingMessage, options: AuthOptions = {}): strin
   }
 
   if (options.allowQueryToken && req.url) {
-    const host = req.headers.host || 'localhost';
-    const url = new URL(req.url, `http://${host}`);
-    return url.searchParams.get('token');
+    try {
+      const host = req.headers.host || 'localhost';
+      const url = new URL(req.url, `http://${host}`);
+      return url.searchParams.get('token');
+    } catch {
+      return null;
+    }
   }
 
   return null;
