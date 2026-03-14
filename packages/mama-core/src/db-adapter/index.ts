@@ -9,10 +9,11 @@
 
 import { info } from '../debug-logger.js';
 import { SQLiteAdapter } from './sqlite-adapter.js';
+import { NodeSQLiteAdapter } from './node-sqlite-adapter.js';
 import { DatabaseAdapter, type VectorSearchResult, type RunResult } from './base-adapter.js';
 import type { Statement } from './statement.js';
 
-export { DatabaseAdapter, SQLiteAdapter };
+export { DatabaseAdapter, SQLiteAdapter, NodeSQLiteAdapter };
 export type { Statement, VectorSearchResult, RunResult };
 
 export interface AdapterConfig {
@@ -26,7 +27,20 @@ export interface AdapterConfig {
  * @returns Configured SQLite adapter instance
  */
 export function createAdapter(config: AdapterConfig = {}): DatabaseAdapter {
-  info('[db-adapter] Using SQLite adapter (plugin mode)');
+  const configuredDriver = process.env.MAMA_SQLITE_DRIVER;
+
+  if (
+    configuredDriver &&
+    configuredDriver !== 'node-sqlite' &&
+    configuredDriver !== 'node:sqlite' &&
+    configuredDriver !== 'auto'
+  ) {
+    throw new Error(
+      `Unsupported SQLite driver "${configuredDriver}". MAMA now requires node:sqlite.`
+    );
+  }
+
+  info('[db-adapter] Using node:sqlite adapter');
   const dbPath = config.dbPath || process.env.MAMA_DB_PATH;
   return new SQLiteAdapter({ dbPath });
 }

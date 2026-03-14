@@ -18,7 +18,7 @@
  */
 
 import { EventEmitter } from 'events';
-import type Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../../sqlite.js';
 import { SwarmManager } from './swarm-manager.js';
 import type { SwarmTask } from './swarm-db.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -511,7 +511,7 @@ export class SwarmTaskRunner extends EventEmitter {
    * @param task - Task to check (avoids redundant SELECT)
    * @returns true if all dependencies are completed, false if pending/failed/missing
    */
-  private checkDependencies(db: Database.Database, task: SwarmTask): boolean {
+  private checkDependencies(db: SQLiteDatabase, task: SwarmTask): boolean {
     const dependencies = parseDependsOn(task);
     if (dependencies.length === 0) {
       return true; // No dependencies
@@ -582,11 +582,7 @@ export class SwarmTaskRunner extends EventEmitter {
    * @param task - Task to check
    * @returns Array of conflicting tasks (empty if no conflicts)
    */
-  private checkFileConflicts(
-    db: Database.Database,
-    sessionId: string,
-    task: SwarmTask
-  ): SwarmTask[] {
+  private checkFileConflicts(db: SQLiteDatabase, sessionId: string, task: SwarmTask): SwarmTask[] {
     const files = parseFilesOwned(task);
     if (files.length === 0) {
       return []; // No files to conflict

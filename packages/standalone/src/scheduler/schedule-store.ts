@@ -5,7 +5,7 @@
  * Supports server restart recovery and execution history tracking.
  */
 
-import Database from 'better-sqlite3';
+import type { SQLiteDatabase } from '../sqlite.js';
 import { randomUUID } from 'crypto';
 
 // ============================================================================
@@ -82,9 +82,9 @@ interface ScheduleLogRow {
  * SQLite-backed store for schedules and execution logs
  */
 export class ScheduleStore {
-  private db: Database.Database;
+  private db: SQLiteDatabase;
 
-  constructor(db: Database.Database) {
+  constructor(db: SQLiteDatabase) {
     this.db = db;
     this.runMigration();
   }

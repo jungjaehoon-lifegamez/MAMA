@@ -140,10 +140,10 @@ describe('Story M1.2: SQLite Database Initialization', () => {
   });
 
   describe('AC #6: SQLite-only verification', () => {
-    it('should use SQLiteAdapter', async () => {
+    it('should use a supported SQLite adapter', async () => {
       const adapter = getAdapter();
 
-      expect(adapter.constructor.name).toBe('SQLiteAdapter');
+      expect(['SQLiteAdapter', 'NodeSQLiteAdapter']).toContain(adapter.constructor.name);
     });
 
     it('should not have PostgreSQL adapter available', () => {
