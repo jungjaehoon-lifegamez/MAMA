@@ -2,8 +2,12 @@
  * SmartSearch — Haiku-powered reranking of search candidates.
  */
 
-import type { HaikuClient } from './haiku-client.js';
 import { warn } from './debug-logger.js';
+
+/** Minimal interface for a client that can run completions (replaces HaikuClient). */
+interface CompletionClient {
+  complete(systemPrompt: string, userMessage: string): Promise<string>;
+}
 
 const RERANK_MIN_CANDIDATES = 3;
 
@@ -27,7 +31,7 @@ export interface SearchCandidate {
 export async function rerankResults(
   query: string,
   candidates: SearchCandidate[],
-  haiku: HaikuClient
+  haiku: CompletionClient
 ): Promise<SearchCandidate[]> {
   if (candidates.length < RERANK_MIN_CANDIDATES) {
     return candidates;

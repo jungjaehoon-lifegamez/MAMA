@@ -26,8 +26,6 @@
     "./outcome-tracker": "./dist/outcome-tracker.js",
     "./query-intent": "./dist/query-intent.js",
     "./test-utils": "./dist/test-utils.js",
-    "./haiku-client": "./dist/haiku-client.js",
-    "./fact-extractor": "./dist/fact-extractor.js",
     "./smart-search": "./dist/smart-search.js"
   },
   "scripts": {
