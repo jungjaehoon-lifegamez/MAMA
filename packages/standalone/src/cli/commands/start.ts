@@ -1484,7 +1484,7 @@ export async function runAgentLoop(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       memoryAgentConfig as any,
       {
-        sessionId: `memory-agent-${Date.now()}`,
+        sessionId: crypto.randomUUID(),
         dangerouslySkipPermissions: true,
       },
       { requestTimeout: 60000 }
