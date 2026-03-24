@@ -1692,6 +1692,7 @@ export async function runAgentLoop(
           telegramGateway!.sendSticker(chatId, emotion),
       };
       toolExecutor.setTelegramGateway(telegramGatewayInterface);
+      agentLoop.setTelegramGateway(telegramGatewayInterface);
 
       console.log('✓ Telegram connected');
     } catch (error) {

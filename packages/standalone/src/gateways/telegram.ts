@@ -335,7 +335,12 @@ export class TelegramGateway extends BaseGateway {
     if (!this.bot || !text.trim()) return;
     const chunks = this.splitMessage(text, TELEGRAM_MAX_LENGTH);
     for (const chunk of chunks) {
-      await this.bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+      try {
+        await this.bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+      } catch {
+        // Markdown parse failed — retry as plain text
+        await this.bot.sendMessage(chatId, chunk);
+      }
     }
   }
 
