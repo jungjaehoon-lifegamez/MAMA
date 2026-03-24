@@ -570,6 +570,18 @@ export class AgentLoop {
   }
 
   /**
+   * Set Telegram gateway for telegram_send tool
+   */
+  setTelegramGateway(gateway: {
+    sendMessage(chatId: string, text: string): Promise<void>;
+    sendFile(chatId: string, filePath: string, caption?: string): Promise<void>;
+    sendImage(chatId: string, imagePath: string, caption?: string): Promise<void>;
+    sendSticker(chatId: string | number, emotion: string): Promise<boolean>;
+  }): void {
+    this.mcpExecutor.setTelegramGateway(gateway);
+  }
+
+  /**
    * Run the agent loop with a user prompt
    *
    * Uses lane-based concurrency when useLanes is enabled:
