@@ -2079,6 +2079,12 @@ export async function runAgentLoop(
     enableAutoKillPort: config.enable_auto_kill_port,
   });
 
+  // Memory Agent stats API
+  apiServer.app.get('/api/memory-agent/stats', (_req, res) => {
+    const stats = messageRouter.getMemoryAgentStats();
+    res.json(stats);
+  });
+
   // Session API endpoints
   apiServer.app.get('/api/sessions/last-active', async (_req, res) => {
     try {

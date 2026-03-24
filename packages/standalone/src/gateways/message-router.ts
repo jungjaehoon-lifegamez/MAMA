@@ -176,9 +176,20 @@ export class MessageRouter {
   private promptEnhancer: PromptEnhancer;
   private cachedGatewayToolsPrompt: string | null = null;
   private memoryAgentProcessManager?: AgentProcessManager;
+  private memoryAgentStats = {
+    turnsObserved: 0,
+    factsExtracted: 0,
+    factsSaved: 0,
+    lastExtraction: null as number | null,
+    recentExtractions: [] as Array<{ topic: string; timestamp: number; success: boolean }>,
+  };
 
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
+  }
+
+  getMemoryAgentStats() {
+    return { ...this.memoryAgentStats };
   }
 
   constructor(
@@ -1019,6 +1030,7 @@ ${historyContext}
     }
 
     this.lastExtractTime = now;
+    this.memoryAgentStats.turnsObserved++;
 
     try {
       // Get existing topics for consistency
@@ -1054,6 +1066,8 @@ ${historyContext}
       const facts = parsed.facts;
       if (!Array.isArray(facts) || facts.length === 0) return;
 
+      this.memoryAgentStats.factsExtracted += facts.length;
+
       if (!this.mamaApi.save) return;
 
       for (const fact of facts) {
@@ -1068,10 +1082,21 @@ ${historyContext}
             is_static: fact.is_static ? 1 : 0,
           });
           logger.info(`[memory-agent] Saved: ${topic}`);
+          this.memoryAgentStats.factsSaved++;
+          this.memoryAgentStats.recentExtractions.push({
+            topic,
+            timestamp: Date.now(),
+            success: true,
+          });
+          if (this.memoryAgentStats.recentExtractions.length > 20) {
+            this.memoryAgentStats.recentExtractions.shift();
+          }
         } catch {
           /* Continue */
         }
       }
+
+      this.memoryAgentStats.lastExtraction = Date.now();
     } catch (err) {
       logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);
     }
