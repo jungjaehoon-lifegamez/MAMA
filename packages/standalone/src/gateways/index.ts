@@ -32,6 +32,9 @@ export type { DiscordGatewayOptions } from './discord.js';
 export { SlackGateway } from './slack.js';
 export type { SlackGatewayOptions } from './slack.js';
 
+export { TelegramGateway } from './telegram.js';
+export type { TelegramGatewayOptions, TelegramGatewayConfig } from './telegram.js';
+
 // Message utilities
 export {
   splitMessage,
