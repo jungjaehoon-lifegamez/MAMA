@@ -1,9 +1,9 @@
 /**
- * Fact Extractor — Extracts structured facts from conversations using Haiku.
+ * Fact Extractor — Extracts structured facts from conversations.
  *
- * Given raw conversation text, uses Haiku to identify architecture decisions,
- * technical choices, and lessons learned. Returns structured facts ready for
- * mama.save().
+ * Always-on memory agent that watches every conversation turn and
+ * extracts meaningful decisions, preferences, and lessons learned.
+ * Maintains topic consistency by feeding existing topics from DB.
  */
 
 import type { HaikuClient } from './haiku-client.js';
@@ -12,25 +12,37 @@ import { warn } from './debug-logger.js';
 const MIN_CONTENT_LENGTH = 50;
 const MAX_CONTENT_LENGTH = 10_000;
 
-const EXTRACTION_PROMPT = `You are a fact extractor for a developer's memory system.
-Given a conversation between a user and an AI assistant, extract ONLY:
-- Architecture decisions (database, framework, language choices)
-- Technical choices (API design, config changes, deployment strategy)
-- Important constraints or requirements discovered
+const EXTRACTION_PROMPT = `You are an always-on memory agent for a developer's knowledge base.
+Your job: watch every conversation turn and extract facts worth remembering long-term.
+
+## What to extract
+- Architecture decisions (database, framework, language, infra choices)
+- Technical choices (API design, config, deployment, tooling)
+- User preferences and working style (coding style, workflow, role)
+- Constraints or requirements discovered
 - Lessons learned (what worked, what failed, why)
 
-DO NOT extract:
+## What to SKIP (return [])
 - Greetings, thanks, casual chat
-- Questions without answers
+- Questions without clear answers/decisions
 - Temporary debugging steps
-- Code snippets (the code itself is in the repo)
+- Code review comments without decisions
+- Anything too vague to be actionable
 
-For each fact, classify as:
-- static: true if this is a long-term preference/choice (tech stack, coding style, role)
-- static: false if this is about current work (this PR, this sprint, this bug)
+## Topic naming rules (CRITICAL)
+- Use lowercase snake_case: auth_strategy, database_choice, deployment_config
+- Be specific but not too granular: auth_strategy (good), jwt_refresh_token_rotation_policy (too specific)
+- REUSE existing topics when the conversation is about the same subject — this creates an evolution chain
+- If the user changes a previous decision on the same subject, use the EXACT same topic so the system can track the change
 
-Return a JSON array of objects with these fields: topic, decision, reasoning, is_static, confidence
-Return empty array [] if nothing worth saving.
+## Fields
+- topic: snake_case identifier (MUST reuse existing topic if same subject)
+- decision: what was decided, in one clear sentence
+- reasoning: why (brief)
+- is_static: true = long-term preference/identity (tech stack, coding style, role); false = project-specific work
+- confidence: 0.0-1.0 how certain this decision is
+
+Return a JSON array. Return [] if nothing worth saving.
 Return ONLY the JSON array, no other text.`;
 
 export interface ExtractedFact {
@@ -43,9 +55,14 @@ export interface ExtractedFact {
 
 /**
  * Extract structured facts from conversation content.
+ * Feeds existing topics from DB to ensure topic consistency.
  * Returns empty array on any error (graceful degradation).
  */
-export async function extractFacts(content: string, haiku: HaikuClient): Promise<ExtractedFact[]> {
+export async function extractFacts(
+  content: string,
+  haiku: HaikuClient,
+  existingTopics?: string[]
+): Promise<ExtractedFact[]> {
   if (content.length < MIN_CONTENT_LENGTH) {
     return [];
   }
@@ -55,8 +72,15 @@ export async function extractFacts(content: string, haiku: HaikuClient): Promise
       ? content.slice(0, MAX_CONTENT_LENGTH) + '\n... (truncated)'
       : content;
 
+  // Build user message with existing topics context
+  let userMessage = truncated;
+  if (existingTopics && existingTopics.length > 0) {
+    const topicList = existingTopics.slice(0, 50).join(', ');
+    userMessage = `[Existing topics in memory: ${topicList}]\n\nConversation:\n${truncated}`;
+  }
+
   try {
-    const response = await haiku.complete(EXTRACTION_PROMPT, truncated);
+    const response = await haiku.complete(EXTRACTION_PROMPT, userMessage);
     return parseExtractedFacts(response);
   } catch (error) {
     warn(
@@ -67,7 +91,7 @@ export async function extractFacts(content: string, haiku: HaikuClient): Promise
 }
 
 /**
- * Parse Haiku's JSON response into typed facts.
+ * Parse LLM's JSON response into typed facts.
  * Handles malformed JSON, missing fields, and unexpected shapes.
  */
 function parseExtractedFacts(response: string): ExtractedFact[] {
@@ -98,7 +122,7 @@ function parseExtractedFacts(response: string): ExtractedFact[] {
         confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
       }));
   } catch {
-    warn('[FactExtractor] Failed to parse Haiku response as JSON');
+    warn('[FactExtractor] Failed to parse LLM response as JSON');
     return [];
   }
 }

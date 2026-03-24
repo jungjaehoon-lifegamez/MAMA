@@ -63,7 +63,22 @@ async function execute(input) {
   }
 
   try {
-    const facts = await extractFacts(content, haiku);
+    // Feed existing topics so LLM can reuse them for consistency
+    let existingTopics = [];
+    try {
+      const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
+      const adapter = getAdapter();
+      const rows = adapter
+        .prepare(
+          'SELECT DISTINCT topic FROM decisions WHERE superseded_by IS NULL ORDER BY created_at DESC LIMIT 50'
+        )
+        .all();
+      existingTopics = rows.map((r) => r.topic);
+    } catch {
+      // DB not ready, proceed without topics
+    }
+
+    const facts = await extractFacts(content, haiku, existingTopics);
 
     if (facts.length === 0) {
       return { success: true, extracted: 0, saved: 0, message: 'No facts worth saving found.' };
