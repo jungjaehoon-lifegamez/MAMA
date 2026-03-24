@@ -187,6 +187,25 @@ describe('MAMA Commands Suite', () => {
         expect(result.message).toContain('Testing recall functionality');
       }
     });
+
+    it('should render memory-v2 bundle context when available', async () => {
+      await mamaSaveCommand({
+        topic: 'test_memory_v2_recall_bundle',
+        decision: 'Use pnpm for workspace scripts',
+        reasoning: 'Keep package manager behavior consistent across the repo',
+      });
+
+      const result = await mamaRecallCommand({
+        topic: 'test_memory_v2_recall_bundle',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.bundle).toBeDefined();
+      expect(result.bundle.memories.length).toBeGreaterThan(0);
+      expect(result.message).toContain('MAMA Profile');
+      expect(result.message).toContain('Related Memories');
+      expect(result.message).toContain('pnpm');
+    });
   });
 
   describe('/mama-suggest Command', () => {
@@ -242,6 +261,19 @@ describe('MAMA Commands Suite', () => {
       expect(result.success).toBe(true);
       expect(result.suggestions).toEqual([]);
       expect(result.message).toContain('No Results Found');
+    });
+
+    it('should render bundle-aware search context when memory-v2 matches exist', async () => {
+      const result = await mamaSuggestCommand({
+        query: 'authentication',
+        limit: 3,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.bundle).toBeDefined();
+      expect(result.bundle.memories.length).toBeGreaterThan(0);
+      expect(result.message).toContain('MAMA Profile');
+      expect(result.message).toContain('Related Memories');
     });
   });
 

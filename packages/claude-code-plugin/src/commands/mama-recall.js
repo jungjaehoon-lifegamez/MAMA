@@ -13,6 +13,7 @@
 const mama = require('@jungjaehoon/mama-core/mama-api');
 const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 const { sanitizeForPrompt } = require('../core/prompt-sanitizer');
+const { hasBundleMemories, formatMemoryBundleMessage } = require('./memory-bundle-format');
 
 /**
  * Recall decision history for a topic
@@ -33,6 +34,27 @@ async function mamaRecallCommand(args = {}) {
 
     // Call mama.recall() API
     info(`[mama-recall] Recalling decisions for topic: ${args.topic}`);
+
+    const scopes = Array.isArray(args.scopes) ? args.scopes : [];
+    if (typeof mama.recallMemory === 'function') {
+      const bundle = await mama.recallMemory(args.topic, {
+        scopes,
+        includeProfile: true,
+      });
+
+      if (hasBundleMemories(bundle)) {
+        return {
+          success: true,
+          history: bundle.memories,
+          bundle,
+          message: formatMemoryBundleMessage({
+            title: '📋 Decision History',
+            query: args.topic,
+            bundle,
+          }),
+        };
+      }
+    }
 
     const result = await mama.recall(args.topic);
 

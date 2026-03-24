@@ -10,9 +10,11 @@ Call tools via JSON block:
 
 - **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
 - **mama_search**(query?, type?, limit?) — Search decisions
+- **mama_recall**(query, scopes?, includeProfile?) — Recall memory bundle with profile, memories, and graph context
 - **mama_update**(id, outcome, reason?) — Update outcome
 - **mama_load_checkpoint**() — Resume session. No params.
 - **mama_add**(content) — Auto-extract and save facts from conversation content via Haiku
+- **mama_ingest**(content, scopes?, source?) — Ingest raw content into memory v2
 
 ## Utility
 

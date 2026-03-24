@@ -36,6 +36,8 @@ import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext } from '../agent/types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { deriveMemoryScopes } from '../memory/scope-context.js';
+import { formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -499,12 +501,7 @@ This protects your credentials from being exposed in chat logs.`;
     // Per-turn memory injection (works for both NEW and CONTINUE sessions)
     let memoryPrefix = '';
     try {
-      const perTurnContext = shouldResume
-        ? await this.contextInjector.getRelevantContext(message.text)
-        : context; // Already fetched for new sessions
-      if (perTurnContext.hasContext) {
-        memoryPrefix = `[MAMA Memory]\n${perTurnContext.prompt}\n[/MAMA Memory]\n\n`;
-      }
+      memoryPrefix = await this.getPerTurnMemoryPrefix(message);
     } catch {
       /* non-fatal */
     }
@@ -1017,6 +1014,34 @@ ${historyContext}
   private static readonly MIN_CONTENT_LENGTH = 100;
   private static readonly MAX_CONTENT_LENGTH = 10_000;
 
+  private getRuntimeProjectId(): string | undefined {
+    return process.env.MAMA_WORKSPACE || process.cwd();
+  }
+
+  private async getPerTurnMemoryPrefix(message: NormalizedMessage): Promise<string> {
+    if (this.mamaApi.recallMemory) {
+      const scopes = deriveMemoryScopes({
+        source: message.source,
+        channelId: message.channelId,
+        userId: message.userId,
+        projectId: this.getRuntimeProjectId(),
+      });
+      const bundle = await this.mamaApi.recallMemory(message.text, {
+        scopes,
+        includeProfile: true,
+      });
+      const formatted = formatRecallBundle(bundle);
+      return formatted ? `${formatted}\n\n` : '';
+    }
+
+    const context = await this.contextInjector.getRelevantContext(message.text);
+    if (!context.hasContext) {
+      return '';
+    }
+
+    return `[MAMA Memory]\n${context.prompt}\n[/MAMA Memory]\n\n`;
+  }
+
   private async triggerMemoryAgent(userText: string, botResponse: string): Promise<void> {
     if (!this.memoryAgentProcessManager) return;
 
@@ -1033,69 +1058,17 @@ ${historyContext}
     this.memoryAgentStats.turnsObserved++;
 
     try {
-      // Get existing topics for consistency
-      let existingTopics: string[] = [];
-      try {
-        const { getAdapter } = await import('@jungjaehoon/mama-core/db-manager');
-        const adapter = getAdapter();
-        const rows = adapter
-          .prepare(
-            'SELECT DISTINCT topic FROM decisions WHERE superseded_by IS NULL ORDER BY created_at DESC LIMIT 50'
-          )
-          .all() as { topic: string }[];
-        existingTopics = rows.map((r: { topic: string }) => r.topic);
-      } catch {
-        /* DB not ready */
-      }
-
-      const topicContext =
-        existingTopics.length > 0 ? `[Existing topics: ${existingTopics.join(', ')}]\n\n` : '';
-      const message = `${topicContext}Conversation:\n${content}`;
+      const scopes = deriveMemoryScopes({
+        source: 'memory-agent',
+        channelId: 'shared',
+        projectId: this.getRuntimeProjectId(),
+      });
+      const scopeContext = scopes.map((scope) => `${scope.kind}:${scope.id}`).join(', ');
+      const message = `Memory scopes: ${scopeContext}\nConversation:\n${content}`;
 
       // Get singleton memory agent process
       const process = await this.memoryAgentProcessManager.getSharedProcess('memory');
-      const result = await process.sendMessage(message);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const responseText = typeof result === 'string' ? result : (result as any)?.response || '';
-
-      // Parse JSON facts
-      const jsonMatch = responseText.match(/\{[\s\S]*"facts"[\s\S]*\}/);
-      if (!jsonMatch) return;
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      const facts = parsed.facts;
-      if (!Array.isArray(facts) || facts.length === 0) return;
-
-      this.memoryAgentStats.factsExtracted += facts.length;
-
-      if (!this.mamaApi.save) return;
-
-      for (const fact of facts) {
-        if (!fact.topic || !fact.decision) continue;
-        try {
-          const topic = String(fact.topic).toLowerCase().replace(/\s+/g, '_');
-          await this.mamaApi.save({
-            topic,
-            decision: String(fact.decision),
-            reasoning: `[auto-extracted] ${fact.reasoning || ''}`,
-            confidence: typeof fact.confidence === 'number' ? fact.confidence : 0.5,
-            is_static: fact.is_static ? 1 : 0,
-          });
-          logger.info(`[memory-agent] Saved: ${topic}`);
-          this.memoryAgentStats.factsSaved++;
-          this.memoryAgentStats.recentExtractions.push({
-            topic,
-            timestamp: Date.now(),
-            success: true,
-          });
-          if (this.memoryAgentStats.recentExtractions.length > 20) {
-            this.memoryAgentStats.recentExtractions.shift();
-          }
-        } catch {
-          /* Continue */
-        }
-      }
-
+      await process.sendMessage(message);
       this.memoryAgentStats.lastExtraction = Date.now();
     } catch (err) {
       logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);

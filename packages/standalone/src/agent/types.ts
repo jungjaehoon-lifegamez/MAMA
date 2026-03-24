@@ -616,9 +616,11 @@ export type GatewayToolInput =
 export type GatewayToolName =
   | 'mama_save'
   | 'mama_search'
+  | 'mama_recall'
   | 'mama_update'
   | 'mama_load_checkpoint'
   | 'mama_add'
+  | 'mama_ingest'
   | 'Read'
   | 'Write'
   | 'Bash'
@@ -1013,6 +1015,15 @@ export interface MAMAApiInterface {
   ): Promise<SaveResult>;
   listDecisions(options?: { limit?: number }): Promise<unknown[]>;
   suggest(query: string, options?: { limit?: number }): Promise<SearchResult>;
+  recallMemory?(
+    query: string,
+    options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
+  ): Promise<unknown>;
+  ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
+  buildProfile?(
+    scopes?: Array<{ kind: string; id: string }>,
+    options?: Record<string, unknown>
+  ): Promise<unknown>;
   updateOutcome(
     id: string,
     input: { outcome: string; failure_reason?: string }

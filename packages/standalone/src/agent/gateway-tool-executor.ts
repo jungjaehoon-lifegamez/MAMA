@@ -33,7 +33,6 @@ import type {
   GatewayToolInput,
   GatewayToolResult,
   SaveInput,
-  SaveDecisionInput,
   SearchInput,
   UpdateInput,
   LoadCheckpointInput,
@@ -169,10 +168,8 @@ export class GatewayToolExecutor {
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
-  private memoryAgentProcessManager?: AgentProcessManager;
-
   setMemoryAgent(processManager: AgentProcessManager): void {
-    this.memoryAgentProcessManager = processManager;
+    void processManager;
   }
 
   constructor(options: GatewayToolExecutorOptions = {}) {
@@ -247,6 +244,9 @@ export class GatewayToolExecutor {
         saveCheckpoint: mama.saveCheckpoint.bind(mama),
         listDecisions: mama.list.bind(mama), // Note: mama exports listDecisions as 'list'
         suggest: mama.suggest.bind(mama),
+        recallMemory: mama.recallMemory?.bind(mama),
+        ingestMemory: mama.ingestMemory?.bind(mama),
+        buildProfile: mama.buildProfile?.bind(mama),
         updateOutcome: mama.updateOutcome.bind(mama),
         loadCheckpoint: mama.loadCheckpoint.bind(mama),
       };
@@ -427,12 +427,18 @@ export class GatewayToolExecutor {
           );
         case 'mama_search':
           return await handleSearch(api, input as SearchInput);
+        case 'mama_recall':
+          return await this.handleMamaRecall(
+            input as SearchInput & { scopes?: Array<{ kind: string; id: string }> }
+          );
         case 'mama_update':
           return await handleUpdate(api, input as UpdateInput);
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(api, input as LoadCheckpointInput);
         case 'mama_add':
           return await this.handleMamaAdd(input as { content: string });
+        case 'mama_ingest':
+          return await this.handleMamaIngest(input as { content: string; scopes?: unknown });
         default:
           throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
       }
@@ -1895,6 +1901,13 @@ export class GatewayToolExecutor {
    * Routes through AgentProcessManager persistent process instead of raw HaikuClient.
    */
   private async handleMamaAdd(input: { content: string }): Promise<GatewayToolResult> {
+    return this.handleMamaIngest(input);
+  }
+
+  private async handleMamaIngest(input: {
+    content: string;
+    scopes?: unknown;
+  }): Promise<GatewayToolResult> {
     const { content } = input;
     if (!content || typeof content !== 'string') {
       return {
@@ -1903,91 +1916,59 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    if (!this.memoryAgentProcessManager) {
-      return {
-        success: false,
-        error: 'Memory agent not initialized. Use mama_save to save manually.',
-      } as GatewayToolResult;
-    }
-
     try {
-      // Feed existing topics for topic reuse consistency
-      let existingTopics: string[] = [];
-      try {
-        const { getAdapter } = await import('@jungjaehoon/mama-core/db-manager');
-        const adapter = getAdapter();
-        const rows = adapter
-          .prepare(
-            'SELECT DISTINCT topic FROM decisions WHERE superseded_by IS NULL ORDER BY created_at DESC LIMIT 50'
-          )
-          .all() as { topic: string }[];
-        existingTopics = rows.map((r: { topic: string }) => r.topic);
-      } catch {
-        // DB not ready
-      }
-
-      const topicContext =
-        existingTopics.length > 0 ? `[Existing topics: ${existingTopics.join(', ')}]\n\n` : '';
-      const message = `${topicContext}Conversation:\n${content.substring(0, 10_000)}`;
-
-      // Route through memory agent persistent process
-      const agentProcess = await this.memoryAgentProcessManager.getSharedProcess('memory');
-      const result = await agentProcess.sendMessage(message);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const responseText = typeof result === 'string' ? result : (result as any)?.response || '';
-
-      // Parse JSON facts from memory agent response
-      const jsonMatch = responseText.match(/\{[\s\S]*"facts"[\s\S]*\}/);
-      if (!jsonMatch) {
-        return {
-          success: true,
-          extracted: 0,
-          saved: 0,
-          message: 'No facts worth saving found.',
-        } as GatewayToolResult;
-      }
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      const facts = parsed.facts;
-      if (!Array.isArray(facts) || facts.length === 0) {
-        return {
-          success: true,
-          extracted: 0,
-          saved: 0,
-          message: 'No facts worth saving found.',
-        } as GatewayToolResult;
-      }
-
       const api = await this.initializeMAMAApi();
-      let saved = 0;
-
-      for (const fact of facts) {
-        if (!fact.topic || !fact.decision) continue;
-        try {
-          const topic = String(fact.topic).toLowerCase().replace(/\s+/g, '_');
-          await handleSave(api, {
-            type: 'decision',
-            topic,
-            decision: String(fact.decision),
-            reasoning: `[auto-extracted] ${fact.reasoning || ''}`,
-            confidence: typeof fact.confidence === 'number' ? fact.confidence : 0.5,
-            is_static: fact.is_static ? 1 : 0,
-          } as SaveDecisionInput);
-          saved++;
-        } catch (err) {
-          debugLogger.warn(
-            `[mama_add] Failed to save fact "${fact.topic}": ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
+      if (!api.ingestMemory) {
+        return {
+          success: false,
+          error: 'Memory ingest API not available.',
+        } as GatewayToolResult;
       }
 
-      return { success: true, extracted: facts.length, saved } as GatewayToolResult;
+      const result = await api.ingestMemory({
+        content: content.substring(0, 10_000),
+        scopes: Array.isArray(input.scopes) ? input.scopes : [],
+        source: {
+          package: 'standalone',
+          source_type: 'gateway_tool_executor',
+          source: this.currentContext?.source || null,
+        },
+      });
+
+      return {
+        success: true,
+        extracted: 1,
+        saved: 1,
+        result,
+      } as GatewayToolResult;
     } catch (err) {
       return {
         success: false,
-        error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Ingest failed: ${err instanceof Error ? err.message : String(err)}`,
       } as GatewayToolResult;
     }
+  }
+
+  private async handleMamaRecall(
+    input: SearchInput & { scopes?: Array<{ kind: string; id: string }> }
+  ): Promise<GatewayToolResult> {
+    const api = await this.initializeMAMAApi();
+    if (!api.recallMemory || !input.query) {
+      return {
+        success: false,
+        error: 'query is required and recallMemory API must be available',
+      } as GatewayToolResult;
+    }
+
+    const bundle = await api.recallMemory(input.query, {
+      scopes: Array.isArray(input.scopes) ? input.scopes : [],
+      includeProfile: true,
+    });
+
+    return {
+      success: true,
+      bundle,
+    } as GatewayToolResult;
   }
 
   static getValidTools(): GatewayToolName[] {

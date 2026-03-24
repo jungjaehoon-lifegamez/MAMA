@@ -1,5 +1,7 @@
 # Memory Agent Redesign — Multi-Agent Persistent Architecture
 
+> Superseded for new implementation work by [2026-03-25-memory-v2-core-first-design.md](/Users/jeongjaehun/project/MAMA/docs/superpowers/specs/2026-03-25-memory-v2-core-first-design.md). This document remains as historical context for the standalone-only redesign attempt.
+
 > Supermemory 대비 우위: 로컬 퍼스트, 에이전트 격리, persistent session 문맥 유지, graph evolution 추적, 비용 $0
 
 ## Problem

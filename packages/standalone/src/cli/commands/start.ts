@@ -39,6 +39,7 @@ import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { getSessionPool } from '../../agent/session-pool.js';
+import type { AgentContext, MAMAApiInterface } from '../../agent/types.js';
 import {
   DiscordGateway,
   SlackGateway,
@@ -100,6 +101,7 @@ const startLogger = new DebugLogger('start');
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
 import Database from '../../sqlite.js';
+import type { AgentProcessManager } from '../../multi-agent/agent-process-manager.js';
 
 // Port configuration — single source of truth
 /** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
@@ -1320,6 +1322,15 @@ export async function runAgentLoop(
     loadCheckpoint?: () => Promise<unknown>;
     list?: (options?: { limit?: number }) => Promise<unknown>;
     listDecisions?: (options?: { limit?: number }) => Promise<unknown>;
+    recallMemory?: (
+      query: string,
+      options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
+    ) => Promise<unknown>;
+    ingestMemory?: (input: Record<string, unknown>) => Promise<unknown>;
+    buildProfile?: (
+      scopes?: Array<{ kind: string; id: string }>,
+      options?: Record<string, unknown>
+    ) => Promise<unknown>;
   };
   const suggest = (mamaApi.suggest ?? mamaApi.search) as
     | ((query: string, options?: { limit?: number }) => Promise<unknown>)
@@ -1449,6 +1460,8 @@ export async function runAgentLoop(
     loadCheckpoint: loadCheckpointForContext,
     listDecisions: listDecisionsForContext,
     save: mamaApi.save,
+    recallMemory: mamaApi.recallMemory as MamaApiClient['recallMemory'],
+    ingestMemory: mamaApi.ingestMemory as MamaApiClient['ingestMemory'],
   };
 
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
@@ -1457,41 +1470,66 @@ export async function runAgentLoop(
 
   // Initialize memory agent (persistent process for fact extraction)
   try {
-    const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
     const { ensureMemoryPersona } = await import('../../multi-agent/memory-agent-persona.js');
 
     const personaPath = ensureMemoryPersona();
-
-    const memoryAgentConfig = {
-      enabled: true,
-      agents: {
-        memory: {
-          enabled: true,
-          name: 'Memory Agent',
-          display_name: 'Memory Agent',
-          trigger_prefix: '',
-          persona_file: personaPath,
-          model: config.multi_agent?.agents?.memory?.model || 'claude-sonnet-4-6',
-          backend: 'claude' as const,
-          tier: 1,
-          can_delegate: false,
-        },
+    const memoryPersona = readFileSync(personaPath, 'utf-8');
+    const memoryAgentContext: AgentContext = {
+      source: 'memory-agent',
+      platform: 'cli',
+      roleName: 'memory_agent',
+      role: {
+        allowedTools: ['mama_search', 'mama_save', 'mama_profile'],
+        blockedTools: ['Read', 'Write', 'Bash'],
+        systemControl: false,
+        sensitiveAccess: false,
       },
-      loop_prevention: { max_turns: 1, cooldown_ms: 0 },
+      session: {
+        sessionId: 'memory-agent:shared',
+        channelId: 'shared',
+        startedAt: new Date(),
+      },
+      capabilities: ['mama_search', 'mama_save', 'mama_profile'],
+      limitations: ['No file or shell access'],
+      tier: 2,
+      backend: 'claude',
     };
 
-    const memoryProcessManager = new AgentProcessManager(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      memoryAgentConfig as any,
+    const memoryAgentLoop = new AgentLoop(
+      oauthManager,
       {
-        sessionId: crypto.randomUUID(),
-        dangerouslySkipPermissions: true,
+        systemPrompt: memoryPersona,
+        model: config.multi_agent?.agents?.memory?.model || 'claude-sonnet-4-6',
+        maxTurns: 6,
+        backend: 'claude',
+        toolsConfig: {
+          gateway: ['mama_search', 'mama_save', 'mama_profile'],
+          mcp: [],
+        },
       },
-      { requestTimeout: 60000 }
+      undefined,
+      { mamaApi: mamaApi as MAMAApiInterface }
     );
+    memoryAgentLoop.setSessionKey('memory-agent:shared');
 
-    messageRouter.setMemoryAgent(memoryProcessManager);
-    toolExecutor.setMemoryAgent(memoryProcessManager);
+    const memoryProcessManager = {
+      async getSharedProcess() {
+        return {
+          async sendMessage(content: string) {
+            const result = await memoryAgentLoop.run(content, {
+              source: 'memory-agent',
+              channelId: 'shared',
+              agentContext: memoryAgentContext,
+            });
+
+            return { response: result.response };
+          },
+        };
+      },
+    };
+
+    messageRouter.setMemoryAgent(memoryProcessManager as unknown as AgentProcessManager);
+    toolExecutor.setMemoryAgent(memoryProcessManager as unknown as AgentProcessManager);
     console.log('✓ Memory agent initialized');
   } catch (err) {
     console.warn(

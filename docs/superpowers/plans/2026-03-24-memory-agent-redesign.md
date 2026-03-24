@@ -1,5 +1,7 @@
 # Memory Agent Redesign — Implementation Plan
 
+> Superseded for new execution by [2026-03-25-memory-v2-core-first-design.md](/Users/jeongjaehun/project/MAMA/docs/superpowers/specs/2026-03-25-memory-v2-core-first-design.md). This plan targets the older standalone-first JSON-extractor design and should not be used as the active implementation baseline.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace raw API call (HaikuClient) memory extraction with a multi-agent persistent process that uses existing MAMA OS infrastructure.

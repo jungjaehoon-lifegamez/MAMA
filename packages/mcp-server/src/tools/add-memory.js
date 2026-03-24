@@ -1,10 +1,4 @@
-/**
- * mama_add — Auto-extract and save facts from conversation content.
- *
- * Memory extraction is now handled by the memory agent persistent process.
- * In MCP server context (not standalone), this tool returns a message directing
- * users to use mama_save for manual saving.
- */
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 const TOOL_DEFINITION = {
   name: 'mama_add',
@@ -28,12 +22,19 @@ async function execute(input) {
     return { success: false, error: 'content is required and must be a string' };
   }
 
-  // mama_add is now handled by the memory agent persistent process.
-  // In MCP server context (not standalone), fall back to direct mama.save().
+  const result = await mama.ingestMemory({
+    content,
+    scopes: [],
+    source: {
+      package: 'mcp-server',
+      source_type: 'mama_add',
+    },
+  });
+
   return {
     success: true,
-    message:
-      'Content received. Memory agent will extract facts automatically. Use mama_save for manual saving.',
+    ...result,
+    message: 'Content ingested into memory v2.',
   };
 }
 

@@ -57,6 +57,19 @@ export interface MamaApiClient {
    * Save a new decision or fact
    */
   save?(input: Record<string, unknown>): Promise<unknown>;
+
+  /**
+   * Recall memory v2 bundle
+   */
+  recallMemory?(
+    query: string,
+    options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
+  ): Promise<RecallBundle>;
+
+  /**
+   * Ingest raw content into memory v2
+   */
+  ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
 }
 
 /**
@@ -69,6 +82,32 @@ export interface SearchResult {
   reasoning?: string;
   outcome?: string;
   similarity: number;
+}
+
+export interface RecallBundleMemory {
+  id: string;
+  topic: string;
+  summary: string;
+  details?: string;
+}
+
+export interface RecallBundle {
+  profile: {
+    static: Array<{ summary: string }>;
+    dynamic: Array<{ summary: string }>;
+    evidence: Array<{ memory_id: string; topic: string; why_included: string }>;
+  };
+  memories: RecallBundleMemory[];
+  graph_context: {
+    primary: RecallBundleMemory[];
+    expanded: RecallBundleMemory[];
+    edges: Array<{ from_id: string; to_id: string; type: string; reason?: string }>;
+  };
+  search_meta: {
+    query: string;
+    scope_order: string[];
+    retrieval_sources: string[];
+  };
 }
 
 /**
@@ -297,6 +336,44 @@ export function createMockMamaApi(decisions: SearchResult[] = []): MamaApiClient
   return {
     async search(_query: string, limit?: number): Promise<SearchResult[]> {
       return decisions.slice(0, limit || decisions.length);
+    },
+    async recallMemory(query: string): Promise<RecallBundle> {
+      const memories = decisions.map((decision) => ({
+        id: decision.id,
+        topic: decision.topic || 'unknown',
+        summary: decision.decision || '',
+        details: decision.reasoning || '',
+      }));
+
+      return {
+        profile: {
+          static: [{ summary: 'Prefer concise answers' }],
+          dynamic: [{ summary: 'Current repo uses pnpm' }],
+          evidence: memories.map((memory) => ({
+            memory_id: memory.id,
+            topic: memory.topic,
+            why_included: 'Mocked for test',
+          })),
+        },
+        memories,
+        graph_context: {
+          primary: memories,
+          expanded: [],
+          edges: [],
+        },
+        search_meta: {
+          query,
+          scope_order: ['project', 'channel', 'user', 'global'],
+          retrieval_sources: ['mock'],
+        },
+      };
+    },
+    async ingestMemory(input: Record<string, unknown>): Promise<unknown> {
+      return {
+        success: true,
+        id: 'ingested_mock_memory',
+        ...input,
+      };
     },
   };
 }

@@ -25,7 +25,7 @@ import os from 'os';
 import crypto from 'crypto';
 
 // Internal modules
-import { learnDecision, createEdgesFromReasoning, DecisionDetection } from './decision-tracker.js';
+import { createEdgesFromReasoning } from './decision-tracker.js';
 import { DecisionRecord, SemanticEdgeItem, fts5Search } from './db-manager.js';
 import {
   queryDecisionGraph,
@@ -33,11 +33,19 @@ import {
   getAdapter,
   vectorSearch,
 } from './memory-store.js';
+import { initDB } from './db-manager.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
 import { logProgress, logComplete, logSearching } from './progress-indicator.js';
 import { generateEmbedding } from './embeddings.js';
 import { generate } from './ollama-client.js';
 import { warn as logWarn, error as logError } from './debug-logger.js';
+import {
+  saveMemory,
+  recallMemory,
+  buildProfile,
+  ingestMemory,
+  evolveMemory,
+} from './memory-v2/api.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -479,7 +487,7 @@ async function save({
   outcome = 'pending',
   failure_reason = null,
   limitation = null,
-  trust_context = null,
+  trust_context: _trust_context = null,
   is_static,
 }: SaveParams): Promise<SaveResult> {
   // Validate required fields
@@ -516,42 +524,24 @@ async function save({
   // Future: Will use decision_type column for proper distinction
   const _userInvolvement = type === 'user_decision' ? 'approved' : null;
 
-  // Create detection object for learnDecision()
-  // Convert null to undefined for type compatibility
-  const detection: DecisionDetection = {
-    topic,
-    decision,
-    reasoning,
-    confidence,
-    trust_context: trust_context ?? undefined,
-  };
-
-  // Create tool execution context
-  // Use current timestamp and generate session ID
-  const sessionId = `mama_api_${Date.now()}`;
-  const toolExecution = {
-    tool_name: 'mama.save',
-    tool_input: { topic, decision },
-    exit_code: 0,
-    session_id: sessionId,
-    timestamp: Date.now(),
-  };
-
-  // Create session context
-  const sessionContext = {
-    session_id: sessionId,
-    latest_user_message: `Save ${type}: ${topic}`,
-    recent_exchange: `Claude: ${reasoning.substring(0, 100)}...`,
-  };
-
-  // Call internal learnDecision function
-  // Note: learnDecision returns { decisionId, notification }
   logProgress(`Saving decision: ${topic.substring(0, 30)}...`);
-  const { decisionId } = await learnDecision(detection, toolExecution, sessionContext);
+  const { id: decisionId } = await saveMemory({
+    topic,
+    kind: is_static === 1 ? 'preference' : 'decision',
+    summary: decision,
+    details: reasoning,
+    confidence,
+    scopes: [],
+    source: {
+      package: 'mama-core',
+      source_type: 'legacy_save',
+    },
+  });
   logComplete(`Decision saved: ${decisionId.substring(0, 20)}...`);
 
   // Update user_involvement, outcome, failure_reason, limitation
   // Note: learnDecision always sets 'requested', we need to override it
+  await initDB();
   const adapter = getAdapter();
 
   // Build UPDATE query dynamically based on what fields are provided
@@ -1366,6 +1356,60 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
   } = options;
 
   try {
+    const bundle = await recallMemory(userQuestion, { includeProfile: false });
+    if (bundle.memories.length > 0) {
+      if (format === 'markdown') {
+        const context = bundle.memories
+          .map(
+            (memory, index) =>
+              `${index + 1}. [${memory.topic}] ${memory.summary}\n   ${memory.details}`
+          )
+          .join('\n');
+        return `🔍 Search method: memory_v2\n${context}`;
+      }
+
+      return {
+        query: userQuestion,
+        results: bundle.memories.map((memory) => ({
+          id: memory.id,
+          topic: memory.topic,
+          decision: memory.summary,
+          reasoning: memory.details,
+          confidence: memory.confidence,
+          similarity: 1,
+          created_at: memory.created_at,
+          graph_source: 'primary',
+          graph_rank: 1,
+          related_to: null,
+          edge_reason: null,
+        })),
+        meta: {
+          count: bundle.memories.length,
+          search_method: 'memory_v2',
+          threshold: threshold || 'adaptive',
+          recency_boost: disableRecency
+            ? null
+            : {
+                weight: recencyWeight,
+                scale: recencyScale,
+                decay: recencyDecay,
+              },
+          graph_expansion: {
+            total_results: bundle.memories.length,
+            primary_count: bundle.graph_context.primary.length,
+            expanded_count: bundle.graph_context.expanded.length,
+            sources: {
+              primary: bundle.graph_context.primary.length,
+              supersedes_chain: 0,
+              refines: 0,
+              refined_by: 0,
+              contradicts: 0,
+            },
+          },
+        },
+      };
+    }
+
     // 1. Try vector search first (if sqlite-vss is available)
     // eslint-disable-next-line no-unused-vars, @typescript-eslint/no-explicit-any
     let results: any[] = [];
@@ -3355,9 +3399,14 @@ const mama = {
   // Core functions (used by 4 MCP tools)
   save,
   suggest,
+  saveMemory,
+  recallMemory,
   list: listDecisions,
   listCheckpoints,
   updateOutcome,
+  buildProfile,
+  ingestMemory,
+  evolveMemory,
   saveCheckpoint,
   loadCheckpoint,
   // Legacy functions (retained for internal use, not exposed via MCP)
@@ -3387,9 +3436,14 @@ const mama = {
 export {
   save,
   suggest,
+  saveMemory,
+  recallMemory,
   listDecisions as list,
   listCheckpoints,
   updateOutcome,
+  buildProfile,
+  ingestMemory,
+  evolveMemory,
   saveCheckpoint,
   loadCheckpoint,
   recall,
