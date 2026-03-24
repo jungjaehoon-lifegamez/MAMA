@@ -252,7 +252,7 @@ Each package has independent versioning:
 - **mama-core:** 1.3.3 (stable API)
 - **mama-server:** 1.9.3 (follows MAMA version)
 - **claude-code-plugin:** 1.8.3 (follows MAMA version)
-- **mama-os:** 0.14.3 (standalone agent)
+- **mama-os:** 0.14.4 (standalone agent)
 
 ## Distribution Strategy
 
