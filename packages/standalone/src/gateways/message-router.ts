@@ -1015,7 +1015,22 @@ ${historyContext}
       const haiku = this.cachedHaikuClient;
       if (!haiku.available()) return;
 
-      const facts = await extractFacts(content, haiku);
+      // Feed existing topics for consistency
+      let existingTopics: string[] = [];
+      try {
+        const { getAdapter } = await import('@jungjaehoon/mama-core/db-manager');
+        const adapter = getAdapter();
+        const rows = adapter
+          .prepare(
+            'SELECT DISTINCT topic FROM decisions WHERE superseded_by IS NULL ORDER BY created_at DESC LIMIT 50'
+          )
+          .all() as { topic: string }[];
+        existingTopics = rows.map((r: { topic: string }) => r.topic);
+      } catch {
+        // DB not ready
+      }
+
+      const facts = await extractFacts(content, haiku, existingTopics);
       if (facts.length === 0) return;
 
       if (!this.mamaApi.save) return;

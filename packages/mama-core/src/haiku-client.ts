@@ -19,7 +19,7 @@ import { warn } from './debug-logger.js';
 
 const CREDENTIALS_PATH = join(homedir(), '.claude', '.credentials.json');
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
-const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const MAX_TOKENS = 2048;
 
 // Circuit breaker
@@ -107,7 +107,10 @@ export class HaikuClient {
       const response = await client.messages.create({
         model: this.model,
         max_tokens: MAX_TOKENS,
-        system: CLAUDE_CODE_IDENTITY + '\n\n' + system,
+        system: [
+          { type: 'text' as const, text: CLAUDE_CODE_IDENTITY },
+          { type: 'text' as const, text: system },
+        ],
         messages: [{ role: 'user', content: user }],
       });
 
