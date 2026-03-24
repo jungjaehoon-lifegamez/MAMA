@@ -69,6 +69,7 @@ import {
 import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
+import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 
@@ -168,6 +169,11 @@ export class GatewayToolExecutor {
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
+  private memoryAgentProcessManager?: AgentProcessManager;
+
+  setMemoryAgent(processManager: AgentProcessManager): void {
+    this.memoryAgentProcessManager = processManager;
+  }
 
   constructor(options: GatewayToolExecutorOptions = {}) {
     this.mamaDbPath = options.mamaDbPath;
@@ -1885,8 +1891,8 @@ export class GatewayToolExecutor {
   }
 
   /**
-   * Handle mama_add — auto-extract facts from conversation content via Haiku.
-   * Uses mama-core HaikuClient + FactExtractor directly.
+   * Handle mama_add — auto-extract facts from conversation content via Memory Agent.
+   * Routes through AgentProcessManager persistent process instead of raw HaikuClient.
    */
   private async handleMamaAdd(input: { content: string }): Promise<GatewayToolResult> {
     const { content } = input;
@@ -1897,18 +1903,14 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
+    if (!this.memoryAgentProcessManager) {
+      return {
+        success: false,
+        error: 'Memory agent not initialized. Use mama_save to save manually.',
+      } as GatewayToolResult;
+    }
+
     try {
-      const { HaikuClient } = await import('@jungjaehoon/mama-core/haiku-client');
-      const { extractFacts } = await import('@jungjaehoon/mama-core/fact-extractor');
-
-      const haiku = new HaikuClient();
-      if (!haiku.available()) {
-        return {
-          success: false,
-          error: 'Smart memory unavailable (no OAuth token). Use mama_save to save manually.',
-        } as GatewayToolResult;
-      }
-
       // Feed existing topics for topic reuse consistency
       let existingTopics: string[] = [];
       try {
@@ -1924,8 +1926,30 @@ export class GatewayToolExecutor {
         // DB not ready
       }
 
-      const facts = await extractFacts(content, haiku, existingTopics);
-      if (facts.length === 0) {
+      const topicContext =
+        existingTopics.length > 0 ? `[Existing topics: ${existingTopics.join(', ')}]\n\n` : '';
+      const message = `${topicContext}Conversation:\n${content.substring(0, 10_000)}`;
+
+      // Route through memory agent persistent process
+      const agentProcess = await this.memoryAgentProcessManager.getSharedProcess('memory');
+      const result = await agentProcess.sendMessage(message);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const responseText = typeof result === 'string' ? result : (result as any)?.response || '';
+
+      // Parse JSON facts from memory agent response
+      const jsonMatch = responseText.match(/\{[\s\S]*"facts"[\s\S]*\}/);
+      if (!jsonMatch) {
+        return {
+          success: true,
+          extracted: 0,
+          saved: 0,
+          message: 'No facts worth saving found.',
+        } as GatewayToolResult;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      const facts = parsed.facts;
+      if (!Array.isArray(facts) || facts.length === 0) {
         return {
           success: true,
           extracted: 0,
@@ -1938,13 +1962,15 @@ export class GatewayToolExecutor {
       let saved = 0;
 
       for (const fact of facts) {
+        if (!fact.topic || !fact.decision) continue;
         try {
+          const topic = String(fact.topic).toLowerCase().replace(/\s+/g, '_');
           await handleSave(api, {
             type: 'decision',
-            topic: fact.topic,
-            decision: fact.decision,
-            reasoning: `[auto-extracted] ${fact.reasoning}`,
-            confidence: fact.confidence,
+            topic,
+            decision: String(fact.decision),
+            reasoning: `[auto-extracted] ${fact.reasoning || ''}`,
+            confidence: typeof fact.confidence === 'number' ? fact.confidence : 0.5,
             is_static: fact.is_static ? 1 : 0,
           } as SaveDecisionInput);
           saved++;

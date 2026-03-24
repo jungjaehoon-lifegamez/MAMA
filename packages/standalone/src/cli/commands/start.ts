@@ -1455,6 +1455,50 @@ export async function runAgentLoop(
     backend: runtimeBackend,
   });
 
+  // Initialize memory agent (persistent process for fact extraction)
+  try {
+    const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
+    const { ensureMemoryPersona } = await import('../../multi-agent/memory-agent-persona.js');
+
+    const personaPath = ensureMemoryPersona();
+
+    const memoryAgentConfig = {
+      enabled: true,
+      agents: {
+        memory: {
+          enabled: true,
+          name: 'Memory Agent',
+          display_name: 'Memory Agent',
+          trigger_prefix: '',
+          persona_file: personaPath,
+          model: config.multi_agent?.agents?.memory?.model || 'claude-sonnet-4-6',
+          backend: 'claude' as const,
+          tier: 1,
+          can_delegate: false,
+        },
+      },
+      loop_prevention: { max_turns: 1, cooldown_ms: 0 },
+    };
+
+    const memoryProcessManager = new AgentProcessManager(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      memoryAgentConfig as any,
+      {
+        sessionId: `memory-agent-${Date.now()}`,
+        dangerouslySkipPermissions: true,
+      },
+      { requestTimeout: 60000 }
+    );
+
+    messageRouter.setMemoryAgent(memoryProcessManager);
+    toolExecutor.setMemoryAgent(memoryProcessManager);
+    console.log('✓ Memory agent initialized');
+  } catch (err) {
+    console.warn(
+      `[memory-agent] Init failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
   // Prepare graph handler options (will be populated after gateways init)
   const graphHandlerOptions: GraphHandlerOptions = {
     healthService: healthService ?? undefined,

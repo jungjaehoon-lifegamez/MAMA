@@ -25,6 +25,7 @@ import type {
   RelatedDecision,
   ContentBlock,
 } from './types.js';
+import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
@@ -174,6 +175,11 @@ export class MessageRouter {
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private cachedGatewayToolsPrompt: string | null = null;
+  private memoryAgentProcessManager?: AgentProcessManager;
+
+  setMemoryAgent(processManager: AgentProcessManager): void {
+    this.memoryAgentProcessManager = processManager;
+  }
 
   constructor(
     sessionStore: SessionStore,
@@ -479,6 +485,19 @@ This protects your credentials from being exposed in chat logs.`;
       );
     }
 
+    // Per-turn memory injection (works for both NEW and CONTINUE sessions)
+    let memoryPrefix = '';
+    try {
+      const perTurnContext = shouldResume
+        ? await this.contextInjector.getRelevantContext(message.text)
+        : context; // Already fetched for new sessions
+      if (perTurnContext.hasContext) {
+        memoryPrefix = `[MAMA Memory]\n${perTurnContext.prompt}\n[/MAMA Memory]\n\n`;
+      }
+    } catch {
+      /* non-fatal */
+    }
+
     try {
       // Use multimodal content if available (OpenClaw-style)
       if (
@@ -519,10 +538,8 @@ This protects your credentials from being exposed in chat logs.`;
           }
         }
 
-        // Add text content (with skill context if matched)
-        const effectiveMessageText = skillPrefix
-          ? `${skillPrefix}${messageText || ''}`
-          : messageText;
+        // Add text content (with memory context and skill context if matched)
+        const effectiveMessageText = `${memoryPrefix}${skillPrefix}${messageText || ''}`;
         if (effectiveMessageText) {
           contentBlocks.push({ type: 'text', text: effectiveMessageText });
         }
@@ -547,14 +564,14 @@ This protects your credentials from being exposed in chat logs.`;
         const result = await this.agentLoop.runWithContent(contentBlocks, options);
         response = result.response;
       } else {
-        const effectiveText = skillPrefix ? `${skillPrefix}${message.text}` : message.text;
+        const effectiveText = `${memoryPrefix}${skillPrefix}${message.text}`;
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
       }
 
       // Auto-extract facts from conversation (fire-and-forget, non-blocking)
       if (response && message.text) {
-        this.autoExtractFacts(message.text, response).catch(() => {});
+        this.triggerMemoryAgent(message.text, response).catch(() => {});
       }
     } catch (error) {
       // CLI timeout or resume failure - invalidate session to force fresh start next time
@@ -981,17 +998,17 @@ ${historyContext}
   }
 
   /**
-   * Auto-extract facts from conversation via Haiku (fire-and-forget).
-   * Skips short exchanges, rate-limits per 30s cooldown.
+   * Trigger memory agent to extract facts (fire-and-forget).
+   * Uses AgentProcessManager persistent process.
    */
   private lastExtractTime = 0;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private cachedHaikuClient: any = null;
   private static readonly EXTRACT_COOLDOWN_MS = 30_000;
   private static readonly MIN_CONTENT_LENGTH = 100;
   private static readonly MAX_CONTENT_LENGTH = 10_000;
 
-  private async autoExtractFacts(userText: string, botResponse: string): Promise<void> {
+  private async triggerMemoryAgent(userText: string, botResponse: string): Promise<void> {
+    if (!this.memoryAgentProcessManager) return;
+
     const now = Date.now();
     if (now - this.lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) return;
 
@@ -1001,21 +1018,10 @@ ${historyContext}
       content = content.substring(0, MessageRouter.MAX_CONTENT_LENGTH);
     }
 
-    // Set cooldown immediately to prevent duplicate extractions during async Haiku call
     this.lastExtractTime = now;
 
     try {
-      const { HaikuClient } = await import('@jungjaehoon/mama-core/haiku-client');
-      const { extractFacts } = await import('@jungjaehoon/mama-core/fact-extractor');
-
-      // Cache HaikuClient instance to avoid repeated credential loading
-      if (!this.cachedHaikuClient) {
-        this.cachedHaikuClient = new HaikuClient();
-      }
-      const haiku = this.cachedHaikuClient;
-      if (!haiku.available()) return;
-
-      // Feed existing topics for consistency
+      // Get existing topics for consistency
       let existingTopics: string[] = [];
       try {
         const { getAdapter } = await import('@jungjaehoon/mama-core/db-manager');
@@ -1027,30 +1033,47 @@ ${historyContext}
           .all() as { topic: string }[];
         existingTopics = rows.map((r: { topic: string }) => r.topic);
       } catch {
-        // DB not ready
+        /* DB not ready */
       }
 
-      const facts = await extractFacts(content, haiku, existingTopics);
-      if (facts.length === 0) return;
+      const topicContext =
+        existingTopics.length > 0 ? `[Existing topics: ${existingTopics.join(', ')}]\n\n` : '';
+      const message = `${topicContext}Conversation:\n${content}`;
+
+      // Get singleton memory agent process
+      const process = await this.memoryAgentProcessManager.getSharedProcess('memory');
+      const result = await process.sendMessage(message);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const responseText = typeof result === 'string' ? result : (result as any)?.response || '';
+
+      // Parse JSON facts
+      const jsonMatch = responseText.match(/\{[\s\S]*"facts"[\s\S]*\}/);
+      if (!jsonMatch) return;
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      const facts = parsed.facts;
+      if (!Array.isArray(facts) || facts.length === 0) return;
 
       if (!this.mamaApi.save) return;
 
       for (const fact of facts) {
+        if (!fact.topic || !fact.decision) continue;
         try {
+          const topic = String(fact.topic).toLowerCase().replace(/\s+/g, '_');
           await this.mamaApi.save({
-            topic: fact.topic,
-            decision: fact.decision,
-            reasoning: `[auto-extracted] ${fact.reasoning}`,
-            confidence: fact.confidence,
+            topic,
+            decision: String(fact.decision),
+            reasoning: `[auto-extracted] ${fact.reasoning || ''}`,
+            confidence: typeof fact.confidence === 'number' ? fact.confidence : 0.5,
             is_static: fact.is_static ? 1 : 0,
           });
-          logger.info(`[auto-extract] Saved: ${fact.topic}`);
+          logger.info(`[memory-agent] Saved: ${topic}`);
         } catch {
-          // Continue with other facts
+          /* Continue */
         }
       }
     } catch (err) {
-      logger.warn(`[auto-extract] Failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
