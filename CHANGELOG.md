@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 - **GitHub Actions runtime refresh** — CI, publish, release, pages, and marketplace sync workflows now use current `actions/checkout`, `actions/setup-node`, and `pnpm/action-setup` releases; GitHub release creation moved from `softprops/action-gh-release` to `gh release create` to avoid deprecated Node 20 action runtimes in future runs
 
+## [0.14.5] - 2026-03-24
+
+### Fixed
+
+- **npx broken in pnpm workspace** — removed `.npmrc` settings (`script-shell`, `unsafe-perm`, `enable-scripts`, etc.) that were added for native module builds no longer needed, which broke `npx` bin resolution and prevented MAMA MCP plugin from connecting when Claude Code was opened in the MAMA project directory
+
 ## [0.14.4] - 2026-03-24
 
 ### Added
