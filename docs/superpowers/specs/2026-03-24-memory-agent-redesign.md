@@ -47,10 +47,12 @@
 ### 2. Memory Agent Lifecycle
 
 - **프로세스**: `AgentProcessManager`가 관리하는 persistent Claude CLI process
-- **세션**: singleton (채널 무관하게 하나의 memory agent 프로세스 공유)
+- **세션**: singleton — `AgentProcessManager`에 `getSharedProcess(agentId)` 메서드 추가. 고정 channelKey `"__system__:memory"` 사용. 채널 무관하게 하나의 프로세스 공유.
 - **모델**: `config.yaml`의 `agents.memory.model` (기본값: `claude-sonnet-4-6`)
 - **Persona**: `~/.mama/personas/memory.md`
 - **격리**: CLAUDE.md Agent Isolation 규칙 준수 (cwd, plugin-dir, setting-sources)
+- **도구 제한**: `--tools ""` — 메모리 에이전트는 JSON 반환만 하며 파일/명령 실행 불필요
+- **Busy 처리**: `sendMessage()` 호출 시 process가 busy면 큐에 저장, idle이 되면 순차 처리. fire-and-forget이므로 호출자는 결과를 기다리지 않음.
 
 ### 3. Persona 설계 (`~/.mama/personas/memory.md`)
 
@@ -75,7 +77,7 @@ Return ONLY a JSON object:
 "reasoning": "brief why",
 "is_static": true/false,
 "confidence": 0.0-1.0,
-"relationship": null | {"type": "supersedes|extends|derives", "target_topic": "..."}
+"relationship": null | {"type": "supersedes|builds_on|synthesizes", "target_topic": "..."}
 }
 ]
 }
@@ -87,11 +89,11 @@ Return ONLY a JSON object:
 - Same topic = evolution chain (supersedes)
 - Related topic = extends or derives
 
-## Relationship Types
+## Relationship Types (기존 DB schema와 일치)
 
 - supersedes: replaces a previous decision on same topic
-- extends: adds information to existing topic without replacing
-- derives: inferred connection from pattern recognition
+- builds_on: adds information to existing topic without replacing
+- synthesizes: merges multiple decisions or infers connections from patterns
 
 ## What to Extract
 
@@ -116,11 +118,18 @@ message-router.ts process():
   2. ContextInjector searches DB → related memories
   3. Prefix memories to user message (매 턴, NEW/CONTINUE 무관)
   4. Main agent responds
-  5. Fire-and-forget: Memory Agent receives {conversation, existing_topics}
+  5. Fire-and-forget:
+     a. agentProcessManager.getSharedProcess('memory') → singleton process
+     b. process가 busy면 내부 큐에 추가, idle이면 즉시 실행
+     c. sendMessage({conversation, existing_topics})
+     d. message-router는 결과를 기다리지 않음 (fire-and-forget)
   6. Memory Agent extracts facts (persistent process, 세션 문맥 유지)
-  7. Save to DB via mama.save()
+  7. JSON 파싱 → mama.save() per fact
   8. Next turn → Step 2에서 새 facts 포함
 ```
+
+**Cooldown**: 채널별 30초. cooldown 중 도착한 메시지는 drop (defer 안 함).
+빠른 대화에서 모든 턴을 추출할 필요 없음 — 중요한 결정은 반복 언급되므로 놓치지 않음.
 
 ### 5. Per-Turn Context Injection (CONTINUE 세션 포함)
 
@@ -182,7 +191,7 @@ agents:
 ├─────────────────────────────────────────┤
 │ Edge Graph                               │
 │ auth_strategy ──supersedes──► auth_str.. │
-│ db_choice ──extends──► deployment_cfg    │
+│ db_choice ──builds_on──► deployment_cfg   │
 └─────────────────────────────────────────┘
 ```
 
@@ -195,7 +204,7 @@ API endpoint: `GET /api/memory-agent/stats` → JSON 실시간 데이터
 - `packages/mama-core/src/haiku-client.ts` → 제거 (PersistentCLI로 대체)
 - `packages/mama-core/src/fact-extractor.ts` → 제거 (memory agent persona로 대체)
 - `message-router.ts` `autoExtractFacts()` → memory agent 트리거로 교체
-- `gateway-tool-executor.ts` `handleMamaAdd()` → memory agent 경유로 교체
+- `gateway-tool-executor.ts` `handleMamaAdd()` → memory agent singleton에 메시지 전달. mama_add tool은 유지하되 내부적으로 `getSharedProcess('memory').sendMessage()`로 라우팅. busy 시 큐잉.
 
 ### 유지 대상
 
@@ -219,6 +228,13 @@ API endpoint: `GET /api/memory-agent/stats` → JSON 실시간 데이터
 | 모니터링           | 외부 대시보드           | 내장 플레이그라운드                                     |
 | 커스터마이징       | API 제한적              | Persona 직접 수정, 모델 변경 자유                       |
 
+### 8. User Profile (기본 — is_static 활용)
+
+이 스펙에서는 기존 `is_static` 컬럼과 `mama_profile` tool을 활용한 기본 profile 지원.
+Memory agent persona가 `is_static: true/false`를 분류하여 자동 profile 구축.
+
+**3-Tier Profile System (identity/preference/context 분리, profile_tier 컬럼, 30일 만료)은 별도 스펙으로 분리 — 이 redesign 완료 후 다음 이터레이션에서 구현.**
+
 ## Success Criteria
 
 1. Memory agent가 `AgentProcessManager`의 persistent process로 실행
@@ -230,3 +246,4 @@ API endpoint: `GET /api/memory-agent/stats` → JSON 실시간 데이터
 7. 플레이그라운드에서 실시간 모니터링
 8. 텔레그램 round-trip e2e 통과
 9. HaikuClient/FactExtractor 제거, raw API call 없음
+10. Memory agent persona가 is_static 자동 분류
