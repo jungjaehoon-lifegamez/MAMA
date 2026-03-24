@@ -173,6 +173,15 @@ export class TelegramGateway extends BaseGateway {
         data: { username: this.botUsername },
       });
     } catch (error) {
+      // Clean up partially initialized bot/poller to prevent leaks on retry
+      if (this.bot) {
+        try {
+          await this.bot.stopPolling();
+        } catch {
+          /* ignore */
+        }
+        this.bot = null;
+      }
       this.lastError = error instanceof Error ? error.message : String(error);
       console.error('Telegram connection failed:', error);
       throw error;
@@ -264,7 +273,7 @@ export class TelegramGateway extends BaseGateway {
     }
 
     const sender = msg.from.username || String(msg.from.id);
-    console.log(`[Telegram] Message from ${sender}: ${text.substring(0, 50)}...`);
+    console.log(`[Telegram] Message from ${sender} (${text.length} chars)`);
 
     const memoryLogger = getMemoryLogger();
     memoryLogger.logMessage('Telegram', sender, text, false);
@@ -391,7 +400,7 @@ export class TelegramGateway extends BaseGateway {
   }
 
   async sendSticker(chatId: string | number, emotion: string): Promise<boolean> {
-    if (!this.bot) return false;
+    if (!this.bot) throw new Error('Telegram gateway not connected');
     await this.loadStickerSet();
 
     const candidates = EMOTION_EMOJI[emotion] ?? EMOTION_EMOJI.happy;

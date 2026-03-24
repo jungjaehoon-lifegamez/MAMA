@@ -233,9 +233,10 @@ describe('TelegramGateway - sticker send fallback', () => {
     expect(botMock.sendMessage).toHaveBeenCalled();
   });
 
-  it('should return false (not throw) when bot is null', async () => {
+  it('should throw when bot is null', async () => {
     await gateway.stop(); // sets bot to null
-    const result = await gateway.sendSticker('12345', 'happy');
-    expect(result).toBe(false);
+    await expect(gateway.sendSticker('12345', 'happy')).rejects.toThrow(
+      'Telegram gateway not connected'
+    );
   });
 });
