@@ -33,6 +33,7 @@ import type {
   GatewayToolInput,
   GatewayToolResult,
   SaveInput,
+  SaveDecisionInput,
   SearchInput,
   UpdateInput,
   LoadCheckpointInput,
@@ -1923,14 +1924,14 @@ export class GatewayToolExecutor {
 
       for (const fact of facts) {
         try {
-          await api.save({
+          await handleSave(api, {
             type: 'decision',
             topic: fact.topic,
             decision: fact.decision,
             reasoning: `[auto-extracted] ${fact.reasoning}`,
             confidence: fact.confidence,
             is_static: fact.is_static ? 1 : 0,
-          });
+          } as SaveDecisionInput);
           saved++;
         } catch (err) {
           debugLogger.warn(
