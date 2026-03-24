@@ -31,6 +31,11 @@ const path = require('path');
 // Import MAMA tools - Simplified to 4 core tools (2025-11-25 refactor)
 // Rationale: LLM can infer relationships from search results, fewer tools = more flexibility
 const { loadCheckpointTool } = require('./tools/checkpoint-tools.js');
+const {
+  TOOL_DEFINITION: addMemoryTool,
+  execute: executeAddMemory,
+} = require('./tools/add-memory.js');
+const { TOOL_DEFINITION: profileTool, execute: executeProfile } = require('./tools/profile.js');
 const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Import core modules from mama-core
@@ -178,6 +183,12 @@ class MAMAServer {
         capabilities: {
           tools: {},
         },
+        instructions: `You have access to MAMA memory tools.
+After completing any meaningful task, call mama_add with a summary of what was decided and why.
+Before starting work on any topic, call search to check for prior decisions.
+Do NOT call mama_add for greetings, casual chat, or trivial exchanges.
+Use save when you already know the exact decision to record (structured).
+Use mama_add when you want MAMA to auto-extract facts from conversation content.`,
       }
     );
 
@@ -386,7 +397,11 @@ When presenting search results to the user or agent, include a brief **Reasoning
             },
           },
         },
-        // 5. LOAD_CHECKPOINT - Resume previous session
+        // 5. MAMA_ADD - Auto-extract and save facts
+        addMemoryTool,
+        // 6. MAMA_PROFILE - User profile preferences
+        profileTool,
+        // 7. LOAD_CHECKPOINT - Resume previous session
         {
           name: 'load_checkpoint',
           description: `🔄 Resume a previous session with full context.
@@ -431,6 +446,12 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
             break;
           case 'search_decisions_and_contracts':
             result = await this.handleSearchDecisionsAndContracts(args);
+            break;
+          case 'mama_add':
+            result = await executeAddMemory(args);
+            break;
+          case 'mama_profile':
+            result = await executeProfile(args);
             break;
           case 'load_checkpoint':
             result = await loadCheckpointTool.handler(args);

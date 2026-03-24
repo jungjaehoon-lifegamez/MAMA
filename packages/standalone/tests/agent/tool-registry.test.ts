@@ -61,7 +61,7 @@ describe('ToolRegistry', () => {
 
     it('should filter by wildcard pattern', () => {
       const filtered = ToolRegistry.getFilteredTools(['mama_*']);
-      expect(filtered).toHaveLength(4);
+      expect(filtered).toHaveLength(5);
       for (const tool of filtered) {
         expect(tool.name).toMatch(/^mama_/);
       }
@@ -87,7 +87,7 @@ describe('ToolRegistry', () => {
     it('should group tools by category', () => {
       const grouped = ToolRegistry.getByCategory();
       expect(grouped.has('memory')).toBe(true);
-      expect(grouped.get('memory')!.length).toBe(4);
+      expect(grouped.get('memory')!.length).toBe(5);
       expect(grouped.has('browser')).toBe(true);
       expect(grouped.get('browser')!.length).toBeGreaterThan(5);
     });

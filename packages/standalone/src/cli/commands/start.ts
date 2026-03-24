@@ -1331,6 +1331,10 @@ export async function runAgentLoop(
     throw new Error('MAMA API shape is incompatible; failed to initialize memory helpers');
   }
 
+  // Set isolated DB path for MAMA OS (카게무샤 pattern: process.env before initDB)
+  const mamaDbPathForCore = expandPath(config.database.path);
+  process.env.MAMA_DB_PATH = mamaDbPathForCore;
+
   // Initialize MAMA database first
   await initDB();
 
@@ -1444,6 +1448,7 @@ export async function runAgentLoop(
     search: searchForContext, // mama-core exports 'suggest' for semantic search
     loadCheckpoint: loadCheckpointForContext,
     listDecisions: listDecisionsForContext,
+    save: mamaApi.save,
   };
 
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {

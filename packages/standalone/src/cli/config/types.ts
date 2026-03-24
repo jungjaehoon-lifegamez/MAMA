@@ -649,7 +649,7 @@ export const DEFAULT_CONFIG: MAMAConfig = {
     },
   },
   database: {
-    path: '~/.claude/mama-memory.db',
+    path: '~/.mama/mama-memory.db',
   },
   logging: {
     level: 'info',

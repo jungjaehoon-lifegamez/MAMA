@@ -52,6 +52,11 @@ export interface MamaApiClient {
    * List recent decisions
    */
   listDecisions?(options?: { limit?: number }): Promise<Decision[]>;
+
+  /**
+   * Save a new decision or fact
+   */
+  save?(input: Record<string, unknown>): Promise<unknown>;
 }
 
 /**

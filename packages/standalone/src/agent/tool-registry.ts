@@ -65,6 +65,12 @@ register({
   description: 'Resume session. No params.',
   category: 'memory',
 });
+register({
+  name: 'mama_add',
+  description: 'Auto-extract and save facts from conversation content via Haiku',
+  category: 'memory',
+  params: 'content',
+});
 
 // Utility tools
 register({ name: 'Read', description: 'Read file', category: 'utility', params: 'path' });

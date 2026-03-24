@@ -12,6 +12,7 @@ Call tools via JSON block:
 - **mama_search**(query?, type?, limit?) — Search decisions
 - **mama_update**(id, outcome, reason?) — Update outcome
 - **mama_load_checkpoint**() — Resume session. No params.
+- **mama_add**(content) — Auto-extract and save facts from conversation content via Haiku
 
 ## Utility
 

@@ -168,6 +168,7 @@ function normalizeTranslationTargetLanguage(
 export class MessageRouter {
   private sessionStore: SessionStore;
   private contextInjector: ContextInjector;
+  private mamaApi: MamaApiClient;
   private agentLoop: AgentLoopClient;
   private config: Required<MessageRouterConfig>;
   private roleManager: RoleManager;
@@ -182,6 +183,7 @@ export class MessageRouter {
   ) {
     this.sessionStore = sessionStore;
     this.agentLoop = agentLoop;
+    this.mamaApi = mamaApi;
     this.config = {
       similarityThreshold: config.similarityThreshold ?? 0.7,
       maxDecisions: config.maxDecisions ?? 3,
@@ -548,6 +550,11 @@ This protects your credentials from being exposed in chat logs.`;
         const effectiveText = skillPrefix ? `${skillPrefix}${message.text}` : message.text;
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
+      }
+
+      // Auto-extract facts from conversation (fire-and-forget, non-blocking)
+      if (response && message.text) {
+        this.autoExtractFacts(message.text, response).catch(() => {});
       }
     } catch (error) {
       // CLI timeout or resume failure - invalidate session to force fresh start next time
@@ -971,6 +978,66 @@ ${historyContext}
     channelName: string
   ): boolean {
     return this.sessionStore.updateChannelName(source, channelId, channelName);
+  }
+
+  /**
+   * Auto-extract facts from conversation via Haiku (fire-and-forget).
+   * Skips short exchanges, rate-limits per 30s cooldown.
+   */
+  private lastExtractTime = 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private cachedHaikuClient: any = null;
+  private static readonly EXTRACT_COOLDOWN_MS = 30_000;
+  private static readonly MIN_CONTENT_LENGTH = 100;
+  private static readonly MAX_CONTENT_LENGTH = 10_000;
+
+  private async autoExtractFacts(userText: string, botResponse: string): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) return;
+
+    let content = `User: ${userText}\nAssistant: ${botResponse}`;
+    if (content.length < MessageRouter.MIN_CONTENT_LENGTH) return;
+    if (content.length > MessageRouter.MAX_CONTENT_LENGTH) {
+      content = content.substring(0, MessageRouter.MAX_CONTENT_LENGTH);
+    }
+
+    // Set cooldown immediately to prevent duplicate extractions during async Haiku call
+    this.lastExtractTime = now;
+
+    try {
+      const { HaikuClient } = await import('@jungjaehoon/mama-core/haiku-client');
+      const { extractFacts } = await import('@jungjaehoon/mama-core/fact-extractor');
+
+      // Cache HaikuClient instance to avoid repeated credential loading
+      if (!this.cachedHaikuClient) {
+        this.cachedHaikuClient = new HaikuClient();
+      }
+      const haiku = this.cachedHaikuClient;
+      if (!haiku.available()) return;
+
+      const facts = await extractFacts(content, haiku);
+      if (facts.length === 0) return;
+
+      if (!this.mamaApi.save) return;
+
+      for (const fact of facts) {
+        try {
+          await this.mamaApi.save({
+            type: 'decision',
+            topic: fact.topic,
+            decision: fact.decision,
+            reasoning: `[auto-extracted] ${fact.reasoning}`,
+            confidence: fact.confidence,
+            is_static: fact.is_static ? 1 : 0,
+          });
+          logger.info(`[auto-extract] Saved: ${fact.topic}`);
+        } catch {
+          // Continue with other facts
+        }
+      }
+    } catch (err) {
+      logger.warn(`[auto-extract] Failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 

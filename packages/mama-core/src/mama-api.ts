@@ -26,7 +26,7 @@ import crypto from 'crypto';
 
 // Internal modules
 import { learnDecision, createEdgesFromReasoning, DecisionDetection } from './decision-tracker.js';
-import { DecisionRecord, SemanticEdgeItem } from './db-manager.js';
+import { DecisionRecord, SemanticEdgeItem, fts5Search } from './db-manager.js';
 import {
   queryDecisionGraph,
   querySemanticEdges,
@@ -56,6 +56,7 @@ interface SaveParams {
   failure_reason?: string | null;
   limitation?: string | null;
   trust_context?: Record<string, unknown> | null;
+  is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
 }
 
 /**
@@ -479,6 +480,7 @@ async function save({
   failure_reason = null,
   limitation = null,
   trust_context = null,
+  is_static,
 }: SaveParams): Promise<SaveResult> {
   // Validate required fields
   if (!topic || typeof topic !== 'string') {
@@ -590,6 +592,12 @@ async function save({
   if (limitation) {
     updates.push('limitation = ?');
     values.push(limitation);
+  }
+
+  // is_static (user profile marker)
+  if (is_static !== undefined) {
+    updates.push('is_static = ?');
+    values.push(is_static);
   }
 
   // Execute UPDATE if we have any fields to update
@@ -1394,6 +1402,57 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         searchMethod = 'vector+recency';
       }
 
+      // Stage 1.7: FTS5 hybrid merge (Haiku Memory Layer)
+      {
+        try {
+          const ftsResults = await fts5Search(userQuestion, limit * 2);
+          if (ftsResults.length > 0) {
+            // Normalize FTS5 ranks (BM25 returns negative values, closer to 0 = better)
+            const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
+            const ftsMap = new Map(
+              ftsResults.map((r) => [r.id, maxRank > 0 ? 1 - Math.abs(r.rank) / maxRank : 0.5])
+            );
+
+            // Merge: boost existing results that also matched FTS5
+            for (const result of results) {
+              const ftsScore = ftsMap.get(result.id);
+              if (ftsScore !== undefined) {
+                // Hybrid score: 0.6 * cosine + 0.4 * FTS5
+                result.similarity = 0.6 * result.similarity + 0.4 * ftsScore;
+                ftsMap.delete(result.id);
+              }
+            }
+
+            // Add FTS5-only results (not in embedding results)
+            for (const [id, ftsScore] of ftsMap) {
+              const ftsResult = ftsResults.find((r) => r.id === id);
+              if (ftsResult) {
+                // Need to get full decision record
+                const adapter = getAdapter();
+                const stmt = adapter.prepare(
+                  'SELECT * FROM decisions WHERE id = ? AND superseded_by IS NULL'
+                );
+                const decision = stmt.get(id) as DecisionRecord | undefined;
+                if (decision) {
+                  results.push({
+                    ...decision,
+                    similarity: 0.4 * ftsScore, // Only FTS5 score component
+                    graph_source: 'fts5',
+                  });
+                }
+              }
+            }
+
+            // Re-sort by similarity
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            results.sort((a: any, b: any) => (b.similarity || 0) - (a.similarity || 0));
+            searchMethod = disableRecency ? 'vector+fts5' : 'vector+recency+fts5';
+          }
+        } catch {
+          // FTS5 not available, continue with embedding-only results
+        }
+      }
+
       // Stage 2: Graph expansion (NEW - Phase 1)
       // Expand candidates with supersedes chain and semantic edges
       if (results.length > 0) {
@@ -1401,6 +1460,17 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         results = graphEnhanced;
         searchMethod = disableRecency ? 'vector+graph' : 'vector+recency+graph';
       }
+
+      // Stage 2.5: is_static boost (after graph expansion to preserve sort order)
+      for (const result of results) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((result as any).is_static === 1) {
+          result.similarity = Math.min(1.0, (result.similarity || 0) + 0.2);
+        }
+      }
+      // Re-sort after is_static boost
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      results.sort((a: any, b: any) => (b.similarity || 0) - (a.similarity || 0));
     } catch (vectorError: unknown) {
       // Fallback to keyword search if vector search unavailable
       logWarn(
