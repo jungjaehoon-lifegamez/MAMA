@@ -13,6 +13,31 @@
 const mama = require('@jungjaehoon/mama-core/mama-api');
 const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 const { sanitizeForPrompt } = require('../core/prompt-sanitizer');
+const {
+  buildSuggestionsFromBundle,
+  hasBundleMemories,
+  formatMemoryBundleMessage,
+} = require('./memory-bundle-format');
+
+function tokenizeQuery(query) {
+  return String(query)
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/)
+    .filter((token) => token.length > 2);
+}
+
+function matchesLexicalQuery(suggestion, queryTokens) {
+  if (queryTokens.length === 0) {
+    return true;
+  }
+
+  const haystack = [suggestion.topic, suggestion.decision, suggestion.reasoning]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return queryTokens.some((token) => haystack.includes(token));
+}
 
 /**
  * Search decisions by semantic similarity
@@ -36,16 +61,48 @@ async function mamaSuggestCommand(args = {}) {
     // Parse options
     const limit = args.limit !== undefined ? parseInt(args.limit, 10) : 5;
     const recencyWeight = args.recencyWeight !== undefined ? parseFloat(args.recencyWeight) : 0.3;
+    const scopes = Array.isArray(args.scopes) ? args.scopes : [];
 
     // Call mama.suggest() API
     info(`[mama-suggest] Searching for: "${args.query}"`);
+
+    if (typeof mama.recallMemory === 'function') {
+      const bundle = await mama.recallMemory(args.query, {
+        scopes,
+        includeProfile: true,
+      });
+
+      if (hasBundleMemories(bundle)) {
+        const suggestions = buildSuggestionsFromBundle(bundle, limit);
+        return {
+          success: true,
+          suggestions,
+          bundle,
+          message: formatMemoryBundleMessage({
+            title: `🔍 Search Results: "${sanitizeForPrompt(args.query)}"`,
+            query: args.query,
+            bundle,
+            suggestions,
+          }),
+        };
+      }
+    }
 
     const result = await mama.suggest(args.query, {
       limit,
       recencyWeight,
     });
 
-    if (!result || !result.suggestions || result.suggestions.length === 0) {
+    const queryTokens = tokenizeQuery(args.query);
+    const suggestions = (
+      Array.isArray(result?.suggestions)
+        ? result.suggestions
+        : Array.isArray(result?.results)
+          ? result.results
+          : []
+    ).filter((suggestion) => matchesLexicalQuery(suggestion, queryTokens));
+
+    if (!result || suggestions.length === 0) {
       info(`[mama-suggest] No suggestions found for query: ${args.query}`);
 
       return {
@@ -55,12 +112,12 @@ async function mamaSuggestCommand(args = {}) {
       };
     }
 
-    info(`[mama-suggest] Found ${result.suggestions.length} suggestion(s)`);
+    info(`[mama-suggest] Found ${suggestions.length} suggestion(s)`);
 
     return {
       success: true,
-      suggestions: result.suggestions,
-      message: formatSuggestionsMessage(args.query, result.suggestions, result.markdown),
+      suggestions,
+      message: formatSuggestionsMessage(args.query, suggestions, result.markdown),
     };
   } catch (err) {
     logError(`[mama-suggest] ❌ Failed to search decisions: ${err.message}`);

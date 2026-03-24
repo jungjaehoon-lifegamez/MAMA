@@ -35,6 +35,14 @@ const {
   TOOL_DEFINITION: addMemoryTool,
   execute: executeAddMemory,
 } = require('./tools/add-memory.js');
+const {
+  TOOL_DEFINITION: ingestMemoryTool,
+  execute: executeIngestMemory,
+} = require('./tools/ingest-memory.js');
+const {
+  TOOL_DEFINITION: recallMemoryTool,
+  execute: executeRecallMemory,
+} = require('./tools/recall-memory.js');
 const { TOOL_DEFINITION: profileTool, execute: executeProfile } = require('./tools/profile.js');
 const mama = require('@jungjaehoon/mama-core/mama-api');
 
@@ -188,7 +196,8 @@ After completing any meaningful task, call mama_add with a summary of what was d
 Before starting work on any topic, call search to check for prior decisions.
 Do NOT call mama_add for greetings, casual chat, or trivial exchanges.
 Use save when you already know the exact decision to record (structured).
-Use mama_add when you want MAMA to auto-extract facts from conversation content.`,
+Use mama_add when you want MAMA to auto-extract facts from conversation content.
+Prefer mama_recall before work and mama_ingest for raw content.`,
       }
     );
 
@@ -399,9 +408,13 @@ When presenting search results to the user or agent, include a brief **Reasoning
         },
         // 5. MAMA_ADD - Auto-extract and save facts
         addMemoryTool,
-        // 6. MAMA_PROFILE - User profile preferences
+        // 6. MAMA_INGEST - Raw content ingestion for memory v2
+        ingestMemoryTool,
+        // 7. MAMA_RECALL - Scoped recall bundle for memory v2
+        recallMemoryTool,
+        // 8. MAMA_PROFILE - User profile preferences
         profileTool,
-        // 7. LOAD_CHECKPOINT - Resume previous session
+        // 9. LOAD_CHECKPOINT - Resume previous session
         {
           name: 'load_checkpoint',
           description: `🔄 Resume a previous session with full context.
@@ -449,6 +462,12 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
             break;
           case 'mama_add':
             result = await executeAddMemory(args);
+            break;
+          case 'mama_ingest':
+            result = await executeIngestMemory(args);
+            break;
+          case 'mama_recall':
+            result = await executeRecallMemory(args);
             break;
           case 'mama_profile':
             result = await executeProfile(args);

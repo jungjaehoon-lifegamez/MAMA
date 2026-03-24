@@ -221,6 +221,10 @@ export function getAdapter(): DatabaseAdapter {
   return dbAdapter;
 }
 
+function buildMemoryScopeId(kind: string, externalId: string): string {
+  return `scope_${kind}_${Buffer.from(externalId).toString('base64url')}`;
+}
+
 /**
  * Close database connection
  *
@@ -235,6 +239,57 @@ export async function closeDB(): Promise<void> {
     initializingPromise = null; // Clear to allow re-initialization
     info('[db-manager] Database connection closed');
   }
+}
+
+export async function ensureMemoryScope(kind: string, externalId: string): Promise<string> {
+  const adapter = getAdapter();
+  const id = buildMemoryScopeId(kind, externalId);
+
+  adapter
+    .prepare(
+      `
+        INSERT OR IGNORE INTO memory_scopes (id, kind, external_id)
+        VALUES (?, ?, ?)
+      `
+    )
+    .run(id, kind, externalId);
+
+  return id;
+}
+
+export async function bindMemoryToScope(
+  memoryId: string,
+  scopeId: string,
+  isPrimary = false
+): Promise<void> {
+  const adapter = getAdapter();
+
+  adapter
+    .prepare(
+      `
+        INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary)
+        VALUES (?, ?, ?)
+      `
+    )
+    .run(memoryId, scopeId, isPrimary ? 1 : 0);
+}
+
+export async function listScopesForMemory(
+  memoryId: string
+): Promise<Array<{ kind: string; id: string }>> {
+  const adapter = getAdapter();
+
+  return adapter
+    .prepare(
+      `
+        SELECT ms.kind, ms.external_id AS id
+        FROM memory_scope_bindings msb
+        JOIN memory_scopes ms ON ms.id = msb.scope_id
+        WHERE msb.memory_id = ?
+        ORDER BY msb.is_primary DESC, ms.created_at ASC
+      `
+    )
+    .all(memoryId) as Array<{ kind: string; id: string }>;
 }
 
 /**

@@ -2,7 +2,7 @@
  * Unit tests for MessageRouter
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
@@ -113,6 +113,27 @@ describe('MessageRouter', () => {
       expect(history[0].bot).toBe('Agent response');
     });
 
+    it('should inject profile-aware recall bundle into the prompt', async () => {
+      let receivedPrompt = '';
+      const agentLoop = createMockAgentLoop((prompt) => {
+        receivedPrompt = prompt;
+        return 'Agent response';
+      });
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+
+      await customRouter.process({
+        source: 'discord',
+        channelId: 'channel-memory',
+        userId: 'user-456',
+        text: 'What should I do here?',
+      });
+
+      expect(receivedPrompt).toContain('[MAMA Profile]');
+      expect(receivedPrompt).toContain('[MAMA Memories]');
+      expect(receivedPrompt).toContain('Current repo uses pnpm');
+    });
+
     it('should pass system prompt to agent loop for new sessions', async () => {
       // Use unique channel ID to ensure new session (not resuming from session pool)
       const uniqueChannelId = `channel-systemprompt-${Date.now()}`;
@@ -187,6 +208,32 @@ describe('MessageRouter', () => {
       // (ensures Gateway Tools and AgentContext are available even if CLI session was lost)
       expect(receivedOptionsHistory[1].systemPrompt).toBeDefined();
       expect(receivedOptionsHistory[1].resumeSession).toBe(true);
+    });
+
+    it('should not parse JSON facts and save them directly in the router', async () => {
+      const agentLoop = createMockAgentLoop(() => 'Agent response');
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+
+      const sendMessage = vi.fn().mockResolvedValue({ response: 'saved via tools' });
+      customRouter.setMemoryAgent({
+        getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
+      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
+
+      const saveSpy = vi.fn();
+      customRouter['mamaApi'].save = saveSpy;
+
+      await customRouter.process({
+        source: 'discord',
+        channelId: 'channel-autosave',
+        userId: 'user-456',
+        text: 'We decided to use pnpm in this project, keep answers concise, avoid long explanations, and continue using this workspace-specific convention for all follow-up implementation tasks.',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(sendMessage).toHaveBeenCalled();
+      expect(saveSpy).not.toHaveBeenCalled();
     });
   });
 

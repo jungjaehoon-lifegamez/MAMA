@@ -12,6 +12,7 @@ const { mamaRecallCommand } = require('./mama-recall');
 const { mamaSuggestCommand } = require('./mama-suggest');
 const { mamaListCommand } = require('./mama-list');
 const { mamaConfigureCommand } = require('./mama-configure');
+const { mamaProfileCommand } = require('./mama-profile');
 
 /**
  * MAMA Commands Suite
@@ -24,6 +25,7 @@ const { mamaConfigureCommand } = require('./mama-configure');
  *   await mamaSuggest({ query });
  *   await mamaList({ limit });
  *   await mamaConfigure({ show });
+ *   await mamaProfile({ scopes });
  */
 module.exports = {
   // Command functions
@@ -32,6 +34,7 @@ module.exports = {
   mamaSuggest: mamaSuggestCommand,
   mamaList: mamaListCommand,
   mamaConfigure: mamaConfigureCommand,
+  mamaProfile: mamaProfileCommand,
 
   // Named exports (alternative)
   mamaSaveCommand,
@@ -39,4 +42,5 @@ module.exports = {
   mamaSuggestCommand,
   mamaListCommand,
   mamaConfigureCommand,
+  mamaProfileCommand,
 };

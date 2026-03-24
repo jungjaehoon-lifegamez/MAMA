@@ -88,6 +88,31 @@ export {
 import mama from './mama-api.js';
 export { mama };
 
+// Memory V2
+export {
+  MEMORY_SCOPE_KINDS,
+  MEMORY_KINDS,
+  MEMORY_STATUSES,
+  MEMORY_EDGE_TYPES,
+  createEmptyRecallBundle,
+  type MemoryScopeKind,
+  type MemoryKind,
+  type MemoryStatus,
+  type MemoryEdgeType,
+  type MemoryScopeRef,
+  type MemoryRecord,
+  type MemoryEdge,
+  type ProfileSnapshot,
+  type RecallBundle,
+} from './memory-v2/types.js';
+export {
+  saveMemory,
+  recallMemory,
+  buildProfile,
+  ingestMemory,
+  evolveMemory,
+} from './memory-v2/api.js';
+
 // Config loader
 export {
   loadConfig,

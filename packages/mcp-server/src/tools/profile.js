@@ -1,41 +1,43 @@
-/**
- * mama_profile — Get user profile: long-term preferences, tech stack, role.
- * Returns all is_static=1, superseded_by IS NULL decisions.
- */
+const mama = require('@jungjaehoon/mama-core/mama-api');
 
 const TOOL_DEFINITION = {
   name: 'mama_profile',
   description:
-    'Get user profile summary: long-term preferences, tech stack, role, coding style. Returns decisions marked as static (long-term) preferences.',
+    'Get user profile summary for memory v2. Returns static profile, dynamic profile, and evidence.',
   inputSchema: {
     type: 'object',
     properties: {
       limit: { type: 'number', description: 'Max results. Default: 10' },
+      scopes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string' },
+            id: { type: 'string' },
+          },
+          required: ['kind', 'id'],
+        },
+        description: 'Optional scope list.',
+      },
     },
   },
 };
 
 async function execute(input) {
   const limit = input?.limit || 10;
+  const scopes = input?.scopes || [];
   try {
-    const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
-    const adapter = getAdapter();
-    const results = adapter
-      .prepare(
-        `
-      SELECT id, topic, decision, reasoning, confidence, created_at
-      FROM decisions
-      WHERE is_static = 1 AND superseded_by IS NULL
-      ORDER BY confidence DESC, created_at DESC
-      LIMIT ?
-    `
-      )
-      .all(limit);
+    const profile = await mama.buildProfile(scopes);
 
     return {
       success: true,
-      count: results.length,
-      profile: results,
+      count: profile.static.length + profile.dynamic.length,
+      profile: {
+        static: profile.static.slice(0, limit),
+        dynamic: profile.dynamic.slice(0, limit),
+        evidence: profile.evidence.slice(0, limit),
+      },
     };
   } catch (err) {
     return { success: false, error: err.message };
