@@ -123,6 +123,7 @@ export class TelegramGateway extends BaseGateway {
           interval: Math.max(this.pollIntervalMs, 2000),
           params: { timeout: 30 },
         },
+        // Force IPv4 — @types/request requires url in Options but node-telegram-bot-api only uses CoreOptions fields
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         request: { family: 4 } as any,
       });
