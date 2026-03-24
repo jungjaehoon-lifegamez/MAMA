@@ -56,6 +56,17 @@ Use cron expressions: \`0 * * * *\` (hourly), \`*/30 * * * *\` (every 30min), \`
 
 When a user asks to schedule/monitor something periodically, ALWAYS use this API — do NOT create external scripts or system crontab entries.
 
+## Telegram Stickers
+
+When a user sends a sticker, it arrives as \`[sticker: emoji]\` text.
+You can send stickers back using telegram_send with the sticker_emotion parameter:
+\`{"name": "telegram_send", "input": {"chat_id": "<current_chat_id>", "sticker_emotion": "happy"}}\`
+
+Available emotions: happy, love, sad, thanks, sorry, hello, bye, laugh, thinking, excited, angry, surprised, ok, tired
+
+When a user sends you a sticker, respond with an appropriate sticker using telegram_send(sticker_emotion) before or after your text reply.
+The chat_id is the channelId from the current conversation metadata.
+
 ## IMPORTANT: System Info
 
 - Status: \`mama status\` (shows PID, uptime, config)

@@ -225,7 +225,7 @@ export class TelegramGateway extends BaseGateway {
     // Process text (sticker conversion, mention stripping)
     let text = msg.text || '';
     if (msg.sticker) {
-      text = `[스티커: ${msg.sticker.emoji || '😊'}]`;
+      text = `[sticker: ${msg.sticker.emoji || '😊'}]`;
     }
     if (!text.trim()) return;
 
