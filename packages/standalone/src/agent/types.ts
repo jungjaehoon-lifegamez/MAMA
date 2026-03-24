@@ -622,6 +622,7 @@ export type GatewayToolName =
   | 'Bash'
   | 'discord_send'
   | 'slack_send'
+  | 'telegram_send'
   | 'translate_image'
   | 'save_integration_token'
   | 'browser_navigate'

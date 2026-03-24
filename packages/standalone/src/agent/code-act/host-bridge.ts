@@ -114,6 +114,17 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'communication',
   },
   {
+    name: 'telegram_send',
+    description: 'Send message or file to Telegram chat',
+    params: [
+      { name: 'chat_id', type: 'string', required: true },
+      { name: 'message', type: 'string', required: false },
+      { name: 'file_path', type: 'string', required: false },
+    ],
+    returnType: 'true',
+    category: 'communication',
+  },
+  {
     name: 'webchat_send',
     description: 'Send message or file to webchat viewer',
     params: [

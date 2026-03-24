@@ -17,12 +17,12 @@ export function getCodeActInstructions(backend: CodeActBackend): string {
     ? `**USE code_act for ALL gateway tools:**
 - File ops: Read, Write, Edit, Bash
 - Memory: mama_search, mama_save, mama_update
-- Communication: discord_send, slack_send, webchat_send
+- Communication: discord_send, slack_send, telegram_send, webchat_send
 - Browser: browser_navigate, browser_click, browser_screenshot
 - System: os_list_bots, os_get_config, os_set_model`
     : `**USE code_act for these gateway tools** (NOT available as direct tools):
 - Memory: mama_search, mama_save, mama_update
-- Communication: discord_send, slack_send, webchat_send
+- Communication: discord_send, slack_send, telegram_send, webchat_send
 - Browser: browser_navigate, browser_click, browser_screenshot
 - System: os_list_bots, os_get_config, os_set_model
 
