@@ -86,6 +86,9 @@ export class TelegramGateway extends BaseGateway {
   private recentMessageIds = new Map<string, number>();
   private recentMessageSignatures = new Map<string, number>();
 
+  // Dedup cleanup timer
+  private dedupCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
   // Sticker cache
   private stickerCache = new Map<string, string>();
   private stickerSetLoaded = false;
@@ -125,7 +128,17 @@ export class TelegramGateway extends BaseGateway {
       });
 
       this.bot.on('message', async (msg: unknown) => {
-        await this.handleMessage(msg as TelegramMessage);
+        try {
+          await this.handleMessage(msg as TelegramMessage);
+        } catch (error) {
+          console.error('[Telegram] Error handling message:', error);
+          this.emitEvent({
+            type: 'error',
+            source: 'telegram',
+            timestamp: new Date(),
+            data: { error: error instanceof Error ? error.message : String(error) },
+          });
+        }
       });
 
       this.bot.on('polling_error', (err: unknown) => {
@@ -141,6 +154,18 @@ export class TelegramGateway extends BaseGateway {
 
       this.connected = true;
       this.lastError = null;
+
+      // Periodic dedup cleanup (prevents stale entries when idle)
+      this.dedupCleanupTimer = setInterval(() => {
+        const now = Date.now();
+        for (const [key, ts] of this.recentMessageIds) {
+          if (now - ts > MESSAGE_DEDUP_TTL_MS) this.recentMessageIds.delete(key);
+        }
+        for (const [key, ts] of this.recentMessageSignatures) {
+          if (now - ts > MESSAGE_CONTENT_DEDUP_TTL_MS) this.recentMessageSignatures.delete(key);
+        }
+      }, 60_000);
+
       this.emitEvent({
         type: 'connected',
         source: 'telegram',
@@ -155,6 +180,10 @@ export class TelegramGateway extends BaseGateway {
   }
 
   async stop(): Promise<void> {
+    if (this.dedupCleanupTimer) {
+      clearInterval(this.dedupCleanupTimer);
+      this.dedupCleanupTimer = null;
+    }
     if (this.bot) {
       try {
         await this.bot.stopPolling();
@@ -230,7 +259,8 @@ export class TelegramGateway extends BaseGateway {
     if (!text.trim()) return;
 
     if (isGroup && this.botUsername) {
-      text = text.replace(new RegExp(`@${this.botUsername}\\b`, 'gi'), '').trim();
+      const escaped = this.botUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      text = text.replace(new RegExp(`@${escaped}\\b`, 'gi'), '').trim();
     }
 
     const sender = msg.from.username || String(msg.from.id);
@@ -332,14 +362,20 @@ export class TelegramGateway extends BaseGateway {
   }
 
   async sendMessage(chatId: string, text: string): Promise<void> {
-    if (!this.bot || !text.trim()) return;
+    if (!this.bot) throw new Error('Telegram gateway not connected');
+    if (!text.trim()) return;
     const chunks = this.splitMessage(text, TELEGRAM_MAX_LENGTH);
     for (const chunk of chunks) {
       try {
         await this.bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
-      } catch {
-        // Markdown parse failed — retry as plain text
-        await this.bot.sendMessage(chatId, chunk);
+      } catch (err) {
+        // Retry as plain text only for Markdown parse errors (400)
+        const status = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+        if (status === 400) {
+          await this.bot.sendMessage(chatId, chunk);
+        } else {
+          throw err;
+        }
       }
     }
   }
@@ -406,7 +442,8 @@ export class TelegramGateway extends BaseGateway {
       }
       this.stickerSetLoaded = true;
     } catch {
-      // Sticker set not found
+      // Sticker set not found or network error — mark as loaded to prevent repeated failing calls
+      this.stickerSetLoaded = true;
     }
   }
 }
