@@ -42,6 +42,7 @@ import { getSessionPool } from '../../agent/session-pool.js';
 import {
   DiscordGateway,
   SlackGateway,
+  TelegramGateway,
   SessionStore,
   MessageRouter,
   PluginLoader,
@@ -107,7 +108,7 @@ const API_PORT = 3847;
 const EMBEDDING_PORT = 3849;
 
 interface SecurityAlertTarget {
-  gateway: 'discord' | 'slack';
+  gateway: 'discord' | 'slack' | 'telegram';
   channelId: string;
 }
 
@@ -123,7 +124,7 @@ function parseSecurityAlertTargets(config: {
       .filter(Boolean)
       .map((entry) => {
         const [gateway, channelId] = entry.split(':', 2);
-        if ((gateway === 'discord' || gateway === 'slack') && channelId) {
+        if ((gateway === 'discord' || gateway === 'slack' || gateway === 'telegram') && channelId) {
           return { gateway, channelId } as SecurityAlertTarget;
         }
         return null;
@@ -1663,6 +1664,44 @@ export async function runAgentLoop(
     }
   }
 
+  // Initialize Telegram gateway if enabled
+  let telegramGateway: TelegramGateway | null = null;
+  if (config.telegram?.enabled && config.telegram?.token) {
+    console.log('Initializing Telegram gateway...');
+    try {
+      telegramGateway = new TelegramGateway({
+        token: config.telegram.token,
+        messageRouter,
+        config: {
+          allowedChats: config.telegram.allowed_chats,
+        },
+      });
+
+      await telegramGateway.start();
+      gateways.push(telegramGateway);
+
+      // Wire tool executor
+      const telegramGatewayInterface = {
+        sendMessage: async (chatId: string, message: string) =>
+          telegramGateway!.sendMessage(chatId, message),
+        sendFile: async (chatId: string, filePath: string, caption?: string) =>
+          telegramGateway!.sendFile(chatId, filePath, caption),
+        sendImage: async (chatId: string, imagePath: string, caption?: string) =>
+          telegramGateway!.sendImage(chatId, imagePath, caption),
+        sendSticker: async (chatId: string | number, emotion: string) =>
+          telegramGateway!.sendSticker(chatId, emotion),
+      };
+      toolExecutor.setTelegramGateway(telegramGatewayInterface);
+
+      console.log('✓ Telegram connected');
+    } catch (error) {
+      console.error(
+        `Failed to connect Telegram: ${error instanceof Error ? error.message : String(error)}`
+      );
+      telegramGateway = null;
+    }
+  }
+
   // Wire gateways into health check service
   if (discordGateway) {
     healthCheckService.addGateway('discord', discordGateway);
@@ -1670,11 +1709,13 @@ export async function runAgentLoop(
   if (slackGateway) {
     healthCheckService.addGateway('slack', slackGateway);
   }
+  if (telegramGateway) {
+    healthCheckService.addGateway('telegram', telegramGateway);
+  }
 
   const securityAlertTargets = parseSecurityAlertTargets(config).filter((target) => {
-    if (target.gateway === 'discord') {
-      return !!discordGateway;
-    }
+    if (target.gateway === 'discord') return !!discordGateway;
+    if (target.gateway === 'telegram') return !!telegramGateway;
     return !!slackGateway;
   });
   if (securityAlertTargets.length > 0) {
@@ -1684,6 +1725,10 @@ export async function runAgentLoop(
         securityAlertTargets.map(async (target) => {
           if (target.gateway === 'discord' && discordGateway) {
             await discordGateway.sendMessage(target.channelId, message);
+            return;
+          }
+          if (target.gateway === 'telegram' && telegramGateway) {
+            await telegramGateway.sendMessage(target.channelId, message);
             return;
           }
           if (target.gateway === 'slack' && slackGateway) {
@@ -1717,6 +1762,7 @@ export async function runAgentLoop(
     gateways: {
       discord: discordGateway ?? undefined,
       slack: slackGateway ?? undefined,
+      telegram: telegramGateway ?? undefined,
     },
   });
 
