@@ -110,6 +110,16 @@ export interface SlackGatewayInterface {
 }
 
 /**
+ * Telegram gateway interface for sending messages and files
+ */
+export interface TelegramGatewayInterface {
+  sendMessage(chatId: string, text: string): Promise<void>;
+  sendFile(chatId: string, filePath: string, caption?: string): Promise<void>;
+  sendImage(chatId: string, imagePath: string, caption?: string): Promise<void>;
+  sendSticker(chatId: string | number, emotion: string): Promise<boolean>;
+}
+
+/**
  * Valid MAMA gateway tools — derived from ToolRegistry (SSOT).
  */
 import { ToolRegistry } from './tool-registry.js';
@@ -153,6 +163,7 @@ export class GatewayToolExecutor {
   private sessionStore?: GatewaySessionStore;
   private discordGateway: DiscordGatewayInterface | null = null;
   private slackGateway: SlackGatewayInterface | null = null;
+  private telegramGateway: TelegramGatewayInterface | null = null;
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
@@ -194,6 +205,10 @@ export class GatewayToolExecutor {
 
   setSlackGateway(gateway: SlackGatewayInterface): void {
     this.slackGateway = gateway;
+  }
+
+  setTelegramGateway(gateway: TelegramGatewayInterface): void {
+    this.telegramGateway = gateway;
   }
 
   /**
@@ -329,6 +344,10 @@ export class GatewayToolExecutor {
         case 'slack_send':
           return await this.executeSlackSend(
             input as { channel_id: string; message?: string; file_path?: string }
+          );
+        case 'telegram_send':
+          return await this.executeTelegramSend(
+            input as { chat_id: string; message?: string; file_path?: string }
           );
         // Browser tools
         case 'browser_navigate':
@@ -766,6 +785,45 @@ export class GatewayToolExecutor {
       return { success: true };
     } catch (err) {
       return { success: false, error: `Failed to send to Slack: ${err}` };
+    }
+  }
+
+  /**
+   * Execute telegram_send tool - Send message/file to Telegram chat
+   */
+  private async executeTelegramSend(input: {
+    chat_id: string;
+    message?: string;
+    file_path?: string;
+    sticker_emotion?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    const { chat_id, message, file_path, sticker_emotion } = input;
+
+    if (!chat_id) {
+      return { success: false, error: 'chat_id is required' };
+    }
+
+    if (!this.telegramGateway) {
+      return { success: false, error: 'Telegram gateway not configured' };
+    }
+
+    try {
+      if (sticker_emotion) {
+        await this.telegramGateway.sendSticker(chat_id, sticker_emotion);
+      } else if (file_path) {
+        await this.telegramGateway.sendFile(chat_id, file_path, message);
+      } else if (message) {
+        await this.telegramGateway.sendMessage(chat_id, message);
+      } else {
+        return {
+          success: false,
+          error: 'Either message, file_path, or sticker_emotion is required',
+        };
+      }
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: `Failed to send to Telegram: ${err}` };
     }
   }
 

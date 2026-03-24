@@ -92,6 +92,12 @@ register({
   category: 'utility',
   params: 'channel_id, message?, file_path?',
 });
+register({
+  name: 'telegram_send',
+  description: 'Send message, file, or sticker to Telegram',
+  category: 'utility',
+  params: 'chat_id, message?, file_path?, sticker_emotion?',
+});
 
 // Browser tools (Playwright)
 register({
