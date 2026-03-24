@@ -362,9 +362,8 @@ Typical daily cost for active developer: **~$0.01-0.05/day**.
 
 | File                                  | Package    | Change                                             |
 | ------------------------------------- | ---------- | -------------------------------------------------- |
-| `mama-core/src/db-manager.ts`         | mama-core  | Add is_latest, is_static columns, FTS5 table       |
-| `mama-core/src/decision-tracker.ts`   | mama-core  | Set is_latest=0 on superseded decisions            |
-| `mama-core/src/memory-store.ts`       | mama-core  | Add is_latest filter to search queries             |
+| `mama-core/src/db-manager.ts`         | mama-core  | Add is_static column, FTS5 table + triggers        |
+| `mama-core/src/memory-store.ts`       | mama-core  | Add `superseded_by IS NULL` filter to search       |
 | `mama-core/src/relevance-scorer.ts`   | mama-core  | Add is_static priority boost, hybrid score merge   |
 | `mama-core/src/mama-api.ts`           | mama-core  | Add `add()` function, expose profile query         |
 | `mcp-server/src/server.js`            | mcp-server | Add instructions, register mama_add + mama_profile |

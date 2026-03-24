@@ -84,6 +84,7 @@ export interface VectorSearchParams {
   limit?: number;
   threshold?: number;
   timeWindow?: number;
+  includeSuperseded?: boolean;
 }
 
 export interface DecisionEdgeRow {
@@ -689,6 +690,11 @@ export async function queryVectorSearch(params: VectorSearchParams): Promise<Dec
         continue;
       }
 
+      // Filter out superseded decisions unless explicitly requested
+      if (!params.includeSuperseded && decision.superseded_by) {
+        continue;
+      }
+
       results.push({
         ...decision,
         similarity,
@@ -842,4 +848,34 @@ export function resetDBState(options: { disconnect?: boolean } = {}): void {
  */
 export function isTestMode(): boolean {
   return !!(process.env.MAMA_TEST_MODE || process.env.VITEST);
+}
+
+/**
+ * FTS5 keyword search on decisions table.
+ * Returns matching decision IDs with BM25 rank scores.
+ */
+export async function fts5Search(
+  query: string,
+  limit = 10
+): Promise<{ id: string; rank: number }[]> {
+  const adapter = getAdapter();
+  try {
+    // Check if FTS5 table exists
+    const tableCheck = adapter
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='decisions_fts'")
+      .get() as { name: string } | undefined;
+    if (!tableCheck) return [];
+
+    const stmt = adapter.prepare(`
+      SELECT d.id, rank
+      FROM decisions_fts
+      JOIN decisions d ON decisions_fts.rowid = d.rowid
+      WHERE decisions_fts MATCH ?
+      ORDER BY rank
+      LIMIT ?
+    `);
+    return stmt.all(query, limit) as { id: string; rank: number }[];
+  } catch {
+    return []; // FTS5 not available or query syntax error
+  }
 }

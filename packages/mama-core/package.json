@@ -25,7 +25,10 @@
     "./time-formatter": "./dist/time-formatter.js",
     "./outcome-tracker": "./dist/outcome-tracker.js",
     "./query-intent": "./dist/query-intent.js",
-    "./test-utils": "./dist/test-utils.js"
+    "./test-utils": "./dist/test-utils.js",
+    "./haiku-client": "./dist/haiku-client.js",
+    "./fact-extractor": "./dist/fact-extractor.js",
+    "./smart-search": "./dist/smart-search.js"
   },
   "scripts": {
     "build": "tsc",
@@ -62,6 +65,7 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "@huggingface/transformers": "^3.8.1",
     "ws": "^8.19.0"
   },

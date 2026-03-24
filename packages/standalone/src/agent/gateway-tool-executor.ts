@@ -424,6 +424,8 @@ export class GatewayToolExecutor {
           return await handleUpdate(api, input as UpdateInput);
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(api, input as LoadCheckpointInput);
+        case 'mama_add':
+          return await this.handleMamaAdd(input as { content: string });
         default:
           throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
       }
@@ -1879,6 +1881,71 @@ export class GatewayToolExecutor {
         ? JSON.stringify({ value: result.value, logs: result.logs, metrics: result.metrics })
         : `Code-Act error: ${result.error?.message || 'Unknown error'}`,
     } as GatewayToolResult;
+  }
+
+  /**
+   * Handle mama_add — auto-extract facts from conversation content via Haiku.
+   * Uses mama-core HaikuClient + FactExtractor directly.
+   */
+  private async handleMamaAdd(input: { content: string }): Promise<GatewayToolResult> {
+    const { content } = input;
+    if (!content || typeof content !== 'string') {
+      return {
+        success: false,
+        error: 'content is required and must be a string',
+      } as GatewayToolResult;
+    }
+
+    try {
+      const { HaikuClient } = await import('@jungjaehoon/mama-core/haiku-client');
+      const { extractFacts } = await import('@jungjaehoon/mama-core/fact-extractor');
+
+      const haiku = new HaikuClient();
+      if (!haiku.available()) {
+        return {
+          success: false,
+          error: 'Smart memory unavailable (no OAuth token). Use mama_save to save manually.',
+        } as GatewayToolResult;
+      }
+
+      const facts = await extractFacts(content, haiku);
+      if (facts.length === 0) {
+        return {
+          success: true,
+          extracted: 0,
+          saved: 0,
+          message: 'No facts worth saving found.',
+        } as GatewayToolResult;
+      }
+
+      const api = await this.initializeMAMAApi();
+      let saved = 0;
+
+      for (const fact of facts) {
+        try {
+          await api.save({
+            type: 'decision',
+            topic: fact.topic,
+            decision: fact.decision,
+            reasoning: `[auto-extracted] ${fact.reasoning}`,
+            confidence: fact.confidence,
+            is_static: fact.is_static ? 1 : 0,
+          });
+          saved++;
+        } catch (err) {
+          debugLogger.warn(
+            `[mama_add] Failed to save fact "${fact.topic}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+
+      return { success: true, extracted: facts.length, saved } as GatewayToolResult;
+    } catch (err) {
+      return {
+        success: false,
+        error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}`,
+      } as GatewayToolResult;
+    }
   }
 
   static getValidTools(): GatewayToolName[] {

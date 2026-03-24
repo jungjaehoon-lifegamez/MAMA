@@ -322,6 +322,7 @@ export interface SaveDecisionInput {
   decision: string;
   reasoning: string;
   confidence?: number;
+  is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
 }
 
 /**
@@ -617,6 +618,7 @@ export type GatewayToolName =
   | 'mama_search'
   | 'mama_update'
   | 'mama_load_checkpoint'
+  | 'mama_add'
   | 'Read'
   | 'Write'
   | 'Bash'
