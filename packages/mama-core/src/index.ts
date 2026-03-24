@@ -255,11 +255,5 @@ export {
 // Notification manager
 export { notifyInsight } from './notification-manager.js';
 
-// Haiku client
-export { HaikuClient } from './haiku-client.js';
-
-// Fact extractor
-export { extractFacts, type ExtractedFact } from './fact-extractor.js';
-
 // Smart search (Haiku rerank)
 export { rerankResults, type SearchCandidate } from './smart-search.js';

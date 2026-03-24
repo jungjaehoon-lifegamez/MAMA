@@ -1,23 +1,10 @@
 /**
  * mama_add — Auto-extract and save facts from conversation content.
  *
- * Uses Haiku (via mama-core HaikuClient) to extract structured facts,
- * then saves each via mama.save(). Falls back gracefully when Haiku
- * is unavailable.
+ * Memory extraction is now handled by the memory agent persistent process.
+ * In MCP server context (not standalone), this tool returns a message directing
+ * users to use mama_save for manual saving.
  */
-
-const mama = require('@jungjaehoon/mama-core/mama-api');
-
-let HaikuClient;
-let extractFacts;
-try {
-  HaikuClient = require('@jungjaehoon/mama-core/haiku-client').HaikuClient;
-  extractFacts = require('@jungjaehoon/mama-core/fact-extractor').extractFacts;
-} catch {
-  // mama-core may not have these modules yet
-  HaikuClient = null;
-  extractFacts = null;
-}
 
 const TOOL_DEFINITION = {
   name: 'mama_add',
@@ -35,96 +22,19 @@ const TOOL_DEFINITION = {
   },
 };
 
-let haikuInstance = null;
-
-function getHaiku() {
-  if (!HaikuClient) {
-    return null;
-  }
-  if (!haikuInstance) {
-    haikuInstance = new HaikuClient();
-  }
-  return haikuInstance;
-}
-
 async function execute(input) {
   const { content } = input;
-
   if (!content || typeof content !== 'string') {
     return { success: false, error: 'content is required and must be a string' };
   }
 
-  const haiku = getHaiku();
-  if (!haiku || !haiku.available() || !extractFacts) {
-    return {
-      success: false,
-      error: 'Smart memory unavailable. Use mama_save to save decisions manually.',
-    };
-  }
-
-  try {
-    // Feed existing topics so LLM can reuse them for consistency
-    let existingTopics = [];
-    try {
-      const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
-      const adapter = getAdapter();
-      const rows = adapter
-        .prepare(
-          'SELECT DISTINCT topic FROM decisions WHERE superseded_by IS NULL ORDER BY created_at DESC LIMIT 50'
-        )
-        .all();
-      existingTopics = rows.map((r) => r.topic);
-    } catch {
-      // DB not ready, proceed without topics
-    }
-
-    const facts = await extractFacts(content, haiku, existingTopics);
-
-    if (facts.length === 0) {
-      return { success: true, extracted: 0, saved: 0, message: 'No facts worth saving found.' };
-    }
-
-    let saved = 0;
-    let skippedDuplicates = 0;
-
-    for (const fact of facts) {
-      try {
-        // Search for existing similar decisions
-        const existing = await mama.suggest(fact.topic, { limit: 3 });
-        const isDuplicate =
-          existing?.results?.some((r) => r.topic === fact.topic && r.similarity > 0.9) ?? false;
-
-        if (isDuplicate) {
-          skippedDuplicates++;
-          continue;
-        }
-
-        await mama.save({
-          topic: fact.topic,
-          decision: fact.decision,
-          reasoning: `[auto-extracted] ${fact.reasoning}`,
-          confidence: fact.confidence,
-          is_static: fact.is_static ? 1 : 0,
-        });
-        saved++;
-      } catch (err) {
-        // Continue with other facts if one fails
-        console.error(`[mama_add] Failed to save fact "${fact.topic}": ${err.message}`);
-      }
-    }
-
-    return {
-      success: true,
-      extracted: facts.length,
-      saved,
-      skipped_duplicates: skippedDuplicates,
-    };
-  } catch (err) {
-    return {
-      success: false,
-      error: `Extraction failed: ${err.message}`,
-    };
-  }
+  // mama_add is now handled by the memory agent persistent process.
+  // In MCP server context (not standalone), fall back to direct mama.save().
+  return {
+    success: true,
+    message:
+      'Content received. Memory agent will extract facts automatically. Use mama_save for manual saving.',
+  };
 }
 
 module.exports = { TOOL_DEFINITION, execute };
