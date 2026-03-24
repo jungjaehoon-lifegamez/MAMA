@@ -240,3 +240,163 @@ describe('TelegramGateway - sticker send fallback', () => {
     );
   });
 });
+
+describe('TelegramGateway - message dedup', () => {
+  let gateway: TelegramGateway;
+  let messageHandler: (msg: unknown) => Promise<void>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+    });
+    await gateway.start();
+    // Capture the 'message' handler registered on the mock bot
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bot = (gateway as any).bot;
+    const onCalls = bot.on.mock.calls;
+    const messageCb = onCalls.find((c: unknown[]) => c[0] === 'message');
+    messageHandler = messageCb[1];
+  });
+
+  it('should process a message the first time', async () => {
+    await messageHandler({
+      message_id: 1,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 200, type: 'private' },
+      text: 'hello',
+    });
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('should ignore duplicate message_id', async () => {
+    const msg = {
+      message_id: 42,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 200, type: 'private' },
+      text: 'hello',
+    };
+    await messageHandler(msg);
+    await messageHandler(msg); // duplicate
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('should ignore duplicate content signature within 5s', async () => {
+    const msg1 = {
+      message_id: 1,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 200, type: 'private' },
+      text: 'same text',
+    };
+    const msg2 = {
+      message_id: 2, // different message_id
+      from: { id: 100, username: 'user1' },
+      chat: { id: 200, type: 'private' },
+      text: 'same text', // same content
+    };
+    await messageHandler(msg1);
+    await messageHandler(msg2);
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('should process different content from same user', async () => {
+    const msg1 = {
+      message_id: 1,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 200, type: 'private' },
+      text: 'hello',
+    };
+    const msg2 = {
+      message_id: 2,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 200, type: 'private' },
+      text: 'world',
+    };
+    await messageHandler(msg1);
+    await messageHandler(msg2);
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('TelegramGateway - group chat filtering', () => {
+  let gateway: TelegramGateway;
+  let messageHandler: (msg: unknown) => Promise<void>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+    });
+    await gateway.start();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bot = (gateway as any).bot;
+    const onCalls = bot.on.mock.calls;
+    const messageCb = onCalls.find((c: unknown[]) => c[0] === 'message');
+    messageHandler = messageCb[1];
+  });
+
+  it('should ignore group messages without mention/command/reply', async () => {
+    await messageHandler({
+      message_id: 1,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 300, type: 'group' },
+      text: 'random group message',
+    });
+    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+  });
+
+  it('should process group messages with @bot mention', async () => {
+    await messageHandler({
+      message_id: 2,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 300, type: 'group' },
+      text: '@test_bot hello',
+      entities: [{ type: 'mention', offset: 0, length: 9 }],
+    });
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('should process group messages with /command', async () => {
+    await messageHandler({
+      message_id: 3,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 300, type: 'group' },
+      text: '/start',
+      entities: [{ type: 'bot_command', offset: 0, length: 6 }],
+    });
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('should process group messages that reply to bot', async () => {
+    await messageHandler({
+      message_id: 4,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 300, type: 'group' },
+      text: 'reply text',
+      reply_to_message: { from: { id: 123 } }, // botId = 123
+    });
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('should process DM messages without filtering', async () => {
+    await messageHandler({
+      message_id: 5,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 100, type: 'private' },
+      text: 'dm message',
+    });
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('should ignore supergroup messages without mention/command/reply', async () => {
+    await messageHandler({
+      message_id: 6,
+      from: { id: 100, username: 'user1' },
+      chat: { id: 400, type: 'supergroup' },
+      text: 'supergroup chatter',
+    });
+    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+  });
+});
