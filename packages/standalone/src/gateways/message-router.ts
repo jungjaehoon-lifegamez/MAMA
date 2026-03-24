@@ -1023,7 +1023,6 @@ ${historyContext}
       for (const fact of facts) {
         try {
           await this.mamaApi.save({
-            type: 'decision',
             topic: fact.topic,
             decision: fact.decision,
             reasoning: `[auto-extracted] ${fact.reasoning}`,
