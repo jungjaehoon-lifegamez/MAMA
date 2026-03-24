@@ -8,6 +8,21 @@ All notable changes to this project will be documented in this file.
 
 - **GitHub Actions runtime refresh** — CI, publish, release, pages, and marketplace sync workflows now use current `actions/checkout`, `actions/setup-node`, and `pnpm/action-setup` releases; GitHub release creation moved from `softprops/action-gh-release` to `gh release create` to avoid deprecated Node 20 action runtimes in future runs
 
+## [0.14.4] - 2026-03-24
+
+### Added
+
+- **Telegram gateway integration** — production-ready Telegram bot support ported from internal project with full platform parity alongside Discord and Slack (#58)
+  - **2-stage message dedup** — message_id (60s TTL) + content signature (5s TTL) prevents duplicate processing on polling reconnect
+  - **Group chat filtering** — bot only responds to @mentions, /commands, and reply-to-bot in group chats
+  - **Sticker support** — receive stickers as `[sticker: emoji]` text; send stickers via `telegram_send(sticker_emotion)` with emotion-to-emoji mapping and sticker set cache
+  - **ToolStatusTracker streaming** — real-time tool progress display using the same PlatformAdapter pattern as Discord/Slack
+  - **Typing indicator** — 4-second refresh interval during message processing
+  - **`telegram_send` tool** — agents can send messages, files, and stickers to Telegram chats
+  - **Platform parity** — health check, security alert delivery, and CronResultRouter all include Telegram
+  - **Polling hardening** — IPv4 forced, polling_error handler, periodic dedup cleanup timer, bot cleanup on start failure
+  - **Markdown fallback** — retries as plain text on 400 errors only
+
 ## [0.14.2] / mama-core [1.3.2] / mcp-server [1.9.2] / plugin [1.8.2] - 2026-03-14
 
 ### Fixed
