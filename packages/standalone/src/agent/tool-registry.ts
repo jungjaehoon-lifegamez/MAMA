@@ -94,9 +94,9 @@ register({
 });
 register({
   name: 'telegram_send',
-  description: 'Send message or file to Telegram',
+  description: 'Send message, file, or sticker to Telegram',
   category: 'utility',
-  params: 'chat_id, message?, file_path?',
+  params: 'chat_id, message?, file_path?, sticker_emotion?',
 });
 
 // Browser tools (Playwright)
