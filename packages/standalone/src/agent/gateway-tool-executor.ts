@@ -795,8 +795,9 @@ export class GatewayToolExecutor {
     chat_id: string;
     message?: string;
     file_path?: string;
+    sticker_emotion?: string;
   }): Promise<{ success: boolean; error?: string }> {
-    const { chat_id, message, file_path } = input;
+    const { chat_id, message, file_path, sticker_emotion } = input;
 
     if (!chat_id) {
       return { success: false, error: 'chat_id is required' };
@@ -807,12 +808,17 @@ export class GatewayToolExecutor {
     }
 
     try {
-      if (file_path) {
+      if (sticker_emotion) {
+        await this.telegramGateway.sendSticker(chat_id, sticker_emotion);
+      } else if (file_path) {
         await this.telegramGateway.sendFile(chat_id, file_path, message);
       } else if (message) {
         await this.telegramGateway.sendMessage(chat_id, message);
       } else {
-        return { success: false, error: 'Either message or file_path is required' };
+        return {
+          success: false,
+          error: 'Either message, file_path, or sticker_emotion is required',
+        };
       }
 
       return { success: true };

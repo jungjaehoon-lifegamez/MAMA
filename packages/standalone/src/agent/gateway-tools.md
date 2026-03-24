@@ -20,7 +20,7 @@ Call tools via JSON block:
 - **Bash**(command, workdir?) — Execute command (60s timeout)
 - **discord_send**(channel_id, message?, file_path?) — Send message or file to Discord
 - **slack_send**(channel_id, message?, file_path?) — Send message or file to Slack
-- **telegram_send**(chat_id, message?, file_path?) — Send message or file to Telegram
+- **telegram_send**(chat_id, message?, file_path?, sticker_emotion?) — Send message, file, or sticker to Telegram
 
 ## Browser (Playwright)
 
