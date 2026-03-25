@@ -1,10 +1,27 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import Database from '../../src/sqlite.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
 
 const TEST_DB = '/tmp/test-standalone-memory-v2-e2e.db';
+const require = createRequire(import.meta.url);
+
+async function waitForMemoryIngestion(mamaApi: {
+  recallMemory: (
+    query: string,
+    options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
+  ) => Promise<{ memories?: unknown[] }>;
+}) {
+  await vi.waitFor(async () => {
+    const bundle = await mamaApi.recallMemory('pnpm', {
+      scopes: [{ kind: 'project', id: process.cwd() }],
+      includeProfile: true,
+    });
+    expect(bundle.memories?.length ?? 0).toBeGreaterThan(0);
+  });
+}
 
 describe('Memory V2 standalone e2e', () => {
   beforeAll(() => {
@@ -34,9 +51,7 @@ describe('Memory V2 standalone e2e', () => {
   });
 
   it('should ingest first-turn memory and inject it on the next turn', async () => {
-    const mamaCore = await import('@jungjaehoon/mama-core');
-    const mamaApi =
-      mamaCore && typeof mamaCore === 'object' && 'mama' in mamaCore ? mamaCore.mama : mamaCore;
+    const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
     let lastPrompt = '';
     const agentLoop = createMockAgentLoop((prompt) => {
@@ -60,6 +75,7 @@ describe('Memory V2 standalone e2e', () => {
     router.setMemoryAgent({
       getSharedProcess: async () => ({
         sendMessage: async (content: string) => {
+          await new Promise((resolve) => setTimeout(resolve, 25));
           await mamaApi.ingestMemory({
             content,
             scopes: [{ kind: 'project', id: process.cwd() }],
@@ -81,7 +97,7 @@ describe('Memory V2 standalone e2e', () => {
       text: 'We decided to use pnpm in this repository, keep answers concise, and reuse this convention for all follow-up tasks in the current project.',
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitForMemoryIngestion(mamaApi);
 
     await router.process({
       source: 'discord',
