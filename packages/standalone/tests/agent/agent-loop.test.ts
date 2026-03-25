@@ -7,7 +7,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
 import type { OAuthManager } from '../../src/auth/index.js';
-import type { MAMAApiInterface } from '../../src/agent/types.js';
+import type { AgentContext, MAMAApiInterface } from '../../src/agent/types.js';
+
+const persistentPromptMock = vi.fn().mockResolvedValue({
+  response: 'Mock response',
+  usage: { input_tokens: 10, output_tokens: 5 },
+  session_id: 'test-session',
+});
 
 // Mock the ClaudeCLIWrapper
 vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
@@ -29,11 +35,7 @@ vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
 vi.mock('../../src/agent/persistent-cli-adapter.js', () => {
   return {
     PersistentCLIAdapter: vi.fn().mockImplementation(() => ({
-      prompt: vi.fn().mockResolvedValue({
-        response: 'Mock response',
-        usage: { input_tokens: 10, output_tokens: 5 },
-        session_id: 'test-session',
-      }),
+      prompt: persistentPromptMock,
       setSessionId: vi.fn(),
       close: vi.fn(),
     })),
@@ -104,8 +106,33 @@ describe('AgentLoop', () => {
     loadCheckpoint: vi.fn().mockResolvedValue({ success: true }),
   });
 
+  const createChatBotContext = (): AgentContext => ({
+    source: 'telegram',
+    platform: 'telegram',
+    roleName: 'chat_bot',
+    role: {
+      allowedTools: ['mama_*', 'Read', 'telegram_send'],
+      blockedTools: ['Bash', 'Write'],
+      systemControl: false,
+      sensitiveAccess: false,
+      model: 'claude-sonnet-4-6',
+      maxTurns: 10,
+    },
+    session: {
+      sessionId: 'telegram:session',
+      channelId: '7026976631',
+      userId: '7026976631',
+      startedAt: new Date(),
+    },
+    capabilities: ['mama_*', 'Read', 'telegram_send'],
+    limitations: ['No Bash', 'No Write'],
+    tier: 2,
+    backend: 'claude',
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
+    persistentPromptMock.mockClear();
   });
 
   describe('run()', () => {
@@ -136,6 +163,27 @@ describe('AgentLoop', () => {
 
       expect(result.totalUsage.input_tokens).toBe(10);
       expect(result.totalUsage.output_tokens).toBe(5);
+    });
+
+    it('should pass structural tool restrictions for chat_bot contexts', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('Hello', {
+        source: 'telegram',
+        channelId: '7026976631',
+        agentContext: createChatBotContext(),
+      });
+
+      const promptOptions = persistentPromptMock.mock.calls[0]?.[2];
+      expect(promptOptions.allowedTools).toEqual(
+        expect.arrayContaining(['mama_search', 'mama_save', 'mama_recall', 'Read', 'telegram_send'])
+      );
+      expect(promptOptions.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Write']));
     });
   });
 

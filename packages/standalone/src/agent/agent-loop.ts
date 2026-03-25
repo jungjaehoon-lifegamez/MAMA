@@ -276,6 +276,27 @@ export class AgentLoop {
   private currentStreamCallbacks?: StreamCallbacks;
   private currentTier: 1 | 2 | 3 = 1;
 
+  private resolveStructuralToolPermissions(agentContext?: AgentContext): {
+    allowedTools?: string[];
+    disallowedTools?: string[];
+  } {
+    if (!agentContext) {
+      return {};
+    }
+
+    const allowedTools = agentContext.role.allowedTools?.includes('*')
+      ? undefined
+      : ToolRegistry.getFilteredTools(agentContext.role.allowedTools).map((tool) => tool.name);
+    const disallowedTools = agentContext.role.blockedTools?.length
+      ? ToolRegistry.getFilteredTools(agentContext.role.blockedTools).map((tool) => tool.name)
+      : undefined;
+
+    return {
+      allowedTools: allowedTools && allowedTools.length > 0 ? allowedTools : undefined,
+      disallowedTools: disallowedTools && disallowedTools.length > 0 ? disallowedTools : undefined,
+    };
+  }
+
   constructor(
     _oauthManager: OAuthManager,
     options: AgentLoopOptions = {},
@@ -835,11 +856,15 @@ export class AgentLoop {
         const shouldResume = !sessionIsNew || turn > 1;
         // Both Claude PersistentCLI and Codex MCP preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
+        const structuralToolPermissions = this.resolveStructuralToolPermissions(
+          options?.agentContext
+        );
         const promptStart = Date.now();
         try {
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
+            ...structuralToolPermissions,
           });
           // Emit prompt latency metric
           this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
@@ -881,6 +906,7 @@ export class AgentLoop {
             piResult = await this.agent.prompt(promptText, callbacks, {
               model: options?.model,
               resumeSession: false, // Force new session
+              ...structuralToolPermissions,
             });
             // Prepend reset notice so user knows context was lost
             if (isPromptTooLong && piResult.response) {
