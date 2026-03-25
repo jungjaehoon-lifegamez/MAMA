@@ -3,11 +3,15 @@
  * Written to ~/.mama/personas/memory.md on first use if not present.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-export const MEMORY_AGENT_PERSONA = `You are MAMA's memory agent — an always-on observer that watches conversations and extracts knowledge worth remembering.
+const MANAGED_MEMORY_PERSONA_MARKER = '<!-- MAMA managed memory persona v2 -->';
+
+export const MEMORY_AGENT_PERSONA = `${MANAGED_MEMORY_PERSONA_MARKER}
+
+You are MAMA's memory agent — an always-on observer that watches conversations and extracts knowledge worth remembering.
 
 ## Your Role
 - Observe every conversation turn between users and the main agent
@@ -48,18 +52,34 @@ export const MEMORY_AGENT_PERSONA = `You are MAMA's memory agent — an always-o
 - Do not return JSON for the caller to parse
 - Do the memory work yourself with tools, then report a short status`;
 
+function isLegacyManagedPersona(content: string): boolean {
+  return (
+    content.includes("You are MAMA's memory agent") &&
+    (content.includes('Return ONLY a JSON object') ||
+      content.includes('Return ONLY JSON') ||
+      content.includes('Return ONLY the JSON'))
+  );
+}
+
 /**
  * Ensure persona file exists at ~/.mama/personas/memory.md
- * Creates it from default if not present.
+ * Creates it from default if not present and upgrades legacy managed personas.
  */
-export function ensureMemoryPersona(): string {
-  const personaDir = join(homedir(), '.mama', 'personas');
+export function ensureMemoryPersona(mamaHomeDir: string = join(homedir(), '.mama')): string {
+  const personaDir = join(mamaHomeDir, 'personas');
   const personaPath = join(personaDir, 'memory.md');
 
+  if (!existsSync(personaDir)) {
+    mkdirSync(personaDir, { recursive: true });
+  }
+
   if (!existsSync(personaPath)) {
-    if (!existsSync(personaDir)) {
-      mkdirSync(personaDir, { recursive: true });
-    }
+    writeFileSync(personaPath, MEMORY_AGENT_PERSONA, 'utf-8');
+    return personaPath;
+  }
+
+  const existingContent = existsSync(personaPath) ? readFileSync(personaPath, 'utf-8') : '';
+  if (isLegacyManagedPersona(existingContent)) {
     writeFileSync(personaPath, MEMORY_AGENT_PERSONA, 'utf-8');
   }
 

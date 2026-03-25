@@ -58,6 +58,7 @@ export class PersistentCLIAdapter implements IModelRunner {
       requestTimeout: options.requestTimeout,
       tools: options.tools,
       pluginDir: options.pluginDir,
+      allowedTools: options.allowedTools,
       disallowedTools: options.disallowedTools,
     });
   }
@@ -74,7 +75,12 @@ export class PersistentCLIAdapter implements IModelRunner {
   async prompt(
     content: string,
     callbacks?: PromptCallbacks,
-    options?: { model?: string; resumeSession?: boolean }
+    options?: {
+      model?: string;
+      resumeSession?: boolean;
+      allowedTools?: string[];
+      disallowedTools?: string[];
+    }
   ): Promise<PromptResult> {
     // Get or create process for this channel
     // NOTE: Do NOT pass sessionId here. The pool generates fresh randomUUID() for --session-id.
@@ -85,6 +91,8 @@ export class PersistentCLIAdapter implements IModelRunner {
       systemPrompt: this.options.systemPrompt,
       dangerouslySkipPermissions: this.options.dangerouslySkipPermissions,
       useGatewayTools: this.options.useGatewayTools,
+      allowedTools: options?.allowedTools || this.options.allowedTools,
+      disallowedTools: options?.disallowedTools || this.options.disallowedTools,
       env: { MAMA_HOOK_FEATURES: 'rules,agents' },
     });
 

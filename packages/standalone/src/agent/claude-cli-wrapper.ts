@@ -85,6 +85,8 @@ export interface ClaudeCLIWrapperOptions {
   pluginDir?: string;
   /** Structurally disallowed tools (--disallowedTools CLI flag) */
   disallowedTools?: string[];
+  /** Structurally allowed tools (--allowedTools CLI flag) */
+  allowedTools?: string[];
 }
 
 export type { PromptCallbacks, ToolUseBlock } from './types.js';
