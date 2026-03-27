@@ -49,6 +49,8 @@ export {
   updateDecisionOutcome,
   getPreparedStmt,
   getDbPath,
+  fts5Search,
+  reindexEmbeddings,
   type DatabaseAdapter as DBManagerAdapter,
   type PreparedStatement,
   type DecisionRecord,
@@ -86,6 +88,37 @@ export {
 // MAMA API
 import mama from './mama-api.js';
 export { mama };
+
+// Memory V2
+export {
+  MEMORY_SCOPE_KINDS,
+  MEMORY_KINDS,
+  MEMORY_STATUSES,
+  MEMORY_EDGE_TYPES,
+  createEmptyRecallBundle,
+  type MemoryScopeKind,
+  type MemoryKind,
+  type MemoryStatus,
+  type MemoryEdgeType,
+  type MemoryScopeRef,
+  type MemoryRecord,
+  type MemoryEdge,
+  type ProfileSnapshot,
+  type RecallBundle,
+} from './memory/types.js';
+export {
+  saveMemory,
+  recallMemory,
+  buildProfile,
+  ingestMemory,
+  evolveMemory,
+  buildMemoryBootstrap,
+  createAuditAck,
+  recordMemoryAudit,
+  upsertChannelSummary,
+  getChannelSummary,
+} from './memory/api.js';
+export { listRecentMemoryEvents } from './memory/event-store.js';
 
 // Config loader
 export {
