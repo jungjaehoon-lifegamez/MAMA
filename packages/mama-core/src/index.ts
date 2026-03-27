@@ -105,6 +105,10 @@ export {
   type MemoryEdge,
   type ProfileSnapshot,
   type RecallBundle,
+  type ConversationMessage,
+  type IngestConversationInput,
+  type ExtractedMemoryUnit,
+  type IngestConversationResult,
 } from './memory/types.js';
 export {
   saveMemory,
@@ -115,9 +119,12 @@ export {
   buildMemoryBootstrap,
   createAuditAck,
   recordMemoryAudit,
+  ingestConversation,
+  setExtractionFn,
   upsertChannelSummary,
   getChannelSummary,
 } from './memory/api.js';
+export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
 export { listRecentMemoryEvents } from './memory/event-store.js';
 
 // Config loader

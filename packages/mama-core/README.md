@@ -81,6 +81,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
   - `recallMemory(query, options)` - Truth-aware recall with scope filtering
   - `buildProfile(scopes)` - Build memory profile (static/dynamic/evidence)
   - `ingestMemory(input)` - Ingest raw content as memory
+  - `ingestConversation(input)` - Decompose conversations into typed memory units via optional LLM extraction
   - `evolveMemory(input)` - Resolve graph edges between memories
   - `buildMemoryBootstrap(params)` - Build memory agent bootstrap context
   - `createAuditAck(input)` - Create audit acknowledgment
@@ -93,6 +94,10 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 - **memory/evolution-engine** - Graph edge resolution
   - `resolveMemoryEvolution(input)` - Determine supersedes/builds_on edges
+
+- **memory/extraction-prompt** - LLM extraction for conversation ingestion
+  - `buildExtractionPrompt(messages)` - Build structured prompt for memory extraction
+  - `parseExtractionResponse(response)` - Parse LLM JSON response into typed units
 
 - **memory/channel-summary-state-store** - Channel state management
   - `recordChannelAudit(input)` - Accumulate audit outcomes into channel state
@@ -148,7 +153,7 @@ pnpm test:watch
 
 ## Test Coverage
 
-- 59 unit tests across 16 test files
+- 72 unit tests across 17 test files
 - 100% passing
 - Tests cover:
   - Config loader, database initialization, module exports
@@ -174,6 +179,7 @@ packages/mama-core/
 │       ├── types.ts          # MemoryRecord, MemoryScopeRef, RecallBundle, etc.
 │       ├── api.ts            # saveMemory, recallMemory, buildProfile, etc.
 │       ├── truth-store.ts    # Truth projection layer
+│       ├── extraction-prompt.ts  # LLM extraction prompt + parser
 │       ├── evolution-engine.ts  # Graph edge resolution
 │       ├── scope-store.ts    # Scope management
 │       ├── event-store.ts    # Audit event persistence
