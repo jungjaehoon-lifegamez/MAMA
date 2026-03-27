@@ -133,8 +133,11 @@ pnpm vitest run tests/commands/
 
 - **Database:** SQLite + pure-TS cosine similarity (no native extensions)
 - **Location:** `~/.claude/mama-memory.db` (configurable via MAMA_DB_PATH)
-- **Schema:** decisions table + embeddings table (BLOB storage)
+- **Schema:** decisions + embeddings (core), memory_scopes + memory_scope_bindings (scoping), memory_events + audit_findings (audit), memory_truth (truth projection), channel_summaries + channel_summary_state (channel state)
 - **Graph edges:** `supersedes`, `builds_on`, `debates`, `synthesizes` (v1.3), plus legacy `refines`/`contradicts`
+- **Memory API** (`packages/mama-core/src/memory/`): saveMemory, recallMemory, buildProfile, ingestMemory, evolveMemory, buildMemoryBootstrap, createAuditAck, recordMemoryAudit
+- **Scopes:** project, channel, user, global — memories are isolated per scope
+- **Truth projection:** historical records preserved, only current truth surfaced in recall
 
 ### Embeddings
 
