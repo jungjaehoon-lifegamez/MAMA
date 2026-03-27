@@ -73,12 +73,17 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 
 **Key Modules:**
 
-- `embeddings.js` - Transformers.js embedding generation
-- `db-manager.js` - SQLite database initialization
-- `memory-store.js` - Decision CRUD operations
-- `mama-api.js` - High-level API interface
+- `embeddings.ts` - Transformers.js embedding generation
+- `db-manager.ts` - SQLite database initialization and scope management
+- `memory-store.js` - Decision CRUD operations (legacy)
+- `mama-api.ts` - High-level API interface (wraps memory API)
 - `decision-tracker.js` - Decision graph management
 - `relevance-scorer.js` - Semantic similarity scoring
+- `memory/` - Scoped memory infrastructure:
+  - `api.ts` - saveMemory, recallMemory, buildProfile, evolveMemory
+  - `truth-store.ts` - Truth projection for recall filtering
+  - `evolution-engine.ts` - Automatic graph edge resolution
+  - `types.ts` - MemoryRecord, MemoryScopeRef, RecallBundle, ProfileSnapshot
 
 **Dependencies:**
 
