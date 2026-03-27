@@ -49,10 +49,13 @@ Track the **evolution**, not just the conclusion:
 Each decision is a node with:
 
 - **topic**: Decision identifier (e.g., 'auth_strategy')
-- **decision**: What was decided
-- **reasoning**: Why it was decided
+- **kind**: Memory type — `preference`, `fact`, `decision`, `lesson`, `constraint`
+- **decision**: What was decided (stored as `summary` in memory API)
+- **reasoning**: Why it was decided (stored as `details` in memory API)
 - **confidence**: 0.0-1.0
-- **outcome**: pending/success/failure/partial/superseded
+- **status**: `active`, `superseded`, `stale`, `quarantined`, `contradicted`
+- **scopes**: Isolation boundaries — `project`, `channel`, `user`, `global`
+- **outcome**: pending/success/failure/partial/superseded (legacy field)
 
 ### Edges (v1.3.0)
 
