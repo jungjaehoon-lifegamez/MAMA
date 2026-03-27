@@ -40,6 +40,19 @@ describe('memory-agent persona management', () => {
     expect(readFileSync(personaPath, 'utf-8')).toBe(MEMORY_AGENT_PERSONA);
   });
 
+  it('should upgrade v2 managed personas with soft tool instructions', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'mama-memory-persona-'));
+    const personaDir = join(homeDir, 'personas');
+    const personaPath = join(personaDir, 'memory.md');
+    mkdirSync(personaDir, { recursive: true });
+    const v2Persona = `<!-- MAMA managed memory persona v2 -->\n\nYou are MAMA's memory auditor...\n## Tool Workflow\n1. Use mama_search`;
+    writeFileSync(personaPath, v2Persona, 'utf-8');
+
+    ensureMemoryPersona(homeDir);
+
+    expect(readFileSync(personaPath, 'utf-8')).toBe(MEMORY_AGENT_PERSONA);
+  });
+
   it('should preserve custom personas that are not legacy managed files', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'mama-memory-persona-'));
     const personaDir = join(homeDir, 'personas');
@@ -57,6 +70,6 @@ describe('memory-agent persona management', () => {
   it('should define the memory agent as an auditor and curator', () => {
     expect(MEMORY_AGENT_PERSONA).toContain('memory auditor');
     expect(MEMORY_AGENT_PERSONA).toContain('current truth');
-    expect(MEMORY_AGENT_PERSONA).toContain('notify the main agent');
+    expect(MEMORY_AGENT_PERSONA).toContain('Notify the main agent');
   });
 });

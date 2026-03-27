@@ -2180,6 +2180,105 @@ export async function runAgentLoop(
     res.json(stats);
   });
 
+  // Memory Agent dashboard API — combines agent stats, memory stats, and channel summaries
+  apiServer.app.get('/api/memory-agent/dashboard', async (_req, res) => {
+    try {
+      // 1. Memory agent runtime stats
+      const agentStats = messageRouter.getMemoryAgentStats();
+
+      // 2. Memory DB stats (decisions, checkpoints, outcomes, topics)
+      const adapter = getAdapter();
+      const now = Date.now();
+      const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+      const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+      const totalRow = adapter.prepare('SELECT COUNT(*) as count FROM decisions').get() as
+        | { count: number }
+        | undefined;
+      const weekRow = adapter
+        .prepare('SELECT COUNT(*) as count FROM decisions WHERE created_at > ?')
+        .get(weekAgo) as { count: number } | undefined;
+      const monthRow = adapter
+        .prepare('SELECT COUNT(*) as count FROM decisions WHERE created_at > ?')
+        .get(monthAgo) as { count: number } | undefined;
+      const checkpointRow = adapter.prepare('SELECT COUNT(*) as count FROM checkpoints').get() as
+        | { count: number }
+        | undefined;
+
+      const outcomeRows = adapter
+        .prepare(
+          `SELECT outcome, COUNT(*) as count FROM decisions
+           WHERE outcome IS NOT NULL GROUP BY outcome`
+        )
+        .all() as Array<{ outcome: string | null; count: number }>;
+      const outcomes: Record<string, number> = {};
+      for (const row of outcomeRows) {
+        outcomes[row.outcome?.toLowerCase() ?? 'unknown'] = row.count;
+      }
+
+      const topTopics = adapter
+        .prepare(
+          `SELECT topic, COUNT(*) as count FROM decisions
+           WHERE topic IS NOT NULL GROUP BY topic ORDER BY count DESC LIMIT 10`
+        )
+        .all() as Array<{ topic: string; count: number }>;
+
+      // 3. Recent decisions (last 20)
+      const recentDecisions = adapter
+        .prepare(
+          `SELECT id, topic, decision, outcome, confidence, created_at
+           FROM decisions ORDER BY created_at DESC LIMIT 20`
+        )
+        .all() as Array<{
+        id: string;
+        topic: string;
+        decision: string;
+        outcome: string | null;
+        confidence: number | null;
+        created_at: number;
+      }>;
+
+      // 4. Channel summaries (from channel_summary_state table, if it exists)
+      let channelSummaries: Array<{
+        channelKey: string;
+        updatedAt: number;
+      }> = [];
+      try {
+        const rawSummaries = adapter
+          .prepare(
+            'SELECT channel_key, updated_at FROM channel_summary_state ORDER BY updated_at DESC LIMIT 20'
+          )
+          .all() as Array<{ channel_key: string; updated_at: number }>;
+        channelSummaries = rawSummaries.map((r) => ({
+          channelKey: r.channel_key,
+          updatedAt: r.updated_at,
+        }));
+      } catch {
+        // Table may not exist yet — not an error
+      }
+
+      res.json({
+        timestamp: new Date().toISOString(),
+        agent: agentStats,
+        memory: {
+          total: totalRow?.count ?? 0,
+          thisWeek: weekRow?.count ?? 0,
+          thisMonth: monthRow?.count ?? 0,
+          checkpoints: checkpointRow?.count ?? 0,
+          outcomes,
+          topTopics,
+        },
+        recentDecisions,
+        channelSummaries,
+      });
+    } catch (error) {
+      console.error('[memory-agent/dashboard] Error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   // Session API endpoints
   apiServer.app.get('/api/sessions/last-active', async (_req, res) => {
     try {
