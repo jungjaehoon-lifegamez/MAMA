@@ -5,7 +5,6 @@ import {
 } from '../../src/memory/extraction-prompt.js';
 import { ingestConversation, recallMemory, setExtractionFn } from '../../src/memory/api.js';
 import type { ConversationMessage } from '../../src/memory/types.js';
-import { parseExtractionResponse as _parseExtractionResponse } from '../../src/memory/extraction-prompt.js';
 import fs from 'node:fs';
 
 describe('extraction-prompt', () => {
