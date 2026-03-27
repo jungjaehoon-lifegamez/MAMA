@@ -11,6 +11,7 @@ import { classifyProfileEntries } from './profile-builder.js';
 import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
+import { warn } from '../debug-logger.js';
 import { projectMemoryTruth, queryRelevantTruth } from './truth-store.js';
 import { buildExtractionPrompt, parseExtractionResponse } from './extraction-prompt.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
@@ -549,11 +550,11 @@ export async function ingestConversation(
   try {
     const prompt = buildExtractionPrompt(input.messages);
     units = await extractionFn(prompt, input.extract);
-  } catch {
+  } catch (err) {
+    warn(`[memory] extraction failed: ${err instanceof Error ? err.message : String(err)}`);
     return result;
   }
 
-  await initDB();
   const adapter = getAdapter();
 
   for (const unit of units) {
@@ -581,8 +582,10 @@ export async function ingestConversation(
         kind: unit.kind,
         topic: unit.topic,
       });
-    } catch {
-      // Individual unit save failure is non-fatal
+    } catch (err) {
+      warn(
+        `[memory] failed to save extracted unit topic=${unit.topic} kind=${unit.kind}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 
