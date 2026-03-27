@@ -55,6 +55,12 @@ register({
   params: 'query?, type?, limit?',
 });
 register({
+  name: 'mama_recall',
+  description: 'Recall memory bundle with profile, memories, and graph context',
+  category: 'memory',
+  params: 'query, scopes?, includeProfile?',
+});
+register({
   name: 'mama_update',
   description: 'Update outcome',
   category: 'memory',
@@ -64,6 +70,18 @@ register({
   name: 'mama_load_checkpoint',
   description: 'Resume session. No params.',
   category: 'memory',
+});
+register({
+  name: 'mama_add',
+  description: 'Auto-extract and save facts from conversation content via Haiku',
+  category: 'memory',
+  params: 'content',
+});
+register({
+  name: 'mama_ingest',
+  description: 'Ingest raw content into memory v2',
+  category: 'memory',
+  params: 'content, scopes?, source?',
 });
 
 // Utility tools

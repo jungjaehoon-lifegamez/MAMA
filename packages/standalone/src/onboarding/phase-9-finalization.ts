@@ -238,7 +238,7 @@ Use confidence scores to indicate certainty:
 ls ~/.mama/
 
 # Check memory database
-sqlite3 ~/.claude/mama-memory.db "SELECT COUNT(*) FROM decisions;"
+sqlite3 ~/.mama/mama-memory.db "SELECT COUNT(*) FROM decisions;"
 \`\`\`
 
 ### Common Issues
@@ -249,7 +249,7 @@ sqlite3 ~/.claude/mama-memory.db "SELECT COUNT(*) FROM decisions;"
 3. Check bot is online
 
 **Memory not working:**
-1. Ensure database exists: \`~/.claude/mama-memory.db\`
+1. Ensure database exists: \`~/.mama/mama-memory.db\`
 2. Check file permissions
 3. Verify embedding server is running
 
@@ -270,7 +270,7 @@ sqlite3 ~/.claude/mama-memory.db "SELECT COUNT(*) FROM decisions;"
 
 - **MAMA Documentation**: See project README.md
 - **Profile Files**: \`~/.mama/\`
-- **Memory Database**: \`~/.claude/mama-memory.db\`
+- **Memory Database**: \`~/.mama/mama-memory.db\`
 - **Integration Examples**: See integrations.md
 
 ---
