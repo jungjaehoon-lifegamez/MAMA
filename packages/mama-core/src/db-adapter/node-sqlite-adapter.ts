@@ -173,6 +173,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       embedding: Uint8Array;
     }>;
 
+    const CACHE_WARN_THRESHOLD = 100_000;
     this.vectorCache.clear();
     for (const row of rows) {
       const vec = bytesToVector(row.embedding);
@@ -181,9 +182,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       }
     }
 
-    info(
-      `[node-sqlite-adapter] Vector cache loaded: ${this.vectorCache.size} embeddings in ${Date.now() - start}ms`
-    );
+    const count = this.vectorCache.size;
+    const elapsed = Date.now() - start;
+    info(`[node-sqlite-adapter] Vector cache loaded: ${count} embeddings in ${elapsed}ms`);
+    if (count > CACHE_WARN_THRESHOLD) {
+      warn(
+        `[node-sqlite-adapter] Vector cache holds ${count} embeddings — consider LRU eviction or on-demand loading for large datasets`
+      );
+    }
   }
 
   disconnect(): void {

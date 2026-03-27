@@ -1081,6 +1081,7 @@ interface SearchCandidate {
   final_score?: number;
   outcome?: string | null;
   failure_reason?: string | null;
+  is_static?: number;
 }
 
 async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCandidate[]> {
@@ -1557,14 +1558,12 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       // Stage 2.5: is_static boost (after graph expansion to preserve sort order)
       for (const result of results) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if ((result as any).is_static === 1) {
+        if (result.is_static === 1) {
           result.similarity = Math.min(1.0, (result.similarity || 0) + 0.2);
         }
       }
       // Re-sort after is_static boost
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      results.sort((a: any, b: any) => (b.similarity || 0) - (a.similarity || 0));
+      results.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
     } catch (vectorError: unknown) {
       // Fallback to keyword search if vector search unavailable
       logWarn(
