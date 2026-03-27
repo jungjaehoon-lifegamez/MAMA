@@ -5,7 +5,6 @@ import {
   insertDecisionWithEmbedding,
   ensureMemoryScope,
   bindMemoryToScope,
-  listScopesForMemory,
   vectorSearch,
 } from '../db-manager.js';
 import { generateEmbedding } from '../embeddings.js';
@@ -86,13 +85,6 @@ function toMemoryRecord(
   };
 }
 
-function toScopeRefs(scopes: Array<{ kind: string; id: string }>): MemoryScopeRef[] {
-  return scopes.map((scope) => ({
-    kind: scope.kind as MemoryScopeKind,
-    id: scope.id,
-  }));
-}
-
 function truthRowToMemoryRecord(row: MemoryTruthRow): MemoryRecord {
   return {
     id: row.memory_id,
@@ -112,12 +104,43 @@ function truthRowToMemoryRecord(row: MemoryTruthRow): MemoryRecord {
   };
 }
 
+function batchLoadScopes(
+  adapter: ReturnType<typeof getAdapter>,
+  memoryIds: string[]
+): Map<string, MemoryScopeRef[]> {
+  const scopeMap = new Map<string, MemoryScopeRef[]>();
+  if (memoryIds.length === 0) return scopeMap;
+
+  const placeholders = memoryIds.map(() => '?').join(', ');
+  const rows = adapter
+    .prepare(
+      `
+        SELECT msb.memory_id, ms.kind, ms.external_id
+        FROM memory_scope_bindings msb
+        JOIN memory_scopes ms ON ms.id = msb.scope_id
+        WHERE msb.memory_id IN (${placeholders})
+        ORDER BY msb.is_primary DESC
+      `
+    )
+    .all(...memoryIds) as Array<{ memory_id: string; kind: string; external_id: string }>;
+
+  for (const row of rows) {
+    const existing = scopeMap.get(row.memory_id) ?? [];
+    existing.push({ kind: row.kind as MemoryScopeKind, id: row.external_id });
+    scopeMap.set(row.memory_id, existing);
+  }
+  return scopeMap;
+}
+
 async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecord[]> {
   await initDB();
   const adapter = getAdapter();
+  const fallbackSource: SaveMemoryInput['source'] = { package: 'mama-core', source_type: 'db' };
+
+  let rows: Record<string, unknown>[];
 
   if (scopes.length === 0) {
-    const rows = adapter
+    rows = adapter
       .prepare(
         `
           SELECT id, topic, decision, reasoning, confidence, created_at, updated_at, trust_context,
@@ -127,42 +150,29 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
         `
       )
       .all() as Record<string, unknown>[];
-
-    return Promise.all(
-      rows.map(async (row) =>
-        toMemoryRecord(row, toScopeRefs(await listScopesForMemory(String(row.id))), {
-          package: 'mama-core',
-          source_type: 'db',
-        })
-      )
+  } else {
+    const scopeIds = await Promise.all(
+      scopes.map((scope) => ensureMemoryScope(scope.kind, scope.id))
     );
+    const placeholders = scopeIds.map(() => '?').join(', ');
+    rows = adapter
+      .prepare(
+        `
+          SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.confidence, d.created_at,
+                 d.updated_at, d.trust_context, d.kind, d.status, d.summary
+          FROM decisions d
+          JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+          WHERE msb.scope_id IN (${placeholders})
+          ORDER BY d.created_at DESC
+        `
+      )
+      .all(...scopeIds) as Record<string, unknown>[];
   }
 
-  const scopeIds = await Promise.all(
-    scopes.map((scope) => ensureMemoryScope(scope.kind, scope.id))
-  );
-  const placeholders = scopeIds.map(() => '?').join(', ');
-  const rows = adapter
-    .prepare(
-      `
-        SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.confidence, d.created_at,
-               d.updated_at, d.trust_context, d.kind, d.status, d.summary
-        FROM decisions d
-        JOIN memory_scope_bindings msb ON msb.memory_id = d.id
-        WHERE msb.scope_id IN (${placeholders})
-        ORDER BY d.created_at DESC
-      `
-    )
-    .all(...scopeIds) as Record<string, unknown>[];
+  const memoryIds = rows.map((row) => String(row.id));
+  const scopeMap = batchLoadScopes(adapter, memoryIds);
 
-  return Promise.all(
-    rows.map(async (row) =>
-      toMemoryRecord(row, toScopeRefs(await listScopesForMemory(String(row.id))), {
-        package: 'mama-core',
-        source_type: 'db',
-      })
-    )
-  );
+  return rows.map((row) => toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource));
 }
 
 export async function saveMemory(
