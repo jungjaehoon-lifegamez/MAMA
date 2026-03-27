@@ -43,6 +43,7 @@ export interface DatabaseAdapter {
     limit: number
   ) => Promise<VectorSearchResult[] | null>;
   vectorSearchEnabled: boolean;
+  reloadVectorCache?: () => void;
   getDbPath?: () => string;
   dbPath?: string;
   constructor: { name: string };
@@ -169,6 +170,11 @@ export async function initDB(): Promise<unknown> {
 
       // Run migrations (includes 012-create-checkpoints-table.sql)
       await dbAdapter.runMigrations(MIGRATIONS_DIR);
+
+      // Reload vector cache after migrations (new tables/rows may now exist)
+      if (typeof dbAdapter.reloadVectorCache === 'function') {
+        dbAdapter.reloadVectorCache();
+      }
 
       isInitialized = true;
 

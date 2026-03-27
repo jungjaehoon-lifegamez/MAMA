@@ -158,6 +158,10 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     return this.db;
   }
 
+  reloadVectorCache(): void {
+    this.loadVectorCache();
+  }
+
   private loadVectorCache(): void {
     if (!this.db) return;
 

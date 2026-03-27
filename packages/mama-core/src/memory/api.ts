@@ -99,8 +99,8 @@ function truthRowToMemoryRecord(row: MemoryTruthRow): MemoryRecord {
       package: 'mama-core',
       source_type: 'truth_projection',
     },
-    created_at: Date.now(),
-    updated_at: Date.now(),
+    created_at: row.created_at ?? Date.now(),
+    updated_at: row.updated_at ?? row.created_at ?? Date.now(),
   };
 }
 
@@ -183,9 +183,25 @@ export async function saveMemory(
 
   const id = buildDecisionId(input.topic);
   const now = Date.now();
-  const evolution = resolveMemoryEvolution({
-    incoming: { topic: input.topic, summary: input.summary },
-    existing: adapter
+  // Filter evolution candidates by primary scope to prevent cross-scope superseding
+  const primaryScope = input.scopes.length > 0 ? input.scopes[0] : null;
+  let existingCandidates: Array<{ id: string; topic: string; summary: string }>;
+  if (primaryScope) {
+    const scopeId = await ensureMemoryScope(primaryScope.kind, primaryScope.id);
+    existingCandidates = adapter
+      .prepare(
+        `
+          SELECT d.id, d.topic, d.summary
+          FROM decisions d
+          JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+          WHERE d.topic = ? AND msb.scope_id = ?
+          ORDER BY d.created_at DESC
+          LIMIT 5
+        `
+      )
+      .all(input.topic, scopeId) as Array<{ id: string; topic: string; summary: string }>;
+  } else {
+    existingCandidates = adapter
       .prepare(
         `
           SELECT id, topic, summary
@@ -195,7 +211,11 @@ export async function saveMemory(
           LIMIT 5
         `
       )
-      .all(input.topic) as Array<{ id: string; topic: string; summary: string }>,
+      .all(input.topic) as Array<{ id: string; topic: string; summary: string }>;
+  }
+  const evolution = resolveMemoryEvolution({
+    incoming: { topic: input.topic, summary: input.summary },
+    existing: existingCandidates,
   });
   const supersedesTarget =
     evolution.edges.find((edge) => edge.type === 'supersedes')?.to_id ?? null;
@@ -304,10 +324,12 @@ export async function recallMemory(
         'stale',
       ]);
 
+      // TODO: Filter vector results by options.scopes for scope-aware fallback
       for (const result of vectorResults as Array<
-        (typeof vectorResults)[number] & { similarity?: number }
+        (typeof vectorResults)[number] & { similarity?: number; status?: string }
       >) {
-        if (!options.includeHistory && result.outcome && EXCLUDED_STATUSES.has(result.outcome)) {
+        const effectiveStatus = (result.status as string) || (result.outcome as string) || '';
+        if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
           continue;
         }
         matched.push({
@@ -317,7 +339,7 @@ export async function recallMemory(
           summary: String(result.decision || ''),
           details: String(result.reasoning || ''),
           confidence: (result as { similarity?: number }).similarity ?? 0.5,
-          status: (result.outcome as MemoryStatus) ?? 'active',
+          status: (effectiveStatus as MemoryStatus) || 'active',
           scopes: [],
           source: { package: 'mama-core', source_type: 'vector_search' },
           created_at: result.created_at ?? Date.now(),
