@@ -1366,8 +1366,19 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
   try {
     const bundle = await recallMemory(userQuestion, { includeProfile: false });
     if (bundle.memories.length > 0) {
+      // Apply threshold filtering if configured
+      let filteredMemories = bundle.memories;
+      if (threshold) {
+        filteredMemories = filteredMemories.filter(
+          (memory) => (memory.confidence ?? 1) >= threshold
+        );
+      }
+
+      // Apply limit
+      filteredMemories = filteredMemories.slice(0, limit);
+
       if (format === 'markdown') {
-        const context = bundle.memories
+        const context = filteredMemories
           .map(
             (memory, index) =>
               `${index + 1}. [${memory.topic}] ${memory.summary}\n   ${memory.details}`
@@ -1378,7 +1389,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: bundle.memories.map((memory) => ({
+        results: filteredMemories.map((memory) => ({
           id: memory.id,
           topic: memory.topic,
           decision: memory.summary,
@@ -1392,7 +1403,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
           edge_reason: null,
         })),
         meta: {
-          count: bundle.memories.length,
+          count: filteredMemories.length,
           search_method: 'memory_v2',
           threshold: threshold || 'adaptive',
           recency_boost: disableRecency
@@ -1403,7 +1414,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
                 decay: recencyDecay,
               },
           graph_expansion: {
-            total_results: bundle.memories.length,
+            total_results: filteredMemories.length,
             primary_count: bundle.graph_context.primary.length,
             expanded_count: bundle.graph_context.expanded.length,
             sources: {
@@ -1559,11 +1570,13 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       // Stage 2.5: is_static boost (after graph expansion to preserve sort order)
       for (const result of results) {
         if (result.is_static === 1) {
-          result.similarity = Math.min(1.0, (result.similarity || 0) + 0.2);
+          result.final_score = Math.min(1.0, (result.final_score ?? result.similarity ?? 0) + 0.2);
         }
       }
-      // Re-sort after is_static boost
-      results.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+      // Re-sort by final_score after is_static boost
+      results.sort(
+        (a, b) => (b.final_score ?? b.similarity ?? 0) - (a.final_score ?? a.similarity ?? 0)
+      );
     } catch (vectorError: unknown) {
       // Fallback to keyword search if vector search unavailable
       logWarn(

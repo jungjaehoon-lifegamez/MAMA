@@ -3,14 +3,22 @@ import crypto from 'node:crypto';
 import { getAdapter, initDB } from '../db-manager.js';
 import type { AuditFindingRecord } from './types.js';
 
+function safeParseJsonArray(value: unknown): string[] {
+  try {
+    return JSON.parse(String(value)) as string[];
+  } catch {
+    return [];
+  }
+}
+
 function deserializeFinding(row: Record<string, unknown>): AuditFindingRecord {
   return {
     finding_id: String(row.finding_id),
     kind: row.kind as AuditFindingRecord['kind'],
     severity: row.severity as AuditFindingRecord['severity'],
     summary: String(row.summary),
-    evidence_refs: JSON.parse(String(row.evidence_refs)) as string[],
-    affected_memory_ids: JSON.parse(String(row.affected_memory_ids)) as string[],
+    evidence_refs: safeParseJsonArray(row.evidence_refs),
+    affected_memory_ids: safeParseJsonArray(row.affected_memory_ids),
     recommended_action: String(row.recommended_action),
     status: row.status as AuditFindingRecord['status'],
     created_at: Number(row.created_at),

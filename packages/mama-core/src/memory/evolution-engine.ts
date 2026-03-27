@@ -9,18 +9,77 @@ export interface EvolutionResult {
   edges: MemoryEdge[];
 }
 
+const STOP_WORDS = new Set([
+  'the',
+  'is',
+  'a',
+  'an',
+  'to',
+  'in',
+  'on',
+  'of',
+  'for',
+  'and',
+  'or',
+  'but',
+  'it',
+  'we',
+  'i',
+  'this',
+  'that',
+  'with',
+  'as',
+  'at',
+  'by',
+  'from',
+  'be',
+  'are',
+  'was',
+  'were',
+  'been',
+  'has',
+  'have',
+  'had',
+  'do',
+  'does',
+  'did',
+  'will',
+  'would',
+  'can',
+  'could',
+  'should',
+  'not',
+  'no',
+  'so',
+  'if',
+  'up',
+  'out',
+  'all',
+  'its',
+]);
+
+const MIN_TOKEN_LENGTH = 3;
+const MIN_SHARED_TOKENS = 2;
+
 function hasSharedToken(left: string, right: string): boolean {
   const leftTokens = new Set(
     left
       .toLowerCase()
       .split(/[^a-z0-9_]+/)
-      .filter(Boolean)
+      .filter((t) => t.length >= MIN_TOKEN_LENGTH && !STOP_WORDS.has(t))
   );
   const rightTokens = right
     .toLowerCase()
     .split(/[^a-z0-9_]+/)
-    .filter(Boolean);
-  return rightTokens.some((token) => leftTokens.has(token));
+    .filter((t) => t.length >= MIN_TOKEN_LENGTH && !STOP_WORDS.has(t));
+  let shared = 0;
+  for (const token of rightTokens) {
+    if (leftTokens.has(token)) {
+      shared++;
+      if (shared >= MIN_SHARED_TOKENS) return true;
+    }
+  }
+  return false;
 }
 
 export function resolveMemoryEvolution(input: EvolutionInput): EvolutionResult {
