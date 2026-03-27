@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 
-import { createAuditFinding, listOpenAuditFindings } from '../../src/memory-v2/finding-store.js';
+import { createAuditFinding, listOpenAuditFindings } from '../../src/memory/finding-store.js';
 
 const TEST_DB = '/tmp/test-memory-v2-finding-store.db';
 

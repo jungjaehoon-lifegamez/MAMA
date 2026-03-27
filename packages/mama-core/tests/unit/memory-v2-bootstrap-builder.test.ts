@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 
-import { buildMemoryAgentBootstrap } from '../../src/memory-v2/bootstrap-builder.js';
-import { createAuditFinding } from '../../src/memory-v2/finding-store.js';
-import { appendMemoryEvent } from '../../src/memory-v2/event-store.js';
-import { projectMemoryTruth } from '../../src/memory-v2/truth-store.js';
-import { upsertChannelSummary } from '../../src/memory-v2/channel-summary-store.js';
+import { buildMemoryAgentBootstrap } from '../../src/memory/bootstrap-builder.js';
+import { createAuditFinding } from '../../src/memory/finding-store.js';
+import { appendMemoryEvent } from '../../src/memory/event-store.js';
+import { projectMemoryTruth } from '../../src/memory/truth-store.js';
+import { upsertChannelSummary } from '../../src/memory/channel-summary-store.js';
 
 const TEST_DB = '/tmp/test-memory-v2-bootstrap-builder.db';
 

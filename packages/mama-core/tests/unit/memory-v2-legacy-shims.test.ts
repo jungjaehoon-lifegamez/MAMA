@@ -25,7 +25,7 @@ const recallMemoryMock = vi.fn(async () => ({
   search_meta: { query: 'legacy save', scope_order: ['project'], retrieval_sources: ['sql_like'] },
 }));
 
-vi.mock('../../src/memory-v2/api.js', () => ({
+vi.mock('../../src/memory/api.js', () => ({
   saveMemory: saveMemoryMock,
   recallMemory: recallMemoryMock,
   buildProfile: vi.fn(),

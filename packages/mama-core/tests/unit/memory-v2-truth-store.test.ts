@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 
-import { projectMemoryTruth, queryTruthByTopic } from '../../src/memory-v2/truth-store.js';
+import { projectMemoryTruth, queryTruthByTopic } from '../../src/memory/truth-store.js';
 
 const TEST_DB = '/tmp/test-memory-v2-truth-store.db';
 

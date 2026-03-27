@@ -105,7 +105,7 @@ export {
   type MemoryEdge,
   type ProfileSnapshot,
   type RecallBundle,
-} from './memory-v2/types.js';
+} from './memory/types.js';
 export {
   saveMemory,
   recallMemory,
@@ -117,8 +117,8 @@ export {
   recordMemoryAudit,
   upsertChannelSummary,
   getChannelSummary,
-} from './memory-v2/api.js';
-export { listRecentMemoryEvents } from './memory-v2/event-store.js';
+} from './memory/api.js';
+export { listRecentMemoryEvents } from './memory/event-store.js';
 
 // Config loader
 export {
