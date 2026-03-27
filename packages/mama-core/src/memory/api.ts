@@ -556,6 +556,8 @@ export async function ingestConversation(
   }
 
   const adapter = getAdapter();
+  const EXTRACTION_EDGE_RELATIONSHIP = 'builds_on';
+  const EXTRACTION_EDGE_REASON = 'Extracted from conversation';
 
   for (const unit of units) {
     try {
@@ -575,7 +577,14 @@ export async function ingestConversation(
           `INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
            VALUES (?, ?, ?, ?, ?, ?)`
         )
-        .run(saved.id, rawResult.id, 'builds_on', 'Extracted from conversation', 1.0, now);
+        .run(
+          saved.id,
+          rawResult.id,
+          EXTRACTION_EDGE_RELATIONSHIP,
+          EXTRACTION_EDGE_REASON,
+          1.0,
+          now
+        );
 
       result.extractedMemories.push({
         id: saved.id,
