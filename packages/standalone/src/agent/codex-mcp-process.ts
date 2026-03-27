@@ -113,8 +113,8 @@ export class CodexMCPProcess extends EventEmitter {
     }
     logger.info(`Starting Codex MCP server with command: ${command}`);
 
-    // Force CODEX_HOME to MAMA-internal directory so Codex ignores global ~/.codex/config.toml
-    const codexHome = this.options.codexHome || join(homedir(), '.mama', '.codex');
+    // Use system CODEX_HOME so auth tokens stay in sync with user's codex CLI
+    const codexHome = this.options.codexHome || join(homedir(), '.codex');
     try {
       this.ensureCodexHome(codexHome);
     } catch (error) {
