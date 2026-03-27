@@ -25,19 +25,34 @@ import os from 'os';
 import crypto from 'crypto';
 
 // Internal modules
-import { learnDecision, createEdgesFromReasoning, DecisionDetection } from './decision-tracker.js';
-import { DecisionRecord, SemanticEdgeItem } from './db-manager.js';
+import { createEdgesFromReasoning } from './decision-tracker.js';
+import { DecisionRecord, SemanticEdgeItem, fts5Search } from './db-manager.js';
 import {
   queryDecisionGraph,
   querySemanticEdges,
   getAdapter,
   vectorSearch,
 } from './memory-store.js';
+import { initDB } from './db-manager.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
 import { logProgress, logComplete, logSearching } from './progress-indicator.js';
 import { generateEmbedding } from './embeddings.js';
 import { generate } from './ollama-client.js';
 import { warn as logWarn, error as logError } from './debug-logger.js';
+import {
+  saveMemory,
+  recallMemory,
+  buildProfile,
+  ingestMemory,
+  evolveMemory,
+  buildMemoryBootstrap,
+  createAuditAck,
+  recordMemoryAudit,
+  upsertChannelSummary,
+  getChannelSummary,
+} from './memory-v2/api.js';
+import { listOpenAuditFindings } from './memory-v2/finding-store.js';
+import { listRecentMemoryEvents } from './memory-v2/event-store.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -56,6 +71,7 @@ interface SaveParams {
   failure_reason?: string | null;
   limitation?: string | null;
   trust_context?: Record<string, unknown> | null;
+  is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
 }
 
 /**
@@ -478,7 +494,8 @@ async function save({
   outcome = 'pending',
   failure_reason = null,
   limitation = null,
-  trust_context = null,
+  trust_context: _trust_context = null,
+  is_static,
 }: SaveParams): Promise<SaveResult> {
   // Validate required fields
   if (!topic || typeof topic !== 'string') {
@@ -514,42 +531,24 @@ async function save({
   // Future: Will use decision_type column for proper distinction
   const _userInvolvement = type === 'user_decision' ? 'approved' : null;
 
-  // Create detection object for learnDecision()
-  // Convert null to undefined for type compatibility
-  const detection: DecisionDetection = {
-    topic,
-    decision,
-    reasoning,
-    confidence,
-    trust_context: trust_context ?? undefined,
-  };
-
-  // Create tool execution context
-  // Use current timestamp and generate session ID
-  const sessionId = `mama_api_${Date.now()}`;
-  const toolExecution = {
-    tool_name: 'mama.save',
-    tool_input: { topic, decision },
-    exit_code: 0,
-    session_id: sessionId,
-    timestamp: Date.now(),
-  };
-
-  // Create session context
-  const sessionContext = {
-    session_id: sessionId,
-    latest_user_message: `Save ${type}: ${topic}`,
-    recent_exchange: `Claude: ${reasoning.substring(0, 100)}...`,
-  };
-
-  // Call internal learnDecision function
-  // Note: learnDecision returns { decisionId, notification }
   logProgress(`Saving decision: ${topic.substring(0, 30)}...`);
-  const { decisionId } = await learnDecision(detection, toolExecution, sessionContext);
+  const { id: decisionId } = await saveMemory({
+    topic,
+    kind: is_static === 1 ? 'preference' : 'decision',
+    summary: decision,
+    details: reasoning,
+    confidence,
+    scopes: [],
+    source: {
+      package: 'mama-core',
+      source_type: 'legacy_save',
+    },
+  });
   logComplete(`Decision saved: ${decisionId.substring(0, 20)}...`);
 
   // Update user_involvement, outcome, failure_reason, limitation
   // Note: learnDecision always sets 'requested', we need to override it
+  await initDB();
   const adapter = getAdapter();
 
   // Build UPDATE query dynamically based on what fields are provided
@@ -590,6 +589,12 @@ async function save({
   if (limitation) {
     updates.push('limitation = ?');
     values.push(limitation);
+  }
+
+  // is_static (user profile marker)
+  if (is_static !== undefined) {
+    updates.push('is_static = ?');
+    values.push(is_static);
   }
 
   // Execute UPDATE if we have any fields to update
@@ -1358,6 +1363,60 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
   } = options;
 
   try {
+    const bundle = await recallMemory(userQuestion, { includeProfile: false });
+    if (bundle.memories.length > 0) {
+      if (format === 'markdown') {
+        const context = bundle.memories
+          .map(
+            (memory, index) =>
+              `${index + 1}. [${memory.topic}] ${memory.summary}\n   ${memory.details}`
+          )
+          .join('\n');
+        return `🔍 Search method: memory_v2\n${context}`;
+      }
+
+      return {
+        query: userQuestion,
+        results: bundle.memories.map((memory) => ({
+          id: memory.id,
+          topic: memory.topic,
+          decision: memory.summary,
+          reasoning: memory.details,
+          confidence: memory.confidence,
+          similarity: 1,
+          created_at: memory.created_at,
+          graph_source: 'primary',
+          graph_rank: 1,
+          related_to: null,
+          edge_reason: null,
+        })),
+        meta: {
+          count: bundle.memories.length,
+          search_method: 'memory_v2',
+          threshold: threshold || 'adaptive',
+          recency_boost: disableRecency
+            ? null
+            : {
+                weight: recencyWeight,
+                scale: recencyScale,
+                decay: recencyDecay,
+              },
+          graph_expansion: {
+            total_results: bundle.memories.length,
+            primary_count: bundle.graph_context.primary.length,
+            expanded_count: bundle.graph_context.expanded.length,
+            sources: {
+              primary: bundle.graph_context.primary.length,
+              supersedes_chain: 0,
+              refines: 0,
+              refined_by: 0,
+              contradicts: 0,
+            },
+          },
+        },
+      };
+    }
+
     // 1. Try vector search first (if sqlite-vss is available)
     // eslint-disable-next-line no-unused-vars, @typescript-eslint/no-explicit-any
     let results: any[] = [];
@@ -1382,6 +1441,43 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       // Filter by adaptive threshold
       results = results.filter((r) => r.similarity >= adaptiveThreshold);
 
+      // Stage 1.4: Temporal boost — detect time-related queries and boost matching results
+      {
+        const temporalPatterns = [
+          // English
+          /\b(yesterday|today|last\s+(?:week|month|year)|(\d+)\s+(?:days?|weeks?|months?)\s+ago)\b/i,
+          /\b(before|after|since|until|during)\s+\w+/i,
+          /\b(how\s+long|when\s+did|what\s+date|what\s+day)\b/i,
+          // Korean
+          /(?:어제|오늘|그제|지난\s*(?:주|달|해)|(\d+)\s*(?:일|주|달|개월)\s*(?:전|후|뒤))/,
+          /(?:언제|얼마나|며칠|몇\s*(?:일|주|달|개월))/,
+        ];
+        const isTemporalQuery = temporalPatterns.some((p) => p.test(userQuestion));
+
+        if (isTemporalQuery && results.length > 0) {
+          // Boost results that contain date/time references in their content
+          const datePatterns = [
+            /\d{4}[-/]\d{1,2}[-/]\d{1,2}/,
+            /(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d/i,
+            /\d+\s*(?:일|월|년|주|시간|분)/,
+            /(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
+            /(?:월요일|화요일|수요일|목요일|금요일|토요일|일요일)/,
+          ];
+
+          for (const result of results) {
+            const content = `${result.decision || ''} ${result.reasoning || ''}`;
+            const hasDateRef = datePatterns.some((p) => p.test(content));
+            if (hasDateRef) {
+              result.similarity = Math.min(1.0, (result.similarity || 0) + 0.1);
+            }
+          }
+          results.sort(
+            (a: { similarity?: number }, b: { similarity?: number }) =>
+              (b.similarity || 0) - (a.similarity || 0)
+          );
+        }
+      }
+
       // Stage 1.5: Apply recency boosting (Gaussian Decay)
       // Allows Claude to adjust search strategy (recent vs historical)
       if (results.length > 0 && !disableRecency) {
@@ -1394,6 +1490,63 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         searchMethod = 'vector+recency';
       }
 
+      // Stage 1.7: FTS5 hybrid merge (Haiku Memory Layer)
+      {
+        try {
+          const ftsResults = await fts5Search(userQuestion, limit * 2);
+          if (ftsResults.length > 0) {
+            // Normalize FTS5 ranks (BM25 returns negative values, closer to 0 = better)
+            const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
+            const ftsMap = new Map(
+              ftsResults.map((r) => [r.id, maxRank > 0 ? 1 - Math.abs(r.rank) / maxRank : 0.5])
+            );
+
+            // Tunable hybrid weights (env: MAMA_VECTOR_WEIGHT, MAMA_FTS5_WEIGHT)
+            const vectorWeight = parseFloat(process.env.MAMA_VECTOR_WEIGHT || '0.6');
+            const fts5Weight = parseFloat(process.env.MAMA_FTS5_WEIGHT || '0.4');
+
+            // Merge: boost existing results that also matched FTS5
+            for (const result of results) {
+              const ftsScore = ftsMap.get(result.id);
+              if (ftsScore !== undefined) {
+                result.similarity = vectorWeight * result.similarity + fts5Weight * ftsScore;
+                ftsMap.delete(result.id);
+              }
+            }
+
+            // Add FTS5-only results (not in embedding results)
+            for (const [id, ftsScore] of ftsMap) {
+              const ftsResult = ftsResults.find((r) => r.id === id);
+              if (ftsResult) {
+                // Need to get full decision record
+                const adapter = getAdapter();
+                const stmt = adapter.prepare(
+                  'SELECT * FROM decisions WHERE id = ? AND superseded_by IS NULL'
+                );
+                const decision = stmt.get(id) as DecisionRecord | undefined;
+                if (decision) {
+                  results.push({
+                    ...decision,
+                    similarity: fts5Weight * ftsScore, // Only FTS5 score component
+                    graph_source: 'fts5',
+                  });
+                }
+              }
+            }
+
+            // Re-sort by similarity
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            results.sort(
+              (a: { similarity?: number }, b: { similarity?: number }) =>
+                (b.similarity || 0) - (a.similarity || 0)
+            );
+            searchMethod = disableRecency ? 'vector+fts5' : 'vector+recency+fts5';
+          }
+        } catch {
+          // FTS5 not available, continue with embedding-only results
+        }
+      }
+
       // Stage 2: Graph expansion (NEW - Phase 1)
       // Expand candidates with supersedes chain and semantic edges
       if (results.length > 0) {
@@ -1401,6 +1554,17 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         results = graphEnhanced;
         searchMethod = disableRecency ? 'vector+graph' : 'vector+recency+graph';
       }
+
+      // Stage 2.5: is_static boost (after graph expansion to preserve sort order)
+      for (const result of results) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((result as any).is_static === 1) {
+          result.similarity = Math.min(1.0, (result.similarity || 0) + 0.2);
+        }
+      }
+      // Re-sort after is_static boost
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      results.sort((a: any, b: any) => (b.similarity || 0) - (a.similarity || 0));
     } catch (vectorError: unknown) {
       // Fallback to keyword search if vector search unavailable
       logWarn(
@@ -3285,9 +3449,21 @@ const mama = {
   // Core functions (used by 4 MCP tools)
   save,
   suggest,
+  saveMemory,
+  recallMemory,
   list: listDecisions,
   listCheckpoints,
   updateOutcome,
+  buildProfile,
+  ingestMemory,
+  evolveMemory,
+  buildMemoryBootstrap,
+  createAuditAck,
+  recordMemoryAudit,
+  upsertChannelSummary,
+  getChannelSummary,
+  listAuditFindings: listOpenAuditFindings,
+  listRecentMemoryEvents,
   saveCheckpoint,
   loadCheckpoint,
   // Legacy functions (retained for internal use, not exposed via MCP)
@@ -3317,9 +3493,21 @@ const mama = {
 export {
   save,
   suggest,
+  saveMemory,
+  recallMemory,
   listDecisions as list,
   listCheckpoints,
   updateOutcome,
+  buildProfile,
+  ingestMemory,
+  evolveMemory,
+  buildMemoryBootstrap,
+  createAuditAck,
+  recordMemoryAudit,
+  upsertChannelSummary,
+  getChannelSummary,
+  listOpenAuditFindings,
+  listRecentMemoryEvents,
   saveCheckpoint,
   loadCheckpoint,
   recall,

@@ -29,7 +29,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/**/*.test.js'],
+    include: ['tests/**/*.test.{js,ts}'],
     testTimeout: 30000,
     pool: 'forks',
     poolOptions: {

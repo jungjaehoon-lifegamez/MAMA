@@ -46,7 +46,7 @@ export const DEFAULT_DB_PATH: string =
 export const CREATE_SESSIONS_TABLE: string = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
-    project_dir TEXT NOT NULL,
+    project_path TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     last_active TEXT DEFAULT (datetime('now')),
     status TEXT DEFAULT 'active',
@@ -67,7 +67,7 @@ const CREATE_STATUS_INDEX: string = `
  */
 interface SessionRow {
   id: string;
-  project_dir: string;
+  project_path: string;
   started_at?: string;
   created_at?: string;
   last_active_at?: string;
@@ -154,6 +154,15 @@ export class SessionManager {
       this.db.exec(CREATE_SESSIONS_TABLE);
       this.db.exec(CREATE_STATUS_INDEX);
 
+      // Add missing columns for older databases
+      for (const col of ['pid INTEGER', 'client_id TEXT']) {
+        try {
+          this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
+        } catch {
+          // Column already exists
+        }
+      }
+
       // Mark any orphaned 'active' sessions as 'terminated'
       // (from previous server crashes)
       this.db
@@ -200,7 +209,7 @@ export class SessionManager {
 
       // Insert into database
       const stmt = this.db!.prepare(`
-        INSERT INTO sessions (id, project_dir, status, pid)
+        INSERT INTO sessions (id, project_path, status, pid)
         VALUES (?, ?, 'active', ?)
       `);
       stmt.run(sessionId, projectDir, daemon.getPid());
@@ -238,7 +247,7 @@ export class SessionManager {
     }
 
     const stmt = this.db!.prepare(`
-      SELECT id, project_dir, started_at, last_active_at, status, pid, client_id
+      SELECT id, project_path, started_at, last_active_at, status, pid, client_id
       FROM sessions
       WHERE status = 'active'
       ORDER BY started_at DESC
@@ -251,7 +260,7 @@ export class SessionManager {
       const memSession = this.sessions.get(row.id);
       return {
         id: row.id,
-        projectDir: row.project_dir,
+        projectDir: row.project_path,
         createdAt: row.started_at,
         lastActive: row.last_active_at,
         status: row.status,
