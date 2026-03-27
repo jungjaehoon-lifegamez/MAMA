@@ -12,7 +12,7 @@ import { classifyProfileEntries } from './profile-builder.js';
 import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
-import { queryRelevantTruth } from './truth-store.js';
+import { projectMemoryTruth, queryRelevantTruth } from './truth-store.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
 import type {
@@ -252,6 +252,23 @@ export async function saveMemory(
         `
       )
       .run(id, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
+  }
+
+  // Project to memory_truth table (best-effort; failure should not break save)
+  try {
+    await projectMemoryTruth({
+      memory_id: id,
+      topic: input.topic,
+      truth_status: (input.status ?? 'active') as MemoryTruthRow['truth_status'],
+      effective_summary: input.summary,
+      effective_details: input.details,
+      trust_score: input.confidence ?? 0.5,
+      scope_refs: input.scopes,
+      supporting_event_ids: [],
+      superseded_by: undefined,
+    });
+  } catch {
+    // Truth projection is best-effort; do not fail the save
   }
 
   return { success: true, id };

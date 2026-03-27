@@ -260,7 +260,7 @@ export class SessionManager {
       const memSession = this.sessions.get(row.id);
       return {
         id: row.id,
-        projectDir: row.project_path,
+        projectDir: row.project_path ?? '',
         createdAt: row.started_at,
         lastActive: row.last_active_at,
         status: row.status,

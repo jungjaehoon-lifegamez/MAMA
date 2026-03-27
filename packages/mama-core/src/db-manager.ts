@@ -946,19 +946,31 @@ export async function reindexEmbeddings(
   onProgress?: (completed: number, total: number) => void
 ): Promise<number> {
   const adapter = getAdapter();
-  const { generateEmbedding } = await import('./embeddings.js');
+  const { generateEnhancedEmbedding } = await import('./embeddings.js');
 
   const decisions = adapter
-    .prepare('SELECT rowid, topic, decision, reasoning FROM decisions')
-    .all() as Array<{ rowid: number; topic: string; decision: string; reasoning: string | null }>;
+    .prepare('SELECT rowid, topic, decision, reasoning, outcome, confidence FROM decisions')
+    .all() as Array<{
+    rowid: number;
+    topic: string;
+    decision: string;
+    reasoning: string | null;
+    outcome: string | null;
+    confidence: number | null;
+  }>;
 
   const total = decisions.length;
   let completed = 0;
 
   for (const row of decisions) {
-    const text = `${row.topic}: ${row.decision}${row.reasoning ? ` ${row.reasoning}` : ''}`;
     try {
-      const embedding = await generateEmbedding(text);
+      const embedding = await generateEnhancedEmbedding({
+        topic: row.topic,
+        decision: row.decision,
+        reasoning: row.reasoning || undefined,
+        outcome: row.outcome || undefined,
+        confidence: row.confidence ?? undefined,
+      });
       adapter.insertEmbedding!(row.rowid, embedding);
       completed++;
       if (onProgress && completed % 50 === 0) {

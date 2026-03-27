@@ -270,6 +270,7 @@ export function createEmptyMemoryAgentBootstrap(
   return {
     current_goal: input.current_goal,
     scope_context: input.scope_context,
+    channel_summary_markdown: input.channel_summary_markdown,
     truth_snapshot: input.truth_snapshot ?? [],
     open_audit_findings: input.open_audit_findings ?? [],
     recent_memory_events: input.recent_memory_events ?? [],

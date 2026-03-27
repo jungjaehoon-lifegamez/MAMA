@@ -25,10 +25,9 @@ describe('Memory auditor truth-first contracts', () => {
 
   it('should expose consult intents and ack statuses', async () => {
     const types = await import('../../src/memory/types.js');
-    const intent = types.MEMORY_CONSULT_INTENTS[1];
     const ack = types.createMemoryAuditAck({ status: 'applied', action: 'save', event_ids: [] });
 
-    expect(intent).toBe('validate_claim');
+    expect(types.MEMORY_CONSULT_INTENTS).toContain('validate_claim');
     expect(ack.status).toBe('applied');
     expect(ack.action).toBe('save');
   });
