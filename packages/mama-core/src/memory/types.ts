@@ -193,6 +193,7 @@ export interface MemoryAgentBootstrap {
 export interface MemoryTruthRow {
   memory_id: string;
   topic: string;
+  kind?: MemoryKind;
   truth_status: MemoryTruthStatus;
   effective_summary: string;
   effective_details: string;
