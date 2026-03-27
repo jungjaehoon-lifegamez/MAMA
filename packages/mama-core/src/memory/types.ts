@@ -201,6 +201,8 @@ export interface MemoryTruthRow {
   supporting_event_ids: string[];
   superseded_by?: string;
   contradicted_by?: string[];
+  created_at?: number;
+  updated_at?: number;
 }
 
 export interface ChannelSummaryRecord {

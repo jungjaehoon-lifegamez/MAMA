@@ -16,6 +16,8 @@ function deserializeTruthRow(row: Record<string, unknown>): MemoryTruthRow {
       typeof row.contradicted_by === 'string'
         ? (JSON.parse(row.contradicted_by) as string[])
         : undefined,
+    created_at: typeof row.created_at === 'number' ? row.created_at : undefined,
+    updated_at: typeof row.updated_at === 'number' ? row.updated_at : undefined,
   };
 }
 
@@ -85,7 +87,7 @@ export async function queryTruthByTopic(
     .prepare(
       `
         SELECT memory_id, topic, truth_status, effective_summary, effective_details, trust_score,
-               scope_refs, supporting_event_ids, superseded_by, contradicted_by
+               scope_refs, supporting_event_ids, superseded_by, contradicted_by, created_at, updated_at
         FROM memory_truth
         WHERE topic = ?
         ORDER BY updated_at DESC
@@ -115,7 +117,7 @@ export async function queryRelevantTruth(params: {
     .prepare(
       `
         SELECT memory_id, topic, truth_status, effective_summary, effective_details, trust_score,
-               scope_refs, supporting_event_ids, superseded_by, contradicted_by
+               scope_refs, supporting_event_ids, superseded_by, contradicted_by, created_at, updated_at
         FROM memory_truth
         ORDER BY updated_at DESC
       `
