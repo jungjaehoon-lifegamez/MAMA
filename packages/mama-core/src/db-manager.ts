@@ -968,6 +968,10 @@ export async function reindexEmbeddings(
     confidence: number | null;
   }>;
 
+  if (typeof adapter.insertEmbedding !== 'function') {
+    throw new Error('Embedding insertion is not available on this adapter');
+  }
+
   const total = decisions.length;
   let completed = 0;
 
@@ -980,7 +984,7 @@ export async function reindexEmbeddings(
         outcome: row.outcome || undefined,
         confidence: row.confidence ?? undefined,
       });
-      adapter.insertEmbedding!(row.rowid, embedding);
+      adapter.insertEmbedding(row.rowid, embedding);
       completed++;
       if (onProgress && completed % 50 === 0) {
         onProgress(completed, total);
