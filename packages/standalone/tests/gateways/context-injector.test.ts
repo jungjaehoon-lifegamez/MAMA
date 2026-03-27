@@ -182,4 +182,24 @@ describe('ContextInjector', () => {
       expect(results).toEqual([]);
     });
   });
+
+  describe('getSessionStartupContext()', () => {
+    it('should include channel summary when available', async () => {
+      const mamaApi = createMockMamaApi(mockDecisions);
+      mamaApi.getChannelSummary = async () => ({
+        channel_key: 'telegram:7026976631',
+        summary_markdown: '## Channel Summary\n- Current DB direction: PostgreSQL',
+        updated_at: Date.now(),
+      });
+
+      const injector = new ContextInjector(mamaApi);
+      const context = await injector.getSessionStartupContext({
+        source: 'telegram',
+        channelId: '7026976631',
+      });
+
+      expect(context).toContain('Channel Summary');
+      expect(context).toContain('PostgreSQL');
+    });
+  });
 });

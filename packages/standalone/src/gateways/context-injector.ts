@@ -52,6 +52,51 @@ export interface MamaApiClient {
    * List recent decisions
    */
   listDecisions?(options?: { limit?: number }): Promise<Decision[]>;
+
+  /**
+   * Save a new decision or fact
+   */
+  save?(input: Record<string, unknown>): Promise<unknown>;
+
+  /**
+   * Recall memory v2 bundle
+   */
+  recallMemory?(
+    query: string,
+    options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
+  ): Promise<RecallBundle>;
+
+  /**
+   * Ingest raw content into memory v2
+   */
+  ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
+
+  /**
+   * Build compact bootstrap packet for memory agents
+   */
+  buildMemoryBootstrap?(input: {
+    scopes: Array<{ kind: string; id: string }>;
+    currentGoal?: string;
+    mainAgentState?: MemoryAgentBootstrap['main_agent_state'];
+  }): Promise<MemoryAgentBootstrap>;
+
+  /**
+   * Read the rolling summary for a channel
+   */
+  getChannelSummary?(channelKey: string): Promise<{
+    channel_key: string;
+    summary_markdown: string;
+    updated_at: number;
+  } | null>;
+
+  /**
+   * Update the rolling summary for a channel
+   */
+  upsertChannelSummary?(input: {
+    channelKey: string;
+    summaryMarkdown: string;
+    deltaHash?: string;
+  }): Promise<void>;
 }
 
 /**
@@ -64,6 +109,49 @@ export interface SearchResult {
   reasoning?: string;
   outcome?: string;
   similarity: number;
+}
+
+export interface RecallBundleMemory {
+  id: string;
+  topic: string;
+  summary: string;
+  details?: string;
+}
+
+export interface RecallBundle {
+  profile: {
+    static: Array<{ summary: string }>;
+    dynamic: Array<{ summary: string }>;
+    evidence: Array<{ memory_id: string; topic: string; why_included: string }>;
+  };
+  memories: RecallBundleMemory[];
+  graph_context: {
+    primary: RecallBundleMemory[];
+    expanded: RecallBundleMemory[];
+    edges: Array<{ from_id: string; to_id: string; type: string; reason?: string }>;
+  };
+  search_meta: {
+    query: string;
+    scope_order: string[];
+    retrieval_sources: string[];
+  };
+}
+
+export interface MemoryAgentBootstrap {
+  current_goal?: string;
+  scope_context: Array<{ kind: string; id: string }>;
+  truth_snapshot: Array<{ id: string; topic: string; summary: string; trust_score: number }>;
+  open_audit_findings: Array<{ id: string; kind: string; severity: string; summary: string }>;
+  recent_memory_events: Array<{ id: string; type: string; topic?: string; created_at: number }>;
+  profile_snapshot?: {
+    static: Array<{ id: string; summary: string }>;
+    dynamic: Array<{ id: string; summary: string }>;
+  };
+  main_agent_state?: {
+    active_goal?: string;
+    active_channel?: string;
+    active_user?: string;
+  };
 }
 
 /**
@@ -199,9 +287,16 @@ export class ContextInjector {
    * Get session startup context (equivalent to SessionStart hook)
    * Includes checkpoint, recent decisions, and greeting instructions
    */
-  async getSessionStartupContext(): Promise<string> {
+  async getSessionStartupContext(input?: { source: string; channelId: string }): Promise<string> {
     try {
       let contextText = '';
+
+      if (input && this.mamaApi.getChannelSummary) {
+        const summary = await this.mamaApi.getChannelSummary(`${input.source}:${input.channelId}`);
+        if (summary?.summary_markdown) {
+          contextText += `\n📝 **Channel Summary**:\n${summary.summary_markdown}\n`;
+        }
+      }
 
       // Load checkpoint if available
       if (this.mamaApi.loadCheckpoint) {
@@ -292,6 +387,73 @@ export function createMockMamaApi(decisions: SearchResult[] = []): MamaApiClient
   return {
     async search(_query: string, limit?: number): Promise<SearchResult[]> {
       return decisions.slice(0, limit || decisions.length);
+    },
+    async recallMemory(query: string): Promise<RecallBundle> {
+      const memories = decisions.map((decision) => ({
+        id: decision.id,
+        topic: decision.topic || 'unknown',
+        summary: decision.decision || '',
+        details: decision.reasoning || '',
+      }));
+
+      return {
+        profile: {
+          static: [{ summary: 'Prefer concise answers' }],
+          dynamic: [{ summary: 'Current repo uses pnpm' }],
+          evidence: memories.map((memory) => ({
+            memory_id: memory.id,
+            topic: memory.topic,
+            why_included: 'Mocked for test',
+          })),
+        },
+        memories,
+        graph_context: {
+          primary: memories,
+          expanded: [],
+          edges: [],
+        },
+        search_meta: {
+          query,
+          scope_order: ['project', 'channel', 'user', 'global'],
+          retrieval_sources: ['mock'],
+        },
+      };
+    },
+    async ingestMemory(input: Record<string, unknown>): Promise<unknown> {
+      return {
+        success: true,
+        id: 'ingested_mock_memory',
+        ...input,
+      };
+    },
+    async buildMemoryBootstrap(input): Promise<MemoryAgentBootstrap> {
+      return {
+        current_goal: input.currentGoal,
+        scope_context: input.scopes,
+        truth_snapshot: decisions.map((decision) => ({
+          id: decision.id,
+          topic: decision.topic || 'unknown',
+          summary: decision.decision || '',
+          trust_score: decision.similarity,
+        })),
+        open_audit_findings: [],
+        recent_memory_events: [],
+        profile_snapshot: {
+          static: [{ id: 'static_1', summary: 'Prefer concise answers' }],
+          dynamic: [{ id: 'dynamic_1', summary: 'Current repo uses pnpm' }],
+        },
+        main_agent_state: input.mainAgentState,
+      };
+    },
+    async getChannelSummary(channelKey: string) {
+      return {
+        channel_key: channelKey,
+        summary_markdown: '## Channel Summary\n- Current DB direction: PostgreSQL',
+        updated_at: Date.now(),
+      };
+    },
+    async upsertChannelSummary() {
+      return;
     },
   };
 }

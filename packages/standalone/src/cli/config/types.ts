@@ -98,8 +98,15 @@ export const DEFAULT_ROLES: RolesConfig = {
     chat_bot: {
       model: 'claude-sonnet-4-6', // Balanced model for chat
       maxTurns: 10,
-      allowedTools: ['mama_*', 'Read', 'discord_send', 'translate_image'],
-      blockedTools: ['Bash', 'Write', 'save_integration_token'],
+      allowedTools: [
+        'mama_search',
+        'mama_recall',
+        'mama_load_checkpoint',
+        'Read',
+        'discord_send',
+        'translate_image',
+      ],
+      blockedTools: ['Bash', 'Write', 'save_integration_token', 'mama_save', 'mama_update'],
       allowedPaths: ['~/.mama/workspace/**'],
       systemControl: false,
       sensitiveAccess: false,
@@ -649,7 +656,7 @@ export const DEFAULT_CONFIG: MAMAConfig = {
     },
   },
   database: {
-    path: '~/.claude/mama-memory.db',
+    path: '~/.mama/mama-memory.db',
   },
   logging: {
     level: 'info',

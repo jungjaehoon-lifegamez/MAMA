@@ -39,6 +39,7 @@ import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { getSessionPool } from '../../agent/session-pool.js';
+import type { AgentContext, MAMAApiInterface } from '../../agent/types.js';
 import {
   DiscordGateway,
   SlackGateway,
@@ -54,6 +55,12 @@ import type {
   MamaApiClient,
   SearchResult,
 } from '../../gateways/context-injector.js';
+import {
+  buildStandaloneMemoryBootstrap,
+  formatMemoryBootstrap,
+} from '../../memory/bootstrap-context.js';
+import { buildMemoryAuditAckFromAgentResult } from '../../memory/memory-agent-ack.js';
+import { deriveMemoryScopes } from '../../memory/scope-context.js';
 import {
   CronScheduler,
   CronWorker,
@@ -100,6 +107,7 @@ const startLogger = new DebugLogger('start');
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
 import Database from '../../sqlite.js';
+import type { AgentProcessManager } from '../../multi-agent/agent-process-manager.js';
 
 // Port configuration — single source of truth
 /** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
@@ -1306,7 +1314,7 @@ export async function runAgentLoop(
 
   // Initialize message router with MAMA database
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { initDB } = require('@jungjaehoon/mama-core/db-manager');
+  const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mamaCore = require('@jungjaehoon/mama-core');
   const mamaApi = (
@@ -1320,6 +1328,31 @@ export async function runAgentLoop(
     loadCheckpoint?: () => Promise<unknown>;
     list?: (options?: { limit?: number }) => Promise<unknown>;
     listDecisions?: (options?: { limit?: number }) => Promise<unknown>;
+    recallMemory?: (
+      query: string,
+      options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
+    ) => Promise<unknown>;
+    ingestMemory?: (input: Record<string, unknown>) => Promise<unknown>;
+    buildMemoryBootstrap?: (input: {
+      scopes: Array<{ kind: string; id: string }>;
+      channelKey?: string;
+      currentGoal?: string;
+      mainAgentState?: {
+        active_goal?: string;
+        active_channel?: string;
+        active_user?: string;
+      };
+    }) => Promise<unknown>;
+    getChannelSummary?: (channelKey: string) => Promise<unknown>;
+    upsertChannelSummary?: (input: {
+      channelKey: string;
+      summaryMarkdown: string;
+      deltaHash?: string;
+    }) => Promise<unknown>;
+    buildProfile?: (
+      scopes?: Array<{ kind: string; id: string }>,
+      options?: Record<string, unknown>
+    ) => Promise<unknown>;
   };
   const suggest = (mamaApi.suggest ?? mamaApi.search) as
     | ((query: string, options?: { limit?: number }) => Promise<unknown>)
@@ -1330,6 +1363,10 @@ export async function runAgentLoop(
   if (!suggest) {
     throw new Error('MAMA API shape is incompatible; failed to initialize memory helpers');
   }
+
+  // Set isolated DB path for MAMA OS (카게무샤 pattern: process.env before initDB)
+  const mamaDbPathForCore = expandPath(config.database.path);
+  process.env.MAMA_DB_PATH = mamaDbPathForCore;
 
   // Initialize MAMA database first
   await initDB();
@@ -1444,11 +1481,118 @@ export async function runAgentLoop(
     search: searchForContext, // mama-core exports 'suggest' for semantic search
     loadCheckpoint: loadCheckpointForContext,
     listDecisions: listDecisionsForContext,
+    save: mamaApi.save,
+    recallMemory: mamaApi.recallMemory as MamaApiClient['recallMemory'],
+    ingestMemory: mamaApi.ingestMemory as MamaApiClient['ingestMemory'],
+    buildMemoryBootstrap: mamaApi.buildMemoryBootstrap as MamaApiClient['buildMemoryBootstrap'],
+    getChannelSummary: mamaApi.getChannelSummary as MamaApiClient['getChannelSummary'],
+    upsertChannelSummary: mamaApi.upsertChannelSummary as MamaApiClient['upsertChannelSummary'],
   };
 
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
     backend: runtimeBackend,
   });
+
+  // Initialize memory agent (persistent process for fact extraction)
+  try {
+    const { ensureMemoryPersona } = await import('../../multi-agent/memory-agent-persona.js');
+
+    const personaPath = ensureMemoryPersona();
+    const memoryPersona = readFileSync(personaPath, 'utf-8');
+    const memoryAgentContext: AgentContext = {
+      source: 'memory-agent',
+      platform: 'cli',
+      roleName: 'memory_agent',
+      role: {
+        allowedTools: ['mama_search', 'mama_save', 'mama_profile'],
+        blockedTools: ['Read', 'Write', 'Bash'],
+        systemControl: false,
+        sensitiveAccess: false,
+      },
+      session: {
+        sessionId: 'memory-agent:shared',
+        channelId: 'shared',
+        startedAt: new Date(),
+      },
+      capabilities: ['mama_search', 'mama_save', 'mama_profile'],
+      limitations: ['No file or shell access'],
+      tier: 2,
+      backend: 'claude',
+    };
+
+    const memoryAgentLoop = new AgentLoop(
+      oauthManager,
+      {
+        systemPrompt: memoryPersona,
+        model: config.multi_agent?.agents?.memory?.model || 'claude-sonnet-4-6',
+        maxTurns: 6,
+        backend: 'claude',
+        toolsConfig: {
+          gateway: ['mama_search', 'mama_save', 'mama_profile'],
+          mcp: [],
+        },
+      },
+      undefined,
+      { mamaApi: mamaApi as MAMAApiInterface }
+    );
+    memoryAgentLoop.setSessionKey('memory-agent:shared');
+    let memoryBootstrapDelivered = false;
+
+    const memoryProcessManager = {
+      async getSharedProcess() {
+        return {
+          async sendMessage(content: string) {
+            let prompt = content;
+            if (!memoryBootstrapDelivered) {
+              const bootstrap = await buildStandaloneMemoryBootstrap({
+                mamaApi: mamaApiClient,
+                scopes: deriveMemoryScopes({
+                  source: 'memory-agent',
+                  channelId: 'shared',
+                  projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+                }),
+                currentGoal: 'Maintain current memory truth and audit ongoing conversations',
+                mainAgentState: {
+                  active_goal: 'Maintain current memory truth and audit ongoing conversations',
+                  active_channel: 'shared',
+                },
+              });
+              prompt = `${formatMemoryBootstrap(bootstrap)}\n\n---\n\n${content}`;
+              memoryBootstrapDelivered = true;
+            }
+
+            const adapter = getAdapter();
+            const beforeDecisionCount = Number(
+              adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
+            );
+            const result = await memoryAgentLoop.run(prompt, {
+              source: 'memory-agent',
+              channelId: 'shared',
+              agentContext: memoryAgentContext,
+            });
+            const afterDecisionCount = Number(
+              adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
+            );
+            const ack = buildMemoryAuditAckFromAgentResult(
+              result,
+              beforeDecisionCount,
+              afterDecisionCount
+            );
+
+            return { response: result.response, ack };
+          },
+        };
+      },
+    };
+
+    messageRouter.setMemoryAgent(memoryProcessManager as unknown as AgentProcessManager);
+    toolExecutor.setMemoryAgent(memoryProcessManager as unknown as AgentProcessManager);
+    console.log('✓ Memory agent initialized');
+  } catch (err) {
+    console.warn(
+      `[memory-agent] Init failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // Prepare graph handler options (will be populated after gateways init)
   const graphHandlerOptions: GraphHandlerOptions = {
@@ -2028,6 +2172,12 @@ export async function runAgentLoop(
       }
     },
     enableAutoKillPort: config.enable_auto_kill_port,
+  });
+
+  // Memory Agent stats API
+  apiServer.app.get('/api/memory-agent/stats', (_req, res) => {
+    const stats = messageRouter.getMemoryAgentStats();
+    res.json(stats);
   });
 
   // Session API endpoints

@@ -97,8 +97,13 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   // Security headers
   app.disable('x-powered-by');
-  app.use((_req, res, next) => {
-    res.setHeader('X-Frame-Options', 'DENY');
+  app.use((req, res, next) => {
+    // Allow playgrounds to be loaded in iframes (viewer embeds them)
+    if (!req.path.startsWith('/playgrounds/')) {
+      res.setHeader('X-Frame-Options', 'DENY');
+    } else {
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    }
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
   });
