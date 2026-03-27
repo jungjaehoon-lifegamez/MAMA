@@ -95,7 +95,7 @@ function truthRowToMemoryRecord(row: MemoryTruthRow): MemoryRecord {
   return {
     id: row.memory_id,
     topic: row.topic,
-    kind: 'decision',
+    kind: row.kind ?? 'decision',
     summary: row.effective_summary,
     details: row.effective_details,
     confidence: row.trust_score,

@@ -18,6 +18,7 @@ function deserializeTruthRow(row: Record<string, unknown>): MemoryTruthRow {
         : undefined,
     created_at: typeof row.created_at === 'number' ? row.created_at : undefined,
     updated_at: typeof row.updated_at === 'number' ? row.updated_at : undefined,
+    kind: typeof row.kind === 'string' ? (row.kind as MemoryTruthRow['kind']) : undefined,
   };
 }
 
@@ -86,11 +87,13 @@ export async function queryTruthByTopic(
   const rows = adapter
     .prepare(
       `
-        SELECT memory_id, topic, truth_status, effective_summary, effective_details, trust_score,
-               scope_refs, supporting_event_ids, superseded_by, contradicted_by, created_at, updated_at
-        FROM memory_truth
-        WHERE topic = ?
-        ORDER BY updated_at DESC
+        SELECT mt.memory_id, mt.topic, mt.truth_status, mt.effective_summary, mt.effective_details, mt.trust_score,
+               mt.scope_refs, mt.supporting_event_ids, mt.superseded_by, mt.contradicted_by, mt.created_at, mt.updated_at,
+               d.kind
+        FROM memory_truth mt
+        LEFT JOIN decisions d ON d.id = mt.memory_id
+        WHERE mt.topic = ?
+        ORDER BY mt.updated_at DESC
       `
     )
     .all(topic) as Record<string, unknown>[];
@@ -116,10 +119,12 @@ export async function queryRelevantTruth(params: {
   const rows = adapter
     .prepare(
       `
-        SELECT memory_id, topic, truth_status, effective_summary, effective_details, trust_score,
-               scope_refs, supporting_event_ids, superseded_by, contradicted_by, created_at, updated_at
-        FROM memory_truth
-        ORDER BY updated_at DESC
+        SELECT mt.memory_id, mt.topic, mt.truth_status, mt.effective_summary, mt.effective_details, mt.trust_score,
+               mt.scope_refs, mt.supporting_event_ids, mt.superseded_by, mt.contradicted_by, mt.created_at, mt.updated_at,
+               d.kind
+        FROM memory_truth mt
+        LEFT JOIN decisions d ON d.id = mt.memory_id
+        ORDER BY mt.updated_at DESC
       `
     )
     .all() as Record<string, unknown>[];
