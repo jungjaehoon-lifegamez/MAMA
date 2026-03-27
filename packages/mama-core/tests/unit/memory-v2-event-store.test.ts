@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 
-import { appendMemoryEvent, listMemoryEventsForTopic } from '../../src/memory-v2/event-store.js';
+import { appendMemoryEvent, listMemoryEventsForTopic } from '../../src/memory/event-store.js';
 
 const TEST_DB = '/tmp/test-memory-v2-event-store.db';
 

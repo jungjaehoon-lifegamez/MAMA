@@ -50,9 +50,9 @@ import {
   recordMemoryAudit,
   upsertChannelSummary,
   getChannelSummary,
-} from './memory-v2/api.js';
-import { listOpenAuditFindings } from './memory-v2/finding-store.js';
-import { listRecentMemoryEvents } from './memory-v2/event-store.js';
+} from './memory/api.js';
+import { listOpenAuditFindings } from './memory/finding-store.js';
+import { listRecentMemoryEvents } from './memory/event-store.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions

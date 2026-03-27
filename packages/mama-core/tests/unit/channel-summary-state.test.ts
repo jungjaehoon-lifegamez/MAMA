@@ -4,11 +4,8 @@ import fs from 'node:fs';
 import {
   getChannelSummaryState,
   recordChannelAudit,
-} from '../../src/memory-v2/channel-summary-state-store.js';
-import {
-  getChannelSummary,
-  upsertChannelSummary,
-} from '../../src/memory-v2/channel-summary-store.js';
+} from '../../src/memory/channel-summary-state-store.js';
+import { getChannelSummary, upsertChannelSummary } from '../../src/memory/channel-summary-store.js';
 
 const TEST_DB = '/tmp/test-channel-summary-state.db';
 

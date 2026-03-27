@@ -1,10 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 
-import {
-  getChannelSummary,
-  upsertChannelSummary,
-} from '../../src/memory-v2/channel-summary-store.js';
+import { getChannelSummary, upsertChannelSummary } from '../../src/memory/channel-summary-store.js';
 
 const TEST_DB = '/tmp/test-channel-summary-store.db';
 

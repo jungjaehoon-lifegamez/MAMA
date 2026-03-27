@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
-import { saveMemory, recallMemory, buildProfile } from '../../src/memory-v2/api.js';
-import { projectMemoryTruth } from '../../src/memory-v2/truth-store.js';
+import { saveMemory, recallMemory, buildProfile } from '../../src/memory/api.js';
+import { projectMemoryTruth } from '../../src/memory/truth-store.js';
 
 const TEST_DB = '/tmp/test-memory-v2-api.db';
 

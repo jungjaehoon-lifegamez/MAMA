@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyProfileEntries } from '../../src/memory-v2/profile-builder.js';
+import { classifyProfileEntries } from '../../src/memory/profile-builder.js';
 
 describe('profile builder', () => {
   it('should split static and dynamic memories', () => {

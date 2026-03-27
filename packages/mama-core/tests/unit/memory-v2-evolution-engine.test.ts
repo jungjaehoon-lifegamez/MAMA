@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveMemoryEvolution } from '../../src/memory-v2/evolution-engine.js';
+import { resolveMemoryEvolution } from '../../src/memory/evolution-engine.js';
 
 describe('evolution engine', () => {
   it('should choose supersedes for same-topic replacement', () => {
