@@ -67,9 +67,13 @@
 
 ### Database (SQLite + pure-TS cosine similarity)
 
-- **Decisions table:** topic, decision, reasoning, confidence, outcome
-- **Embeddings:** 384-dimensional vectors (multilingual-e5-small, q8)
+- **Decisions table:** topic, decision, reasoning, confidence, outcome, kind, status, summary
+- **Embeddings:** 384-dimensional vectors (multilingual-e5-small, q8) with in-memory cache
 - **Graph:** supersedes/builds_on/debates/synthesizes edges
+- **Memory scopes:** project/channel/user/global isolation via memory_scopes + memory_scope_bindings
+- **Truth projection:** memory_truth table for recall filtering (preserves history, surfaces current truth)
+- **Audit trail:** memory_events + audit_findings for memory agent auditing
+- **Channel state:** channel_summaries + channel_summary_state for per-channel context
 
 ### Embeddings
 
