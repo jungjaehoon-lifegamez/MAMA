@@ -11,7 +11,9 @@ import { classifyProfileEntries } from './profile-builder.js';
 import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
+import { warn } from '../debug-logger.js';
 import { projectMemoryTruth, queryRelevantTruth } from './truth-store.js';
+import { buildExtractionPrompt, parseExtractionResponse } from './extraction-prompt.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
 import type {
@@ -25,6 +27,9 @@ import type {
   MemoryTruthRow,
   ProfileSnapshot,
   RecallBundle,
+  IngestConversationInput,
+  ExtractedMemoryUnit,
+  IngestConversationResult,
 } from './types.js';
 
 interface SaveMemoryInput {
@@ -472,6 +477,128 @@ export async function recordMemoryAudit(input: {
   savedMemories?: Array<{ id: string; topic: string; summary: string }>;
 }) {
   return recordChannelAudit(input);
+}
+
+async function callExtractionLLM(
+  prompt: string,
+  options: NonNullable<IngestConversationInput['extract']>
+): Promise<ExtractedMemoryUnit[]> {
+  const model = options.model ?? 'claude-sonnet-4-5-20250514';
+  const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
+  const baseUrl = options.baseUrl ?? 'https://api.anthropic.com';
+
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY is required for extraction');
+  }
+
+  const res = await fetch(`${baseUrl}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.text().catch(() => 'unknown');
+    throw new Error(`Anthropic API error ${res.status}: ${errorBody}`);
+  }
+
+  const data = (await res.json()) as {
+    content?: Array<{ type: string; text?: string }>;
+  };
+  const text = data.content?.find((c) => c.type === 'text')?.text ?? '';
+  return parseExtractionResponse(text);
+}
+
+let extractionFn: typeof callExtractionLLM = callExtractionLLM;
+export function setExtractionFn(fn: typeof callExtractionLLM | null): void {
+  extractionFn = fn ?? callExtractionLLM;
+}
+
+export async function ingestConversation(
+  input: IngestConversationInput
+): Promise<IngestConversationResult> {
+  if (!input.messages || input.messages.length === 0) {
+    throw new Error('messages array must not be empty');
+  }
+
+  const conversationText = input.messages.map((m) => `${m.role}: ${m.content}`).join('\n');
+
+  const rawResult = await ingestMemory({
+    content: conversationText,
+    scopes: input.scopes,
+    source: input.source,
+  });
+
+  const result: IngestConversationResult = {
+    rawId: rawResult.id,
+    extractedMemories: [],
+  };
+
+  if (!input.extract?.enabled) {
+    return result;
+  }
+
+  let units: ExtractedMemoryUnit[];
+  try {
+    const prompt = buildExtractionPrompt(input.messages);
+    units = await extractionFn(prompt, input.extract);
+  } catch (err) {
+    warn(`[memory] extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+    return result;
+  }
+
+  const adapter = getAdapter();
+  const EXTRACTION_EDGE_RELATIONSHIP = 'builds_on';
+  const EXTRACTION_EDGE_REASON = 'Extracted from conversation';
+
+  for (const unit of units) {
+    try {
+      const saved = await saveMemory({
+        topic: unit.topic,
+        kind: unit.kind,
+        summary: unit.summary,
+        details: unit.details,
+        confidence: unit.confidence,
+        scopes: input.scopes,
+        source: input.source,
+      });
+
+      const now = Date.now();
+      adapter
+        .prepare(
+          `INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          saved.id,
+          rawResult.id,
+          EXTRACTION_EDGE_RELATIONSHIP,
+          EXTRACTION_EDGE_REASON,
+          1.0,
+          now
+        );
+
+      result.extractedMemories.push({
+        id: saved.id,
+        kind: unit.kind,
+        topic: unit.topic,
+      });
+    } catch (err) {
+      warn(
+        `[memory] failed to save extracted unit topic=${unit.topic} kind=${unit.kind}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  return result;
 }
 
 export { upsertChannelSummary, getChannelSummary };
