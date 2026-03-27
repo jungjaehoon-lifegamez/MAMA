@@ -920,25 +920,28 @@ export async function fts5Search(
   limit = 10
 ): Promise<{ id: string; rank: number }[]> {
   const adapter = getAdapter();
+
+  // Check if FTS5 table exists (swallow errors — table may not exist yet)
+  let tableCheck: { name: string } | undefined;
   try {
-    // Check if FTS5 table exists
-    const tableCheck = adapter
+    tableCheck = adapter
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='decisions_fts'")
       .get() as { name: string } | undefined;
-    if (!tableCheck) return [];
-
-    const stmt = adapter.prepare(`
-      SELECT d.id, rank
-      FROM decisions_fts
-      JOIN decisions d ON decisions_fts.rowid = d.rowid
-      WHERE decisions_fts MATCH ?
-      ORDER BY rank
-      LIMIT ?
-    `);
-    return stmt.all(query, limit) as { id: string; rank: number }[];
   } catch {
-    return []; // FTS5 not available or query syntax error
+    return [];
   }
+  if (!tableCheck) return [];
+
+  // Query execution — let errors propagate to the caller
+  const stmt = adapter.prepare(`
+    SELECT d.id, rank
+    FROM decisions_fts
+    JOIN decisions d ON decisions_fts.rowid = d.rowid
+    WHERE decisions_fts MATCH ?
+    ORDER BY rank
+    LIMIT ?
+  `);
+  return stmt.all(query, limit) as { id: string; rank: number }[];
 }
 
 /**

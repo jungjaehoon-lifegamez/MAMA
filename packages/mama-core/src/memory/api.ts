@@ -4,7 +4,6 @@ import {
   getAdapter,
   insertDecisionWithEmbedding,
   ensureMemoryScope,
-  bindMemoryToScope,
   vectorSearch,
 } from '../db-manager.js';
 import { generateEmbedding } from '../embeddings.js';
@@ -67,7 +66,14 @@ function toMemoryRecord(
   scopes: MemoryScopeRef[],
   fallbackSource: SaveMemoryInput['source']
 ): MemoryRecord {
-  const trustContext = typeof row.trust_context === 'string' ? JSON.parse(row.trust_context) : null;
+  let trustContext = null;
+  if (typeof row.trust_context === 'string') {
+    try {
+      trustContext = JSON.parse(row.trust_context);
+    } catch {
+      /* malformed */
+    }
+  }
   const savedSource = trustContext?.source;
 
   return {
@@ -195,6 +201,8 @@ export async function saveMemory(
           FROM decisions d
           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
           WHERE d.topic = ? AND msb.scope_id = ?
+            AND (d.status = 'active' OR d.status IS NULL)
+            AND d.superseded_by IS NULL
           ORDER BY d.created_at DESC
           LIMIT 5
         `
@@ -207,6 +215,8 @@ export async function saveMemory(
           SELECT id, topic, summary
           FROM decisions
           WHERE topic = ?
+            AND (status = 'active' OR status IS NULL)
+            AND superseded_by IS NULL
           ORDER BY created_at DESC
           LIMIT 5
         `
@@ -232,47 +242,63 @@ export async function saveMemory(
     trust_context: JSON.stringify({ source: input.source }),
   });
 
-  adapter
-    .prepare(
-      `
-        UPDATE decisions
-        SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?, updated_at = ?
-        WHERE id = ?
-      `
-    )
-    .run(
-      input.kind,
-      input.status ?? 'active',
-      input.summary,
-      input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0,
-      JSON.stringify({ source: input.source }),
-      now,
-      id
-    );
-
+  // Pre-resolve scope IDs before the synchronous transaction
+  const resolvedScopeIds: Array<{ scopeId: string; isPrimary: boolean }> = [];
   for (const [index, scope] of input.scopes.entries()) {
     const scopeId = await ensureMemoryScope(scope.kind, scope.id);
-    await bindMemoryToScope(id, scopeId, index === 0);
+    resolvedScopeIds.push({ scopeId, isPrimary: index === 0 });
   }
 
-  for (const edge of evolution.edges) {
-    if (edge.type === 'supersedes') {
-      adapter
-        .prepare(
-          `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
-        )
-        .run(id, now, edge.to_id);
-    }
-
+  // Wrap all post-insert mutations in a transaction for atomicity
+  adapter.transaction(() => {
     adapter
       .prepare(
         `
-          INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)
+          UPDATE decisions
+          SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?, updated_at = ?
+          WHERE id = ?
         `
       )
-      .run(id, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
-  }
+      .run(
+        input.kind,
+        input.status ?? 'active',
+        input.summary,
+        input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0,
+        JSON.stringify({ source: input.source }),
+        now,
+        id
+      );
+
+    for (const { scopeId, isPrimary } of resolvedScopeIds) {
+      adapter
+        .prepare(
+          `
+            INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary)
+            VALUES (?, ?, ?)
+          `
+        )
+        .run(id, scopeId, isPrimary ? 1 : 0);
+    }
+
+    for (const edge of evolution.edges) {
+      if (edge.type === 'supersedes') {
+        adapter
+          .prepare(
+            `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
+          )
+          .run(id, now, edge.to_id);
+      }
+
+      adapter
+        .prepare(
+          `
+            INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `
+        )
+        .run(id, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
+    }
+  });
 
   // Project to memory_truth table (best-effort; failure should not break save)
   try {
@@ -324,8 +350,19 @@ export async function recallMemory(
         'stale',
       ]);
 
-      // TODO: Filter vector results by options.scopes for scope-aware fallback
-      for (const result of vectorResults as Array<
+      // Filter vector results by scope if scopes are specified
+      let filteredVectorResults = vectorResults;
+      if (options.scopes && options.scopes.length > 0) {
+        const vectorIds = vectorResults.map((r) => String(r.id));
+        const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
+        const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+        filteredVectorResults = vectorResults.filter((r) => {
+          const scopes = scopeMap.get(String(r.id)) ?? [];
+          return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
+        });
+      }
+
+      for (const result of filteredVectorResults as Array<
         (typeof vectorResults)[number] & { similarity?: number; status?: string }
       >) {
         const effectiveStatus = (result.status as string) || (result.outcome as string) || '';
