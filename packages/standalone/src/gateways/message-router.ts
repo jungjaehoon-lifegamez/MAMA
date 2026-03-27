@@ -1059,7 +1059,7 @@ ${historyContext}
 
   private buildMemoryAuditPrompt(job: MemoryAuditJob): string {
     const scopeContext = job.scopeContext.map((scope) => `${scope.kind}:${scope.id}`).join(', ');
-    return `Memory scopes: ${scopeContext}\nConversation:\n${job.conversation}`;
+    return `Memory scopes: ${scopeContext}\nConversation:\n${job.conversation}\n\nINSTRUCTION: First call mama_search to check existing memories for this topic. Then decide: if the conversation contains a decision, preference, fact, or lesson, call mama_save. Respond with tool calls, not text.`;
   }
 
   private classifyMemoryAuditResponse(response: string): MemoryAuditAckLike {

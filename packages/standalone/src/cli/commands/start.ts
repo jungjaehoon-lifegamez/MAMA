@@ -1520,13 +1520,20 @@ export async function runAgentLoop(
       backend: 'claude',
     };
 
+    const memoryAgentConfig = config.multi_agent?.agents?.memory;
+    const memoryBackend = (memoryAgentConfig?.backend === 'codex-mcp' ? 'codex-mcp' : 'claude') as
+      | 'claude'
+      | 'codex-mcp';
+    const memoryModel =
+      memoryAgentConfig?.model ||
+      (memoryBackend === 'claude' ? 'claude-sonnet-4-6' : config.agent.model);
     const memoryAgentLoop = new AgentLoop(
       oauthManager,
       {
         systemPrompt: memoryPersona,
-        model: config.multi_agent?.agents?.memory?.model || 'claude-sonnet-4-6',
+        model: memoryModel,
         maxTurns: 6,
-        backend: 'claude',
+        backend: memoryBackend,
         toolsConfig: {
           gateway: ['mama_search', 'mama_save', 'mama_profile'],
           mcp: [],
