@@ -91,6 +91,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   private config: SQLiteAdapterConfig;
   private db: NodeSQLiteConnection | null = null;
   private _vectorSearchEnabled = true;
+  private vectorCache: Map<number, Float32Array> = new Map();
 
   constructor(config: SQLiteAdapterConfig = {}) {
     super();
@@ -152,7 +153,47 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     info('[node-sqlite-adapter] Vector search: pure TS cosine similarity (no native extensions)');
 
+    this.loadVectorCache();
+
     return this.db;
+  }
+
+  reloadVectorCache(): void {
+    this.loadVectorCache();
+  }
+
+  private loadVectorCache(): void {
+    if (!this.db) return;
+
+    const tableCheck = this.db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='embeddings'`)
+      .all() as Array<{ name: string }>;
+
+    if (tableCheck.length === 0) return;
+
+    const start = Date.now();
+    const rows = this.db.prepare('SELECT rowid, embedding FROM embeddings').all() as Array<{
+      rowid: number;
+      embedding: Uint8Array;
+    }>;
+
+    const CACHE_WARN_THRESHOLD = 100_000;
+    this.vectorCache.clear();
+    for (const row of rows) {
+      const vec = bytesToVector(row.embedding);
+      if (vec) {
+        this.vectorCache.set(row.rowid, vec);
+      }
+    }
+
+    const count = this.vectorCache.size;
+    const elapsed = Date.now() - start;
+    info(`[node-sqlite-adapter] Vector cache loaded: ${count} embeddings in ${elapsed}ms`);
+    if (count > CACHE_WARN_THRESHOLD) {
+      warn(
+        `[node-sqlite-adapter] Vector cache holds ${count} embeddings — consider LRU eviction or on-demand loading for large datasets`
+      );
+    }
   }
 
   disconnect(): void {
@@ -214,66 +255,30 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     const queryVector =
       embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
 
-    const tableCheck = this.prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='embeddings'`
-    ).all() as Array<{ name: string }>;
+    const effectiveLimit = Math.max(limit, 1);
+    const bestMatches: VectorSearchResult[] = [];
+    let minScore = -Infinity;
 
-    if (tableCheck.length === 0) {
-      throw new Error('Embeddings table missing');
+    for (const [rowid, candidate] of this.vectorCache) {
+      if (candidate.length !== queryVector.length) continue;
+
+      const similarity = cosineSimilarity(candidate, queryVector);
+
+      if (bestMatches.length < effectiveLimit) {
+        bestMatches.push({ rowid, similarity, distance: 1 - similarity });
+        if (bestMatches.length === effectiveLimit) {
+          bestMatches.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+          minScore = bestMatches[bestMatches.length - 1].similarity ?? -Infinity;
+        }
+      } else if (similarity > minScore) {
+        bestMatches[bestMatches.length - 1] = { rowid, similarity, distance: 1 - similarity };
+        bestMatches.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+        minScore = bestMatches[bestMatches.length - 1].similarity ?? -Infinity;
+      }
     }
 
-    const effectiveLimit = Math.max(limit, 1);
-    const batchSize = 500;
-    const bestMatches: VectorSearchResult[] = [];
-    let offset = 0;
-
-    let hasMoreRows = true;
-    while (hasMoreRows) {
-      const rows = this.prepare('SELECT rowid, embedding FROM embeddings LIMIT ? OFFSET ?').all(
-        batchSize,
-        offset
-      ) as Array<{
-        rowid: number;
-        embedding: Uint8Array;
-      }>;
-
-      if (rows.length === 0) {
-        hasMoreRows = false;
-        continue;
-      }
-
-      for (const row of rows) {
-        const candidate = bytesToVector(row.embedding);
-        if (!candidate) continue;
-        if (candidate.length !== queryVector.length) {
-          warn(
-            `Skipping rowid ${row.rowid}: dimension mismatch (${candidate.length} vs ${queryVector.length})`
-          );
-          continue;
-        }
-
-        const similarity = cosineSimilarity(candidate, queryVector);
-        const scoredRow: VectorSearchResult = {
-          rowid: row.rowid,
-          similarity,
-          distance: 1 - similarity,
-        };
-
-        if (bestMatches.length < effectiveLimit) {
-          bestMatches.push(scoredRow);
-          bestMatches.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
-          continue;
-        }
-
-        const weakestMatch = bestMatches[bestMatches.length - 1];
-        if ((scoredRow.similarity ?? 0) > (weakestMatch.similarity ?? 0)) {
-          bestMatches.pop();
-          bestMatches.push(scoredRow);
-          bestMatches.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
-        }
-      }
-
-      offset += rows.length;
+    if (bestMatches.length < effectiveLimit) {
+      bestMatches.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
     }
 
     return bestMatches;
@@ -292,7 +297,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       VALUES (?, ?)
     `);
 
-    return stmt.run(rowid, buffer);
+    const result = stmt.run(rowid, buffer);
+
+    // Keep in-memory cache in sync
+    this.vectorCache.set(rowid, vec);
+
+    return result;
   }
 
   getLastInsertRowid(): number {

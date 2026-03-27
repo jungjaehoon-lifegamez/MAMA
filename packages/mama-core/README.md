@@ -74,12 +74,35 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
   - CRUD operations for decisions
   - Vector similarity search
 
-### Core API
+### Memory API
 
-- **mama-api** - High-level API interface
+- **memory/api** - Scoped memory operations
+  - `saveMemory(input)` - Save typed memory with scopes (preference, fact, decision, lesson, constraint)
+  - `recallMemory(query, options)` - Truth-aware recall with scope filtering
+  - `buildProfile(scopes)` - Build memory profile (static/dynamic/evidence)
+  - `ingestMemory(input)` - Ingest raw content as memory
+  - `evolveMemory(input)` - Resolve graph edges between memories
+  - `buildMemoryBootstrap(params)` - Build memory agent bootstrap context
+  - `createAuditAck(input)` - Create audit acknowledgment
+  - `recordMemoryAudit(input)` - Record channel audit with state management
+
+- **memory/truth-store** - Truth projection layer
+  - `projectMemoryTruth(row)` - Write truth projection
+  - `queryRelevantTruth(params)` - Query current truth with scope/query filtering
+  - `queryTruthByTopic(topic)` - Get truth rows for a topic
+
+- **memory/evolution-engine** - Graph edge resolution
+  - `resolveMemoryEvolution(input)` - Determine supersedes/builds_on edges
+
+- **memory/channel-summary-state-store** - Channel state management
+  - `recordChannelAudit(input)` - Accumulate audit outcomes into channel state
+
+### Core API (Legacy)
+
+- **mama-api** - High-level API interface (wraps memory API)
   - `save(decision)` - Save decision
   - `recall(topic)` - Retrieve decision history
-  - `suggest(query)` - Semantic search
+  - `suggest(query)` - Semantic search with hybrid FTS5 + vector + recency
   - `updateOutcome(id, outcome)` - Update decision outcome
 
 - **decision-tracker** - Decision graph management
@@ -125,12 +148,15 @@ pnpm test:watch
 
 ## Test Coverage
 
-- 35 unit tests
+- 59 unit tests across 16 test files
 - 100% passing
 - Tests cover:
-  - Config loader
-  - Database initialization
-  - Module exports
+  - Config loader, database initialization, module exports
+  - Memory API (save, recall, profile)
+  - Truth store, evolution engine, scope schema
+  - Channel summary, channel summary state
+  - Event store, finding store, bootstrap builder
+  - Legacy shim compatibility
 
 ## Architecture
 
@@ -139,23 +165,39 @@ MAMA Core uses CommonJS modules and is designed to be shared across multiple pac
 ```
 packages/mama-core/
 ├── src/
-│   ├── index.js              # Main exports
-│   ├── embeddings.js         # Embedding generation
-│   ├── db-manager.js         # Database management
-│   ├── mama-api.js           # High-level API
-│   └── db-adapter/           # Database adapter
-├── db/migrations/            # SQLite migrations
-└── tests/                    # Unit tests
+│   ├── index.ts              # Main exports
+│   ├── embeddings.ts         # Embedding generation
+│   ├── db-manager.ts         # Database management
+│   ├── mama-api.ts           # High-level API (wraps memory API)
+│   ├── db-adapter/           # Database adapter (SQLite)
+│   └── memory/               # Memory infrastructure
+│       ├── types.ts          # MemoryRecord, MemoryScopeRef, RecallBundle, etc.
+│       ├── api.ts            # saveMemory, recallMemory, buildProfile, etc.
+│       ├── truth-store.ts    # Truth projection layer
+│       ├── evolution-engine.ts  # Graph edge resolution
+│       ├── scope-store.ts    # Scope management
+│       ├── event-store.ts    # Audit event persistence
+│       ├── finding-store.ts  # Audit finding persistence
+│       ├── channel-summary-store.ts       # Channel summaries
+│       ├── channel-summary-state-store.ts # Channel state reducer
+│       ├── bootstrap-builder.ts           # Memory agent bootstrap
+│       └── profile-builder.ts             # Profile classification
+├── db/migrations/            # SQLite migrations (001-023)
+└── tests/                    # 16 test files, 59 tests
 ```
 
 ## Migration Files
 
-Database migrations are included in `db/migrations/`:
+Database migrations are included in `db/migrations/` (001-023):
 
-- 001-initial-decision-graph.sql
-- 002-add-error-patterns.sql
-- 003-add-validation-fields.sql
-- (and more...)
+- 001-013: Core schema (decisions, embeddings, graph edges)
+- 014: Add is_static column
+- 015: FTS5 full-text search index
+- 016: Memory kind/status/summary columns
+- 017-018: Memory scopes and scope bindings
+- 019-020: Memory events and audit findings
+- 021: Memory truth projection
+- 022-023: Channel summaries and state
 
 ## License
 

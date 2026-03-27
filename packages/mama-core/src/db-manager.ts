@@ -43,6 +43,7 @@ export interface DatabaseAdapter {
     limit: number
   ) => Promise<VectorSearchResult[] | null>;
   vectorSearchEnabled: boolean;
+  reloadVectorCache?: () => void;
   getDbPath?: () => string;
   dbPath?: string;
   constructor: { name: string };
@@ -84,6 +85,7 @@ export interface VectorSearchParams {
   limit?: number;
   threshold?: number;
   timeWindow?: number;
+  includeSuperseded?: boolean;
 }
 
 export interface DecisionEdgeRow {
@@ -169,6 +171,11 @@ export async function initDB(): Promise<unknown> {
       // Run migrations (includes 012-create-checkpoints-table.sql)
       await dbAdapter.runMigrations(MIGRATIONS_DIR);
 
+      // Reload vector cache after migrations (new tables/rows may now exist)
+      if (typeof dbAdapter.reloadVectorCache === 'function') {
+        dbAdapter.reloadVectorCache();
+      }
+
       isInitialized = true;
 
       info(`[db-manager] Database initialized (${dbAdapter.constructor.name})`);
@@ -220,6 +227,10 @@ export function getAdapter(): DatabaseAdapter {
   return dbAdapter;
 }
 
+function buildMemoryScopeId(kind: string, externalId: string): string {
+  return `scope_${kind}_${Buffer.from(externalId).toString('base64url')}`;
+}
+
 /**
  * Close database connection
  *
@@ -234,6 +245,57 @@ export async function closeDB(): Promise<void> {
     initializingPromise = null; // Clear to allow re-initialization
     info('[db-manager] Database connection closed');
   }
+}
+
+export async function ensureMemoryScope(kind: string, externalId: string): Promise<string> {
+  const adapter = getAdapter();
+  const id = buildMemoryScopeId(kind, externalId);
+
+  adapter
+    .prepare(
+      `
+        INSERT OR IGNORE INTO memory_scopes (id, kind, external_id)
+        VALUES (?, ?, ?)
+      `
+    )
+    .run(id, kind, externalId);
+
+  return id;
+}
+
+export async function bindMemoryToScope(
+  memoryId: string,
+  scopeId: string,
+  isPrimary = false
+): Promise<void> {
+  const adapter = getAdapter();
+
+  adapter
+    .prepare(
+      `
+        INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary)
+        VALUES (?, ?, ?)
+      `
+    )
+    .run(memoryId, scopeId, isPrimary ? 1 : 0);
+}
+
+export async function listScopesForMemory(
+  memoryId: string
+): Promise<Array<{ kind: string; id: string }>> {
+  const adapter = getAdapter();
+
+  return adapter
+    .prepare(
+      `
+        SELECT ms.kind, ms.external_id AS id
+        FROM memory_scope_bindings msb
+        JOIN memory_scopes ms ON ms.id = msb.scope_id
+        WHERE msb.memory_id = ?
+        ORDER BY msb.is_primary DESC, ms.created_at ASC
+      `
+    )
+    .all(memoryId) as Array<{ kind: string; id: string }>;
 }
 
 /**
@@ -689,6 +751,11 @@ export async function queryVectorSearch(params: VectorSearchParams): Promise<Dec
         continue;
       }
 
+      // Filter out superseded decisions unless explicitly requested
+      if (!params.includeSuperseded && decision.superseded_by) {
+        continue;
+      }
+
       results.push({
         ...decision,
         similarity,
@@ -842,4 +909,92 @@ export function resetDBState(options: { disconnect?: boolean } = {}): void {
  */
 export function isTestMode(): boolean {
   return !!(process.env.MAMA_TEST_MODE || process.env.VITEST);
+}
+
+/**
+ * FTS5 keyword search on decisions table.
+ * Returns matching decision IDs with BM25 rank scores.
+ */
+export async function fts5Search(
+  query: string,
+  limit = 10
+): Promise<{ id: string; rank: number }[]> {
+  const adapter = getAdapter();
+
+  // Check if FTS5 table exists (swallow errors — table may not exist yet)
+  let tableCheck: { name: string } | undefined;
+  try {
+    tableCheck = adapter
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='decisions_fts'")
+      .get() as { name: string } | undefined;
+  } catch {
+    return [];
+  }
+  if (!tableCheck) return [];
+
+  // Query execution — let errors propagate to the caller
+  const stmt = adapter.prepare(`
+    SELECT d.id, rank
+    FROM decisions_fts
+    JOIN decisions d ON decisions_fts.rowid = d.rowid
+    WHERE decisions_fts MATCH ?
+    ORDER BY rank
+    LIMIT ?
+  `);
+  return stmt.all(query, limit) as { id: string; rank: number }[];
+}
+
+/**
+ * Re-generate all embeddings using the currently configured model.
+ * Call this after changing the embedding model in config.json.
+ *
+ * @param onProgress - Optional callback with (completed, total) counts
+ * @returns Number of embeddings regenerated
+ */
+export async function reindexEmbeddings(
+  onProgress?: (completed: number, total: number) => void
+): Promise<number> {
+  const adapter = getAdapter();
+  const { generateEnhancedEmbedding } = await import('./embeddings.js');
+
+  const decisions = adapter
+    .prepare('SELECT rowid, topic, decision, reasoning, outcome, confidence FROM decisions')
+    .all() as Array<{
+    rowid: number;
+    topic: string;
+    decision: string;
+    reasoning: string | null;
+    outcome: string | null;
+    confidence: number | null;
+  }>;
+
+  if (typeof adapter.insertEmbedding !== 'function') {
+    throw new Error('Embedding insertion is not available on this adapter');
+  }
+
+  const total = decisions.length;
+  let completed = 0;
+
+  for (const row of decisions) {
+    try {
+      const embedding = await generateEnhancedEmbedding({
+        topic: row.topic,
+        decision: row.decision,
+        reasoning: row.reasoning || undefined,
+        outcome: row.outcome || undefined,
+        confidence: row.confidence ?? undefined,
+      });
+      adapter.insertEmbedding(row.rowid, embedding);
+      completed++;
+      if (onProgress && completed % 50 === 0) {
+        onProgress(completed, total);
+      }
+    } catch (e) {
+      logError(`[db-manager] Failed to reindex rowid ${row.rowid}: ${e}`);
+    }
+  }
+
+  onProgress?.(completed, total);
+  info(`[db-manager] Reindexed ${completed}/${total} embeddings`);
+  return completed;
 }

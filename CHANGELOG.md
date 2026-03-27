@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Memory core infrastructure** — scoped memory system with typed records (preference, fact, decision, lesson, constraint), truth projection for recall filtering, evolution engine with automatic graph edge resolution, and channel summary state management. SQLite migrations 014-023. 16 test files, 59 tests.
+
 ### Changed
 
 - **GitHub Actions runtime refresh** — CI, publish, release, pages, and marketplace sync workflows now use current `actions/checkout`, `actions/setup-node`, and `pnpm/action-setup` releases; GitHub release creation moved from `softprops/action-gh-release` to `gh release create` to avoid deprecated Node 20 action runtimes in future runs
