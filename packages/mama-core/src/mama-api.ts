@@ -528,6 +528,29 @@ async function save({
     );
   }
 
+  // Validate scopes shape
+  if (inputScopes !== undefined && inputScopes !== null) {
+    if (!Array.isArray(inputScopes)) {
+      throw new Error('mama.save() scopes must be an array');
+    }
+    const validKinds = ['global', 'user', 'channel', 'project'];
+    for (const scope of inputScopes) {
+      if (
+        !scope ||
+        typeof scope !== 'object' ||
+        typeof scope.kind !== 'string' ||
+        typeof scope.id !== 'string'
+      ) {
+        throw new Error('mama.save() each scope must have kind (string) and id (string)');
+      }
+      if (!validKinds.includes(scope.kind)) {
+        throw new Error(
+          `mama.save() scope kind must be one of: ${validKinds.join(', ')} (got: ${scope.kind})`
+        );
+      }
+    }
+  }
+
   // Map type to user_involvement field
   // Note: Current schema uses user_involvement ('requested', 'approved', 'rejected')
   // Future: Will use decision_type column for proper distinction
@@ -623,6 +646,8 @@ async function save({
   if (topic) {
     try {
       // Story 1.1: Auto-search using suggest()
+      // NOTE: suggest() searches globally and does not yet support scoped similarity search.
+      // Cross-scope suggestions are possible here. Track as a follow-up.
       logSearching('Searching for related decisions...');
       const searchResults = await suggest(topic, {
         limit: 3,

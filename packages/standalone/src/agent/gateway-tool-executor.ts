@@ -1957,8 +1957,12 @@ export class GatewayToolExecutor {
           })
         : [];
 
-      const scopes =
-        Array.isArray(input.scopes) && input.scopes.length > 0 ? input.scopes : fallbackScopes;
+      let scopes = fallbackScopes;
+      if (Array.isArray(input.scopes) && input.scopes.length > 0) {
+        const derivedIds = new Set(fallbackScopes.map((s) => `${s.kind}:${s.id}`));
+        const allInDerived = input.scopes.every((s) => derivedIds.has(`${s.kind}:${s.id}`));
+        scopes = allInDerived ? input.scopes : fallbackScopes;
+      }
 
       if (scopes.length === 0) {
         return {
@@ -2010,8 +2014,12 @@ export class GatewayToolExecutor {
           projectId: process.env.MAMA_WORKSPACE || process.cwd(),
         })
       : [];
-    const scopes =
-      Array.isArray(input.scopes) && input.scopes.length > 0 ? input.scopes : fallbackScopes;
+    let scopes: Array<{ kind: string; id: string }> = fallbackScopes;
+    if (Array.isArray(input.scopes) && input.scopes.length > 0) {
+      const derivedIds = new Set(fallbackScopes.map((s) => `${s.kind}:${s.id}`));
+      const allInDerived = input.scopes.every((s) => derivedIds.has(`${s.kind}:${s.id}`));
+      scopes = allInDerived ? input.scopes : fallbackScopes;
+    }
 
     if (scopes.length === 0) {
       return {

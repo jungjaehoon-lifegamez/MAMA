@@ -78,7 +78,6 @@ function buildRecentChannels(
     if (existing) {
       if (summary.updatedAt > existing.lastActive) {
         existing.lastActive = summary.updatedAt;
-        channels.set(summary.channelKey, existing);
       }
       continue;
     }
@@ -93,6 +92,19 @@ function buildRecentChannels(
   }
 
   return Array.from(channels.values()).sort((left, right) => right.lastActive - left.lastActive);
+}
+
+function formatExtractionStatus(status?: string): string {
+  switch (status) {
+    case 'applied':
+      return 'Recent save applied';
+    case 'failed':
+      return 'Recent audit failed';
+    case 'skipped':
+      return 'Recent audit skipped';
+    default:
+      return 'No memory activity yet';
+  }
 }
 
 export function buildMemoryAgentDashboardPayload(params: {
@@ -113,14 +125,7 @@ export function buildMemoryAgentDashboardPayload(params: {
   const activeChannel = recentChannels[0] || null;
   const lastExtraction = params.agentStats.lastExtraction;
   const latestExtraction = params.agentStats.recentExtractions[0];
-  const lastExtractionStatus =
-    latestExtraction?.status === 'applied'
-      ? 'Recent save applied'
-      : latestExtraction?.status === 'failed'
-        ? 'Recent audit failed'
-        : latestExtraction?.status === 'skipped'
-          ? 'Recent audit skipped'
-          : 'No memory activity yet';
+  const lastExtractionStatus = formatExtractionStatus(latestExtraction?.status);
 
   return {
     generatedAt,

@@ -66,7 +66,7 @@ When calling \`mama_save\`, always include the \`scopes\` field from the Memory 
 ## Truth Model
 - Preserve history, but maintain current truth separately
 - Old memories may remain in history while becoming stale, contradicted, or superseded
-- When uncertain, prefer no-op or quarantine with a reason instead of inventing certainty
+- When uncertain about relationship type, prefer builds_on over supersedes to avoid data loss
 
 ## What to Save
 - Architecture decisions, technical choices, tooling preferences
@@ -127,6 +127,14 @@ export function ensureMemoryPersona(mamaHomeDir: string = join(homedir(), '.mama
 
   const existingContent = readFileSync(personaPath, 'utf-8');
   if (isLegacyManagedPersona(existingContent)) {
+    writeFileSync(personaPath, MEMORY_AGENT_PERSONA, 'utf-8');
+  }
+
+  // Also normalize v4 managed personas that may have drifted
+  if (
+    existingContent.includes(MANAGED_MEMORY_PERSONA_MARKER) &&
+    existingContent !== MEMORY_AGENT_PERSONA
+  ) {
     writeFileSync(personaPath, MEMORY_AGENT_PERSONA, 'utf-8');
   }
 
