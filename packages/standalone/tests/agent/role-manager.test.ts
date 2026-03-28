@@ -29,6 +29,7 @@ describe('RoleManager', () => {
       expect(roleName).toBe('chat_bot');
       expect(role.allowedTools).not.toContain('*');
       expect(role.blockedTools).toContain('Bash');
+      expect(role.blockedTools).toContain('mama_save');
       expect(role.systemControl).toBe(false);
     });
 
@@ -243,7 +244,19 @@ describe('RoleManager', () => {
       const capabilities = manager.getCapabilities(role);
 
       expect(capabilities.some((c) => c.includes('mama'))).toBe(true);
+      expect(capabilities).not.toContain('mama save');
       expect(capabilities).not.toContain('System control');
+    });
+  });
+
+  describe('chat_bot memory mutation policy', () => {
+    it('should not allow direct mama_save for chat_bot by default', () => {
+      const manager = new RoleManager();
+      const { role } = manager.getRoleForSource('telegram');
+
+      expect(manager.isToolAllowed(role, 'mama_search')).toBe(true);
+      expect(manager.isToolAllowed(role, 'mama_recall')).toBe(true);
+      expect(manager.isToolAllowed(role, 'mama_save')).toBe(false);
     });
   });
 

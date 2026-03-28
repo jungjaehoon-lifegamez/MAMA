@@ -11,15 +11,27 @@
  * - threadId-based session management
  */
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execFileSync } from 'child_process';
 import { EventEmitter } from 'events';
 import * as readline from 'readline';
-import { accessSync, chmodSync, constants, existsSync, mkdirSync, copyFileSync } from 'fs';
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  copyFileSync,
+  writeFileSync,
+  unlinkSync,
+} from 'fs';
 import { homedir } from 'os';
 import { delimiter, join } from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getConfig } from '../cli/config/config-manager.js';
 import type { PromptCallbacks } from './types.js';
+import { collectDescendantPids, type ProcessRow } from './process-tree.js';
+import { extractCodexAuthFailure } from './codex-auth.js';
+import { buildMAMACodexConfig } from './codex-home.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -88,6 +100,7 @@ export class CodexMCPProcess extends EventEmitter {
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
   private rl: readline.Interface | null = null;
+  private lastAuthFailure: Error | null = null;
 
   constructor(options: CodexMCPOptions = {}) {
     super();
@@ -104,6 +117,7 @@ export class CodexMCPProcess extends EventEmitter {
     }
 
     this.state = 'starting';
+    this.lastAuthFailure = null;
     let command: string;
     try {
       command = this.resolveCodexCommand();
@@ -113,7 +127,8 @@ export class CodexMCPProcess extends EventEmitter {
     }
     logger.info(`Starting Codex MCP server with command: ${command}`);
 
-    // Force CODEX_HOME to MAMA-internal directory so Codex ignores global ~/.codex/config.toml
+    // Use a MAMA-specific CODEX_HOME so we control MCP server wiring, while
+    // syncing auth from the user's global Codex home on every start.
     const codexHome = this.options.codexHome || join(homedir(), '.mama', '.codex');
     try {
       this.ensureCodexHome(codexHome);
@@ -156,6 +171,14 @@ export class CodexMCPProcess extends EventEmitter {
     this.process.stderr?.on('data', (chunk) => {
       const text = chunk.toString().trim();
       if (text) {
+        const authFailure = extractCodexAuthFailure(text);
+        if (authFailure) {
+          const error = new Error(authFailure);
+          this.lastAuthFailure = error;
+          logger.error('Codex auth failure detected:', authFailure);
+          this.shutdown(error, true);
+          return;
+        }
         logger.warn('stderr:', text);
       }
     });
@@ -375,6 +398,9 @@ export class CodexMCPProcess extends EventEmitter {
     content: string;
     usage?: { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
   }> {
+    logger.info(
+      `[CALL_START] ${name} thread=${this.threadId || 'none'} args=${Object.keys(args).join(',')}`
+    );
     const response = (await this.sendRequest('tools/call', {
       name,
       arguments: args,
@@ -397,6 +423,9 @@ export class CodexMCPProcess extends EventEmitter {
 
     // Check structuredContent first (preferred - has threadId)
     if (response.structuredContent?.threadId) {
+      logger.info(
+        `[CALL_DONE] ${name} thread=${response.structuredContent.threadId} content_len=${response.structuredContent.content?.length || 0}`
+      );
       return {
         threadId: response.structuredContent.threadId,
         content: response.structuredContent.content || '',
@@ -410,12 +439,18 @@ export class CodexMCPProcess extends EventEmitter {
       if (textContent?.text) {
         try {
           const parsed = JSON.parse(textContent.text) as { threadId?: string; content?: string };
+          logger.info(
+            `[CALL_DONE] ${name} thread=${parsed.threadId || this.threadId || 'none'} content_len=${parsed.content?.length || textContent.text.length}`
+          );
           return {
             threadId: parsed.threadId || this.threadId || '',
             content: parsed.content || textContent.text,
             usage,
           };
         } catch {
+          logger.info(
+            `[CALL_DONE] ${name} thread=${this.threadId || 'none'} content_len=${textContent.text.length}`
+          );
           return { content: textContent.text, threadId: this.threadId || '', usage };
         }
       }
@@ -442,6 +477,9 @@ export class CodexMCPProcess extends EventEmitter {
         return await this.callTool(name, args);
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
+        if (this.lastAuthFailure) {
+          throw this.lastAuthFailure;
+        }
         if (attempt >= 2 || !this.isRetryableToolError(err)) {
           logger.error(`Call failed: ${name} (attempt=${attempt})`, err);
           throw err;
@@ -559,6 +597,9 @@ export class CodexMCPProcess extends EventEmitter {
 
     switch (msg.type) {
       case 'mcp_tool_call_begin':
+        logger.info(
+          `[EVENT] mcp_tool_call_begin thread=${params?._meta?.threadId || this.threadId || 'none'} server=${msg.invocation?.server || 'unknown'} tool=${msg.invocation?.tool || 'unknown'}`
+        );
         if (cb?.onToolUse && msg.invocation) {
           const toolName = msg.invocation.server
             ? `${msg.invocation.server}:${msg.invocation.tool}`
@@ -569,6 +610,9 @@ export class CodexMCPProcess extends EventEmitter {
         break;
 
       case 'mcp_tool_call_end':
+        logger.info(
+          `[EVENT] mcp_tool_call_end thread=${params?._meta?.threadId || this.threadId || 'none'} server=${msg.invocation?.server || 'unknown'} tool=${msg.invocation?.tool || 'unknown'}`
+        );
         if (cb?.onToolComplete && msg.call_id) {
           const toolName = msg.invocation?.tool || 'unknown';
           const isError = false; // Codex doesn't indicate error in this event
@@ -578,6 +622,9 @@ export class CodexMCPProcess extends EventEmitter {
         break;
 
       case 'agent_message_delta':
+        logger.debug(
+          `[EVENT] agent_message_delta len=${typeof msg.delta === 'string' ? msg.delta.length : 0}`
+        );
         if (cb?.onDelta && typeof msg.delta === 'string') {
           cb.onDelta(msg.delta);
         }
@@ -693,21 +740,30 @@ export class CodexMCPProcess extends EventEmitter {
     }
     chmodSync(codexHome, 0o700);
 
-    const internalAuthPath = join(codexHome, 'auth.json');
-    if (existsSync(internalAuthPath)) {
-      chmodSync(internalAuthPath, 0o600);
-      return;
-    }
+    const configPath = join(codexHome, 'config.toml');
+    const configToml = buildMAMACodexConfig();
+    writeFileSync(configPath, configToml, 'utf-8');
+    chmodSync(configPath, 0o600);
 
+    const internalAuthPath = join(codexHome, 'auth.json');
     const externalAuthPath = join(homedir(), '.codex', 'auth.json');
     if (existsSync(externalAuthPath)) {
       try {
         copyFileSync(externalAuthPath, internalAuthPath);
         chmodSync(internalAuthPath, 0o600);
-        logger.info(`Bootstrapped Codex auth into ${internalAuthPath}`);
+        logger.info(`Synced Codex auth into ${internalAuthPath}`);
       } catch (error) {
         logger.warn(
-          `Failed to bootstrap Codex auth: ${error instanceof Error ? error.message : String(error)}`
+          `Failed to sync Codex auth: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    } else if (existsSync(internalAuthPath)) {
+      try {
+        unlinkSync(internalAuthPath);
+        logger.info('Removed stale internal Codex auth file (external auth deleted)');
+      } catch (unlinkErr) {
+        logger.warn(
+          `Failed to remove stale Codex auth: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`
         );
       }
     }
@@ -753,13 +809,17 @@ export class CodexMCPProcess extends EventEmitter {
 
   private isRetryableToolError(error: Error): boolean {
     const message = error.message.toLowerCase();
+    if (extractCodexAuthFailure(error.message)) {
+      return false;
+    }
+
     return (
-      message.includes('request timeout') ||
-      message.includes('process is not running') ||
-      message.includes('process closed with code') ||
-      message.includes('mcp initialize timeout') ||
-      message.includes('connection closed') ||
-      message.includes('econnreset')
+      !message.includes('request timeout') &&
+      (message.includes('process is not running') ||
+        message.includes('process closed with code') ||
+        message.includes('mcp initialize timeout') ||
+        message.includes('connection closed') ||
+        message.includes('econnreset'))
     );
   }
 
@@ -772,12 +832,16 @@ export class CodexMCPProcess extends EventEmitter {
     this.clearPendingRequests(error);
     if (shouldKillProcess && this.process) {
       const processToKill = this.process;
+      const rootPid = processToKill.pid;
+      if (!rootPid) {
+        this.rl?.close();
+        this.rl = null;
+        this.process = null;
+        this.threadId = null;
+        return;
+      }
       const forceKillTimer = setTimeout(() => {
-        try {
-          processToKill.kill('SIGKILL');
-        } catch {
-          // Process already exited.
-        }
+        this.killProcessTree(rootPid, 'SIGKILL');
       }, 1000);
       forceKillTimer.unref();
 
@@ -786,7 +850,7 @@ export class CodexMCPProcess extends EventEmitter {
       });
 
       try {
-        processToKill.kill();
+        this.killProcessTree(rootPid, 'SIGTERM');
       } catch {
         clearTimeout(forceKillTimer);
       }
@@ -797,5 +861,37 @@ export class CodexMCPProcess extends EventEmitter {
     }
     this.process = null;
     this.threadId = null;
+  }
+
+  private killProcessTree(rootPid: number, signal: NodeJS.Signals): void {
+    const descendants = this.listDescendantPids(rootPid);
+    for (const pid of [...descendants.reverse(), rootPid]) {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        // Process may already be gone.
+      }
+    }
+  }
+
+  private listDescendantPids(rootPid: number): number[] {
+    try {
+      const output = execFileSync('ps', ['-Ao', 'pid=,ppid='], { encoding: 'utf8' });
+      const rows: ProcessRow[] = output
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [pid, ppid] = line.split(/\s+/);
+          return { pid: Number(pid), ppid: Number(ppid) };
+        })
+        .filter((row) => Number.isFinite(row.pid) && Number.isFinite(row.ppid));
+      return collectDescendantPids(rootPid, rows);
+    } catch (error) {
+      logger.warn(
+        `Failed to inspect codex process descendants: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return [];
+    }
   }
 }

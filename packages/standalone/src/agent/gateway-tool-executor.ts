@@ -28,12 +28,14 @@ import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { recordSecurityEvent } from '../security/security-monitor.js';
+import { deriveMemoryScopes } from '../memory/scope-context.js';
 import type {
   GatewayToolName,
   GatewayToolInput,
   GatewayToolResult,
   SaveInput,
   SearchInput,
+  RecallInput,
   UpdateInput,
   LoadCheckpointInput,
   GatewayToolExecutorOptions,
@@ -68,6 +70,7 @@ import {
 import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
+import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 
@@ -167,6 +170,15 @@ export class GatewayToolExecutor {
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
+  private memoryAgentProcessManager: AgentProcessManager | null = null;
+  setMemoryAgent(processManager: AgentProcessManager): void {
+    this.memoryAgentProcessManager = processManager;
+  }
+
+  /** Check if a memory agent is available for routing memory writes. */
+  hasMemoryAgent(): boolean {
+    return this.memoryAgentProcessManager !== null;
+  }
 
   constructor(options: GatewayToolExecutorOptions = {}) {
     this.mamaDbPath = options.mamaDbPath;
@@ -240,6 +252,9 @@ export class GatewayToolExecutor {
         saveCheckpoint: mama.saveCheckpoint.bind(mama),
         listDecisions: mama.list.bind(mama), // Note: mama exports listDecisions as 'list'
         suggest: mama.suggest.bind(mama),
+        recallMemory: mama.recallMemory?.bind(mama),
+        ingestMemory: mama.ingestMemory?.bind(mama),
+        buildProfile: mama.buildProfile?.bind(mama),
         updateOutcome: mama.updateOutcome.bind(mama),
         loadCheckpoint: mama.loadCheckpoint.bind(mama),
       };
@@ -420,10 +435,16 @@ export class GatewayToolExecutor {
           );
         case 'mama_search':
           return await handleSearch(api, input as SearchInput);
+        case 'mama_recall':
+          return await this.handleMamaRecall(input as RecallInput);
         case 'mama_update':
           return await handleUpdate(api, input as UpdateInput);
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(api, input as LoadCheckpointInput);
+        case 'mama_add':
+          return await this.handleMamaAdd(input as { content: string });
+        case 'mama_ingest':
+          return await this.handleMamaIngest(input as { content: string; scopes?: unknown });
         default:
           throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
       }
@@ -1879,6 +1900,146 @@ export class GatewayToolExecutor {
         ? JSON.stringify({ value: result.value, logs: result.logs, metrics: result.metrics })
         : `Code-Act error: ${result.error?.message || 'Unknown error'}`,
     } as GatewayToolResult;
+  }
+
+  /**
+   * Handle mama_add — auto-extract facts from conversation content with derived memory scopes.
+   */
+  private async handleMamaAdd(input: { content: string }): Promise<GatewayToolResult> {
+    if (!this.currentContext) {
+      return {
+        success: false,
+        error: 'mama_add requires an active agent context',
+      } as GatewayToolResult;
+    }
+
+    const scopes = deriveMemoryScopes({
+      source: this.currentContext.source,
+      channelId: this.currentContext.session.channelId,
+      userId: this.currentContext.session.userId,
+      projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+    });
+
+    return this.handleMamaIngest({
+      ...input,
+      scopes,
+    });
+  }
+
+  private async handleMamaIngest(input: {
+    content: string;
+    scopes?: unknown;
+  }): Promise<GatewayToolResult> {
+    const { content } = input;
+    if (!content || typeof content !== 'string') {
+      return {
+        success: false,
+        error: 'content is required and must be a string',
+      } as GatewayToolResult;
+    }
+
+    try {
+      const api = await this.initializeMAMAApi();
+      if (!api.ingestMemory) {
+        return {
+          success: false,
+          error: 'Memory ingest API not available.',
+        } as GatewayToolResult;
+      }
+
+      const fallbackScopes = this.currentContext
+        ? deriveMemoryScopes({
+            source: this.currentContext.source,
+            channelId: this.currentContext.session.channelId,
+            userId: this.currentContext.session.userId,
+            projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+          })
+        : [];
+
+      let scopes = fallbackScopes;
+      if (Array.isArray(input.scopes) && input.scopes.length > 0) {
+        const derivedIds = new Set(fallbackScopes.map((s) => `${s.kind}:${s.id}`));
+        const allInDerived = input.scopes.every((s) => derivedIds.has(`${s.kind}:${s.id}`));
+        scopes = allInDerived ? input.scopes : fallbackScopes;
+      }
+
+      if (scopes.length === 0) {
+        return {
+          success: false,
+          error: 'mama_ingest requires scopes (provide via input or active agent context)',
+        } as GatewayToolResult;
+      }
+
+      const result = await api.ingestMemory({
+        content: content.substring(0, 10_000),
+        scopes,
+        source: {
+          package: 'standalone',
+          source_type: 'gateway_tool_executor',
+          source: this.currentContext?.source || null,
+        },
+      });
+
+      return {
+        success: true,
+        extracted: 1,
+        saved: 1,
+        result,
+      } as GatewayToolResult;
+    } catch (err) {
+      return {
+        success: false,
+        error: `Ingest failed: ${err instanceof Error ? err.message : String(err)}`,
+      } as GatewayToolResult;
+    }
+  }
+
+  private async handleMamaRecall(input: RecallInput): Promise<GatewayToolResult> {
+    const api = await this.initializeMAMAApi();
+    if (!api.recallMemory || typeof input.query !== 'string' || input.query.length === 0) {
+      return {
+        success: false,
+        error: 'query is required and recallMemory API must be available',
+      } as GatewayToolResult;
+    }
+
+    const fallbackScopes = this.currentContext
+      ? deriveMemoryScopes({
+          source: this.currentContext.source,
+          channelId: this.currentContext.session.channelId,
+          userId: this.currentContext.session.userId,
+          projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+        })
+      : [];
+    let scopes = fallbackScopes;
+    if (Array.isArray(input.scopes) && input.scopes.length > 0) {
+      const derivedIds = new Set(fallbackScopes.map((s) => `${s.kind}:${s.id}`));
+      const allInDerived = input.scopes.every((s) => derivedIds.has(`${s.kind}:${s.id}`));
+      if (allInDerived)
+        scopes = fallbackScopes.filter((s) =>
+          input.scopes!.some((is) => is.kind === s.kind && is.id === s.id)
+        );
+    }
+
+    if (scopes.length === 0) {
+      return {
+        success: false,
+        error: 'mama_recall requires scopes (provide via input or active agent context)',
+      } as GatewayToolResult;
+    }
+
+    try {
+      const bundle = await api.recallMemory(input.query, {
+        scopes,
+        includeProfile: true,
+      });
+      return { success: true, bundle } as GatewayToolResult;
+    } catch (err) {
+      return {
+        success: false,
+        error: `Recall failed: ${err instanceof Error ? err.message : String(err)}`,
+      } as GatewayToolResult;
+    }
   }
 
   static getValidTools(): GatewayToolName[] {
