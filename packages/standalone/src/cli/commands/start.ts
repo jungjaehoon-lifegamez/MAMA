@@ -1515,7 +1515,7 @@ export async function runAgentLoop(
       roleName: 'memory_agent',
       role: {
         allowedTools: ['mama_search', 'mama_save'],
-        blockedTools: ['Read', 'Write', 'Bash'],
+        blockedTools: ['Read', 'Write', 'Bash', 'Grep', 'Glob', 'Edit'],
         systemControl: false,
         sensitiveAccess: false,
       },
