@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AgentLoop } from '../../src/agent/agent-loop.js';
+import { AgentLoop, getGatewayToolsPrompt } from '../../src/agent/agent-loop.js';
 import type { OAuthManager } from '../../src/auth/index.js';
 import type { AgentContext, MAMAApiInterface } from '../../src/agent/types.js';
 
@@ -165,7 +165,7 @@ describe('AgentLoop', () => {
       expect(result.totalUsage.output_tokens).toBe(5);
     });
 
-    it('should pass structural tool restrictions for chat_bot contexts', async () => {
+    it('should not pass structural tool restrictions through the runner options', async () => {
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),
         {},
@@ -180,19 +180,8 @@ describe('AgentLoop', () => {
       });
 
       const promptOptions = persistentPromptMock.mock.calls[0]?.[2];
-      expect(promptOptions.allowedTools).toEqual(
-        expect.arrayContaining([
-          'mama_search',
-          'mama_recall',
-          'mama_load_checkpoint',
-          'Read',
-          'telegram_send',
-        ])
-      );
-      expect(promptOptions.allowedTools).not.toContain('mama_save');
-      expect(promptOptions.disallowedTools).toEqual(
-        expect.arrayContaining(['Bash', 'Write', 'mama_save'])
-      );
+      expect(promptOptions.allowedTools).toBeUndefined();
+      expect(promptOptions.disallowedTools).toBeUndefined();
     });
   });
 
@@ -215,6 +204,13 @@ describe('AgentLoop', () => {
       const tools = AgentLoop.getToolDefinitions();
       // Tool definitions are now provided by ClaudeCLI/MCP, so may be empty
       expect(Array.isArray(tools)).toBe(true);
+    });
+  });
+
+  describe('system prompt helpers', () => {
+    it('should expose the full gateway tools prompt', () => {
+      expect(getGatewayToolsPrompt()).toContain('# Gateway Tools');
+      expect(getGatewayToolsPrompt()).toContain('mama_search');
     });
   });
 

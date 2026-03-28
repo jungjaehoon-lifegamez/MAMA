@@ -41,4 +41,18 @@ describe('memory agent ack classification', () => {
     const ack = buildMemoryAuditAckFromAgentResult(createResult(['mama_search']), 1, 1);
     expect(ack.status).toBe('skipped');
   });
+
+  it('should mark failed when response contains a codex auth error', () => {
+    const ack = buildMemoryAuditAckFromAgentResult(
+      createResult(
+        ['mama_search'],
+        'Failed to refresh token: refresh_token_reused. Please log out and sign in again.'
+      ),
+      1,
+      1
+    );
+
+    expect(ack.status).toBe('failed');
+    expect(ack.reason).toContain('refresh_token_reused');
+  });
 });

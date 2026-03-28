@@ -33,8 +33,8 @@ import {
   expandPath,
   provisionDefaults,
 } from '../config/config-manager.js';
-import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
-import { killProcessesOnPorts, killAllMamaDaemons } from './stop.js';
+import { writePid, isDaemonRunning, isProcessRunning } from '../utils/pid-manager.js';
+import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
@@ -60,6 +60,7 @@ import {
   formatMemoryBootstrap,
 } from '../../memory/bootstrap-context.js';
 import { buildMemoryAuditAckFromAgentResult } from '../../memory/memory-agent-ack.js';
+import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
 import { deriveMemoryScopes } from '../../memory/scope-context.js';
 import {
   CronScheduler,
@@ -71,6 +72,7 @@ import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer, insertTokenUsage } from '../../api/index.js';
 import { MetricsStore } from '../../observability/metrics-store.js';
 import { MetricsCleanup } from '../../observability/metrics-cleanup.js';
+import { stopAgentLoops } from '../../cli/shutdown-utils.js';
 import { HealthScoreService } from '../../observability/health-score.js';
 import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
@@ -595,6 +597,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
 
   // Clean up ALL stale mama daemon processes (not just port holders).
   // Zombie daemons may stay alive via Slack Socket Mode without holding any port.
+  await killAllMamaWatchdogs();
   await killAllMamaDaemons();
   await killProcessesOnPorts([3847, 3849]);
 
@@ -747,8 +750,13 @@ function spawnDaemonChild(): number {
 async function startDaemon(): Promise<number> {
   const pid = spawnDaemonChild();
 
-  // Give daemon a moment to start
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  // Give the child a short window to fail fast before we advertise it as healthy.
+  // Without this, a dead-on-start daemon can still get a PID file + watchdog while
+  // an old daemon is serving health, which leads to duplicate gateways on restart.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  if (!isProcessRunning(pid)) {
+    throw new Error(`Daemon process ${pid} exited before startup completed`);
+  }
   await writePid(pid);
 
   // Start watchdog in background (detached)
@@ -929,7 +937,7 @@ setTimeout(() => tick(), 10000);
 `;
 
   // Spawn watchdog as a separate detached process
-  const child = spawn(process.execPath, ['-e', watchdogScript], {
+  const child = spawn(process.execPath, ['-e', watchdogScript, 'mama-watchdog'], {
     detached: true,
     stdio: ['ignore', out, out],
     cwd: homedir(),
@@ -1489,6 +1497,8 @@ export async function runAgentLoop(
     upsertChannelSummary: mamaApi.upsertChannelSummary as MamaApiClient['upsertChannelSummary'],
   };
 
+  let memoryAgentLoop: AgentLoop | null = null;
+
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
     backend: runtimeBackend,
   });
@@ -1527,12 +1537,12 @@ export async function runAgentLoop(
     const memoryModel =
       memoryAgentConfig?.model ||
       (memoryBackend === 'claude' ? 'claude-sonnet-4-6' : config.agent.model);
-    const memoryAgentLoop = new AgentLoop(
+    memoryAgentLoop = new AgentLoop(
       oauthManager,
       {
         systemPrompt: memoryPersona,
         model: memoryModel,
-        maxTurns: 6,
+        maxTurns: 3,
         backend: memoryBackend,
         toolsConfig: {
           gateway: ['mama_search', 'mama_save', 'mama_profile'],
@@ -1549,6 +1559,9 @@ export async function runAgentLoop(
       async getSharedProcess() {
         return {
           async sendMessage(content: string) {
+            if (!memoryAgentLoop) {
+              throw new Error('Memory agent loop is not initialized');
+            }
             let prompt = content;
             if (!memoryBootstrapDelivered) {
               const bootstrap = await buildStandaloneMemoryBootstrap({
@@ -1576,6 +1589,7 @@ export async function runAgentLoop(
               source: 'memory-agent',
               channelId: 'shared',
               agentContext: memoryAgentContext,
+              stopAfterSuccessfulTools: ['mama_save'],
             });
             const afterDecisionCount = Number(
               adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
@@ -2264,8 +2278,15 @@ export async function runAgentLoop(
         // Table may not exist yet — not an error
       }
 
+      const payload = buildMemoryAgentDashboardPayload({
+        agentStats,
+        channelSummaries,
+        recentDecisions,
+        generatedAt: new Date().toISOString(),
+      });
+
       res.json({
-        timestamp: new Date().toISOString(),
+        ...payload,
         agent: agentStats,
         memory: {
           total: totalRow?.count ?? 0,
@@ -2275,7 +2296,6 @@ export async function runAgentLoop(
           outcomes,
           topTopics,
         },
-        recentDecisions,
         channelSummaries,
       });
     } catch (error) {
@@ -3289,7 +3309,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       );
 
       // Stop agent loop
-      await agentLoop.stop();
+      await stopAgentLoops([agentLoop, memoryAgentLoop]);
 
       // Release all CLI sessions
       getSessionPool().dispose();

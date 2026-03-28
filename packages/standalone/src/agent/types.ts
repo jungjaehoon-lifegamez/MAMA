@@ -866,6 +866,12 @@ export interface AgentLoopOptions {
   streamCallbacks?: StreamCallbacks;
 
   /**
+   * Stop the agent loop immediately after any of these tools completes successfully.
+   * Useful for internal agents that should terminate as soon as a save side-effect occurs.
+   */
+  stopAfterSuccessfulTools?: string[];
+
+  /**
    * Metric recording callback (STORY-020)
    * Called at key emission points: prompt latency, tool execution, errors
    */
