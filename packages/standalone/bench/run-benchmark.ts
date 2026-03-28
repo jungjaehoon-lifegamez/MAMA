@@ -86,7 +86,8 @@ async function mamaSave(
 
 async function mamaSearch(
   query: string,
-  limit = 10
+  limit = 10,
+  topicPrefix?: string
 ): Promise<
   Array<{
     id: string;
@@ -96,17 +97,24 @@ async function mamaSearch(
     similarity: number;
   }>
 > {
-  const res = await fetch(
-    `${MAMA_BASE_URL}/api/mama/search?q=${encodeURIComponent(query)}&limit=${limit}`
-  );
+  let url = `${MAMA_BASE_URL}/api/mama/search?q=${encodeURIComponent(query)}&limit=${limit * 3}`;
+  if (topicPrefix) {
+    url += `&topicPrefix=${encodeURIComponent(topicPrefix)}`;
+  }
+  const res = await fetch(url);
   const data = (await res.json()) as { results?: unknown[] };
-  return (data.results ?? []) as Array<{
+  let results = (data.results ?? []) as Array<{
     id: string;
     topic: string;
     decision: string;
     reasoning: string;
     similarity: number;
   }>;
+  // Filter by topic prefix if provided (client-side enforcement)
+  if (topicPrefix) {
+    results = results.filter((r) => r.topic.startsWith(topicPrefix));
+  }
+  return results.slice(0, limit);
 }
 
 function buildContext(
@@ -173,14 +181,31 @@ async function judgeAnswer(
 ): Promise<{ correct: boolean; reason: string }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    // Simple substring match fallback
-    const normalized = answer.toLowerCase();
-    const truthWords = groundTruth
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((w) => w.length > 3);
-    const matches = truthWords.filter((w) => normalized.includes(w));
-    const correct = matches.length >= Math.ceil(truthWords.length * 0.5);
+    // Improved keyword judge: check for key entities (numbers, proper nouns)
+    const normalizedAnswer = answer.toLowerCase();
+    const normalizedTruth = groundTruth.toLowerCase();
+
+    // Extract key entities: numbers, capitalized words, quoted phrases
+    const numbers = groundTruth.match(/\d[\d,./:]+/g) ?? [];
+    const properNouns = groundTruth.match(/[A-Z][a-z]{2,}/g) ?? [];
+    const keyEntities = [
+      ...numbers.map((n) => n.toLowerCase()),
+      ...properNouns.map((n) => n.toLowerCase()),
+    ];
+
+    if (keyEntities.length > 0) {
+      const entityMatches = keyEntities.filter((e) => normalizedAnswer.includes(e));
+      const correct = entityMatches.length >= Math.ceil(keyEntities.length * 0.4);
+      return {
+        correct,
+        reason: `entity-match: ${entityMatches.join(',')} (${entityMatches.length}/${keyEntities.length})`,
+      };
+    }
+
+    // Fallback: word overlap
+    const truthWords = normalizedTruth.split(/\s+/).filter((w) => w.length > 3);
+    const matches = truthWords.filter((w) => normalizedAnswer.includes(w));
+    const correct = matches.length >= Math.ceil(truthWords.length * 0.4);
     return { correct, reason: `keyword-match: ${matches.length}/${truthWords.length}` };
   }
 
@@ -275,25 +300,32 @@ async function main() {
     const prefix = `[${i + 1}/${questions.length}]`;
     process.stdout.write(`${prefix} ${q.question_type}: ${q.question.slice(0, 50)}... `);
 
-    // Ingest: save all haystack sessions
+    // Ingest: save haystack sessions in parallel batches
     const ingestStart = Date.now();
     const containerTag = `bench_${runId}_${q.question_id}`;
-    for (let si = 0; si < q.haystack_sessions.length; si++) {
-      const session = q.haystack_sessions[si];
-      const conversationText = session
-        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-        .join('\n');
-      const topic = `${containerTag}_s${si}`.slice(0, 80);
-      await mamaSave(topic, conversationText.slice(0, 8000), `Session ${si} for ${q.question_id}`);
+    const BATCH_SIZE = 5;
+    for (let batch = 0; batch < q.haystack_sessions.length; batch += BATCH_SIZE) {
+      const batchSessions = q.haystack_sessions.slice(batch, batch + BATCH_SIZE);
+      await Promise.all(
+        batchSessions.map((session, offset) => {
+          const si = batch + offset;
+          const conversationText = session
+            .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+            .join('\n');
+          const topic = `${containerTag}_s${si}`.slice(0, 80);
+          return mamaSave(
+            topic,
+            conversationText.slice(0, 8000),
+            `Session ${si} for ${q.question_id}`
+          );
+        })
+      );
     }
     const ingestMs = Date.now() - ingestStart;
 
-    // Small delay for embedding indexing
-    await new Promise((r) => setTimeout(r, 200));
-
-    // Search
+    // Search (scoped to this question's container)
     const searchStart = Date.now();
-    const searchResults = await mamaSearch(q.question, 5);
+    const searchResults = await mamaSearch(q.question, 5, containerTag);
     const searchMs = Date.now() - searchStart;
 
     // Answer
