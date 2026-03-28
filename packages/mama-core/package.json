@@ -10,6 +10,7 @@
     "./embedding-cache": "./dist/embedding-cache.js",
     "./embedding-client": "./dist/embedding-client.js",
     "./embedding-server": "./dist/embedding-server/index.js",
+    "./memory/types": "./dist/memory/types.js",
     "./memory-store": "./dist/memory-store.js",
     "./db-manager": "./dist/db-manager.js",
     "./db-adapter": "./dist/db-adapter/index.js",

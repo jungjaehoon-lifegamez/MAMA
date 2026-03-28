@@ -7,9 +7,15 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Memory core infrastructure** — scoped memory system with typed records (preference, fact, decision, lesson, constraint), truth projection for recall filtering, evolution engine with automatic graph edge resolution, and channel summary state management. SQLite migrations 014-023. 16 test files, 59 tests.
+- **Candidate-driven memory writer agent** — when you say "기억해" or "we decided X," MAMA now reliably catches and saves it. A deterministic `SaveCandidateExtractor` pre-filters turns for durable memory candidates (Korean + English), then a writer-only memory agent searches related memories, resolves topic relationships, and saves with scope bindings. Replaces the previous audit-only flow that could silently skip explicit decisions.
+- **Memory agent dashboard API** — `/api/memory-agent/stats` and `/api/memory-agent/dashboard` expose candidate lifecycle metrics (turnsObserved, acksApplied/Skipped/Failed), channel tracking, and recent extraction activity
+- **Scoped memory saves** — `mama_save` now forwards scope refs (project, channel, user, global) through the full chain from agent persona to mama-core `saveMemory()`, preventing cross-scope pollution
+- **Strongly-typed scope refs** — `ScopeRef` type with `MemoryScopeKind` union replaces bare `{ kind: string; id: string }` across standalone types, catching invalid scope names at compile time
 
 ### Changed
 
+- **Memory agent persona** — rewritten from auditor to writer role; resolves "save when in doubt" vs "prefer quarantine" contradiction; now instructs agent to parse and include scopes when calling `mama_save`
+- **Memory agent isolation** — `blockedTools` expanded to include Grep, Glob, Edit alongside Read, Write, Bash for defense-in-depth
 - **GitHub Actions runtime refresh** — CI, publish, release, pages, and marketplace sync workflows now use current `actions/checkout`, `actions/setup-node`, and `pnpm/action-setup` releases; GitHub release creation moved from `softprops/action-gh-release` to `gh release create` to avoid deprecated Node 20 action runtimes in future runs
 
 ## [0.14.5] - 2026-03-24

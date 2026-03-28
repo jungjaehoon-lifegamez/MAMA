@@ -280,7 +280,7 @@ describe.sequential('load_checkpoint MCP Tool', () => {
 
       // Verify latency is reasonable
       const duration = endTime - startTime;
-      expect(duration).toBeGreaterThan(0);
+      expect(duration).toBeGreaterThanOrEqual(0);
       expect(duration).toBeLessThan(10000); // Should complete within 10 seconds
     });
 

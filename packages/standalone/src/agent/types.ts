@@ -316,12 +316,30 @@ export interface ToolDefinition {
 /**
  * Input for save tool (decision)
  */
+export type MemoryScopeKind = 'global' | 'user' | 'channel' | 'project';
+export interface ScopeRef {
+  kind: MemoryScopeKind;
+  id: string;
+}
+
 export interface SaveDecisionInput {
   type: 'decision';
   topic: string;
   decision: string;
   reasoning: string;
   confidence?: number;
+  is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
+  scopes?: ScopeRef[];
+}
+
+export interface SaveDecisionPayload {
+  type: 'user_decision';
+  topic: string;
+  decision: string;
+  reasoning: string;
+  confidence?: number;
+  is_static?: number;
+  scopes?: ScopeRef[];
 }
 
 /**
@@ -346,6 +364,20 @@ export interface SearchInput {
   query?: string;
   type?: 'all' | 'decision' | 'checkpoint';
   limit?: number;
+}
+
+export interface RecallInput {
+  query: string;
+  scopes?: ScopeRef[];
+}
+
+export interface AddInput {
+  content: string;
+}
+
+export interface IngestInput {
+  content: string;
+  scopes?: unknown;
 }
 
 /**
@@ -588,6 +620,9 @@ export interface StopBotInput {
 export type GatewayToolInput =
   | SaveInput
   | SearchInput
+  | RecallInput
+  | AddInput
+  | IngestInput
   | UpdateInput
   | LoadCheckpointInput
   | TranslateImageInput
@@ -615,8 +650,11 @@ export type GatewayToolInput =
 export type GatewayToolName =
   | 'mama_save'
   | 'mama_search'
+  | 'mama_recall'
   | 'mama_update'
   | 'mama_load_checkpoint'
+  | 'mama_add'
+  | 'mama_ingest'
   | 'Read'
   | 'Write'
   | 'Bash'
@@ -862,6 +900,12 @@ export interface AgentLoopOptions {
   streamCallbacks?: StreamCallbacks;
 
   /**
+   * Stop the agent loop after the current tool batch completes when any
+   * of these tools executed successfully in that batch.
+   */
+  stopAfterSuccessfulTools?: string[];
+
+  /**
    * Metric recording callback (STORY-020)
    * Called at key emission points: prompt latency, tool execution, errors
    */
@@ -1001,7 +1045,7 @@ export interface GatewayToolExecutorOptions {
  * Interface for MAMA API (for dependency injection)
  */
 export interface MAMAApiInterface {
-  save(input: SaveDecisionInput | Omit<SaveCheckpointInput, 'type'>): Promise<SaveResult>;
+  save(input: SaveDecisionPayload): Promise<SaveResult>;
   saveCheckpoint(
     summary: string,
     openFiles: string[],
@@ -1011,6 +1055,12 @@ export interface MAMAApiInterface {
   ): Promise<SaveResult>;
   listDecisions(options?: { limit?: number }): Promise<unknown[]>;
   suggest(query: string, options?: { limit?: number }): Promise<SearchResult>;
+  recallMemory?(
+    query: string,
+    options?: { scopes?: ScopeRef[]; includeProfile?: boolean }
+  ): Promise<unknown>;
+  ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
+  buildProfile?(scopes?: ScopeRef[], options?: Record<string, unknown>): Promise<unknown>;
   updateOutcome(
     id: string,
     input: { outcome: string; failure_reason?: string }

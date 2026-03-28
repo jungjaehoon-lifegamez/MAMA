@@ -74,18 +74,17 @@ Save a decision or checkpoint to MAMA's memory.
 
 #### Input Schema
 
-| Field                 | Type   | Required       | Description                                                                 |
-| --------------------- | ------ | -------------- | --------------------------------------------------------------------------- |
-| `type`                | string | Yes            | `'decision'` or `'checkpoint'`                                              |
-| **Decision fields**   |
-| `topic`               | string | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous. |
-| `decision`            | string | For decision   | The decision made                                                           |
-| `reasoning`           | string | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3). |
-| `confidence`          | number | No             | 0.0-1.0, default 0.5                                                        |
-| **Checkpoint fields** |
-| `summary`             | string | For checkpoint | Session state: what was done, what's pending                                |
-| `next_steps`          | string | No             | Instructions for next session                                               |
-| `open_files`          | array  | No             | List of relevant file paths                                                 |
+| Field        | Type   | Required       | Description                                                                                                     |
+| ------------ | ------ | -------------- | --------------------------------------------------------------------------------------------------------------- |
+| `type`       | string | Yes            | `'decision'` or `'checkpoint'`                                                                                  |
+| `topic`      | string | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous.                                     |
+| `decision`   | string | For decision   | The decision made                                                                                               |
+| `reasoning`  | string | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3).                                     |
+| `confidence` | number | No             | 0.0-1.0, default 0.5                                                                                            |
+| `scopes`     | array  | No             | Standalone gateway only. Memory scope refs, e.g. `[{kind:"project",id:"/path"}]`. Not yet in MCP server schema. |
+| `summary`    | string | For checkpoint | Session state: what was done, what's pending                                                                    |
+| `next_steps` | string | No             | Instructions for next session                                                                                   |
+| `open_files` | array  | No             | List of relevant file paths                                                                                     |
 
 #### Example: Save Decision
 
