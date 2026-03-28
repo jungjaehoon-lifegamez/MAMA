@@ -32,6 +32,8 @@ export interface PromptResult {
 export interface PromptOptions {
   model?: string;
   resumeSession?: boolean;
+  allowedTools?: string[];
+  disallowedTools?: string[];
 }
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
