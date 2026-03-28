@@ -1901,6 +1901,19 @@ export async function runAgentLoop(
     }
   }
 
+  // Wire gateway registry for memory save confirmations
+  messageRouter.setGatewayRegistry({
+    async sendMessage(source: string, channelId: string, text: string) {
+      if (source === 'telegram' && telegramGateway) {
+        await telegramGateway.sendMessage(channelId, text);
+      } else if (source === 'discord' && discordGateway) {
+        await discordGateway.sendMessage(channelId, text);
+      } else if (source === 'slack' && slackGateway) {
+        await slackGateway.sendMessage(channelId, text);
+      }
+    },
+  });
+
   // Wire gateways into health check service
   if (discordGateway) {
     healthCheckService.addGateway('discord', discordGateway);
