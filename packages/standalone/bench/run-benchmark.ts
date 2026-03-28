@@ -3,16 +3,20 @@
  * MAMA Memory Benchmark Runner
  *
  * Production-level benchmark using LongMemEval dataset.
- * Tests the full save -> search -> answer -> judge pipeline.
+ * Uses mama-core directly (no HTTP API needed) and Claude CLI for judging.
  *
  * Usage:
  *   pnpm --dir packages/standalone bench:sample   # 12 questions (2 per category)
  *   pnpm --dir packages/standalone bench:full     # all 500 questions
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { createRequire } from 'module';
+import { execSync } from 'child_process';
+
+const require = createRequire(import.meta.url);
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -32,6 +36,7 @@ interface BenchmarkResult {
   searchResults: number;
   searchMs: number;
   ingestMs: number;
+  topSimilarity: number;
   answer: string;
   correct: boolean;
   judgeReason: string;
@@ -45,13 +50,13 @@ interface BenchmarkReport {
   accuracy: number;
   avgSearchMs: number;
   avgIngestMs: number;
+  judgeMethod: string;
   byCategory: Record<string, { total: number; correct: number; accuracy: number }>;
   results: BenchmarkResult[];
 }
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
-const MAMA_BASE_URL = process.env.MAMA_BASE_URL || 'http://localhost:3847';
 const DATASET_PATH =
   process.env.LONGMEMEVAL_PATH ||
   join(
@@ -59,182 +64,78 @@ const DATASET_PATH =
     '.mama/workspace/memorybench/data/benchmarks/longmemeval/datasets/longmemeval_s_cleaned.json'
   );
 const RESULTS_DIR = join(dirname(new URL(import.meta.url).pathname), 'results');
+const BENCH_DB = '/tmp/mama-bench-run.db';
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── mama-core direct access ────────────────────────────────────────────────
 
-async function mamaHealthCheck(): Promise<boolean> {
-  try {
-    const res = await fetch(`${MAMA_BASE_URL}/health`);
-    return res.ok;
-  } catch {
-    return false;
+function initMamaCore() {
+  // Clean previous bench DB
+  for (const suffix of ['', '-journal', '-wal', '-shm']) {
+    try {
+      unlinkSync(`${BENCH_DB}${suffix}`);
+    } catch {
+      /* ok */
+    }
   }
+  process.env.MAMA_DB_PATH = BENCH_DB;
+
+  const mamaApi = require('@jungjaehoon/mama-core/mama-api');
+  return mamaApi;
 }
 
-async function mamaSave(
-  topic: string,
-  decision: string,
-  reasoning: string
-): Promise<{ success: boolean; id?: string }> {
-  const res = await fetch(`${MAMA_BASE_URL}/api/mama/save`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topic, decision, reasoning }),
-  });
-  return (await res.json()) as { success: boolean; id?: string };
+async function closeMamaCore() {
+  const dbManager = await import('@jungjaehoon/mama-core/db-manager');
+  await dbManager.closeDB();
+  delete process.env.MAMA_DB_PATH;
 }
 
-async function mamaSearch(
-  query: string,
-  limit = 10,
-  topicPrefix?: string
-): Promise<
-  Array<{
-    id: string;
-    topic: string;
-    decision: string;
-    reasoning: string;
-    similarity: number;
-  }>
-> {
-  // Over-fetch and filter client-side (MAMA API doesn't support topicPrefix)
-  const fetchLimit = topicPrefix ? Math.max(limit * 10, 100) : limit;
-  const url = `${MAMA_BASE_URL}/api/mama/search?q=${encodeURIComponent(query)}&limit=${fetchLimit}`;
-  const res = await fetch(url);
-  const data = (await res.json()) as { results?: unknown[] };
-  let results = (data.results ?? []) as Array<{
-    id: string;
-    topic: string;
-    decision: string;
-    reasoning: string;
-    similarity: number;
-  }>;
-  // Client-side container isolation: only keep results for this question
-  if (topicPrefix) {
-    results = results.filter((r) => r.topic.startsWith(topicPrefix));
-  }
-  return results.slice(0, limit);
-}
+// ── Judge via Claude CLI ───────────────────────────────────────────────────
 
-function buildContext(
-  results: Array<{ topic: string; decision: string; reasoning: string }>
-): string {
-  if (results.length === 0) return '<no relevant memories found>';
-  return results
-    .map((r, i) => `[${i + 1}] Topic: ${r.topic}\nContent: ${r.decision}\nReason: ${r.reasoning}`)
-    .join('\n\n');
-}
-
-async function generateAnswer(question: string, context: string): Promise<string> {
-  // Use MAMA's own API to answer (through the main agent's model)
-  // Fallback: simple extraction from context
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    // No API key: extract best guess from context
-    return extractAnswerFromContext(question, context);
-  }
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
-      messages: [
-        {
-          role: 'user',
-          content: `Answer this question using ONLY the provided context. Be concise (1-2 sentences max).
-
-Context:
-${context}
-
-Question: ${question}
-
-Answer:`,
-        },
-      ],
-    }),
-  });
-  const data = (await res.json()) as {
-    content?: Array<{ text: string }>;
-    error?: { message: string };
-  };
-  if (data.error) return `ERROR: ${data.error.message}`;
-  return data.content?.[0]?.text ?? '<no answer>';
-}
-
-function extractAnswerFromContext(question: string, context: string): string {
-  // Simple keyword extraction fallback when no API key
-  const lines = context.split('\n').filter((l) => l.startsWith('Content:'));
-  return lines[0]?.replace('Content: ', '') ?? '<no context>';
-}
-
-async function judgeAnswer(
+function judgeWithClaude(
   question: string,
   groundTruth: string,
   answer: string
-): Promise<{ correct: boolean; reason: string }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    // Improved keyword judge: check for key entities (numbers, proper nouns)
-    const normalizedAnswer = answer.toLowerCase();
-    const normalizedTruth = groundTruth.toLowerCase();
-
-    // Extract key entities: numbers, capitalized words, quoted phrases
-    const numbers = groundTruth.match(/\d[\d,./:]+/g) ?? [];
-    const properNouns = groundTruth.match(/[A-Z][a-z]{2,}/g) ?? [];
-    const keyEntities = [
-      ...numbers.map((n) => n.toLowerCase()),
-      ...properNouns.map((n) => n.toLowerCase()),
-    ];
-
-    if (keyEntities.length > 0) {
-      const entityMatches = keyEntities.filter((e) => normalizedAnswer.includes(e));
-      const correct = entityMatches.length >= Math.ceil(keyEntities.length * 0.4);
-      return {
-        correct,
-        reason: `entity-match: ${entityMatches.join(',')} (${entityMatches.length}/${keyEntities.length})`,
-      };
-    }
-
-    // Fallback: word overlap
-    const truthWords = normalizedTruth.split(/\s+/).filter((w) => w.length > 3);
-    const matches = truthWords.filter((w) => normalizedAnswer.includes(w));
-    const correct = matches.length >= Math.ceil(truthWords.length * 0.4);
-    return { correct, reason: `keyword-match: ${matches.length}/${truthWords.length}` };
-  }
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 100,
-      messages: [
-        {
-          role: 'user',
-          content: `Judge if the answer correctly addresses the question given the ground truth.
+): { correct: boolean; reason: string } {
+  const prompt = `Judge if the answer correctly addresses the question. Reply ONLY "CORRECT" or "INCORRECT" then a brief reason.
 Question: ${question}
 Ground truth: ${groundTruth}
-Answer: ${answer}
+Answer: ${answer}`;
 
-Reply with ONLY "CORRECT" or "INCORRECT" followed by a brief reason.`,
-        },
-      ],
-    }),
-  });
-  const data = (await res.json()) as { content?: Array<{ text: string }> };
-  const text = data.content?.[0]?.text ?? 'INCORRECT: no response';
-  const correct = text.toUpperCase().startsWith('CORRECT');
-  return { correct, reason: text };
+  try {
+    const result = execSync(
+      `echo ${JSON.stringify(prompt)} | claude --print --model claude-haiku-4-5-20251001 2>/dev/null`,
+      { timeout: 15000, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+    ).trim();
+    const correct = result.toUpperCase().startsWith('CORRECT');
+    return { correct, reason: result.slice(0, 200) };
+  } catch {
+    // Fallback to keyword judge
+    return keywordJudge(groundTruth, answer);
+  }
+}
+
+function keywordJudge(groundTruth: string, answer: string): { correct: boolean; reason: string } {
+  const normalizedAnswer = answer.toLowerCase();
+  const numbers = groundTruth.match(/\d[\d,./:]+/g) ?? [];
+  const properNouns = groundTruth.match(/[A-Z][a-z]{2,}/g) ?? [];
+  const keyEntities = [
+    ...numbers.map((n) => n.toLowerCase()),
+    ...properNouns.map((n) => n.toLowerCase()),
+  ];
+
+  if (keyEntities.length > 0) {
+    const entityMatches = keyEntities.filter((e) => normalizedAnswer.includes(e));
+    const correct = entityMatches.length >= Math.ceil(keyEntities.length * 0.4);
+    return { correct, reason: `entity-match: ${entityMatches.length}/${keyEntities.length}` };
+  }
+
+  const truthWords = groundTruth
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 3);
+  const matches = truthWords.filter((w) => normalizedAnswer.includes(w));
+  const correct = matches.length >= Math.ceil(truthWords.length * 0.4);
+  return { correct, reason: `keyword-match: ${matches.length}/${truthWords.length}` };
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -243,28 +144,29 @@ async function main() {
   const args = process.argv.slice(2);
   const mode = args[0] || 'sample';
 
-  // Load dataset
+  // Check dataset
   if (!existsSync(DATASET_PATH)) {
     console.error(`Dataset not found: ${DATASET_PATH}`);
-    console.error('Download LongMemEval or set LONGMEMEVAL_PATH env var.');
     process.exit(1);
   }
 
-  const healthy = await mamaHealthCheck();
-  if (!healthy) {
-    console.error(`MAMA not reachable at ${MAMA_BASE_URL}. Run 'mama start' first.`);
-    process.exit(1);
+  // Check Claude CLI for judging
+  let useClaude = false;
+  try {
+    execSync('which claude', { encoding: 'utf-8' });
+    useClaude = true;
+  } catch {
+    console.log('Claude CLI not found, using keyword judge');
   }
 
   const dataset: LongMemEvalQuestion[] = JSON.parse(readFileSync(DATASET_PATH, 'utf-8'));
   console.log(`Loaded ${dataset.length} questions from LongMemEval`);
 
-  // Select questions based on mode
+  // Select questions
   let questions: LongMemEvalQuestion[];
   if (mode === 'full') {
     questions = dataset;
   } else if (mode === 'sample') {
-    // 2 per category, smallest haystack
     const byType: Record<string, LongMemEvalQuestion[]> = {};
     for (const q of dataset) {
       if (!byType[q.question_type]) byType[q.question_type] = [];
@@ -276,78 +178,110 @@ async function main() {
       questions.push(...items.slice(0, 2));
     }
   } else {
-    // Category filter
     questions = dataset.filter((q) => q.question_type === mode);
     if (questions.length === 0) {
-      console.error(
-        `No questions for category: ${mode}. Available: ${[...new Set(dataset.map((q) => q.question_type))].join(', ')}`
-      );
+      console.error(`No questions for category: ${mode}`);
       process.exit(1);
     }
   }
 
   console.log(`Running ${questions.length} questions (mode: ${mode})`);
-  console.log(
-    `API key: ${process.env.ANTHROPIC_API_KEY ? 'present (LLM judge)' : 'absent (keyword judge)'}\n`
-  );
+  console.log(`Judge: ${useClaude ? 'Claude CLI (haiku)' : 'keyword matching'}`);
+  console.log(`DB: ${BENCH_DB} (fresh per run)\n`);
 
   const results: BenchmarkResult[] = [];
   const runId = `mama-bench-${mode}-${Date.now()}`;
 
+  // Initialize mama-core with fresh DB for each question
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
     const prefix = `[${i + 1}/${questions.length}]`;
     process.stdout.write(`${prefix} ${q.question_type}: ${q.question.slice(0, 50)}... `);
 
-    // Ingest: save haystack sessions in parallel batches
+    // Fresh DB per question (no cross-contamination)
+    const mamaApi = initMamaCore();
+
+    // Ingest all haystack sessions
     const ingestStart = Date.now();
-    const containerTag = `bench_${runId}_${q.question_id}`;
-    const BATCH_SIZE = 5;
-    for (let batch = 0; batch < q.haystack_sessions.length; batch += BATCH_SIZE) {
-      const batchSessions = q.haystack_sessions.slice(batch, batch + BATCH_SIZE);
-      await Promise.all(
-        batchSessions.map((session, offset) => {
-          const si = batch + offset;
-          const conversationText = session
-            .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-            .join('\n');
-          const topic = `${containerTag}_s${si}`.slice(0, 80);
-          return mamaSave(
-            topic,
-            conversationText.slice(0, 8000),
-            `Session ${si} for ${q.question_id}`
-          );
-        })
-      );
+    for (let si = 0; si < q.haystack_sessions.length; si++) {
+      const session = q.haystack_sessions[si];
+      const conversationText = session
+        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+        .join('\n');
+      const topic = `session_${si}`;
+      await mamaApi.save({
+        topic,
+        decision: conversationText.slice(0, 8000),
+        reasoning: `Session ${si}`,
+        confidence: 0.5,
+        type: 'user_decision',
+      });
     }
     const ingestMs = Date.now() - ingestStart;
 
-    // Search (scoped to this question's container)
+    // Search
     const searchStart = Date.now();
-    const searchResults = await mamaSearch(q.question, 5, containerTag);
+    const searchResult = await mamaApi.suggest(q.question, { limit: 5 });
     const searchMs = Date.now() - searchStart;
 
-    // Answer
-    const context = buildContext(searchResults);
-    const answer = await generateAnswer(q.question, context);
+    const topResults = searchResult?.results ?? [];
+    const topSimilarity = topResults[0]?.similarity ?? 0;
+
+    // Build context from search results
+    let context = '<no results>';
+    if (topResults.length > 0) {
+      context = topResults
+        .map(
+          (r: { topic: string; decision: string; reasoning: string }, idx: number) =>
+            `[${idx + 1}] ${r.decision?.slice(0, 3000)}`
+        )
+        .join('\n\n');
+    }
+
+    // Extract answer from context using Claude CLI
+    let answer = '<no context>';
+    if (topResults.length > 0) {
+      try {
+        const extractPrompt = `Answer this question in 1-2 sentences using ONLY the provided context. If the answer is not in the context, say "Not found in context."
+
+Context:
+${context.slice(0, 6000)}
+
+Question: ${q.question}
+
+Answer:`;
+        answer = execSync(
+          `echo ${JSON.stringify(extractPrompt)} | claude --print --model claude-haiku-4-5-20251001 2>/dev/null`,
+          { timeout: 20000, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+        ).trim();
+      } catch {
+        answer = topResults[0]?.decision?.slice(0, 500) ?? '<extraction failed>';
+      }
+    }
 
     // Judge
-    const { correct, reason } = await judgeAnswer(q.question, q.answer, answer);
+    const { correct, reason } = useClaude
+      ? judgeWithClaude(q.question, q.answer, answer)
+      : keywordJudge(q.answer, answer);
 
     results.push({
       questionId: q.question_id,
       questionType: q.question_type,
       question: q.question,
       groundTruth: q.answer,
-      searchResults: searchResults.length,
+      searchResults: topResults.length,
       searchMs,
       ingestMs,
-      answer,
+      topSimilarity,
+      answer: answer.slice(0, 500),
       correct,
       judgeReason: reason,
     });
 
-    console.log(correct ? '✅' : '❌', `(${searchMs}ms)`);
+    console.log(correct ? '✅' : '❌', `(search:${searchMs}ms sim:${topSimilarity.toFixed(2)})`);
+
+    // Close DB before next question
+    await closeMamaCore();
   }
 
   // Build report
@@ -372,6 +306,7 @@ async function main() {
     accuracy: Math.round((totalCorrect / results.length) * 1000) / 10,
     avgSearchMs: Math.round(results.reduce((s, r) => s + r.searchMs, 0) / results.length),
     avgIngestMs: Math.round(results.reduce((s, r) => s + r.ingestMs, 0) / results.length),
+    judgeMethod: useClaude ? 'claude-haiku' : 'keyword',
     byCategory,
     results,
   };
@@ -384,6 +319,7 @@ async function main() {
   // Print report
   console.log('\n╔══════════════════════════════════════════════════════════╗');
   console.log('║            MAMA MEMORY BENCHMARK REPORT                 ║');
+  console.log(`║  Judge: ${report.judgeMethod.padEnd(48)}║`);
   console.log('╠══════════════════════════════════════════════════════════╣');
 
   for (const [cat, stats] of Object.entries(byCategory).sort(([a], [b]) => a.localeCompare(b))) {
@@ -397,9 +333,15 @@ async function main() {
     `║ ${'OVERALL'.padEnd(27)}│ ${String(totalCorrect).padStart(4)} │ ${String(results.length).padStart(4)} │ ${String(report.accuracy + '%').padStart(7)} ║`
   );
   console.log('╠══════════════════════════════════════════════════════════╣');
-  console.log(`║ Avg search: ${report.avgSearchMs}ms`.padEnd(59) + '║');
-  console.log(`║ Avg ingest: ${report.avgIngestMs}ms`.padEnd(59) + '║');
-  console.log(`║ Report: ${reportPath}`.padEnd(59) + '║');
+  console.log(
+    `║ Avg search: ${report.avgSearchMs}ms | Avg ingest: ${report.avgIngestMs}ms`.padEnd(59) + '║'
+  );
+  console.log(
+    `║ Top similarity range: ${Math.min(...results.map((r) => r.topSimilarity)).toFixed(2)} - ${Math.max(...results.map((r) => r.topSimilarity)).toFixed(2)}`.padEnd(
+      59
+    ) + '║'
+  );
+  console.log(`║ Report: ${reportPath.split('/').slice(-2).join('/')}`.padEnd(59) + '║');
   console.log('╚══════════════════════════════════════════════════════════╝');
 }
 

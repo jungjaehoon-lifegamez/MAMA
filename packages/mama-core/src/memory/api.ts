@@ -335,61 +335,70 @@ export async function recallMemory(
   options: RecallMemoryOptions = {}
 ): Promise<RecallBundle> {
   const bundle = createEmptyRecallBundle(query);
-  const truthRows = await queryRelevantTruth({
-    query,
-    scopes: options.scopes ?? [],
-    includeHistory: options.includeHistory === true,
-  });
-  let matched = truthRows.map(truthRowToMemoryRecord);
+  // Primary: embedding-based vector search (semantic relevance)
+  let matched: MemoryRecord[] = [];
+  try {
+    await initDB();
+    const queryEmbedding = await generateEmbedding(query);
+    const vectorResults = await vectorSearch(queryEmbedding, 10, 0.3);
+    const EXCLUDED_STATUSES: Set<string> = new Set([
+      'superseded',
+      'quarantined',
+      'contradicted',
+      'stale',
+    ]);
 
-  // Fallback: embedding-based vector search (multilingual, works with Korean)
-  if (matched.length === 0) {
-    try {
-      await initDB();
-      const queryEmbedding = await generateEmbedding(query);
-      const vectorResults = await vectorSearch(queryEmbedding, 10, 0.5);
-      const EXCLUDED_STATUSES: Set<string> = new Set([
-        'superseded',
-        'quarantined',
-        'contradicted',
-        'stale',
-      ]);
+    // Filter vector results by scope if scopes are specified
+    let filteredVectorResults = vectorResults;
+    if (options.scopes && options.scopes.length > 0) {
+      const vectorIds = vectorResults.map((r) => String(r.id));
+      const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
+      const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+      filteredVectorResults = vectorResults.filter((r) => {
+        const scopes = scopeMap.get(String(r.id)) ?? [];
+        // Include unscoped results when no scope filter, or match scopes
+        return scopes.length === 0 || scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
+      });
+    }
 
-      // Filter vector results by scope if scopes are specified
-      let filteredVectorResults = vectorResults;
-      if (options.scopes && options.scopes.length > 0) {
-        const vectorIds = vectorResults.map((r) => String(r.id));
-        const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
-        const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
-        filteredVectorResults = vectorResults.filter((r) => {
-          const scopes = scopeMap.get(String(r.id)) ?? [];
-          return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
-        });
+    for (const result of filteredVectorResults as Array<
+      (typeof vectorResults)[number] & { similarity?: number; status?: string }
+    >) {
+      const effectiveStatus = (result.status as string) || (result.outcome as string) || '';
+      if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
+        continue;
       }
+      matched.push({
+        id: String(result.id),
+        topic: String(result.topic || ''),
+        kind: 'decision' as MemoryKind,
+        summary: String(result.decision || ''),
+        details: String(result.reasoning || ''),
+        confidence: (result as { similarity?: number }).similarity ?? 0.5,
+        status: (effectiveStatus as MemoryStatus) || 'active',
+        scopes: [],
+        source: { package: 'mama-core', source_type: 'vector_search' },
+        created_at: result.created_at ?? Date.now(),
+        updated_at: result.created_at ?? Date.now(),
+      });
+    }
+  } catch {
+    // Vector search unavailable — fall through to truth + text search
+  }
 
-      for (const result of filteredVectorResults as Array<
-        (typeof vectorResults)[number] & { similarity?: number; status?: string }
-      >) {
-        const effectiveStatus = (result.status as string) || (result.outcome as string) || '';
-        if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
-          continue;
-        }
-        matched.push({
-          id: String(result.id),
-          topic: String(result.topic || ''),
-          kind: 'decision' as MemoryKind,
-          summary: String(result.decision || ''),
-          details: String(result.reasoning || ''),
-          confidence: (result as { similarity?: number }).similarity ?? 0.5,
-          status: (effectiveStatus as MemoryStatus) || 'active',
-          scopes: [],
-          source: { package: 'mama-core', source_type: 'vector_search' },
-          created_at: result.created_at ?? Date.now(),
-          updated_at: result.created_at ?? Date.now(),
-        });
+  // Supplement with truth projection if vector search returned few results
+  if (matched.length < 3) {
+    const truthRows = await queryRelevantTruth({
+      query,
+      scopes: options.scopes ?? [],
+      includeHistory: options.includeHistory === true,
+    });
+    const truthRecords = truthRows.map(truthRowToMemoryRecord);
+    const existingIds = new Set(matched.map((m) => m.id));
+    for (const record of truthRecords) {
+      if (!existingIds.has(record.id)) {
+        matched.push(record);
       }
-    } catch {
-      // Vector search unavailable — fall through to text search
     }
   }
 
@@ -422,8 +431,7 @@ export async function recallMemory(
   bundle.graph_context.expanded = [];
   bundle.graph_context.edges = [];
   bundle.search_meta.scope_order = (options.scopes ?? []).map((scope) => scope.kind);
-  bundle.search_meta.retrieval_sources =
-    truthRows.length > 0 ? ['truth_projection'] : matched.length > 0 ? ['vector_search'] : ['none'];
+  bundle.search_meta.retrieval_sources = matched.length > 0 ? ['vector_search'] : ['none'];
 
   if (options.includeProfile) {
     bundle.profile = await buildProfile(options.scopes ?? []);
