@@ -330,6 +330,72 @@ export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSna
   return classifyProfileEntries(records);
 }
 
+// ---------------------------------------------------------------------------
+// Lexical token-overlap ranking (supplements vector search when results are sparse)
+// ---------------------------------------------------------------------------
+const LEXICAL_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'by',
+  'do',
+  'for',
+  'from',
+  'has',
+  'have',
+  'how',
+  'i',
+  'in',
+  'is',
+  'it',
+  'my',
+  'of',
+  'on',
+  'or',
+  'the',
+  'to',
+  'was',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'with',
+  'you',
+  'your',
+]);
+
+function rankByTokenOverlap(
+  query: string,
+  records: MemoryRecord[],
+  limit: number
+): (MemoryRecord & { _lexicalScore: number })[] {
+  const tokens = query
+    .toLowerCase()
+    .split(/[\s,.!?;:()[\]{}"']+/)
+    .filter((t) => t.length > 2 && !LEXICAL_STOPWORDS.has(t));
+
+  return records
+    .map((record) => {
+      const haystack = `${record.topic}\n${record.summary}\n${record.details}`.toLowerCase();
+      const score =
+        tokens.reduce(
+          (s, t) => s + (haystack.includes(t) ? (t.length >= 8 ? 3 : t.length >= 5 ? 2 : 1) : 0),
+          0
+        ) + (haystack.includes(query.toLowerCase()) ? 2 : 0);
+      return { ...record, _lexicalScore: score };
+    })
+    .filter((r) => r._lexicalScore > 0)
+    .sort(
+      (a, b) => b._lexicalScore - a._lexicalScore || Number(b.created_at) - Number(a.created_at)
+    )
+    .slice(0, limit);
+}
+
 export async function recallMemory(
   query: string,
   options: RecallMemoryOptions = {}
@@ -340,7 +406,7 @@ export async function recallMemory(
   try {
     await initDB();
     const queryEmbedding = await generateEmbedding(query);
-    const vectorResults = await vectorSearch(queryEmbedding, 10, 0.3);
+    const vectorResults = await vectorSearch(queryEmbedding, 20, 0.2);
     const EXCLUDED_STATUSES: Set<string> = new Set([
       'superseded',
       'quarantined',
@@ -398,6 +464,19 @@ export async function recallMemory(
     for (const record of truthRecords) {
       if (!existingIds.has(record.id)) {
         matched.push(record);
+      }
+    }
+  }
+
+  // Supplement with lexical ranking when vector + truth results are insufficient
+  if (matched.length < 5) {
+    const allRecords = await loadScopedMemories(options.scopes ?? []);
+    const lexicalMatches = rankByTokenOverlap(query, allRecords, 10);
+    const existingIds = new Set(matched.map((m) => m.id));
+    for (const record of lexicalMatches) {
+      if (!existingIds.has(record.id)) {
+        matched.push(record);
+        if (matched.length >= 10) break;
       }
     }
   }
