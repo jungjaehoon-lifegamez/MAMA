@@ -1335,9 +1335,10 @@ export async function runAgentLoop(
     mamaCore.setExtractionFn(async (prompt: string) => {
       if (!extractionProcess) {
         extractionProcess = new PersistentClaudeProcess({
-          sessionId: 'extraction-cli',
+          sessionId: `${crypto.randomUUID()}`,
           model: 'claude-haiku-4-5-20251001',
-          systemPrompt: 'You are a memory extraction assistant. Extract structured memory units from conversations.',
+          systemPrompt:
+            'You are a memory extraction assistant. Extract structured memory units from conversations.',
           dangerouslySkipPermissions: true,
         });
         await extractionProcess.start();
