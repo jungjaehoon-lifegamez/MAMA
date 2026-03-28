@@ -13,5 +13,9 @@ export function buildMAMACodexConfig(): string {
 }
 
 export function getLocalMCPServerEntry(): string {
-  return join(__dirname, '../../../mcp-server/src/server.js');
+  try {
+    return require.resolve('@jungjaehoon/mama-server');
+  } catch {
+    return join(__dirname, '../../../mcp-server/src/server.js');
+  }
 }

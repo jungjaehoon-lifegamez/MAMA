@@ -45,6 +45,7 @@ export async function handleSave(
       confidence: d.confidence ?? 0.5,
       is_static: d.is_static,
       type: 'user_decision',
+      scopes: d.scopes,
     };
     return await api.save(payload);
   }

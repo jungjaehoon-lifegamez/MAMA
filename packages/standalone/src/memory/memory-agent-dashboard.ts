@@ -1,7 +1,7 @@
 export interface MemoryAgentRecentExtraction {
   topic: string;
   timestamp: number;
-  success: boolean;
+  status: 'applied' | 'skipped' | 'failed';
   channelKey?: string;
 }
 
@@ -112,11 +112,15 @@ export function buildMemoryAgentDashboardPayload(params: {
   const recentChannels = buildRecentChannels(params.agentStats, params.channelSummaries);
   const activeChannel = recentChannels[0] || null;
   const lastExtraction = params.agentStats.lastExtraction;
-  const lastExtractionStatus = params.agentStats.recentExtractions[0]?.success
-    ? 'Recent save applied'
-    : params.agentStats.recentExtractions[0]
-      ? 'Recent audit skipped or failed'
-      : 'No memory activity yet';
+  const latestExtraction = params.agentStats.recentExtractions[0];
+  const lastExtractionStatus =
+    latestExtraction?.status === 'applied'
+      ? 'Recent save applied'
+      : latestExtraction?.status === 'failed'
+        ? 'Recent audit failed'
+        : latestExtraction?.status === 'skipped'
+          ? 'Recent audit skipped'
+          : 'No memory activity yet';
 
   return {
     generatedAt,
@@ -142,7 +146,7 @@ export function buildMemoryAgentDashboardPayload(params: {
     activity: params.agentStats.recentExtractions.map((item) => ({
       topic: item.topic,
       timestamp: item.timestamp,
-      status: item.success ? 'applied' : 'skipped',
+      status: item.status,
       channelKey: item.channelKey || null,
     })),
     summary: {
