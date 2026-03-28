@@ -162,7 +162,7 @@ function sanitizeForPrompt(text: string): string {
 }
 
 function stripGatewayDecorations(text: string): string {
-  return text.replace(/^(?:\s*\|\|[^|]*\|\|\s*)+/u, '').trim();
+  return text.replace(/^(?:\s*\|\|[\s\S]*?\|\|\s*)+/u, '').trim();
 }
 
 /**
@@ -209,7 +209,12 @@ export class MessageRouter {
     acksSkipped: 0,
     acksFailed: 0,
     lastExtraction: null as number | null,
-    recentExtractions: [] as Array<{ topic: string; timestamp: number; success: boolean }>,
+    recentExtractions: [] as Array<{
+      topic: string;
+      timestamp: number;
+      channelKey?: string;
+      status: 'applied' | 'skipped' | 'failed';
+    }>,
   };
 
   setMemoryAgent(processManager: MemoryAgentProcessManagerLike): void {
@@ -1097,15 +1102,17 @@ ${historyContext}
   }
 
   private buildMemoryAuditPrompt(job: MemoryAuditJob): string {
+    const escapeBackticks = (s: string) => s.replace(/```/g, '\\`\\`\\`');
     const scopeContext = job.scopeContext.map((scope) => `${scope.kind}:${scope.id}`).join(', ');
     const candidateLines = (job.candidates ?? []).map((candidate) => {
-      const topic = candidate.topicHint ? ` topic=${candidate.topicHint}` : '';
+      const topic = candidate.topicHint ? ` topic=${escapeBackticks(candidate.topicHint)}` : '';
       return `- kind=${candidate.kind}${topic} confidence=${candidate.confidence} summary=${JSON.stringify(candidate.summary)}`;
     });
+    const safeConversation = escapeBackticks(job.conversation);
     return `Memory scopes: ${scopeContext}
 Conversation:
 \`\`\`conversation
-${job.conversation}
+${safeConversation}
 \`\`\`
 
 Candidates:
@@ -1184,7 +1191,6 @@ INSTRUCTION:
 
     if (ack.status === 'applied') {
       this.memoryAgentStats.acksApplied++;
-      this.memoryAgentStats.factsExtracted++;
       this.memoryAgentStats.factsSaved++;
     } else if (ack.status === 'skipped') {
       this.memoryAgentStats.acksSkipped++;
@@ -1204,7 +1210,8 @@ INSTRUCTION:
     this.memoryAgentStats.recentExtractions.unshift({
       topic,
       timestamp,
-      success: ack.status === 'applied',
+      channelKey,
+      status: ack.status,
     });
     this.memoryAgentStats.recentExtractions = this.memoryAgentStats.recentExtractions.slice(0, 10);
     this.memoryAgentStats.lastExtraction = timestamp;
@@ -1303,6 +1310,7 @@ INSTRUCTION:
 
     this.memoryAuditCooldowns.set(cooldownKey, now);
     this.memoryAgentStats.turnsObserved++;
+    this.memoryAgentStats.factsExtracted += candidates.length;
 
     const scopes = deriveMemoryScopes({
       source,

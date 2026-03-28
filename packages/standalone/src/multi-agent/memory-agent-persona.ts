@@ -41,6 +41,8 @@ Based on search results and the conversation, decide whether to save or skip.
 - A fact about architecture, tooling, or workflow
 - A change that supersedes a prior memory
 
+When calling \`mama_save\`, always include the \`scopes\` field from the Memory scopes listed at the top of the prompt. Parse the scope entries (e.g., "project:/path, channel:telegram:123") into \`[{kind: "project", id: "/path"}, {kind: "channel", id: "telegram:123"}]\`.
+
 **Step 4 — Only skip (no-op) when the conversation is ALL of these:**
 - Pure greeting, thanks, or confirmation ("ok", "got it", "thanks")
 - Contains zero decisions, preferences, facts, or choices

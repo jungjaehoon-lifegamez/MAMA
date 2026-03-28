@@ -169,10 +169,14 @@ export class GatewayToolExecutor {
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
+  private memoryAgentProcessManager: AgentProcessManager | null = null;
   setMemoryAgent(processManager: AgentProcessManager): void {
-    // Memory-agent execution is owned by MessageRouter/startup wiring.
-    // GatewayToolExecutor keeps this setter for interface parity only.
-    void processManager;
+    this.memoryAgentProcessManager = processManager;
+  }
+
+  /** Check if a memory agent is available for routing memory writes. */
+  hasMemoryAgent(): boolean {
+    return this.memoryAgentProcessManager !== null;
   }
 
   constructor(options: GatewayToolExecutorOptions = {}) {
@@ -1953,9 +1957,19 @@ export class GatewayToolExecutor {
           })
         : [];
 
+      const scopes =
+        Array.isArray(input.scopes) && input.scopes.length > 0 ? input.scopes : fallbackScopes;
+
+      if (scopes.length === 0) {
+        return {
+          success: false,
+          error: 'mama_ingest requires scopes (provide via input or active agent context)',
+        } as GatewayToolResult;
+      }
+
       const result = await api.ingestMemory({
         content: content.substring(0, 10_000),
-        scopes: Array.isArray(input.scopes) ? input.scopes : fallbackScopes,
+        scopes,
         source: {
           package: 'standalone',
           source_type: 'gateway_tool_executor',
@@ -1988,8 +2002,26 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
+    const fallbackScopes = this.currentContext
+      ? deriveMemoryScopes({
+          source: this.currentContext.source,
+          channelId: this.currentContext.session.channelId,
+          userId: this.currentContext.session.userId,
+          projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+        })
+      : [];
+    const scopes =
+      Array.isArray(input.scopes) && input.scopes.length > 0 ? input.scopes : fallbackScopes;
+
+    if (scopes.length === 0) {
+      return {
+        success: false,
+        error: 'mama_recall requires scopes (provide via input or active agent context)',
+      } as GatewayToolResult;
+    }
+
     const bundle = await api.recallMemory(input.query, {
-      scopes: Array.isArray(input.scopes) ? input.scopes : [],
+      scopes,
       includeProfile: true,
     });
 

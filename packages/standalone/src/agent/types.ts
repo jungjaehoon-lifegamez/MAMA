@@ -323,6 +323,7 @@ export interface SaveDecisionInput {
   reasoning: string;
   confidence?: number;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
+  scopes?: Array<{ kind: string; id: string }>;
 }
 
 export interface SaveDecisionPayload {
@@ -332,6 +333,7 @@ export interface SaveDecisionPayload {
   reasoning: string;
   confidence?: number;
   is_static?: number;
+  scopes?: Array<{ kind: string; id: string }>;
 }
 
 /**
@@ -1036,7 +1038,7 @@ export interface GatewayToolExecutorOptions {
  * Interface for MAMA API (for dependency injection)
  */
 export interface MAMAApiInterface {
-  save(input: SaveDecisionPayload | Omit<SaveCheckpointInput, 'type'>): Promise<SaveResult>;
+  save(input: SaveDecisionPayload): Promise<SaveResult>;
   saveCheckpoint(
     summary: string,
     openFiles: string[],

@@ -72,6 +72,7 @@ interface SaveParams {
   limitation?: string | null;
   trust_context?: Record<string, unknown> | null;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
+  scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
 }
 
 /**
@@ -496,6 +497,7 @@ async function save({
   limitation = null,
   trust_context: _trust_context = null,
   is_static,
+  scopes: inputScopes,
 }: SaveParams): Promise<SaveResult> {
   // Validate required fields
   if (!topic || typeof topic !== 'string') {
@@ -538,7 +540,7 @@ async function save({
     summary: decision,
     details: reasoning,
     confidence,
-    scopes: [],
+    scopes: Array.isArray(inputScopes) && inputScopes.length > 0 ? inputScopes : [],
     source: {
       package: 'mama-core',
       source_type: 'legacy_save',

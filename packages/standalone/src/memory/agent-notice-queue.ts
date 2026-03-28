@@ -35,8 +35,9 @@ export class AgentNoticeQueue {
       return notices;
     }
 
-    const drained = notices.slice(0, count);
-    const remaining = notices.slice(count);
+    const safeCount = Math.max(0, count);
+    const drained = notices.slice(0, safeCount);
+    const remaining = notices.slice(safeCount);
     if (remaining.length > 0) {
       this.queue.set(channelKey, remaining);
     } else {

@@ -18,7 +18,7 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
             {
               topic: 'redis_sqlite',
               timestamp: 1234,
-              success: false,
+              status: 'skipped',
               channelKey: 'telegram:5551000001',
             },
           ],
@@ -61,7 +61,7 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
             {
               topic: 'redis_sqlite',
               timestamp: 1234,
-              success: false,
+              status: 'skipped',
               channelKey: 'telegram:5551000001',
             },
           ],

@@ -1554,6 +1554,10 @@ export async function runAgentLoop(
     );
     memoryAgentLoop.setSessionKey('memory-agent:shared');
     let memoryBootstrapDelivered = false;
+    let memoryBootstrapLock: Promise<void> | null = null;
+    const memoryWorkspaceProjectId =
+      process.env.MAMA_WORKSPACE ||
+      expandPath(config.workspace?.path || `${homedir()}/.mama/workspace`);
 
     const memoryProcessManager = {
       async getSharedProcess() {
@@ -1562,14 +1566,31 @@ export async function runAgentLoop(
             if (!memoryAgentLoop) {
               throw new Error('Memory agent loop is not initialized');
             }
+            if (!memoryBootstrapDelivered && memoryBootstrapLock) {
+              await memoryBootstrapLock;
+            }
+
+            // Safe: initDB() completed before memoryProcessManager is created.
+            const adapter = getAdapter();
+            const beforeDecisionCount = Number(
+              adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
+            );
             let prompt = content;
+            let shouldDeliverBootstrap = false;
+            let resolveBootstrapLock: (() => void) | undefined;
+            let rejectBootstrapLock: ((error?: unknown) => void) | undefined;
             if (!memoryBootstrapDelivered) {
+              shouldDeliverBootstrap = true;
+              memoryBootstrapLock = new Promise<void>((resolve, reject) => {
+                resolveBootstrapLock = resolve;
+                rejectBootstrapLock = reject;
+              });
               const bootstrap = await buildStandaloneMemoryBootstrap({
                 mamaApi: mamaApiClient,
                 scopes: deriveMemoryScopes({
                   source: 'memory-agent',
                   channelId: 'shared',
-                  projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+                  projectId: memoryWorkspaceProjectId,
                 }),
                 currentGoal: 'Maintain current memory truth and audit ongoing conversations',
                 mainAgentState: {
@@ -1578,30 +1599,42 @@ export async function runAgentLoop(
                 },
               });
               prompt = `${formatMemoryBootstrap(bootstrap)}\n\n---\n\n${content}`;
-              memoryBootstrapDelivered = true;
             }
 
-            // Safe: initDB() completed before memoryProcessManager is created.
-            const adapter = getAdapter();
-            const beforeDecisionCount = Number(
-              adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
-            );
-            const result = await memoryAgentLoop.run(prompt, {
-              source: 'memory-agent',
-              channelId: 'shared',
-              agentContext: memoryAgentContext,
-              stopAfterSuccessfulTools: ['mama_save'],
-            });
-            const afterDecisionCount = Number(
-              adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
-            );
-            const ack = buildMemoryAuditAckFromAgentResult(
-              result,
-              beforeDecisionCount,
-              afterDecisionCount
-            );
+            try {
+              const result = await memoryAgentLoop.run(prompt, {
+                source: 'memory-agent',
+                channelId: 'shared',
+                agentContext: memoryAgentContext,
+                stopAfterSuccessfulTools: ['mama_save'],
+              });
+              const afterDecisionCount = Number(
+                adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
+              );
+              const ack = buildMemoryAuditAckFromAgentResult(
+                result,
+                beforeDecisionCount,
+                afterDecisionCount
+              );
 
-            return { response: result.response, ack };
+              if (shouldDeliverBootstrap) {
+                memoryBootstrapDelivered = true;
+                if (resolveBootstrapLock) {
+                  resolveBootstrapLock();
+                }
+                memoryBootstrapLock = null;
+              }
+
+              return { response: result.response, ack };
+            } catch (error) {
+              if (shouldDeliverBootstrap) {
+                if (rejectBootstrapLock) {
+                  rejectBootstrapLock(error);
+                }
+                memoryBootstrapLock = null;
+              }
+              throw error;
+            }
           },
         };
       },
