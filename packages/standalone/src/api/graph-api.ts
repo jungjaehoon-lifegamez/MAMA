@@ -1052,6 +1052,31 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: POST /api/mama/ingest-conversation - ingest conversation with LLM extraction
+    if (pathname === '/api/mama/ingest-conversation' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const { ingestConversation } = await import('@jungjaehoon/mama-core');
+        const source = (body.source as { package: string; source_type: string }) || {
+          package: 'standalone' as const,
+          source_type: 'api',
+        };
+        const result = await ingestConversation({
+          messages: (body.messages || []) as Array<{ role: 'user' | 'assistant'; content: string }>,
+          scopes: (body.scopes || []) as Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>,
+          source: { package: source.package as 'standalone', source_type: source.source_type },
+          extract: body.extract as { enabled: boolean; model?: string; apiKey?: string } | undefined,
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...result }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message }));
+      }
+      return true;
+    }
+
     // Alias: POST /api/update -> /graph/update
     if (pathname === '/api/update' && req.method === 'POST') {
       await handleUpdateRequest(req, res);
