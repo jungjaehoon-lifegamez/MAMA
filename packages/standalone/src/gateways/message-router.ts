@@ -161,6 +161,10 @@ function sanitizeForPrompt(text: string): string {
     .replace(/\}/g, '\\}');
 }
 
+function stripGatewayDecorations(text: string): string {
+  return text.replace(/^(?:\s*\|\|[^|]*\|\|\s*)+/u, '').trim();
+}
+
 /**
  * Check if message contains sensitive configuration request
  */
@@ -643,9 +647,10 @@ This protects your credentials from being exposed in chat logs.`;
 
       // Auto-extract facts from conversation (fire-and-forget, non-blocking)
       if (response && message.text) {
+        const rawAssistantText = stripGatewayDecorations(response);
         void (async () => {
           try {
-            await this.triggerMemoryAgent(channelKey, message.text, response, message);
+            await this.triggerMemoryAgent(channelKey, message.text, rawAssistantText, message);
           } catch {
             /* non-fatal */
           }
@@ -1185,10 +1190,11 @@ INSTRUCTION:
       this.memoryAgentStats.acksSkipped++;
     } else {
       this.memoryAgentStats.acksFailed++;
+      logger.warn(`[memory-agent] Audit failed: ${ack.reason ?? 'unknown failure'}`);
       this.memoryNoticeQueue.enqueue(channelKey ?? 'memory-agent:shared', {
         type: 'memory_warning',
         severity: 'high',
-        summary: ack.reason ?? 'memory audit failed',
+        summary: 'memory audit failed',
         evidence: [],
         recommended_action: 'consult_memory',
         relevant_memories: [],
@@ -1321,7 +1327,8 @@ INSTRUCTION:
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '') || 'memory_audit';
     const displayTopic = candidates[0]?.topicHint || userText.slice(0, 80).trim() || 'memory_audit';
-    const deltaKey = createHash('sha256').update(displayTopic).digest('hex').slice(0, 16);
+    const deltaKeySource = candidates[0]?.id || userText;
+    const deltaKey = createHash('sha256').update(deltaKeySource).digest('hex').slice(0, 16);
 
     this.memoryAuditQueue
       .enqueue(job)

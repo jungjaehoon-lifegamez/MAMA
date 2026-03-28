@@ -1514,7 +1514,7 @@ export async function runAgentLoop(
       platform: 'cli',
       roleName: 'memory_agent',
       role: {
-        allowedTools: ['mama_search', 'mama_save', 'mama_profile'],
+        allowedTools: ['mama_search', 'mama_save'],
         blockedTools: ['Read', 'Write', 'Bash'],
         systemControl: false,
         sensitiveAccess: false,
@@ -1524,7 +1524,7 @@ export async function runAgentLoop(
         channelId: 'shared',
         startedAt: new Date(),
       },
-      capabilities: ['mama_search', 'mama_save', 'mama_profile'],
+      capabilities: ['mama_search', 'mama_save'],
       limitations: ['No file or shell access'],
       tier: 2,
       backend: 'claude',
@@ -1545,7 +1545,7 @@ export async function runAgentLoop(
         maxTurns: 3,
         backend: memoryBackend,
         toolsConfig: {
-          gateway: ['mama_search', 'mama_save', 'mama_profile'],
+          gateway: ['mama_search', 'mama_save'],
           mcp: [],
         },
       },
@@ -2299,7 +2299,10 @@ export async function runAgentLoop(
         channelSummaries,
       });
     } catch (error) {
-      console.error('[memory-agent/dashboard] Error:', error);
+      startLogger.error(
+        '[memory-agent/dashboard] Error',
+        error instanceof Error ? error : String(error)
+      );
       res.status(500).json({
         error: error instanceof Error ? error.message : String(error),
       });
