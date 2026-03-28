@@ -1581,6 +1581,7 @@ export async function runAgentLoop(
               memoryBootstrapDelivered = true;
             }
 
+            // Safe: initDB() completed before memoryProcessManager is created.
             const adapter = getAdapter();
             const beforeDecisionCount = Number(
               adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
@@ -2196,13 +2197,13 @@ export async function runAgentLoop(
   });
 
   // Memory Agent stats API
-  apiServer.app.get('/api/memory-agent/stats', (_req, res) => {
+  apiServer.app.get('/api/memory-agent/stats', requireAuth, (_req, res) => {
     const stats = messageRouter.getMemoryAgentStats();
     res.json(stats);
   });
 
   // Memory Agent dashboard API — combines agent stats, memory stats, and channel summaries
-  apiServer.app.get('/api/memory-agent/dashboard', async (_req, res) => {
+  apiServer.app.get('/api/memory-agent/dashboard', requireAuth, async (_req, res) => {
     try {
       // 1. Memory agent runtime stats
       const agentStats = messageRouter.getMemoryAgentStats();

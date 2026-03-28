@@ -12,4 +12,21 @@ describe('standalone memory scope context', () => {
 
     expect(scopes.map((item) => item.kind)).toEqual(['project', 'channel', 'user', 'global']);
   });
+
+  it('should return only global scope when only source is provided', () => {
+    const scopes = deriveMemoryScopes({
+      source: 'telegram',
+    });
+
+    expect(scopes.map((item) => item.kind)).toEqual(['global']);
+  });
+
+  it('should derive user and global scopes when no channel or project exists', () => {
+    const scopes = deriveMemoryScopes({
+      source: 'discord',
+      userId: 'user-1',
+    });
+
+    expect(scopes.map((item) => item.kind)).toEqual(['user', 'global']);
+  });
 });

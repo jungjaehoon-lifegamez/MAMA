@@ -28,4 +28,17 @@ describe('memory agent notices', () => {
       })
     ).toBe(false);
   });
+
+  it('should deliver direction alerts even when severity is low', () => {
+    expect(
+      shouldDeliverAuditNotice({
+        type: 'direction_alert',
+        severity: 'low',
+        summary: 'direction changed',
+        evidence: [],
+        recommended_action: 'recheck',
+        relevant_memories: [],
+      })
+    ).toBe(true);
+  });
 });

@@ -1,12 +1,8 @@
-export type MemoryConsultIntent =
-  | 'bootstrap_session'
-  | 'validate_claim'
-  | 'get_relevant_truth'
-  | 'check_conflicts'
-  | 'explain_history';
+import type { MemoryConsultIntent } from '@jungjaehoon/mama-core/memory/types';
+import type { MemoryScopeRef } from './scope-context.js';
 
 export interface MemoryConsultRequest {
   intent: MemoryConsultIntent;
   query?: string;
-  scopeIds?: string[];
+  scopeIds?: MemoryScopeRef[];
 }

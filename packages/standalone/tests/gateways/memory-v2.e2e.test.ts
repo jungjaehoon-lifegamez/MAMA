@@ -23,7 +23,7 @@ async function waitForMemoryIngestion(mamaApi: {
   });
 }
 
-describe('Memory V2 standalone e2e', () => {
+describe('Story: Memory V2 Standalone Integration', () => {
   beforeAll(() => {
     [TEST_DB, `${TEST_DB}-journal`, `${TEST_DB}-wal`, `${TEST_DB}-shm`].forEach((file) => {
       try {
@@ -34,12 +34,14 @@ describe('Memory V2 standalone e2e', () => {
     });
 
     process.env.MAMA_DB_PATH = TEST_DB;
+    process.env.MAMA_FORCE_TIER_3 = 'true';
   });
 
   afterAll(async () => {
     const dbManager = await import('@jungjaehoon/mama-core/db-manager');
     await dbManager.closeDB();
     delete process.env.MAMA_DB_PATH;
+    delete process.env.MAMA_FORCE_TIER_3;
 
     [TEST_DB, `${TEST_DB}-journal`, `${TEST_DB}-wal`, `${TEST_DB}-shm`].forEach((file) => {
       try {
@@ -50,65 +52,67 @@ describe('Memory V2 standalone e2e', () => {
     });
   });
 
-  it('should ingest first-turn memory but avoid default per-turn reinjection on the next turn', async () => {
-    const mamaApi = require('@jungjaehoon/mama-core/mama-api');
+  describe('AC #1: Memory ingestion and recall', () => {
+    it('should ingest first-turn memory but avoid default per-turn reinjection on the next turn', async () => {
+      const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
-    let lastPrompt = '';
-    const agentLoop = createMockAgentLoop((prompt) => {
-      lastPrompt = prompt;
-      return 'Agent response';
-    });
+      let lastPrompt = '';
+      const agentLoop = createMockAgentLoop((prompt) => {
+        lastPrompt = prompt;
+        return 'Agent response';
+      });
 
-    const mamaApiClient = {
-      search: async (query: string, limit?: number) => {
-        const result = await mamaApi.suggest(query, limit !== undefined ? { limit } : undefined);
-        return result?.results || [];
-      },
-      recallMemory: mamaApi.recallMemory.bind(mamaApi),
-      ingestMemory: mamaApi.ingestMemory.bind(mamaApi),
-      save: mamaApi.save.bind(mamaApi),
-    };
-
-    const sessionStore = new SessionStore(new Database(':memory:'));
-    const router = new MessageRouter(sessionStore, agentLoop, mamaApiClient);
-
-    router.setMemoryAgent({
-      getSharedProcess: async () => ({
-        sendMessage: async (content: string) => {
-          await new Promise((resolve) => setTimeout(resolve, 25));
-          await mamaApi.ingestMemory({
-            content,
-            scopes: [{ kind: 'project', id: process.cwd() }],
-            source: {
-              package: 'standalone',
-              source_type: 'memory-agent-e2e',
-              project_id: process.cwd(),
-            },
-          });
-          return { response: 'ingested' };
+      const mamaApiClient = {
+        search: async (query: string, limit?: number) => {
+          const result = await mamaApi.suggest(query, limit !== undefined ? { limit } : undefined);
+          return result?.results || [];
         },
-      }),
-    } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
+        recallMemory: mamaApi.recallMemory.bind(mamaApi),
+        ingestMemory: mamaApi.ingestMemory.bind(mamaApi),
+        save: mamaApi.save.bind(mamaApi),
+      };
 
-    await router.process({
-      source: 'discord',
-      channelId: 'channel-e2e',
-      userId: 'user-e2e',
-      text: 'We decided to use pnpm in this repository, keep answers concise, and reuse this convention for all follow-up tasks in the current project.',
+      const sessionStore = new SessionStore(new Database(':memory:'));
+      const router = new MessageRouter(sessionStore, agentLoop, mamaApiClient);
+
+      router.setMemoryAgent({
+        getSharedProcess: async () => ({
+          sendMessage: async (content: string) => {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            await mamaApi.ingestMemory({
+              content,
+              scopes: [{ kind: 'project', id: process.cwd() }],
+              source: {
+                package: 'standalone',
+                source_type: 'memory-agent-e2e',
+                project_id: process.cwd(),
+              },
+            });
+            return { response: 'ingested' };
+          },
+        }),
+      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
+
+      await router.process({
+        source: 'discord',
+        channelId: 'channel-e2e',
+        userId: 'user-e2e',
+        text: 'We decided to use pnpm in this repository, keep answers concise, and reuse this convention for all follow-up tasks in the current project.',
+      });
+
+      await waitForMemoryIngestion(mamaApi);
+
+      await router.process({
+        source: 'discord',
+        channelId: 'channel-e2e',
+        userId: 'user-e2e',
+        text: 'Should we keep using pnpm here?',
+      });
+
+      expect(lastPrompt).not.toContain('[MAMA Profile]');
+      expect(lastPrompt).not.toContain('[MAMA Memories]');
+
+      sessionStore.close();
     });
-
-    await waitForMemoryIngestion(mamaApi);
-
-    await router.process({
-      source: 'discord',
-      channelId: 'channel-e2e',
-      userId: 'user-e2e',
-      text: 'Should we keep using pnpm here?',
-    });
-
-    expect(lastPrompt).not.toContain('[MAMA Profile]');
-    expect(lastPrompt).not.toContain('[MAMA Memories]');
-
-    sessionStore.close();
   });
 });

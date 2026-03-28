@@ -61,6 +61,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       systemPrompt: options.systemPrompt,
       cwd: options.cwd,
       sandbox: options.sandbox,
+      codexHome: options.codexHome,
       command: options.command,
       compactPrompt: 'Summarize the conversation concisely, preserving key decisions and context.',
       timeoutMs: options.requestTimeout,

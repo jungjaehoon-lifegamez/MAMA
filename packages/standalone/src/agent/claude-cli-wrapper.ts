@@ -209,6 +209,12 @@ export class ClaudeCLIWrapper {
       if (this.options.dangerouslySkipPermissions) {
         args.push('--dangerously-skip-permissions');
       }
+      if (this.options.allowedTools && this.options.allowedTools.length > 0) {
+        args.push('--allowedTools', this.options.allowedTools.join(','));
+      }
+      if (this.options.disallowedTools && this.options.disallowedTools.length > 0) {
+        args.push('--disallowedTools', this.options.disallowedTools.join(','));
+      }
 
       // ============================================================
       // ⚠️ MAMA OS AGENT ISOLATION — DO NOT MODIFY ⚠️
