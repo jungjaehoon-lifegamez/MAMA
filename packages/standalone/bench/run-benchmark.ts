@@ -213,35 +213,88 @@ async function main() {
     // Fresh DB per question (no cross-contamination)
     const mamaApi = initMamaCore();
 
-    // Ingest haystack sessions with LLM extraction via Claude CLI
+    // Ingest haystack sessions
     const ingestStart = Date.now();
+    const useExtraction = process.env.BENCH_EXTRACT === 'true';
     for (let si = 0; si < q.haystack_sessions.length; si++) {
       const session = q.haystack_sessions[si];
-      const messages = session.map((m) => ({
-        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: m.content,
-      }));
-      await mamaApi.ingestConversation({
-        messages,
-        scopes: [],
-        source: { package: 'standalone', source_type: 'benchmark' },
-        extract: { enabled: true, model: 'claude-haiku-4-5-20251001' },
-      });
+      if (useExtraction) {
+        const messages = session.map((m) => ({
+          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: m.content,
+        }));
+        await mamaApi.ingestConversation({
+          messages,
+          scopes: [],
+          source: { package: 'standalone', source_type: 'benchmark' },
+          extract: { enabled: true, model: 'claude-haiku-4-5-20251001' },
+        });
+      } else {
+        // Save each session as a decision (same as memorybench provider)
+        const conversationText = session
+          .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+          .join('\n');
+        await mamaApi.save({
+          topic: `session_${si}`,
+          decision: conversationText.slice(0, 8000),
+          reasoning: `Session ${si}`,
+          confidence: 0.5,
+          type: 'user_decision',
+        });
+      }
     }
     const ingestMs = Date.now() - ingestStart;
 
     // Search
     const searchStart = Date.now();
-    const searchResult = await mamaApi.suggest(q.question, { limit: 5 });
+    const searchResult = await mamaApi.suggest(q.question, { limit: 10, threshold: 0.2 });
+    let topResults = searchResult?.results ?? [];
+
+    // Semantic reranking via Claude CLI (same concept as memorybench's Codex reranking)
+    if (topResults.length >= 2 && useClaude) {
+      try {
+        const rerankWindow = topResults.slice(0, 6);
+        const candidateText = rerankWindow
+          .map(
+            (r: { topic: string; decision: string }, i: number) =>
+              `ID: ${i}\nTopic: ${r.topic}\nExcerpt:\n${r.decision?.slice(0, 1500)}`
+          )
+          .join('\n\n---\n\n');
+        const rerankPrompt = `Rank these memory candidates by relevance to the question. Return ONLY JSON: {"ordered":[0,2,1,...]}
+
+Question: ${q.question}
+
+Candidates:
+${candidateText}`;
+        const rerankResult = execSync(
+          `echo ${JSON.stringify(rerankPrompt)} | claude --print --model claude-haiku-4-5-20251001 2>/dev/null`,
+          { timeout: 15000, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+        ).trim();
+        const jsonMatch = rerankResult.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]) as { ordered?: number[] };
+          if (Array.isArray(parsed.ordered)) {
+            const reranked = parsed.ordered
+              .filter((i) => i >= 0 && i < rerankWindow.length)
+              .map((i) => rerankWindow[i]);
+            const seen = new Set(reranked.map((_, i) => parsed.ordered![i]));
+            const remaining = rerankWindow.filter((_, i) => !seen.has(i));
+            topResults = [...reranked, ...remaining, ...topResults.slice(6)];
+          }
+        }
+      } catch {
+        // Reranking failed, keep original order
+      }
+    }
     const searchMs = Date.now() - searchStart;
 
-    const topResults = searchResult?.results ?? [];
     const topSimilarity = topResults[0]?.similarity ?? 0;
 
     // Build context from search results
     let context = '<no results>';
     if (topResults.length > 0) {
       context = topResults
+        .slice(0, 5)
         .map(
           (r: { topic: string; decision: string; reasoning: string }, idx: number) =>
             `[${idx + 1}] ${r.decision?.slice(0, 3000)}`
