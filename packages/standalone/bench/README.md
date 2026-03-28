@@ -58,7 +58,19 @@ pnpm bench:category single-session-user
 
 ## Baseline
 
-| Version            | Questions | Accuracy | Avg Search Ms |
-| ------------------ | --------- | -------- | ------------- |
-| v5 (provider-path) | 10        | 100%     | 26,183ms      |
-| v6 (this branch)   | 12        | TBD      | TBD           |
+| Version            | Questions | Accuracy | Avg Search Ms | Judge   | Notes                        |
+| ------------------ | --------- | -------- | ------------- | ------- | ---------------------------- |
+| v5 (provider-path) | 10        | 100%     | 26,183ms      | gpt-5.4 | Direct API, not runtime path |
+| v6 (keyword judge) | 12        | 41.7%    | 10ms          | keyword | Clean DB, entity matching    |
+| v6 (LLM judge)     | 12        | TBD      | TBD           | haiku   | With ANTHROPIC_API_KEY       |
+
+### Per-Category Breakdown (v6 keyword)
+
+| Category                  | Correct | Total | Accuracy |
+| ------------------------- | ------- | ----- | -------- |
+| temporal-reasoning        | 2       | 2     | 100%     |
+| knowledge-update          | 1       | 2     | 50%      |
+| single-session-preference | 1       | 2     | 50%      |
+| single-session-user       | 1       | 2     | 50%      |
+| multi-session             | 0       | 2     | 0%       |
+| single-session-assistant  | 0       | 2     | 0%       |
