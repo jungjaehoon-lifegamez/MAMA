@@ -1428,7 +1428,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
           decision: memory.summary,
           reasoning: memory.details,
           confidence: memory.confidence,
-          similarity: 1,
+          similarity: memory.confidence ?? 1,
           created_at: memory.created_at,
           graph_source: 'primary',
           graph_rank: 1,
