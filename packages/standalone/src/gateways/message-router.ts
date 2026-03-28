@@ -543,10 +543,12 @@ This protects your credentials from being exposed in chat logs.`;
     // Per-turn memory injection (works for both NEW and CONTINUE sessions)
     let memoryPrefix = '';
     let pendingNotices = false;
+    let pendingNoticeCount = 0;
     try {
       if (shouldResume) {
         const notices = this.memoryNoticeQueue.peek(channelKey);
         pendingNotices = notices.length > 0;
+        pendingNoticeCount = notices.length;
         memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
         if (memoryPrefix) {
           memoryPrefix = `${memoryPrefix}\n\n`;
@@ -651,7 +653,7 @@ This protects your credentials from being exposed in chat logs.`;
       }
 
       if (shouldResume && pendingNotices) {
-        this.memoryNoticeQueue.drain(channelKey);
+        this.memoryNoticeQueue.drain(channelKey, pendingNoticeCount);
       }
     } catch (error) {
       // CLI timeout or resume failure - invalidate session to force fresh start next time
@@ -1093,11 +1095,13 @@ ${historyContext}
     const scopeContext = job.scopeContext.map((scope) => `${scope.kind}:${scope.id}`).join(', ');
     const candidateLines = (job.candidates ?? []).map((candidate) => {
       const topic = candidate.topicHint ? ` topic=${candidate.topicHint}` : '';
-      return `- kind=${candidate.kind}${topic} confidence=${candidate.confidence} summary=${candidate.summary}`;
+      return `- kind=${candidate.kind}${topic} confidence=${candidate.confidence} summary=${JSON.stringify(candidate.summary)}`;
     });
     return `Memory scopes: ${scopeContext}
 Conversation:
+\`\`\`conversation
 ${job.conversation}
+\`\`\`
 
 Candidates:
 ${candidateLines.length > 0 ? candidateLines.join('\n') : '- none'}
@@ -1225,18 +1229,24 @@ INSTRUCTION:
 
   private async getPerTurnMemoryPrefix(message: NormalizedMessage): Promise<string> {
     if (this.mamaApi.recallMemory) {
-      const scopes = deriveMemoryScopes({
-        source: message.source,
-        channelId: message.channelId,
-        userId: message.userId,
-        projectId: this.getRuntimeProjectId(),
-      });
-      const bundle = await this.mamaApi.recallMemory(message.text, {
-        scopes,
-        includeProfile: true,
-      });
-      const formatted = formatRecallBundle(bundle);
-      return formatted ? `${formatted}\n\n` : '';
+      try {
+        const scopes = deriveMemoryScopes({
+          source: message.source,
+          channelId: message.channelId,
+          userId: message.userId,
+          projectId: this.getRuntimeProjectId(),
+        });
+        const bundle = await this.mamaApi.recallMemory(message.text, {
+          scopes,
+          includeProfile: true,
+        });
+        const formatted = formatRecallBundle(bundle);
+        return formatted ? `${formatted}\n\n` : '';
+      } catch (error) {
+        logger.warn(
+          `[memory-prefix] recallMemory failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
 
     const context = await this.contextInjector.getRelevantContext(message.text);
@@ -1259,18 +1269,6 @@ INSTRUCTION:
     const source = message?.source ?? 'memory-agent';
     const channelId = message?.channelId ?? 'shared';
     const userId = message?.userId;
-    const cooldownKey = `${source}:${channelId}:${userId ?? 'anonymous'}`;
-    const lastExtractTime = this.memoryAuditCooldowns.get(cooldownKey) ?? 0;
-    if (now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
-      return;
-    }
-
-    let content = `User: ${userText}\nAssistant: ${botResponse}`;
-    if (content.length < MessageRouter.MIN_CONTENT_LENGTH) return;
-    if (content.length > MessageRouter.MAX_CONTENT_LENGTH) {
-      content = content.substring(0, MessageRouter.MAX_CONTENT_LENGTH);
-    }
-
     const candidates = extractSaveCandidates({
       userText,
       botResponse,
@@ -1281,6 +1279,20 @@ INSTRUCTION:
       projectId: this.getRuntimeProjectId(),
       createdAt: now,
     });
+    const cooldownKey = `${source}:${channelId}:${userId ?? 'anonymous'}`;
+    const lastExtractTime = this.memoryAuditCooldowns.get(cooldownKey) ?? 0;
+    if (now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
+      return;
+    }
+
+    let content = `User: ${userText}\nAssistant: ${botResponse}`;
+    if (content.length < MessageRouter.MIN_CONTENT_LENGTH && candidates.length === 0) {
+      return;
+    }
+    if (content.length > MessageRouter.MAX_CONTENT_LENGTH) {
+      content = content.substring(0, MessageRouter.MAX_CONTENT_LENGTH);
+    }
+
     if (candidates.length === 0) return;
 
     this.memoryAuditCooldowns.set(cooldownKey, now);

@@ -235,10 +235,6 @@ const loadCheckpointTool = {
   inputSchema: {
     type: 'object',
     properties: {
-      session_id: {
-        type: 'string',
-        description: 'Optional session ID. If not provided, loads the most recent checkpoint.',
-      },
       include_narrative: {
         type: 'boolean',
         description: 'Include related narrative/decisions (default: true)',
@@ -258,12 +254,7 @@ const loadCheckpointTool = {
   },
   handler: async (args = {}) => {
     const start = Date.now();
-    const {
-      session_id: _session_id,
-      include_narrative = true,
-      include_links = true,
-      link_depth = 1,
-    } = args;
+    const { include_narrative = true, include_links = true, link_depth = 1 } = args;
 
     try {
       const adapter = getAdapter();

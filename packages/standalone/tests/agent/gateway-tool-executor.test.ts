@@ -353,12 +353,37 @@ describe('GatewayToolExecutor', () => {
     it('should route mama_add through ingestMemory instead of fact JSON parsing', async () => {
       const mockApi = createMockApi();
       const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+      executor.setAgentContext({
+        source: 'telegram',
+        platform: 'telegram',
+        roleName: 'os_agent',
+        role: {
+          allowedTools: ['*'],
+          systemControl: false,
+          sensitiveAccess: false,
+        },
+        session: {
+          sessionId: 'test-session',
+          channelId: '5551000001',
+          userId: '5551000001',
+          startedAt: new Date(),
+        },
+        capabilities: ['mama_add'],
+        limitations: [],
+      });
 
       const result = await executor.execute('mama_add', {
         content: 'User prefers concise answers in this repo',
       });
 
-      expect(mockApi.ingestMemory).toHaveBeenCalled();
+      expect(mockApi.ingestMemory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scopes: expect.arrayContaining([
+            expect.objectContaining({ kind: 'channel', id: 'telegram:5551000001' }),
+            expect.objectContaining({ kind: 'user', id: '5551000001' }),
+          ]),
+        })
+      );
       expect(result).toMatchObject({ success: true, saved: 1 });
     });
   });

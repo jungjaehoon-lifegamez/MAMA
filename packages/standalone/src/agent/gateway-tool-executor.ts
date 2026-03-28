@@ -28,6 +28,7 @@ import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { recordSecurityEvent } from '../security/security-monitor.js';
+import { deriveMemoryScopes } from '../memory/scope-context.js';
 import type {
   GatewayToolName,
   GatewayToolInput,
@@ -1899,11 +1900,27 @@ export class GatewayToolExecutor {
   }
 
   /**
-   * Handle mama_add — auto-extract facts from conversation content via Memory Agent.
-   * Routes through AgentProcessManager persistent process instead of raw HaikuClient.
+   * Handle mama_add — auto-extract facts from conversation content with derived memory scopes.
    */
   private async handleMamaAdd(input: { content: string }): Promise<GatewayToolResult> {
-    return this.handleMamaIngest(input);
+    if (!this.currentContext) {
+      return {
+        success: false,
+        error: 'mama_add requires an active agent context',
+      } as GatewayToolResult;
+    }
+
+    const scopes = deriveMemoryScopes({
+      source: this.currentContext.source,
+      channelId: this.currentContext.session.channelId,
+      userId: this.currentContext.session.userId,
+      projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+    });
+
+    return this.handleMamaIngest({
+      ...input,
+      scopes,
+    });
   }
 
   private async handleMamaIngest(input: {
@@ -1927,9 +1944,18 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
 
+      const fallbackScopes = this.currentContext
+        ? deriveMemoryScopes({
+            source: this.currentContext.source,
+            channelId: this.currentContext.session.channelId,
+            userId: this.currentContext.session.userId,
+            projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+          })
+        : [];
+
       const result = await api.ingestMemory({
         content: content.substring(0, 10_000),
-        scopes: Array.isArray(input.scopes) ? input.scopes : [],
+        scopes: Array.isArray(input.scopes) ? input.scopes : fallbackScopes,
         source: {
           package: 'standalone',
           source_type: 'gateway_tool_executor',
