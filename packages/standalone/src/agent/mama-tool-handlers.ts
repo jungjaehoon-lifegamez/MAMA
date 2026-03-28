@@ -43,6 +43,7 @@ export async function handleSave(
       decision: d.decision,
       reasoning: d.reasoning,
       confidence: d.confidence ?? 0.5,
+      is_static: d.is_static,
       type: 'user_decision',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);

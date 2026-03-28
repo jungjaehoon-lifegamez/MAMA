@@ -116,6 +116,7 @@ export class CodexMCPProcess extends EventEmitter {
     }
 
     this.state = 'starting';
+    this.lastAuthFailure = null;
     let command: string;
     try {
       command = this.resolveCodexCommand();
@@ -830,6 +831,8 @@ export class CodexMCPProcess extends EventEmitter {
       const processToKill = this.process;
       const rootPid = processToKill.pid;
       if (!rootPid) {
+        this.rl?.close();
+        this.rl = null;
         this.process = null;
         this.threadId = null;
         return;

@@ -3,12 +3,12 @@ import type { SaveCandidate, SaveCandidateKind } from './save-candidate-types.js
 
 const DECISION_PATTERNS = [
   /\bwe decided\b/i,
-  /\buse\s+[A-Za-z0-9_-]+\b/i,
-  /\bdefault\b/i,
-  /앞으로/,
-  /기억해/,
-  /쓰자/,
-  /결정/,
+  /\b(?:we|i|let's|lets|should|decid(?:e|ed)\s+to)\s+use\s+[A-Za-z0-9_-]+\b/i,
+  /\b(?:default|standard)\s+(?:db|database|choice|option)\b/i,
+  /앞으로.*(?:쓰자|사용하자|기억해)/,
+  /(?:기억해|기억해 둬|기억해줘).*(?:결정|규칙|기본)/,
+  /(?:쓰자|사용하자|가자).*(?:db|database|프로젝트|기본)/i,
+  /결정(?:했|하)/,
 ];
 
 const PREFERENCE_PATTERNS = [
@@ -16,24 +16,40 @@ const PREFERENCE_PATTERNS = [
   /\bpreference\b/i,
   /\bfavorite\b/i,
   /\bfavourite\b/i,
-  /\blike\b/i,
-  /\blove\b/i,
+  /\b(?:really\s+)?(?:like|love)\s+[a-z0-9]/i,
   /선호/,
-  /좋아/,
+  /좋아(?:해)?/,
 ];
 
 const CHANGE_PATTERNS = [
-  /\bnow\b/i,
+  /\b(?:now|from now on)\b.+\b(?:use|prefer|switch|choose)\b/i,
   /\binitially\b/i,
   /\bsince\b/i,
   /\bbefore\b/i,
   /\bafter\b/i,
-  /예전/,
-  /이제/,
-  /처음/,
+  /예전.*(?:지금|이제)/,
+  /이제.*(?:바꿀게|사용할게|할게|가자)/,
+  /처음.*(?:지금|이제)/,
 ];
 
-const FACT_PATTERNS = [/\bunder\b/i, /\bover a year\b/i, /\bwhere\b/i, /\bhow many\b/i];
+const FACT_PATTERNS = [
+  /\bwhere\s+we\s+keep\b/i,
+  /\bover a year\b/i,
+  /\bhow many\s+(?:items|hours|projects|people)\b/i,
+  /\bunder\s+(?:my|the)\b/i,
+];
+
+const TOPIC_HINTS: Partial<Record<SaveCandidateKind, Array<{ match: RegExp; topic: string }>>> = {
+  decision: [
+    { match: /\bpostgresql\b/i, topic: 'database_choice' },
+    { match: /\bsqlite\b/i, topic: 'database_choice' },
+  ],
+  preference: [
+    { match: /\bsony\b/i, topic: 'photography_preference' },
+    { match: /\bhomegrown\b/i, topic: 'ingredient_preference' },
+  ],
+  change: [{ match: /\b(?:postgresql|sqlite)\b/i, topic: 'database_choice' }],
+};
 
 const IGNORE_PATTERNS = [/^\s*(thanks|thank you|고마워|감사|좋네|오케이|okay|ok)\s*[.!?]*\s*$/i];
 
@@ -49,14 +65,14 @@ export interface SaveCandidateExtractionInput {
 }
 
 function detectKind(text: string): SaveCandidateKind | null {
-  if (PREFERENCE_PATTERNS.some((pattern) => pattern.test(text))) {
-    return 'preference';
+  if (CHANGE_PATTERNS.some((pattern) => pattern.test(text))) {
+    return 'change';
   }
   if (DECISION_PATTERNS.some((pattern) => pattern.test(text))) {
     return 'decision';
   }
-  if (CHANGE_PATTERNS.some((pattern) => pattern.test(text))) {
-    return 'change';
+  if (PREFERENCE_PATTERNS.some((pattern) => pattern.test(text))) {
+    return 'preference';
   }
   if (FACT_PATTERNS.some((pattern) => pattern.test(text))) {
     return 'fact';
@@ -65,18 +81,11 @@ function detectKind(text: string): SaveCandidateKind | null {
 }
 
 function inferTopicHint(text: string, kind: SaveCandidateKind): string | undefined {
-  const normalized = text.toLowerCase();
-  if (kind === 'decision' && normalized.includes('postgresql')) {
-    return 'database_choice';
-  }
-  if (kind === 'decision' && normalized.includes('sqlite')) {
-    return 'database_choice';
-  }
-  if (kind === 'preference' && normalized.includes('sony')) {
-    return 'photography_preference';
-  }
-  if (kind === 'preference' && normalized.includes('homegrown')) {
-    return 'ingredient_preference';
+  const rules = TOPIC_HINTS[kind] ?? [];
+  for (const rule of rules) {
+    if (rule.match.test(text)) {
+      return rule.topic;
+    }
   }
   return undefined;
 }
