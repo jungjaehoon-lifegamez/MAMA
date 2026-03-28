@@ -80,7 +80,19 @@ function initMamaCore() {
   process.env.MAMA_DB_PATH = BENCH_DB;
 
   const mamaApi = require('@jungjaehoon/mama-core/mama-api');
-  return mamaApi;
+  const mamaCore = require('@jungjaehoon/mama-core');
+
+  // Inject Claude CLI as extraction backend (no API key needed)
+  const { parseExtractionResponse } = mamaCore;
+  mamaCore.setExtractionFn(async (prompt: string) => {
+    const result = execSync(
+      `echo ${JSON.stringify(prompt)} | claude --print --model claude-haiku-4-5-20251001 2>/dev/null`,
+      { timeout: 30000, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+    ).trim();
+    return parseExtractionResponse(result);
+  });
+
+  return { ...mamaApi, ingestConversation: mamaCore.ingestConversation };
 }
 
 async function closeMamaCore() {
@@ -201,20 +213,19 @@ async function main() {
     // Fresh DB per question (no cross-contamination)
     const mamaApi = initMamaCore();
 
-    // Ingest all haystack sessions
+    // Ingest haystack sessions with LLM extraction via Claude CLI
     const ingestStart = Date.now();
     for (let si = 0; si < q.haystack_sessions.length; si++) {
       const session = q.haystack_sessions[si];
-      const conversationText = session
-        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-        .join('\n');
-      const topic = `session_${si}`;
-      await mamaApi.save({
-        topic,
-        decision: conversationText.slice(0, 8000),
-        reasoning: `Session ${si}`,
-        confidence: 0.5,
-        type: 'user_decision',
+      const messages = session.map((m) => ({
+        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: m.content,
+      }));
+      await mamaApi.ingestConversation({
+        messages,
+        scopes: [],
+        source: { package: 'standalone', source_type: 'benchmark' },
+        extract: { enabled: true, model: 'claude-haiku-4-5-20251001' },
       });
     }
     const ingestMs = Date.now() - ingestStart;
