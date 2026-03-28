@@ -494,7 +494,7 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       if (!topic || !decision || !reasoning) {
         return { success: false, message: '❌ Decision requires: topic, decision, reasoning' };
       }
-      const id = await mama.save({ topic, decision, reasoning, confidence });
+      const id = await mama.save({ type: 'user_decision', topic, decision, reasoning, confidence });
       return {
         success: true,
         id,

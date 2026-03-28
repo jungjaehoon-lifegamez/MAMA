@@ -659,6 +659,7 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
     await initDB();
 
     const result = await mama.save({
+      type: 'user_decision',
       topic: body.topic,
       decision: body.decision,
       reasoning: body.reasoning,

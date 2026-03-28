@@ -308,8 +308,8 @@ git commit -m "feat(standalone): expose memory candidate lifecycle in dashboard"
 **Files:**
 
 - Create: `docs/superpowers/specs/2026-03-27-memory-agent-path-benchmark-design.md`
-- Modify: `~/.mama/workspace/memorybench/src/providers/mama/index.ts`
-- Test: `~/.mama/workspace/memorybench/src/providers/mama/index.test.ts`
+- Modify: `<memorybench-workspace>/memorybench/src/providers/mama/index.ts`
+- Test: `<memorybench-workspace>/memorybench/src/providers/mama/index.test.ts`
 
 - [ ] **Step 1: Write the failing benchmark alignment test**
 
@@ -337,7 +337,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-03-27-memory-agent-path-benchmark-design.md <memorybench-workspace>/src/providers/mama/index.ts <memorybench-workspace>/src/providers/mama/index.test.ts
+git add docs/superpowers/specs/2026-03-27-memory-agent-path-benchmark-design.md <memorybench-workspace>/memorybench/src/providers/mama/index.ts <memorybench-workspace>/memorybench/src/providers/mama/index.test.ts
 git commit -m "docs: define agent-path benchmark alignment for memory agent"
 ```
 
@@ -414,7 +414,7 @@ git commit -m "feat(standalone): reframe memory agent as candidate-driven writer
 
 **Files:**
 
-- Read: `/Users/jeongjaehun/.mama/workspace/memorybench/data/runs/mama-bench-quality-step4-20260327/report.json`
+- Read: `<memorybench-workspace>/memorybench/data/runs/mama-bench-quality-step4-20260327/report.json`
 - Modify: benchmark runner config only if needed
 
 - [ ] **Step 1: Run the runtime-aligned sample benchmark**
@@ -441,7 +441,7 @@ Save a new MAMA checkpoint/decision explaining:
 - [ ] **Step 4: Commit benchmark follow-up docs/config if changed**
 
 ```bash
-git add docs/superpowers/specs /Users/jeongjaehun/.mama/workspace/memorybench
+git add docs/superpowers/specs <memorybench-workspace>/memorybench
 git commit -m "docs: record runtime-aligned memory benchmark results"
 ```
 

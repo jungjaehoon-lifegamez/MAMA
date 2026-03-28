@@ -1,12 +1,6 @@
 import { join } from 'path';
 
-export interface MAMACodexConfigOptions {
-  nodeCommand: string;
-  mcpEntry: string;
-  mamaDbPath: string;
-}
-
-export function buildMAMACodexConfig(_options: MAMACodexConfigOptions): string {
+export function buildMAMACodexConfig(): string {
   return [
     'approval_policy = "never"',
     'model_reasoning_effort = "high"',

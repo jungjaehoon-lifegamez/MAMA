@@ -30,7 +30,7 @@ import { getConfig } from '../cli/config/config-manager.js';
 import type { PromptCallbacks } from './types.js';
 import { collectDescendantPids, type ProcessRow } from './process-tree.js';
 import { extractCodexAuthFailure } from './codex-auth.js';
-import { buildMAMACodexConfig, getLocalMCPServerEntry } from './codex-home.js';
+import { buildMAMACodexConfig } from './codex-home.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -740,15 +740,7 @@ export class CodexMCPProcess extends EventEmitter {
     chmodSync(codexHome, 0o700);
 
     const configPath = join(codexHome, 'config.toml');
-    const mcpEntry = getLocalMCPServerEntry();
-    const mamaDbPath =
-      getConfig().database?.path?.replace(/^~\//, `${homedir()}/`) ||
-      join(homedir(), '.mama', 'mama-memory.db');
-    const configToml = buildMAMACodexConfig({
-      nodeCommand: process.execPath,
-      mcpEntry,
-      mamaDbPath,
-    });
+    const configToml = buildMAMACodexConfig();
     writeFileSync(configPath, configToml, 'utf-8');
     chmodSync(configPath, 0o600);
 

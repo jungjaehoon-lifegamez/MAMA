@@ -6,11 +6,7 @@ import { buildMAMACodexConfig, getLocalMCPServerEntry } from '../../src/agent/co
 describe('Story: Codex home config generation', () => {
   describe('AC #1: build MAMA-specific Codex config', () => {
     it('does not expose a direct mama MCP server to Codex', () => {
-      const config = buildMAMACodexConfig({
-        nodeCommand: '/opt/homebrew/bin/node',
-        mcpEntry: '/Users/jeongjaehun/project/MAMA/packages/mcp-server/src/server.js',
-        mamaDbPath: '/Users/jeongjaehun/.mama/mama-memory.db',
-      });
+      const config = buildMAMACodexConfig();
 
       expect(config).not.toContain('[mcp_servers.mama]');
       expect(config).not.toContain('packages/mcp-server/src/server.js');

@@ -15,9 +15,8 @@ const DECISION_PATTERNS = [
 
 const PREFERENCE_PATTERNS = [
   /\b(?:we|i)\s+prefer\s+[a-z0-9'"][^\n]{0,40}/i,
-  /\bpreference\b/i,
-  /\bfavorite\b/i,
-  /\bfavourite\b/i,
+  /\b(?:my|our)\s+preference\s+(?:is|for)\s+[a-z0-9'"][^\n]{0,40}/i,
+  /\b(?:my|our)\s+favo(?:u)?rite\s+[a-z0-9'"\s_-]+\s+(?:is|are)\s+[a-z0-9'"][^\n]{0,40}/i,
   /\b(?:we|i)\s+(?:really\s+)?(?:like|love)\s+[a-z0-9]/i,
   /(?:나는|우리는).*(?:선호해|선호한다|좋아해)/,
   /(?:추천|다음에도).*(?:기억해|참고해).*(?:선호|좋아)/,
@@ -62,7 +61,7 @@ export interface SaveCandidateExtractionInput {
   channelId: string;
   userId?: string;
   projectId?: string;
-  createdAt?: number;
+  createdAt: number;
 }
 
 function detectKind(text: string): SaveCandidateKind | null {
@@ -113,7 +112,11 @@ export function extractSaveCandidates(input: SaveCandidateExtractionInput): Save
     return [];
   }
 
-  const createdAt = input.createdAt ?? Date.now();
+  if (!Number.isFinite(input.createdAt)) {
+    throw new Error('extractSaveCandidates requires a deterministic createdAt');
+  }
+
+  const createdAt = input.createdAt;
   const topicHint = inferTopicHint(text, kind);
   const confidence =
     kind === 'decision' ? 0.95 : kind === 'preference' ? 0.9 : kind === 'change' ? 0.85 : 0.75;
