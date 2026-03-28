@@ -363,6 +363,78 @@ describe('MessageRouter', () => {
       });
       expect(sendMessage).not.toHaveBeenCalled();
     });
+
+    it('should still invoke the memory agent for short but explicit decision candidates', async () => {
+      const agentLoop = createMockAgentLoop(() => '알겠습니다.');
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+      const sendMessage = vi.fn().mockResolvedValue({
+        response: 'DONE',
+        ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved' },
+      });
+
+      customRouter.setMemoryAgent({
+        getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
+      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
+
+      await customRouter.process({
+        source: 'telegram',
+        channelId: '7026976631',
+        userId: '7026976631',
+        text: '앞으로 SQLite를 기본 DB로 쓰자. 기억해.',
+      });
+
+      await vi.waitFor(() => {
+        expect(sendMessage).toHaveBeenCalled();
+      });
+    });
+
+    it('should only drain notices that were present at peek time', async () => {
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const agentLoop = {
+        async run(): Promise<{ response: string }> {
+          routerRef['memoryNoticeQueue'].enqueue('discord:channel-notice', {
+            type: 'memory_warning',
+            severity: 'high',
+            summary: 'late notice',
+            evidence: [],
+            recommended_action: 'consult_memory',
+            relevant_memories: [],
+          });
+          return { response: 'Response' };
+        },
+      };
+
+      const routerRef = new MessageRouter(sessionStore, agentLoop, mamaApi);
+
+      await routerRef.process({
+        source: 'discord',
+        channelId: 'channel-notice',
+        userId: 'user-456',
+        text: 'Hello',
+      });
+
+      routerRef['memoryNoticeQueue'].enqueue('discord:channel-notice', {
+        type: 'memory_warning',
+        severity: 'high',
+        summary: 'peeked notice',
+        evidence: [],
+        recommended_action: 'consult_memory',
+        relevant_memories: [],
+      });
+
+      await routerRef.process({
+        source: 'discord',
+        channelId: 'channel-notice',
+        userId: 'user-456',
+        text: 'Resume please',
+      });
+
+      expect(routerRef['memoryNoticeQueue'].peek('discord:channel-notice')).toHaveLength(1);
+      expect(routerRef['memoryNoticeQueue'].peek('discord:channel-notice')[0]?.summary).toBe(
+        'late notice'
+      );
+    });
   });
 
   describe('getSession()', () => {

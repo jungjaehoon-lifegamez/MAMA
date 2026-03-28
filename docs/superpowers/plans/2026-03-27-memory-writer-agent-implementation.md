@@ -377,9 +377,9 @@ Expected: exit code `0`
 Run:
 
 ```bash
-node /Users/jeongjaehun/project/MAMA/packages/standalone/dist/cli/index.js stop
-node /Users/jeongjaehun/project/MAMA/packages/standalone/dist/cli/index.js start
-node /Users/jeongjaehun/project/MAMA/packages/standalone/dist/cli/index.js status
+node <workspace>/packages/standalone/dist/cli/index.js stop
+node <workspace>/packages/standalone/dist/cli/index.js start
+node <workspace>/packages/standalone/dist/cli/index.js status
 ```
 
 Expected:

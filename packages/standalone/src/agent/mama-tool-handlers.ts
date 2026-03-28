@@ -7,6 +7,7 @@
 import type {
   SaveInput,
   SaveDecisionInput,
+  SaveDecisionPayload,
   SaveCheckpointInput,
   SearchInput,
   UpdateInput,
@@ -37,16 +38,15 @@ export async function handleSave(
     if (!d.topic || !d.decision || !d.reasoning) {
       return { success: false, message: 'Decision requires: topic, decision, reasoning' };
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return await api.save({
+    const payload: SaveDecisionPayload = {
       topic: d.topic,
       decision: d.decision,
       reasoning: d.reasoning,
       confidence: d.confidence ?? 0.5,
       is_static: d.is_static,
       type: 'user_decision',
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any);
+    };
+    return await api.save(payload);
   }
 
   if (input.type === 'checkpoint') {

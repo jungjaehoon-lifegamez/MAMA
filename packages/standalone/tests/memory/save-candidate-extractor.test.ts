@@ -52,7 +52,7 @@ describe('Story: Extract save candidates', () => {
 
     it('extracts an explicit change candidate', () => {
       const candidates = extractSaveCandidates({
-        userText: '이제는 PostgreSQL로 바꿀게. 이 결정 기억해.',
+        userText: '이제는 PostgreSQL을 기본 DB로 바꿀게. 이 결정 기억해.',
         botResponse: '알겠습니다. 이제 PostgreSQL로 전환하는 것으로 기억하겠습니다.',
         channelKey: 'telegram:7026976631',
         source: 'telegram',
@@ -84,6 +84,21 @@ describe('Story: Extract save candidates', () => {
         userId: '7026976631',
         projectId: '/repo',
         createdAt: 1,
+      });
+
+      expect(candidates).toEqual([]);
+    });
+
+    it('does not extract a candidate from ordinary chat with weak temporal words', () => {
+      const candidates = extractSaveCandidates({
+        userText: 'before we continue, can you explain this one more time?',
+        botResponse: '물론입니다.',
+        channelKey: 'telegram:7026976631',
+        source: 'telegram',
+        channelId: '7026976631',
+        userId: '7026976631',
+        projectId: '/repo',
+        createdAt: 3,
       });
 
       expect(candidates).toEqual([]);

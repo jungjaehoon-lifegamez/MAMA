@@ -807,10 +807,11 @@ export class CodexMCPProcess extends EventEmitter {
 
   private isRetryableToolError(error: Error): boolean {
     const message = error.message.toLowerCase();
+    if (extractCodexAuthFailure(error.message)) {
+      return false;
+    }
+
     return (
-      !message.includes('authentication failed') &&
-      !message.includes('refresh_token_reused') &&
-      !message.includes('failed to refresh token') &&
       !message.includes('request timeout') &&
       (message.includes('process is not running') ||
         message.includes('process closed with code') ||

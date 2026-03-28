@@ -28,9 +28,20 @@ export class AgentNoticeQueue {
     return [...(this.queue.get(channelKey) ?? [])];
   }
 
-  drain(channelKey: string): AuditNotice[] {
+  drain(channelKey: string, count?: number): AuditNotice[] {
     const notices = this.queue.get(channelKey) ?? [];
-    this.queue.delete(channelKey);
-    return notices;
+    if (count === undefined || count >= notices.length) {
+      this.queue.delete(channelKey);
+      return notices;
+    }
+
+    const drained = notices.slice(0, count);
+    const remaining = notices.slice(count);
+    if (remaining.length > 0) {
+      this.queue.set(channelKey, remaining);
+    } else {
+      this.queue.delete(channelKey);
+    }
+    return drained;
   }
 }

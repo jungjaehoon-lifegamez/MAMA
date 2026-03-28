@@ -4,39 +4,40 @@ import type { SaveCandidate, SaveCandidateKind } from './save-candidate-types.js
 const DECISION_PATTERNS = [
   /\bwe decided\b/i,
   /\b(?:we|i|let's|lets|should|decid(?:e|ed)\s+to)\s+use\s+[A-Za-z0-9_-]+\b/i,
+  /\b(?:we|i)\s+(?:will|are going to)\s+use\s+[A-Za-z0-9_-]+\b/i,
+  /\b(?:we|i)\s+(?:decided|choose|chose)\s+[A-Za-z0-9_-]+\s+as\b/i,
   /\b(?:default|standard)\s+(?:db|database|choice|option)\b/i,
   /앞으로.*(?:쓰자|사용하자|기억해)/,
   /(?:기억해|기억해 둬|기억해줘).*(?:결정|규칙|기본)/,
-  /(?:쓰자|사용하자|가자).*(?:db|database|프로젝트|기본)/i,
+  /(?:이 프로젝트|우리|앞으로).*(?:쓰자|사용하자|가자).*(?:db|database|프로젝트|기본)/i,
   /결정(?:했|하)/,
 ];
 
 const PREFERENCE_PATTERNS = [
-  /\bprefer\b/i,
+  /\b(?:we|i)\s+prefer\s+[a-z0-9'"][^\n]{0,40}/i,
   /\bpreference\b/i,
   /\bfavorite\b/i,
   /\bfavourite\b/i,
-  /\b(?:really\s+)?(?:like|love)\s+[a-z0-9]/i,
-  /선호/,
-  /좋아(?:해)?/,
+  /\b(?:we|i)\s+(?:really\s+)?(?:like|love)\s+[a-z0-9]/i,
+  /(?:나는|우리는).*(?:선호해|선호한다|좋아해)/,
+  /(?:추천|다음에도).*(?:기억해|참고해).*(?:선호|좋아)/,
 ];
 
 const CHANGE_PATTERNS = [
   /\b(?:now|from now on)\b.+\b(?:use|prefer|switch|choose)\b/i,
-  /\binitially\b/i,
-  /\bsince\b/i,
-  /\bbefore\b/i,
-  /\bafter\b/i,
+  /\b(?:switched|switching)\s+to\s+[A-Za-z0-9_-]+\b/i,
+  /\b(?:changed|moving)\s+from\s+[A-Za-z0-9_-]+\s+to\s+[A-Za-z0-9_-]+\b/i,
   /예전.*(?:지금|이제)/,
-  /이제.*(?:바꿀게|사용할게|할게|가자)/,
+  /이제.*(?:바꿀게|사용할게|할게|가자).*(?:postgresql|sqlite|db|database|기본)/i,
+  /이제.*(?:postgresql|sqlite|db|database|기본).*(?:바꿀게|사용할게|할게|가자)/i,
   /처음.*(?:지금|이제)/,
 ];
 
 const FACT_PATTERNS = [
   /\bwhere\s+we\s+keep\b/i,
-  /\bover a year\b/i,
   /\bhow many\s+(?:items|hours|projects|people)\b/i,
-  /\bunder\s+(?:my|the)\b/i,
+  /\bwe\s+keep\s+[a-z0-9'"\s_-]+\s+under\s+(?:my|the)\b/i,
+  /\b(?:for|over)\s+(?:more than\s+)?\d+\s+(?:days|weeks|months|years)\b/i,
 ];
 
 const TOPIC_HINTS: Partial<Record<SaveCandidateKind, Array<{ match: RegExp; topic: string }>>> = {
