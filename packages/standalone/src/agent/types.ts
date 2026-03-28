@@ -316,6 +316,12 @@ export interface ToolDefinition {
 /**
  * Input for save tool (decision)
  */
+export type MemoryScopeKind = 'global' | 'user' | 'channel' | 'project';
+export interface ScopeRef {
+  kind: MemoryScopeKind;
+  id: string;
+}
+
 export interface SaveDecisionInput {
   type: 'decision';
   topic: string;
@@ -323,7 +329,7 @@ export interface SaveDecisionInput {
   reasoning: string;
   confidence?: number;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
-  scopes?: Array<{ kind: string; id: string }>;
+  scopes?: ScopeRef[];
 }
 
 export interface SaveDecisionPayload {
@@ -333,7 +339,7 @@ export interface SaveDecisionPayload {
   reasoning: string;
   confidence?: number;
   is_static?: number;
-  scopes?: Array<{ kind: string; id: string }>;
+  scopes?: ScopeRef[];
 }
 
 /**
@@ -360,9 +366,9 @@ export interface SearchInput {
   limit?: number;
 }
 
-export interface RecallInput extends SearchInput {
+export interface RecallInput {
   query: string;
-  scopes?: Array<{ kind: string; id: string }>;
+  scopes?: ScopeRef[];
 }
 
 export interface AddInput {
@@ -1051,13 +1057,10 @@ export interface MAMAApiInterface {
   suggest(query: string, options?: { limit?: number }): Promise<SearchResult>;
   recallMemory?(
     query: string,
-    options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
+    options?: { scopes?: ScopeRef[]; includeProfile?: boolean }
   ): Promise<unknown>;
   ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
-  buildProfile?(
-    scopes?: Array<{ kind: string; id: string }>,
-    options?: Record<string, unknown>
-  ): Promise<unknown>;
+  buildProfile?(scopes?: ScopeRef[], options?: Record<string, unknown>): Promise<unknown>;
   updateOutcome(
     id: string,
     input: { outcome: string; failure_reason?: string }

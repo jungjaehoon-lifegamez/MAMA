@@ -35,6 +35,7 @@ import type {
   GatewayToolResult,
   SaveInput,
   SearchInput,
+  RecallInput,
   UpdateInput,
   LoadCheckpointInput,
   GatewayToolExecutorOptions,
@@ -435,9 +436,7 @@ export class GatewayToolExecutor {
         case 'mama_search':
           return await handleSearch(api, input as SearchInput);
         case 'mama_recall':
-          return await this.handleMamaRecall(
-            input as SearchInput & { scopes?: Array<{ kind: string; id: string }> }
-          );
+          return await this.handleMamaRecall(input as RecallInput);
         case 'mama_update':
           return await handleUpdate(api, input as UpdateInput);
         case 'mama_load_checkpoint':
@@ -1995,9 +1994,7 @@ export class GatewayToolExecutor {
     }
   }
 
-  private async handleMamaRecall(
-    input: SearchInput & { scopes?: Array<{ kind: string; id: string }> }
-  ): Promise<GatewayToolResult> {
+  private async handleMamaRecall(input: RecallInput): Promise<GatewayToolResult> {
     const api = await this.initializeMAMAApi();
     if (!api.recallMemory || typeof input.query !== 'string' || input.query.length === 0) {
       return {
@@ -2014,11 +2011,14 @@ export class GatewayToolExecutor {
           projectId: process.env.MAMA_WORKSPACE || process.cwd(),
         })
       : [];
-    let scopes: Array<{ kind: string; id: string }> = fallbackScopes;
+    let scopes = fallbackScopes;
     if (Array.isArray(input.scopes) && input.scopes.length > 0) {
       const derivedIds = new Set(fallbackScopes.map((s) => `${s.kind}:${s.id}`));
       const allInDerived = input.scopes.every((s) => derivedIds.has(`${s.kind}:${s.id}`));
-      scopes = allInDerived ? input.scopes : fallbackScopes;
+      if (allInDerived)
+        scopes = fallbackScopes.filter((s) =>
+          input.scopes!.some((is) => is.kind === s.kind && is.id === s.id)
+        );
     }
 
     if (scopes.length === 0) {
