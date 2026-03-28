@@ -169,6 +169,8 @@ export class GatewayToolExecutor {
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
   setMemoryAgent(processManager: AgentProcessManager): void {
+    // Memory-agent execution is owned by MessageRouter/startup wiring.
+    // GatewayToolExecutor keeps this setter for interface parity only.
     void processManager;
   }
 

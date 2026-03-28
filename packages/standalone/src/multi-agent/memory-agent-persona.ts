@@ -123,7 +123,7 @@ export function ensureMemoryPersona(mamaHomeDir: string = join(homedir(), '.mama
     return personaPath;
   }
 
-  const existingContent = existsSync(personaPath) ? readFileSync(personaPath, 'utf-8') : '';
+  const existingContent = readFileSync(personaPath, 'utf-8');
   if (isLegacyManagedPersona(existingContent)) {
     writeFileSync(personaPath, MEMORY_AGENT_PERSONA, 'utf-8');
   }

@@ -187,6 +187,7 @@ export class MessageRouter {
   private memoryAgentProcessManager?: AgentProcessManager;
   private memoryAuditQueue?: AuditTaskQueue;
   private memoryNoticeQueue = new AgentNoticeQueue();
+  private memoryAuditCooldowns = new Map<string, number>();
   private memoryAgentStats = {
     turnsObserved: 0,
     factsExtracted: 0,
@@ -532,9 +533,11 @@ This protects your credentials from being exposed in chat logs.`;
 
     // Per-turn memory injection (works for both NEW and CONTINUE sessions)
     let memoryPrefix = '';
+    let pendingNotices = false;
     try {
       if (shouldResume) {
-        const notices = this.memoryNoticeQueue.drain(channelKey);
+        const notices = this.memoryNoticeQueue.peek(channelKey);
+        pendingNotices = notices.length > 0;
         memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
         if (memoryPrefix) {
           memoryPrefix = `${memoryPrefix}\n\n`;
@@ -543,7 +546,13 @@ This protects your credentials from being exposed in chat logs.`;
         memoryPrefix = await this.getPerTurnMemoryPrefix(message);
       }
     } catch {
-      /* non-fatal */
+      if (shouldResume) {
+        try {
+          memoryPrefix = await this.getPerTurnMemoryPrefix(message);
+        } catch {
+          /* non-fatal */
+        }
+      }
     }
 
     try {
@@ -619,7 +628,17 @@ This protects your credentials from being exposed in chat logs.`;
 
       // Auto-extract facts from conversation (fire-and-forget, non-blocking)
       if (response && message.text) {
-        this.triggerMemoryAgent(channelKey, message.text, response, message).catch(() => {});
+        void (async () => {
+          try {
+            await this.triggerMemoryAgent(channelKey, message.text, response, message);
+          } catch {
+            /* non-fatal */
+          }
+        })();
+      }
+
+      if (shouldResume && pendingNotices) {
+        this.memoryNoticeQueue.drain(channelKey);
       }
     } catch (error) {
       // CLI timeout or resume failure - invalidate session to force fresh start next time
@@ -1049,7 +1068,6 @@ ${historyContext}
    * Trigger memory agent to extract facts (fire-and-forget).
    * Uses AgentProcessManager persistent process.
    */
-  private lastExtractTime = 0;
   private static readonly EXTRACT_COOLDOWN_MS = 30_000;
   private static readonly MIN_CONTENT_LENGTH = 100;
   private static readonly MAX_CONTENT_LENGTH = 10_000;
@@ -1107,7 +1125,7 @@ INSTRUCTION:
       };
     }
 
-    if (normalized.includes('failed')) {
+    if (normalized === 'failed' || normalized.includes('failed')) {
       return {
         status: 'failed',
         action: 'no_op',
@@ -1116,9 +1134,18 @@ INSTRUCTION:
       };
     }
 
+    if (normalized === 'done' || normalized === 'applied') {
+      return {
+        status: 'applied',
+        action: 'save',
+        event_ids: [],
+        reason: response,
+      };
+    }
+
     return {
-      status: 'applied',
-      action: 'save',
+      status: 'skipped',
+      action: 'no_op',
       event_ids: [],
       reason: response,
     };
@@ -1210,7 +1237,14 @@ INSTRUCTION:
     if (!this.memoryAgentProcessManager || !this.memoryAuditQueue) return;
 
     const now = Date.now();
-    if (now - this.lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) return;
+    const source = message?.source ?? 'memory-agent';
+    const channelId = message?.channelId ?? 'shared';
+    const userId = message?.userId;
+    const cooldownKey = `${source}:${channelId}:${userId ?? 'anonymous'}`;
+    const lastExtractTime = this.memoryAuditCooldowns.get(cooldownKey) ?? 0;
+    if (now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
+      return;
+    }
 
     let content = `User: ${userText}\nAssistant: ${botResponse}`;
     if (content.length < MessageRouter.MIN_CONTENT_LENGTH) return;
@@ -1218,9 +1252,6 @@ INSTRUCTION:
       content = content.substring(0, MessageRouter.MAX_CONTENT_LENGTH);
     }
 
-    const source = message?.source ?? 'memory-agent';
-    const channelId = message?.channelId ?? 'shared';
-    const userId = message?.userId;
     const candidates = extractSaveCandidates({
       userText,
       botResponse,
@@ -1233,7 +1264,7 @@ INSTRUCTION:
     });
     if (candidates.length === 0) return;
 
-    this.lastExtractTime = now;
+    this.memoryAuditCooldowns.set(cooldownKey, now);
     this.memoryAgentStats.turnsObserved++;
 
     const scopes = deriveMemoryScopes({

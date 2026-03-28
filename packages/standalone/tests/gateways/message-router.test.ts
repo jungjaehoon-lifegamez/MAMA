@@ -243,7 +243,10 @@ describe('MessageRouter', () => {
 
       customRouter.setMemoryAgent({
         getSharedProcess: vi.fn().mockResolvedValue({
-          sendMessage: vi.fn().mockResolvedValue({ response: 'saved via tools' }),
+          sendMessage: vi.fn().mockResolvedValue({
+            response: 'DONE',
+            ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved via tools' },
+          }),
         }),
       } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 

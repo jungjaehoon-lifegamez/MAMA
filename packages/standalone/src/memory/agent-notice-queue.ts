@@ -24,6 +24,10 @@ export class AgentNoticeQueue {
     this.queue.set(channelKey, notices);
   }
 
+  peek(channelKey: string): AuditNotice[] {
+    return [...(this.queue.get(channelKey) ?? [])];
+  }
+
   drain(channelKey: string): AuditNotice[] {
     const notices = this.queue.get(channelKey) ?? [];
     this.queue.delete(channelKey);
