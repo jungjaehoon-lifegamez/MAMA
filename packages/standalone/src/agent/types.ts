@@ -893,8 +893,8 @@ export interface AgentLoopOptions {
   streamCallbacks?: StreamCallbacks;
 
   /**
-   * Stop the agent loop immediately after any of these tools completes
-   * successfully.
+   * Stop the agent loop after the current tool batch completes when any
+   * of these tools executed successfully in that batch.
    */
   stopAfterSuccessfulTools?: string[];
 

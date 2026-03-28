@@ -1328,12 +1328,10 @@ INSTRUCTION:
       conversation: content,
       candidates,
     };
+    const rawTopic = userText.slice(0, 40).toLowerCase();
+    const asciiTopic = rawTopic.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
     const topic =
-      userText
-        .slice(0, 40)
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '') || 'memory_audit';
+      asciiTopic || `topic_${createHash('sha256').update(rawTopic).digest('hex').slice(0, 8)}`;
     const displayTopic = candidates[0]?.topicHint || userText.slice(0, 80).trim() || 'memory_audit';
     const deltaKeySource = candidates[0]?.id || userText;
     const deltaKey = createHash('sha256').update(deltaKeySource).digest('hex').slice(0, 16);
