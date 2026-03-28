@@ -241,13 +241,13 @@ const loadCheckpointTool = {
       },
       include_narrative: {
         type: 'boolean',
-        description: 'Include related narrative/decisions (default: false)',
-        default: false,
+        description: 'Include related narrative/decisions (default: true)',
+        default: true,
       },
       include_links: {
         type: 'boolean',
-        description: 'Include approved links (default: false)',
-        default: false,
+        description: 'Include approved links (default: true)',
+        default: true,
       },
       link_depth: {
         type: 'number',
@@ -258,8 +258,12 @@ const loadCheckpointTool = {
   },
   handler: async (args = {}) => {
     const start = Date.now();
-    // eslint-disable-next-line no-unused-vars
-    const { session_id, include_narrative = false, include_links = false, link_depth = 1 } = args;
+    const {
+      session_id: _session_id,
+      include_narrative = true,
+      include_links = true,
+      link_depth = 1,
+    } = args;
 
     try {
       const adapter = getAdapter();

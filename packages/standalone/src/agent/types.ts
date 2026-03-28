@@ -349,6 +349,19 @@ export interface SearchInput {
   limit?: number;
 }
 
+export interface RecallInput extends SearchInput {
+  scopes?: Array<{ kind: string; id: string }>;
+}
+
+export interface AddInput {
+  content: string;
+}
+
+export interface IngestInput {
+  content: string;
+  scopes?: unknown;
+}
+
 /**
  * Input for update tool
  */
@@ -589,6 +602,9 @@ export interface StopBotInput {
 export type GatewayToolInput =
   | SaveInput
   | SearchInput
+  | RecallInput
+  | AddInput
+  | IngestInput
   | UpdateInput
   | LoadCheckpointInput
   | TranslateImageInput
@@ -866,8 +882,8 @@ export interface AgentLoopOptions {
   streamCallbacks?: StreamCallbacks;
 
   /**
-   * Stop the agent loop immediately after any of these tools completes successfully.
-   * Useful for internal agents that should terminate as soon as a save side-effect occurs.
+   * Stop the agent loop immediately after any of these tools completes
+   * successfully.
    */
   stopAfterSuccessfulTools?: string[];
 

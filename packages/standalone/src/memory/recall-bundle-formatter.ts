@@ -6,6 +6,16 @@ interface RecallBundleLike {
   memories?: Array<{ topic?: string; summary?: string }>;
 }
 
+function sanitizePromptValue(value: string | undefined): string {
+  const normalized = value ?? '<no summary>';
+  return normalized
+    .replace(/\[\/?MAMA/gi, '［MAMA')
+    .replace(/\[/g, '［')
+    .replace(/\]/g, '］')
+    .replace(/</g, '〈')
+    .replace(/>/g, '〉');
+}
+
 export function formatRecallBundle(bundle: RecallBundleLike): string {
   const lines: string[] = [];
 
@@ -13,12 +23,14 @@ export function formatRecallBundle(bundle: RecallBundleLike): string {
     lines.push('[MAMA Profile]');
     if (bundle.profile?.static?.length) {
       lines.push(
-        `Static: ${bundle.profile.static.map((item) => item.summary ?? '<no summary>').join('; ')}`
+        `Static: ${bundle.profile.static.map((item) => sanitizePromptValue(item.summary)).join('; ')}`
       );
     }
     if (bundle.profile?.dynamic?.length) {
       lines.push(
-        `Dynamic: ${bundle.profile.dynamic.map((item) => item.summary ?? '<no summary>').join('; ')}`
+        `Dynamic: ${bundle.profile.dynamic
+          .map((item) => sanitizePromptValue(item.summary))
+          .join('; ')}`
       );
     }
     lines.push('[/MAMA Profile]');
@@ -27,7 +39,9 @@ export function formatRecallBundle(bundle: RecallBundleLike): string {
   if (bundle.memories?.length) {
     lines.push('[MAMA Memories]');
     for (const memory of bundle.memories) {
-      lines.push(`- ${memory.topic ?? '<unknown topic>'}: ${memory.summary ?? '<no summary>'}`);
+      lines.push(
+        `- ${sanitizePromptValue(memory.topic ?? '<unknown topic>')}: ${sanitizePromptValue(memory.summary)}`
+      );
     }
     lines.push('[/MAMA Memories]');
   }
@@ -43,15 +57,17 @@ export function formatAuditNotice(notice: {
 }): string {
   const lines = [
     '[MAMA Notice]',
-    `Severity: ${notice.severity}`,
-    `Summary: ${notice.summary}`,
-    `Action: ${notice.recommended_action}`,
+    `Severity: ${sanitizePromptValue(notice.severity)}`,
+    `Summary: ${sanitizePromptValue(notice.summary)}`,
+    `Action: ${sanitizePromptValue(notice.recommended_action)}`,
   ];
 
   if (notice.relevant_memories?.length) {
     lines.push('Relevant memories:');
     for (const memory of notice.relevant_memories) {
-      lines.push(`- ${memory.topic ?? '<unknown topic>'}: ${memory.summary ?? '<no summary>'}`);
+      lines.push(
+        `- ${sanitizePromptValue(memory.topic ?? '<unknown topic>')}: ${sanitizePromptValue(memory.summary)}`
+      );
     }
   }
 

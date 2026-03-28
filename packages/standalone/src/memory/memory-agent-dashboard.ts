@@ -74,7 +74,12 @@ function buildRecentChannels(
   }
 
   for (const summary of channelSummaries) {
-    if (channels.has(summary.channelKey)) {
+    const existing = channels.get(summary.channelKey);
+    if (existing) {
+      if (summary.updatedAt > existing.lastActive) {
+        existing.lastActive = summary.updatedAt;
+        channels.set(summary.channelKey, existing);
+      }
       continue;
     }
     const { source, channelId } = parseChannelKey(summary.channelKey);

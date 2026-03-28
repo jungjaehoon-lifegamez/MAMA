@@ -1955,7 +1955,7 @@ export class GatewayToolExecutor {
     input: SearchInput & { scopes?: Array<{ kind: string; id: string }> }
   ): Promise<GatewayToolResult> {
     const api = await this.initializeMAMAApi();
-    if (!api.recallMemory || !input.query) {
+    if (!api.recallMemory || typeof input.query !== 'string' || input.query.length === 0) {
       return {
         success: false,
         error: 'query is required and recallMemory API must be available',

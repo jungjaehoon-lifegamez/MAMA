@@ -49,6 +49,7 @@ import {
   PluginLoader,
   initChannelHistory,
 } from '../../gateways/index.js';
+import type { MemoryAgentProcessManagerLike } from '../../gateways/message-router.js';
 import type {
   Checkpoint,
   Decision,
@@ -109,7 +110,6 @@ const startLogger = new DebugLogger('start');
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import http from 'node:http';
 import Database from '../../sqlite.js';
-import type { AgentProcessManager } from '../../multi-agent/agent-process-manager.js';
 
 // Port configuration — single source of truth
 /** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
@@ -1607,8 +1607,7 @@ export async function runAgentLoop(
       },
     };
 
-    messageRouter.setMemoryAgent(memoryProcessManager as unknown as AgentProcessManager);
-    toolExecutor.setMemoryAgent(memoryProcessManager as unknown as AgentProcessManager);
+    messageRouter.setMemoryAgent(memoryProcessManager as MemoryAgentProcessManagerLike);
     console.log('✓ Memory agent initialized');
   } catch (err) {
     console.warn(

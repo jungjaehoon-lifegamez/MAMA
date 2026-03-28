@@ -317,7 +317,7 @@ Add a provider test that asserts the benchmark path cannot bypass the candidate-
 
 - [ ] **Step 2: Run test to verify failure**
 
-Run: `cd /Users/jeongjaehun/.mama/workspace/memorybench && npx --yes tsx --test src/providers/mama/index.test.ts`
+Run: `cd <memorybench-workspace> && npx --yes tsx --test src/providers/mama/index.test.ts`
 Expected: FAIL until provider alignment contract is updated.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -331,13 +331,13 @@ Add runtime hook points or TODO guards so future reruns cannot claim runtime equ
 
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `cd /Users/jeongjaehun/.mama/workspace/memorybench && npx --yes tsx --test src/providers/mama/index.test.ts`
+Run: `cd <memorybench-workspace> && npx --yes tsx --test src/providers/mama/index.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/jeongjaehun/project/MAMA/docs/superpowers/specs/2026-03-27-memory-agent-path-benchmark-design.md /Users/jeongjaehun/.mama/workspace/memorybench/src/providers/mama/index.ts /Users/jeongjaehun/.mama/workspace/memorybench/src/providers/mama/index.test.ts
+git add docs/superpowers/specs/2026-03-27-memory-agent-path-benchmark-design.md <memorybench-workspace>/src/providers/mama/index.ts <memorybench-workspace>/src/providers/mama/index.test.ts
 git commit -m "docs: define agent-path benchmark alignment for memory agent"
 ```
 

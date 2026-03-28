@@ -211,7 +211,9 @@ describe('MessageRouter', () => {
     });
 
     it('should not parse JSON facts and save them directly in the router', async () => {
-      const agentLoop = createMockAgentLoop(() => 'Agent response');
+      const agentLoop = createMockAgentLoop(() =>
+        'Agent response that is long enough to trigger memory audit.'.repeat(4)
+      );
       const mamaApi = createMockMamaApi(mockDecisions);
       const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
 
@@ -230,9 +232,9 @@ describe('MessageRouter', () => {
         text: 'We decided to use pnpm in this project, keep answers concise, avoid long explanations, and continue using this workspace-specific convention for all follow-up implementation tasks.',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(sendMessage).toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(sendMessage).toHaveBeenCalled();
+      });
       expect(saveSpy).not.toHaveBeenCalled();
     });
 
@@ -265,7 +267,9 @@ describe('MessageRouter', () => {
     });
 
     it('should update channel summary when an audit ack is applied', async () => {
-      const agentLoop = createMockAgentLoop(() => 'Agent response');
+      const agentLoop = createMockAgentLoop(() =>
+        'Agent response that is long enough to trigger memory audit.'.repeat(4)
+      );
       const mamaApi = createMockMamaApi(mockDecisions);
       mamaApi.upsertChannelSummary = vi.fn().mockResolvedValue(undefined);
       const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
@@ -283,7 +287,7 @@ describe('MessageRouter', () => {
         source: 'telegram',
         channelId: '7026976631',
         userId: '7026976631',
-        text: '이 프로젝트에서는 PostgreSQL을 기본 DB로 사용하고, 앞으로 메모리 관련 답변은 짧고 직접적으로 유지하며, 같은 채널에서 후속 작업에도 이 규칙을 계속 적용하자.',
+        text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 DB로 사용하자. 이 규칙은 기억해.',
       });
 
       await vi.waitFor(() => {
@@ -354,7 +358,9 @@ describe('MessageRouter', () => {
         text: '고마워',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await vi.waitFor(() => {
+        expect(customRouter.getMemoryAgentStats().turnsObserved).toBe(0);
+      });
       expect(sendMessage).not.toHaveBeenCalled();
     });
   });

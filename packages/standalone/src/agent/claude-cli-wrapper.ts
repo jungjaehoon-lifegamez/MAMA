@@ -210,10 +210,10 @@ export class ClaudeCLIWrapper {
         args.push('--dangerously-skip-permissions');
       }
       if (this.options.allowedTools && this.options.allowedTools.length > 0) {
-        args.push('--allowedTools', this.options.allowedTools.join(','));
+        args.push('--allowedTools', ...this.options.allowedTools);
       }
       if (this.options.disallowedTools && this.options.disallowedTools.length > 0) {
-        args.push('--disallowedTools', this.options.disallowedTools.join(','));
+        args.push('--disallowedTools', ...this.options.disallowedTools);
       }
 
       // ============================================================

@@ -14,7 +14,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { SessionStore } from './session-store.js';
 import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type MamaApiClient } from './context-injector.js';
@@ -25,7 +25,6 @@ import type {
   RelatedDecision,
   ContentBlock,
 } from './types.js';
-import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
@@ -71,6 +70,16 @@ export interface AgentLoopClient {
     content: ContentBlock[],
     options?: AgentLoopOptions
   ): Promise<{ response: string }>;
+}
+
+export interface MemoryAgentProcessLike {
+  sendMessage(
+    content: string
+  ): Promise<{ response?: string; ack?: MemoryAuditAckLike } | { response?: string }>;
+}
+
+export interface MemoryAgentProcessManagerLike {
+  getSharedProcess(agentId: 'memory'): Promise<MemoryAgentProcessLike>;
 }
 
 /**
@@ -184,7 +193,7 @@ export class MessageRouter {
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private cachedGatewayToolsPrompt: string | null = null;
-  private memoryAgentProcessManager?: AgentProcessManager;
+  private memoryAgentProcessManager?: MemoryAgentProcessManagerLike;
   private memoryAuditQueue?: AuditTaskQueue;
   private memoryNoticeQueue = new AgentNoticeQueue();
   private memoryAuditCooldowns = new Map<string, number>();
@@ -199,7 +208,7 @@ export class MessageRouter {
     recentExtractions: [] as Array<{ topic: string; timestamp: number; success: boolean }>,
   };
 
-  setMemoryAgent(processManager: AgentProcessManager): void {
+  setMemoryAgent(processManager: MemoryAgentProcessManagerLike): void {
     this.memoryAgentProcessManager = processManager;
     this.memoryAuditQueue = new AuditTaskQueue(async (job) => {
       const process = await processManager.getSharedProcess('memory');
@@ -545,11 +554,15 @@ This protects your credentials from being exposed in chat logs.`;
       } else {
         memoryPrefix = await this.getPerTurnMemoryPrefix(message);
       }
-    } catch {
+    } catch (err) {
+      logger.warn(`[memory-prefix] Failed: ${err instanceof Error ? err.message : String(err)}`);
       if (shouldResume) {
         try {
           memoryPrefix = await this.getPerTurnMemoryPrefix(message);
-        } catch {
+        } catch (fallbackErr) {
+          logger.warn(
+            `[memory-prefix] Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`
+          );
           /* non-fatal */
         }
       }
@@ -1151,7 +1164,13 @@ INSTRUCTION:
     };
   }
 
-  private recordMemoryAuditAck(ack: MemoryAuditAckLike, topic: string, channelKey?: string): void {
+  private recordMemoryAuditAck(
+    ack: MemoryAuditAckLike,
+    topic: string,
+    channelKey?: string,
+    displayTopic?: string,
+    deltaKey?: string
+  ): void {
     const timestamp = Date.now();
 
     if (ack.status === 'applied') {
@@ -1183,7 +1202,7 @@ INSTRUCTION:
     if (ack.status === 'applied' && channelKey && this.mamaApi.upsertChannelSummary) {
       const summaryMarkdown = [
         '## Channel Summary',
-        `- Last memory update: ${topic}`,
+        `- Last memory update: ${displayTopic ?? topic}`,
         `- Status: ${ack.action}`,
         ack.reason ? `- Notes: ${ack.reason.slice(0, 240)}` : '',
       ]
@@ -1194,7 +1213,7 @@ INSTRUCTION:
         .upsertChannelSummary({
           channelKey,
           summaryMarkdown,
-          deltaHash: `${topic}:${ack.action}`,
+          deltaHash: `${deltaKey ?? topic}:${ack.action}`,
         })
         .catch((error) => {
           logger.warn(
@@ -1289,11 +1308,13 @@ INSTRUCTION:
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '') || 'memory_audit';
+    const displayTopic = candidates[0]?.topicHint || userText.slice(0, 80).trim() || 'memory_audit';
+    const deltaKey = createHash('sha256').update(displayTopic).digest('hex').slice(0, 16);
 
     this.memoryAuditQueue
       .enqueue(job)
       .then((ack) => {
-        this.recordMemoryAuditAck(ack, topic, channelKey);
+        this.recordMemoryAuditAck(ack, topic, channelKey, displayTopic, deltaKey);
       })
       .catch((err) => {
         this.memoryAgentStats.acksFailed++;

@@ -1099,7 +1099,10 @@ export class AgentLoop {
             }
           }
 
-          const toolResults = await this.executeTools(response.content);
+          const toolResults = await this.executeTools(
+            response.content,
+            options?.stopAfterSuccessfulTools ?? []
+          );
 
           // Add tool results to history
           history.push({
@@ -1117,15 +1120,11 @@ export class AgentLoop {
           const stopAfterSuccessfulTools = options?.stopAfterSuccessfulTools ?? [];
           const shouldStopAfterTool =
             stopAfterSuccessfulTools.length > 0 &&
-            toolUseBlocks.some((toolUse) => {
-              if (!stopAfterSuccessfulTools.includes(toolUse.name)) {
-                return false;
-              }
-              const matchingResult = toolResults.find(
-                (result) => result.tool_use_id === toolUse.id && !result.is_error
-              );
-              return Boolean(matchingResult);
-            });
+            toolUseBlocks.some(
+              (toolUse) =>
+                stopAfterSuccessfulTools.includes(toolUse.name) &&
+                toolResults.some((result) => result.tool_use_id === toolUse.id && !result.is_error)
+            );
 
           if (shouldStopAfterTool) {
             stopReason = 'end_turn';
@@ -1167,7 +1166,10 @@ export class AgentLoop {
   /**
    * Execute tools from response content blocks
    */
-  private async executeTools(content: ContentBlock[]): Promise<ToolResultBlock[]> {
+  private async executeTools(
+    content: ContentBlock[],
+    stopAfterSuccessfulTools: string[] = []
+  ): Promise<ToolResultBlock[]> {
     const toolUseBlocks = content.filter(
       (block): block is ToolUseBlock => block.type === 'tool_use'
     );
@@ -1269,6 +1271,10 @@ export class AgentLoop {
         content: result,
         is_error: isError,
       });
+
+      if (!isError && stopAfterSuccessfulTools.includes(toolUse.name)) {
+        break;
+      }
     }
 
     return results;
