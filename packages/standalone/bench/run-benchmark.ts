@@ -97,10 +97,9 @@ async function mamaSearch(
     similarity: number;
   }>
 > {
-  let url = `${MAMA_BASE_URL}/api/mama/search?q=${encodeURIComponent(query)}&limit=${limit * 3}`;
-  if (topicPrefix) {
-    url += `&topicPrefix=${encodeURIComponent(topicPrefix)}`;
-  }
+  // Over-fetch and filter client-side (MAMA API doesn't support topicPrefix)
+  const fetchLimit = topicPrefix ? Math.max(limit * 10, 100) : limit;
+  const url = `${MAMA_BASE_URL}/api/mama/search?q=${encodeURIComponent(query)}&limit=${fetchLimit}`;
   const res = await fetch(url);
   const data = (await res.json()) as { results?: unknown[] };
   let results = (data.results ?? []) as Array<{
@@ -110,7 +109,7 @@ async function mamaSearch(
     reasoning: string;
     similarity: number;
   }>;
-  // Filter by topic prefix if provided (client-side enforcement)
+  // Client-side container isolation: only keep results for this question
   if (topicPrefix) {
     results = results.filter((r) => r.topic.startsWith(topicPrefix));
   }
