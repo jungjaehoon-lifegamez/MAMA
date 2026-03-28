@@ -18,7 +18,10 @@
     "test:watch": "vitest watch",
     "clean": "rm -rf dist node_modules",
     "typecheck": "tsc --noEmit",
-    "start": "node dist/cli/index.js"
+    "start": "node dist/cli/index.js",
+    "bench:sample": "tsx bench/run-benchmark.ts sample",
+    "bench:full": "tsx bench/run-benchmark.ts full",
+    "bench:category": "tsx bench/run-benchmark.ts"
   },
   "keywords": [
     "ai",
