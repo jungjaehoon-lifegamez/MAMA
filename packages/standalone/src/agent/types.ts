@@ -361,6 +361,7 @@ export interface SearchInput {
 }
 
 export interface RecallInput extends SearchInput {
+  query: string;
   scopes?: Array<{ kind: string; id: string }>;
 }
 
