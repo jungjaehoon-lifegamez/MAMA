@@ -1,10 +1,15 @@
 import type { MemoryScopeRef } from './scope-context.js';
+import type { SaveCandidate } from './save-candidate-types.js';
 
 export interface MemoryAuditJob {
   turnId: string;
   channelKey?: string;
+  source?: string;
+  channelId?: string;
+  userId?: string;
   scopeContext: MemoryScopeRef[];
   conversation: string;
+  candidates?: SaveCandidate[];
 }
 
 export interface MemoryAuditAckLike {

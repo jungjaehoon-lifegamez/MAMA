@@ -44,6 +44,7 @@ import {
 import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
+import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -618,7 +619,7 @@ This protects your credentials from being exposed in chat logs.`;
 
       // Auto-extract facts from conversation (fire-and-forget, non-blocking)
       if (response && message.text) {
-        this.triggerMemoryAgent(channelKey, message.text, response).catch(() => {});
+        this.triggerMemoryAgent(channelKey, message.text, response, message).catch(() => {});
       }
     } catch (error) {
       // CLI timeout or resume failure - invalidate session to force fresh start next time
@@ -1059,7 +1060,24 @@ ${historyContext}
 
   private buildMemoryAuditPrompt(job: MemoryAuditJob): string {
     const scopeContext = job.scopeContext.map((scope) => `${scope.kind}:${scope.id}`).join(', ');
-    return `Memory scopes: ${scopeContext}\nConversation:\n${job.conversation}\n\nINSTRUCTION: First call mama_search to check existing memories for this topic. Then decide: if the conversation contains a decision, preference, fact, or lesson, call mama_save. Respond with tool calls, not text.`;
+    const candidateLines = (job.candidates ?? []).map((candidate) => {
+      const topic = candidate.topicHint ? ` topic=${candidate.topicHint}` : '';
+      return `- kind=${candidate.kind}${topic} confidence=${candidate.confidence} summary=${candidate.summary}`;
+    });
+    return `Memory scopes: ${scopeContext}
+Conversation:
+${job.conversation}
+
+Candidates:
+${candidateLines.length > 0 ? candidateLines.join('\n') : '- none'}
+
+INSTRUCTION:
+- Call mama_search exactly once first.
+- If the conversation contains a decision, preference, fact, lesson, or superseding update, call mama_save exactly once.
+- If nothing should be saved, do not call mama_save.
+- Do not call resource discovery tools.
+- Do not ask follow-up questions.
+- After tool work finishes, respond with exactly DONE or SKIP.`;
   }
 
   private classifyMemoryAuditResponse(response: string): MemoryAuditAckLike {
@@ -1186,7 +1204,8 @@ ${historyContext}
   private async triggerMemoryAgent(
     channelKey: string,
     userText: string,
-    botResponse: string
+    botResponse: string,
+    message?: NormalizedMessage
   ): Promise<void> {
     if (!this.memoryAgentProcessManager || !this.memoryAuditQueue) return;
 
@@ -1199,19 +1218,39 @@ ${historyContext}
       content = content.substring(0, MessageRouter.MAX_CONTENT_LENGTH);
     }
 
+    const source = message?.source ?? 'memory-agent';
+    const channelId = message?.channelId ?? 'shared';
+    const userId = message?.userId;
+    const candidates = extractSaveCandidates({
+      userText,
+      botResponse,
+      channelKey,
+      source,
+      channelId,
+      userId,
+      projectId: this.getRuntimeProjectId(),
+      createdAt: now,
+    });
+    if (candidates.length === 0) return;
+
     this.lastExtractTime = now;
     this.memoryAgentStats.turnsObserved++;
 
     const scopes = deriveMemoryScopes({
-      source: 'memory-agent',
-      channelId: 'shared',
+      source,
+      channelId,
+      userId,
       projectId: this.getRuntimeProjectId(),
     });
     const job: MemoryAuditJob = {
       turnId: `turn_${now}`,
       channelKey,
+      source,
+      channelId,
+      userId,
       scopeContext: scopes,
       conversation: content,
+      candidates,
     };
     const topic =
       userText

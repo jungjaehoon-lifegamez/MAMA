@@ -291,6 +291,69 @@ describe('MessageRouter', () => {
         );
       });
     });
+
+    it('should pass the real channel scope to the memory audit job', async () => {
+      const agentLoop = createMockAgentLoop(() =>
+        'Agent response that is long enough to trigger memory audit.'.repeat(4)
+      );
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+      const sendMessage = vi.fn().mockResolvedValue({
+        response: 'skip',
+        ack: { status: 'skipped', action: 'no_op', event_ids: [], reason: 'nothing new' },
+      });
+
+      customRouter.setMemoryAgent({
+        getSharedProcess: vi.fn().mockResolvedValue({
+          sendMessage,
+        }),
+      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
+
+      await customRouter.process({
+        source: 'telegram',
+        channelId: '7026976631',
+        userId: '7026976631',
+        text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 데이터베이스로 사용하자. 이건 기억해 둬.',
+      });
+
+      await vi.waitFor(() => {
+        expect(sendMessage).toHaveBeenCalled();
+      });
+
+      const prompt = sendMessage.mock.calls[0]?.[0] as string;
+      expect(prompt).toContain('channel:telegram:7026976631');
+      expect(prompt).toContain('user:7026976631');
+      expect(prompt).toContain('Candidates:');
+      expect(prompt).toContain('kind=decision');
+    });
+
+    it('should not invoke the memory agent when no durable save candidate exists', async () => {
+      const agentLoop = createMockAgentLoop(() =>
+        '도움이 되었길 바랍니다! 필요하면 더 말씀해 주세요.'.repeat(4)
+      );
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+      const sendMessage = vi.fn().mockResolvedValue({
+        response: 'skip',
+        ack: { status: 'skipped', action: 'no_op', event_ids: [], reason: 'nothing new' },
+      });
+
+      customRouter.setMemoryAgent({
+        getSharedProcess: vi.fn().mockResolvedValue({
+          sendMessage,
+        }),
+      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
+
+      await customRouter.process({
+        source: 'telegram',
+        channelId: '7026976631',
+        userId: '7026976631',
+        text: '고마워',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sendMessage).not.toHaveBeenCalled();
+    });
   });
 
   describe('getSession()', () => {

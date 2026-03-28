@@ -20,6 +20,23 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 const logger = new DebugLogger('Stop');
 
+export function isStandaloneDaemonCommand(command: string): boolean {
+  return (
+    command.includes('mama daemon') ||
+    command.includes('/packages/standalone/dist/cli/index.js daemon') ||
+    command.includes('\\packages\\standalone\\dist\\cli\\index.js daemon')
+  );
+}
+
+export function isStandaloneWatchdogCommand(command: string): boolean {
+  return (
+    command.includes('mama-watchdog') ||
+    (command.includes('DAEMON_CMD = "') &&
+      command.includes('/packages/standalone/dist/cli/index.js') &&
+      command.includes('function checkHealth()'))
+  );
+}
+
 /**
  * Execute stop command
  */
@@ -28,6 +45,7 @@ export async function stopCommand(): Promise<void> {
 
   // Stop watchdog first to prevent auto-restart during shutdown
   await stopWatchdog();
+  await killAllMamaWatchdogs();
 
   // Check if running
   const runningInfo = await isDaemonRunning();
@@ -122,7 +140,7 @@ async function stopLingeringDaemonProcesses(primaryPid: number): Promise<void> {
     if (p.pid === primaryPid || p.pid === process.pid) {
       return false;
     }
-    return p.command.includes('mama daemon');
+    return isStandaloneDaemonCommand(p.command);
   });
 
   if (targets.length === 0) {
@@ -240,7 +258,7 @@ export async function killAllMamaDaemons(): Promise<boolean> {
   const processes = listProcesses();
   const targets = processes.filter((p) => {
     if (p.pid === process.pid) return false;
-    return p.command.includes('mama daemon');
+    return isStandaloneDaemonCommand(p.command);
   });
 
   if (targets.length === 0) return false;
@@ -323,6 +341,40 @@ async function stopWatchdog(): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+export async function killAllMamaWatchdogs(): Promise<boolean> {
+  const processes = listProcesses();
+  const targets = processes.filter((p) => {
+    if (p.pid === process.pid) return false;
+    return isStandaloneWatchdogCommand(p.command);
+  });
+
+  if (targets.length === 0) return false;
+
+  console.log(`Stopping ${targets.length} lingering watchdog process(es)...`);
+
+  for (const proc of targets) {
+    try {
+      process.kill(proc.pid, 'SIGTERM');
+    } catch {
+      // ignore
+    }
+  }
+
+  await sleep(1000);
+
+  for (const proc of targets) {
+    if (isProcessRunning(proc.pid)) {
+      try {
+        process.kill(proc.pid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return true;
 }
 
 function listProcesses(): Array<{ pid: number; command: string }> {

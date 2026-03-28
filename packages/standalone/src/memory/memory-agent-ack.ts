@@ -1,4 +1,5 @@
 import type { AgentLoopResult, Message } from '../agent/types.js';
+import { extractCodexAuthFailure } from '../agent/codex-auth.js';
 import type { MemoryAuditAckLike } from './audit-task-queue.js';
 
 function collectToolNames(history: Message[]): string[] {
@@ -33,6 +34,16 @@ export function buildMemoryAuditAckFromAgentResult(
       action: 'save',
       event_ids: [],
       reason: result.response,
+    };
+  }
+
+  const authFailure = extractCodexAuthFailure(result.response || '');
+  if (authFailure) {
+    return {
+      status: 'failed',
+      action: 'no_op',
+      event_ids: [],
+      reason: authFailure,
     };
   }
 
