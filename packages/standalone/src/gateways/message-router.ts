@@ -1309,6 +1309,15 @@ INSTRUCTION:
     if (candidates.length === 0) return;
 
     this.memoryAuditCooldowns.set(cooldownKey, now);
+
+    // Evict stale cooldown entries (older than 2x cooldown window)
+    if (this.memoryAuditCooldowns.size > 100) {
+      const staleThreshold = now - MessageRouter.EXTRACT_COOLDOWN_MS * 2;
+      for (const [key, ts] of this.memoryAuditCooldowns) {
+        if (ts < staleThreshold) this.memoryAuditCooldowns.delete(key);
+      }
+    }
+
     this.memoryAgentStats.turnsObserved++;
     this.memoryAgentStats.factsExtracted += candidates.length;
 

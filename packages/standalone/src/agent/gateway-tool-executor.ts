@@ -2028,15 +2028,18 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    const bundle = await api.recallMemory(input.query, {
-      scopes,
-      includeProfile: true,
-    });
-
-    return {
-      success: true,
-      bundle,
-    } as GatewayToolResult;
+    try {
+      const bundle = await api.recallMemory(input.query, {
+        scopes,
+        includeProfile: true,
+      });
+      return { success: true, bundle } as GatewayToolResult;
+    } catch (err) {
+      return {
+        success: false,
+        error: `Recall failed: ${err instanceof Error ? err.message : String(err)}`,
+      } as GatewayToolResult;
+    }
   }
 
   static getValidTools(): GatewayToolName[] {

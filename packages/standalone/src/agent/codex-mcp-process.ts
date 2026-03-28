@@ -22,6 +22,7 @@ import {
   mkdirSync,
   copyFileSync,
   writeFileSync,
+  unlinkSync,
 } from 'fs';
 import { homedir } from 'os';
 import { delimiter, join } from 'path';
@@ -754,6 +755,15 @@ export class CodexMCPProcess extends EventEmitter {
       } catch (error) {
         logger.warn(
           `Failed to sync Codex auth: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    } else if (existsSync(internalAuthPath)) {
+      try {
+        unlinkSync(internalAuthPath);
+        logger.info('Removed stale internal Codex auth file (external auth deleted)');
+      } catch (unlinkErr) {
+        logger.warn(
+          `Failed to remove stale Codex auth: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`
         );
       }
     }

@@ -543,6 +543,9 @@ async function save({
       ) {
         throw new Error('mama.save() each scope must have kind (string) and id (string)');
       }
+      if (typeof scope.id === 'string' && scope.id.trim().length === 0) {
+        throw new Error('mama.save() each scope.id must be a non-empty string');
+      }
       if (!validKinds.includes(scope.kind)) {
         throw new Error(
           `mama.save() scope kind must be one of: ${validKinds.join(', ')} (got: ${scope.kind})`
@@ -644,60 +647,63 @@ async function save({
 
   // Only run auto-search for decisions (not checkpoints) with a topic
   if (topic) {
-    try {
-      // Story 1.1: Auto-search using suggest()
-      // NOTE: suggest() searches globally and does not yet support scoped similarity search.
-      // Cross-scope suggestions are possible here. Track as a follow-up.
-      logSearching('Searching for related decisions...');
-      const searchResults = await suggest(topic, {
-        limit: 3,
-        threshold: 0.7,
-        disableRecency: true, // Pure semantic similarity for comparison
-      });
+    // Skip global similarity search and reasoning graph for scoped saves
+    if (!inputScopes || !Array.isArray(inputScopes) || inputScopes.length === 0) {
+      try {
+        // Story 1.1: Auto-search using suggest()
+        // NOTE: suggest() searches globally and does not yet support scoped similarity search.
+        // Cross-scope suggestions are possible here. Track as a follow-up.
+        logSearching('Searching for related decisions...');
+        const searchResults = await suggest(topic, {
+          limit: 3,
+          threshold: 0.7,
+          disableRecency: true, // Pure semantic similarity for comparison
+        });
 
-      // Handle suggest() result which can be string | null | object
-      if (searchResults && typeof searchResults === 'object' && 'results' in searchResults) {
-        // Filter out the decision we just saved
-        similar_decisions = (searchResults.results as SimilarDecision[])
-          .filter((d: SimilarDecision) => d.id !== decisionId)
-          .map((d: SimilarDecision) => ({
-            id: d.id,
-            topic: d.topic,
-            decision: d.decision,
-            similarity: d.similarity,
-            created_at: d.created_at,
-          }));
+        // Handle suggest() result which can be string | null | object
+        if (searchResults && typeof searchResults === 'object' && 'results' in searchResults) {
+          // Filter out the decision we just saved
+          similar_decisions = (searchResults.results as SimilarDecision[])
+            .filter((d: SimilarDecision) => d.id !== decisionId)
+            .map((d: SimilarDecision) => ({
+              id: d.id,
+              topic: d.topic,
+              decision: d.decision,
+              similarity: d.similarity,
+              created_at: d.created_at,
+            }));
 
-        if (similar_decisions.length > 0) {
-          logComplete(`Found ${similar_decisions.length} related decision(s)`);
+          if (similar_decisions.length > 0) {
+            logComplete(`Found ${similar_decisions.length} related decision(s)`);
+          }
+
+          // Story 1.2: Warning logic (similarity >= 0.85)
+          const highSimilarity = similar_decisions.find(
+            (d: SimilarDecision) => (d.similarity ?? 0) >= 0.85
+          );
+          if (highSimilarity && !_isTopicInCooldown(topic)) {
+            warning = `High similarity (${((highSimilarity.similarity ?? 0) * 100).toFixed(0)}%) with existing decision "${highSimilarity.decision.substring(0, 50)}..."`;
+            _markTopicWarned(topic);
+          }
+
+          // Story 1.2: Collaboration hint
+          if (similar_decisions.length > 0) {
+            collaboration_hint = _generateCollaborationHint(similar_decisions);
+          }
         }
-
-        // Story 1.2: Warning logic (similarity >= 0.85)
-        const highSimilarity = similar_decisions.find(
-          (d: SimilarDecision) => (d.similarity ?? 0) >= 0.85
-        );
-        if (highSimilarity && !_isTopicInCooldown(topic)) {
-          warning = `High similarity (${((highSimilarity.similarity ?? 0) * 100).toFixed(0)}%) with existing decision "${highSimilarity.decision.substring(0, 50)}..."`;
-          _markTopicWarned(topic);
-        }
-
-        // Story 1.2: Collaboration hint
-        if (similar_decisions.length > 0) {
-          collaboration_hint = _generateCollaborationHint(similar_decisions);
-        }
+      } catch (error: unknown) {
+        // Story 1.1 AC3: Best-effort - save succeeds even if auto-search fails
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logError('Auto-search failed:', errMsg);
       }
-    } catch (error: unknown) {
-      // Story 1.1 AC3: Best-effort - save succeeds even if auto-search fails
-      const errMsg = error instanceof Error ? error.message : String(error);
-      logError('Auto-search failed:', errMsg);
-    }
 
-    // Story 1.2: Reasoning graph info
-    try {
-      reasoning_graph = await _getReasoningGraphInfo(topic, decisionId);
-    } catch (error: unknown) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      logError('Reasoning graph query failed:', errMsg);
+      // Story 1.2: Reasoning graph info
+      try {
+        reasoning_graph = await _getReasoningGraphInfo(topic, decisionId);
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logError('Reasoning graph query failed:', errMsg);
+      }
     }
 
     // Story 2.2: Parse reasoning for relationship edges (builds_on, debates, synthesizes)

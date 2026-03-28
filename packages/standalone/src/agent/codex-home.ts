@@ -16,6 +16,7 @@ export function getLocalMCPServerEntry(): string {
   try {
     return require.resolve('@jungjaehoon/mama-server');
   } catch {
+    // Fallback to monorepo-relative path for local development
     return join(__dirname, '../../../mcp-server/src/server.js');
   }
 }

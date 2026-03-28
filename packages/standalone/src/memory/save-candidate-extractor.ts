@@ -34,9 +34,8 @@ const CHANGE_PATTERNS = [
 
 const FACT_PATTERNS = [
   /\bwhere\s+we\s+keep\b/i,
-  /\bhow many\s+(?:items|hours|projects|people)\b/i,
   /\bwe\s+keep\s+[a-z0-9'"\s_-]+\s+under\s+(?:my|the)\b/i,
-  /\b(?:for|over)\s+(?:more than\s+)?\d+\s+(?:days|weeks|months|years)\b/i,
+  /\b(?:stored|kept|retained|maintained)\s+(?:for|over)\s+(?:more than\s+)?\d+\s+(?:days|weeks|months|years)\b/i,
 ];
 
 const TOPIC_HINTS: Partial<Record<SaveCandidateKind, Array<{ match: RegExp; topic: string }>>> = {
