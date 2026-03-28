@@ -148,6 +148,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - **Agent Loop:** Autonomous conversation handling with Claude API
 - **Gateway Integrations:** Discord, Slack, Telegram bot support
 - **Multi-Agent Swarm:** 3-tier agent hierarchy with delegation and UltraWork mode
+- **Memory Writer Agent:** Candidate-driven memory pipeline with `SaveCandidateExtractor` (rule-based), `AuditTaskQueue` (serial), memory-agent-ack (candidate-aware), and dashboard API (`/api/memory-agent/stats`, `/api/memory-agent/dashboard`)
 - **Code-Act Sandbox:** QuickJS-based sandboxed code execution for agents (Tier 3 safe)
 - **Onboarding Wizard:** 10-phase autonomous discovery
 - **Cron Scheduler:** Scheduled task execution with heartbeat

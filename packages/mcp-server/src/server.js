@@ -415,6 +415,8 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
     // Handle tool execution - 4 core tools only
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
+      const toolStart = Date.now();
+      console.error(`[MAMA MCP] Tool start: ${name}`);
 
       try {
         let result;
@@ -446,6 +448,8 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
           this.legacyNoticeEmittedInToolResponse = true;
         }
 
+        console.error(`[MAMA MCP] Tool done: ${name} (${Date.now() - toolStart}ms)`);
+
         return {
           content: [
             {
@@ -464,6 +468,7 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
           ],
         };
       } catch (error) {
+        console.error(`[MAMA MCP] Tool failed: ${name} (${Date.now() - toolStart}ms)`);
         console.error('[MAMA MCP] Tool execution error:', error);
         return {
           content: [
@@ -489,7 +494,7 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       if (!topic || !decision || !reasoning) {
         return { success: false, message: '❌ Decision requires: topic, decision, reasoning' };
       }
-      const id = await mama.save({ topic, decision, reasoning, confidence });
+      const id = await mama.save({ type: 'user_decision', topic, decision, reasoning, confidence });
       return {
         success: true,
         id,

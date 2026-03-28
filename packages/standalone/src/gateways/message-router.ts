@@ -14,7 +14,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { SessionStore } from './session-store.js';
 import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type MamaApiClient } from './context-injector.js';
@@ -35,6 +35,15 @@ import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext } from '../agent/types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import {
+  AuditTaskQueue,
+  type MemoryAuditAckLike,
+  type MemoryAuditJob,
+} from '../memory/audit-task-queue.js';
+import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
+import { deriveMemoryScopes } from '../memory/scope-context.js';
+import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
+import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -61,6 +70,16 @@ export interface AgentLoopClient {
     content: ContentBlock[],
     options?: AgentLoopOptions
   ): Promise<{ response: string }>;
+}
+
+export interface MemoryAgentProcessLike {
+  sendMessage(
+    content: string
+  ): Promise<{ response?: string; ack?: MemoryAuditAckLike } | { response?: string }>;
+}
+
+export interface MemoryAgentProcessManagerLike {
+  getSharedProcess(agentId: 'memory'): Promise<MemoryAgentProcessLike>;
 }
 
 /**
@@ -142,6 +161,10 @@ function sanitizeForPrompt(text: string): string {
     .replace(/\}/g, '\\}');
 }
 
+function stripGatewayDecorations(text: string): string {
+  return text.replace(/^(?:\s*\|\|[\s\S]*?\|\|\s*)+/u, '').trim();
+}
+
 /**
  * Check if message contains sensitive configuration request
  */
@@ -168,11 +191,56 @@ function normalizeTranslationTargetLanguage(
 export class MessageRouter {
   private sessionStore: SessionStore;
   private contextInjector: ContextInjector;
+  private mamaApi: MamaApiClient;
   private agentLoop: AgentLoopClient;
   private config: Required<MessageRouterConfig>;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private cachedGatewayToolsPrompt: string | null = null;
+  private memoryAgentProcessManager?: MemoryAgentProcessManagerLike;
+  private memoryAuditQueue?: AuditTaskQueue;
+  private memoryNoticeQueue = new AgentNoticeQueue();
+  private memoryAuditCooldowns = new Map<string, number>();
+  private memoryAgentStats = {
+    turnsObserved: 0,
+    factsExtracted: 0,
+    factsSaved: 0,
+    acksApplied: 0,
+    acksSkipped: 0,
+    acksFailed: 0,
+    lastExtraction: null as number | null,
+    recentExtractions: [] as Array<{
+      topic: string;
+      timestamp: number;
+      channelKey?: string;
+      status: 'applied' | 'skipped' | 'failed';
+    }>,
+  };
+
+  setMemoryAgent(processManager: MemoryAgentProcessManagerLike): void {
+    this.memoryAgentProcessManager = processManager;
+    this.memoryAuditQueue = new AuditTaskQueue(async (job) => {
+      const process = await processManager.getSharedProcess('memory');
+      const result = await process.sendMessage(this.buildMemoryAuditPrompt(job));
+      if (
+        result &&
+        typeof result === 'object' &&
+        'ack' in result &&
+        result.ack &&
+        typeof result.ack === 'object'
+      ) {
+        return result.ack as MemoryAuditAckLike;
+      }
+
+      return this.classifyMemoryAuditResponse(
+        typeof result?.response === 'string' ? result.response : ''
+      );
+    });
+  }
+
+  getMemoryAgentStats() {
+    return { ...this.memoryAgentStats };
+  }
 
   constructor(
     sessionStore: SessionStore,
@@ -182,6 +250,7 @@ export class MessageRouter {
   ) {
     this.sessionStore = sessionStore;
     this.agentLoop = agentLoop;
+    this.mamaApi = mamaApi;
     this.config = {
       similarityThreshold: config.similarityThreshold ?? 0.7,
       maxDecisions: config.maxDecisions ?? 3,
@@ -379,7 +448,10 @@ This protects your credentials from being exposed in chat logs.`;
       logger.info('CONTINUE turn: skipping context injection');
     } else {
       // NEW session: full prompt build
-      const sessionStartupContext = await this.contextInjector.getSessionStartupContext();
+      const sessionStartupContext = await this.contextInjector.getSessionStartupContext({
+        source: message.source,
+        channelId: message.channelId,
+      });
       const historyContext = message.metadata?.historyContext;
       systemPrompt = this.buildSystemPrompt(
         session,
@@ -477,6 +549,36 @@ This protects your credentials from being exposed in chat logs.`;
       );
     }
 
+    // Per-turn memory injection (works for both NEW and CONTINUE sessions)
+    let memoryPrefix = '';
+    let pendingNotices = false;
+    let pendingNoticeCount = 0;
+    try {
+      if (shouldResume) {
+        const notices = this.memoryNoticeQueue.peek(channelKey);
+        pendingNotices = notices.length > 0;
+        pendingNoticeCount = notices.length;
+        memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
+        if (memoryPrefix) {
+          memoryPrefix = `${memoryPrefix}\n\n`;
+        }
+      } else {
+        memoryPrefix = await this.getPerTurnMemoryPrefix(message);
+      }
+    } catch (err) {
+      logger.warn(`[memory-prefix] Failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (shouldResume) {
+        try {
+          memoryPrefix = await this.getPerTurnMemoryPrefix(message);
+        } catch (fallbackErr) {
+          logger.warn(
+            `[memory-prefix] Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`
+          );
+          /* non-fatal */
+        }
+      }
+    }
+
     try {
       // Use multimodal content if available (OpenClaw-style)
       if (
@@ -517,10 +619,8 @@ This protects your credentials from being exposed in chat logs.`;
           }
         }
 
-        // Add text content (with skill context if matched)
-        const effectiveMessageText = skillPrefix
-          ? `${skillPrefix}${messageText || ''}`
-          : messageText;
+        // Add text content (with memory context and skill context if matched)
+        const effectiveMessageText = `${memoryPrefix}${skillPrefix}${messageText || ''}`;
         if (effectiveMessageText) {
           contentBlocks.push({ type: 'text', text: effectiveMessageText });
         }
@@ -545,9 +645,25 @@ This protects your credentials from being exposed in chat logs.`;
         const result = await this.agentLoop.runWithContent(contentBlocks, options);
         response = result.response;
       } else {
-        const effectiveText = skillPrefix ? `${skillPrefix}${message.text}` : message.text;
+        const effectiveText = `${memoryPrefix}${skillPrefix}${message.text}`;
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
+      }
+
+      // Auto-extract facts from conversation (fire-and-forget, non-blocking)
+      if (response && message.text) {
+        const rawAssistantText = stripGatewayDecorations(response);
+        void (async () => {
+          try {
+            await this.triggerMemoryAgent(channelKey, message.text, rawAssistantText, message);
+          } catch {
+            /* non-fatal */
+          }
+        })();
+      }
+
+      if (shouldResume && pendingNotices) {
+        this.memoryNoticeQueue.drain(channelKey, pendingNoticeCount);
       }
     } catch (error) {
       // CLI timeout or resume failure - invalidate session to force fresh start next time
@@ -971,6 +1087,273 @@ ${historyContext}
     channelName: string
   ): boolean {
     return this.sessionStore.updateChannelName(source, channelId, channelName);
+  }
+
+  /**
+   * Trigger memory agent to extract facts (fire-and-forget).
+   * Uses AgentProcessManager persistent process.
+   */
+  private static readonly EXTRACT_COOLDOWN_MS = 30_000;
+  private static readonly MIN_CONTENT_LENGTH = 100;
+  private static readonly MAX_CONTENT_LENGTH = 10_000;
+
+  private getRuntimeProjectId(): string | undefined {
+    return process.env.MAMA_WORKSPACE || process.cwd();
+  }
+
+  private buildMemoryAuditPrompt(job: MemoryAuditJob): string {
+    const escapeBackticks = (s: string) => s.replace(/```/g, '\\`\\`\\`');
+    const scopeContext = job.scopeContext.map((scope) => `${scope.kind}:${scope.id}`).join(', ');
+    const candidateLines = (job.candidates ?? []).map((candidate) => {
+      const topic = candidate.topicHint ? ` topic=${escapeBackticks(candidate.topicHint)}` : '';
+      return `- kind=${candidate.kind}${topic} confidence=${candidate.confidence} summary=${JSON.stringify(candidate.summary)}`;
+    });
+    const safeConversation = escapeBackticks(job.conversation);
+    return `Memory scopes: ${scopeContext}
+Conversation:
+\`\`\`conversation
+${safeConversation}
+\`\`\`
+
+Candidates:
+${candidateLines.length > 0 ? candidateLines.join('\n') : '- none'}
+
+INSTRUCTION:
+- Call mama_search exactly once first.
+- If the conversation contains a decision, preference, fact, lesson, or superseding update, call mama_save exactly once.
+- If nothing should be saved, do not call mama_save.
+- Do not call resource discovery tools.
+- Do not ask follow-up questions.
+- After tool work finishes, respond with exactly DONE or SKIP.`;
+  }
+
+  private classifyMemoryAuditResponse(response: string): MemoryAuditAckLike {
+    const normalized = response.trim().toLowerCase();
+
+    if (normalized.length === 0) {
+      return {
+        status: 'skipped',
+        action: 'no_op',
+        event_ids: [],
+        reason: 'memory agent returned an empty response',
+      };
+    }
+
+    if (
+      normalized.includes('nothing worth saving') ||
+      normalized.includes('nothing is worth saving') ||
+      normalized.includes('no-op') ||
+      normalized.includes('no op') ||
+      normalized.includes('skip')
+    ) {
+      return {
+        status: 'skipped',
+        action: 'no_op',
+        event_ids: [],
+        reason: response,
+      };
+    }
+
+    if (normalized === 'failed' || normalized.includes('failed')) {
+      return {
+        status: 'failed',
+        action: 'no_op',
+        event_ids: [],
+        reason: response,
+      };
+    }
+
+    if (normalized === 'done' || normalized === 'applied') {
+      return {
+        status: 'applied',
+        action: 'save',
+        event_ids: [],
+        reason: response,
+      };
+    }
+
+    return {
+      status: 'skipped',
+      action: 'no_op',
+      event_ids: [],
+      reason: response,
+    };
+  }
+
+  private recordMemoryAuditAck(
+    ack: MemoryAuditAckLike,
+    topic: string,
+    channelKey?: string,
+    displayTopic?: string,
+    deltaKey?: string
+  ): void {
+    const timestamp = Date.now();
+
+    if (ack.status === 'applied') {
+      this.memoryAgentStats.acksApplied++;
+      this.memoryAgentStats.factsSaved++;
+    } else if (ack.status === 'skipped') {
+      this.memoryAgentStats.acksSkipped++;
+    } else {
+      this.memoryAgentStats.acksFailed++;
+      logger.warn(`[memory-agent] Audit failed: ${ack.reason ?? 'unknown failure'}`);
+      this.memoryNoticeQueue.enqueue(channelKey ?? 'memory-agent:shared', {
+        type: 'memory_warning',
+        severity: 'high',
+        summary: 'memory audit failed',
+        evidence: [],
+        recommended_action: 'consult_memory',
+        relevant_memories: [],
+      });
+    }
+
+    this.memoryAgentStats.recentExtractions.unshift({
+      topic,
+      timestamp,
+      channelKey,
+      status: ack.status,
+    });
+    this.memoryAgentStats.recentExtractions = this.memoryAgentStats.recentExtractions.slice(0, 10);
+    this.memoryAgentStats.lastExtraction = timestamp;
+
+    if (ack.status === 'applied' && channelKey && this.mamaApi.upsertChannelSummary) {
+      const summaryMarkdown = [
+        '## Channel Summary',
+        `- Last memory update: ${displayTopic ?? topic}`,
+        `- Status: ${ack.action}`,
+        ack.reason ? `- Notes: ${ack.reason.slice(0, 240)}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      void this.mamaApi
+        .upsertChannelSummary({
+          channelKey,
+          summaryMarkdown,
+          deltaHash: `${deltaKey ?? topic}:${ack.action}`,
+        })
+        .catch((error) => {
+          logger.warn(
+            `[channel-summary] Failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
+    }
+  }
+
+  private async getPerTurnMemoryPrefix(message: NormalizedMessage): Promise<string> {
+    if (this.mamaApi.recallMemory) {
+      try {
+        const scopes = deriveMemoryScopes({
+          source: message.source,
+          channelId: message.channelId,
+          userId: message.userId,
+          projectId: this.getRuntimeProjectId(),
+        });
+        const bundle = await this.mamaApi.recallMemory(message.text, {
+          scopes,
+          includeProfile: true,
+        });
+        const formatted = formatRecallBundle(bundle);
+        return formatted ? `${formatted}\n\n` : '';
+      } catch (error) {
+        logger.warn(
+          `[memory-prefix] recallMemory failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    const context = await this.contextInjector.getRelevantContext(message.text);
+    if (!context.hasContext) {
+      return '';
+    }
+
+    return `[MAMA Memory]\n${context.prompt}\n[/MAMA Memory]\n\n`;
+  }
+
+  private async triggerMemoryAgent(
+    channelKey: string,
+    userText: string,
+    botResponse: string,
+    message?: NormalizedMessage
+  ): Promise<void> {
+    if (!this.memoryAgentProcessManager || !this.memoryAuditQueue) return;
+
+    const now = Date.now();
+    const source = message?.source ?? 'memory-agent';
+    const channelId = message?.channelId ?? 'shared';
+    const userId = message?.userId;
+    const candidates = extractSaveCandidates({
+      userText,
+      botResponse,
+      channelKey,
+      source,
+      channelId,
+      userId,
+      projectId: this.getRuntimeProjectId(),
+      createdAt: now,
+    });
+    const cooldownKey = `${source}:${channelId}:${userId ?? 'anonymous'}`;
+    const lastExtractTime = this.memoryAuditCooldowns.get(cooldownKey) ?? 0;
+    if (now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
+      return;
+    }
+
+    let content = `User: ${userText}\nAssistant: ${botResponse}`;
+    if (content.length < MessageRouter.MIN_CONTENT_LENGTH && candidates.length === 0) {
+      return;
+    }
+    if (content.length > MessageRouter.MAX_CONTENT_LENGTH) {
+      content = content.substring(0, MessageRouter.MAX_CONTENT_LENGTH);
+    }
+
+    if (candidates.length === 0) return;
+
+    this.memoryAuditCooldowns.set(cooldownKey, now);
+
+    // Evict stale cooldown entries (older than 2x cooldown window)
+    if (this.memoryAuditCooldowns.size > 100) {
+      const staleThreshold = now - MessageRouter.EXTRACT_COOLDOWN_MS * 2;
+      for (const [key, ts] of this.memoryAuditCooldowns) {
+        if (ts < staleThreshold) this.memoryAuditCooldowns.delete(key);
+      }
+    }
+
+    this.memoryAgentStats.turnsObserved++;
+    this.memoryAgentStats.factsExtracted += candidates.length;
+
+    const scopes = deriveMemoryScopes({
+      source,
+      channelId,
+      userId,
+      projectId: this.getRuntimeProjectId(),
+    });
+    const job: MemoryAuditJob = {
+      turnId: `turn_${now}`,
+      channelKey,
+      source,
+      channelId,
+      userId,
+      scopeContext: scopes,
+      conversation: content,
+      candidates,
+    };
+    const rawTopic = userText.slice(0, 40).toLowerCase();
+    const asciiTopic = rawTopic.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const topic =
+      asciiTopic || `topic_${createHash('sha256').update(rawTopic).digest('hex').slice(0, 8)}`;
+    const displayTopic = candidates[0]?.topicHint || userText.slice(0, 80).trim() || 'memory_audit';
+    const deltaKeySource = candidates[0]?.id || userText;
+    const deltaKey = createHash('sha256').update(deltaKeySource).digest('hex').slice(0, 16);
+
+    this.memoryAuditQueue
+      .enqueue(job)
+      .then((ack) => {
+        this.recordMemoryAuditAck(ack, topic, channelKey, displayTopic, deltaKey);
+      })
+      .catch((err) => {
+        this.memoryAgentStats.acksFailed++;
+        logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
   }
 }
 

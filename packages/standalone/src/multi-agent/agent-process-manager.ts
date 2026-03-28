@@ -310,6 +310,20 @@ export class AgentProcessManager extends EventEmitter {
   }
 
   /**
+   * Get a shared singleton process for system-level agents (e.g., memory agent).
+   * Unlike getProcess() which creates per-channel processes, this returns
+   * a single persistent process shared across all channels.
+   *
+   * Uses fixed channelKey: `__system__:<agentId>:<agentId>`
+   */
+  async getSharedProcess(
+    agentId: string,
+    overrides?: { requestTimeout?: number }
+  ): Promise<AgentRuntimeProcess> {
+    return this.getProcess('__system__', agentId, agentId, overrides);
+  }
+
+  /**
    * Factory: create a runner for a given backend.
    * Claude runners are managed by PersistentProcessPool (returned separately).
    * Codex runners are created here as standalone instances.

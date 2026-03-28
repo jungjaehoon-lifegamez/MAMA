@@ -136,7 +136,8 @@ pnpm vitest run tests/commands/
 - **Schema:** decisions + embeddings (core), memory_scopes + memory_scope_bindings (scoping), memory_events + audit_findings (audit), memory_truth (truth projection), channel_summaries + channel_summary_state (channel state)
 - **Graph edges:** `supersedes`, `builds_on`, `debates`, `synthesizes` (v1.3), plus legacy `refines`/`contradicts`
 - **Memory API** (`packages/mama-core/src/memory/`): saveMemory, recallMemory, buildProfile, ingestMemory, ingestConversation, evolveMemory, buildMemoryBootstrap, createAuditAck, recordMemoryAudit
-- **Scopes:** project, channel, user, global — memories are isolated per scope
+- **Standalone Memory Runtime** (`packages/standalone/src/memory/`): extractSaveCandidates (rule-based candidate detection), AuditTaskQueue (serial job queue), buildMemoryAuditAckFromAgentResult (candidate-aware ack classification), buildMemoryAgentDashboardPayload (stats + channel tracking), formatRecallBundle, deriveMemoryScopes, AgentNoticeQueue, buildStandaloneMemoryBootstrap
+- **Scopes:** project, channel, user, global — memories are isolated per scope; mama_save now forwards scopes through the full save chain
 - **Truth projection:** historical records preserved, only current truth surfaced in recall
 
 ### Embeddings
