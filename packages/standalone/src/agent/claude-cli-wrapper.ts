@@ -85,6 +85,8 @@ export interface ClaudeCLIWrapperOptions {
   pluginDir?: string;
   /** Structurally disallowed tools (--disallowedTools CLI flag) */
   disallowedTools?: string[];
+  /** Structurally allowed tools (--allowedTools CLI flag) */
+  allowedTools?: string[];
 }
 
 export type { PromptCallbacks, ToolUseBlock } from './types.js';
@@ -206,6 +208,12 @@ export class ClaudeCLIWrapper {
 
       if (this.options.dangerouslySkipPermissions) {
         args.push('--dangerously-skip-permissions');
+      }
+      if (this.options.allowedTools?.length) {
+        args.push('--allowedTools', ...this.options.allowedTools);
+      }
+      if (this.options.disallowedTools?.length) {
+        args.push('--disallowedTools', ...this.options.disallowedTools);
       }
 
       // ============================================================

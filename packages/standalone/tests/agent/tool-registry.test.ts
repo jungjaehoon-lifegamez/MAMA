@@ -61,10 +61,15 @@ describe('ToolRegistry', () => {
 
     it('should filter by wildcard pattern', () => {
       const filtered = ToolRegistry.getFilteredTools(['mama_*']);
-      expect(filtered).toHaveLength(4);
-      for (const tool of filtered) {
-        expect(tool.name).toMatch(/^mama_/);
-      }
+      expect(filtered.map((tool) => tool.name)).toEqual([
+        'mama_save',
+        'mama_search',
+        'mama_recall',
+        'mama_update',
+        'mama_load_checkpoint',
+        'mama_add',
+        'mama_ingest',
+      ]);
     });
 
     it('should support mixed patterns', () => {
@@ -87,7 +92,15 @@ describe('ToolRegistry', () => {
     it('should group tools by category', () => {
       const grouped = ToolRegistry.getByCategory();
       expect(grouped.has('memory')).toBe(true);
-      expect(grouped.get('memory')!.length).toBe(4);
+      expect(grouped.get('memory')!.map((tool) => tool.name)).toEqual([
+        'mama_save',
+        'mama_search',
+        'mama_recall',
+        'mama_update',
+        'mama_load_checkpoint',
+        'mama_add',
+        'mama_ingest',
+      ]);
       expect(grouped.has('browser')).toBe(true);
       expect(grouped.get('browser')!.length).toBeGreaterThan(5);
     });

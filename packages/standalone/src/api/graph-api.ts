@@ -659,6 +659,7 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
     await initDB();
 
     const result = await mama.save({
+      type: 'user_decision',
       topic: body.topic,
       decision: body.decision,
       reasoning: body.reasoning,
@@ -1611,8 +1612,14 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
           chat_bot: {
             model: 'claude-sonnet-4-6',
             maxTurns: 10,
-            allowedTools: ['mama_*', 'Read', 'discord_send'],
-            blockedTools: ['Bash', 'Write'],
+            allowedTools: [
+              'mama_search',
+              'mama_recall',
+              'mama_load_checkpoint',
+              'Read',
+              'discord_send',
+            ],
+            blockedTools: ['Bash', 'Write', 'mama_save', 'mama_update'],
             systemControl: false,
             sensitiveAccess: false,
           },

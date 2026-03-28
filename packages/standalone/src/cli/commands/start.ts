@@ -33,12 +33,13 @@ import {
   expandPath,
   provisionDefaults,
 } from '../config/config-manager.js';
-import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
-import { killProcessesOnPorts, killAllMamaDaemons } from './stop.js';
+import { writePid, isDaemonRunning, isProcessRunning } from '../utils/pid-manager.js';
+import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { getSessionPool } from '../../agent/session-pool.js';
+import type { AgentContext, MAMAApiInterface } from '../../agent/types.js';
 import {
   DiscordGateway,
   SlackGateway,
@@ -48,12 +49,20 @@ import {
   PluginLoader,
   initChannelHistory,
 } from '../../gateways/index.js';
+import type { MemoryAgentProcessManagerLike } from '../../gateways/message-router.js';
 import type {
   Checkpoint,
   Decision,
   MamaApiClient,
   SearchResult,
 } from '../../gateways/context-injector.js';
+import {
+  buildStandaloneMemoryBootstrap,
+  formatMemoryBootstrap,
+} from '../../memory/bootstrap-context.js';
+import { buildMemoryAuditAckFromAgentResult } from '../../memory/memory-agent-ack.js';
+import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
+import { deriveMemoryScopes } from '../../memory/scope-context.js';
 import {
   CronScheduler,
   CronWorker,
@@ -64,6 +73,7 @@ import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { createApiServer, insertTokenUsage } from '../../api/index.js';
 import { MetricsStore } from '../../observability/metrics-store.js';
 import { MetricsCleanup } from '../../observability/metrics-cleanup.js';
+import { stopAgentLoops } from '../../cli/shutdown-utils.js';
 import { HealthScoreService } from '../../observability/health-score.js';
 import { HealthCheckService } from '../../observability/health-check.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
@@ -587,6 +597,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
 
   // Clean up ALL stale mama daemon processes (not just port holders).
   // Zombie daemons may stay alive via Slack Socket Mode without holding any port.
+  await killAllMamaWatchdogs();
   await killAllMamaDaemons();
   await killProcessesOnPorts([3847, 3849]);
 
@@ -739,8 +750,13 @@ function spawnDaemonChild(): number {
 async function startDaemon(): Promise<number> {
   const pid = spawnDaemonChild();
 
-  // Give daemon a moment to start
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  // Give the child a short window to fail fast before we advertise it as healthy.
+  // Without this, a dead-on-start daemon can still get a PID file + watchdog while
+  // an old daemon is serving health, which leads to duplicate gateways on restart.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  if (!isProcessRunning(pid)) {
+    throw new Error(`Daemon process ${pid} exited before startup completed`);
+  }
   await writePid(pid);
 
   // Start watchdog in background (detached)
@@ -921,7 +937,7 @@ setTimeout(() => tick(), 10000);
 `;
 
   // Spawn watchdog as a separate detached process
-  const child = spawn(process.execPath, ['-e', watchdogScript], {
+  const child = spawn(process.execPath, ['-e', watchdogScript, 'mama-watchdog'], {
     detached: true,
     stdio: ['ignore', out, out],
     cwd: homedir(),
@@ -1306,7 +1322,7 @@ export async function runAgentLoop(
 
   // Initialize message router with MAMA database
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { initDB } = require('@jungjaehoon/mama-core/db-manager');
+  const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mamaCore = require('@jungjaehoon/mama-core');
   const mamaApi = (
@@ -1320,6 +1336,31 @@ export async function runAgentLoop(
     loadCheckpoint?: () => Promise<unknown>;
     list?: (options?: { limit?: number }) => Promise<unknown>;
     listDecisions?: (options?: { limit?: number }) => Promise<unknown>;
+    recallMemory?: (
+      query: string,
+      options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
+    ) => Promise<unknown>;
+    ingestMemory?: (input: Record<string, unknown>) => Promise<unknown>;
+    buildMemoryBootstrap?: (input: {
+      scopes: Array<{ kind: string; id: string }>;
+      channelKey?: string;
+      currentGoal?: string;
+      mainAgentState?: {
+        active_goal?: string;
+        active_channel?: string;
+        active_user?: string;
+      };
+    }) => Promise<unknown>;
+    getChannelSummary?: (channelKey: string) => Promise<unknown>;
+    upsertChannelSummary?: (input: {
+      channelKey: string;
+      summaryMarkdown: string;
+      deltaHash?: string;
+    }) => Promise<unknown>;
+    buildProfile?: (
+      scopes?: Array<{ kind: string; id: string }>,
+      options?: Record<string, unknown>
+    ) => Promise<unknown>;
   };
   const suggest = (mamaApi.suggest ?? mamaApi.search) as
     | ((query: string, options?: { limit?: number }) => Promise<unknown>)
@@ -1330,6 +1371,10 @@ export async function runAgentLoop(
   if (!suggest) {
     throw new Error('MAMA API shape is incompatible; failed to initialize memory helpers');
   }
+
+  // Set isolated DB path for MAMA OS (카게무샤 pattern: process.env before initDB)
+  const mamaDbPathForCore = expandPath(config.database.path);
+  process.env.MAMA_DB_PATH = mamaDbPathForCore;
 
   // Initialize MAMA database first
   await initDB();
@@ -1444,11 +1489,164 @@ export async function runAgentLoop(
     search: searchForContext, // mama-core exports 'suggest' for semantic search
     loadCheckpoint: loadCheckpointForContext,
     listDecisions: listDecisionsForContext,
+    save: mamaApi.save,
+    recallMemory: mamaApi.recallMemory as MamaApiClient['recallMemory'],
+    ingestMemory: mamaApi.ingestMemory as MamaApiClient['ingestMemory'],
+    buildMemoryBootstrap: mamaApi.buildMemoryBootstrap as MamaApiClient['buildMemoryBootstrap'],
+    getChannelSummary: mamaApi.getChannelSummary as MamaApiClient['getChannelSummary'],
+    upsertChannelSummary: mamaApi.upsertChannelSummary as MamaApiClient['upsertChannelSummary'],
   };
+
+  let memoryAgentLoop: AgentLoop | null = null;
 
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
     backend: runtimeBackend,
   });
+
+  // Initialize memory agent (persistent process for fact extraction)
+  try {
+    const { ensureMemoryPersona } = await import('../../multi-agent/memory-agent-persona.js');
+
+    const personaPath = ensureMemoryPersona();
+    const memoryPersona = readFileSync(personaPath, 'utf-8');
+    const memoryAgentContext: AgentContext = {
+      source: 'memory-agent',
+      platform: 'cli',
+      roleName: 'memory_agent',
+      role: {
+        allowedTools: ['mama_search', 'mama_save'],
+        blockedTools: ['Read', 'Write', 'Bash', 'Grep', 'Glob', 'Edit'],
+        systemControl: false,
+        sensitiveAccess: false,
+      },
+      session: {
+        sessionId: 'memory-agent:shared',
+        channelId: 'shared',
+        startedAt: new Date(),
+      },
+      capabilities: ['mama_search', 'mama_save'],
+      limitations: ['No file or shell access'],
+      tier: 2,
+      backend: 'claude',
+    };
+
+    const memoryAgentConfig = config.multi_agent?.agents?.memory;
+    const memoryBackend = (memoryAgentConfig?.backend === 'codex-mcp' ? 'codex-mcp' : 'claude') as
+      | 'claude'
+      | 'codex-mcp';
+    const memoryModel =
+      memoryAgentConfig?.model ||
+      (memoryBackend === 'claude' ? 'claude-sonnet-4-6' : config.agent.model);
+    memoryAgentLoop = new AgentLoop(
+      oauthManager,
+      {
+        systemPrompt: memoryPersona,
+        model: memoryModel,
+        maxTurns: 3,
+        backend: memoryBackend,
+        toolsConfig: {
+          gateway: ['mama_search', 'mama_save'],
+          mcp: [],
+        },
+      },
+      undefined,
+      { mamaApi: mamaApi as MAMAApiInterface }
+    );
+    memoryAgentLoop.setSessionKey('memory-agent:shared');
+    let memoryBootstrapDelivered = false;
+    let memoryBootstrapLock: Promise<void> | null = null;
+    const memoryWorkspaceProjectId =
+      process.env.MAMA_WORKSPACE ||
+      expandPath(config.workspace?.path || `${homedir()}/.mama/workspace`);
+
+    const memoryProcessManager = {
+      async getSharedProcess() {
+        return {
+          async sendMessage(content: string) {
+            if (!memoryAgentLoop) {
+              throw new Error('Memory agent loop is not initialized');
+            }
+            if (!memoryBootstrapDelivered && memoryBootstrapLock) {
+              await memoryBootstrapLock;
+            }
+
+            // Safe: initDB() completed before memoryProcessManager is created.
+            const adapter = getAdapter();
+            const beforeDecisionCount = Number(
+              adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
+            );
+            let prompt = content;
+            let shouldDeliverBootstrap = false;
+            let resolveBootstrapLock: (() => void) | undefined;
+            let rejectBootstrapLock: ((error?: unknown) => void) | undefined;
+            if (!memoryBootstrapDelivered) {
+              shouldDeliverBootstrap = true;
+              memoryBootstrapLock = new Promise<void>((resolve, reject) => {
+                resolveBootstrapLock = resolve;
+                rejectBootstrapLock = reject;
+              });
+              const bootstrap = await buildStandaloneMemoryBootstrap({
+                mamaApi: mamaApiClient,
+                scopes: deriveMemoryScopes({
+                  source: 'memory-agent',
+                  channelId: 'shared',
+                  projectId: memoryWorkspaceProjectId,
+                }),
+                currentGoal: 'Maintain current memory truth and audit ongoing conversations',
+                mainAgentState: {
+                  active_goal: 'Maintain current memory truth and audit ongoing conversations',
+                  active_channel: 'shared',
+                },
+              });
+              prompt = `${formatMemoryBootstrap(bootstrap)}\n\n---\n\n${content}`;
+            }
+
+            try {
+              const result = await memoryAgentLoop.run(prompt, {
+                source: 'memory-agent',
+                channelId: 'shared',
+                agentContext: memoryAgentContext,
+                stopAfterSuccessfulTools: ['mama_save'],
+              });
+              const afterDecisionCount = Number(
+                adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count
+              );
+              const ack = buildMemoryAuditAckFromAgentResult(
+                result,
+                beforeDecisionCount,
+                afterDecisionCount
+              );
+
+              if (shouldDeliverBootstrap) {
+                memoryBootstrapDelivered = true;
+                if (resolveBootstrapLock) {
+                  resolveBootstrapLock();
+                }
+                memoryBootstrapLock = null;
+              }
+
+              return { response: result.response, ack };
+            } catch (error) {
+              if (shouldDeliverBootstrap) {
+                if (rejectBootstrapLock) {
+                  rejectBootstrapLock(error);
+                }
+                memoryBootstrapLock = null;
+              }
+              throw error;
+            }
+          },
+        };
+      },
+    };
+
+    messageRouter.setMemoryAgent(memoryProcessManager as MemoryAgentProcessManagerLike);
+    console.log('✓ Memory agent initialized');
+  } catch (err) {
+    console.warn(
+      `[memory-agent] Init failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // Prepare graph handler options (will be populated after gateways init)
   const graphHandlerOptions: GraphHandlerOptions = {
@@ -2028,6 +2226,120 @@ export async function runAgentLoop(
       }
     },
     enableAutoKillPort: config.enable_auto_kill_port,
+  });
+
+  // Memory Agent stats API
+  apiServer.app.get('/api/memory-agent/stats', requireAuth, (_req, res) => {
+    const stats = messageRouter.getMemoryAgentStats();
+    res.json(stats);
+  });
+
+  // Memory Agent dashboard API — combines agent stats, memory stats, and channel summaries
+  apiServer.app.get('/api/memory-agent/dashboard', requireAuth, async (_req, res) => {
+    try {
+      // 1. Memory agent runtime stats
+      const agentStats = messageRouter.getMemoryAgentStats();
+
+      // 2. Memory DB stats (decisions, checkpoints, outcomes, topics)
+      const adapter = getAdapter();
+      const now = Date.now();
+      const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+      const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+      const totalRow = adapter.prepare('SELECT COUNT(*) as count FROM decisions').get() as
+        | { count: number }
+        | undefined;
+      const weekRow = adapter
+        .prepare('SELECT COUNT(*) as count FROM decisions WHERE created_at > ?')
+        .get(weekAgo) as { count: number } | undefined;
+      const monthRow = adapter
+        .prepare('SELECT COUNT(*) as count FROM decisions WHERE created_at > ?')
+        .get(monthAgo) as { count: number } | undefined;
+      const checkpointRow = adapter.prepare('SELECT COUNT(*) as count FROM checkpoints').get() as
+        | { count: number }
+        | undefined;
+
+      const outcomeRows = adapter
+        .prepare(
+          `SELECT outcome, COUNT(*) as count FROM decisions
+           WHERE outcome IS NOT NULL GROUP BY outcome`
+        )
+        .all() as Array<{ outcome: string | null; count: number }>;
+      const outcomes: Record<string, number> = {};
+      for (const row of outcomeRows) {
+        outcomes[row.outcome?.toLowerCase() ?? 'unknown'] = row.count;
+      }
+
+      const topTopics = adapter
+        .prepare(
+          `SELECT topic, COUNT(*) as count FROM decisions
+           WHERE topic IS NOT NULL GROUP BY topic ORDER BY count DESC LIMIT 10`
+        )
+        .all() as Array<{ topic: string; count: number }>;
+
+      // 3. Recent decisions (last 20)
+      const recentDecisions = adapter
+        .prepare(
+          `SELECT id, topic, decision, outcome, confidence, created_at
+           FROM decisions ORDER BY created_at DESC LIMIT 20`
+        )
+        .all() as Array<{
+        id: string;
+        topic: string;
+        decision: string;
+        outcome: string | null;
+        confidence: number | null;
+        created_at: number;
+      }>;
+
+      // 4. Channel summaries (from channel_summary_state table, if it exists)
+      let channelSummaries: Array<{
+        channelKey: string;
+        updatedAt: number;
+      }> = [];
+      try {
+        const rawSummaries = adapter
+          .prepare(
+            'SELECT channel_key, updated_at FROM channel_summary_state ORDER BY updated_at DESC LIMIT 20'
+          )
+          .all() as Array<{ channel_key: string; updated_at: number }>;
+        channelSummaries = rawSummaries.map((r) => ({
+          channelKey: r.channel_key,
+          updatedAt: r.updated_at,
+        }));
+      } catch {
+        // Table may not exist yet — not an error
+      }
+
+      const payload = buildMemoryAgentDashboardPayload({
+        agentStats,
+        channelSummaries,
+        recentDecisions,
+        generatedAt: new Date().toISOString(),
+      });
+
+      res.json({
+        ...payload,
+        agent: agentStats,
+        memory: {
+          total: totalRow?.count ?? 0,
+          thisWeek: weekRow?.count ?? 0,
+          thisMonth: monthRow?.count ?? 0,
+          checkpoints: checkpointRow?.count ?? 0,
+          outcomes,
+          topTopics,
+        },
+        channelSummaries,
+      });
+    } catch (error) {
+      startLogger.error(
+        '[memory-agent/dashboard] Error',
+        error instanceof Error ? error : String(error)
+      );
+      res.status(500).json({
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   // Session API endpoints
@@ -3033,7 +3345,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       );
 
       // Stop agent loop
-      await agentLoop.stop();
+      await stopAgentLoops([agentLoop, memoryAgentLoop]);
 
       // Release all CLI sessions
       getSessionPool().dispose();

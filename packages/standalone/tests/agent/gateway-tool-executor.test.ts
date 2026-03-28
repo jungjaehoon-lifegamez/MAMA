@@ -54,6 +54,16 @@ describe('GatewayToolExecutor', () => {
       next_steps: 'Next steps',
       open_files: ['file1.ts'],
     }),
+    recallMemory: vi.fn().mockResolvedValue({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: { query: 'test', scope_order: ['project'], retrieval_sources: ['mock'] },
+    }),
+    ingestMemory: vi.fn().mockResolvedValue({
+      success: true,
+      id: 'ingested_123',
+    }),
   });
 
   // Shared context helpers (used by multiple test suites)
@@ -339,10 +349,50 @@ describe('GatewayToolExecutor', () => {
     });
   });
 
+  describe('memory v2 tools', () => {
+    it('should route mama_add through ingestMemory instead of fact JSON parsing', async () => {
+      const mockApi = createMockApi();
+      const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+      executor.setAgentContext({
+        source: 'telegram',
+        platform: 'telegram',
+        roleName: 'os_agent',
+        role: {
+          allowedTools: ['*'],
+          systemControl: false,
+          sensitiveAccess: false,
+        },
+        session: {
+          sessionId: 'test-session',
+          channelId: '7026976631',
+          userId: '7026976631',
+          startedAt: new Date(),
+        },
+        capabilities: ['mama_add'],
+        limitations: [],
+      });
+
+      const result = await executor.execute('mama_add', {
+        content: 'User prefers concise answers in this repo',
+      });
+
+      expect(mockApi.ingestMemory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scopes: expect.arrayContaining([
+            expect.objectContaining({ kind: 'channel', id: 'telegram:7026976631' }),
+            expect.objectContaining({ kind: 'user', id: '7026976631' }),
+          ]),
+        })
+      );
+      expect(result).toMatchObject({ success: true, saved: 1 });
+    });
+  });
+
   describe('static methods', () => {
     it('should return valid tools', () => {
       const tools = GatewayToolExecutor.getValidTools();
       expect(tools).toContain('mama_search');
+      expect(tools).toContain('mama_recall');
       expect(tools).toContain('mama_save');
       expect(tools).toContain('mama_update');
       expect(tools).toContain('mama_load_checkpoint');
@@ -363,6 +413,7 @@ describe('GatewayToolExecutor', () => {
     it('should check valid tool names', () => {
       expect(GatewayToolExecutor.isValidTool('mama_save')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('mama_search')).toBe(true);
+      expect(GatewayToolExecutor.isValidTool('mama_recall')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('mama_update')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('mama_load_checkpoint')).toBe(true);
       expect(GatewayToolExecutor.isValidTool('Read')).toBe(true);

@@ -1,6 +1,4 @@
 import { EventEmitter } from 'events';
-import { homedir } from 'os';
-import { join } from 'path';
 import {
   CodexMCPProcess,
   type CodexMCPOptions,
@@ -63,10 +61,10 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       systemPrompt: options.systemPrompt,
       cwd: options.cwd,
       sandbox: options.sandbox,
+      codexHome: options.codexHome,
       command: options.command,
       compactPrompt: 'Summarize the conversation concisely, preserving key decisions and context.',
       timeoutMs: options.requestTimeout,
-      codexHome: join(homedir(), '.mama', '.codex'),
     };
     this.wrapper = new CodexMCPProcess(wrapperOptions);
   }
