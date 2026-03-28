@@ -330,104 +330,41 @@ export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSna
   return classifyProfileEntries(records);
 }
 
-// ---------------------------------------------------------------------------
-// Lexical token-overlap ranking (supplements vector search when results are sparse)
-// ---------------------------------------------------------------------------
-const LEXICAL_STOPWORDS = new Set([
-  'a',
-  'an',
-  'and',
-  'are',
-  'as',
-  'at',
-  'be',
-  'by',
-  'do',
-  'for',
-  'from',
-  'has',
-  'have',
-  'how',
-  'i',
-  'in',
-  'is',
-  'it',
-  'my',
-  'of',
-  'on',
-  'or',
-  'the',
-  'to',
-  'was',
-  'what',
-  'when',
-  'where',
-  'which',
-  'who',
-  'with',
-  'you',
-  'your',
-]);
-
-function rankByTokenOverlap(
-  query: string,
-  records: MemoryRecord[],
-  limit: number
-): (MemoryRecord & { _lexicalScore: number })[] {
-  const tokens = query
-    .toLowerCase()
-    .split(/[\s,.!?;:()[\]{}"']+/)
-    .filter((t) => t.length > 2 && !LEXICAL_STOPWORDS.has(t));
-
-  return records
-    .map((record) => {
-      const haystack = `${record.topic}\n${record.summary}\n${record.details}`.toLowerCase();
-      const score =
-        tokens.reduce(
-          (s, t) => s + (haystack.includes(t) ? (t.length >= 8 ? 3 : t.length >= 5 ? 2 : 1) : 0),
-          0
-        ) + (haystack.includes(query.toLowerCase()) ? 2 : 0);
-      return { ...record, _lexicalScore: score };
-    })
-    .filter((r) => r._lexicalScore > 0)
-    .sort(
-      (a, b) => b._lexicalScore - a._lexicalScore || Number(b.created_at) - Number(a.created_at)
-    )
-    .slice(0, limit);
-}
-
 export async function recallMemory(
   query: string,
   options: RecallMemoryOptions = {}
 ): Promise<RecallBundle> {
   const bundle = createEmptyRecallBundle(query);
-  // Primary: embedding-based vector search (semantic relevance)
+  const EXCLUDED_STATUSES: Set<string> = new Set([
+    'superseded',
+    'quarantined',
+    'contradicted',
+    'stale',
+  ]);
+
   let matched: MemoryRecord[] = [];
+  let retrievalSource = 'none';
+
+  // Primary: embedding-based vector search (same path as MCP SearchEngine)
   try {
     await initDB();
     const queryEmbedding = await generateEmbedding(query);
-    const vectorResults = await vectorSearch(queryEmbedding, 20, 0.2);
-    const EXCLUDED_STATUSES: Set<string> = new Set([
-      'superseded',
-      'quarantined',
-      'contradicted',
-      'stale',
-    ]);
+    const vectorResults = await vectorSearch(queryEmbedding, 20, 0.5);
 
-    // Filter vector results by scope if scopes are specified
-    let filteredVectorResults = vectorResults;
+    // Post-filter 1: scope
+    let filtered = vectorResults;
     if (options.scopes && options.scopes.length > 0) {
       const vectorIds = vectorResults.map((r) => String(r.id));
       const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
       const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
-      filteredVectorResults = vectorResults.filter((r) => {
+      filtered = vectorResults.filter((r) => {
         const scopes = scopeMap.get(String(r.id)) ?? [];
-        // Include unscoped results when no scope filter, or match scopes
         return scopes.length === 0 || scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
       });
     }
 
-    for (const result of filteredVectorResults as Array<
+    // Post-filter 2: truth status (exclude superseded/contradicted)
+    for (const result of filtered as Array<
       (typeof vectorResults)[number] & { similarity?: number; status?: string }
     >) {
       const effectiveStatus = (result.status as string) || (result.outcome as string) || '';
@@ -448,52 +385,18 @@ export async function recallMemory(
         updated_at: result.created_at ?? Date.now(),
       });
     }
+    if (matched.length > 0) retrievalSource = 'vector_search';
   } catch {
-    // Vector search unavailable — fall through to truth + text search
+    // Vector search unavailable — fall through to text fallback
   }
 
-  // Supplement with truth projection if vector search returned few results
-  if (matched.length < 3) {
-    const truthRows = await queryRelevantTruth({
-      query,
-      scopes: options.scopes ?? [],
-      includeHistory: options.includeHistory === true,
-    });
-    const truthRecords = truthRows.map(truthRowToMemoryRecord);
-    const existingIds = new Set(matched.map((m) => m.id));
-    for (const record of truthRecords) {
-      if (!existingIds.has(record.id)) {
-        matched.push(record);
-      }
-    }
-  }
-
-  // Supplement with lexical ranking when vector + truth results are insufficient
-  if (matched.length < 5) {
-    const allRecords = await loadScopedMemories(options.scopes ?? []);
-    const lexicalMatches = rankByTokenOverlap(query, allRecords, 10);
-    const existingIds = new Set(matched.map((m) => m.id));
-    for (const record of lexicalMatches) {
-      if (!existingIds.has(record.id)) {
-        matched.push(record);
-        if (matched.length >= 10) break;
-      }
-    }
-  }
-
-  // Final fallback: text token matching
+  // Fallback: text token matching (only when vector search fails entirely)
   if (matched.length === 0) {
     const records = await loadScopedMemories(options.scopes ?? []);
     const tokens = query
       .toLowerCase()
       .split(/[\s,.!?;:()[\]{}"']+/)
-      .filter((token) => token.length > 1);
-    const EXCLUDED_STATUSES: Set<string> = new Set([
-      'superseded',
-      'quarantined',
-      'contradicted',
-      'stale',
-    ]);
+      .filter((token) => token.length > 2);
     matched = records.filter((record) => {
       if (!options.includeHistory && EXCLUDED_STATUSES.has(record.status)) {
         return false;
@@ -501,8 +404,9 @@ export async function recallMemory(
       const haystack = [record.topic, record.summary, record.details].join(' ').toLowerCase();
       return tokens.length === 0
         ? haystack.includes(query.toLowerCase())
-        : tokens.some((token) => haystack.includes(token));
+        : tokens.filter((token) => haystack.includes(token)).length >= 2;
     });
+    if (matched.length > 0) retrievalSource = 'text_fallback';
   }
 
   bundle.memories = matched;
@@ -510,7 +414,7 @@ export async function recallMemory(
   bundle.graph_context.expanded = [];
   bundle.graph_context.edges = [];
   bundle.search_meta.scope_order = (options.scopes ?? []).map((scope) => scope.kind);
-  bundle.search_meta.retrieval_sources = matched.length > 0 ? ['vector_search'] : ['none'];
+  bundle.search_meta.retrieval_sources = [retrievalSource];
 
   if (options.includeProfile) {
     bundle.profile = await buildProfile(options.scopes ?? []);

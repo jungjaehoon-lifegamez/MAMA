@@ -1325,6 +1325,28 @@ export async function runAgentLoop(
   const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mamaCore = require('@jungjaehoon/mama-core');
+
+  // Set extraction backend to Claude CLI persistent session (no API key needed)
+  if (mamaCore.setExtractionFn) {
+    const { PersistentClaudeProcess } = await import('../../agent/persistent-cli-process.js');
+    const { parseExtractionResponse } = mamaCore;
+    let extractionProcess: InstanceType<typeof PersistentClaudeProcess> | null = null;
+
+    mamaCore.setExtractionFn(async (prompt: string) => {
+      if (!extractionProcess) {
+        extractionProcess = new PersistentClaudeProcess({
+          sessionId: 'extraction-cli',
+          model: 'claude-haiku-4-5-20251001',
+          systemPrompt: 'You are a memory extraction assistant. Extract structured memory units from conversations.',
+          dangerouslySkipPermissions: true,
+        });
+        await extractionProcess.start();
+      }
+      const result = await extractionProcess.sendMessage(prompt);
+      return parseExtractionResponse(result.response);
+    });
+  }
+
   const mamaApi = (
     mamaCore && typeof mamaCore === 'object' && 'mama' in mamaCore ? mamaCore.mama : mamaCore
   ) as {

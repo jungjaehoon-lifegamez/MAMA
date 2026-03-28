@@ -1,0 +1,6 @@
+node_modules/
+data/benchmarks/longmemeval/datasets/*.json
+data/runs/
+ui/node_modules/
+ui/.next/
+*.db
