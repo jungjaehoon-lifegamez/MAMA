@@ -299,6 +299,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 | [@jungjaehoon/mama-os](packages/standalone/README.md)     | 0.14.5  | Your AI Operating System (agent + gateway)   | npm                |
 | [@jungjaehoon/mama-server](packages/mcp-server/README.md) | 1.9.3   | MCP server for Claude Desktop/Code           | npm                |
 | [@jungjaehoon/mama-core](packages/mama-core/README.md)    | 1.3.3   | Shared core library (embeddings, DB, memory) | npm                |
+| [memorybench](packages/memorybench/README.md)             | 1.0.0   | Memory retrieval benchmarking framework      | Internal           |
 | [mama](packages/claude-code-plugin/README.md)             | 1.8.3   | Claude Code plugin                           | Claude Marketplace |
 
 > **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
@@ -391,7 +392,7 @@ mama status
 
 ## 🏗️ Project Structure
 
-This is a monorepo containing four packages:
+This is a monorepo containing five packages:
 
 ```
 MAMA/
@@ -399,6 +400,7 @@ MAMA/
 │   ├── standalone/          # @jungjaehoon/mama-os (npm)
 │   ├── mama-core/           # @jungjaehoon/mama-core (npm)
 │   ├── mcp-server/          # @jungjaehoon/mama-server (npm)
+│   ├── memorybench/         # Memory retrieval benchmarking framework
 │   └── claude-code-plugin/  # mama (Claude Code marketplace)
 └── docs/                    # Documentation
 ```

@@ -454,17 +454,18 @@ export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSna
   return classifyProfileEntries(records);
 }
 
+const EXCLUDED_STATUSES: Set<string> = new Set([
+  'superseded',
+  'quarantined',
+  'contradicted',
+  'stale',
+]);
+
 export async function recallMemory(
   query: string,
   options: RecallMemoryOptions = {}
 ): Promise<RecallBundle> {
   const bundle = createEmptyRecallBundle(query);
-  const EXCLUDED_STATUSES: Set<string> = new Set([
-    'superseded',
-    'quarantined',
-    'contradicted',
-    'stale',
-  ]);
 
   let matched: MemoryRecord[] = [];
   let retrievalSource = 'none';
