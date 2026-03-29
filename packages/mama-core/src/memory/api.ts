@@ -20,6 +20,7 @@ import type {
   MemoryKind,
   MemoryAgentBootstrap,
   MemoryAuditAck,
+  MemoryEdge,
   MemoryRecord,
   MemoryScopeKind,
   MemoryScopeRef,
@@ -53,6 +54,7 @@ interface RecallMemoryOptions {
   scopes?: MemoryScopeRef[];
   includeProfile?: boolean;
   includeHistory?: boolean;
+  skipGraphExpansion?: boolean;
 }
 
 interface IngestMemoryInput {
@@ -308,6 +310,31 @@ function mergeRecallCandidates(
       return Number(right.memory.created_at) - Number(left.memory.created_at);
     })
     .map((candidate) => candidate.memory);
+}
+
+export async function loadEdgesForIds(ids: string[]): Promise<MemoryEdge[]> {
+  if (ids.length === 0) return [];
+  await initDB();
+  const adapter = getAdapter();
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = adapter
+    .prepare(
+      `SELECT from_id, to_id, relationship AS type, reason
+       FROM decision_edges
+       WHERE from_id IN (${placeholders}) OR to_id IN (${placeholders})`
+    )
+    .all(...ids, ...ids) as Array<{
+    from_id: string;
+    to_id: string;
+    type: string;
+    reason: string | null;
+  }>;
+  return rows.map((row) => ({
+    from_id: row.from_id,
+    to_id: row.to_id,
+    type: row.type as MemoryEdge['type'],
+    reason: row.reason ?? undefined,
+  }));
 }
 
 export async function saveMemory(
