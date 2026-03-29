@@ -1234,6 +1234,35 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: POST /api/mama/audit-conversation - ingest via memory agent (creates edges)
+    if (pathname === '/api/mama/audit-conversation' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        if (!options.auditConversation) {
+          res.writeHead(501, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));
+          return true;
+        }
+        const messages = (body.messages || []) as Array<{
+          role: 'user' | 'assistant';
+          content: string;
+        }>;
+        const conversation = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
+        const scopes = (body.scopes || []) as Array<{ kind: string; id: string }>;
+        const candidates = body.candidates as
+          | Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>
+          | undefined;
+        const ack = await options.auditConversation({ conversation, scopes, candidates });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ack }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message }));
+      }
+      return true;
+    }
+
     // Alias: POST /api/update -> /graph/update
     if (pathname === '/api/update' && req.method === 'POST') {
       await handleUpdateRequest(req, res);
