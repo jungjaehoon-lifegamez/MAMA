@@ -64,29 +64,6 @@ const STOPWORDS = new Set([
   "you",
   "your",
 ])
-const PHOTOGRAPHY_EXPANSION = [
-  "camera",
-  "flash",
-  "lens",
-  "tripod",
-  "sony",
-  "compatible",
-  "gear",
-  "photo",
-]
-const DINNER_EXPANSION = [
-  "recipe",
-  "cook",
-  "dinner",
-  "serve",
-  "ingredients",
-  "homegrown",
-  "tomatoes",
-  "basil",
-  "mint",
-  "garden",
-  "herbs",
-]
 
 export class MAMAProvider implements Provider {
   name = "mama"
@@ -278,18 +255,8 @@ export class MAMAProvider implements Provider {
       .slice(0, limit)
   }
 
-  private getExpandedQueryTokens(query: string): string[] {
-    const normalized = query.toLowerCase()
-    const expansions: string[] = []
-
-    if (/\b(photo|photography|camera|accessor|setup|gear)\b/i.test(normalized)) {
-      expansions.push(...PHOTOGRAPHY_EXPANSION)
-    }
-    if (/\b(dinner|serve|ingredient|homegrown|garden|cook|recipe|meal)\b/i.test(normalized)) {
-      expansions.push(...DINNER_EXPANSION)
-    }
-
-    return expansions
+  private getExpandedQueryTokens(_query: string): string[] {
+    return []
   }
 
   async semanticRerankLocalRecords(
@@ -522,13 +489,8 @@ ${candidates
   async search(query: string, options: SearchOptions): Promise<unknown[]> {
     const limit = options.limit || 10
     const topicPrefix = `bench_${options.containerTag}_`
-    const preferenceLikeQuery = this.isPreferenceLikeQuery(query)
-    const localPreferenceCandidates = preferenceLikeQuery
-      ? this.rankLocalRecords(options.containerTag, query, Math.max(limit * 4, 20))
-      : []
 
-    const scopedLimit = preferenceLikeQuery ? Math.max(limit * 2, 20) : limit
-    const scopedUrl = `${this.baseUrl}/api/mama/search?q=${encodeURIComponent(query)}&limit=${scopedLimit}&topicPrefix=${encodeURIComponent(topicPrefix)}`
+    const scopedUrl = `${this.baseUrl}/api/mama/search?q=${encodeURIComponent(query)}&limit=${limit}&topicPrefix=${encodeURIComponent(topicPrefix)}`
     const scopedResponse = await fetch(scopedUrl)
     if (scopedResponse.ok) {
       const scopedData = (await scopedResponse.json()) as {
@@ -545,17 +507,13 @@ ${candidates
       }
 
       if (scopedData.results && scopedData.results.length > 0) {
-        const scopedCandidates = scopedData.results.map((r) => ({
+        return scopedData.results.slice(0, limit).map((r) => ({
           id: r.id,
           content: `${r.decision}\n\n${r.reasoning}`,
           topic: r.topic,
           score: r.similarity,
           created_at: r.created_at,
         }))
-        const mergedCandidates = preferenceLikeQuery
-          ? this.mergeCandidates(scopedCandidates, localPreferenceCandidates)
-          : scopedCandidates
-        return await this.maybeSemanticRerank(query, mergedCandidates, limit)
       }
     }
 
@@ -587,14 +545,13 @@ ${candidates
     const filtered = data.results.filter((r) => r.topic.startsWith(topicPrefix))
 
     if (filtered.length > 0) {
-      const filteredCandidates = filtered.map((r) => ({
+      return filtered.slice(0, limit).map((r) => ({
         id: r.id,
         content: `${r.decision}\n\n${r.reasoning}`,
         topic: r.topic,
         score: r.similarity,
         created_at: r.created_at,
       }))
-      return await this.maybeSemanticRerank(query, filteredCandidates, limit)
     }
 
     logger.warn(`No isolated MAMA search results for ${options.containerTag}`)
@@ -603,7 +560,7 @@ ${candidates
       query,
       Math.max(limit * 3, 20)
     )
-    return await this.maybeSemanticRerank(query, localCandidates, limit)
+    return localCandidates.slice(0, limit)
   }
 
   async clear(containerTag: string): Promise<void> {

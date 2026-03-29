@@ -177,13 +177,15 @@ test("MAMAProvider.search should fall back to local scoped ranking when MAMA ret
     {
       id: "local-1",
       topic: "bench_target-container_session_1",
-      content: "user: How long did I wait for the decision on my asylum application?\nassistant: You waited over a year for the decision.",
+      content:
+        "user: How long did I wait for the decision on my asylum application?\nassistant: You waited over a year for the decision.",
       created_at: 10,
     },
     {
       id: "local-2",
       topic: "bench_target-container_session_2",
-      content: "user: Tell me about Swedish immigration policies.\nassistant: Here are several policy notes.",
+      content:
+        "user: Tell me about Swedish immigration policies.\nassistant: Here are several policy notes.",
       created_at: 11,
     },
   ])
@@ -192,10 +194,13 @@ test("MAMAProvider.search should fall back to local scoped ranking when MAMA ret
   globalThis.fetch = (async () => createResponse({ results: [] })) as typeof fetch
 
   try {
-    const results = await provider.search("How long did I wait for the decision on my asylum application?", {
-      containerTag: "target-container",
-      limit: 5,
-    })
+    const results = await provider.search(
+      "How long did I wait for the decision on my asylum application?",
+      {
+        containerTag: "target-container",
+        limit: 5,
+      }
+    )
 
     assert.equal(results.length, 1)
     assert.equal((results[0] as { id: string }).id, "local-1")
@@ -236,10 +241,13 @@ test("MAMAProvider.ingest should preserve late-session facts for scoped fallback
       { containerTag: "target-container" }
     )
 
-    const results = await provider.search("How long did I wait for the decision on my asylum application?", {
-      containerTag: "target-container",
-      limit: 5,
-    })
+    const results = await provider.search(
+      "How long did I wait for the decision on my asylum application?",
+      {
+        containerTag: "target-container",
+        limit: 5,
+      }
+    )
 
     assert.equal(results.length, 1)
     assert.equal((results[0] as { id: string }).id, "saved-1")
@@ -248,7 +256,7 @@ test("MAMAProvider.ingest should preserve late-session facts for scoped fallback
   }
 })
 
-test("MAMAProvider.search should apply semantic rerank to local scoped candidates", async () => {
+test("MAMAProvider.search should return local scoped candidates in lexical rank order", async () => {
   const provider = new MAMAProvider()
   ;(provider as unknown as { baseUrl: string }).baseUrl = "http://localhost:3847"
   ;(
@@ -267,7 +275,7 @@ test("MAMAProvider.search should apply semantic rerank to local scoped candidate
       created_at: 10,
     },
     {
-      id: "semantic-best",
+      id: "lexical-second",
       topic: "bench_target-container_session_2",
       content:
         "user: I harvested homegrown cherry tomatoes, basil, and mint. assistant: You should serve a dinner that showcases those ingredients.",
@@ -277,29 +285,26 @@ test("MAMAProvider.search should apply semantic rerank to local scoped candidate
 
   const originalFetch = globalThis.fetch
   globalThis.fetch = (async () => createResponse({ results: [] })) as typeof fetch
-  ;(provider as unknown as {
-    semanticRerankLocalRecords?: (
-      query: string,
-      candidates: Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
-    ) => Promise<Array<{ id: string; topic: string; content: string; created_at: number; score: number }>>
-  }).semanticRerankLocalRecords = async (_query, candidates) => [
-    candidates.find((candidate) => candidate.id === "semantic-best")!,
-    candidates.find((candidate) => candidate.id === "lexical-top")!,
-  ]
 
   try {
-    const results = await provider.search("What should I serve for dinner this weekend with my homegrown ingredients?", {
-      containerTag: "target-container",
-      limit: 5,
-    })
+    const results = await provider.search(
+      "What should I serve for dinner this weekend with my homegrown ingredients?",
+      {
+        containerTag: "target-container",
+        limit: 5,
+      }
+    )
 
-    assert.equal((results[0] as { id: string }).id, "semantic-best")
+    // Both records should be returned; lexical ranking determines order, no reranking
+    assert.ok(results.length >= 1)
+    const ids = results.map((r) => (r as { id: string }).id)
+    assert.ok(ids.includes("lexical-top"))
   } finally {
     globalThis.fetch = originalFetch
   }
 })
 
-test("MAMAProvider.search should expand preference-style queries to include domain-specific candidates", async () => {
+test("MAMAProvider.search should find accessory-related candidates via lexical ranking", async () => {
   const provider = new MAMAProvider()
   ;(provider as unknown as { baseUrl: string }).baseUrl = "http://localhost:3847"
   ;(
@@ -338,14 +343,18 @@ test("MAMAProvider.search should expand preference-style queries to include doma
       }
     )
 
+    // sony-flash has "accessories" and "setup" which match query tokens directly
     const ids = results.map((result) => (result as { id: string }).id)
-    assert.ok(ids.includes("sony-flash"))
+    assert.ok(
+      ids.includes("sony-flash"),
+      `expected sony-flash in results, got: ${JSON.stringify(ids)}`
+    )
   } finally {
     globalThis.fetch = originalFetch
   }
 })
 
-test("MAMAProvider.search should apply semantic rerank to ambiguous server-scoped results", async () => {
+test("MAMAProvider.search should return server-scoped results in server-returned order", async () => {
   const provider = new MAMAProvider()
   ;(provider as unknown as { baseUrl: string }).baseUrl = "http://localhost:3847"
 
@@ -356,20 +365,18 @@ test("MAMAProvider.search should apply semantic rerank to ambiguous server-scope
       return createResponse({
         results: [
           {
-            id: "lexical-top",
+            id: "server-first",
             topic: "bench_target-container_session_1",
-            decision:
-              "You asked for dinner ideas for this weekend with ingredients to serve, but there was no mention of homegrown produce.",
-            reasoning: "Lexically close but wrong fact cluster.",
+            decision: "First result returned by server.",
+            reasoning: "Higher similarity score.",
             similarity: 8,
             created_at: 10,
           },
           {
-            id: "semantic-best",
+            id: "server-second",
             topic: "bench_target-container_session_2",
-            decision:
-              "You harvested homegrown cherry tomatoes, basil, and mint and wanted dinner ideas that showcase those ingredients.",
-            reasoning: "Exact preference-bearing detail.",
+            decision: "Second result returned by server.",
+            reasoning: "Lower similarity score.",
             similarity: 7,
             created_at: 11,
           },
@@ -379,29 +386,21 @@ test("MAMAProvider.search should apply semantic rerank to ambiguous server-scope
     return createResponse({ results: [] })
   }) as typeof fetch
 
-  ;(provider as unknown as {
-    semanticRerankLocalRecords?: (
-      query: string,
-      candidates: Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
-    ) => Promise<Array<{ id: string; topic: string; content: string; created_at: number; score: number }>>
-  }).semanticRerankLocalRecords = async (_query, candidates) => [
-    candidates.find((candidate) => candidate.id === "semantic-best")!,
-    candidates.find((candidate) => candidate.id === "lexical-top")!,
-  ]
-
   try {
-    const results = await provider.search("What should I serve for dinner this weekend with my homegrown ingredients?", {
+    const results = await provider.search("query", {
       containerTag: "target-container",
       limit: 5,
     })
 
-    assert.equal((results[0] as { id: string }).id, "semantic-best")
+    // Server result order is preserved as-is, no reranking
+    assert.equal((results[0] as { id: string }).id, "server-first")
+    assert.equal((results[1] as { id: string }).id, "server-second")
   } finally {
     globalThis.fetch = originalFetch
   }
 })
 
-test("MAMAProvider.search should merge local expanded candidates for preference queries before reranking", async () => {
+test("MAMAProvider.search should return server-scoped results without merging local candidates", async () => {
   const provider = new MAMAProvider()
   ;(provider as unknown as { baseUrl: string }).baseUrl = "http://localhost:3847"
   ;(
@@ -413,10 +412,9 @@ test("MAMAProvider.search should merge local expanded candidates for preference 
     }
   ).localRecords.set("target-container", [
     {
-      id: "sony-flash",
+      id: "local-only",
       topic: "bench_target-container_session_35",
-      content:
-        "user: I'm looking to upgrade my camera flash. Can you recommend some good options that are compatible with my Sony A7R IV? assistant: Here are several Sony-compatible flash options and accessories for your camera setup.",
+      content: "local record that should not be merged into server results",
       created_at: 35,
     },
   ])
@@ -428,10 +426,10 @@ test("MAMAProvider.search should merge local expanded candidates for preference 
       return createResponse({
         results: [
           {
-            id: "generic-tips",
+            id: "server-result",
             topic: "bench_target-container_session_8",
-            decision: "Here are props and backdrops for candle photography.",
-            reasoning: "Lexically matched but not the best gear preference memory.",
+            decision: "Server returned this result.",
+            reasoning: "Matched by server search.",
             similarity: 8,
             created_at: 8,
           },
@@ -441,26 +439,15 @@ test("MAMAProvider.search should merge local expanded candidates for preference 
     return createResponse({ results: [] })
   }) as typeof fetch
 
-  ;(provider as unknown as {
-    semanticRerankLocalRecords?: (
-      query: string,
-      candidates: Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
-    ) => Promise<Array<{ id: string; topic: string; content: string; created_at: number; score: number }>>
-  }).semanticRerankLocalRecords = async (_query, candidates) => [
-    candidates.find((candidate) => candidate.id === "sony-flash")!,
-    ...candidates.filter((candidate) => candidate.id !== "sony-flash"),
-  ]
-
   try {
-    const results = await provider.search(
-      "Can you suggest some accessories that would complement my current photography setup?",
-      {
-        containerTag: "target-container",
-        limit: 5,
-      }
-    )
+    const results = await provider.search("query", {
+      containerTag: "target-container",
+      limit: 5,
+    })
 
-    assert.equal((results[0] as { id: string }).id, "sony-flash")
+    // When server returns results, use them directly — no local merge
+    assert.equal(results.length, 1)
+    assert.equal((results[0] as { id: string }).id, "server-result")
   } finally {
     globalThis.fetch = originalFetch
   }
