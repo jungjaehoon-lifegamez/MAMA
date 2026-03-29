@@ -3532,6 +3532,7 @@ const mama = {
   verifyBackupExists,
   deleteAutoLinks,
   validateCleanupResult,
+  expandWithGraph,
 };
 
 // Named exports for ESM consumers
