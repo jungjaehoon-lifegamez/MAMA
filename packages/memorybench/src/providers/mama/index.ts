@@ -21,6 +21,7 @@ import { executeCodexPrompt } from "../../utils/codex"
 
 const DEFAULT_BASE_URL = "http://localhost:3847"
 const STATE_FILE_NAME = "mama-provider-state.json"
+// Synced from mama-core/src/memory/api.ts LEXICAL_STOPWORDS
 const STOPWORDS = new Set([
   "a",
   "an",

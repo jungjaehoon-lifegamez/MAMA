@@ -10,6 +10,7 @@ const MAX_CONTEXT_EXCERPT_CHARS = 600
 const EXCERPT_WINDOW_CHARS = 600
 const MAX_CLUES_PER_TYPE = 10
 const MAX_CLUE_CHARS = 220
+// Synced from mama-core/src/memory/api.ts LEXICAL_STOPWORDS
 const STOPWORDS = new Set([
   "a",
   "an",
