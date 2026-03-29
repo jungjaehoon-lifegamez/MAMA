@@ -584,6 +584,52 @@ export async function recallMemory(
   bundle.graph_context.primary = matched;
   bundle.graph_context.expanded = [];
   bundle.graph_context.edges = [];
+
+  if (matched.length > 0 && !options.skipGraphExpansion) {
+    try {
+      const candidates = matched.map((m) => ({
+        id: m.id,
+        topic: m.topic,
+        decision: m.summary,
+        confidence: m.confidence,
+        created_at: m.created_at,
+        similarity: m.confidence ?? 0.5,
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mamaApiModule: any = await import('../mama-api.js');
+      const expanded = await mamaApiModule.default.expandWithGraph(candidates);
+      const primaryIds = new Set(matched.map((m) => m.id));
+      const expandedOnly = expanded.filter(
+        (e: Record<string, unknown>) => !primaryIds.has(e.id as string)
+      );
+
+      bundle.graph_context.expanded = expandedOnly.map((e: Record<string, unknown>) => ({
+        id: String(e.id),
+        topic: String(e.topic || ''),
+        kind: 'decision' as const,
+        summary: String(e.decision || ''),
+        details: '',
+        confidence: (e.graph_rank as number) ?? 0.5,
+        status: 'active' as const,
+        scopes: [],
+        source: {
+          package: 'mama-core' as const,
+          source_type: String(e.graph_source || 'graph_expansion'),
+        },
+        created_at: (e.created_at as number) ?? Date.now(),
+        updated_at: (e.created_at as number) ?? Date.now(),
+      }));
+
+      const allIds = [
+        ...matched.map((m) => m.id),
+        ...expandedOnly.map((e: Record<string, unknown>) => String(e.id)),
+      ];
+      bundle.graph_context.edges = await loadEdgesForIds(allIds);
+    } catch {
+      // Graph expansion is best-effort; do not fail recall
+    }
+  }
+
   bundle.search_meta.scope_order = (options.scopes ?? []).map((scope) => scope.kind);
   bundle.search_meta.retrieval_sources = [retrievalSource];
 
