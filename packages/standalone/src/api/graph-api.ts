@@ -68,6 +68,10 @@ const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
 const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
+const DEFAULT_GRAPH_LIMIT = 300;
+const MAX_GRAPH_LIMIT = 1000;
+const GRAPH_PREVIEW_CHARS = 220;
+const SIMILAR_QUERY_DECISION_CHARS = 400;
 
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
@@ -105,9 +109,94 @@ function isValidPersonaPath(filePath: string): boolean {
   return ALLOWED_PERSONA_DIRS.some((dir) => resolvedPath.startsWith(dir + path.sep));
 }
 
-async function getAllNodes(): Promise<GraphNode[]> {
+type GraphDecisionRow = {
+  id: string;
+  topic: string;
+  decision: string;
+  reasoning: string;
+  outcome: string | null;
+  confidence: number | null;
+  created_at: number;
+};
+
+function buildDecisionPreview(decision: string): string {
+  const normalized = decision.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= GRAPH_PREVIEW_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, GRAPH_PREVIEW_CHARS)}...`;
+}
+
+function mapDecisionRowToGraphNode(row: GraphDecisionRow): GraphNode {
+  return {
+    id: row.id,
+    topic: row.topic,
+    decision_preview: buildDecisionPreview(row.decision),
+    outcome: row.outcome,
+    confidence: row.confidence,
+    created_at: row.created_at,
+  };
+}
+
+function parseGraphLimit(params: URLSearchParams): number | null {
+  if (params.get('full') === 'true') {
+    return null;
+  }
+
+  const rawLimit = params.get('limit');
+  if (!rawLimit) {
+    return DEFAULT_GRAPH_LIMIT;
+  }
+
+  const parsed = parseInt(rawLimit, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_GRAPH_LIMIT;
+  }
+
+  return Math.min(parsed, MAX_GRAPH_LIMIT);
+}
+
+function buildGraphMeta(input: {
+  totalNodes: number;
+  totalEdges: number;
+  similarityEdges: number;
+  isPartial: boolean;
+  returnedNodes: number;
+  returnedEdges: number;
+}): Record<string, number | boolean> {
+  return {
+    total_nodes: input.returnedNodes,
+    total_edges: input.returnedEdges,
+    similarity_edges: input.similarityEdges,
+    partial: input.isPartial,
+    total_available_nodes: input.totalNodes,
+    total_available_edges: input.totalEdges,
+  };
+}
+
+async function getAllNodes(limit?: number | null): Promise<GraphNode[]> {
   const adapter = getAdapter();
 
+  const sql = `
+    SELECT
+      id,
+      topic,
+      decision,
+      outcome,
+      confidence,
+      created_at
+    FROM decisions
+    ORDER BY created_at DESC
+  `;
+  const stmt = adapter.prepare(limit ? `${sql}\nLIMIT ?` : sql);
+
+  const rows = (limit ? stmt.all(limit) : stmt.all()) as GraphDecisionRow[];
+
+  return rows.map(mapDecisionRowToGraphNode);
+}
+
+async function getDecisionDetail(id: string): Promise<GraphNode | null> {
+  const adapter = getAdapter();
   const stmt = adapter.prepare(`
     SELECT
       id,
@@ -118,20 +207,15 @@ async function getAllNodes(): Promise<GraphNode[]> {
       confidence,
       created_at
     FROM decisions
-    ORDER BY created_at DESC
+    WHERE id = ?
   `);
 
-  const rows = stmt.all() as Array<{
-    id: string;
-    topic: string;
-    decision: string;
-    reasoning: string;
-    outcome: string | null;
-    confidence: number | null;
-    created_at: number;
-  }>;
+  const row = stmt.get(id) as GraphDecisionRow | undefined;
+  if (!row) {
+    return null;
+  }
 
-  return rows.map((row) => ({
+  return {
     id: row.id,
     topic: row.topic,
     decision: row.decision,
@@ -139,7 +223,8 @@ async function getAllNodes(): Promise<GraphNode[]> {
     outcome: row.outcome,
     confidence: row.confidence,
     created_at: row.created_at,
-  }));
+    decision_preview: buildDecisionPreview(row.decision),
+  };
 }
 
 async function getAllEdges(): Promise<GraphEdge[]> {
@@ -284,12 +369,16 @@ async function handleGraphRequest(
   try {
     await initDB();
 
-    let nodes = await getAllNodes();
-    let edges = await getAllEdges();
+    const limit = parseGraphLimit(params);
+    const allEdges = await getAllEdges();
+    let nodes = await getAllNodes(limit);
+    let edges = allEdges;
 
     const topicFilter = params.get('topic');
     if (topicFilter) {
       nodes = filterNodesByTopic(nodes, topicFilter);
+      edges = filterEdgesByNodes(edges, nodes);
+    } else if (limit !== null) {
       edges = filterEdgesByNodes(edges, nodes);
     }
 
@@ -301,15 +390,15 @@ async function handleGraphRequest(
       similarityEdges = similarityEdges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to));
     }
 
-    const allTopics = topicFilter ? [topicFilter] : getUniqueTopics(nodes);
-    const meta = {
-      total_nodes: nodes.length,
-      total_edges: edges.length,
-      similarity_edges: similarityEdges.length,
-      topics: allTopics,
-    };
-
     const latency = Date.now() - startTime;
+    const meta = buildGraphMeta({
+      totalNodes: limit ? await getDecisionCount() : nodes.length,
+      totalEdges: allEdges.length,
+      similarityEdges: similarityEdges.length,
+      isPartial: !topicFilter && limit !== null,
+      returnedNodes: nodes.length,
+      returnedEdges: edges.length,
+    });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
@@ -332,6 +421,51 @@ async function handleGraphRequest(
         message,
       })
     );
+  }
+}
+
+async function getDecisionCount(): Promise<number> {
+  const adapter = getAdapter();
+  const row = adapter.prepare('SELECT COUNT(*) as count FROM decisions').get() as
+    | { count: number }
+    | undefined;
+  return row?.count ?? 0;
+}
+
+async function handleGraphDetailRequest(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: URLSearchParams
+): Promise<void> {
+  try {
+    const decisionId = params.get('id');
+    if (!decisionId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'MISSING_ID',
+          message: 'Missing required parameter: id',
+        })
+      );
+      return;
+    }
+
+    await initDB();
+    const detail = await getDecisionDetail(decisionId);
+    if (!detail) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, code: 'NOT_FOUND', message: 'Decision not found' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ node: detail }));
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('Graph detail error:', message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: true, code: 'INTERNAL_ERROR', message }));
   }
 }
 
@@ -504,7 +638,7 @@ async function handleSimilarRequest(
       return;
     }
 
-    const searchQuery = `${decision.topic} ${decision.decision}`;
+    const searchQuery = `${decision.topic} ${decision.decision.slice(0, SIMILAR_QUERY_DECISION_CHARS)}`;
     console.log(
       `[GraphAPI] Searching for similar decisions with query: "${searchQuery.substring(0, 50)}..."`
     );
@@ -574,7 +708,7 @@ async function handleMamaSearchRequest(
 ): Promise<void> {
   try {
     const query = params.get('q');
-    const limit = Math.min(parseInt(params.get('limit') || '10', 10), 20);
+    const limit = Math.min(parseInt(params.get('limit') || '10', 10), 500);
 
     if (!query) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -590,8 +724,10 @@ async function handleMamaSearchRequest(
 
     await initDB();
 
+    const topicPrefix = params.get('topicPrefix') || '';
+    const fetchLimit = topicPrefix ? Math.max(limit * 5, 100) : limit;
     const searchResults = await mama.suggest(query, {
-      limit: limit,
+      limit: fetchLimit,
       threshold: 0.3,
     });
 
@@ -606,7 +742,11 @@ async function handleMamaSearchRequest(
       created_at: number;
     }> = [];
     if (searchResults && searchResults.results) {
-      results = (searchResults.results as Array<Record<string, unknown>>).map((r) => ({
+      let rawResults = searchResults.results as Array<Record<string, unknown>>;
+      if (topicPrefix) {
+        rawResults = rawResults.filter((r) => String(r.topic || '').startsWith(topicPrefix));
+      }
+      results = rawResults.slice(0, limit).map((r) => ({
         id: r.id as string,
         topic: r.topic as string,
         decision: r.decision as string,
@@ -994,6 +1134,12 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: GET /graph/detail - fetch full node detail lazily
+    if (pathname === '/graph/detail' && req.method === 'GET') {
+      await handleGraphDetailRequest(req, res, params);
+      return true;
+    }
+
     // Route: POST /graph/update - update decision outcome
     if (pathname === '/graph/update' && req.method === 'POST') {
       await handleUpdateRequest(req, res);
@@ -1009,6 +1155,12 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Alias: GET /api/graph -> /graph
     if (pathname === '/api/graph' && req.method === 'GET') {
       await handleGraphRequest(req, res, params);
+      return true;
+    }
+
+    // Alias: GET /api/graph/detail -> /graph/detail
+    if (pathname === '/api/graph/detail' && req.method === 'GET') {
+      await handleGraphDetailRequest(req, res, params);
       return true;
     }
 
@@ -1063,9 +1215,14 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         };
         const result = await ingestConversation({
           messages: (body.messages || []) as Array<{ role: 'user' | 'assistant'; content: string }>,
-          scopes: (body.scopes || []) as Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>,
+          scopes: (body.scopes || []) as Array<{
+            kind: 'global' | 'user' | 'channel' | 'project';
+            id: string;
+          }>,
           source: { package: source.package as 'standalone', source_type: source.source_type },
-          extract: body.extract as { enabled: boolean; model?: string; apiKey?: string } | undefined,
+          extract: body.extract as
+            | { enabled: boolean; model?: string; apiKey?: string }
+            | undefined,
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ...result }));
@@ -2907,6 +3064,10 @@ async function handleCodeActRequest(
 
 export {
   createGraphHandler,
+  DEFAULT_GRAPH_LIMIT,
+  mapDecisionRowToGraphNode,
+  parseGraphLimit,
+  buildGraphMeta,
   getAllNodes,
   getAllEdges,
   getAllCheckpoints,

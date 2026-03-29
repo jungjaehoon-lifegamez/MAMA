@@ -23,7 +23,13 @@ import {
   getErrorMessage,
 } from '../utils/dom.js';
 import { DebugLogger } from '../utils/debug-logger.js';
-import { API, type GraphNode, type GraphEdge, type SimilarDecision } from '../utils/api.js';
+import {
+  API,
+  type GraphNode,
+  type GraphEdge,
+  type SimilarDecision,
+  type QueryParams,
+} from '../utils/api.js';
 import { renderSafeMarkdown } from '../utils/markdown.js';
 
 type GraphNodeRecord = GraphNode & {
@@ -32,7 +38,7 @@ type GraphNodeRecord = GraphNode & {
   decision?: string;
   reasoning?: string;
   confidence?: number;
-  created_at?: string;
+  created_at?: string | number;
 };
 
 type GraphEdgeRecord = GraphEdge & {
@@ -59,6 +65,8 @@ type GraphInput = {
 };
 
 const logger = new DebugLogger('Graph');
+const INITIAL_GRAPH_LIMIT = 300;
+const PHYSICS_NODE_THRESHOLD = 400;
 
 /**
  * Graph Module Class
@@ -113,9 +121,9 @@ export class GraphModule {
   /**
    * Fetch graph data from API
    */
-  async fetchData(): Promise<GraphInput> {
+  async fetchData(params: QueryParams = { limit: INITIAL_GRAPH_LIMIT }): Promise<GraphInput> {
     try {
-      this.graphData = await API.getGraph();
+      this.graphData = await API.getGraph(params);
       logger.info('Graph data loaded:', this.graphData.meta);
       return this.graphData;
     } catch (error) {
@@ -198,7 +206,7 @@ export class GraphModule {
         width: 2,
       },
       physics: {
-        enabled: true,
+        enabled: data.nodes.length <= PHYSICS_NODE_THRESHOLD,
         barnesHut: {
           gravitationalConstant: -8000,
           centralGravity: 0.3,
@@ -438,27 +446,27 @@ export class GraphModule {
 
     const connectedIds = this.getConnectedNodeIds(targetId, 3);
     const allNodes = this.network.body.data.nodes.get();
-
-    allNodes.forEach((node) => {
+    const nodeUpdates = allNodes.map((node) => {
       const isConnected = connectedIds.includes(String(node.id));
       const opacity = isConnected ? 1.0 : 0.2;
-
-      this.network.body.data.nodes.update({
+      return {
         id: node.id,
         opacity: opacity,
         font: { ...node.font, color: isConnected ? '#131313' : '#999' },
-      });
+      };
     });
+    this.network.body.data.nodes.update(nodeUpdates);
 
     const allEdges = this.network.body.data.edges.get();
-    allEdges.forEach((edge) => {
+    const edgeUpdates = allEdges.map((edge) => {
       const isConnected =
         connectedIds.includes(String(edge.from)) && connectedIds.includes(String(edge.to));
-      this.network.body.data.edges.update({
+      return {
         id: edge.id,
         opacity: isConnected ? 1.0 : 0.1,
-      });
+      };
     });
+    this.network.body.data.edges.update(edgeUpdates);
   }
 
   /**
@@ -470,21 +478,21 @@ export class GraphModule {
     }
 
     const allNodes = this.network.body.data.nodes.get();
-    allNodes.forEach((node) => {
-      this.network.body.data.nodes.update({
+    this.network.body.data.nodes.update(
+      allNodes.map((node) => ({
         id: node.id,
         opacity: 1.0,
         font: { ...node.font, color: '#131313' },
-      });
-    });
+      }))
+    );
 
     const allEdges = this.network.body.data.edges.get();
-    allEdges.forEach((edge) => {
-      this.network.body.data.edges.update({
+    this.network.body.data.edges.update(
+      allEdges.map((edge) => ({
         id: edge.id,
         opacity: 1.0,
-      });
-    });
+      }))
+    );
   }
 
   // =============================================
@@ -517,8 +525,8 @@ export class GraphModule {
         topicEl.textContent = node.topic || 'Unknown Topic';
       }
 
-      decisionEl.innerHTML = renderSafeMarkdown(node.decision || '-');
-      reasoningEl.innerHTML = renderSafeMarkdown(node.reasoning || '-');
+      decisionEl.innerHTML = '<span class="loading-similar">Loading details...</span>';
+      reasoningEl.innerHTML = '<span class="loading-similar">Loading details...</span>';
 
       const outcomeSelect = getElementByIdOrNull<HTMLSelectElement>('detail-outcome-select');
       if (outcomeSelect) {
@@ -558,9 +566,21 @@ export class GraphModule {
       // Show panel
       panel.classList.add('visible');
 
-      // Fetch similar decisions
+      const detail = await API.getGraphDetail(String(node.id));
+      const detailNode = detail.node || node;
+      const localNode = this.graphData.nodes.find((n) => String(n.id) === String(node.id));
+      if (localNode) {
+        Object.assign(localNode, detailNode);
+      }
+
+      decisionEl.innerHTML = renderSafeMarkdown(
+        String(detailNode.decision || detailNode.decision_preview || '-')
+      );
+      reasoningEl.innerHTML = renderSafeMarkdown(String(detailNode.reasoning || '-'));
+
+      // Fetch similar decisions in the background so the detail panel opens immediately.
       logger.info('Fetching similar decisions...');
-      await this.fetchSimilarDecisions(String(node.id));
+      void this.fetchSimilarDecisions(String(node.id));
       logger.debug('showDetail completed successfully');
     } catch (error) {
       logger.error('Error in showDetail:', error);
@@ -749,7 +769,7 @@ export class GraphModule {
       }
 
       // Reload graph: fetch fresh data and reinitialize
-      await this.fetchData();
+      await this.fetchData({ full: true });
       this.init(this.graphData);
 
       // Try exact match again

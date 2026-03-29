@@ -6,9 +6,9 @@ export type JudgePromptFunction = (
 ) => JudgePromptResult
 
 const MAX_CONTEXT_RESULTS = 6
-const MAX_CONTEXT_EXCERPT_CHARS = 2000
+const MAX_CONTEXT_EXCERPT_CHARS = 600
 const EXCERPT_WINDOW_CHARS = 600
-const MAX_CLUES_PER_TYPE = 3
+const MAX_CLUES_PER_TYPE = 10
 const MAX_CLUE_CHARS = 220
 const STOPWORDS = new Set([
   "a",
@@ -52,10 +52,13 @@ const STOPWORDS = new Set([
   "you",
   "your",
 ])
-const NUMBER_WORDS = /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|year|years|month|months|week|weeks|day|days)\b/i
+const NUMBER_WORDS =
+  /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|year|years|month|months|week|weeks|day|days)\b/i
 const NUMERIC_PATTERN = new RegExp(`\\d|${NUMBER_WORDS.source}`, "i")
-const TEMPORAL_PATTERN = /\b(initially|initial|now|current|currently|again|since|after|before|when|while|today|yesterday|tomorrow|started|start|first|latest|earlier|later|year|month|week|day)\b/i
-const PREFERENCE_PATTERN = /\b(prefer|preference|favorite|favourite|love|like|enjoy|want|recommend|serve|best|usually|tend|homegrown|compatible|durable|showcase)\b/i
+const TEMPORAL_PATTERN =
+  /\b(initially|initial|now|current|currently|again|since|after|before|when|while|today|yesterday|tomorrow|started|start|first|latest|earlier|later|year|month|week|day)\b/i
+const PREFERENCE_PATTERN =
+  /\b(prefer|preference|favorite|favourite|love|like|enjoy|want|recommend|serve|best|usually|tend|homegrown|compatible|durable|showcase)\b/i
 
 function truncateText(value: string, limit: number): string {
   if (value.length <= limit) {
@@ -124,18 +127,17 @@ function getRelevantSegments(content: string, query?: string): string[] {
   return segments
     .map((segment) => {
       const normalized = segment.toLowerCase()
-      const tokenScore = tokens.reduce((score, token) => score + (normalized.includes(token) ? token.length : 0), 0)
+      const tokenScore = tokens.reduce(
+        (score, token) => score + (normalized.includes(token) ? token.length : 0),
+        0
+      )
       return { segment, score: tokenScore }
     })
     .sort((left, right) => right.score - left.score)
     .map((item) => item.segment)
 }
 
-function collectClues(
-  content: string,
-  query: string | undefined,
-  pattern: RegExp
-): string[] {
+function collectClues(content: string, query: string | undefined, pattern: RegExp): string[] {
   const preferred = getRelevantSegments(content, query).filter((segment) => pattern.test(segment))
   const fallback = splitIntoSegments(content).filter((segment) => pattern.test(segment))
   const merged = [...preferred, ...fallback]
