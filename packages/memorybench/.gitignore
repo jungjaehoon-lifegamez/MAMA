@@ -4,4 +4,16 @@ data/benchmarks/longmemeval/datasets/
 data/runs/
 ui/
 skills/
+framework.md
+src/README.md
+src/providers/README.md
+src/providers/filesystem/
+src/providers/mem0/
+src/providers/rag/
+src/providers/supermemory/
+src/providers/zep/
+src/benchmarks/README.md
+src/benchmarks/convomem/
+src/benchmarks/locomo/
+src/judges/README.md
 *.db
