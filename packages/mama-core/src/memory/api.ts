@@ -167,7 +167,7 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
   return rows.map((row) => toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource));
 }
 
-const LEXICAL_STOPWORDS: Set<string> = new Set([
+export const LEXICAL_STOPWORDS: Set<string> = new Set([
   'a',
   'an',
   'and',
@@ -210,7 +210,7 @@ const LEXICAL_STOPWORDS: Set<string> = new Set([
   'your',
 ]);
 
-function getLexicalQueryTokens(query: string): string[] {
+export function getLexicalQueryTokens(query: string): string[] {
   return query
     .toLowerCase()
     .split(/[\s,.!?;:()[\]{}"']+/)
@@ -469,7 +469,13 @@ export async function recallMemory(
 
   let matched: MemoryRecord[] = [];
   let retrievalSource = 'none';
-  const lexicalRecords = await loadScopedMemories(options.scopes ?? []);
+  let _lexicalRecords: MemoryRecord[] | null = null;
+  const loadLexical = async () => {
+    if (_lexicalRecords === null) {
+      _lexicalRecords = await loadScopedMemories(options.scopes ?? []);
+    }
+    return _lexicalRecords;
+  };
 
   // Primary: embedding-based vector search (same path as MCP SearchEngine)
   try {
@@ -516,16 +522,21 @@ export async function recallMemory(
     // Vector search unavailable — fall through to text fallback
   }
 
-  const lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
-  if (lexicalCandidates.length > 0) {
-    matched = mergeRecallCandidates(matched, lexicalCandidates);
-    if (matched.length > 0) {
-      retrievalSource = retrievalSource === 'vector_search' ? 'vector+lexical' : 'text_fallback';
+  // Lexical augmentation: only load when vector results are sparse
+  if (matched.length < 5) {
+    const lexicalRecords = await loadLexical();
+    const lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
+    if (lexicalCandidates.length > 0) {
+      matched = mergeRecallCandidates(matched, lexicalCandidates);
+      if (matched.length > 0) {
+        retrievalSource = retrievalSource === 'vector_search' ? 'vector+lexical' : 'text_fallback';
+      }
     }
   }
 
   // Fallback: text token matching (only when vector search fails entirely)
   if (matched.length === 0) {
+    const lexicalRecords = await loadLexical();
     const tokens = query
       .toLowerCase()
       .split(/[\s,.!?;:()[\]{}"']+/)
