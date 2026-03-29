@@ -252,6 +252,49 @@ export class MessageRouter {
     return { ...this.memoryAgentStats };
   }
 
+  /**
+   * Public API for auditing a conversation via the memory agent.
+   * Used by the /api/mama/audit-conversation endpoint for benchmarking.
+   * Bypasses cooldown and candidate detection — caller provides conversation + optional candidates.
+   */
+  async auditConversation(job: {
+    conversation: string;
+    scopes: Array<{ kind: string; id: string }>;
+    candidates?: Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>;
+  }): Promise<MemoryAuditAckLike> {
+    if (!this.memoryAuditQueue) {
+      return {
+        status: 'failed',
+        action: 'no_op',
+        event_ids: [],
+        reason: 'Memory agent not initialized',
+      };
+    }
+    const auditJob: MemoryAuditJob = {
+      turnId: `audit_${Date.now()}`,
+      channelKey: 'api',
+      source: 'api',
+      scopeContext: job.scopes.map((s) => ({
+        kind: s.kind as 'global' | 'user' | 'channel' | 'project',
+        id: s.id,
+      })),
+      conversation: job.conversation,
+      candidates: job.candidates?.map((c) => ({
+        id: `api_${Date.now()}`,
+        kind: c.kind as 'decision' | 'preference' | 'fact' | 'change',
+        topicHint: c.topicHint,
+        confidence: c.confidence,
+        summary: c.summary,
+        evidence: [c.summary],
+        channelKey: 'api',
+        source: 'api',
+        channelId: 'api',
+        createdAt: Date.now(),
+      })),
+    };
+    return this.memoryAuditQueue.enqueue(auditJob);
+  }
+
   constructor(
     sessionStore: SessionStore,
     agentLoop: AgentLoopClient,

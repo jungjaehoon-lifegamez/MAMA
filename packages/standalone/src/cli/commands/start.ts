@@ -1675,6 +1675,7 @@ export async function runAgentLoop(
   const graphHandlerOptions: GraphHandlerOptions = {
     healthService: healthService ?? undefined,
     healthCheckService,
+    auditConversation: (job) => messageRouter.auditConversation(job),
   };
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
