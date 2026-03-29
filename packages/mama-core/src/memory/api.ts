@@ -756,7 +756,18 @@ export async function ingestConversation(
 
   let units: ExtractedMemoryUnit[];
   try {
-    const prompt = buildExtractionPrompt(input.messages);
+    // Fetch existing topics so LLM can reuse them (enables supersedes edges)
+    await initDB();
+    const existingTopics = getAdapter()
+      .prepare(
+        `SELECT DISTINCT topic FROM decisions
+         WHERE (status = 'active' OR status IS NULL)
+         ORDER BY created_at DESC LIMIT 200`
+      )
+      .all() as Array<{ topic: string }>;
+    const topicList = existingTopics.map((r) => r.topic);
+
+    const prompt = buildExtractionPrompt(input.messages, topicList);
     units = await extractionFn(prompt, input.extract);
   } catch (err) {
     warn(`[memory] extraction failed: ${err instanceof Error ? err.message : String(err)}`);
