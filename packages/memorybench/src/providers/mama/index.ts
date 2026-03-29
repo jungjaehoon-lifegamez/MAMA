@@ -68,7 +68,7 @@ const STOPWORDS = new Set([
 export class MAMAProvider implements Provider {
   name = "mama"
   concurrency = {
-    default: 5,
+    default: process.env.MEMORYBENCH_EXTRACT_MEMORIES === "true" ? 1 : 5,
     indexing: 1,
   }
 
