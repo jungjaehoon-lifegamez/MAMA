@@ -4,10 +4,7 @@
   "question": "How many weeks passed between the day I bought my new tennis racket and the day I received it?",
   "question_date": "2023/04/15 (Sat) 22:38",
   "answer": "1 week",
-  "answer_session_ids": [
-    "answer_4d5490f1_1",
-    "answer_4d5490f1_2"
-  ],
+  "answer_session_ids": ["answer_4d5490f1_1", "answer_4d5490f1_2"],
   "haystack_dates": [
     "2023/02/14 (Tue) 23:22",
     "2023/02/16 (Thu) 19:16",
