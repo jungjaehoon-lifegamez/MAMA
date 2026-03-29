@@ -2,7 +2,6 @@ node_modules/
 bun.lock
 data/benchmarks/longmemeval/datasets/
 data/runs/
-ui/node_modules/
-ui/.next/
-ui/bun.lock
+ui/
+skills/
 *.db
