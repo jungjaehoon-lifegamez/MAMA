@@ -178,9 +178,17 @@ export class MAMAProvider implements Provider {
 
   private async maybeSemanticRerank(
     query: string,
-    candidates: Array<{ id: string; topic: string; content: string; created_at: number; score: number }>,
+    candidates: Array<{
+      id: string
+      topic: string
+      content: string
+      created_at: number
+      score: number
+    }>,
     limit: number
-  ): Promise<Array<{ id: string; topic: string; content: string; created_at: number; score: number }>> {
+  ): Promise<
+    Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
+  > {
     if (!this.shouldSemanticRerank(query, candidates)) {
       return candidates.slice(0, limit)
     }
@@ -193,10 +201,25 @@ export class MAMAProvider implements Provider {
   }
 
   private mergeCandidates(
-    primary: Array<{ id: string; topic: string; content: string; created_at: number; score: number }>,
-    secondary: Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
+    primary: Array<{
+      id: string
+      topic: string
+      content: string
+      created_at: number
+      score: number
+    }>,
+    secondary: Array<{
+      id: string
+      topic: string
+      content: string
+      created_at: number
+      score: number
+    }>
   ): Array<{ id: string; topic: string; content: string; created_at: number; score: number }> {
-    const merged = new Map<string, { id: string; topic: string; content: string; created_at: number; score: number }>()
+    const merged = new Map<
+      string,
+      { id: string; topic: string; content: string; created_at: number; score: number }
+    >()
     for (const candidate of [...primary, ...secondary]) {
       const existing = merged.get(candidate.id)
       if (!existing || candidate.score > existing.score) {
@@ -270,8 +293,16 @@ export class MAMAProvider implements Provider {
 
   async semanticRerankLocalRecords(
     query: string,
-    candidates: Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
-  ): Promise<Array<{ id: string; topic: string; content: string; created_at: number; score: number }>> {
+    candidates: Array<{
+      id: string
+      topic: string
+      content: string
+      created_at: number
+      score: number
+    }>
+  ): Promise<
+    Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
+  > {
     if (candidates.length < 2) {
       return candidates
     }
@@ -366,7 +397,10 @@ ${candidates
       const formattedDate = session.metadata?.formattedDate as string | undefined
 
       const messages = session.messages.map((m) => ({
-        role: (m.role === "human" ? "user" : m.role === "ai" ? "assistant" : m.role) as "user" | "assistant" | "system",
+        role: (m.role === "human" ? "user" : m.role === "ai" ? "assistant" : m.role) as
+          | "user"
+          | "assistant"
+          | "system",
         content: m.content,
       }))
 
@@ -405,11 +439,13 @@ ${candidates
             rawId?: string
             extractedMemories?: Array<{ id: string; kind: string; topic: string }>
           }
-          if (data.success && data.rawId) {
-            documentIds.push(data.rawId)
-            existingIds.push(data.rawId)
+          if (data.success) {
+            const primaryId =
+              data.rawId || data.extractedMemories?.[0]?.id || `extracted_${session.sessionId}`
+            documentIds.push(primaryId)
+            existingIds.push(primaryId)
             existingLocalRecords.push({
-              id: data.rawId,
+              id: primaryId,
               topic: `bench_${options.containerTag}_${session.sessionId}`.slice(0, 80),
               content: `${conversationText}\n\n${reasoning}`,
               created_at: Date.now(),

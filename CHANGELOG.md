@@ -6,14 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **MemoryBench benchmarking framework** (`packages/memorybench/`) — pluggable provider/benchmark/judge framework for objectively measuring memory retrieval quality. Supports MAMA, Mem0, SuperMemory, Zep, filesystem, and RAG providers against LongMemEval (500 questions, 6 categories). Pipeline: ingest → index → search → answer → evaluate → report with checkpoint/resume. Web UI for real-time visualization and run comparison. MemScore composite metric (accuracy / latency / context tokens)
+- **Vector-first recall with lexical augmentation** (`mama-core`) — `recallMemory()` now uses vector search as primary retrieval path instead of truth text matching. Added `rankByTokenOverlap()` lexical fallback with weighted scoring (token length bonuses, phrase boost), `mergeRecallCandidates()` for vector+lexical dedup, and `lexicalScoreToConfidence()` normalization. Fixes the root cause of near-random retrieval when conversations were stored as single blobs
+- **Claude CLI extraction pipeline** — benchmark uses `ingestConversation()` with Claude CLI for typed memory extraction (fact/preference/decision/lesson/constraint), giving each fact its own embedding for precise retrieval. No API key needed
 - **Memory core infrastructure** — scoped memory system with typed records (preference, fact, decision, lesson, constraint), truth projection for recall filtering, evolution engine with automatic graph edge resolution, and channel summary state management. SQLite migrations 014-023. 16 test files, 59 tests.
 - **Candidate-driven memory writer agent** — when you say "기억해" or "we decided X," MAMA now reliably catches and saves it. A deterministic `SaveCandidateExtractor` pre-filters turns for durable memory candidates (Korean + English), then a writer-only memory agent searches related memories, resolves topic relationships, and saves with scope bindings. Replaces the previous audit-only flow that could silently skip explicit decisions.
 - **Memory agent dashboard API** — `/api/memory-agent/stats` and `/api/memory-agent/dashboard` expose candidate lifecycle metrics (turnsObserved, acksApplied/Skipped/Failed), channel tracking, and recent extraction activity
 - **Scoped memory saves** — `mama_save` now forwards scope refs (project, channel, user, global) through the full chain from agent persona to mama-core `saveMemory()`, preventing cross-scope pollution
 - **Strongly-typed scope refs** — `ScopeRef` type with `MemoryScopeKind` union replaces bare `{ kind: string; id: string }` across standalone types, catching invalid scope names at compile time
 
+### Fixed
+
+- **Vector search blocked by text matching** — `recallMemory()` used `queryRelevantTruth` as primary path which returned all decisions by update time, not query relevance. Vector search is now primary with truth status as post-filter
+- **Similarity scores hardcoded to 1** — `suggest()` now returns actual cosine similarity instead of hardcoded value, enabling meaningful ranking
+- **Extraction CLI session ID** — Claude CLI requires UUID format for `--session-id`; was using string `'extraction-cli'` causing silent extraction failures
+
 ### Changed
 
+- **Graph API pagination** — `/api/graph` now returns `decision_preview` (220 chars) instead of full decision text, with `?limit=N` (default 300, max 1000) and `?full=true` for unbounded fetch. Viewer disables physics simulation above 400 nodes for performance
 - **Memory agent persona** — rewritten from auditor to writer role; resolves "save when in doubt" vs "prefer quarantine" contradiction; now instructs agent to parse and include scopes when calling `mama_save`
 - **Memory agent isolation** — `blockedTools` expanded to include Grep, Glob, Edit alongside Read, Write, Bash for defense-in-depth
 - **GitHub Actions runtime refresh** — CI, publish, release, pages, and marketplace sync workflows now use current `actions/checkout`, `actions/setup-node`, and `pnpm/action-setup` releases; GitHub release creation moved from `softprops/action-gh-release` to `gh release create` to avoid deprecated Node 20 action runtimes in future runs

@@ -12,7 +12,7 @@ import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
 import { warn } from '../debug-logger.js';
-import { projectMemoryTruth, queryRelevantTruth } from './truth-store.js';
+import { projectMemoryTruth } from './truth-store.js';
 import { buildExtractionPrompt, parseExtractionResponse } from './extraction-prompt.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
@@ -96,25 +96,6 @@ function toMemoryRecord(
   };
 }
 
-function truthRowToMemoryRecord(row: MemoryTruthRow): MemoryRecord {
-  return {
-    id: row.memory_id,
-    topic: row.topic,
-    kind: row.kind ?? 'decision',
-    summary: row.effective_summary,
-    details: row.effective_details,
-    confidence: row.trust_score,
-    status: row.truth_status === 'quarantined' ? 'stale' : row.truth_status,
-    scopes: row.scope_refs,
-    source: {
-      package: 'mama-core',
-      source_type: 'truth_projection',
-    },
-    created_at: row.created_at ?? Date.now(),
-    updated_at: row.updated_at ?? row.created_at ?? Date.now(),
-  };
-}
-
 function batchLoadScopes(
   adapter: ReturnType<typeof getAdapter>,
   memoryIds: string[]
@@ -184,6 +165,149 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
   const scopeMap = batchLoadScopes(adapter, memoryIds);
 
   return rows.map((row) => toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource));
+}
+
+const LEXICAL_STOPWORDS: Set<string> = new Set([
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'by',
+  'did',
+  'do',
+  'does',
+  'for',
+  'from',
+  'had',
+  'has',
+  'have',
+  'how',
+  'i',
+  'in',
+  'is',
+  'it',
+  'my',
+  'of',
+  'on',
+  'or',
+  'that',
+  'the',
+  'their',
+  'to',
+  'was',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'with',
+  'you',
+  'your',
+]);
+
+function getLexicalQueryTokens(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/[\s,.!?;:()[\]{}"']+/)
+    .filter((token) => token.length > 2 && !LEXICAL_STOPWORDS.has(token));
+}
+
+function buildLexicalCandidates(
+  records: MemoryRecord[],
+  query: string
+): Array<{ memory: MemoryRecord; score: number }> {
+  const tokens = getLexicalQueryTokens(query);
+  const normalizedQuery = query.toLowerCase();
+
+  return records
+    .map((record) => {
+      const haystack = [record.topic, record.summary, record.details].join(' ').toLowerCase();
+      const tokenMatches = tokens.reduce((count, token) => {
+        if (!haystack.includes(token)) {
+          return count;
+        }
+        if (token.length >= 8) {
+          return count + 3;
+        }
+        if (token.length >= 5) {
+          return count + 2;
+        }
+        return count + 1;
+      }, 0);
+      const phraseBoost = haystack.includes(normalizedQuery) ? 2 : 0;
+      const score = tokenMatches + phraseBoost;
+      return { memory: record, score };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return Number(right.memory.created_at) - Number(left.memory.created_at);
+    });
+}
+
+function lexicalScoreToConfidence(score: number): number {
+  return Math.min(0.95, 0.45 + score * 0.05);
+}
+
+function mergeRecallCandidates(
+  primary: MemoryRecord[],
+  lexical: Array<{ memory: MemoryRecord; score: number }>
+): MemoryRecord[] {
+  const merged = new Map<
+    string,
+    { memory: MemoryRecord; sortScore: number; lexicalScore: number }
+  >();
+
+  for (const memory of primary) {
+    merged.set(memory.id, {
+      memory,
+      sortScore: memory.confidence ?? 0.5,
+      lexicalScore: 0,
+    });
+  }
+
+  for (const candidate of lexical) {
+    const lexicalConfidence = lexicalScoreToConfidence(candidate.score);
+    const existing = merged.get(candidate.memory.id);
+    if (existing) {
+      existing.sortScore = Math.max(existing.sortScore, lexicalConfidence);
+      existing.lexicalScore = Math.max(existing.lexicalScore, candidate.score);
+      existing.memory = {
+        ...existing.memory,
+        confidence: Math.max(existing.memory.confidence ?? 0.5, lexicalConfidence),
+      };
+      merged.set(candidate.memory.id, existing);
+      continue;
+    }
+
+    merged.set(candidate.memory.id, {
+      memory: {
+        ...candidate.memory,
+        confidence: Math.max(candidate.memory.confidence ?? 0.5, lexicalConfidence),
+      },
+      sortScore: lexicalConfidence,
+      lexicalScore: candidate.score,
+    });
+  }
+
+  return Array.from(merged.values())
+    .sort((left, right) => {
+      if (right.sortScore !== left.sortScore) {
+        return right.sortScore - left.sortScore;
+      }
+      if (right.lexicalScore !== left.lexicalScore) {
+        return right.lexicalScore - left.lexicalScore;
+      }
+      return Number(right.memory.created_at) - Number(left.memory.created_at);
+    })
+    .map((candidate) => candidate.memory);
 }
 
 export async function saveMemory(
@@ -344,6 +468,7 @@ export async function recallMemory(
 
   let matched: MemoryRecord[] = [];
   let retrievalSource = 'none';
+  const lexicalRecords = await loadScopedMemories(options.scopes ?? []);
 
   // Primary: embedding-based vector search (same path as MCP SearchEngine)
   try {
@@ -390,14 +515,21 @@ export async function recallMemory(
     // Vector search unavailable — fall through to text fallback
   }
 
+  const lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
+  if (lexicalCandidates.length > 0) {
+    matched = mergeRecallCandidates(matched, lexicalCandidates);
+    if (matched.length > 0) {
+      retrievalSource = retrievalSource === 'vector_search' ? 'vector+lexical' : 'text_fallback';
+    }
+  }
+
   // Fallback: text token matching (only when vector search fails entirely)
   if (matched.length === 0) {
-    const records = await loadScopedMemories(options.scopes ?? []);
     const tokens = query
       .toLowerCase()
       .split(/[\s,.!?;:()[\]{}"']+/)
       .filter((token) => token.length > 2);
-    matched = records.filter((record) => {
+    matched = lexicalRecords.filter((record) => {
       if (!options.includeHistory && EXCLUDED_STATUSES.has(record.status)) {
         return false;
       }

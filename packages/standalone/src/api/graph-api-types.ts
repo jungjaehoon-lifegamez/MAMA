@@ -9,8 +9,9 @@ import type { IncomingMessage, ServerResponse } from 'http';
 export interface GraphNode {
   id: string;
   topic: string;
-  decision: string;
-  reasoning: string;
+  decision?: string;
+  reasoning?: string;
+  decision_preview?: string;
   outcome: string | null;
   confidence: number | null;
   created_at: number;
