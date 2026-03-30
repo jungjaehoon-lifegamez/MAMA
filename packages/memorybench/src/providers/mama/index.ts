@@ -649,7 +649,11 @@ ${candidates
     const _useHybridExtract = process.env.MEMORYBENCH_HYBRID_EXTRACT === "true"
     const useExtraction = process.env.MEMORYBENCH_EXTRACT_MEMORIES === "true"
     const extractionModel = process.env.MEMORYBENCH_EXTRACTION_MODEL || "claude-sonnet-4-5-20250514"
-    const anthropicApiKey = process.env.ANTHROPIC_API_KEY
+    const extractionBaseUrl = process.env.MEMORYBENCH_EXTRACTION_BASE_URL
+    // Security: only forward ANTHROPIC_API_KEY to Anthropic's own domain
+    const isAnthropicDomain =
+      !extractionBaseUrl || /^https?:\/\/([^/]*\.)?anthropic\.com(\/|$)/i.test(extractionBaseUrl)
+    const anthropicApiKey = isAnthropicDomain ? process.env.ANTHROPIC_API_KEY : undefined
 
     // Per-ingest entity registry for supersedes tracking (entityKey → memoryId)
     const entityRegistry = new Map<string, string>()
@@ -712,6 +716,7 @@ ${candidates
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(body),
+              signal: AbortSignal.timeout(10000),
             })
             const data = (await res.json()) as { success?: boolean; id?: string }
             if (data.success && data.id) {
@@ -744,6 +749,7 @@ ${candidates
           const res = await fetch(`${this.baseUrl}/api/mama/ingest-conversation`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(10000),
             body: JSON.stringify({
               messages,
               scopes: [],
@@ -794,6 +800,7 @@ ${candidates
           const res = await fetch(`${this.baseUrl}/api/mama/save`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(10000),
             body: JSON.stringify({ topic, decision: conversationText, reasoning }),
           })
 
@@ -850,7 +857,7 @@ ${candidates
     const searchQuery = temporalContext.normalizedQuery
 
     const scopedUrl = `${this.baseUrl}/api/mama/search?q=${encodeURIComponent(searchQuery)}&limit=${limit}&topicPrefix=${encodeURIComponent(topicPrefix)}`
-    const scopedResponse = await fetch(scopedUrl)
+    const scopedResponse = await fetch(scopedUrl, { signal: AbortSignal.timeout(10000) })
     if (scopedResponse.ok) {
       const scopedData = (await scopedResponse.json()) as {
         results?: Array<{
@@ -898,7 +905,7 @@ ${candidates
     const fetchLimit = this.getFetchLimit(options.containerTag, limit)
     const url = `${this.baseUrl}/api/mama/search?q=${encodeURIComponent(searchQuery)}&limit=${fetchLimit}`
 
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
     if (!res.ok) throw new Error(`MAMA search failed: ${res.status}`)
 
     const data = (await res.json()) as {
@@ -971,6 +978,7 @@ ${candidates
         await fetch(`${this.baseUrl}/api/update`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(10000),
           body: JSON.stringify({ id, outcome: "FAILED" }),
         })
       } catch (e) {

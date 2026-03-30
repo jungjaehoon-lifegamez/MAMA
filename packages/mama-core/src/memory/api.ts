@@ -628,7 +628,20 @@ export async function recallMemory(
 
   // Channel 2: BM25/lexical search (keyword matching) — always run in parallel
   // For aggregation queries, run lexical on all sub-queries too
-  const lexicalRecords = await loadLexical();
+  let lexicalRecords = await loadLexical();
+
+  // Enforce scope boundaries: filter out memories without matching scopes
+  if (options.scopes && options.scopes.length > 0) {
+    const lexicalIds = lexicalRecords.map((r) => r.id);
+    const scopeMap = batchLoadScopes(getAdapter(), lexicalIds);
+    const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+    lexicalRecords = lexicalRecords.filter((r) => {
+      const scopes = scopeMap.get(r.id) ?? [];
+      if (scopes.length === 0) return false;
+      return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
+    });
+  }
+
   const allLexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
   if (subQueries.length > 1) {
     for (const sq of subQueries.slice(1)) {
@@ -667,7 +680,10 @@ export async function recallMemory(
 
   matched = Array.from(rrfScores.values())
     .sort((a, b) => b.score - a.score)
-    .map((entry) => entry.record);
+    .map((entry) => ({
+      ...entry.record,
+      confidence: entry.score,
+    }));
 
   if (vectorMatched.length > 0 && lexicalCandidates.length > 0) {
     retrievalSource = 'hybrid_rrf';
@@ -752,7 +768,31 @@ export async function recallMemory(
       }));
 
       const allIds = [...matched.map((m) => m.id), ...expandedOnly.map((e) => e.id)];
-      bundle.graph_context.edges = await loadEdgesForIds(allIds);
+      const allEdges = await loadEdgesForIds(allIds);
+
+      // Filter out edges pointing to decisions with excluded statuses
+      const activeIds = new Set(allIds);
+      const edgesToCheck = allEdges.filter((e) => !activeIds.has(e.to_id));
+      if (edgesToCheck.length > 0) {
+        const adapter = getAdapter();
+        const checkIds = [...new Set(edgesToCheck.map((e) => e.to_id))];
+        const placeholders = checkIds.map(() => '?').join(', ');
+        const statusRows = adapter
+          .prepare(
+            `SELECT id, status FROM decisions WHERE id IN (${placeholders})`
+          )
+          .all(...checkIds) as Array<{ id: string; status: string | null }>;
+        const excludedIds = new Set(
+          statusRows
+            .filter((r) => r.status && EXCLUDED_STATUSES.has(r.status))
+            .map((r) => r.id)
+        );
+        bundle.graph_context.edges = allEdges.filter(
+          (e) => !excludedIds.has(e.from_id) && !excludedIds.has(e.to_id)
+        );
+      } else {
+        bundle.graph_context.edges = allEdges;
+      }
     } catch {
       // Graph expansion is best-effort; do not fail recall
     }
@@ -820,11 +860,20 @@ async function callExtractionLLM(
   options: NonNullable<IngestConversationInput['extract']>
 ): Promise<ExtractedMemoryUnit[]> {
   const model = options.model ?? 'claude-sonnet-4-5-20250514';
-  const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
   const baseUrl = options.baseUrl ?? 'https://api.anthropic.com';
 
+  // Security: only send ANTHROPIC_API_KEY to Anthropic's own domain
+  const isAnthropicDomain = /^https?:\/\/([^/]*\.)?anthropic\.com(\/|$)/i.test(baseUrl);
+  const apiKey = isAnthropicDomain
+    ? (options.apiKey ?? process.env.ANTHROPIC_API_KEY)
+    : options.apiKey; // custom baseUrl must supply its own key explicitly
+
   if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY is required for extraction');
+    throw new Error(
+      isAnthropicDomain
+        ? 'ANTHROPIC_API_KEY is required for extraction'
+        : 'apiKey must be provided explicitly when using a custom baseUrl'
+    );
   }
 
   const res = await fetch(`${baseUrl}/v1/messages`, {

@@ -1209,6 +1209,31 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     if (pathname === '/api/mama/ingest-conversation' && req.method === 'POST') {
       try {
         const body = await readBody(req);
+
+        // Validate payload at HTTP boundary
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'messages must be a non-empty array' }));
+          return true;
+        }
+        for (const msg of body.messages as unknown[]) {
+          if (
+            typeof msg !== 'object' ||
+            msg === null ||
+            typeof (msg as Record<string, unknown>).role !== 'string' ||
+            typeof (msg as Record<string, unknown>).content !== 'string'
+          ) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: true,
+                message: 'Each message must have string "role" and "content" fields',
+              })
+            );
+            return true;
+          }
+        }
+
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { ingestConversation } = require('@jungjaehoon/mama-core');
         const source = (body.source as { package: string; source_type: string }) || {
@@ -1257,8 +1282,16 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           | Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>
           | undefined;
         const ack = await options.auditConversation({ conversation, scopes, candidates });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, ack }));
+        if (!ack || (typeof ack === 'object' && (ack as Record<string, unknown>).error)) {
+          const errMsg =
+            (typeof ack === 'object' && (ack as Record<string, unknown>).message) ||
+            'Audit conversation failed';
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: String(errMsg) }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, ack }));
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         res.writeHead(500, { 'Content-Type': 'application/json' });
