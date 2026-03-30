@@ -1331,19 +1331,52 @@ export async function runAgentLoop(
     const { PersistentClaudeProcess } = await import('../../agent/persistent-cli-process.js');
     const { parseExtractionResponse } = mamaCore;
     let extractionProcess: InstanceType<typeof PersistentClaudeProcess> | null = null;
+    let extractionInitPromise: Promise<InstanceType<typeof PersistentClaudeProcess>> | null = null;
 
-    mamaCore.setExtractionFn(async (prompt: string) => {
-      if (!extractionProcess) {
-        extractionProcess = new PersistentClaudeProcess({
+    const getExtractionProcess = async (): Promise<
+      InstanceType<typeof PersistentClaudeProcess>
+    > => {
+      if (extractionProcess) return extractionProcess;
+      if (extractionInitPromise) return extractionInitPromise;
+      extractionInitPromise = (async () => {
+        const proc = new PersistentClaudeProcess({
           sessionId: `${crypto.randomUUID()}`,
-          model: 'haiku',
+          model: 'sonnet',
           systemPrompt:
             'You are a memory extraction assistant. Extract structured memory units from conversations.',
           dangerouslySkipPermissions: true,
         });
-        await extractionProcess.start();
+        await proc.start();
+        extractionProcess = proc;
+        return proc;
+      })();
+      try {
+        return await extractionInitPromise;
+      } catch (err) {
+        extractionInitPromise = null;
+        throw err;
       }
-      const result = await extractionProcess.sendMessage(prompt);
+    };
+
+    // Cleanup extraction process on exit
+    const cleanupExtraction = () => {
+      if (extractionProcess) {
+        try {
+          extractionProcess.stop?.();
+        } catch {
+          /* best-effort */
+        }
+        extractionProcess = null;
+        extractionInitPromise = null;
+      }
+    };
+    process.on('exit', cleanupExtraction);
+    process.on('SIGINT', cleanupExtraction);
+    process.on('SIGTERM', cleanupExtraction);
+
+    mamaCore.setExtractionFn(async (prompt: string) => {
+      const proc = await getExtractionProcess();
+      const result = await proc.sendMessage(prompt);
       return parseExtractionResponse(result.response);
     });
   }

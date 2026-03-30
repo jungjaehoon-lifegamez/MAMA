@@ -13,10 +13,14 @@ export function buildExtractionPrompt(
 ): string {
   const conversationText = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
 
-  const topicHint =
-    existingTopics && existingTopics.length > 0
-      ? `\nExisting topics (REUSE these when the subject matches instead of creating new ones):\n${existingTopics.join(', ')}\n`
-      : '';
+  const hasExistingTopics = existingTopics && existingTopics.length > 0;
+  const topicHint = hasExistingTopics
+    ? `\nExisting topics (REUSE these when the subject matches instead of creating new ones):\n${existingTopics.map((t) => t.replace(/[`$\\]/g, '')).join(', ')}\n`
+    : '';
+
+  const topicRule = hasExistingTopics
+    ? '- topic: lowercase_snake_case, MUST reuse an existing topic above when the subject matches'
+    : '- topic: lowercase_snake_case';
 
   return `You are extracting structured memory units from a conversation.
 
@@ -24,7 +28,7 @@ Read the conversation and identify distinct pieces of information worth remember
 Classify each as one of: preference, fact, decision, lesson, constraint.
 ${topicHint}
 Rules:
-- topic: lowercase_snake_case, MUST reuse an existing topic above when the subject matches
+${topicRule}
 - summary: concise (<200 chars), must include key entities/numbers/names
 - details: full context with evidence from the conversation
 - confidence: 0.0-1.0 based on how explicitly stated the information is
