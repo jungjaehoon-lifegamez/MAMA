@@ -277,10 +277,16 @@ function _mergeRecallCandidates(
     });
   }
 
+  // Determine the lowest vector confidence to cap lexical-only candidates below it
+  const minVectorConfidence =
+    primary.length > 0 ? Math.min(...primary.map((m) => m.confidence ?? 0.5)) : 1.0;
+  const LEXICAL_ONLY_CAP = Math.max(0, minVectorConfidence - 0.01);
+
   for (const candidate of lexical) {
     const lexicalConfidence = lexicalScoreToConfidence(candidate.score);
     const existing = merged.get(candidate.memory.id);
     if (existing) {
+      // Already has a vector hit — safe to boost with lexical score
       existing.sortScore = Math.max(existing.sortScore, lexicalConfidence);
       existing.lexicalScore = Math.max(existing.lexicalScore, candidate.score);
       existing.memory = {
@@ -291,12 +297,14 @@ function _mergeRecallCandidates(
       continue;
     }
 
+    // Lexical-only candidate — cap below the lowest vector hit
+    const cappedConfidence = Math.min(lexicalConfidence, LEXICAL_ONLY_CAP);
     merged.set(candidate.memory.id, {
       memory: {
         ...candidate.memory,
-        confidence: Math.max(candidate.memory.confidence ?? 0.5, lexicalConfidence),
+        confidence: Math.max(candidate.memory.confidence ?? 0.5, cappedConfidence),
       },
-      sortScore: lexicalConfidence,
+      sortScore: cappedConfidence,
       lexicalScore: candidate.score,
     });
   }
@@ -572,9 +580,9 @@ export async function recallMemory(
         const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
         filtered = vectorResults.filter((r) => {
           const scopes = scopeMap.get(String(r.id)) ?? [];
-          return (
-            scopes.length === 0 || scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`))
-          );
+          // When scopes are requested, zero-binding results must NOT pass through
+          if (scopes.length === 0) return false;
+          return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
         });
       }
 
@@ -684,20 +692,49 @@ export async function recallMemory(
         created_at: m.created_at,
         similarity: m.confidence ?? 0.5,
       }));
-      const mamaApiModule = (await import('../mama-api.js')) as unknown as {
-        default: {
-          expandWithGraph: (
-            candidates: Record<string, unknown>[]
-          ) => Promise<Record<string, unknown>[]>;
-        };
+      interface GraphExpandedCandidate {
+        id: string;
+        topic: string;
+        decision: string;
+        confidence?: number;
+        similarity?: number;
+        created_at?: number | string;
+        graph_source?: string;
+        graph_rank?: number;
+      }
+      const mamaApiModule = await import('../mama-api.js');
+      const mamaDefault = mamaApiModule.default as unknown as {
+        expandWithGraph: (
+          candidates: GraphExpandedCandidate[]
+        ) => Promise<GraphExpandedCandidate[]>;
       };
-      const expanded = await mamaApiModule.default.expandWithGraph(candidates);
+      const expanded = await mamaDefault.expandWithGraph(candidates);
       const primaryIds = new Set(matched.map((m) => m.id));
-      const expandedOnly = expanded.filter(
-        (e: Record<string, unknown>) => !primaryIds.has(e.id as string)
-      );
+      let expandedOnly = expanded.filter((e) => !primaryIds.has(e.id));
 
-      bundle.graph_context.expanded = expandedOnly.map((e: Record<string, unknown>) => ({
+      // Re-filter expanded results: apply status and scope checks
+      if (!options.includeHistory) {
+        expandedOnly = expandedOnly.filter((e) => {
+          const adapter = getAdapter();
+          const row = adapter.prepare(`SELECT status FROM decisions WHERE id = ?`).get(e.id) as
+            | { status?: string }
+            | undefined;
+          const status = row?.status || '';
+          return !status || !EXCLUDED_STATUSES.has(status);
+        });
+      }
+      if (options.scopes && options.scopes.length > 0) {
+        const expandedIds = expandedOnly.map((e) => e.id);
+        const scopeMap = batchLoadScopes(getAdapter(), expandedIds);
+        const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+        expandedOnly = expandedOnly.filter((e) => {
+          const scopes = scopeMap.get(e.id) ?? [];
+          if (scopes.length === 0) return false;
+          return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
+        });
+      }
+
+      bundle.graph_context.expanded = expandedOnly.map((e) => ({
         id: String(e.id),
         topic: String(e.topic || ''),
         kind: 'decision' as const,
@@ -714,10 +751,7 @@ export async function recallMemory(
         updated_at: (e.created_at as number) ?? Date.now(),
       }));
 
-      const allIds = [
-        ...matched.map((m) => m.id),
-        ...expandedOnly.map((e: Record<string, unknown>) => String(e.id)),
-      ];
+      const allIds = [...matched.map((m) => m.id), ...expandedOnly.map((e) => e.id)];
       bundle.graph_context.edges = await loadEdgesForIds(allIds);
     } catch {
       // Graph expansion is best-effort; do not fail recall
@@ -852,13 +886,31 @@ export async function ingestConversation(
   try {
     // Fetch existing topics so LLM can reuse them (enables supersedes edges)
     await initDB();
-    const existingTopics = getAdapter()
-      .prepare(
-        `SELECT DISTINCT topic FROM decisions
-         WHERE (status = 'active' OR status IS NULL)
-         ORDER BY created_at DESC LIMIT 200`
-      )
-      .all() as Array<{ topic: string }>;
+    const adapter = getAdapter();
+    let existingTopics: Array<{ topic: string }>;
+    if (input.scopes && input.scopes.length > 0) {
+      const scopeIds = await Promise.all(
+        input.scopes.map((scope) => ensureMemoryScope(scope.kind, scope.id))
+      );
+      const placeholders = scopeIds.map(() => '?').join(', ');
+      existingTopics = adapter
+        .prepare(
+          `SELECT DISTINCT d.topic FROM decisions d
+           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+           WHERE msb.scope_id IN (${placeholders})
+             AND (d.status = 'active' OR d.status IS NULL)
+           ORDER BY d.created_at DESC LIMIT 200`
+        )
+        .all(...scopeIds) as Array<{ topic: string }>;
+    } else {
+      existingTopics = adapter
+        .prepare(
+          `SELECT DISTINCT topic FROM decisions
+           WHERE (status = 'active' OR status IS NULL)
+           ORDER BY created_at DESC LIMIT 200`
+        )
+        .all() as Array<{ topic: string }>;
+    }
     const topicList = existingTopics.map((r) => r.topic);
 
     const prompt = buildExtractionPrompt(input.messages, topicList);
