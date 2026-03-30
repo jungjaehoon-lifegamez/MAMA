@@ -163,7 +163,7 @@
           <!-- Navigation Tabs -->
           <nav class="flex items-center gap-1" id="nav-tabs">
             <button
-              class="hidden px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-mama-lavender-light"
+              class="hidden px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100"
               data-tab="setup"
               onclick="window.switchTab && window.switchTab('setup')"
             >
@@ -185,7 +185,7 @@
               </svg>
               <span class="hidden sm:inline">Setup</span>
             </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="dashboard" onclick="window.switchTab && window.switchTab('dashboard')">
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="dashboard" onclick="window.switchTab && window.switchTab('dashboard')">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
@@ -204,7 +204,7 @@
               </svg>
               <span class="hidden sm:inline">Dashboard</span>
             </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="playground" onclick="window.switchTab && window.switchTab('playground')">
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="playground" onclick="window.switchTab && window.switchTab('playground')">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
@@ -220,7 +220,7 @@
               </svg>
               <span class="hidden sm:inline">Playground</span>
             </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="skills" onclick="window.switchTab && window.switchTab('skills')">
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="skills" onclick="window.switchTab && window.switchTab('skills')">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
@@ -238,7 +238,7 @@
               </svg>
               <span class="hidden sm:inline">Skills</span>
             </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
@@ -258,7 +258,7 @@
               </svg>
               <span class="hidden sm:inline">Memory</span>
             </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-mama-lavender-light flex items-center gap-2" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
+            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
@@ -281,7 +281,7 @@
           <div class="flex items-center gap-2">
             <button
               id="context-help-btn"
-              class="p-2 rounded-full hover:bg-mama-lavender-light transition-colors"
+              class="p-2 rounded-full hover:bg-gray-100 transition-colors"
               onclick="askContextHelp()"
               title="Ask agent about this tab"
             >
@@ -292,7 +292,7 @@
               </svg>
             </button>
             <button
-              class="p-2 rounded-full hover:bg-mama-lavender-light transition-colors"
+              class="p-2 rounded-full hover:bg-gray-100 transition-colors"
               onclick="showTunnelSetup()"
               title="External Access"
             >
@@ -937,7 +937,7 @@
             </div>
 
             <div class="legend-panel absolute bottom-16 right-4 w-48 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-3 z-10" id="legend-panel">
-              <button class="absolute top-2 right-2 p-1 rounded hover:bg-mama-lavender-light transition-colors" onclick="toggleLegend()">
+              <button class="absolute top-2 right-2 p-1 rounded hover:bg-gray-100 transition-colors" onclick="toggleLegend()">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
@@ -988,7 +988,7 @@
                 </div>
               </div>
             </div>
-            <button class="legend-toggle absolute bottom-4 right-4 px-3 py-1.5 text-xs font-medium bg-gray-100 bg-white hover:bg-gray-200 hover:bg-mama-lavender border border-gray-200 border-mama-lavender-dark rounded-lg transition-colors flex items-center gap-1.5 z-10" onclick="toggleLegend()">
+            <button class="legend-toggle absolute bottom-4 right-4 px-3 py-1.5 text-xs font-medium bg-gray-100 bg-white hover:bg-gray-200 hover:bg-gray-100 border border-gray-200 border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 z-10" onclick="toggleLegend()">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10" />
                 <line x1="12" y1="16" x2="12" y2="12" />
@@ -1107,7 +1107,7 @@
           <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full overflow-y-auto">
             <div class="flex items-center justify-between mb-4">
               <h2 class="text-lg font-bold text-mama-black">Playgrounds</h2>
-              <button id="playground-refresh-btn" class="px-3 py-1.5 text-xs rounded-lg bg-mama-lavender-light text-mama-black font-medium hover:bg-mama-lavender-dark">
+              <button id="playground-refresh-btn" class="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-mama-black font-medium hover:bg-gray-200">
                 Refresh
               </button>
             </div>
@@ -1120,7 +1120,7 @@
                 <span id="playground-viewer-title" class="font-semibold text-mama-black"></span>
                 <a id="playground-open-new" href="#" target="_blank" class="ml-auto text-xs text-indigo-600 hover:underline">Open in new tab</a>
               </div>
-              <iframe id="playground-iframe" class="w-full border border-mama-lavender-dark rounded-lg bg-white" style="height: calc(100vh - 200px);" sandbox="allow-scripts allow-same-origin allow-forms allow-modals"></iframe>
+              <iframe id="playground-iframe" class="w-full border border-gray-300 rounded-lg bg-white" style="height: calc(100vh - 200px);" sandbox="allow-scripts allow-same-origin allow-forms allow-modals"></iframe>
             </div>
           </div>
         </div>
@@ -1136,9 +1136,9 @@
             <span id="chat-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
           </button>
 
-          <div id="chat-panel" class="chat-panel-closed absolute bottom-[4.5rem] right-0 w-[400px] h-[560px] bg-white rounded-2xl shadow-float border border-mama-lavender-dark flex flex-col overflow-hidden">
+          <div id="chat-panel" class="chat-panel-closed absolute bottom-[4.5rem] right-0 w-[400px] h-[560px] bg-white rounded-2xl shadow-float border border-gray-300 flex flex-col overflow-hidden">
             <!-- Header -->
-            <div id="chat-header" class="h-12 bg-mama-yellow/20 flex items-center px-4 border-b border-mama-lavender-dark shrink-0">
+            <div id="chat-header" class="h-12 bg-mama-yellow/20 flex items-center px-4 border-b border-gray-300 shrink-0">
               <svg class="w-5 h-5 text-mama-black mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
@@ -1148,20 +1148,20 @@
                 <span>Not connected</span>
               </div>
               <div class="ml-auto flex items-center gap-1">
-                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-tts-toggle" onclick="toggleTTS()" title="TTS Off">
+                <button class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" id="chat-tts-toggle" onclick="toggleTTS()" title="TTS Off">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
                 <div class="relative">
-                  <span class="text-[10px] text-gray-500 cursor-pointer px-1 py-0.5 hover:bg-mama-lavender-light rounded" id="tts-speed-label" onclick="toggleTTSPopup()">1.8x</span>
-                  <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white border border-mama-lavender-dark rounded-lg p-3 shadow-lg hidden" id="tts-speed-popup">
+                  <span class="text-[10px] text-gray-500 cursor-pointer px-1 py-0.5 hover:bg-gray-100 rounded" id="tts-speed-label" onclick="toggleTTSPopup()">1.8x</span>
+                  <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white border border-gray-300 rounded-lg p-3 shadow-lg hidden" id="tts-speed-popup">
                     <div class="text-center text-sm font-semibold mb-2" id="tts-speed-value">1.8x</div>
                     <input type="range" class="w-full accent-mama-yellow" id="tts-speed-slider" min="0.5" max="2.0" step="0.1" value="1.8" oninput="updateTTSSpeed(this.value)" />
                   </div>
                 </div>
-                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-handsfree-toggle" onclick="toggleHandsFree()" title="Hands-free Off">
+                <button class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" id="chat-handsfree-toggle" onclick="toggleHandsFree()" title="Hands-free Off">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="2" stroke-width="2"/>
                     <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1187,10 +1187,10 @@
             </div>
 
             <!-- Input -->
-            <div class="border-t border-mama-lavender-dark p-3 space-y-2 shrink-0">
+            <div class="border-t border-gray-300 p-3 space-y-2 shrink-0">
               <div class="flex gap-2">
                 <textarea
-                  class="flex-1 px-3 py-2 border border-mama-lavender-dark rounded-lg bg-mama-lavender-light text-mama-black placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-mama-yellow disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  class="flex-1 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-mama-black placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-mama-yellow disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   id="chat-input" placeholder="Type your message..." rows="1" disabled
                 ></textarea>
                 <button
@@ -1203,7 +1203,7 @@
                 </button>
               </div>
               <!-- Attachment preview -->
-              <div id="chat-attachment-preview" class="hidden flex items-center gap-2 px-2 py-1 bg-mama-lavender-light rounded-lg border border-mama-lavender-dark">
+              <div id="chat-attachment-preview" class="hidden flex items-center gap-2 px-2 py-1 bg-gray-50 rounded-lg border border-gray-300">
                 <img id="chat-attachment-thumb" class="w-10 h-10 object-cover rounded" src="" alt="preview" />
                 <span id="chat-attachment-name" class="text-xs text-gray-600 truncate max-w-[120px]"></span>
                 <button class="text-gray-400 hover:text-red-500 ml-auto" onclick="clearAttachment()" title="Remove">
@@ -1212,12 +1212,12 @@
               </div>
               <div class="flex items-center gap-1">
                 <input type="file" id="chat-file-input" class="hidden" accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.md,.json,.html,.htm,.xml,.zip,.gz,.ppt,.pptx" onchange="handleFileSelect(event)" />
-                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors" id="chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach file">
+                <button class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" id="chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach file">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
-                <button class="p-1.5 rounded-lg hover:bg-mama-lavender-light transition-colors relative" id="chat-mic" onclick="toggleVoiceInput()" title="Voice input">
+                <button class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors relative" id="chat-mic" onclick="toggleVoiceInput()" title="Voice input">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1234,8 +1234,8 @@
       </main>
 
       <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" id="save-decision-modal">
-        <div class="bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded-xl shadow-2xl w-[90%] max-w-md max-h-[90vh] flex flex-col overflow-hidden">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-mama-lavender-dark bg-gray-50 bg-mama-lavender-light/50">
+        <div class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-xl shadow-2xl w-[90%] max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50">
             <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900 text-mama-black">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
@@ -1244,7 +1244,7 @@
               </svg>
               Save Decision
             </h3>
-            <button class="p-1.5 rounded-lg hover:bg-gray-200 hover:bg-mama-lavender transition-colors text-gray-500 hover:text-gray-700 hover:text-mama-black" onclick="hideSaveDecisionForm()">
+            <button class="p-1.5 rounded-lg hover:bg-gray-200 hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700 hover:text-mama-black" onclick="hideSaveDecisionForm()">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
@@ -1256,7 +1256,7 @@
               <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-topic">Topic</label>
               <input
                 type="text"
-                class="w-full px-3 py-2 bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors"
+                class="w-full px-3 py-2 bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors"
                 id="save-topic"
                 placeholder="e.g., auth_strategy"
                 required
@@ -1265,7 +1265,7 @@
             <div class="flex flex-col gap-2">
               <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-decision">Decision</label>
               <textarea
-                class="w-full px-3 py-2 bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors resize-y min-h-[60px]"
+                class="w-full px-3 py-2 bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors resize-y min-h-[60px]"
                 id="save-decision"
                 placeholder="What did you decide?"
                 rows="2"
@@ -1275,7 +1275,7 @@
             <div class="flex flex-col gap-2">
               <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-reasoning">Reasoning</label>
               <textarea
-                class="w-full px-3 py-2 bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors resize-y min-h-[100px]"
+                class="w-full px-3 py-2 bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors resize-y min-h-[100px]"
                 id="save-reasoning"
                 placeholder="Why did you make this decision?"
                 rows="4"
@@ -1286,7 +1286,7 @@
               <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-confidence">Confidence (0.0 - 1.0)</label>
               <input
                 type="number"
-                class="w-28 px-3 py-2 bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded-lg text-sm text-gray-900 text-mama-black focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors"
+                class="w-28 px-3 py-2 bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-lg text-sm text-gray-900 text-mama-black focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors"
                 id="save-confidence"
                 min="0"
                 max="1"
@@ -1295,8 +1295,8 @@
               />
             </div>
           </div>
-          <div class="flex justify-end gap-2 px-4 py-3 border-t border-gray-200 border-mama-lavender-dark bg-gray-50 bg-mama-lavender-light/50">
-            <button class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-white hover:bg-gray-200 hover:bg-mama-lavender rounded-lg transition-colors" onclick="hideSaveDecisionForm()">Cancel</button>
+          <div class="flex justify-end gap-2 px-4 py-3 border-t border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50">
+            <button class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-white hover:bg-gray-200 hover:bg-gray-100 rounded-lg transition-colors" onclick="hideSaveDecisionForm()">Cancel</button>
             <button
               class="px-4 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors"
               id="save-form-submit"
@@ -1308,8 +1308,8 @@
       </div>
 
       <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" id="tunnel-setup-modal">
-        <div class="bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded-xl shadow-2xl w-[90%] max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-mama-lavender-dark bg-gray-50 bg-mama-lavender-light/50">
+        <div class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-xl shadow-2xl w-[90%] max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50">
             <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900 text-mama-black">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10" />
@@ -1318,7 +1318,7 @@
               </svg>
               External Access Setup
             </h3>
-            <button class="p-1.5 rounded-lg hover:bg-gray-200 hover:bg-mama-lavender transition-colors text-gray-500 hover:text-gray-700 hover:text-mama-black" onclick="hideTunnelSetup()">
+            <button class="p-1.5 rounded-lg hover:bg-gray-200 hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700 hover:text-mama-black" onclick="hideTunnelSetup()">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
@@ -1327,7 +1327,7 @@
           </div>
           <div class="flex-1 p-4 overflow-y-auto space-y-4">
             <!-- ngrok section -->
-            <div class="bg-gray-100 bg-white border border-gray-200 border-mama-lavender-dark rounded-lg p-4">
+            <div class="bg-gray-100 bg-white border border-gray-200 border-gray-300 rounded-lg p-4">
               <h4 class="text-sm text-mama-black text-mama-black mb-2 flex items-center gap-1.5">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
@@ -1335,9 +1335,9 @@
                 ngrok (Quick Setup)
               </h4>
               <p class="text-xs text-gray-500 text-gray-600 mb-3">Tunnel your local server to a public URL</p>
-              <div class="bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded px-3 py-2 flex items-center justify-between gap-2 mb-2">
+              <div class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded px-3 py-2 flex items-center justify-between gap-2 mb-2">
                 <code id="ngrok-command" class="font-mono text-sm text-green-600 text-green-600">ngrok http 3847</code>
-                <button class="p-1.5 rounded hover:bg-mama-lavender-light transition-colors" onclick="copyNgrokCommand()">
+                <button class="p-1.5 rounded hover:bg-gray-100 transition-colors" onclick="copyNgrokCommand()">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
@@ -1355,7 +1355,7 @@
             </div>
 
             <!-- Cloudflare section -->
-            <div class="bg-gray-100 bg-white border border-gray-200 border-mama-lavender-dark rounded-lg p-4">
+            <div class="bg-gray-100 bg-white border border-gray-200 border-gray-300 rounded-lg p-4">
               <h4 class="text-sm text-mama-black text-mama-black mb-2 flex items-center gap-1.5">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
@@ -1382,12 +1382,12 @@
               <div class="text-xs">
                 <strong class="text-amber-600 text-amber-600 block mb-1">Security Notice</strong>
                 <span class="text-gray-700 text-gray-700">Always set MAMA_AUTH_TOKEN environment variable before exposing your server externally.</span>
-                <pre class="bg-white bg-mama-lavender-light border border-gray-200 border-mama-lavender-dark rounded px-2 py-1.5 mt-2 text-[11px] text-green-600 text-green-600 overflow-x-auto">export MAMA_AUTH_TOKEN="your-secure-token-here"</pre>
+                <pre class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded px-2 py-1.5 mt-2 text-[11px] text-green-600 text-green-600 overflow-x-auto">export MAMA_AUTH_TOKEN="your-secure-token-here"</pre>
               </div>
             </div>
 
             <!-- Test connection -->
-            <div class="border-t border-gray-200 border-mama-lavender-dark pt-4">
+            <div class="border-t border-gray-200 border-gray-300 pt-4">
               <button class="w-full px-4 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors flex items-center justify-center gap-2" onclick="testConnection()">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M5 12.55a11 11 0 0 1 14.08 0" />
@@ -2040,10 +2040,10 @@
             container.innerHTML = checkpointsData.map((cp, idx) => {
               const fullSummary = renderMarkdown(cp.summary || '');
               return `
-              <div class="checkpoint-item p-3 bg-white bg-white border border-gray-200 border-mama-lavender-dark rounded-lg cursor-pointer hover:border-indigo-500 transition-colors" onclick="toggleCheckpoint(${idx})">
+              <div class="checkpoint-item p-3 bg-white bg-white border border-gray-200 border-gray-300 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors" onclick="toggleCheckpoint(${idx})">
                 <div class="text-xs font-semibold text-mama-black text-mama-black mb-1">${new Date(cp.timestamp).toLocaleString()}</div>
                 <div class="checkpoint-summary text-sm text-gray-700 text-gray-700 markdown-content line-clamp-3 overflow-hidden">${fullSummary}</div>
-                <div class="checkpoint-details hidden mt-3 pt-3 border-t border-gray-200 border-mama-lavender-dark">
+                <div class="checkpoint-details hidden mt-3 pt-3 border-t border-gray-200 border-gray-300">
                   <div class="text-sm text-gray-700 text-gray-700 markdown-content max-h-64 overflow-y-auto">${fullSummary}</div>
                 </div>
               </div>
