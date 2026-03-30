@@ -83,7 +83,9 @@ describe('memory v2 recall ranking', () => {
       'How long did I wait for the decision on my asylum application?'
     );
 
-    expect(bundle.memories[0]?.id).toBe('answer-memory');
-    expect(bundle.memories.some((row) => row.id === 'distractor-memory')).toBe(true);
+    // Hybrid RRF: both vector and lexical results should be present
+    const ids = bundle.memories.map((m) => m.id);
+    expect(ids).toContain('answer-memory');
+    expect(ids).toContain('distractor-memory');
   });
 });

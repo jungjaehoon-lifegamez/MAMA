@@ -2,7 +2,7 @@ import type { MemoryEdge, MemoryRecord } from './types.js';
 
 interface EvolutionInput {
   incoming: Pick<MemoryRecord, 'topic' | 'summary'>;
-  existing: Array<Pick<MemoryRecord, 'id' | 'topic' | 'summary'>>;
+  existing: Array<Pick<MemoryRecord, 'id' | 'topic' | 'summary'> & { _semanticMatch?: boolean }>;
 }
 
 export interface EvolutionResult {
@@ -92,6 +92,18 @@ export function resolveMemoryEvolution(input: EvolutionInput): EvolutionResult {
         to_id: existing.id,
         type: 'supersedes',
         reason: 'Same topic indicates latest replacement',
+      });
+      continue;
+    }
+
+    // Semantic candidates (found via vector search with similarity >= 0.82)
+    // have already passed a high similarity threshold.
+    if (existing._semanticMatch) {
+      edges.push({
+        from_id: 'incoming',
+        to_id: existing.id,
+        type: 'builds_on',
+        reason: 'Semantically similar memory detected via vector search',
       });
       continue;
     }

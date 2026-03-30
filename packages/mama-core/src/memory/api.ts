@@ -258,7 +258,8 @@ function lexicalScoreToConfidence(score: number): number {
   return Math.min(0.95, 0.45 + score * 0.05);
 }
 
-function mergeRecallCandidates(
+// Retained for potential future use in non-RRF recall paths
+function _mergeRecallCandidates(
   primary: MemoryRecord[],
   lexical: Array<{ memory: MemoryRecord; score: number }>
 ): MemoryRecord[] {
@@ -345,7 +346,7 @@ export async function saveMemory(
 
   const id = buildDecisionId(input.topic);
   const now = Date.now();
-  // Filter evolution candidates by primary scope to prevent cross-scope superseding
+  // Find evolution candidates: exact topic match first, then semantic search fallback
   const primaryScope = input.scopes.length > 0 ? input.scopes[0] : null;
   let existingCandidates: Array<{ id: string; topic: string; summary: string }>;
   if (primaryScope) {
@@ -379,6 +380,29 @@ export async function saveMemory(
       )
       .all(input.topic) as Array<{ id: string; topic: string; summary: string }>;
   }
+
+  // Semantic fallback: if no exact topic match, find similar memories via vector search
+  if (existingCandidates.length === 0) {
+    try {
+      const queryText = `${input.topic} ${input.summary}`;
+      const embedding = await generateEmbedding(queryText);
+      const semanticResults = await vectorSearch(embedding, 3, 0.82);
+      existingCandidates = semanticResults
+        .filter((r) => {
+          const outcome = String((r as { outcome?: unknown }).outcome || '');
+          return !outcome || outcome === 'active' || outcome === '';
+        })
+        .map((r) => ({
+          id: String(r.id),
+          topic: String(r.topic || ''),
+          summary: String(r.decision || ''),
+          _semanticMatch: true,
+        }));
+    } catch {
+      // Semantic search unavailable — proceed with empty candidates
+    }
+  }
+
   const evolution = resolveMemoryEvolution({
     incoming: { topic: input.topic, summary: input.summary },
     existing: existingCandidates,
@@ -504,13 +528,15 @@ export async function recallMemory(
     return _lexicalRecords;
   };
 
-  // Primary: embedding-based vector search (same path as MCP SearchEngine)
+  // Hybrid search: vector + BM25/lexical in parallel, fused with RRF
+  await initDB();
+
+  // Channel 1: Vector search (semantic similarity)
+  const vectorMatched: MemoryRecord[] = [];
   try {
-    await initDB();
     const queryEmbedding = await generateEmbedding(query);
     const vectorResults = await vectorSearch(queryEmbedding, 20, 0.5);
 
-    // Post-filter 1: scope
     let filtered = vectorResults;
     if (options.scopes && options.scopes.length > 0) {
       const vectorIds = vectorResults.map((r) => String(r.id));
@@ -522,7 +548,6 @@ export async function recallMemory(
       });
     }
 
-    // Post-filter 2: truth status (exclude superseded/contradicted)
     for (const result of filtered as Array<
       (typeof vectorResults)[number] & { similarity?: number; status?: string }
     >) {
@@ -530,7 +555,7 @@ export async function recallMemory(
       if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
         continue;
       }
-      matched.push({
+      vectorMatched.push({
         id: String(result.id),
         topic: String(result.topic || ''),
         kind: 'decision' as MemoryKind,
@@ -544,40 +569,49 @@ export async function recallMemory(
         updated_at: result.created_at ?? Date.now(),
       });
     }
-    if (matched.length > 0) retrievalSource = 'vector_search';
   } catch {
-    // Vector search unavailable — fall through to text fallback
+    // Vector search unavailable
   }
 
-  // Lexical augmentation: only load when vector results are sparse
-  if (matched.length < 5) {
-    const lexicalRecords = await loadLexical();
-    const lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
-    if (lexicalCandidates.length > 0) {
-      matched = mergeRecallCandidates(matched, lexicalCandidates);
-      if (matched.length > 0) {
-        retrievalSource = retrievalSource === 'vector_search' ? 'vector+lexical' : 'text_fallback';
-      }
+  // Channel 2: BM25/lexical search (keyword matching) — always run in parallel
+  const lexicalRecords = await loadLexical();
+  const lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
+
+  // RRF Fusion: combine vector and lexical results by reciprocal rank
+  const RRF_K = 60;
+  const rrfScores = new Map<string, { record: MemoryRecord; score: number }>();
+
+  for (let i = 0; i < vectorMatched.length; i++) {
+    const r = vectorMatched[i];
+    const rrfScore = 1 / (RRF_K + i + 1);
+    rrfScores.set(r.id, { record: r, score: rrfScore });
+  }
+
+  for (let i = 0; i < lexicalCandidates.length; i++) {
+    const r = lexicalCandidates[i];
+    if (!options.includeHistory && EXCLUDED_STATUSES.has(r.memory.status)) continue;
+    const rrfScore = 1 / (RRF_K + i + 1);
+    const existing = rrfScores.get(r.memory.id);
+    if (existing) {
+      existing.score += rrfScore;
+    } else {
+      rrfScores.set(r.memory.id, { record: r.memory, score: rrfScore });
     }
   }
 
-  // Fallback: text token matching (only when vector search fails entirely)
-  if (matched.length === 0) {
-    const lexicalRecords = await loadLexical();
-    const tokens = query
-      .toLowerCase()
-      .split(/[\s,.!?;:()[\]{}"']+/)
-      .filter((token) => token.length > 2);
-    matched = lexicalRecords.filter((record) => {
-      if (!options.includeHistory && EXCLUDED_STATUSES.has(record.status)) {
-        return false;
-      }
-      const haystack = [record.topic, record.summary, record.details].join(' ').toLowerCase();
-      return tokens.length === 0
-        ? haystack.includes(query.toLowerCase())
-        : tokens.filter((token) => haystack.includes(token)).length >= 2;
-    });
-    if (matched.length > 0) retrievalSource = 'text_fallback';
+  matched = Array.from(rrfScores.values())
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => ({
+      ...entry.record,
+      confidence: entry.score,
+    }));
+
+  if (vectorMatched.length > 0 && lexicalCandidates.length > 0) {
+    retrievalSource = 'hybrid_rrf';
+  } else if (vectorMatched.length > 0) {
+    retrievalSource = 'vector_search';
+  } else if (lexicalCandidates.length > 0) {
+    retrievalSource = 'lexical_search';
   }
 
   bundle.memories = matched;
@@ -595,8 +629,13 @@ export async function recallMemory(
         created_at: m.created_at,
         similarity: m.confidence ?? 0.5,
       }));
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mamaApiModule: any = await import('../mama-api.js');
+      const mamaApiModule = (await import('../mama-api.js')) as unknown as {
+        default: {
+          expandWithGraph: (
+            candidates: Record<string, unknown>[]
+          ) => Promise<Record<string, unknown>[]>;
+        };
+      };
       const expanded = await mamaApiModule.default.expandWithGraph(candidates);
       const primaryIds = new Set(matched.map((m) => m.id));
       const expandedOnly = expanded.filter(

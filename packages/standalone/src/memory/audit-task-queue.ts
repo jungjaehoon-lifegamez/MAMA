@@ -21,7 +21,7 @@ export interface MemoryAuditAckLike {
 
 type AuditWorker = (job: MemoryAuditJob) => Promise<MemoryAuditAckLike>;
 
-const AUDIT_TIMEOUT_MS = 30_000;
+const AUDIT_TIMEOUT_MS = parseInt(process.env.MAMA_AUDIT_TIMEOUT_MS || '30000', 10);
 
 export class AuditTaskQueue {
   private tail: Promise<void> = Promise.resolve();

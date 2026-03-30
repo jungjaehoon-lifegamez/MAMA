@@ -1237,7 +1237,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/mama/audit-conversation - ingest via memory agent (creates edges)
     if (pathname === '/api/mama/audit-conversation' && req.method === 'POST') {
       try {
-        const body = await readBody(req);
+        // Express may have already parsed the body; use req.body if available
+        const body =
+          (req as unknown as { body?: Record<string, unknown> }).body ?? (await readBody(req));
         if (!options.auditConversation) {
           res.writeHead(501, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));

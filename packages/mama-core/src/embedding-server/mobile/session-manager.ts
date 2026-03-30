@@ -155,7 +155,13 @@ export class SessionManager {
       this.db.exec(CREATE_STATUS_INDEX);
 
       // Add missing columns for older databases
-      for (const col of ['pid INTEGER', 'client_id TEXT']) {
+      for (const col of [
+        'pid INTEGER',
+        'client_id TEXT',
+        "status TEXT DEFAULT 'active'",
+        'last_active TEXT',
+        'created_at TEXT',
+      ]) {
         try {
           this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
         } catch {
