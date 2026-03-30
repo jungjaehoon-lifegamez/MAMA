@@ -52,6 +52,25 @@ main {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* ============================================================================
+   TYPOGRAPHY HIERARCHY — fix the flat 14px-everywhere problem
+   ============================================================================ */
+
+h1 { font-size: 1.5rem; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; }
+h2 { font-size: 1.125rem; font-weight: 600; line-height: 1.3; }
+h3 { font-size: 0.9375rem; font-weight: 600; line-height: 1.4; }
+h4 { font-size: 0.8125rem; font-weight: 500; line-height: 1.4; }
+
+/* Card system — subtle borders, not heavy shadows */
+.card, [class*="bg-white"][class*="rounded"] {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-card, 12px);
+}
+
+/* Button touch targets — minimum 44px height */
+button { min-height: 32px; }
+button:not([class*="p-0"]):not([class*="p-1"]) { padding: 6px 12px; }
+
 /* Floating Chat */
 .animate-slide-up {
   animation: slide-up 0.2s ease-out;

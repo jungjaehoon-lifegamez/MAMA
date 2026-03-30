@@ -8,7 +8,7 @@
     />
     <title>MAMA - Memory-Augmented Assistant</title>
 
-    <meta name="theme-color" content="#EDDBF7" />
+    <meta name="theme-color" content="#F9F7F4" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -111,17 +111,23 @@
         --mama-black: #131313;
         --mama-blush: #FF9999;
 
+        /* Radius hierarchy: outer > inner > button */
+        --radius-card: 12px;
+        --radius-inner: 8px;
+        --radius-button: 6px;
+        --radius-pill: 9999px;
+
         /* Semantic Colors (HSL for Tailwind) */
-        --background: 280 55% 93%;  /* lavender */
+        --background: 40 20% 97%;   /* warm off-white */
         --foreground: 0 0% 7%;      /* black */
         --card: 0 0% 100%;          /* white */
         --card-foreground: 0 0% 7%;
-        --border: 0 0% 91%;         /* light gray */
-        --muted: 280 55% 96%;       /* lavender-light */
-        --muted-foreground: 0 0% 53%;
+        --border: 0 0% 89%;         /* light gray */
+        --muted: 40 15% 95%;        /* warm muted */
+        --muted-foreground: 0 0% 45%;
         --primary: 48 100% 50%;     /* yellow */
         --primary-foreground: 0 0% 7%;
-        --secondary: 280 55% 96%;   /* lavender-light */
+        --secondary: 280 40% 95%;   /* subtle lavender accent */
         --secondary-foreground: 0 0% 7%;
         --destructive: 0 84% 60%;
         --destructive-foreground: 0 0% 98%;
@@ -143,7 +149,7 @@
 
     <link rel="stylesheet" href="/viewer/viewer.css" />
   </head>
-  <body class="bg-mama-lavender text-mama-black font-body">
+  <body class="bg-background text-mama-black font-body">
     <div id="app" class="h-screen flex flex-col">
       <!-- Header -->
       <header class="fixed top-0 left-0 right-0 h-14 bg-white/95 backdrop-blur-md border-b border-gray-200 shadow-soft z-50">
