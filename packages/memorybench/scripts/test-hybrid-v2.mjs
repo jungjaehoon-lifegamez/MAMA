@@ -34,6 +34,9 @@ const NEW_IDS = [
 
 const ALL_IDS = [...EXISTING_IDS, ...NEW_IDS]
 
+// LIMIT env: use first N questions from dataset instead of hardcoded IDs
+const QUESTION_LIMIT = parseInt(process.env.LIMIT || "0", 10)
+
 // ─── Persistent Claude Session ───────────────────────────────────────────────
 
 class PersistentSession {
@@ -433,6 +436,8 @@ async function search(query, topicPrefix, questionDate) {
 
 // ─── Extraction + Ingest ─────────────────────────────────────────────────────
 
+const BATCH_SIZE = 5 // sessions per Sonnet call
+
 async function extractAndIngest(question, runTag, session) {
   const topicPrefix = `hyb_${runTag}_`
   const entityRegistry = new Map()
@@ -440,6 +445,10 @@ async function extractAndIngest(question, runTag, session) {
     sonnetSaved = 0,
     sonnetCalls = 0
   const answerSessionsSaved = new Set()
+
+  // Pass 1: Code extraction for all sessions, collect sessions needing Sonnet
+  const sessionData = []
+  const needsSonnet = []
 
   for (let i = 0; i < question.haystack_sessions.length; i++) {
     const sessionId = question.haystack_session_ids[i]
@@ -449,69 +458,103 @@ async function extractAndIngest(question, runTag, session) {
     const userMessages = msgs.filter((m) => m.role === "user")
     const reasoning = `Session ${sessionId}. Date: ${formattedDate}.`
 
-    // Phase 1: Code extraction
-    const sessionFacts = []
+    const codeFacts = []
     for (const msg of userMessages) {
       for (const fact of extractFactSentences(msg.content)) {
         const normalized = fact.replace(/\bI\b/g, "User").trim()
         const dated = `${formattedDate}: ${addDomainLabel(normalized)}`
-        sessionFacts.push({ fact, dated })
+        codeFacts.push({ fact, dated })
       }
     }
 
-    // Phase 2: Sonnet supplement — runs when code found fewer than 2 facts
-    let sonnetFacts = []
-    if (sessionFacts.length < 2 && session) {
-      sonnetCalls++
-      const conversationText = userMessages
-        .map((m) => `User: ${m.content}`)
-        .join("\n")
-        .slice(0, 3000)
-      const prompt = `Extract personal facts from this conversation. Return ONLY a JSON array of strings, each being a concise fact about the user. Include dates, names, places, activities, preferences. Prefix each fact with the date "${formattedDate}". Replace "I" with "User". Return [] if no personal facts found. Return ONLY the JSON array.
+    const entry = { i, sessionId, formattedDate, dateStr, reasoning, codeFacts, userMessages }
+    sessionData.push(entry)
+    if (codeFacts.length < 2 && session) {
+      needsSonnet.push(sessionData.length - 1)
+    }
+  }
 
-Conversation:
-${conversationText}`
+  // Pass 2: Batch Sonnet extraction (BATCH_SIZE sessions per call)
+  const sonnetResults = new Map()
 
-      try {
-        const result = await session.prompt(prompt, 20000)
-        const match = result.match(/\[[\s\S]*\]/)
-        if (match) {
-          const parsed = JSON.parse(match[0])
-          sonnetFacts = parsed.map((f) => ({ fact: String(f), dated: String(f), fromSonnet: true }))
+  for (let b = 0; b < needsSonnet.length; b += BATCH_SIZE) {
+    const batch = needsSonnet.slice(b, b + BATCH_SIZE)
+    sonnetCalls++
+
+    const sections = batch
+      .map((idx, si) => {
+        const s = sessionData[idx]
+        const text = s.userMessages
+          .map((m) => `User: ${m.content}`)
+          .join("\n")
+          .slice(0, 2000)
+        return `--- Session ${si + 1} (date: ${s.formattedDate}) ---\n${text}`
+      })
+      .join("\n\n")
+
+    const prompt = `Extract personal facts from each session below. For EACH session, return facts as a JSON array of strings. Replace "I" with "User". Include the session date as prefix. Return a JSON array of arrays (one inner array per session). Return ONLY the JSON.
+
+${sections}`
+
+    try {
+      const result = await session.prompt(prompt, 30000)
+      const match = result.match(/\[[\s\S]*\]/)
+      if (match) {
+        let parsed = JSON.parse(match[0])
+        if (parsed.length > 0 && !Array.isArray(parsed[0])) {
+          const perSession = Math.ceil(parsed.length / batch.length)
+          const chunks = []
+          for (let c = 0; c < batch.length; c++) {
+            chunks.push(parsed.slice(c * perSession, (c + 1) * perSession))
+          }
+          parsed = chunks
         }
-      } catch (e) {
-        // timeout or parse error — skip
+        batch.forEach((idx, si) => {
+          const facts = (parsed[si] || []).map((f) => ({
+            fact: String(f),
+            dated: String(f),
+            fromSonnet: true,
+          }))
+          sonnetResults.set(idx, facts)
+        })
       }
+    } catch (e) {
+      // timeout or parse error — skip batch
     }
+  }
 
-    const allFacts = [...sessionFacts, ...sonnetFacts]
+  // Pass 3: Save all facts to MAMA
+  for (let di = 0; di < sessionData.length; di++) {
+    const s = sessionData[di]
+    const sonnetFacts = sonnetResults.get(di) || []
+    const allFacts = [...s.codeFacts, ...sonnetFacts]
     if (allFacts.length === 0) {
       continue
     }
 
-    for (const { fact, dated, fromSonnet } of allFacts.slice(0, 4)) {
-      const factIdx = allFacts.indexOf(allFacts.find((f) => f.dated === dated))
+    for (let fi = 0; fi < Math.min(allFacts.length, 4); fi++) {
+      const { fact, dated, fromSonnet } = allFacts[fi]
       const entityKey = fromSonnet
-        ? `sonnet_${i}_f${factIdx}_${dated
+        ? `sonnet_${s.i}_f${fi}_${dated
             .toLowerCase()
             .split(/\s+/)
             .filter((w) => w.length > 4)
             .slice(0, 2)
             .join("_")}`.slice(0, 60)
         : extractEntityKey(fact)
-      const topic = `${topicPrefix}${sessionId}_${entityKey}`.slice(0, 90)
+      const topic = `${topicPrefix}${s.sessionId}_${entityKey}`.slice(0, 90)
       const existing = entityRegistry.get(entityKey)
       const supersedes = existing ? [existing.id] : undefined
 
-      const id = await saveMemory({ topic, decision: dated, reasoning, supersedes })
-      entityRegistry.set(entityKey, { id, date: dateStr })
+      const id = await saveMemory({ topic, decision: dated, reasoning: s.reasoning, supersedes })
+      entityRegistry.set(entityKey, { id, date: s.dateStr })
       if (fromSonnet) {
         sonnetSaved++
       } else {
         codeSaved++
       }
-      if (question.answer_session_ids.includes(sessionId)) {
-        answerSessionsSaved.add(sessionId)
+      if (question.answer_session_ids.includes(s.sessionId)) {
+        answerSessionsSaved.add(s.sessionId)
       }
     }
   }
@@ -533,9 +576,16 @@ async function run() {
 
   const results = []
 
+  // Determine question IDs to process
+  const targetIds =
+    QUESTION_LIMIT > 0 ? allData.slice(0, QUESTION_LIMIT).map((q) => q.question_id) : ALL_IDS
+
   // Phase 1: Re-extract questions that need it
-  // Set REINGEST_IDS to re-extract specific questions, or use NEW_IDS for first run
-  const REINGEST_IDS = process.env.REINGEST ? process.env.REINGEST.split(",") : NEW_IDS
+  const REINGEST_IDS = process.env.REINGEST
+    ? process.env.REINGEST.split(",")
+    : QUESTION_LIMIT > 0
+      ? targetIds // ingest all when using LIMIT
+      : NEW_IDS
 
   console.log(`\n${"═".repeat(60)}`)
   console.log(`PHASE 1: INGEST (${REINGEST_IDS.length} questions)`)
@@ -584,7 +634,7 @@ async function run() {
     }
   }
 
-  for (const qid of ALL_IDS) {
+  for (const qid of targetIds) {
     const q = allData.find((x) => x.question_id === qid)
     if (!q) {
       continue
@@ -642,7 +692,7 @@ Respond with ONLY "correct" or "incorrect" on the first line, then a brief expla
 
   // Summary
   console.log(`\n${"=".repeat(60)}`)
-  console.log("HYBRID v2 RESULTS (10 questions)")
+  console.log(`HYBRID v2 RESULTS (${results.length} questions)`)
   console.log(`${"=".repeat(60)}`)
   const correct = results.filter((r) => r.isCorrect).length
   console.log(

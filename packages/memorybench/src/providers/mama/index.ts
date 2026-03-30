@@ -221,17 +221,22 @@ export class MAMAProvider implements Provider {
       return false
     }
 
-    const state = JSON.parse(readFileSync(statePath, "utf8")) as {
-      savedIds?: Record<string, string[]>
-      localRecords?: Record<
-        string,
-        Array<{ id: string; topic: string; content: string; created_at: number }>
-      >
-    }
+    try {
+      const state = JSON.parse(readFileSync(statePath, "utf8")) as {
+        savedIds?: Record<string, string[]>
+        localRecords?: Record<
+          string,
+          Array<{ id: string; topic: string; content: string; created_at: number }>
+        >
+      }
 
-    this.savedIds = new Map(Object.entries(state.savedIds || {}))
-    this.localRecords = new Map(Object.entries(state.localRecords || {}))
-    return true
+      this.savedIds = new Map(Object.entries(state.savedIds || {}))
+      this.localRecords = new Map(Object.entries(state.localRecords || {}))
+      return true
+    } catch {
+      logger.warn(`Corrupted state file ${statePath}, starting fresh`)
+      return false
+    }
   }
 
   private getFetchLimit(containerTag: string, limit: number): number {
@@ -612,9 +617,15 @@ ${candidates
     this.dataSourceRunPath =
       typeof config.dataSourceRunPath === "string" ? config.dataSourceRunPath : this.runPath
 
-    // Health check
-    const res = await fetch(`${this.baseUrl}/health`)
-    if (!res.ok) throw new Error(`MAMA API not reachable at ${this.baseUrl}`)
+    // Health check with timeout
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5000)
+    try {
+      const res = await fetch(`${this.baseUrl}/health`, { signal: controller.signal })
+      if (!res.ok) throw new Error(`MAMA API not reachable at ${this.baseUrl}`)
+    } finally {
+      clearTimeout(timeout)
+    }
 
     const sourceStatePath = this.dataSourceRunPath
       ? join(this.dataSourceRunPath, STATE_FILE_NAME)
@@ -962,8 +973,8 @@ ${candidates
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id, outcome: "FAILED" }),
         })
-      } catch {
-        // Ignore individual clear errors
+      } catch (e) {
+        logger.debug(`Failed to clear decision ${id}: ${e}`)
       }
     }
 
