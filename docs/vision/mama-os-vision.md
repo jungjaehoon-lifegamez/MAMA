@@ -144,7 +144,7 @@ No single app can produce these insights. Only connected memory can.
 
 ## What We Have Proven
 
-1. **Memory quality works.** MemoryBench achieved 100% accuracy on 10 LongMemEval questions across all types (multi-session, temporal reasoning, knowledge updates). mama-core can accurately recall and reason about facts extracted from conversations.
+1. **Memory quality works.** MemoryBench achieved 100% accuracy on a 10-question sample from LongMemEval covering all question types (multi-session, temporal reasoning, knowledge updates). 100-question benchmark is in progress. mama-core can accurately recall and reason about facts extracted from conversations.
 
 2. **Multi-channel monitoring works.** Kagemusha monitors 5 messaging platforms simultaneously and produces actionable summaries. LLMs handle the complexity without confusion.
 
