@@ -2,9 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Complete mama-core as a universal memory platform with hybrid extraction, document ingestion, real-time memory agent, and scope-based search.
+**Goal:** Complete mama-core as a production memory platform with real-time memory agent, scope-based search, and debounce queue for hook events.
 
-**Architecture:** mama-core's `ingestConversation` gets a `mode: "hybrid"` option that runs code regex first, then LLM for sessions with few code-extracted facts. New `ingestDocument` API handles non-conversational data. Memory agent connects to Claude Code Plugin hooks via MAMA OS HTTP endpoint. Scope-based vector search replaces topicPrefix string matching.
+**Architecture:** Memory agent receives Claude Code Plugin hook events via HTTP, queues them (debounce), and processes batches through existing Sonnet extraction pipeline (`ingestConversation`). Scope-based vector search replaces topicPrefix string matching. Hybrid extraction stays in memorybench only (benchmark-specific optimization, not production).
+
+**Eng Review Decisions (2026-03-31):**
+- Hybrid extractor: benchmarks only, NOT integrated into mama-core production path
+- ingestDocument: deferred to v0.17 (no consumer in v0.16)
+- Production extraction: Sonnet via existing ingestConversation
+- Hook fetch pattern: test-driven decision during implementation
+- Memory agent: debounce queue (Kagemusha delta-digest pattern)
 
 **Tech Stack:** TypeScript, Vitest, SQLite (better-sqlite3), Transformers.js (384-dim embeddings), Claude API (Sonnet for extraction)
 
@@ -15,25 +22,26 @@
 ### New Files
 | File | Responsibility |
 |------|---------------|
-| `packages/mama-core/src/memory/hybrid-extractor.ts` | Code regex patterns + LLM batch extraction pipeline |
-| `packages/mama-core/src/memory/document-ingester.ts` | ingestDocument API (text extraction → fact storage) |
-| `packages/mama-core/tests/unit/memory-hybrid-extractor.test.ts` | Hybrid extraction tests |
-| `packages/mama-core/tests/unit/memory-document-ingester.test.ts` | Document ingestion tests |
 | `packages/mama-core/tests/unit/memory-scope-search.test.ts` | Scope-based search tests |
-| `packages/standalone/src/api/memory-agent-handler.ts` | HTTP endpoint receiving Claude Code hook events |
-| `packages/standalone/tests/api/memory-agent-handler.test.ts` | Memory agent handler tests |
+| `packages/standalone/src/api/memory-agent-handler.ts` | HTTP endpoint + debounce queue for hook events |
+| `packages/standalone/tests/api/memory-agent-handler.test.ts` | Memory agent handler tests (happy path + error cases) |
 
 ### Modified Files
 | File | Changes |
 |------|---------|
-| `packages/mama-core/src/memory/api.ts` | Add hybrid mode to `ingestConversation`, export `ingestDocument` |
-| `packages/mama-core/src/memory/types.ts` | Add `HybridExtractOptions`, `IngestDocumentInput` types |
-| `packages/mama-core/src/db-adapter/node-sqlite-adapter.ts` | Scope-based filtering (replace topicPrefix with scope query) |
+| `packages/mama-core/src/memory/types.ts` | Add `filterByScopes` utility |
+| `packages/mama-core/src/memory/api.ts` | Scope-based recall improvements |
+| `packages/mama-core/src/db-adapter/node-sqlite-adapter.ts` | Scope-based filtering (extend topicPrefix to scope) |
 | `packages/mama-core/src/db-manager.ts` | Pass scope filter to vectorSearch |
-| `packages/mama-core/src/index.ts` | Export new APIs |
-| `packages/standalone/src/api/graph-api.ts` | Pass scope to suggest() |
 | `packages/standalone/src/cli/commands/start.ts` | Register memory-agent HTTP endpoint |
-| `packages/claude-code-plugin/scripts/userpromptsubmit-hook.js` | Send conversation content to MAMA OS memory agent endpoint |
+| `packages/claude-code-plugin/scripts/userpromptsubmit-hook.js` | Send hook events to MAMA OS memory agent |
+
+### NOT Modified (Eng Review decisions)
+| File | Reason |
+|------|--------|
+| `packages/mama-core/src/memory/hybrid-extractor.ts` | Benchmarks only, stays in memorybench scripts |
+| `packages/mama-core/src/memory/document-ingester.ts` | Deferred to v0.17 |
+| `packages/mama-core/src/index.ts` | No new exports needed |
 
 ---
 
@@ -967,15 +975,17 @@ git commit -m "test(mama-core): add memory engine E2E test — hybrid ingest + r
 
 ---
 
-## Completion Checklist
+## Completion Checklist (Updated after Eng Review)
 
-- [ ] Task 1: Hybrid extractor module (code regex + LLM pipeline)
-- [ ] Task 2: Wire hybrid into ingestConversation
-- [ ] Task 3: ingestDocument API
 - [ ] Task 4: Scope-based vector search
-- [ ] Task 5: Memory agent HTTP endpoint
-- [ ] Task 6: Claude Code Plugin hook update
+- [ ] Task 5: Memory agent HTTP endpoint + debounce queue (Kagemusha pattern)
+- [ ] Task 6: Claude Code Plugin hook update (fetch pattern: test-driven)
 - [ ] Task 7: 100-question benchmark report
-- [ ] Task 8: E2E integration test
+- [ ] Task 8: E2E integration test (Sonnet extraction path)
+
+### Removed / Deferred
+- ~~Task 1: Hybrid extractor~~ → stays in memorybench scripts (benchmark-only)
+- ~~Task 2: Wire hybrid into ingestConversation~~ → production uses Sonnet only
+- ~~Task 3: ingestDocument~~ → deferred to v0.17 (no consumer)
 
 After all tasks pass: bump version to 0.16.0, update CHANGELOG.md, tag release.
