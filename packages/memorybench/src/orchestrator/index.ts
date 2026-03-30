@@ -143,6 +143,10 @@ export class Orchestrator {
     if (this.checkpointManager.exists(runId) && !isNewRun) {
       checkpoint = this.checkpointManager.load(runId)!
 
+      // Allow overriding judge/answeringModel when resuming
+      checkpoint.judge = judgeModel
+      checkpoint.answeringModel = answeringModel
+
       effectiveLimit = checkpoint.limit
       targetQuestionIds = checkpoint.targetQuestionIds
 

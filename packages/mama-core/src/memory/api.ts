@@ -55,6 +55,7 @@ interface RecallMemoryOptions {
   includeProfile?: boolean;
   includeHistory?: boolean;
   skipGraphExpansion?: boolean;
+  topicPrefix?: string;
 }
 
 interface IngestMemoryInput {
@@ -557,7 +558,12 @@ export async function recallMemory(
   try {
     for (const sq of subQueries) {
       const queryEmbedding = await generateEmbedding(sq);
-      const vectorResults = await vectorSearch(queryEmbedding, vectorLimit, 0.5);
+      const vectorResults = await vectorSearch(
+        queryEmbedding,
+        vectorLimit,
+        0.5,
+        options.topicPrefix
+      );
 
       let filtered = vectorResults;
       if (options.scopes && options.scopes.length > 0) {

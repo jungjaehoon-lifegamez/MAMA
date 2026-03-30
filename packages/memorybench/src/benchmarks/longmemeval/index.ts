@@ -132,6 +132,7 @@ export class LongMemEvalBenchmark implements Benchmark {
     let downloaded = 0
     const totalMb = Math.round(totalSize / 1024 / 1024)
 
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -225,7 +226,7 @@ export class LongMemEvalBenchmark implements Benchmark {
       const parsedDate = sessionDate ? parseLongMemEvalDate(sessionDate) : null
 
       sessions.push({
-        sessionId: `${item.question_id}-session-${i}`,
+        sessionId: item.haystack_session_ids?.[i] ?? `${item.question_id}-session-${i}`,
         messages: unifiedMessages,
         metadata: {
           date: parsedDate?.iso,

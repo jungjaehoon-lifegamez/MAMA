@@ -19,6 +19,7 @@ export interface SearchOptions {
   containerTag: string
   limit?: number
   threshold?: number
+  questionDate?: string
 }
 
 export interface IngestResult {

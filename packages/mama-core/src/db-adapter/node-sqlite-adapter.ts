@@ -92,6 +92,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   private db: NodeSQLiteConnection | null = null;
   private _vectorSearchEnabled = true;
   private vectorCache: Map<number, Float32Array> = new Map();
+  private topicCache: Map<number, string> = new Map();
 
   constructor(config: SQLiteAdapterConfig = {}) {
     super();
@@ -186,6 +187,16 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       }
     }
 
+    // Load topic cache for scoped vector search
+    this.topicCache.clear();
+    const topicRows = this.db.prepare('SELECT rowid, topic FROM decisions').all() as Array<{
+      rowid: number;
+      topic: string;
+    }>;
+    for (const row of topicRows) {
+      this.topicCache.set(row.rowid, row.topic);
+    }
+
     const count = this.vectorCache.size;
     const elapsed = Date.now() - start;
     info(`[node-sqlite-adapter] Vector cache loaded: ${count} embeddings in ${elapsed}ms`);
@@ -247,7 +258,11 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     }
   }
 
-  vectorSearch(embedding: Float32Array | number[], limit = 5): VectorSearchResult[] | null {
+  vectorSearch(
+    embedding: Float32Array | number[],
+    limit = 5,
+    topicPrefix?: string
+  ): VectorSearchResult[] | null {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
@@ -261,6 +276,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     for (const [rowid, candidate] of this.vectorCache) {
       if (candidate.length !== queryVector.length) continue;
+
+      // Pre-filter by topic prefix before computing similarity
+      if (topicPrefix) {
+        const topic = this.topicCache.get(rowid);
+        if (!topic || !topic.startsWith(topicPrefix)) continue;
+      }
 
       const similarity = cosineSimilarity(candidate, queryVector);
 
@@ -299,8 +320,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     const result = stmt.run(rowid, buffer);
 
-    // Keep in-memory cache in sync
+    // Keep in-memory caches in sync
     this.vectorCache.set(rowid, vec);
+    const topicRow = this.prepare('SELECT topic FROM decisions WHERE rowid = ?').get(rowid) as
+      | { topic: string }
+      | undefined;
+    if (topicRow) this.topicCache.set(rowid, topicRow.topic);
 
     return result;
   }
