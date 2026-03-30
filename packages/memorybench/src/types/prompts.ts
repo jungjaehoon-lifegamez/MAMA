@@ -6,8 +6,8 @@ export type JudgePromptFunction = (
 ) => JudgePromptResult
 
 const MAX_CONTEXT_RESULTS = 6
-const MAX_CONTEXT_EXCERPT_CHARS = 600
-const EXCERPT_WINDOW_CHARS = 600
+const MAX_CONTEXT_EXCERPT_CHARS = 1200
+const EXCERPT_WINDOW_CHARS = 400
 const MAX_CLUES_PER_TYPE = 10
 const MAX_CLUE_CHARS = 220
 // Synced from mama-core/src/memory/api.ts LEXICAL_STOPWORDS
@@ -86,28 +86,54 @@ function extractRelevantExcerpt(content: string, query?: string): string {
     return truncateText(normalized, MAX_CONTEXT_EXCERPT_CHARS)
   }
 
-  let bestIndex = -1
-  let bestScore = 0
+  // Multi-window: find ALL token matches, deduplicate overlapping windows, combine
+  const lower = normalized.toLowerCase()
+  const windows: Array<{ start: number; end: number; score: number }> = []
+
   for (const token of tokens) {
-    const index = normalized.toLowerCase().indexOf(token)
-    if (index === -1) {
-      continue
-    }
-    const score = token.length
-    if (score > bestScore) {
-      bestScore = score
-      bestIndex = index
+    let searchFrom = 0
+    while (searchFrom < lower.length) {
+      const index = lower.indexOf(token, searchFrom)
+      if (index === -1) break
+      const start = Math.max(0, index - EXCERPT_WINDOW_CHARS / 2)
+      const end = Math.min(normalized.length, index + EXCERPT_WINDOW_CHARS / 2)
+      windows.push({ start, end, score: token.length })
+      searchFrom = index + token.length
     }
   }
 
-  if (bestIndex === -1) {
+  if (windows.length === 0) {
     return truncateText(normalized, MAX_CONTEXT_EXCERPT_CHARS)
   }
 
-  const start = Math.max(0, bestIndex - EXCERPT_WINDOW_CHARS / 2)
-  const end = Math.min(normalized.length, start + EXCERPT_WINDOW_CHARS)
-  const snippet = normalized.slice(start, end).trim()
-  return truncateText(snippet, MAX_CONTEXT_EXCERPT_CHARS)
+  // Sort by score (longest token first), then merge overlapping windows
+  windows.sort((a, b) => b.score - a.score || a.start - b.start)
+
+  const merged: Array<{ start: number; end: number }> = []
+  let totalChars = 0
+
+  for (const w of windows) {
+    if (totalChars >= MAX_CONTEXT_EXCERPT_CHARS) break
+
+    // Check overlap with existing merged windows
+    const overlapping = merged.findIndex((m) => w.start <= m.end && w.end >= m.start)
+    if (overlapping >= 0) {
+      // Extend existing window
+      const m = merged[overlapping]
+      const oldSize = m.end - m.start
+      m.start = Math.min(m.start, w.start)
+      m.end = Math.max(m.end, w.end)
+      totalChars += m.end - m.start - oldSize
+    } else {
+      merged.push({ start: w.start, end: w.end })
+      totalChars += w.end - w.start
+    }
+  }
+
+  // Sort merged windows by position and combine with "..." separator
+  merged.sort((a, b) => a.start - b.start)
+  const excerpts = merged.map((m) => normalized.slice(m.start, m.end).trim())
+  return truncateText(excerpts.join(" ... "), MAX_CONTEXT_EXCERPT_CHARS)
 }
 
 function splitIntoSegments(content: string): string[] {
