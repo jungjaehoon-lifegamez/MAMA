@@ -528,54 +528,106 @@ export async function recallMemory(
     return _lexicalRecords;
   };
 
+  // Query analysis: detect aggregation patterns and extract sub-queries
+  const lowerQuery = query.toLowerCase();
+  const isAggregation = /\b(how many|how much|total|all|every|each|count|number of)\b/.test(
+    lowerQuery
+  );
+  const hasMultipleEntities = /\b(and|or|vs|versus|compared|between)\b/.test(lowerQuery);
+  const vectorLimit = isAggregation ? 50 : 20;
+
+  // Multi-query decomposition: extract sub-queries for complex questions
+  const subQueries: string[] = [query];
+  if (hasMultipleEntities) {
+    // Split on "or"/"and" to create focused sub-queries
+    const parts = query
+      .split(/\b(?:or|vs|versus|and|,)\b/i)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 10);
+    if (parts.length > 1) {
+      subQueries.push(...parts);
+    }
+  }
+
   // Hybrid search: vector + BM25/lexical in parallel, fused with RRF
   await initDB();
 
-  // Channel 1: Vector search (semantic similarity)
+  // Channel 1: Vector search (semantic similarity) — run all sub-queries
   const vectorMatched: MemoryRecord[] = [];
   try {
-    const queryEmbedding = await generateEmbedding(query);
-    const vectorResults = await vectorSearch(queryEmbedding, 20, 0.5);
+    for (const sq of subQueries) {
+      const queryEmbedding = await generateEmbedding(sq);
+      const vectorResults = await vectorSearch(queryEmbedding, vectorLimit, 0.5);
 
-    let filtered = vectorResults;
-    if (options.scopes && options.scopes.length > 0) {
-      const vectorIds = vectorResults.map((r) => String(r.id));
-      const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
-      const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
-      filtered = vectorResults.filter((r) => {
-        const scopes = scopeMap.get(String(r.id)) ?? [];
-        return scopes.length === 0 || scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
-      });
-    }
-
-    for (const result of filtered as Array<
-      (typeof vectorResults)[number] & { similarity?: number; status?: string }
-    >) {
-      const effectiveStatus = (result.status as string) || (result.outcome as string) || '';
-      if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
-        continue;
+      let filtered = vectorResults;
+      if (options.scopes && options.scopes.length > 0) {
+        const vectorIds = vectorResults.map((r) => String(r.id));
+        const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
+        const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+        filtered = vectorResults.filter((r) => {
+          const scopes = scopeMap.get(String(r.id)) ?? [];
+          return (
+            scopes.length === 0 || scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`))
+          );
+        });
       }
-      vectorMatched.push({
-        id: String(result.id),
-        topic: String(result.topic || ''),
-        kind: 'decision' as MemoryKind,
-        summary: String(result.decision || ''),
-        details: String(result.reasoning || ''),
-        confidence: (result as { similarity?: number }).similarity ?? 0.5,
-        status: (effectiveStatus as MemoryStatus) || 'active',
-        scopes: [],
-        source: { package: 'mama-core', source_type: 'vector_search' },
-        created_at: result.created_at ?? Date.now(),
-        updated_at: result.created_at ?? Date.now(),
-      });
-    }
-  } catch {
-    // Vector search unavailable
+
+      for (const result of filtered as Array<
+        (typeof vectorResults)[number] & { similarity?: number; status?: string }
+      >) {
+        const effectiveStatus = (result.status as string) || (result.outcome as string) || '';
+        if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
+          continue;
+        }
+        vectorMatched.push({
+          id: String(result.id),
+          topic: String(result.topic || ''),
+          kind: 'decision' as MemoryKind,
+          summary: String(result.decision || ''),
+          details: String(result.reasoning || ''),
+          confidence: (result as { similarity?: number }).similarity ?? 0.5,
+          status: (effectiveStatus as MemoryStatus) || 'active',
+          scopes: [],
+          source: { package: 'mama-core', source_type: 'vector_search' },
+          created_at: result.created_at ?? Date.now(),
+          updated_at: result.created_at ?? Date.now(),
+        });
+      }
+    } // end sub-query loop
+  } catch (vectorErr) {
+    warn(
+      `[recallMemory] Vector search failed: ${vectorErr instanceof Error ? vectorErr.message : String(vectorErr)}`
+    );
   }
 
+  // Deduplicate vector results from multiple sub-queries
+  const seenIds = new Set<string>();
+  const dedupedVector: MemoryRecord[] = [];
+  for (const r of vectorMatched) {
+    if (!seenIds.has(r.id)) {
+      seenIds.add(r.id);
+      dedupedVector.push(r);
+    }
+  }
+  vectorMatched.length = 0;
+  vectorMatched.push(...dedupedVector);
+
   // Channel 2: BM25/lexical search (keyword matching) — always run in parallel
+  // For aggregation queries, run lexical on all sub-queries too
   const lexicalRecords = await loadLexical();
-  const lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
+  const allLexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
+  if (subQueries.length > 1) {
+    for (const sq of subQueries.slice(1)) {
+      const subCandidates = buildLexicalCandidates(lexicalRecords, sq);
+      for (const c of subCandidates) {
+        if (!allLexicalCandidates.some((existing) => existing.memory.id === c.memory.id)) {
+          allLexicalCandidates.push(c);
+        }
+      }
+    }
+    allLexicalCandidates.sort((a, b) => b.score - a.score);
+  }
+  const lexicalCandidates = allLexicalCandidates;
 
   // RRF Fusion: combine vector and lexical results by reciprocal rank
   const RRF_K = 60;
@@ -601,10 +653,7 @@ export async function recallMemory(
 
   matched = Array.from(rrfScores.values())
     .sort((a, b) => b.score - a.score)
-    .map((entry) => ({
-      ...entry.record,
-      confidence: entry.score,
-    }));
+    .map((entry) => entry.record);
 
   if (vectorMatched.length > 0 && lexicalCandidates.length > 0) {
     retrievalSource = 'hybrid_rrf';

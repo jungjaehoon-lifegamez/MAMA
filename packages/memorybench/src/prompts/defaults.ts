@@ -23,6 +23,9 @@ Instructions:
 - "preference_clues" highlights likes, wants, favorites, recommendations, and ingredient/brand preferences
 - Use the clues to answer directly when they clearly support an answer
 - Consider any temporal/date information present in the data
+- For purchase/acquisition questions, prefer acquisition_clues and the most specific item name over generic context
+- For purchase/acquisition questions, if acquisition_clues name a concrete item, answer with that item and do not abstain
+- Example: if the context says "I just got a smoker today", answer "a smoker"
 - Treat titles, roles, people, products, places, and timepoints as exact facts
 - Do NOT substitute a close-but-different entity or title for the one in the question
 - Example: if the context says "Senior Software Engineer" but the question asks about "Software Engineer Manager", the information is not enough and you must answer "I don't know"

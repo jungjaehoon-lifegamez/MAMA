@@ -1208,7 +1208,8 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     if (pathname === '/api/mama/ingest-conversation' && req.method === 'POST') {
       try {
         const body = await readBody(req);
-        const { ingestConversation } = await import('@jungjaehoon/mama-core');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { ingestConversation } = require('@jungjaehoon/mama-core');
         const source = (body.source as { package: string; source_type: string }) || {
           package: 'standalone' as const,
           source_type: 'api',

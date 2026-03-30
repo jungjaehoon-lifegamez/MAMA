@@ -1336,7 +1336,7 @@ export async function runAgentLoop(
       if (!extractionProcess) {
         extractionProcess = new PersistentClaudeProcess({
           sessionId: `${crypto.randomUUID()}`,
-          model: 'sonnet',
+          model: 'haiku',
           systemPrompt:
             'You are a memory extraction assistant. Extract structured memory units from conversations.',
           dangerouslySkipPermissions: true,
