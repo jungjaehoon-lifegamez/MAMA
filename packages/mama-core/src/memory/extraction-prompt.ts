@@ -29,8 +29,8 @@ Classify each as one of: preference, fact, decision, lesson, constraint.
 ${topicHint}
 Rules:
 ${topicRule}
-- summary: concise (<200 chars), must include key entities/numbers/names
-- details: full context with evidence from the conversation
+- summary: concise (<200 chars). MUST preserve: proper nouns (names, brands, places), specific numbers, dates. Example: "User's cat Luna needs microchipping" NOT "User has a cat"
+- details: full context with evidence from the conversation. Include exact quotes for names/numbers
 - confidence: 0.0-1.0 based on how explicitly stated the information is
 - For preferences: state what IS preferred and what is NOT (if mentioned)
 - For countable facts: enumerate items explicitly (e.g., "Projects: 1. X, 2. Y, 3. Z")

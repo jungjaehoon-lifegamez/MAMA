@@ -661,8 +661,14 @@ async function run() {
       ? `\nIMPORTANT: The user asked this question on ${questionDate}. Interpret all relative time references ("this year", "last week", "how long", "ago") relative to this date, NOT today's date.\n`
       : ""
 
-    const answerPrompt = `You are a personal assistant with access to the user's memory. Based ONLY on the context below, answer the user's question. If the context doesn't contain enough information, say "I don't know."
+    const answerPrompt = `You are a personal assistant with access to the user's memory. Answer the user's question using the context below.
 ${dateContext}
+Rules:
+- If the context contains the answer or enough clues to infer it, answer directly.
+- Use reasoning: "Valentine's Day" = February 14th. "got back from a 2-day workshop" = spent 2 days.
+- Extract specific details: names, numbers, places, dates, brands from the context.
+- Only say "I don't know" if the context truly has NO relevant information at all.
+
 Context from memory:
 ${context}
 
