@@ -22,6 +22,12 @@ vi.mock('../../src/db-manager.js', () => ({
           }
           return [];
         },
+        get: (..._args: unknown[]) => {
+          if (sql.includes('SELECT status FROM decisions')) {
+            return { status: 'active' };
+          }
+          return undefined;
+        },
       };
     },
   })),
