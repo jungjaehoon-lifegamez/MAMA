@@ -1376,6 +1376,7 @@ interface SuggestFunctionOptions {
   recencyScale?: number;
   recencyDecay?: number;
   disableRecency?: boolean;
+  topicPrefix?: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1397,7 +1398,10 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
   } = options;
 
   try {
-    const bundle = await recallMemory(userQuestion, { includeProfile: false });
+    const bundle = await recallMemory(userQuestion, {
+      includeProfile: false,
+      topicPrefix: options.topicPrefix,
+    });
     if (bundle.memories.length > 0) {
       // Apply threshold filtering if configured
       let filteredMemories = bundle.memories;

@@ -21,6 +21,112 @@ import { executeCodexPrompt } from "../../utils/codex"
 
 const DEFAULT_BASE_URL = "http://localhost:3847"
 const STATE_FILE_NAME = "mama-provider-state.json"
+
+// ─── Code-based fact extraction ───────────────────────────────────────────────
+
+const CODE_EXTRACT_FACT_PATTERNS = [
+  /\bI\s+(just\s+)?(started|began|finished|completed|graduated|attended)\b/i,
+  /\bI\s+(just\s+)?(got|bought|purchased|acquired|received)\s+(a|an|my|the)\b/i,
+  /\bI\s+(just\s+)?(got|bought|purchased|acquired)\b/i,
+  /\bI\s+(am\s+currently|'m\s+currently)\b/i,
+  /\bI\s+(am|'m)\s+(reading|watching|writing|playing|learning|training|working)\b/i,
+  /\bI\s+recently\s+(attended|went|visited|saw|watched|volunteered|completed|finished|made|baked)\b/i,
+  /\bI\s+went\s+(to|on)\b/i,
+  /\bI\s+visited\b/i,
+  /\bI\s+volunteered\b/i,
+  /\bI\s+(work|live|play|run|do)\b/i,
+  /\bI\s+spent\s+\d+\s+(day|days|week|weeks|hour|hours)\b/i,
+  /\bI\s+was\s+in\s+[A-Z]/,
+  /\bI'?ve\s+(made|baked|cooked|tried|been\s+doing|been\s+playing|been\s+training)\b/i,
+  /\bour\s+\w*\s*(team|record|score|league)\b/i,
+  /\bwe'?re\s+\d+-\d+\b/i,
+]
+
+const CODE_EXTRACT_DOMAIN_LABELS: Array<{ patterns: RegExp[]; label: string }> = [
+  { patterns: [/\b(made|baked|cooked|brewed)\b/i], label: "Cooking/baking experience" },
+  {
+    patterns: [
+      /\b(started|began|finished|completed)\b.*\b(book|novel)\b/i,
+      /\b(started|began|finished|completed)\b.*["'][^"']{3,}["']/i,
+    ],
+    label: "Reading history",
+  },
+  {
+    patterns: [
+      /\b(started|watching|watched|finished|binge)\b.*\b(show|series|movie|season|episode)\b/i,
+    ],
+    label: "Watching history",
+  },
+  {
+    patterns: [
+      /\b(attended|visited)\b.*\b(concert|lecture|museum|gallery|theater|festival|exhibition)\b/i,
+      /\bvolunteered\b/i,
+    ],
+    label: "Event attendance",
+  },
+  {
+    patterns: [/\b(bought|purchased|acquired)\b/i, /\bgot\s+(a|an|my|the)\s+\w+/i],
+    label: "Purchase",
+  },
+  {
+    patterns: [/\bwe'?re\s+\d+-\d+\b/i, /\b(record|score)\b.*\d+-\d+/i],
+    label: "Sports record",
+  },
+  {
+    patterns: [/\b(went to|visited|was in|traveled to)\b.*\b[A-Z][a-z]{2,}\b/i],
+    label: "Travel",
+  },
+  { patterns: [/\b(graduated|degree|diploma)\b/i], label: "Education" },
+]
+
+function codeExtractFactSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .filter((s) => CODE_EXTRACT_FACT_PATTERNS.some((p) => p.test(s)) && s.length > 15)
+}
+
+function codeExtractEntityKey(fact: string): string {
+  const quoted = fact.match(/"([^"]+)"/)?.[1]
+  if (quoted) {
+    const verb =
+      fact
+        .match(
+          /\b(started|began|finished|completed|got|bought|purchased|attended|went|visited)\b/i
+        )?.[1]
+        ?.toLowerCase() ?? "fact"
+    return `${verb}_${quoted.toLowerCase().replace(/\s+/g, "_")}`.slice(0, 70)
+  }
+  const gotNoun = fact.match(/\bgot\s+(?:a\s+|an\s+)?(\w+)\b/i)?.[1]
+  if (gotNoun && gotNoun.length > 3) return `got_${gotNoun.toLowerCase()}`
+  const proper = fact
+    .match(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*/g)
+    ?.filter((w) => !["User", "By", "The", "In", "On"].includes(w))
+  if (proper?.length) {
+    const verb =
+      fact
+        .match(/\b(started|finished|attended|bought|visited|went|graduated|completed)\b/i)?.[1]
+        ?.toLowerCase() ?? "fact"
+    return `${verb}_${proper[0].toLowerCase().replace(/\s+/g, "_")}`.slice(0, 70)
+  }
+  const words = fact
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(
+      (w) => w.length > 4 && !["about", "their", "which", "would", "could", "should"].includes(w)
+    )
+    .slice(0, 3)
+  return words.join("_") || "unknown"
+}
+
+function codeExtractAddDomainLabel(fact: string): string {
+  for (const { patterns, label } of CODE_EXTRACT_DOMAIN_LABELS) {
+    if (patterns.some((p) => p.test(fact))) return `${label}: ${fact}`
+  }
+  return fact
+}
+
+// ─── End code-based fact extraction ──────────────────────────────────────────
+
 // Synced from mama-core/src/memory/api.ts LEXICAL_STOPWORDS
 const STOPWORDS = new Set([
   "a",
@@ -74,7 +180,11 @@ interface TemporalSearchContext {
 export class MAMAProvider implements Provider {
   name = "mama"
   concurrency = {
-    default: process.env.MEMORYBENCH_EXTRACT_MEMORIES === "true" ? 1 : 5,
+    default:
+      process.env.MEMORYBENCH_CODE_EXTRACT === "true" ||
+      process.env.MEMORYBENCH_EXTRACT_MEMORIES === "true"
+        ? 1
+        : 5,
     indexing: 1,
   }
 
@@ -524,9 +634,14 @@ ${candidates
     const existingIds = this.savedIds.get(options.containerTag) || []
     const existingLocalRecords = this.localRecords.get(options.containerTag) || []
 
+    const useCodeExtract = process.env.MEMORYBENCH_CODE_EXTRACT === "true"
+    const _useHybridExtract = process.env.MEMORYBENCH_HYBRID_EXTRACT === "true"
     const useExtraction = process.env.MEMORYBENCH_EXTRACT_MEMORIES === "true"
     const extractionModel = process.env.MEMORYBENCH_EXTRACTION_MODEL || "claude-sonnet-4-5-20250514"
     const anthropicApiKey = process.env.ANTHROPIC_API_KEY
+
+    // Per-ingest entity registry for supersedes tracking (entityKey → memoryId)
+    const entityRegistry = new Map<string, string>()
 
     for (const session of sessions) {
       const isoDate = session.metadata?.date as string | undefined
@@ -553,7 +668,67 @@ ${candidates
         .join(". ")
 
       try {
-        if (useExtraction) {
+        if (useCodeExtract) {
+          // Code-based extraction: regex fact detection + date injection + supersedes
+          const userMessages = messages.filter((m) => m.role === "user")
+          const sessionFacts: Array<{ dated: string; entityKey: string; topic: string }> = []
+
+          for (const msg of userMessages) {
+            const sentences = codeExtractFactSentences(msg.content)
+            for (const sentence of sentences) {
+              const normalized = sentence.replace(/\bI\b/g, "User").trim()
+              const labeled = codeExtractAddDomainLabel(normalized)
+              const dated = formattedDate ? `${formattedDate}: ${labeled}` : labeled
+              const entityKey = codeExtractEntityKey(sentence)
+              const topic = `bench_${options.containerTag}_${session.sessionId}_${entityKey}`.slice(
+                0,
+                90
+              )
+              sessionFacts.push({ dated, entityKey, topic })
+            }
+          }
+
+          // Save up to 4 facts per session
+          for (const { dated, entityKey, topic } of sessionFacts.slice(0, 4)) {
+            const existingId = entityRegistry.get(entityKey)
+            const body: Record<string, unknown> = {
+              topic,
+              decision: dated,
+              reasoning,
+              ...(existingId ? { supersedes: [existingId] } : {}),
+            }
+            const res = await fetch(`${this.baseUrl}/api/mama/save`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            })
+            const data = (await res.json()) as { success?: boolean; id?: string }
+            if (data.success && data.id) {
+              documentIds.push(data.id)
+              existingIds.push(data.id)
+              entityRegistry.set(entityKey, data.id)
+              existingLocalRecords.push({
+                id: data.id,
+                topic,
+                content: dated,
+                created_at: Date.now(),
+              })
+            }
+          }
+
+          // Also store full conversation in localRecords for fallback
+          const fullTopic = `bench_${options.containerTag}_${session.sessionId}`.slice(0, 80)
+          existingLocalRecords.push({
+            id: `local_${session.sessionId}`,
+            topic: fullTopic,
+            content: `${conversationText}\n\n${reasoning}`,
+            created_at: Date.now(),
+          })
+
+          logger.debug(
+            `Code-extracted session ${session.sessionId}: ${sessionFacts.length} facts, ${Math.min(sessionFacts.length, 4)} saved`
+          )
+        } else if (useExtraction) {
           // Use ingestConversation with LLM extraction
           const res = await fetch(`${this.baseUrl}/api/mama/ingest-conversation`, {
             method: "POST",

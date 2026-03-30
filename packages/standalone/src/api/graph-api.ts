@@ -729,6 +729,7 @@ async function handleMamaSearchRequest(
     const searchResults = await mama.suggest(query, {
       limit: fetchLimit,
       threshold: 0.3,
+      topicPrefix: topicPrefix || undefined,
     });
 
     let results: Array<{
