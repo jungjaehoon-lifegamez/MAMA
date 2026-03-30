@@ -436,7 +436,7 @@ async function search(query, topicPrefix, questionDate) {
 
 // ─── Extraction + Ingest ─────────────────────────────────────────────────────
 
-const BATCH_SIZE = 5 // sessions per Sonnet call
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "3", 10) // sessions per Sonnet call
 
 async function extractAndIngest(question, runTag, session) {
   const topicPrefix = `hyb_${runTag}_`
@@ -497,7 +497,7 @@ async function extractAndIngest(question, runTag, session) {
 ${sections}`
 
     try {
-      const result = await session.prompt(prompt, 30000)
+      const result = await session.prompt(prompt, 60000)
       const match = result.match(/\[[\s\S]*\]/)
       if (match) {
         let parsed = JSON.parse(match[0])
