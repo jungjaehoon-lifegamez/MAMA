@@ -60,6 +60,7 @@ const TEMPORAL_PATTERN =
   /\b(initially|initial|now|current|currently|again|since|after|before|when|while|today|yesterday|tomorrow|started|start|first|latest|earlier|later|year|month|week|day)\b/i
 const PREFERENCE_PATTERN =
   /\b(prefer|preference|favorite|favourite|love|like|enjoy|want|recommend|serve|best|usually|tend|homegrown|compatible|durable|showcase)\b/i
+const ACQUISITION_PATTERN = /\b(i|we)\b[\s\S]{0,80}\b(got|gotten|bought|purchased|acquired)\b/i
 
 function truncateText(value: string, limit: number): string {
   if (value.length <= limit) {
@@ -210,6 +211,7 @@ function compactContextEntry(entry: unknown, index: number, query?: string): unk
     numeric_clues: collectClues(content, query, NUMERIC_PATTERN),
     time_clues: collectClues(content, query, TEMPORAL_PATTERN),
     preference_clues: collectClues(content, query, PREFERENCE_PATTERN),
+    acquisition_clues: collectClues(content, query, ACQUISITION_PATTERN),
   }
 }
 

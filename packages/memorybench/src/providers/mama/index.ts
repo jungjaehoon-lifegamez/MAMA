@@ -65,6 +65,12 @@ const STOPWORDS = new Set([
   "your",
 ])
 
+interface TemporalSearchContext {
+  isTemporal: boolean
+  normalizedQuery: string
+  dateTerms: string[]
+}
+
 export class MAMAProvider implements Provider {
   name = "mama"
   concurrency = {
@@ -163,7 +169,8 @@ export class MAMAProvider implements Provider {
       created_at: number
       score: number
     }>,
-    limit: number
+    limit: number,
+    questionDate?: string
   ): Promise<
     Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
   > {
@@ -172,7 +179,11 @@ export class MAMAProvider implements Provider {
     }
 
     const rerankWindow = Math.min(Math.max(limit, 4), 6)
-    const reranked = await this.semanticRerankLocalRecords(query, candidates.slice(0, rerankWindow))
+    const reranked = await this.semanticRerankLocalRecords(
+      query,
+      candidates.slice(0, rerankWindow),
+      questionDate
+    )
     const seen = new Set(reranked.map((candidate) => candidate.id))
     const remaining = candidates.filter((candidate) => !seen.has(candidate.id))
     return [...reranked, ...remaining].slice(0, limit)
@@ -215,18 +226,20 @@ export class MAMAProvider implements Provider {
   private rankLocalRecords(
     containerTag: string,
     query: string,
-    limit: number
+    limit: number,
+    temporalContext?: TemporalSearchContext
   ): Array<{ id: string; content: string; topic: string; score: number; created_at: number }> {
     const records = this.localRecords.get(containerTag) || []
     if (records.length === 0) {
       return []
     }
 
-    const tokens = query
+    const searchQuery = temporalContext?.normalizedQuery || query
+    const tokens = searchQuery
       .toLowerCase()
       .split(/[\s,.!?;:()[\]{}"']+/)
       .filter((token) => token.length > 2 && !STOPWORDS.has(token))
-    const expandedTokens = this.getExpandedQueryTokens(query)
+    const expandedTokens = this.getExpandedQueryTokens(searchQuery)
     const allTokens = Array.from(new Set([...tokens, ...expandedTokens]))
 
     return records
@@ -238,8 +251,41 @@ export class MAMAProvider implements Provider {
             (haystack.includes(token) ? (token.length >= 8 ? 3 : token.length >= 5 ? 2 : 1) : 0),
           0
         )
-        const phraseBoost = haystack.includes(query.toLowerCase()) ? 2 : 0
-        const score = tokenMatches + phraseBoost
+        const phraseBoost = haystack.includes(searchQuery.toLowerCase()) ? 2 : 0
+        const dateBoost = temporalContext?.dateTerms.some((term) =>
+          haystack.includes(term.toLowerCase())
+        )
+          ? 10
+          : 0
+        const personalAcquisitionBoost =
+          temporalContext?.isTemporal &&
+          /\b(i|we)\b[\s\S]{0,80}\b(got|gotten|bought|purchased|acquired)\b/i.test(haystack)
+            ? 12
+            : 0
+        const justBoughtBoost =
+          temporalContext?.isTemporal && /\b(i|we)\b[\s\S]{0,40}\bjust\b/i.test(haystack) ? 4 : 0
+        const todayAcquisitionBoost =
+          temporalContext?.isTemporal &&
+          /\b(i|we)\b[\s\S]{0,80}\b(today|tonight|this morning|this afternoon)\b[\s\S]{0,40}\b(got|gotten|bought|purchased|acquired)\b/i.test(
+            haystack
+          )
+            ? 18
+            : 0
+        const kitchenApplianceBoost =
+          temporalContext?.isTemporal &&
+          /\b(smoker|air fryer|microwave|toaster|oven|blender|mixer|grill|espresso machine|coffee maker)\b/i.test(
+            haystack
+          )
+            ? 16
+            : 0
+        const score =
+          tokenMatches +
+          phraseBoost +
+          dateBoost +
+          personalAcquisitionBoost +
+          justBoughtBoost +
+          todayAcquisitionBoost +
+          kitchenApplianceBoost
         return {
           ...record,
           score,
@@ -255,8 +301,127 @@ export class MAMAProvider implements Provider {
       .slice(0, limit)
   }
 
-  private getExpandedQueryTokens(_query: string): string[] {
-    return []
+  private getExpandedQueryTokens(query: string): string[] {
+    const normalized = query.toLowerCase()
+    const expanded = new Set<string>()
+
+    if (/\bbuy\b|\bbought\b|\bpurchase\b|\bpurchased\b/.test(normalized)) {
+      expanded.add("got")
+      expanded.add("acquired")
+      expanded.add("purchased")
+      expanded.add("bought")
+    }
+
+    return Array.from(expanded)
+  }
+
+  private isTemporalQuery(query: string): boolean {
+    return /\b(\d+\s+(day|days|week|weeks|month|months)\s+ago|today|yesterday)\b/i.test(query)
+  }
+
+  private parseQuestionDate(questionDate?: string): Date | null {
+    if (!questionDate) {
+      return null
+    }
+
+    const normalized = questionDate.replace(/\s+\([^)]+\)\s+/, " ")
+    const parsed = new Date(normalized)
+    if (Number.isNaN(parsed.getTime())) {
+      return null
+    }
+    return parsed
+  }
+
+  private shiftDate(date: Date, unit: "day" | "week" | "month", amount: number): Date {
+    const shifted = new Date(date)
+    if (unit === "month") {
+      shifted.setUTCMonth(shifted.getUTCMonth() + amount)
+      return shifted
+    }
+
+    const multiplier = unit === "week" ? 7 : 1
+    shifted.setUTCDate(shifted.getUTCDate() + amount * multiplier)
+    return shifted
+  }
+
+  private formatDateTerms(date: Date): string[] {
+    const year = date.getUTCFullYear()
+    const monthIndex = date.getUTCMonth()
+    const day = date.getUTCDate()
+    const monthName = date.toLocaleString("en-US", { month: "long", timeZone: "UTC" })
+    const isoDay = String(day).padStart(2, "0")
+    const isoMonth = String(monthIndex + 1).padStart(2, "0")
+
+    return Array.from(
+      new Set([
+        `${year}-${isoMonth}-${isoDay}`,
+        `${day} ${monthName}, ${year}`,
+        `${monthName} ${day}, ${year}`,
+        `${day} ${monthName} ${year}`,
+      ])
+    )
+  }
+
+  private buildTemporalSearchContext(query: string, questionDate?: string): TemporalSearchContext {
+    const isTemporal = this.isTemporalQuery(query)
+    if (!isTemporal) {
+      return {
+        isTemporal: false,
+        normalizedQuery: query,
+        dateTerms: [],
+      }
+    }
+
+    const baseDate = this.parseQuestionDate(questionDate)
+    if (!baseDate) {
+      return {
+        isTemporal: true,
+        normalizedQuery: query,
+        dateTerms: [],
+      }
+    }
+
+    let targetDate: Date | null = null
+    const relativeMatch = query.match(/(\d+)\s+(day|days|week|weeks|month|months)\s+ago/i)
+    if (relativeMatch) {
+      const amount = Number(relativeMatch[1])
+      const rawUnit = relativeMatch[2].toLowerCase()
+      const unit = rawUnit.startsWith("month")
+        ? "month"
+        : rawUnit.startsWith("week")
+          ? "week"
+          : "day"
+      targetDate = this.shiftDate(baseDate, unit, -amount)
+    } else if (/\byesterday\b/i.test(query)) {
+      targetDate = this.shiftDate(baseDate, "day", -1)
+    } else if (/\btoday\b/i.test(query)) {
+      targetDate = baseDate
+    }
+
+    if (!targetDate) {
+      return {
+        isTemporal: true,
+        normalizedQuery: query,
+        dateTerms: [],
+      }
+    }
+
+    const dateTerms = this.formatDateTerms(targetDate)
+    const displayDate = dateTerms[1] || dateTerms[0]
+    let normalizedQuery = query
+      .replace(/(\d+)\s+(day|days|week|weeks|month|months)\s+ago/i, `on ${displayDate}`)
+      .replace(/\byesterday\b/i, `on ${displayDate}`)
+      .replace(/\btoday\b/i, `on ${displayDate}`)
+
+    if (normalizedQuery === query) {
+      normalizedQuery = `${query} on ${displayDate}`
+    }
+
+    return {
+      isTemporal: true,
+      normalizedQuery,
+      dateTerms,
+    }
   }
 
   async semanticRerankLocalRecords(
@@ -267,7 +432,8 @@ export class MAMAProvider implements Provider {
       content: string
       created_at: number
       score: number
-    }>
+    }>,
+    questionDate?: string
   ): Promise<
     Array<{ id: string; topic: string; content: string; created_at: number; score: number }>
   > {
@@ -279,6 +445,8 @@ export class MAMAProvider implements Provider {
 
 Question:
 ${query}
+
+${questionDate && this.isTemporalQuery(query) ? `Question Date: ${questionDate}\n` : ""}
 
 Rank the candidates from most useful to least useful for answering the question.
 Prioritize:
@@ -487,10 +655,15 @@ ${candidates
   }
 
   async search(query: string, options: SearchOptions): Promise<unknown[]> {
-    const limit = options.limit || 10
+    const baseLimit = options.limit || 10
+    // Aggregation queries need wider search to collect all relevant items
+    const isAggregation = /\b(how many|how much|total|all|every|count|number of)\b/i.test(query)
+    const limit = isAggregation ? Math.max(baseLimit * 3, 30) : baseLimit
     const topicPrefix = `bench_${options.containerTag}_`
+    const temporalContext = this.buildTemporalSearchContext(query, options.questionDate)
+    const searchQuery = temporalContext.normalizedQuery
 
-    const scopedUrl = `${this.baseUrl}/api/mama/search?q=${encodeURIComponent(query)}&limit=${limit}&topicPrefix=${encodeURIComponent(topicPrefix)}`
+    const scopedUrl = `${this.baseUrl}/api/mama/search?q=${encodeURIComponent(searchQuery)}&limit=${limit}&topicPrefix=${encodeURIComponent(topicPrefix)}`
     const scopedResponse = await fetch(scopedUrl)
     if (scopedResponse.ok) {
       const scopedData = (await scopedResponse.json()) as {
@@ -507,20 +680,37 @@ ${candidates
       }
 
       if (scopedData.results && scopedData.results.length > 0) {
-        return scopedData.results.slice(0, limit).map((r) => ({
+        const serverCandidates = scopedData.results.slice(0, limit).map((r) => ({
           id: r.id,
           content: `${r.decision}\n\n${r.reasoning}`,
           topic: r.topic,
           score: r.similarity,
           created_at: r.created_at,
         }))
+
+        if (!temporalContext.isTemporal) {
+          return serverCandidates
+        }
+
+        const localCandidates = this.rankLocalRecords(
+          options.containerTag,
+          searchQuery,
+          Math.max(limit * 3, 20),
+          temporalContext
+        )
+        return this.maybeSemanticRerank(
+          searchQuery,
+          this.mergeCandidates(localCandidates, serverCandidates),
+          limit,
+          options.questionDate
+        )
       }
     }
 
     // Fetch a wider window because MAMA lacks native namespace filtering.
     // We must over-fetch, then enforce containerTag isolation client-side.
     const fetchLimit = this.getFetchLimit(options.containerTag, limit)
-    const url = `${this.baseUrl}/api/mama/search?q=${encodeURIComponent(query)}&limit=${fetchLimit}`
+    const url = `${this.baseUrl}/api/mama/search?q=${encodeURIComponent(searchQuery)}&limit=${fetchLimit}`
 
     const res = await fetch(url)
     if (!res.ok) throw new Error(`MAMA search failed: ${res.status}`)
@@ -545,22 +735,44 @@ ${candidates
     const filtered = data.results.filter((r) => r.topic.startsWith(topicPrefix))
 
     if (filtered.length > 0) {
-      return filtered.slice(0, limit).map((r) => ({
+      const serverCandidates = filtered.slice(0, limit).map((r) => ({
         id: r.id,
         content: `${r.decision}\n\n${r.reasoning}`,
         topic: r.topic,
         score: r.similarity,
         created_at: r.created_at,
       }))
+
+      if (!temporalContext.isTemporal) {
+        return serverCandidates
+      }
+
+      const localCandidates = this.rankLocalRecords(
+        options.containerTag,
+        searchQuery,
+        Math.max(limit * 3, 20),
+        temporalContext
+      )
+      return this.maybeSemanticRerank(
+        searchQuery,
+        this.mergeCandidates(localCandidates, serverCandidates),
+        limit,
+        options.questionDate
+      )
     }
 
     logger.warn(`No isolated MAMA search results for ${options.containerTag}`)
     const localCandidates = this.rankLocalRecords(
       options.containerTag,
-      query,
-      Math.max(limit * 3, 20)
+      searchQuery,
+      Math.max(limit * 3, 20),
+      temporalContext
     )
-    return localCandidates.slice(0, limit)
+    if (!temporalContext.isTemporal) {
+      return localCandidates.slice(0, limit)
+    }
+
+    return this.maybeSemanticRerank(searchQuery, localCandidates, limit, options.questionDate)
   }
 
   async clear(containerTag: string): Promise<void> {
