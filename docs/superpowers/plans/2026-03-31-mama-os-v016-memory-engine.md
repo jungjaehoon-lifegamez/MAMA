@@ -12,6 +12,13 @@
 - Production extraction: Sonnet via existing ingestConversation
 - Hook fetch pattern: test-driven decision during implementation
 - Memory agent: debounce queue (Kagemusha delta-digest pattern)
+- Queue max size: 50 (oldest dropped on overflow)
+
+**CEO Review Additions (2026-03-31, SELECTIVE EXPANSION):**
+- Cherry-pick 1: `mama memory search` CLI command (developer QoL)
+- Cherry-pick 2: Hook sends assistant response alongside user prompt (richer extraction)
+- Debounce queue unit tests (new code needs coverage)
+- Flush activity logging (observability)
 
 **Tech Stack:** TypeScript, Vitest, SQLite (better-sqlite3), Transformers.js (384-dim embeddings), Claude API (Sonnet for extraction)
 
@@ -23,8 +30,11 @@
 | File | Responsibility |
 |------|---------------|
 | `packages/mama-core/tests/unit/memory-scope-search.test.ts` | Scope-based search tests |
-| `packages/standalone/src/api/memory-agent-handler.ts` | HTTP endpoint + debounce queue for hook events |
-| `packages/standalone/tests/api/memory-agent-handler.test.ts` | Memory agent handler tests (happy path + error cases) |
+| `packages/standalone/src/api/memory-agent-handler.ts` | HTTP endpoint + debounce queue (max 50, flush log) |
+| `packages/standalone/src/api/memory-agent-queue.ts` | Debounce queue class (enqueue, flush, overflow drop) |
+| `packages/standalone/tests/api/memory-agent-handler.test.ts` | Handler tests (happy path + malformed JSON + ingest failure) |
+| `packages/standalone/tests/api/memory-agent-queue.test.ts` | Queue unit tests (enqueue, flush, max size drop) |
+| `packages/standalone/src/cli/commands/memory.ts` | `mama memory search` CLI command |
 
 ### Modified Files
 | File | Changes |
@@ -975,17 +985,19 @@ git commit -m "test(mama-core): add memory engine E2E test — hybrid ingest + r
 
 ---
 
-## Completion Checklist (Updated after Eng Review)
+## Completion Checklist (Eng Review + CEO Review)
 
-- [ ] Task 4: Scope-based vector search
-- [ ] Task 5: Memory agent HTTP endpoint + debounce queue (Kagemusha pattern)
-- [ ] Task 6: Claude Code Plugin hook update (fetch pattern: test-driven)
-- [ ] Task 7: 100-question benchmark report
-- [ ] Task 8: E2E integration test (Sonnet extraction path)
+- [ ] Task 1: Scope-based vector search
+- [ ] Task 2: Memory agent endpoint + debounce queue (max 50, Kagemusha pattern)
+- [ ] Task 3: Debounce queue unit tests (enqueue, flush, overflow drop)
+- [ ] Task 4: Claude Code Plugin hook (user + assistant response, fetch pattern TBD)
+- [ ] Task 5: `mama memory search` CLI command (CEO cherry-pick)
+- [ ] Task 6: 100-question benchmark report
+- [ ] Task 7: E2E integration test (Sonnet extraction path)
 
 ### Removed / Deferred
-- ~~Task 1: Hybrid extractor~~ → stays in memorybench scripts (benchmark-only)
-- ~~Task 2: Wire hybrid into ingestConversation~~ → production uses Sonnet only
-- ~~Task 3: ingestDocument~~ → deferred to v0.17 (no consumer)
+- ~~Hybrid extractor~~ → stays in memorybench scripts (benchmark-only)
+- ~~Wire hybrid into ingestConversation~~ → production uses Sonnet only
+- ~~ingestDocument~~ → deferred to v0.17 (no consumer)
 
 After all tasks pass: bump version to 0.16.0, update CHANGELOG.md, tag release.
