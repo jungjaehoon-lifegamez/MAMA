@@ -216,7 +216,11 @@ export const LEXICAL_STOPWORDS: Set<string> = new Set([
   'your',
 ]);
 
-/** Minimal English suffix stripping so "weddings" matches "wedding", etc. */
+/**
+ * Intentionally minimal English suffix stemmer for fuzzy lexical matching.
+ * Not a full Porter/Snowball implementation — imperfect stems (e.g., "running" → "runn")
+ * are acceptable for scoring/recall. Avoids pulling in a heavier stemming dependency.
+ */
 function stemToken(token: string): string {
   if (token.length <= 4) return token;
   // Order matters: try longest suffix first

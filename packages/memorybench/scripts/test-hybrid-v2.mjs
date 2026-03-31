@@ -380,7 +380,12 @@ function formatDate(dateStr) {
     return dateStr
   }
   const d = new Date(`${m[1]}-${m[2]}-${m[3]}`)
-  return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+  return d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  })
 }
 
 function resolveTemporalQuery(query, questionDate) {
@@ -406,7 +411,7 @@ function resolveTemporalQuery(query, questionDate) {
     }
     return query.replace(
       relMatch[0],
-      `on ${target.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`
+      `on ${target.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" })}`
     )
   }
   return query
@@ -457,7 +462,13 @@ async function search(query, topicPrefix, questionDate) {
 
 // ─── Extraction + Ingest ─────────────────────────────────────────────────────
 
-const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "3", 10) // sessions per Sonnet call
+const BATCH_SIZE = (() => {
+  const val = parseInt(process.env.BATCH_SIZE || "3", 10)
+  if (!Number.isInteger(val) || val < 1) {
+    throw new Error(`BATCH_SIZE must be a positive integer, got: ${process.env.BATCH_SIZE}`)
+  }
+  return val
+})() // sessions per Sonnet call
 
 async function extractAndIngest(question, runTag, session) {
   const topicPrefix = `hyb_${runTag}_`
