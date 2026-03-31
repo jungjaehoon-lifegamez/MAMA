@@ -57,29 +57,56 @@ Tacit knowledge — the know-how that lives in conversations, failed experiments
 ## Architecture
 
 ```
-                         MAMA OS (localhost:3847)
-                    ┌─────────────────────────────┐
-Claude Code ────────┤                             │
-  (Plugin hooks)    │   Knowledge Graph Engine    │
-                    │   ┌─────────────────────┐   │
-Telegram ───────────┤   │ decisions (nodes)   │   │
-Discord  ───────────┤   │ edges (supersedes,  │   │
-Slack    ───────────┤   │   builds_on,        │   │
-                    │   │   debates,          │   │
-Web Dashboard ──────┤   │   synthesizes)      │   │
-                    │   │ embeddings (vector) │   │
-                    │   │ FTS5 (keyword)      │   │
-                    │   └─────────────────────┘   │
-                    │                             │
-                    │   Memory Agent               │
-                    │   (auto-extract, evolve)     │
-                    └─────────────────────────────┘
-                              │
-                         SQLite (local)
-                    ~/.mama/mama-memory.db
+  Conversations                Files & Documents            External Apps
+  ─────────────                ─────────────────            ─────────────
+  Claude Code (hooks)          PDF / Images                 Gmail MCP ──┐
+  Telegram ──────┐             Google Drive                 Calendar ───┤
+  Discord  ──────┤             Slack attachments            GitHub ─────┤
+  Slack    ──────┤                    │                     Notion ─────┘
+  Web Chat ──────┘                    │                          │
+        │                             │                     MCP Bridge
+        ▼                             ▼                          │
+   ingestConversation            ingestDocument                  │
+        │                             │                          │
+        └──────────┬──────────────────┴──────────────────────────┘
+                   ▼
+          MAMA OS (localhost:3847)
+     ┌──────────────────────────────┐
+     │   Memory Agent               │
+     │   (observe, extract, evolve) │
+     │                              │
+     │   Knowledge Graph Engine     │
+     │   ┌──────────────────────┐   │
+     │   │ facts, decisions,    │   │
+     │   │ preferences (nodes)  │   │
+     │   │ supersedes/builds_on │   │
+     │   │ debates/synthesizes  │   │
+     │   │ (edges)              │   │
+     │   │ vector + FTS5 search │   │
+     │   └──────────────────────┘   │
+     └──────────────────────────────┘
+                   │
+              SQLite (local)
+         ~/.mama/mama-memory.db
 ```
 
 **Local-first.** All data stays on your device. No cloud dependency. AI provider independent — works with Claude, GPT, Codex.
+
+### Knowledge Sources
+
+MAMA's knowledge graph isn't limited to conversations. Any source of knowledge can be ingested:
+
+| Source                   | Method                                             | Status     |
+| ------------------------ | -------------------------------------------------- | ---------- |
+| **Claude Code sessions** | Plugin hooks → `ingestConversation`                | Production |
+| **Messenger chats**      | Telegram/Discord/Slack bots → `ingestConversation` | Production |
+| **PDF / Documents**      | Connector → LLM extraction → `ingestDocument`      | v0.17      |
+| **Images**               | Connector → LLM vision → `ingestDocument`          | v0.17      |
+| **Google Drive**         | MCP Bridge → `ingestDocument`                      | v0.17      |
+| **Gmail / Calendar**     | MCP Bridge → `ingestConversation`                  | v0.17      |
+| **GitHub / Notion**      | MCP Bridge → `ingestConversation`                  | v0.17      |
+
+mama-core stores **extracted facts only**, never raw files. Connectors handle extraction, mama-core handles storage + search. This means 100+ existing [MCP servers](https://modelcontextprotocol.io/) can feed into MAMA's knowledge graph via a thin bridge adapter.
 
 ## Knowledge Graph
 
