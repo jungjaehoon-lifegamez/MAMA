@@ -190,14 +190,14 @@ Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 
 ### Roadmap
 
-| Phase    | Version | Focus                                                          |
-| -------- | ------- | -------------------------------------------------------------- |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)    |
-| **Next** | v0.16   | Memory agent, scope search, noise filtering, temporal metadata |
-|          | v0.17   | Connector framework, cross-source memory, pattern recognition  |
-|          | v0.18   | Control tower UI, memory explorer, workflow recommendations    |
-|          | v0.19   | Stability, security audit, enterprise server mode              |
-|          | v1.0    | General release — domain automation                            |
+| Phase    | Version | Focus                                                                 |
+| -------- | ------- | --------------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)           |
+| **Next** | v0.16   | Memory agent, scope search, noise filtering — LongMemEval 95%+ target |
+|          | v0.17   | Connector framework, cross-source memory, pattern recognition         |
+|          | v0.18   | Control tower UI, memory explorer, workflow recommendations           |
+|          | v0.19   | Stability, security audit, enterprise server mode                     |
+|          | v1.0    | General release — domain automation                                   |
 
 ## Development
 
