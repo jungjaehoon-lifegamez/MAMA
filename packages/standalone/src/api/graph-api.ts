@@ -1224,6 +1224,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           res.end(JSON.stringify({ error: true, message: 'messages must be a non-empty array' }));
           return true;
         }
+        const validRoles = new Set(['user', 'assistant']);
         for (const msg of body.messages as unknown[]) {
           if (
             typeof msg !== 'object' ||
@@ -1240,6 +1241,21 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             );
             return true;
           }
+          if (!validRoles.has((msg as Record<string, unknown>).role as string)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: true,
+                message: `Invalid role "${(msg as Record<string, unknown>).role}". Must be "user" or "assistant"`,
+              })
+            );
+            return true;
+          }
+        }
+        if (body.scopes && !Array.isArray(body.scopes)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'scopes must be an array' }));
+          return true;
         }
 
         // eslint-disable-next-line @typescript-eslint/no-require-imports
