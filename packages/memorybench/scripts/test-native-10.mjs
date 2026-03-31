@@ -82,6 +82,10 @@ async function ingestSession(messages, extract = true, topicPrefix = "") {
       topicPrefix,
     }),
   })
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`Ingest failed: HTTP ${res.status} ${body.slice(0, 200)}`)
+  }
   return await res.json()
 }
 
@@ -89,6 +93,10 @@ async function search(query, limit = 20, topicPrefix = "") {
   const prefix = topicPrefix ? `&topicPrefix=${encodeURIComponent(topicPrefix)}` : ""
   const url = `${BASE_URL}/api/mama/search?q=${encodeURIComponent(query)}&limit=${limit}${prefix}`
   const res = await fetch(url)
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`Search failed: HTTP ${res.status} ${body.slice(0, 200)}`)
+  }
   return (await res.json()).results || []
 }
 
@@ -101,8 +109,8 @@ function callOpus(prompt) {
     })
       .toString()
       .trim()
-  } catch {
-    return "I don't know."
+  } catch (e) {
+    throw new Error(`callOpus failed: ${e.message?.slice(0, 120)}`)
   }
 }
 
@@ -350,9 +358,8 @@ Reply "correct" or "incorrect" on first line, then explain.`)
   const totalTime = ((Date.now() - startTime) / 1000 / 60).toFixed(1)
   const correct = results.filter((r) => r.isCorrect).length
   console.log(`\n${"=".repeat(60)}`)
-  console.log(
-    `NATIVE ingestConversation: ${correct}/${results.length} (${((correct / results.length) * 100).toFixed(0)}%)`
-  )
+  const accuracyPct = results.length > 0 ? ((correct / results.length) * 100).toFixed(0) : "0"
+  console.log(`NATIVE ingestConversation: ${correct}/${results.length} (${accuracyPct}%)`)
   console.log(`Total time: ${totalTime} min`)
   console.log()
   results.forEach((r) => console.log(`${r.isCorrect ? "✓" : "✗"} ${r.qid.padEnd(18)} ${r.type}`))

@@ -964,10 +964,16 @@ export async function recallMemory(
 
       // Filter out edges pointing to decisions with excluded statuses
       const activeIds = new Set(allIds);
-      const edgesToCheck = allEdges.filter((e) => !activeIds.has(e.to_id));
+      const edgesToCheck = allEdges.filter(
+        (e) => !activeIds.has(e.to_id) || !activeIds.has(e.from_id)
+      );
       if (edgesToCheck.length > 0) {
         const adapter = getAdapter();
-        const checkIds = [...new Set(edgesToCheck.map((e) => e.to_id))];
+        const checkIds = [
+          ...new Set(
+            edgesToCheck.flatMap((e) => [e.from_id, e.to_id]).filter((id) => !activeIds.has(id))
+          ),
+        ];
         const placeholders = checkIds.map(() => '?').join(', ');
         const statusRows = adapter
           .prepare(`SELECT id, status FROM decisions WHERE id IN (${placeholders})`)
