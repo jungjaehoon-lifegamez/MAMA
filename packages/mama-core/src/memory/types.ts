@@ -62,6 +62,8 @@ export interface MemoryRecord {
     channel_id?: string;
     project_id?: string;
   };
+  /** Real-world date the fact/decision pertains to (ISO 8601 date string, e.g. "2026-03-31") */
+  event_date?: string;
   created_at: number | string;
   updated_at: number | string;
 }
@@ -318,6 +320,8 @@ export interface IngestConversationInput {
   };
   /** Prefix for all topics created by this ingestion (e.g. "bench_questionId_") for data isolation */
   topicPrefix?: string;
+  /** Session date to attach as event_date on extracted facts (ISO 8601 date string) */
+  sessionDate?: string;
 }
 
 export interface ExtractedMemoryUnit {
