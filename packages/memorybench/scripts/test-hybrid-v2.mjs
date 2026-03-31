@@ -614,30 +614,32 @@ async function run() {
   console.log(`PHASE 1: INGEST (${REINGEST_IDS.length} questions)`)
   console.log(`${"═".repeat(60)}`)
 
-  for (const qid of REINGEST_IDS) {
-    const q = allData.find((x) => x.question_id === qid)
-    if (!q) {
-      console.log(`${qid}: NOT FOUND`)
-      continue
+  try {
+    for (const qid of REINGEST_IDS) {
+      const q = allData.find((x) => x.question_id === qid)
+      if (!q) {
+        console.log(`${qid}: NOT FOUND`)
+        continue
+      }
+
+      const runTag = `hyb_${qid.replace(/[^a-z0-9]/gi, "").slice(0, 8)}`
+      process.stdout.write(`\n[${qid}] ${q.question.slice(0, 60)}...\n`)
+
+      const { codeSaved, sonnetSaved, sonnetCalls, answerSessionsSaved } = await extractAndIngest(
+        q,
+        runTag,
+        extractSession
+      )
+
+      const coverage = answerSessionsSaved.size
+      const total = q.answer_session_ids.length
+      process.stdout.write(
+        `  code:${codeSaved} sonnet:${sonnetSaved} (${sonnetCalls} calls) | answer coverage: ${coverage}/${total}\n`
+      )
     }
-
-    const runTag = `hyb_${qid.replace(/[^a-z0-9]/gi, "").slice(0, 8)}`
-    process.stdout.write(`\n[${qid}] ${q.question.slice(0, 60)}...\n`)
-
-    const { codeSaved, sonnetSaved, sonnetCalls, answerSessionsSaved } = await extractAndIngest(
-      q,
-      runTag,
-      extractSession
-    )
-
-    const coverage = answerSessionsSaved.size
-    const total = q.answer_session_ids.length
-    process.stdout.write(
-      `  code:${codeSaved} sonnet:${sonnetSaved} (${sonnetCalls} calls) | answer coverage: ${coverage}/${total}\n`
-    )
+  } finally {
+    extractSession.close()
   }
-
-  extractSession.close()
 
   // Phase 2: Search + Answer + Evaluate ALL 10 questions
   console.log(`\n${"═".repeat(60)}`)

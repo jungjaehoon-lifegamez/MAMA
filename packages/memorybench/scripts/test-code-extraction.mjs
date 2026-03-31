@@ -124,7 +124,12 @@ function formatDate(dateStr) {
     return dateStr
   }
   const d = new Date(`${m[1]}-${m[2]}-${m[3]}`)
-  return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+  return d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  })
 }
 
 function parseQuestionDate(dateStr) {
@@ -159,6 +164,7 @@ function resolveTemporalQuery(query, questionDate) {
       year: "numeric",
       month: "long",
       day: "numeric",
+      timeZone: "UTC",
     })
     return query.replace(relMatch[0], `on ${dateStr}`)
   }
