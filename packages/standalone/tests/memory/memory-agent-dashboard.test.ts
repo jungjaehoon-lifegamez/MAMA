@@ -8,6 +8,7 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
       const payload = buildMemoryAgentDashboardPayload({
         agentStats: {
           turnsObserved: 1,
+          candidatesDetected: 0,
           factsExtracted: 0,
           factsSaved: 0,
           acksApplied: 0,
@@ -51,6 +52,7 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
       const payload = buildMemoryAgentDashboardPayload({
         agentStats: {
           turnsObserved: 1,
+          candidatesDetected: 0,
           factsExtracted: 0,
           factsSaved: 0,
           acksApplied: 0,
@@ -90,6 +92,7 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
       const payload = buildMemoryAgentDashboardPayload({
         agentStats: {
           turnsObserved: 0,
+          candidatesDetected: 0,
           factsExtracted: 0,
           factsSaved: 0,
           acksApplied: 0,

@@ -82,6 +82,10 @@ export interface MemoryAgentProcessManagerLike {
   getSharedProcess(agentId: 'memory'): Promise<MemoryAgentProcessLike>;
 }
 
+export interface GatewayRegistry {
+  sendMessage(source: string, channelId: string, text: string): Promise<void>;
+}
+
 /**
  * Options for agent loop execution
  */
@@ -197,12 +201,14 @@ export class MessageRouter {
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private cachedGatewayToolsPrompt: string | null = null;
+  private gatewayRegistry: GatewayRegistry | null = null;
   private memoryAgentProcessManager?: MemoryAgentProcessManagerLike;
   private memoryAuditQueue?: AuditTaskQueue;
   private memoryNoticeQueue = new AgentNoticeQueue();
   private memoryAuditCooldowns = new Map<string, number>();
   private memoryAgentStats = {
     turnsObserved: 0,
+    candidatesDetected: 0,
     factsExtracted: 0,
     factsSaved: 0,
     acksApplied: 0,
@@ -216,6 +222,10 @@ export class MessageRouter {
       status: 'applied' | 'skipped' | 'failed';
     }>,
   };
+
+  setGatewayRegistry(registry: GatewayRegistry): void {
+    this.gatewayRegistry = registry;
+  }
 
   setMemoryAgent(processManager: MemoryAgentProcessManagerLike): void {
     this.memoryAgentProcessManager = processManager;
@@ -240,6 +250,44 @@ export class MessageRouter {
 
   getMemoryAgentStats() {
     return { ...this.memoryAgentStats };
+  }
+
+  /**
+   * Public API for auditing a conversation via the memory agent.
+   * Used by the /api/mama/audit-conversation endpoint for benchmarking.
+   * Bypasses cooldown and candidate detection — caller provides conversation + optional candidates.
+   */
+  async auditConversation(job: {
+    conversation: string;
+    scopes: Array<{ kind: string; id: string }>;
+    candidates?: Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>;
+  }): Promise<MemoryAuditAckLike> {
+    if (!this.memoryAuditQueue) {
+      throw new Error('Memory agent not initialized — cannot audit conversation');
+    }
+    const auditJob: MemoryAuditJob = {
+      turnId: `audit_${Date.now()}`,
+      channelKey: 'api:default',
+      source: 'api',
+      scopeContext: job.scopes.map((s) => ({
+        kind: s.kind as 'global' | 'user' | 'channel' | 'project',
+        id: s.id,
+      })),
+      conversation: job.conversation,
+      candidates: job.candidates?.map((c) => ({
+        id: `api_${Date.now()}`,
+        kind: c.kind as 'decision' | 'preference' | 'fact' | 'change',
+        topicHint: c.topicHint,
+        confidence: c.confidence,
+        summary: c.summary,
+        evidence: [c.summary],
+        channelKey: 'api:default',
+        source: 'api',
+        channelId: 'default',
+        createdAt: Date.now(),
+      })),
+    };
+    return this.memoryAuditQueue.enqueue(auditJob);
   }
 
   constructor(
@@ -1192,6 +1240,18 @@ INSTRUCTION:
     if (ack.status === 'applied') {
       this.memoryAgentStats.acksApplied++;
       this.memoryAgentStats.factsSaved++;
+
+      // Fire-and-forget save confirmation to originating channel
+      if (this.gatewayRegistry && channelKey) {
+        const [source, ...channelParts] = channelKey.split(':');
+        const channelId = channelParts.join(':');
+        const confirmMsg = `✅ Memory saved: ${displayTopic}`;
+        this.gatewayRegistry.sendMessage(source, channelId, confirmMsg).catch((err) => {
+          logger.warn(
+            `[memory-feedback] Failed to send confirmation: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
     } else if (ack.status === 'skipped') {
       this.memoryAgentStats.acksSkipped++;
     } else {
@@ -1319,6 +1379,7 @@ INSTRUCTION:
     }
 
     this.memoryAgentStats.turnsObserved++;
+    this.memoryAgentStats.candidatesDetected += candidates.length;
     this.memoryAgentStats.factsExtracted += candidates.length;
 
     const scopes = deriveMemoryScopes({

@@ -1325,6 +1325,72 @@ export async function runAgentLoop(
   const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mamaCore = require('@jungjaehoon/mama-core');
+
+  // Set extraction backend to Claude CLI persistent session (no API key needed)
+  if (mamaCore.setExtractionFn) {
+    const { PersistentClaudeProcess } = await import('../../agent/persistent-cli-process.js');
+    const { parseExtractionResponse } = mamaCore;
+    let extractionProcess: InstanceType<typeof PersistentClaudeProcess> | null = null;
+    let extractionInitPromise: Promise<InstanceType<typeof PersistentClaudeProcess>> | null = null;
+    let extractionInitLock = false;
+
+    const getExtractionProcess = async (): Promise<
+      InstanceType<typeof PersistentClaudeProcess>
+    > => {
+      if (extractionProcess) return extractionProcess;
+      if (extractionInitPromise) return extractionInitPromise;
+      if (extractionInitLock) {
+        // Another call is between attempts; wait a tick and retry
+        await new Promise((r) => setTimeout(r, 50));
+        return getExtractionProcess();
+      }
+      extractionInitLock = true;
+      extractionInitPromise = (async () => {
+        const proc = new PersistentClaudeProcess({
+          sessionId: `${crypto.randomUUID()}`,
+          model: 'sonnet',
+          systemPrompt:
+            'You are a memory extraction assistant. Extract structured memory units from conversations.',
+          dangerouslySkipPermissions: true,
+        });
+        await proc.start();
+        extractionProcess = proc;
+        return proc;
+      })();
+      try {
+        return await extractionInitPromise;
+      } catch (err) {
+        extractionProcess = null;
+        extractionInitPromise = null;
+        throw err;
+      } finally {
+        extractionInitLock = false;
+      }
+    };
+
+    // Cleanup extraction process on exit
+    const cleanupExtraction = () => {
+      if (extractionProcess) {
+        try {
+          extractionProcess.stop?.();
+        } catch {
+          /* best-effort */
+        }
+        extractionProcess = null;
+        extractionInitPromise = null;
+      }
+    };
+    process.on('exit', cleanupExtraction);
+    process.on('SIGINT', cleanupExtraction);
+    process.on('SIGTERM', cleanupExtraction);
+
+    mamaCore.setExtractionFn(async (prompt: string) => {
+      const proc = await getExtractionProcess();
+      const result = await proc.sendMessage(prompt);
+      return parseExtractionResponse(result.response);
+    });
+  }
+
   const mamaApi = (
     mamaCore && typeof mamaCore === 'object' && 'mama' in mamaCore ? mamaCore.mama : mamaCore
   ) as {
@@ -1652,6 +1718,7 @@ export async function runAgentLoop(
   const graphHandlerOptions: GraphHandlerOptions = {
     healthService: healthService ?? undefined,
     healthCheckService,
+    auditConversation: (job) => messageRouter.auditConversation(job),
   };
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
@@ -1900,6 +1967,19 @@ export async function runAgentLoop(
       telegramGateway = null;
     }
   }
+
+  // Wire gateway registry for memory save confirmations
+  messageRouter.setGatewayRegistry({
+    async sendMessage(source: string, channelId: string, text: string) {
+      if (source === 'telegram' && telegramGateway) {
+        await telegramGateway.sendMessage(channelId, text);
+      } else if (source === 'discord' && discordGateway) {
+        await discordGateway.sendMessage(channelId, text);
+      } else if (source === 'slack' && slackGateway) {
+        await slackGateway.sendMessage(channelId, text);
+      }
+    },
+  });
 
   // Wire gateways into health check service
   if (discordGateway) {

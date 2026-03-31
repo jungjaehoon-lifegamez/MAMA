@@ -7,23 +7,40 @@ import {
 
 const VALID_KINDS = new Set<string>(MEMORY_KINDS);
 
-export function buildExtractionPrompt(messages: ConversationMessage[]): string {
+export function buildExtractionPrompt(
+  messages: ConversationMessage[],
+  existingTopics?: string[]
+): string {
   const conversationText = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
 
-  return `You are extracting structured memory units from a conversation.
+  const hasExistingTopics = existingTopics && existingTopics.length > 0;
+  const topicHint = hasExistingTopics
+    ? `\nExisting topics (REUSE these when the subject matches instead of creating new ones):\n${existingTopics.map((t) => t.replace(/[`$\\]/g, '')).join(', ')}\n`
+    : '';
 
-Read the conversation and identify distinct pieces of information worth remembering.
+  const topicRule = hasExistingTopics
+    ? '- topic: lowercase_snake_case, prefer reusing an existing topic above when the subject matches'
+    : '- topic: lowercase_snake_case';
+
+  return `You are extracting structured memory units from a conversation about a user's life.
+
+Read the conversation and identify every distinct piece of personal information worth remembering.
 Classify each as one of: preference, fact, decision, lesson, constraint.
-
+${topicHint}
 Rules:
-- topic: lowercase_snake_case, reuse existing topics when same subject
-- summary: concise (<200 chars), must include key entities/numbers/names
-- details: full context with evidence from the conversation
+${topicRule}
+- summary: concise (<200 chars). MUST include ALL of these when mentioned:
+  • Names (people, pets, brands, stores, apps, services)
+  • Dates and times ("bought on February 15", "every Tuesday", "3 weeks ago")
+  • Numbers and amounts ("$5 coupon", "4 hours", "45 minutes each way", "3 weddings")
+  • Places ("at Target", "from IKEA", "in Chicago")
+  Example: "User redeemed a $5 coupon on coffee creamer at Target on March 3" NOT "User used a coupon"
+- details: quote the exact sentence(s) from the conversation that contain this information
 - confidence: 0.0-1.0 based on how explicitly stated the information is
 - For preferences: state what IS preferred and what is NOT (if mentioned)
-- For countable facts: enumerate items explicitly (e.g., "Projects: 1. X, 2. Y, 3. Z")
-- Skip small talk and meta-conversation
-- Merge related facts into one unit when they share a topic
+- For countable facts: enumerate items explicitly (e.g., "Weddings attended: 1. Rachel & Mike, 2. Emily & Sarah, 3. Jen & Tom")
+- IMPORTANT: do NOT merge unrelated facts. Each distinct event, purchase, person, or activity is a separate unit
+- Skip small talk, meta-conversation, and assistant's general knowledge responses
 
 Return ONLY a JSON array:
 [{"kind":"...","topic":"...","summary":"...","details":"...","confidence":0.9}]

@@ -8,7 +8,7 @@
 
 ## OVERVIEW
 
-MAMA (Memory-Augmented MCP Assistant) — Contract-first memory system for Claude. Tracks WHY you decided, not just WHAT you chose. Prevents vibe coding breakage across sessions. Monorepo with 4 packages: MCP server (npm), Claude Code plugin (marketplace), MAMA OS standalone agent (npm), shared core (npm).
+MAMA (Memory-Augmented MCP Assistant) — Contract-first memory system for Claude. Tracks WHY you decided, not just WHAT you chose. Prevents vibe coding breakage across sessions. Monorepo with 5 packages: MCP server (npm), Claude Code plugin (marketplace), MAMA OS standalone agent (npm), shared core (npm), MemoryBench (internal).
 
 **Stack:** JavaScript (MCP/plugin), TypeScript (standalone), pnpm workspaces, Vitest, SQLite + pure-TS cosine similarity, Transformers.js (local embeddings), GitHub Actions
 
@@ -22,7 +22,8 @@ MAMA/
 │   ├── mama-core/                  # Shared foundation (32 modules: embeddings, db, memory API)
 │   ├── mcp-server/                 # MCP server for Claude Desktop/Code (4 tools: save/search/update/checkpoint)
 │   ├── claude-code-plugin/         # Claude Code plugin (commands + hooks + local mama-core copies)
-│   └── standalone/                 # MAMA OS agent (Discord/Slack/Telegram, multi-agent swarm, CLI, web UI)
+│   ├── standalone/                 # MAMA OS agent (Discord/Slack/Telegram, multi-agent swarm, CLI, web UI)
+│   └── memorybench/                # Memory retrieval benchmarking framework (bun, internal)
 ├── docs/                           # User-facing documentation (Diátaxis framework)
 ├── .mama/                          # Project identity (SOUL.md, IDENTITY.md, config.json)
 ├── .sisyphus/                      # Internal planning artifacts (drafts/, plans/)

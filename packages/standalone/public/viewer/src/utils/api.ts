@@ -17,6 +17,11 @@ export type JsonRecord = Record<string, unknown>;
 export interface GraphNode {
   id: string | number;
   topic?: string;
+  decision_preview?: string;
+  decision?: string;
+  reasoning?: string;
+  confidence?: number;
+  created_at?: number | string;
   outcome?: string;
   [key: string]: unknown;
 }
@@ -32,6 +37,11 @@ export interface GraphResponse {
   nodes: GraphNode[];
   edges: GraphEdge[];
   meta?: JsonRecord;
+}
+
+export interface GraphDetailResponse {
+  node: GraphNode;
+  [key: string]: unknown;
 }
 
 export interface SimilarDecision {
@@ -527,6 +537,10 @@ export class API {
   static async getGraph(params: QueryParams = {}): Promise<GraphResponse> {
     // cluster: false by default to avoid slow embedding calculations
     return this.get<GraphResponse>('/graph', { cluster: 'false', ...params });
+  }
+
+  static async getGraphDetail(nodeId: string): Promise<GraphDetailResponse> {
+    return this.get<GraphDetailResponse>('/graph/detail', { id: nodeId });
   }
 
   /**
