@@ -14,6 +14,7 @@ import { startCommand, runAgentLoop } from './commands/start.js';
 import { stopCommand } from './commands/stop.js';
 import { statusCommand } from './commands/status.js';
 import { runCommand } from './commands/run.js';
+import { memoryCommand } from './commands/memory.js';
 import { initConfig } from './config/config-manager.js';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -100,6 +101,8 @@ program
   .action(async (prompt, options) => {
     await runCommand({ prompt, verbose: options.verbose });
   });
+
+program.addCommand(memoryCommand());
 
 // Hidden daemon command (used internally for background process)
 program

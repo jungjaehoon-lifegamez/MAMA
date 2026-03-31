@@ -52,6 +52,8 @@ interface SaveMemoryInput {
   };
   /** IDs to exclude from supersede candidates (e.g., sibling facts from same ingestion batch) */
   excludeIds?: string[];
+  /** Real-world date the fact/decision pertains to (ISO 8601 date string) */
+  event_date?: string;
 }
 
 interface RecallMemoryOptions {
@@ -98,6 +100,7 @@ function toMemoryRecord(
     status: (row.status as MemoryStatus) ?? 'active',
     scopes,
     source: savedSource ?? fallbackSource,
+    event_date: row.event_date ? String(row.event_date) : undefined,
     created_at: row.created_at as number | string,
     updated_at: (row.updated_at as number | string) ?? (row.created_at as number | string),
   };
@@ -493,7 +496,8 @@ export async function saveMemory(
       .prepare(
         `
           UPDATE decisions
-          SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?, updated_at = ?
+          SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?, updated_at = ?,
+              event_date = COALESCE(?, event_date)
           WHERE id = ?
         `
       )
@@ -504,6 +508,7 @@ export async function saveMemory(
         input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0,
         JSON.stringify({ source: input.source }),
         now,
+        input.event_date ?? null,
         id
       );
 
@@ -1220,6 +1225,7 @@ export async function ingestConversation(
         confidence: unit.confidence,
         scopes: input.scopes,
         source: input.source,
+        event_date: input.sessionDate,
         excludeIds: batchSavedIds,
       });
 
