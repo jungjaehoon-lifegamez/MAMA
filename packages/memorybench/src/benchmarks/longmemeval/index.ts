@@ -87,6 +87,11 @@ export class LongMemEvalBenchmark implements Benchmark {
   private dataPath: string = ""
 
   async load(config?: BenchmarkConfig): Promise<void> {
+    // Reset state to prevent duplication on repeated load() calls
+    this.data = []
+    this.questions = []
+    this.sessionsMap = new Map()
+
     this.dataPath = config?.dataPath || DEFAULT_DATA_PATH
     const fullPath = join(process.cwd(), this.dataPath)
     const rawDataPath = join(fullPath, "longmemeval_s_cleaned.json")
@@ -185,7 +190,9 @@ export class LongMemEvalBenchmark implements Benchmark {
   }
 
   private loadQuestions(questionsDir: string): void {
-    const files = readdirSync(questionsDir).filter((f) => f.endsWith(".json"))
+    const files = readdirSync(questionsDir)
+      .filter((f) => f.endsWith(".json"))
+      .sort()
 
     for (const file of files) {
       const item: LongMemEvalItem = JSON.parse(readFileSync(join(questionsDir, file), "utf8"))

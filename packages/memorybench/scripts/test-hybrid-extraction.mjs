@@ -197,8 +197,7 @@ function callSonnet(prompt) {
     )
     return result.toString().trim()
   } catch (e) {
-    console.error("  Sonnet call failed:", e.message?.slice(0, 80))
-    return ""
+    throw new Error(`Sonnet call failed: ${e.message?.slice(0, 120)}`)
   }
 }
 
