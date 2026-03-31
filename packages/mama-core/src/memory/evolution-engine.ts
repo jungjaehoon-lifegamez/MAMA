@@ -74,7 +74,9 @@ function summaryOverlapRatio(left: string, right: string): number {
     );
   const leftTokens = tokenize(left);
   const rightTokens = tokenize(right);
-  if (leftTokens.size === 0 && rightTokens.size === 0) return 1;
+  if (leftTokens.size === 0 && rightTokens.size === 0) {
+    return left.toLowerCase().trim() === right.toLowerCase().trim() ? 1 : 0;
+  }
   const smaller = leftTokens.size <= rightTokens.size ? leftTokens : rightTokens;
   const larger = leftTokens.size > rightTokens.size ? leftTokens : rightTokens;
   let shared = 0;

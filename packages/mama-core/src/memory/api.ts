@@ -754,6 +754,9 @@ export async function recallMemory(
           const scopeMap = batchLoadScopes(adapter, memoryIds);
           const record = toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource);
 
+          // Topic prefix filtering (matches vectorSearch behavior)
+          if (options.topicPrefix && !record.topic.startsWith(options.topicPrefix)) continue;
+
           // Scope filtering
           if (options.scopes && options.scopes.length > 0) {
             const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
@@ -783,6 +786,11 @@ export async function recallMemory(
           if (scopes.length === 0) return false;
           return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
         });
+      }
+
+      // Topic prefix filtering for in-memory lexical (matches vectorSearch behavior)
+      if (options.topicPrefix) {
+        lexicalRecords = lexicalRecords.filter((r) => r.topic.startsWith(options.topicPrefix!));
       }
 
       lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
