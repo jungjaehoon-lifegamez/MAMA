@@ -40,8 +40,9 @@ export interface DatabaseAdapter {
   insertEmbedding: (rowid: number, embedding: Float32Array | number[]) => void;
   vectorSearch: (
     embedding: Float32Array | number[],
-    limit: number
-  ) => Promise<VectorSearchResult[] | null>;
+    limit: number,
+    topicPrefix?: string
+  ) => Promise<VectorSearchResult[] | null> | VectorSearchResult[] | null;
   vectorSearchEnabled: boolean;
   reloadVectorCache?: () => void;
   getDbPath?: () => string;
@@ -334,13 +335,14 @@ export async function insertEmbedding(
 export async function vectorSearch(
   queryEmbedding: Float32Array | number[],
   limit = 5,
-  threshold = 0.7
+  threshold = 0.7,
+  topicPrefix?: string
 ): Promise<DecisionRecord[]> {
   const adapter = getAdapter();
 
   try {
-    // Brute-force cosine similarity over all embeddings
-    const results = await adapter.vectorSearch(queryEmbedding, limit * 3);
+    // Brute-force cosine similarity over all embeddings (with optional topic pre-filter)
+    const results = await adapter.vectorSearch(queryEmbedding, limit * 3, topicPrefix);
 
     if (!results || results.length === 0) {
       return []; // No keyword fallback - fast fail

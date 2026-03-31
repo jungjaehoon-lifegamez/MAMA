@@ -316,6 +316,8 @@ export interface IngestConversationInput {
     apiKey?: string;
     baseUrl?: string;
   };
+  /** Prefix for all topics created by this ingestion (e.g. "bench_questionId_") for data isolation */
+  topicPrefix?: string;
 }
 
 export interface ExtractedMemoryUnit {
