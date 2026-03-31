@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [Unreleased] — v0.16 target
 
 ### Added
 
@@ -26,6 +26,8 @@ All notable changes to this project will be documented in this file.
 - **Graph API pagination** — `/api/graph` now returns `decision_preview` (220 chars) instead of full decision text, with `?limit=N` (default 300, max 1000) and `?full=true` for unbounded fetch. Viewer disables physics simulation above 400 nodes for performance
 - **Memory agent persona** — rewritten from auditor to writer role; resolves "save when in doubt" vs "prefer quarantine" contradiction; now instructs agent to parse and include scopes when calling `mama_save`
 - **Memory agent isolation** — `blockedTools` expanded to include Grep, Glob, Edit alongside Read, Write, Bash for defense-in-depth
+- **Search quality overhaul** — LongMemEval benchmark 58% to 88% (100Q) / 81.5% (200Q) via RRF fusion threshold fix, FTS5 BM25 integration, conservative supersede evolution, and extraction prompt improvements (mandatory dates/amounts/places/brands, no-merge rule)
+- **better-sqlite3 restored for FTS5** — `node:sqlite` (introduced in 0.14.0) lacked FTS5 support needed for BM25 lexical search; better-sqlite3 was rolled back as the SQLite runtime to enable hybrid vector+FTS5 retrieval
 - **GitHub Actions runtime refresh** — CI, publish, release, pages, and marketplace sync workflows now use current `actions/checkout`, `actions/setup-node`, and `pnpm/action-setup` releases; GitHub release creation moved from `softprops/action-gh-release` to `gh release create` to avoid deprecated Node 20 action runtimes in future runs
 
 ## [0.14.5] - 2026-03-24

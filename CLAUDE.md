@@ -132,7 +132,7 @@ pnpm vitest run tests/commands/
 
 ### Decision Storage
 
-- **Database:** SQLite + pure-TS cosine similarity (no native extensions)
+- **Database:** SQLite via better-sqlite3 (FTS5 full-text search + pure-TS cosine similarity)
 - **Location:** `~/.claude/mama-memory.db` (configurable via MAMA_DB_PATH)
 - **Schema:** decisions + embeddings (core), memory_scopes + memory_scope_bindings (scoping), memory_events + audit_findings (audit), memory_truth (truth projection), channel_summaries + channel_summary_state (channel state)
 - **Graph edges:** `supersedes`, `builds_on`, `debates`, `synthesizes` (v1.3), plus legacy `refines`/`contradicts`
