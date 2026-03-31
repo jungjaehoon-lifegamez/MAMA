@@ -68,9 +68,7 @@ const CREATE_STATUS_INDEX: string = `
 interface SessionRow {
   id: string;
   project_path: string;
-  started_at?: string;
   created_at?: string;
-  last_active_at?: string;
   last_active?: string;
   status: string;
   pid: number | null;
@@ -155,7 +153,13 @@ export class SessionManager {
       this.db.exec(CREATE_STATUS_INDEX);
 
       // Add missing columns for older databases
-      for (const col of ['pid INTEGER', 'client_id TEXT']) {
+      for (const col of [
+        'pid INTEGER',
+        'client_id TEXT',
+        "status TEXT DEFAULT 'active'",
+        'last_active TEXT',
+        'created_at TEXT',
+      ]) {
         try {
           this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
         } catch {
@@ -247,10 +251,10 @@ export class SessionManager {
     }
 
     const stmt = this.db!.prepare(`
-      SELECT id, project_path, started_at, last_active_at, status, pid, client_id
+      SELECT id, project_path, created_at, last_active, status, pid, client_id
       FROM sessions
       WHERE status = 'active'
-      ORDER BY started_at DESC
+      ORDER BY created_at DESC
     `);
 
     const rows = stmt.all() as SessionRow[];
@@ -261,8 +265,8 @@ export class SessionManager {
       return {
         id: row.id,
         projectDir: row.project_path ?? '',
-        createdAt: row.started_at,
-        lastActive: row.last_active_at,
+        createdAt: row.created_at,
+        lastActive: row.last_active,
         status: row.status,
         pid: row.pid,
         clientId: row.client_id,

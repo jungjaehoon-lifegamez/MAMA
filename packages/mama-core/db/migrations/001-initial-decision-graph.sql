@@ -100,7 +100,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- Timestamps
   started_at INTEGER DEFAULT (unixepoch() * 1000),
   last_active_at INTEGER DEFAULT (unixepoch() * 1000),
+  last_active TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
   ended_at INTEGER,
+  status TEXT DEFAULT 'active',
+  pid INTEGER,
+  client_id TEXT,
 
   CHECK (action_count >= 0),
   CHECK (decision_count >= 0)

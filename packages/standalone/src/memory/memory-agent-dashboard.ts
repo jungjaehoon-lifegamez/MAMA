@@ -7,6 +7,7 @@ export interface MemoryAgentRecentExtraction {
 
 export interface MemoryAgentStatsLike {
   turnsObserved: number;
+  candidatesDetected: number;
   factsExtracted: number;
   factsSaved: number;
   acksApplied: number;
@@ -142,6 +143,7 @@ export function buildMemoryAgentDashboardPayload(params: {
         params.agentStats.turnsObserved > 0
           ? Math.round((params.agentStats.acksApplied / params.agentStats.turnsObserved) * 100)
           : 0,
+      candidatesDetected: params.agentStats.candidatesDetected,
       factsExtracted: params.agentStats.factsExtracted,
       factsSaved: params.agentStats.factsSaved,
       acksApplied: params.agentStats.acksApplied,
