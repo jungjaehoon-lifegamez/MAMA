@@ -1,477 +1,235 @@
-# MAMA - Memory-Augmented MCP Assistant
+# MAMA OS — Local AI Runtime with Connected Memory
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22.13.0-brightgreen)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-2692%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
-[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://jungjaehoon-lifegamez.github.io/MAMA)
+[![LongMemEval](https://img.shields.io/badge/LongMemEval-81.5%25-blue)](packages/memorybench/)
+[![Tests](https://img.shields.io/badge/tests-passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Your AI that works while you sleep.
+> Your AI remembers why, not just what.
 
-MAMA is a **24/7 autonomous AI agent** that lives on your machine. It connects to Discord, Slack, and Telegram — runs scheduled tasks, monitors markets, reviews PRs, and remembers every decision you've ever made together.
+MAMA OS is a **local AI runtime** that turns conversations, decisions, and work artifacts into a structured knowledge graph. Every choice is saved with reasoning. Every mistake becomes a reference. When AI agents connect to MAMA, they don't just answer — they understand your context and recommend with evidence.
 
-```text
-You: "Check Craigslist for Mac Mini M4 every hour and notify me"
-MAMA: ✅ Cron registered (0 * * * *) — skill matched: marketplace-monitor
-      → Fetches listings → Filters by price → Reports to Discord
-      → Repeats every hour. You go to sleep.
+```
+Session 1:  "Use SQLite for the project"
+Session 5:  "Switch to PostgreSQL — SQLite can't handle concurrent writes"
+Session 12: "Should we use MongoDB for the new service?"
+            → MAMA: "You switched from SQLite to PostgreSQL in Session 5
+               because of concurrent write issues. MongoDB has similar
+               trade-offs. Here's what happened last time..."
 ```
 
-## What Makes MAMA Different
+## Why MAMA OS
 
-| Feature          | Other AI Tools            | MAMA OS                                                                |
-| ---------------- | ------------------------- | ---------------------------------------------------------------------- |
-| **Memory**       | Forgets after session     | Remembers decisions with reasoning across sessions                     |
-| **Availability** | Only when you're chatting | 24/7 daemon with cron scheduler                                        |
-| **Skills**       | Fixed capabilities        | User-installable `.md` skills — write instructions, agent follows them |
-| **Platforms**    | Single interface          | Discord, Slack, Telegram, Web Dashboard                                |
-| **Agents**       | Single agent              | Multi-Agent Swarm with tiered permissions and delegation               |
-| **Ecosystem**    | Closed                    | Anthropic Cowork plugins, MCP servers, custom skills — all installable |
+AI agents today are brilliant but amnesiac. They forget everything between sessions. MAMA solves this:
 
-## How It Actually Works
+|               | Without MAMA           | With MAMA                               |
+| ------------- | ---------------------- | --------------------------------------- |
+| **Memory**    | Forgets after session  | Knowledge graph with decision evolution |
+| **Context**   | Generic answers        | Answers grounded in your history        |
+| **Mistakes**  | Repeat the same errors | Past failures prevent future ones       |
+| **Knowledge** | Only general knowledge | Domain-specific, accumulated over time  |
 
-**1. You install a skill** — just a `.md` file in `~/.mama/skills/`. Write instructions in natural language, the agent follows them. Or ask the agent to install from the built-in catalog, Cowork plugins, MCP servers, or any GitHub repo.
+### Why We Pivoted
 
-**2. You talk naturally** — the agent matches skills by keywords and follows instructions exactly.
+MAMA started as a multi-agent dashboard — skills marketplace, playground, agent swarm, cron scheduler. Those features still exist and work, but they're no longer the focus.
 
-**3. You schedule it** — cron jobs run your prompts on a timer, visible in the dashboard and settings.
+Why? Because **AI agents commoditized all of it.** Claude, GPT, Codex can all orchestrate sub-agents, execute code, and run tools out of the box. Building another agent framework is competing with the foundation model providers themselves.
 
-**4. Decisions persist** — every choice is saved with reasoning. Next session, the agent remembers _why_, not just _what_.
+What AI agents **cannot** do is remember. Every session starts from zero. That's the gap only a persistent memory layer can fill — and that's where MAMA's real value lies.
 
-```text
-Session 1: "Use JWT with refresh tokens"
-           → MAMA saves reasoning: "Tried simple JWT, users complained about frequent logouts"
+| Commoditized (still works, not the focus) | Unique to MAMA (core focus)                     |
+| ----------------------------------------- | ----------------------------------------------- |
+| Multi-agent orchestration                 | Knowledge graph with decision evolution         |
+| Skills/plugins marketplace                | Automatic memory extraction from conversations  |
+| Code sandbox                              | Cross-source intelligence (code + chat + email) |
+| Cron scheduling                           | Domain-specific recall with "why" context       |
 
-Session 5: "Add logout endpoint"
-           → Agent checks MAMA → "I see you use JWT with refresh tokens..."
-           → Writes matching code. No guessing.
+### The Vision: From Tool to Partner
+
+```
+Today:     General-purpose AI agent (smart but no context)
++ MAMA:    AI agent with your domain knowledge (smart + experienced)
+Future:    AI that understands why your team makes decisions the way it does
 ```
 
-## 🤔 Which MAMA Do You Need?
+Tacit knowledge — the know-how that lives in conversations, failed experiments, and tribal memory — is the most valuable and hardest to capture asset in any organization. MAMA captures it automatically through a knowledge graph that preserves not just facts, but the reasoning behind every decision.
 
-Choose the right package for your use case:
+## Architecture
 
-### 🤖 Want an Always-On AI Agent?
+```
+                         MAMA OS (localhost:3847)
+                    ┌─────────────────────────────┐
+Claude Code ────────┤                             │
+  (Plugin hooks)    │   Knowledge Graph Engine    │
+                    │   ┌─────────────────────┐   │
+Telegram ───────────┤   │ decisions (nodes)   │   │
+Discord  ───────────┤   │ edges (supersedes,  │   │
+Slack    ───────────┤   │   builds_on,        │   │
+                    │   │   debates,          │   │
+Web Dashboard ──────┤   │   synthesizes)      │   │
+                    │   │ embeddings (vector) │   │
+                    │   │ FTS5 (keyword)      │   │
+                    │   └─────────────────────┘   │
+                    │                             │
+                    │   Memory Agent               │
+                    │   (auto-extract, evolve)     │
+                    └─────────────────────────────┘
+                              │
+                         SQLite (local)
+                    ~/.mama/mama-memory.db
+```
 
-**→ Discord/Slack/Telegram bot with 24/7 agent loop**
-**→ Installable skill system** — drop a `.md` file, agent follows it
-**→ Built-in cron scheduler** — manage from dashboard or settings UI
-**→ Multi-Agent System** — delegation, workflows, council, UltraWork
-**→ Interactive Playgrounds** — Skill Lab, Cron Workflow Lab, Wave Visualizer
+**Local-first.** All data stays on your device. No cloud dependency. AI provider independent — works with Claude, GPT, Codex.
 
-**Use:** [MAMA OS](packages/standalone/README.md)
+## Knowledge Graph
+
+MAMA doesn't just store facts. It tracks how knowledge evolves:
+
+```
+"Use JWT" (decision, confidence: 0.8)
+    │
+    ├── superseded by → "Use JWT with refresh tokens"
+    │     reason: "Users complained about frequent logouts"
+    │
+    ├── builds_on → "Add token rotation for security"
+    │
+    └── debates → "Consider session-based auth for web app"
+          reason: "Simpler for server-rendered pages"
+```
+
+Edge types: `supersedes` (replaced), `builds_on` (extended), `debates` (alternative view), `synthesizes` (unified from multiple).
+
+This means MAMA can answer "why did we switch?" — not just "what do we use?"
+
+## Benchmark: LongMemEval
+
+Tested on [LongMemEval](https://xiaowu0162.github.io/long-mem-eval/) — 500 questions across 6 types, ~115K tokens of conversation history per question.
+
+| System      | Score     | Model      |
+| ----------- | --------- | ---------- |
+| Mastra      | 94.87%    | GPT-5-mini |
+| SuperMemory | 81.6%     | GPT-4o     |
+| **MAMA OS** | **81.5%** | Sonnet 4.6 |
+| Zep         | 71.2%     | GPT-4o     |
+
+MAMA matches SuperMemory on overall accuracy while running **entirely locally** with open-source components.
+
+## Packages
+
+| Package                                          | Version | Description                                  |
+| ------------------------------------------------ | ------- | -------------------------------------------- |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.14.5  | Always-on runtime with messenger gateways    |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.9.3   | MCP server for Claude Desktop/Code           |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.3.3   | Core library (memory engine, embeddings, DB) |
+| [mama plugin](packages/claude-code-plugin/)      | 1.8.3   | Claude Code plugin (marketplace)             |
+| [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework      |
+
+## Quick Start
+
+### Claude Code Plugin (simplest)
+
+```bash
+/plugin install mama
+
+# Decisions are saved automatically via hooks
+# Search manually when needed:
+/mama:search "authentication strategy"
+```
+
+### MAMA OS (full runtime)
 
 ```bash
 npm install -g @jungjaehoon/mama-os
-mama init    # copies default skills to ~/.mama/skills/
-mama start   # opens web dashboard at localhost:3847
+mama start   # starts daemon at localhost:3847
 ```
 
-**Package:** `@jungjaehoon/mama-os` 0.14.5
-**Tagline:** _Your AI Operating System_
+Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 
-> ⚠️ **Security Notice**: MAMA OS runs an autonomous AI agent with file system access.
-> We strongly recommend running it in an isolated environment:
->
-> - **Docker container** (recommended)
-> - **VPS/Cloud VM** with limited permissions
-> - **Sandbox** (Firejail, bubblewrap)
->
-> See [Security Guide](docs/guides/security.md) for details.
-> For account/policy guidance (team bot vs personal account), see
-> [Standalone Compliance Notes](packages/standalone/README.md#compliance).
+> **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated.
 
-<details>
-<summary>✅ <strong>Why CLI Subprocess? (ToS & Stability)</strong></summary>
-
-MAMA OS deliberately uses an **official backend CLI as a subprocess** (Claude/Codex) rather than direct API calls with extracted auth tokens. This architectural choice prioritizes long-term stability:
-
-**How it works:**
-
-```text
-MAMA OS → spawn('claude' | 'codex', [...args]) → Official CLI toolchain
-```
-
-**Why this matters:**
-
-| Approach           | Method                            | Risk                                        |
-| ------------------ | --------------------------------- | ------------------------------------------- |
-| Direct token usage | Extract auth token → call API     | Token refresh conflicts, compatibility risk |
-| **CLI Subprocess** | Spawn official backend CLI binary | ✅ Officially supported, stable             |
-
-**Benefits of CLI subprocess approach:**
-
-- 🔒 **Policy-Aligned** - Uses official CLI execution paths instead of reverse-engineered token flows
-- 🛡️ **Future-Proof** - Backend vendors maintain CLI compatibility; reduced risk from internal API changes
-- 🔄 **Auth Handled** - CLI manages token refresh internally; no race conditions
-- 📊 **Usage Tracking** - Proper session/cost tracking through official tooling
-
-**Historical Context:**
-In January 2026, Anthropic [tightened safeguards](https://venturebeat.com/technology/anthropic-cracks-down-on-unauthorized-claude-usage-by-third-party-harnesses) against tools that spoofed Claude Code headers. MAMA OS was unaffected because we chose the legitimate CLI approach from the start—not because other approaches are "wrong," but because we prioritized stability for an always-on autonomous agent that users depend on daily.
-
-</details>
-
-**Requires:** at least one backend CLI installed and authenticated:
-
-- [Claude Code CLI](https://claude.ai/claude-code), or
-- Codex CLI (`npm install -g @openai/codex && codex login`)
-
-#### Multi-Agent System
-
-> Built independently, announced the same day as Anthropic's [Agent Teams](https://docs.anthropic.com/en/docs/claude-code/agent-teams).
-> Same vision — coordinated AI agents — but for **chat platforms**, not just CLI.
-
-Multiple specialized AI agents collaborate across Discord, Slack, and Telegram.
-A **Conductor** agent orchestrates work through four coordination modes:
-
-```text
-User message → Orchestrator → Routing
-                                │
-                ┌───────────────┼───────────────┐
-                ▼               ▼               ▼
-         🎼 Conductor     🔧 Developer     📝 Reviewer
-          (Tier 1)          (Tier 2)         (Tier 3)
-        Orchestrates      Implements        Reviews
-        Delegates         Code changes      Quality checks
-```
-
-**Coordination Modes:**
-
-| Mode                  | How it works                                                                        |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| **Delegation**        | Conductor assigns tasks via `DELEGATE::{agent}::{task}` with depth-1 safety         |
-| **Dynamic Workflows** | Conductor generates DAG of ephemeral agents — any backend/model, parallel execution |
-| **Council**           | Named agents discuss a topic in multi-round structured debate                       |
-| **UltraWork**         | 3-Phase autonomous sessions: Plan→Build→Retrospective with file-based state         |
-
-**Core Features:**
-
-| Feature                | Description                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------- |
-| **3-Tier Permissions** | Tier 1: full tools + delegation. Tier 2: read-only advisory. Tier 3: scoped execution |
-| **5-Stage Routing**    | free_chat → explicit_trigger → category_match → keyword_match → default_agent         |
-| **Task Continuation**  | Auto-resume incomplete agent responses                                                |
-| **Mixed Backends**     | Claude and Codex agents in the same conversation                                      |
-
-**Dynamic Workflow Example:**
-
-```text
-User: "Analyze the project in 3 stages"
-
-Conductor → workflow_plan JSON
-  ┌─────────────────┐   ┌─────────────────┐
-  │ Analyst          │   │ Reviewer         │
-  │ [claude-sonnet]  │──▶│ [codex]         │──▶ Synthesizer
-  │ Structure scan   │   │ Code quality     │    Final report
-  └─────────────────┘   └─────────────────┘
-       Level 0               Level 1            Level 2
-```
-
-**UltraWork 3-Phase (Ralph Loop):**
-
-```text
-Phase 1: Planning  → Conductor creates plan (+ Council review)
-Phase 2: Building  → Delegates tasks, records progress to disk
-Phase 3: Retrospective → Reviews results (+ Council quality check)
-         └─ RETRO_INCOMPLETE → re-enters Phase 2
-```
-
-[Setup Guide →](packages/standalone/README.md#multi-agent-swarm) | [Architecture →](docs/architecture-mama-swarm-2026-02-06.md)
-
-#### Playgrounds
-
-Interactive HTML playgrounds run directly inside the MAMA dashboard. Create skills, schedule workflows, and experiment — all without leaving the browser.
-
-| Playground            | Description                                                                      |
-| --------------------- | -------------------------------------------------------------------------------- |
-| **Skill Lab**         | Create, verify, and publish skills with step-by-step wizard                      |
-| **Cron Workflow Lab** | Node-based DAG editor for cron workflows (trigger → prompt → condition → action) |
-| **Wave Visualizer**   | Multi-Agent task execution flow visualizer with Simulation and Live modes        |
-
-Skills Tab and Playground Tab are bidirectionally linked — selecting a skill in Skills opens it in Skill Lab, and publishing from Skill Lab refreshes Skills.
-
----
-
-### 💻 Building Software with Claude Code/Desktop?
-
-**→ Stop frontend/backend mismatches**
-**→ Auto-track API contracts & function signatures**
-**→ Claude remembers your architecture decisions**
-
-**Use:** [MAMA MCP Server](packages/mcp-server/README.md) + [Claude Code Plugin](packages/claude-code-plugin/README.md)
-
-#### For Claude Code (Recommended for Development):
-
-```bash
-# Install both MCP server and plugin
-/plugin marketplace add jungjaehoon-lifegamez/claude-plugins
-/plugin install mama
-```
-
-**For Claude Desktop:**
+### MCP Server (Claude Desktop)
 
 ```json
 {
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon/mama-server"]
+      "args": ["@jungjaehoon/mama-server"]
     }
   }
 }
 ```
 
-**Package:** `@jungjaehoon/mama-server` 1.9.3
+## Technical Details
 
-**What happens after installation:**
+- **Database:** SQLite via better-sqlite3 (FTS5 full-text search + vector embeddings)
+- **Embeddings:** Xenova/multilingual-e5-small (384-dim, quantized q8, 100+ languages)
+- **Search:** Hybrid retrieval — FTS5 BM25 (lexical) + cosine similarity (semantic) + RRF fusion
+- **Extraction:** Sonnet for structured fact extraction from conversations
+- **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
-1. **PreToolUse Hook** (Claude Code only)
-   - Executes MCP search before Read/Edit/Grep
-   - Injects contract-only results + Reasoning Summary (grounded in matches)
-   - Blocks guessing when no contract exists (shows save template)
+## Current Status & Roadmap
 
-2. **PostToolUse Hook** (Claude Code only)
-   - Detects when you write/edit code
-   - Extracts API contracts automatically (TypeScript, Python, Java, Go, Rust, SQL, GraphQL)
-   - Requires structured reasoning (Context/Evidence/Why/Unknowns) for contract saves
-   - Uses per-session long/short output to reduce repeated guidance
+### What Works Today
 
-3. **MCP Tools** (Both Desktop & Code)
-   - `/mama:search` - Find past decisions
-   - `/mama:decision` - Save contracts/choices
-   - `/mama:checkpoint` - Resume sessions
+| Feature                | Status     | Details                                                                         |
+| ---------------------- | ---------- | ------------------------------------------------------------------------------- |
+| **Knowledge Graph**    | Production | decisions + edges (supersedes/builds_on/debates/synthesizes) + truth projection |
+| **Hybrid Search**      | Production | FTS5 BM25 + vector cosine + RRF fusion, 81.5% on LongMemEval                    |
+| **Claude Code Plugin** | Production | Auto-save decisions via hooks, search via `/mama:search`                        |
+| **MCP Server**         | Production | `mama_save`, `mama_search`, `mama_suggest` tools                                |
+| **Messenger Gateways** | Production | Telegram, Discord, Slack bots with memory integration                           |
+| **Always-On Daemon**   | Production | Cron scheduler, web dashboard at localhost:3847                                 |
+| **Evolution Engine**   | Production | Conservative supersede (overlap-based), builds_on for independent facts         |
 
-4. **Auto-Context Injection**
-   - Before editing: Claude sees related contracts
-   - Before API calls: Recalls correct schemas
-   - Cross-session: Remembers your architecture
+### What's In Progress (v0.16)
 
----
+| Feature                   | Status  | Goal                                                        |
+| ------------------------- | ------- | ----------------------------------------------------------- |
+| **Memory Agent Endpoint** | Planned | HTTP endpoint for real-time hook events → auto-extraction   |
+| **Noise Filtering**       | Planned | Reject greetings, internal prompts, duplicates from storage |
+| **Scope-Based Search**    | Planned | Replace topicPrefix with proper scope filtering             |
+| **Temporal Metadata**     | Planned | `event_date` on facts for time-based search                 |
+| **FTS5 Migration**        | Planned | Permanent trigger SQL instead of runtime-generated          |
 
-## ✨ Key Strengths
+### What's Not Built Yet
 
-- **Contract-first coding:** PreToolUse searches contracts before edits and blocks guessing when none exist.
-- **Grounded reasoning:** Reasoning Summary is derived from actual matches (unknowns are explicit).
-- **Persistence across sessions:** Contracts saved in MCP prevent schema drift over time.
-- **Low-noise guidance:** Per-session long/short output reduces repetition.
-- **Safer outputs:** Prompt-sanitized contract injection reduces prompt-injection risk.
+| Feature                       | Target | Why It Matters                                        |
+| ----------------------------- | ------ | ----------------------------------------------------- |
+| **Pattern Recognition**       | v0.17  | Detect recurring workflows from accumulated knowledge |
+| **Workflow Recommendations**  | v0.18  | "Your team usually does X before Y" suggestions       |
+| **Cross-Source Intelligence** | v0.17  | Code decisions + team chat + email = unified graph    |
+| **Memory Explorer UI**        | v0.18  | Visual graph of decision evolution                    |
+| **Enterprise Server Mode**    | v0.19  | Central server for team knowledge (vs personal local) |
+| **Domain Automation**         | v1.0   | Knowledge graph → automated workflow execution        |
 
-**Example workflow:**
+### Roadmap
 
-```bash
-# Day 1: Build backend
-You: "Create login API"
-Claude: [Writes code]
-MAMA: Saved contract - POST /api/auth/login returns { userId, token, email }
+| Phase    | Version | Focus                                                                 |
+| -------- | ------- | --------------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)           |
+| **Next** | v0.16   | Memory agent, scope search, noise filtering — LongMemEval 95%+ target |
+|          | v0.17   | Connector framework, cross-source memory, pattern recognition         |
+|          | v0.18   | Control tower UI, memory explorer, workflow recommendations           |
+|          | v0.19   | Stability, security audit, enterprise server mode                     |
+|          | v1.0    | General release — domain automation                                   |
 
-# Day 3: Build frontend (new session)
-You: "Add login form"
-Claude: "I see you have POST /api/auth/login that returns { userId, token, email }"
-       [Writes correct fetch() call, first try]
-```
-
----
-
-### 🔧 Building Custom Integration?
-
-**→ Embedding & search APIs**  
-**→ Decision graph management**  
-**→ SQLite + vector storage**
-
-**Use:** [MAMA Core](packages/mama-core/README.md)
+## Development
 
 ```bash
-npm install @jungjaehoon/mama-core
-```
-
-```javascript
-const { generateEmbedding, initDB } = require('@jungjaehoon/mama-core');
-const mamaApi = require('@jungjaehoon/mama-core/mama-api');
-```
-
-**Package:** `@jungjaehoon/mama-core` 1.3.3
-
----
-
-## 📦 All Packages
-
-| Package                                                   | Version | Description                                  | Distribution       |
-| --------------------------------------------------------- | ------- | -------------------------------------------- | ------------------ |
-| [@jungjaehoon/mama-os](packages/standalone/README.md)     | 0.14.5  | Your AI Operating System (agent + gateway)   | npm                |
-| [@jungjaehoon/mama-server](packages/mcp-server/README.md) | 1.9.3   | MCP server for Claude Desktop/Code           | npm                |
-| [@jungjaehoon/mama-core](packages/mama-core/README.md)    | 1.3.3   | Shared core library (embeddings, DB, memory) | npm                |
-| [mama](packages/claude-code-plugin/README.md)             | 1.8.3   | Claude Code plugin                           | Claude Marketplace |
-
-> **Note:** "MAMA 2.0" is the marketing name for this release. Individual packages have independent version numbers.
-
----
-
-## ✨ Key Features
-
-**🧩 Skill System** - Drop a `.md` file in `~/.mama/skills/` and the agent follows it. Write instructions in natural language — no code needed. [Learn more →](packages/standalone/README.md)
-
-**⏰ Cron Scheduler** - Register recurring tasks from chat, dashboard, or settings UI. Agent executes your prompt on schedule. [Learn more →](packages/standalone/README.md)
-
-**🧠 Decision Memory** - Every choice is saved with reasoning. Cross-session, cross-language. Claude remembers _why_, not just _what_. [Learn more →](docs/explanation/decision-graph.md)
-
-**🤝 Multi-Agent System** - Conductor orchestrates specialized agents across Discord/Slack/Telegram via delegation, dynamic workflows, council debates, and UltraWork autonomous sessions. [Learn more →](packages/standalone/README.md#multi-agent-swarm)
-
-**🤖 24/7 Agent** - Always-on daemon with Discord, Slack, Telegram gateways. Web dashboard at `localhost:3847`. [Learn more →](packages/standalone/README.md)
-
-**🔒 Local-First** - All data on your device. SQLite + local embeddings. No API calls for core functionality. [Learn more →](docs/explanation/data-privacy.md)
-
-**⚡ Code-Act Sandbox** - Execute JavaScript in an isolated QuickJS/WASM sandbox with read-only tool access. Safe agent code execution without Node.js. [Learn more →](docs/guides/security.md#code-act-sandbox-security)
-
----
-
-## 🚀 Quick Start
-
-### For Claude Code Users
-
-```bash
-# Install plugin
-/plugin marketplace add jungjaehoon-lifegamez/claude-plugins
-/plugin install mama
-
-# Save a decision
-/mama-save topic="auth_strategy" decision="JWT with refresh tokens" reasoning="Need stateless auth for API scaling"
-
-# Search for related decisions
-/mama-suggest "How should I handle authentication?"
-```
-
-[Full Claude Code Guide →](packages/claude-code-plugin/README.md)
-
-### For Standalone Agent Users
-
-```bash
-# Install globally
-npm install -g @jungjaehoon/mama-os
-
-# Authenticate one backend CLI (one-time)
-# Claude: claude
-# Codex:  codex login
-
-# Initialize workspace
-mama init
-
-# Start agent
-mama start
-
-# Check status
-mama status
-```
-
-[Full Standalone Guide →](packages/standalone/README.md)
-
----
-
-## 📚 Documentation
-
-### Getting Started
-
-- [Installation Guide](docs/guides/installation.md) - Complete setup for all clients
-- [Getting Started Tutorial](docs/tutorials/getting-started.md) - 10-minute quickstart
-- [Troubleshooting](docs/guides/troubleshooting.md) - Common issues and fixes
-
-### Reference
-
-- [Commands Reference](docs/reference/commands.md) - All available commands
-- [MCP Tool API](docs/reference/api.md) - Tool interfaces
-- [Architecture](docs/explanation/architecture.md) - System architecture
-
-### Development
-
-- [Developer Playbook](docs/development/developer-playbook.md) - Architecture & standards
-- [Contributing Guide](docs/development/contributing.md) - How to contribute
-- [Testing Guide](docs/development/testing.md) - Test suite documentation
-
-[Full Documentation Index →](docs/index.md)
-
----
-
-## 🏗️ Project Structure
-
-This is a monorepo containing four packages:
-
-```
-MAMA/
-├── packages/
-│   ├── standalone/          # @jungjaehoon/mama-os (npm)
-│   ├── mama-core/           # @jungjaehoon/mama-core (npm)
-│   ├── mcp-server/          # @jungjaehoon/mama-server (npm)
-│   └── claude-code-plugin/  # mama (Claude Code marketplace)
-└── docs/                    # Documentation
-```
-
----
-
-## 🛠️ Development
-
-```bash
-# Clone repository
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA
-
-# Install dependencies
 pnpm install
-
-# Run all tests
-pnpm test
-
-# Build all packages
 pnpm build
+pnpm test     # 2600+ tests across all packages
 ```
 
-[Contributing Guide →](docs/development/contributing.md)
+See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.
+
+## License
+
+MIT
 
 ---
 
-## 🤝 Contributing
-
-Contributions welcome! See [Contributing Guide](docs/development/contributing.md) for code standards, pull request process, and testing requirements.
-
----
-
-## 📄 License
-
-MIT - see [LICENSE](LICENSE) for details
-
----
-
-## 🙏 Acknowledgments
-
-**Memory System:**
-MAMA was inspired by the excellent work of [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While MAMA is a distinct implementation focused on local-first SQLite/MCP architecture for Claude, we appreciate their pioneering work in LLM memory management.
-
-**Agent Architecture:**
-MAMA OS was inspired by [OpenClaw](https://github.com/openclaw/openclaw) (formerly Moltbot), an open-source AI gateway system. We built MAMA OS as a standalone implementation because:
-
-- **Claude-Native**: MAMA OS is optimized specifically for Claude's tool-use patterns and conversation style
-- **Memory-First**: Deep integration with MAMA's decision graph and semantic search
-- **Simplified Setup**: Single `npm install` instead of running a separate gateway server
-- **Direct CLI**: Uses Claude Code CLI directly, avoiding additional abstraction layers
-
-The OpenClaw plugin has been [extracted to a standalone repo](https://github.com/jungjaehoon-lifegamez/openclaw-mama) for users who prefer the OpenClaw ecosystem.
-
-**Multi-Agent Architecture:**
-The Multi-Agent Swarm system was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode), a multi-agent orchestration framework for AI coding assistants. While MAMA's swarm shares the vision of coordinated AI agents with tiered permissions, it was built specifically for **chat platforms** (Discord, Slack, Telegram) rather than CLI environments, enabling collaborative agent teams accessible from anywhere.
-
-**Planning Workflows:**
-MAMA's Conductor agent integrates workflow templates from [BMAD-METHOD](https://github.com/bmadcode/BMAD-METHOD) (MIT License, Copyright BMad Code, LLC). The BMAD Method provides structured planning artifacts (product briefs, PRDs, tech specs, architecture docs) that the Conductor uses to orchestrate multi-step project planning. "BMad", "BMad Method", and "BMAD-METHOD" are trademarks of BMad Code, LLC; MAMA is not affiliated with or endorsed by BMad Code, LLC.
-
----
-
-## 🔗 Links
-
-- [**Documentation Site**](https://jungjaehoon-lifegamez.github.io/MAMA) ← Start here!
-- [GitHub Repository](https://github.com/jungjaehoon-lifegamez/MAMA)
-- [Issues](https://github.com/jungjaehoon-lifegamez/MAMA/issues)
-- [Local Documentation](docs/index.md)
-- [npm: @jungjaehoon/mama-server](https://www.npmjs.com/package/@jungjaehoon/mama-server)
-- [npm: @jungjaehoon/mama-os](https://www.npmjs.com/package/@jungjaehoon/mama-os)
-- [npm: @jungjaehoon/mama-core](https://www.npmjs.com/package/@jungjaehoon/mama-core)
-
----
-
-**Author**: SpineLift Team
-**Last Updated**: 2026-02-22
+_Last updated: 2026-04-01_
