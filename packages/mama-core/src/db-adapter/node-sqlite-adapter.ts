@@ -120,6 +120,10 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   private _vectorSearchEnabled = true;
   private vectorCache: Map<number, Float32Array> = new Map();
   private topicCache: Map<number, string> = new Map();
+  /** Maps decision id (string) -> set of scope_id strings for pre-filtering */
+  private scopeBindingsCache: Map<string, Set<string>> = new Map();
+  /** Maps embedding rowid -> decision id for scope lookups */
+  private rowidToDecisionId: Map<number, string> = new Map();
 
   constructor(config: SQLiteAdapterConfig = {}) {
     super();
@@ -195,6 +199,19 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     this.loadVectorCache();
   }
 
+  /**
+   * Incrementally update scope bindings cache when a new binding is added.
+   * Avoids full cache reload for single binding inserts.
+   */
+  addScopeBinding(memoryId: string, scopeId: string): void {
+    let scopeSet = this.scopeBindingsCache.get(memoryId);
+    if (!scopeSet) {
+      scopeSet = new Set();
+      this.scopeBindingsCache.set(memoryId, scopeSet);
+    }
+    scopeSet.add(scopeId);
+  }
+
   private loadVectorCache(): void {
     if (!this.db) return;
 
@@ -225,12 +242,41 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     // Load topic cache for scoped vector search
     this.topicCache.clear();
-    const topicRows = this.db.prepare('SELECT rowid, topic FROM decisions').all() as Array<{
+    this.rowidToDecisionId.clear();
+    const topicRows = this.db.prepare('SELECT rowid, id, topic FROM decisions').all() as Array<{
       rowid: number;
+      id: string;
       topic: string;
     }>;
     for (const row of topicRows) {
       this.topicCache.set(row.rowid, row.topic);
+      this.rowidToDecisionId.set(row.rowid, row.id);
+    }
+
+    // Load scope bindings cache for scope-filtered vector search
+    this.scopeBindingsCache.clear();
+    try {
+      const bindingTableCheck = this.db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='memory_scope_bindings'`
+        )
+        .all() as Array<{ name: string }>;
+
+      if (bindingTableCheck.length > 0) {
+        const bindingRows = this.db
+          .prepare('SELECT memory_id, scope_id FROM memory_scope_bindings')
+          .all() as Array<{ memory_id: string; scope_id: string }>;
+        for (const row of bindingRows) {
+          let scopeSet = this.scopeBindingsCache.get(row.memory_id);
+          if (!scopeSet) {
+            scopeSet = new Set();
+            this.scopeBindingsCache.set(row.memory_id, scopeSet);
+          }
+          scopeSet.add(row.scope_id);
+        }
+      }
+    } catch {
+      // memory_scope_bindings may not exist yet — gracefully degrade
     }
 
     const count = this.vectorCache.size;
@@ -297,7 +343,8 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   vectorSearch(
     embedding: Float32Array | number[],
     limit = 5,
-    topicPrefix?: string
+    topicPrefix?: string,
+    scopeFilter?: { scopeIds: string[] }
   ): VectorSearchResult[] | null {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
@@ -310,6 +357,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     const bestMatches: VectorSearchResult[] = [];
     let minScore = -Infinity;
 
+    // Pre-compute scope filter set for O(1) lookups
+    const scopeIdSet = scopeFilter?.scopeIds?.length ? new Set(scopeFilter.scopeIds) : null;
+
     for (const [rowid, candidate] of this.vectorCache) {
       if (candidate.length !== queryVector.length) continue;
 
@@ -317,6 +367,24 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       if (topicPrefix) {
         const topic = this.topicCache.get(rowid);
         if (!topic || !topic.startsWith(topicPrefix)) continue;
+      }
+
+      // Pre-filter by scope bindings before computing similarity
+      if (scopeIdSet) {
+        const decisionId = this.rowidToDecisionId.get(rowid);
+        if (!decisionId) continue;
+        const boundScopes = this.scopeBindingsCache.get(decisionId);
+        // No bindings means not in any scope — exclude
+        if (!boundScopes || boundScopes.size === 0) continue;
+        // Must match at least one requested scope
+        let hasMatch = false;
+        for (const sid of scopeIdSet) {
+          if (boundScopes.has(sid)) {
+            hasMatch = true;
+            break;
+          }
+        }
+        if (!hasMatch) continue;
       }
 
       const similarity = cosineSimilarity(candidate, queryVector);
@@ -358,10 +426,13 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     // Keep in-memory caches in sync
     this.vectorCache.set(rowid, vec);
-    const topicRow = this.prepare('SELECT topic FROM decisions WHERE rowid = ?').get(rowid) as
-      | { topic: string }
-      | undefined;
-    if (topicRow) this.topicCache.set(rowid, topicRow.topic);
+    const decisionRow = this.prepare('SELECT id, topic FROM decisions WHERE rowid = ?').get(
+      rowid
+    ) as { id: string; topic: string } | undefined;
+    if (decisionRow) {
+      this.topicCache.set(rowid, decisionRow.topic);
+      this.rowidToDecisionId.set(rowid, decisionRow.id);
+    }
 
     return result;
   }

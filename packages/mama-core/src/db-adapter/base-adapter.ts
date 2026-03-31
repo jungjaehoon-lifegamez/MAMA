@@ -60,7 +60,8 @@ export abstract class DatabaseAdapter {
   abstract vectorSearch(
     embedding: Float32Array | number[],
     limit: number,
-    topicPrefix?: string
+    topicPrefix?: string,
+    scopeFilter?: { scopeIds: string[] }
   ): VectorSearchResult[] | null;
 
   /**
