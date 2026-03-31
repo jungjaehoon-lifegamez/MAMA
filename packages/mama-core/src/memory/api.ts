@@ -5,6 +5,7 @@ import {
   insertDecisionWithEmbedding,
   ensureMemoryScope,
   vectorSearch,
+  fts5Search,
 } from '../db-manager.js';
 import { generateEmbedding } from '../embeddings.js';
 import { classifyProfileEntries } from './profile-builder.js';
@@ -48,6 +49,8 @@ interface SaveMemoryInput {
     channel_id?: string;
     project_id?: string;
   };
+  /** IDs to exclude from supersede candidates (e.g., sibling facts from same ingestion batch) */
+  excludeIds?: string[];
 }
 
 interface RecallMemoryOptions {
@@ -213,6 +216,17 @@ export const LEXICAL_STOPWORDS: Set<string> = new Set([
   'your',
 ]);
 
+/** Minimal English suffix stripping so "weddings" matches "wedding", etc. */
+function stemToken(token: string): string {
+  if (token.length <= 4) return token;
+  // Order matters: try longest suffix first
+  if (token.endsWith('ies') && token.length > 4) return token.slice(0, -3) + 'y';
+  if (token.endsWith('ing') && token.length > 5) return token.slice(0, -3);
+  if (token.endsWith('ed') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('s') && !token.endsWith('ss')) return token.slice(0, -1);
+  return token;
+}
+
 export function getLexicalQueryTokens(query: string): string[] {
   return query
     .toLowerCase()
@@ -231,7 +245,8 @@ function buildLexicalCandidates(
     .map((record) => {
       const haystack = [record.topic, record.summary, record.details].join(' ').toLowerCase();
       const tokenMatches = tokens.reduce((count, token) => {
-        if (!haystack.includes(token)) {
+        const stem = stemToken(token);
+        if (!haystack.includes(token) && !haystack.includes(stem)) {
           return count;
         }
         if (token.length >= 8) {
@@ -357,13 +372,15 @@ export async function saveMemory(
   const now = Date.now();
   // Find evolution candidates: exact topic match first, then semantic search fallback
   const primaryScope = input.scopes.length > 0 ? input.scopes[0] : null;
-  let existingCandidates: Array<{ id: string; topic: string; summary: string }>;
+  const excludeIds = new Set(input.excludeIds ?? []);
+  let existingCandidates: Array<{ id: string; topic: string; summary: string; kind: string }>;
   if (primaryScope) {
     const scopeId = await ensureMemoryScope(primaryScope.kind, primaryScope.id);
-    existingCandidates = adapter
-      .prepare(
-        `
-          SELECT d.id, d.topic, d.summary
+    existingCandidates = (
+      adapter
+        .prepare(
+          `
+          SELECT d.id, d.topic, d.summary, d.kind
           FROM decisions d
           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
           WHERE d.topic = ? AND msb.scope_id = ?
@@ -372,13 +389,20 @@ export async function saveMemory(
           ORDER BY d.created_at DESC
           LIMIT 5
         `
-      )
-      .all(input.topic, scopeId) as Array<{ id: string; topic: string; summary: string }>;
+        )
+        .all(input.topic, scopeId) as Array<{
+        id: string;
+        topic: string;
+        summary: string;
+        kind: string;
+      }>
+    ).filter((c) => !excludeIds.has(c.id));
   } else {
-    existingCandidates = adapter
-      .prepare(
-        `
-          SELECT id, topic, summary
+    existingCandidates = (
+      adapter
+        .prepare(
+          `
+          SELECT id, topic, summary, kind
           FROM decisions
           WHERE topic = ?
             AND (status = 'active' OR status IS NULL)
@@ -386,8 +410,9 @@ export async function saveMemory(
           ORDER BY created_at DESC
           LIMIT 5
         `
-      )
-      .all(input.topic) as Array<{ id: string; topic: string; summary: string }>;
+        )
+        .all(input.topic) as Array<{ id: string; topic: string; summary: string; kind: string }>
+    ).filter((c) => !excludeIds.has(c.id));
   }
 
   // Semantic fallback: if no exact topic match, find similar memories via vector search
@@ -405,6 +430,7 @@ export async function saveMemory(
           id: String(r.id),
           topic: String(r.topic || ''),
           summary: String(r.decision || ''),
+          kind: 'fact' as const,
           _semanticMatch: true,
         }));
     } catch {
@@ -413,8 +439,11 @@ export async function saveMemory(
   }
 
   const evolution = resolveMemoryEvolution({
-    incoming: { topic: input.topic, summary: input.summary },
-    existing: existingCandidates,
+    incoming: { topic: input.topic, summary: input.summary, kind: input.kind },
+    existing: existingCandidates.map((c) => ({
+      ...c,
+      kind: (c.kind || 'fact') as MemoryRecord['kind'],
+    })),
   });
   const supersedesTarget =
     evolution.edges.find((edge) => edge.type === 'supersedes')?.to_id ?? null;
@@ -569,7 +598,7 @@ export async function recallMemory(
       const vectorResults = await vectorSearch(
         queryEmbedding,
         vectorLimit,
-        0.5,
+        0.3,
         options.topicPrefix
       );
 
@@ -626,64 +655,172 @@ export async function recallMemory(
   vectorMatched.length = 0;
   vectorMatched.push(...dedupedVector);
 
-  // Channel 2: BM25/lexical search (keyword matching) — always run in parallel
-  // For aggregation queries, run lexical on all sub-queries too
-  let lexicalRecords = await loadLexical();
+  // Channel 2: FTS5 BM25 search (preferred) with in-memory lexical fallback
+  let lexicalCandidates: Array<{ memory: MemoryRecord; score: number }> = [];
+  const lexicalLimit = isAggregation ? 100 : 50;
 
-  // Enforce scope boundaries: filter out memories without matching scopes
-  if (options.scopes && options.scopes.length > 0) {
-    const lexicalIds = lexicalRecords.map((r) => r.id);
-    const scopeMap = batchLoadScopes(getAdapter(), lexicalIds);
-    const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
-    lexicalRecords = lexicalRecords.filter((r) => {
-      const scopes = scopeMap.get(r.id) ?? [];
-      if (scopes.length === 0) return false;
-      return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
-    });
-  }
+  try {
+    // Try FTS5 first — proper BM25 ranking, much better than in-memory .includes()
+    // FTS5 MATCH treats spaces as AND; convert to OR so partial matches still surface.
+    // Use all non-stopword tokens for FTS5 (stopwords already removed by getLexicalQueryTokens).
+    // Additional high-frequency words that cause too many FTS5 matches are filtered separately.
+    const FTS5_NOISE_WORDS = new Set([
+      'this',
+      'that',
+      'also',
+      'just',
+      'like',
+      'some',
+      'many',
+      'much',
+      'very',
+      'more',
+      'most',
+      'such',
+      'each',
+      'every',
+      'been',
+      'being',
+      'about',
+      'would',
+      'could',
+      'should',
+      'will',
+      'year',
+      'years',
+      'time',
+      'know',
+      'think',
+      'want',
+      'need',
+      'make',
+      'made',
+    ]);
+    const ftsTokens = getLexicalQueryTokens(query)
+      .map((t) => stemToken(t))
+      .filter((t) => !FTS5_NOISE_WORDS.has(t));
+    const ftsQuery = ftsTokens.length > 0 ? ftsTokens.join(' OR ') : query;
+    const ftsResults = await fts5Search(ftsQuery, lexicalLimit);
+    if (ftsResults.length > 0) {
+      const adapter = getAdapter();
+      const fallbackSource: SaveMemoryInput['source'] = {
+        package: 'mama-core',
+        source_type: 'fts5',
+      };
 
-  const allLexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
-  if (subQueries.length > 1) {
-    for (const sq of subQueries.slice(1)) {
-      const subCandidates = buildLexicalCandidates(lexicalRecords, sq);
-      for (const c of subCandidates) {
-        if (!allLexicalCandidates.some((existing) => existing.memory.id === c.memory.id)) {
-          allLexicalCandidates.push(c);
+      // Normalize BM25 ranks (negative values, closer to 0 = better match)
+      const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
+
+      for (const ftsRow of ftsResults) {
+        const row = adapter
+          .prepare(
+            `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
+                  trust_context, kind, status, summary
+           FROM decisions WHERE id = ?`
+          )
+          .get(ftsRow.id) as Record<string, unknown> | undefined;
+        if (!row) continue;
+
+        const effectiveStatus = (row.status as string) || '';
+        if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
+          continue;
         }
+
+        const memoryIds = [String(row.id)];
+        const scopeMap = batchLoadScopes(adapter, memoryIds);
+        const record = toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource);
+
+        // Scope filtering
+        if (options.scopes && options.scopes.length > 0) {
+          const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+          const scopes = scopeMap.get(record.id) ?? [];
+          if (scopes.length === 0) continue;
+          if (!scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`))) continue;
+        }
+
+        const bm25Score = maxRank > 0 ? 1 - Math.abs(ftsRow.rank) / maxRank : 0.5;
+        lexicalCandidates.push({ memory: record, score: bm25Score });
       }
     }
-    allLexicalCandidates.sort((a, b) => b.score - a.score);
+  } catch {
+    // FTS5 not available — fall through to in-memory lexical
   }
-  const lexicalCandidates = allLexicalCandidates;
 
-  // RRF Fusion: combine vector and lexical results by reciprocal rank
+  // Fallback: in-memory lexical if FTS5 returned nothing
+  if (lexicalCandidates.length === 0) {
+    let lexicalRecords = await loadLexical();
+
+    if (options.scopes && options.scopes.length > 0) {
+      const lexicalIds = lexicalRecords.map((r) => r.id);
+      const scopeMap = batchLoadScopes(getAdapter(), lexicalIds);
+      const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+      lexicalRecords = lexicalRecords.filter((r) => {
+        const scopes = scopeMap.get(r.id) ?? [];
+        if (scopes.length === 0) return false;
+        return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
+      });
+    }
+
+    lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
+    if (subQueries.length > 1) {
+      for (const sq of subQueries.slice(1)) {
+        const subCandidates = buildLexicalCandidates(lexicalRecords, sq);
+        for (const c of subCandidates) {
+          if (!lexicalCandidates.some((existing) => existing.memory.id === c.memory.id)) {
+            lexicalCandidates.push(c);
+          }
+        }
+      }
+      lexicalCandidates.sort((a, b) => b.score - a.score);
+    }
+  }
+
+  // RRF Fusion: combine vector and lexical/FTS5 results by reciprocal rank
+  // FTS5 BM25 gets 2x weight — it naturally demotes records where query terms
+  // appear only in passing (e.g. "wedding" mentioned once in a dating record),
+  // so weighting it higher filters topical noise better than equal weighting.
+  // Additionally, vector-only results (no lexical support) are penalized to
+  // reduce semantic-but-off-topic noise.
+  // Lexical-first fusion: FTS5 BM25 provides the primary ranking (topic relevance),
+  // vector similarity acts as a secondary boost (semantic depth).
+  // This prevents off-topic records that are semantically similar from ranking high.
   const RRF_K = 60;
   const rrfScores = new Map<string, { record: MemoryRecord; score: number }>();
 
+  // Vector rank map for boosting lexical results
+  const vectorRankMap = new Map<string, number>();
   for (let i = 0; i < vectorMatched.length; i++) {
-    const r = vectorMatched[i];
-    const rrfScore = 1 / (RRF_K + i + 1);
-    rrfScores.set(r.id, { record: r, score: rrfScore });
+    vectorRankMap.set(vectorMatched[i].id, i);
   }
 
+  // Primary: lexical/FTS5 results with vector boost
   for (let i = 0; i < lexicalCandidates.length; i++) {
     const r = lexicalCandidates[i];
     if (!options.includeHistory && EXCLUDED_STATUSES.has(r.memory.status)) continue;
-    const rrfScore = 1 / (RRF_K + i + 1);
-    const existing = rrfScores.get(r.memory.id);
-    if (existing) {
-      existing.score += rrfScore;
-    } else {
-      rrfScores.set(r.memory.id, { record: r.memory, score: rrfScore });
-    }
+    const lexScore = 1 / (RRF_K + i + 1);
+    const vecRank = vectorRankMap.get(r.memory.id);
+    const vecBoost = vecRank !== undefined ? 0.2 * (1 / (RRF_K + vecRank + 1)) : 0;
+    rrfScores.set(r.memory.id, { record: r.memory, score: lexScore + vecBoost });
   }
 
-  matched = Array.from(rrfScores.values())
-    .sort((a, b) => b.score - a.score)
-    .map((entry) => ({
-      ...entry.record,
-      confidence: entry.score,
-    }));
+  // Secondary: vector-only results (no lexical backing) get heavily discounted
+  for (let i = 0; i < vectorMatched.length; i++) {
+    const r = vectorMatched[i];
+    if (rrfScores.has(r.id)) continue; // Already included via lexical
+    const rrfScore = 0.15 * (1 / (RRF_K + i + 1));
+    rrfScores.set(r.id, { record: r, score: rrfScore });
+  }
+
+  const sortedRrf = Array.from(rrfScores.values()).sort((a, b) => b.score - a.score);
+
+  // Normalize RRF scores to 0-1 range so downstream consumers (threshold filters,
+  // similarity displays) get meaningful values.  The raw RRF score for K=60 tops out
+  // around 0.033, which is misleading when compared against similarity thresholds.
+  const maxRrf = sortedRrf.length > 0 ? sortedRrf[0].score : 1;
+  matched = sortedRrf.map((entry) => ({
+    ...entry.record,
+    confidence: maxRrf > 0 ? entry.score / maxRrf : 0,
+  }));
 
   if (vectorMatched.length > 0 && lexicalCandidates.length > 0) {
     retrievalSource = 'hybrid_rrf';
@@ -691,6 +828,35 @@ export async function recallMemory(
     retrievalSource = 'vector_search';
   } else if (lexicalCandidates.length > 0) {
     retrievalSource = 'lexical_search';
+  }
+
+  // Enrich active records with summaries from their superseded predecessors.
+  // When ingestConversation extracts multiple facts under the same topic, only
+  // the last survives as "active" — the earlier ones become superseded and are
+  // excluded from search.  This recovers their key information so it is not lost.
+  if (matched.length > 0) {
+    const adapter = getAdapter();
+    const stmtChain = adapter.prepare(
+      `SELECT id, summary, decision FROM decisions WHERE superseded_by = ?`
+    );
+    for (const record of matched) {
+      const predecessors = stmtChain.all(record.id) as Array<{
+        id: string;
+        summary?: string;
+        decision?: string;
+      }>;
+      if (predecessors.length > 0) {
+        const extra = predecessors
+          .map((p) => String(p.summary ?? p.decision ?? ''))
+          .filter(Boolean)
+          .join(' | ');
+        if (extra) {
+          record.details = record.details
+            ? `${record.details}\n[Prior context] ${extra}`
+            : `[Prior context] ${extra}`;
+        }
+      }
+    }
   }
 
   bundle.memories = matched;
@@ -778,14 +944,10 @@ export async function recallMemory(
         const checkIds = [...new Set(edgesToCheck.map((e) => e.to_id))];
         const placeholders = checkIds.map(() => '?').join(', ');
         const statusRows = adapter
-          .prepare(
-            `SELECT id, status FROM decisions WHERE id IN (${placeholders})`
-          )
+          .prepare(`SELECT id, status FROM decisions WHERE id IN (${placeholders})`)
           .all(...checkIds) as Array<{ id: string; status: string | null }>;
         const excludedIds = new Set(
-          statusRows
-            .filter((r) => r.status && EXCLUDED_STATUSES.has(r.status))
-            .map((r) => r.id)
+          statusRows.filter((r) => r.status && EXCLUDED_STATUSES.has(r.status)).map((r) => r.id)
         );
         bundle.graph_context.edges = allEdges.filter(
           (e) => !excludedIds.has(e.from_id) && !excludedIds.has(e.to_id)
@@ -859,7 +1021,7 @@ async function callExtractionLLM(
   prompt: string,
   options: NonNullable<IngestConversationInput['extract']>
 ): Promise<ExtractedMemoryUnit[]> {
-  const model = options.model ?? 'claude-sonnet-4-5-20250514';
+  const model = options.model ?? 'claude-sonnet-4-6-20261022';
   const baseUrl = options.baseUrl ?? 'https://api.anthropic.com';
 
   // Security: only send ANTHROPIC_API_KEY to Anthropic's own domain
@@ -915,9 +1077,10 @@ export async function ingestConversation(
   }
 
   const conversationText = input.messages.map((m) => `${m.role}: ${m.content}`).join('\n');
+  const topicPrefix = input.topicPrefix || '';
 
   const rawResult = await ingestMemory({
-    content: conversationText,
+    content: topicPrefix ? `${topicPrefix}${conversationText.slice(0, 40)}` : conversationText,
     scopes: input.scopes,
     source: input.source,
   });
@@ -973,16 +1136,22 @@ export async function ingestConversation(
   const EXTRACTION_EDGE_RELATIONSHIP = 'builds_on';
   const EXTRACTION_EDGE_REASON = 'Extracted from conversation';
 
+  // Track IDs saved in this batch so sibling facts don't supersede each other.
+  // Without this, when ingestConversation extracts multiple facts under the same topic,
+  // each subsequent save supersedes the previous one, losing independent information.
+  const batchSavedIds: string[] = [];
+
   for (const unit of units) {
     try {
       const saved = await saveMemory({
-        topic: unit.topic,
+        topic: topicPrefix ? `${topicPrefix}${unit.topic}` : unit.topic,
         kind: unit.kind,
         summary: unit.summary,
         details: unit.details,
         confidence: unit.confidence,
         scopes: input.scopes,
         source: input.source,
+        excludeIds: batchSavedIds,
       });
 
       const now = Date.now();
@@ -1000,6 +1169,7 @@ export async function ingestConversation(
           now
         );
 
+      batchSavedIds.push(saved.id);
       result.extractedMemories.push({
         id: saved.id,
         kind: unit.kind,

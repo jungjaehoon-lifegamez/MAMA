@@ -1403,13 +1403,11 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       topicPrefix: options.topicPrefix,
     });
     if (bundle.memories.length > 0) {
-      // Apply threshold filtering if configured
+      // recallMemory uses RRF fusion — confidence holds the RRF score (range ~0.01-0.03
+      // for RRF_K=60).  Applying a similarity-style threshold (e.g. 0.3) would discard
+      // every result.  Skip threshold filtering here; the RRF ranking already orders by
+      // relevance and the caller limits the count.
       let filteredMemories = bundle.memories;
-      if (threshold) {
-        filteredMemories = filteredMemories.filter(
-          (memory) => (memory.confidence ?? 1) >= threshold
-        );
-      }
 
       // Apply limit
       filteredMemories = filteredMemories.slice(0, limit);
