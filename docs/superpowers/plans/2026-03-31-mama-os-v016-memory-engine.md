@@ -61,7 +61,7 @@
 - FTS5 trigger migration SQL (permanent, not runtime-generated)
 - Temporal metadata on facts (event_date field for time-based search)
 
-**Tech Stack:** TypeScript, Vitest, SQLite (better-sqlite3), Transformers.js (1024-dim e5-large embeddings), Claude API (Sonnet for extraction)
+**Tech Stack:** TypeScript, Vitest, SQLite (better-sqlite3), Transformers.js (384-dim e5-small embeddings), Claude API (Sonnet for extraction)
 
 ---
 
