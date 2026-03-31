@@ -153,16 +153,51 @@ Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 - **Extraction:** Sonnet for structured fact extraction from conversations
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
-## Roadmap
+## Current Status & Roadmap
 
-| Phase       | Version | Focus                                                      |
-| ----------- | ------- | ---------------------------------------------------------- |
-| **Current** | v0.15   | Search quality overhaul, FTS5, evolution engine            |
-| Next        | v0.16   | Memory agent endpoint, scope-based search, noise filtering |
-|             | v0.17   | Connector framework, messenger memory integration          |
-|             | v0.18   | Control tower UI, memory explorer                          |
-|             | v0.19   | Stability, security audit                                  |
-|             | v1.0    | General release                                            |
+### What Works Today
+
+| Feature                | Status     | Details                                                                         |
+| ---------------------- | ---------- | ------------------------------------------------------------------------------- |
+| **Knowledge Graph**    | Production | decisions + edges (supersedes/builds_on/debates/synthesizes) + truth projection |
+| **Hybrid Search**      | Production | FTS5 BM25 + vector cosine + RRF fusion, 81.5% on LongMemEval                    |
+| **Claude Code Plugin** | Production | Auto-save decisions via hooks, search via `/mama:search`                        |
+| **MCP Server**         | Production | `mama_save`, `mama_search`, `mama_suggest` tools                                |
+| **Messenger Gateways** | Production | Telegram, Discord, Slack bots with memory integration                           |
+| **Always-On Daemon**   | Production | Cron scheduler, web dashboard at localhost:3847                                 |
+| **Evolution Engine**   | Production | Conservative supersede (overlap-based), builds_on for independent facts         |
+
+### What's In Progress (v0.16)
+
+| Feature                   | Status  | Goal                                                        |
+| ------------------------- | ------- | ----------------------------------------------------------- |
+| **Memory Agent Endpoint** | Planned | HTTP endpoint for real-time hook events → auto-extraction   |
+| **Noise Filtering**       | Planned | Reject greetings, internal prompts, duplicates from storage |
+| **Scope-Based Search**    | Planned | Replace topicPrefix with proper scope filtering             |
+| **Temporal Metadata**     | Planned | `event_date` on facts for time-based search                 |
+| **FTS5 Migration**        | Planned | Permanent trigger SQL instead of runtime-generated          |
+
+### What's Not Built Yet
+
+| Feature                       | Target | Why It Matters                                        |
+| ----------------------------- | ------ | ----------------------------------------------------- |
+| **Pattern Recognition**       | v0.17  | Detect recurring workflows from accumulated knowledge |
+| **Workflow Recommendations**  | v0.18  | "Your team usually does X before Y" suggestions       |
+| **Cross-Source Intelligence** | v0.17  | Code decisions + team chat + email = unified graph    |
+| **Memory Explorer UI**        | v0.18  | Visual graph of decision evolution                    |
+| **Enterprise Server Mode**    | v0.19  | Central server for team knowledge (vs personal local) |
+| **Domain Automation**         | v1.0   | Knowledge graph → automated workflow execution        |
+
+### Roadmap
+
+| Phase    | Version | Focus                                                          |
+| -------- | ------- | -------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)    |
+| **Next** | v0.16   | Memory agent, scope search, noise filtering, temporal metadata |
+|          | v0.17   | Connector framework, cross-source memory, pattern recognition  |
+|          | v0.18   | Control tower UI, memory explorer, workflow recommendations    |
+|          | v0.19   | Stability, security audit, enterprise server mode              |
+|          | v1.0    | General release — domain automation                            |
 
 ## Development
 
