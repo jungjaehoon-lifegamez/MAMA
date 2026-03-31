@@ -146,7 +146,12 @@ class PersistentSession {
           this.pendingReject(new Error(`Timeout after ${timeoutMs}ms`))
           this.pendingResolve = null
           this.pendingReject = null
-          this.state = "idle"
+          // Kill the process on timeout to avoid leaked resources
+          if (this.process && !this.process.killed) {
+            this.process.kill("SIGTERM")
+            this.process = null
+          }
+          this.state = "dead"
         }
       }, timeoutMs)
 
@@ -192,25 +197,35 @@ class PersistentSession {
   }
 
   _processEvent(event) {
-    if (event.type === "assistant" && event.message?.content) {
-      for (const block of event.message.content) {
-        if (block.type === "text" && block.text) {
-          this.accumulatedText += block.text
+    try {
+      if (event.type === "assistant" && event.message?.content) {
+        for (const block of event.message.content) {
+          if (block.type === "text" && block.text) {
+            this.accumulatedText += block.text
+          }
         }
       }
-    }
-    if (event.type === "result") {
-      if (this.timeoutHandle) {
-        clearTimeout(this.timeoutHandle)
+      if (event.type === "result") {
+        if (this.timeoutHandle) {
+          clearTimeout(this.timeoutHandle)
+        }
+        this.timeoutHandle = null
+        const text = this.accumulatedText.trim()
+        this.state = "idle"
+        if (this.pendingResolve) {
+          this.pendingResolve(text)
+          this.pendingResolve = null
+          this.pendingReject = null
+        }
       }
-      this.timeoutHandle = null
-      const text = this.accumulatedText.trim()
-      this.state = "idle"
-      if (this.pendingResolve) {
-        this.pendingResolve(text)
+    } catch (e) {
+      console.error(`[Session] Error processing event: ${e.message}`)
+      if (this.pendingReject) {
+        this.pendingReject(e)
         this.pendingResolve = null
         this.pendingReject = null
       }
+      this.state = "idle"
     }
   }
 

@@ -346,7 +346,8 @@ export async function loadEdgesForIds(ids: string[]): Promise<MemoryEdge[]> {
     .prepare(
       `SELECT from_id, to_id, relationship AS type, reason
        FROM decision_edges
-       WHERE from_id IN (${placeholders}) OR to_id IN (${placeholders})`
+       WHERE (from_id IN (${placeholders}) OR to_id IN (${placeholders}))
+         AND (approved_by_user != 0 OR approved_by_user IS NULL)`
     )
     .all(...ids, ...ids) as Array<{
     from_id: string;
@@ -884,12 +885,13 @@ export async function recallMemory(
         graph_source?: string;
         graph_rank?: number;
       }
-      const mamaApiModule = await import('../mama-api.js');
-      const mamaDefault = mamaApiModule.default as unknown as {
+      interface MamaApiDefault {
         expandWithGraph: (
           candidates: GraphExpandedCandidate[]
         ) => Promise<GraphExpandedCandidate[]>;
-      };
+      }
+      const mamaApiModule = await import('../mama-api.js');
+      const mamaDefault: MamaApiDefault = mamaApiModule.default as unknown as MamaApiDefault;
       const expanded = await mamaDefault.expandWithGraph(candidates);
       const primaryIds = new Set(matched.map((m) => m.id));
       let expandedOnly = expanded.filter((e) => !primaryIds.has(e.id));

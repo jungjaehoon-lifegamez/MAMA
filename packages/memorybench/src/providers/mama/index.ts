@@ -304,6 +304,26 @@ export class MAMAProvider implements Provider {
     return [...reranked, ...remaining].slice(0, limit)
   }
 
+  private normalizeScores(
+    candidates: Array<{
+      id: string
+      topic: string
+      content: string
+      created_at: number
+      score: number
+    }>
+  ): Array<{ id: string; topic: string; content: string; created_at: number; score: number }> {
+    if (candidates.length === 0) return []
+    const scores = candidates.map((c) => c.score)
+    const min = Math.min(...scores)
+    const max = Math.max(...scores)
+    const range = max - min
+    if (range === 0) {
+      return candidates.map((c) => ({ ...c, score: 1 }))
+    }
+    return candidates.map((c) => ({ ...c, score: (c.score - min) / range }))
+  }
+
   private mergeCandidates(
     primary: Array<{
       id: string
@@ -320,11 +340,13 @@ export class MAMAProvider implements Provider {
       score: number
     }>
   ): Array<{ id: string; topic: string; content: string; created_at: number; score: number }> {
+    const normalizedPrimary = this.normalizeScores(primary)
+    const normalizedSecondary = this.normalizeScores(secondary)
     const merged = new Map<
       string,
       { id: string; topic: string; content: string; created_at: number; score: number }
     >()
-    for (const candidate of [...primary, ...secondary]) {
+    for (const candidate of [...normalizedPrimary, ...normalizedSecondary]) {
       const existing = merged.get(candidate.id)
       if (!existing || candidate.score > existing.score) {
         merged.set(candidate.id, candidate)
@@ -768,8 +790,13 @@ ${candidates
             extractedMemories?: Array<{ id: string; kind: string; topic: string }>
           }
           if (data.success) {
-            const primaryId =
-              data.rawId || data.extractedMemories?.[0]?.id || `extracted_${session.sessionId}`
+            const primaryId = data.rawId || data.extractedMemories?.[0]?.id
+            if (!primaryId) {
+              logger.warn(
+                `Ingest session ${session.sessionId} returned success but no IDs — treating as error`
+              )
+              continue
+            }
             documentIds.push(primaryId)
             existingIds.push(primaryId)
             existingLocalRecords.push({
@@ -972,24 +999,38 @@ ${candidates
     // MAMA doesn't have a bulk delete endpoint
     // Mark all decisions from this run as FAILED (closest to "cleared")
     const ids = this.savedIds.get(containerTag) || []
+    const failedIds: string[] = []
 
     for (const id of ids) {
       try {
-        await fetch(`${this.baseUrl}/api/update`, {
+        const res = await fetch(`${this.baseUrl}/api/update`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: AbortSignal.timeout(10000),
           body: JSON.stringify({ id, outcome: "FAILED" }),
         })
+        if (!res.ok) {
+          logger.debug(`Failed to clear decision ${id}: HTTP ${res.status}`)
+          failedIds.push(id)
+        }
       } catch (e) {
         logger.debug(`Failed to clear decision ${id}: ${e}`)
+        failedIds.push(id)
       }
     }
 
-    this.savedIds.delete(containerTag)
+    if (failedIds.length > 0) {
+      // Keep failed IDs so they can be retried later
+      this.savedIds.set(containerTag, failedIds)
+      logger.warn(
+        `${failedIds.length}/${ids.length} decisions failed to clear for container ${containerTag}`
+      )
+    } else {
+      this.savedIds.delete(containerTag)
+    }
     this.localRecords.delete(containerTag)
     this.persistState()
-    logger.info(`Cleared ${ids.length} decisions for container ${containerTag}`)
+    logger.info(`Cleared ${ids.length - failedIds.length} decisions for container ${containerTag}`)
   }
 }
 

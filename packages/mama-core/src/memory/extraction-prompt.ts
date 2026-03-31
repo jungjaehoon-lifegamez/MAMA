@@ -19,7 +19,7 @@ export function buildExtractionPrompt(
     : '';
 
   const topicRule = hasExistingTopics
-    ? '- topic: lowercase_snake_case, MUST reuse an existing topic above when the subject matches'
+    ? '- topic: lowercase_snake_case, prefer reusing an existing topic above when the subject matches'
     : '- topic: lowercase_snake_case';
 
   return `You are extracting structured memory units from a conversation about a user's life.

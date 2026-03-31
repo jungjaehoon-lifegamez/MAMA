@@ -53,6 +53,9 @@ async function search(query, topicPrefix, questionDate) {
   const resolved = resolveTemporalQuery(query, questionDate)
   const url = `${BASE_URL}/api/mama/search?q=${encodeURIComponent(resolved)}&limit=15&topicPrefix=${encodeURIComponent(topicPrefix)}`
   const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`Search failed: HTTP ${res.status} ${res.statusText}`)
+  }
   const data = await res.json()
   return data.results || []
 }
@@ -66,8 +69,7 @@ function callClaude(prompt) {
     )
     return result.toString().trim()
   } catch (e) {
-    console.error("  Claude call failed:", e.message?.slice(0, 80))
-    return "I don't know."
+    throw new Error(`Claude call failed: ${e.message?.slice(0, 120)}`)
   }
 }
 
@@ -131,9 +133,8 @@ Respond with ONLY "correct" or "incorrect" on the first line, then a brief expla
   console.log("HYBRID ANSWER RESULTS")
   console.log(`${"=".repeat(60)}`)
   const correct = results.filter((r) => r.isCorrect).length
-  console.log(
-    `Accuracy: ${correct}/${results.length} (${((correct / results.length) * 100).toFixed(0)}%)`
-  )
+  const accuracy = results.length > 0 ? ((correct / results.length) * 100).toFixed(0) : "N/A"
+  console.log(`Accuracy: ${correct}/${results.length} (${accuracy}%)`)
   console.log()
   results.forEach((r) => {
     console.log(

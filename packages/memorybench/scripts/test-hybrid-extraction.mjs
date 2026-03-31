@@ -271,6 +271,9 @@ async function search(query, topicPrefix, questionDate) {
   const resolved = resolveTemporalQuery(query, questionDate)
   const url = `${BASE_URL}/api/mama/search?q=${encodeURIComponent(resolved)}&limit=15&topicPrefix=${encodeURIComponent(topicPrefix)}`
   const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`Search failed: HTTP ${res.status} ${res.statusText}`)
+  }
   const data = await res.json()
   return data.results || []
 }
