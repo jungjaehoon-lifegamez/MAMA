@@ -62,14 +62,14 @@ h3 { font-size: 0.9375rem; font-weight: 600; line-height: 1.4; }
 h4 { font-size: 0.8125rem; font-weight: 500; line-height: 1.4; }
 
 /* Card system — subtle borders, not heavy shadows */
-.card, [class*="bg-white"][class*="rounded"] {
+.card, .bg-white.rounded {
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-card, 12px);
 }
 
 /* Button touch targets — minimum 32px height (44px recommended for mobile) */
 button { min-height: 32px; }
-button:not([class*="p-0"]):not([class*="p-1"]) { padding: 6px 12px; }
+button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px 12px; }
 
 /* Floating Chat */
 .animate-slide-up {

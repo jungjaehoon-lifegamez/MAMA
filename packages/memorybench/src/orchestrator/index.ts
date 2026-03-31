@@ -40,10 +40,18 @@ function selectQuestionsBySampling(
   }
 
   if (sampling.mode === "limit" && sampling.limit) {
+    if (!Number.isInteger(sampling.limit) || sampling.limit <= 0) {
+      throw new Error(`sampling.limit must be a positive integer, got ${sampling.limit}`)
+    }
     return allQuestions.slice(0, sampling.limit).map((q) => q.questionId)
   }
 
   if (sampling.mode === "sample" && sampling.perCategory) {
+    if (!Number.isInteger(sampling.perCategory) || sampling.perCategory <= 0) {
+      throw new Error(
+        `sampling.perCategory must be a positive integer, got ${sampling.perCategory}`
+      )
+    }
     const byType: Record<string, { questionId: string; questionType: string }[]> = {}
     for (const q of allQuestions) {
       if (!byType[q.questionType]) byType[q.questionType] = []
@@ -143,12 +151,12 @@ export class Orchestrator {
     if (this.checkpointManager.exists(runId) && !isNewRun) {
       checkpoint = this.checkpointManager.load(runId)!
 
-      // Only override judge/answeringModel when the caller explicitly provided
-      // non-default values; otherwise preserve the checkpoint's stored models
+      // Only override models when the caller explicitly provided overrides;
+      // otherwise preserve the checkpoint's stored models for resume
       if (judgeModel !== checkpoint.judge) {
         checkpoint.judge = judgeModel
       }
-      if (answeringModel !== "gpt-4o" || !checkpoint.answeringModel) {
+      if (options.answeringModel !== undefined) {
         checkpoint.answeringModel = answeringModel
       }
 
@@ -176,9 +184,9 @@ export class Orchestrator {
               `Old checkpoint detected. Using CLI limit (${limit}) to determine target questions.`
             )
           } else {
-            targetQuestionIds = startedQuestions
+            targetQuestionIds = [...startedQuestions, ...pendingQuestions]
             logger.warn(
-              `Old checkpoint without stored limit. Only processing ${startedQuestions.length} already-started questions.`
+              `Old checkpoint without stored limit. Processing all ${targetQuestionIds.length} questions (${startedQuestions.length} started + ${pendingQuestions.length} pending).`
             )
           }
 
@@ -195,6 +203,15 @@ export class Orchestrator {
             this.checkpointManager.save(checkpoint)
             logger.warn(
               `Old checkpoint with no progress. Applying limit (${limit}) to first ${limit} questions.`
+            )
+          } else {
+            // Legacy checkpoint without targetQuestionIds and no progress:
+            // populate with all known question IDs from the checkpoint
+            targetQuestionIds = Object.values(checkpoint.questions).map((q) => q.questionId)
+            checkpoint.targetQuestionIds = targetQuestionIds
+            this.checkpointManager.save(checkpoint)
+            logger.warn(
+              `Legacy checkpoint without targetQuestionIds. Populated with all ${targetQuestionIds.length} checkpoint questions.`
             )
           }
         }
@@ -371,23 +388,22 @@ export class Orchestrator {
   getStatus(runId: string): void {
     const checkpoint = this.checkpointManager.load(runId)
     if (!checkpoint) {
-      logger.error(`No run found: ${runId}`)
-      return
+      throw new Error(`No run found: ${runId}`)
     }
 
     const summary = this.checkpointManager.getSummary(checkpoint)
-    console.log("\n" + "=".repeat(50))
-    console.log(`Run: ${runId}`)
-    console.log(`Provider: ${checkpoint.provider}`)
-    console.log(`Benchmark: ${checkpoint.benchmark}`)
-    console.log("=".repeat(50))
-    console.log(`Total Questions: ${summary.total}`)
-    console.log(`Ingested: ${summary.ingested}`)
-    console.log(`Indexed: ${summary.indexed}`)
-    console.log(`Searched: ${summary.searched}`)
-    console.log(`Answered: ${summary.answered}`)
-    console.log(`Evaluated: ${summary.evaluated}`)
-    console.log("=".repeat(50) + "\n")
+    logger.info("\n" + "=".repeat(50))
+    logger.info(`Run: ${runId}`)
+    logger.info(`Provider: ${checkpoint.provider}`)
+    logger.info(`Benchmark: ${checkpoint.benchmark}`)
+    logger.info("=".repeat(50))
+    logger.info(`Total Questions: ${summary.total}`)
+    logger.info(`Ingested: ${summary.ingested}`)
+    logger.info(`Indexed: ${summary.indexed}`)
+    logger.info(`Searched: ${summary.searched}`)
+    logger.info(`Answered: ${summary.answered}`)
+    logger.info(`Evaluated: ${summary.evaluated}`)
+    logger.info("=".repeat(50) + "\n")
   }
 }
 

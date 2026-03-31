@@ -202,7 +202,11 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='embeddings'`)
       .all() as Array<{ name: string }>;
 
-    if (tableCheck.length === 0) return;
+    if (tableCheck.length === 0) {
+      this.vectorCache.clear();
+      this.topicCache.clear();
+      return;
+    }
 
     const start = Date.now();
     const rows = this.db.prepare('SELECT rowid, embedding FROM embeddings').all() as Array<{

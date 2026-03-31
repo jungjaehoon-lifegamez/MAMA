@@ -1403,10 +1403,11 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       topicPrefix: options.topicPrefix,
     });
     if (bundle.memories.length > 0) {
-      // recallMemory uses RRF fusion — confidence holds the RRF score (range ~0.01-0.03
-      // for RRF_K=60).  Applying a similarity-style threshold (e.g. 0.3) would discard
-      // every result.  Skip threshold filtering here; the RRF ranking already orders by
-      // relevance and the caller limits the count.
+      // recallMemory uses RRF fusion — confidence is overwritten with the normalized
+      // retrieval score (0-1 range, where 1.0 = best match in this result set).
+      // The original stored confidence is lost after RRF normalization.
+      // We capture the retrieval score separately so `similarity` reflects search
+      // relevance while `confidence` is passed through as-is from the bundle.
       let filteredMemories = bundle.memories;
 
       // Apply limit
@@ -1424,13 +1425,16 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: filteredMemories.map((memory) => ({
+        results: filteredMemories.map((memory, idx) => ({
           id: memory.id,
           topic: memory.topic,
           decision: memory.summary,
           reasoning: memory.details,
           confidence: memory.confidence,
-          similarity: memory.confidence,
+          // memory.confidence is the normalized RRF retrieval score (0-1) after
+          // recallMemory.  Use it as similarity so the field reflects search relevance
+          // rather than the original stored trust score.
+          similarity: memory.confidence ?? 1 - idx * 0.01,
           created_at: memory.created_at,
           graph_source: 'primary',
           graph_rank: 1,

@@ -263,12 +263,7 @@ export class MessageRouter {
     candidates?: Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>;
   }): Promise<MemoryAuditAckLike> {
     if (!this.memoryAuditQueue) {
-      return {
-        status: 'failed',
-        action: 'no_op',
-        event_ids: [],
-        reason: 'Memory agent not initialized',
-      };
+      throw new Error('Memory agent not initialized — cannot audit conversation');
     }
     const auditJob: MemoryAuditJob = {
       turnId: `audit_${Date.now()}`,
