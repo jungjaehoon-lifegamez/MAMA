@@ -68,6 +68,10 @@ const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
 const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
+const DEFAULT_GRAPH_LIMIT = 300;
+const MAX_GRAPH_LIMIT = 1000;
+const GRAPH_PREVIEW_CHARS = 220;
+const SIMILAR_QUERY_DECISION_CHARS = 400;
 
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
@@ -105,9 +109,94 @@ function isValidPersonaPath(filePath: string): boolean {
   return ALLOWED_PERSONA_DIRS.some((dir) => resolvedPath.startsWith(dir + path.sep));
 }
 
-async function getAllNodes(): Promise<GraphNode[]> {
+type GraphDecisionRow = {
+  id: string;
+  topic: string;
+  decision: string;
+  reasoning: string;
+  outcome: string | null;
+  confidence: number | null;
+  created_at: number;
+};
+
+function buildDecisionPreview(decision: string): string {
+  const normalized = decision.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= GRAPH_PREVIEW_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, GRAPH_PREVIEW_CHARS)}...`;
+}
+
+function mapDecisionRowToGraphNode(row: GraphDecisionRow): GraphNode {
+  return {
+    id: row.id,
+    topic: row.topic,
+    decision_preview: buildDecisionPreview(row.decision),
+    outcome: row.outcome,
+    confidence: row.confidence,
+    created_at: row.created_at,
+  };
+}
+
+function parseGraphLimit(params: URLSearchParams): number | null {
+  if (params.get('full') === 'true') {
+    return null;
+  }
+
+  const rawLimit = params.get('limit');
+  if (!rawLimit) {
+    return DEFAULT_GRAPH_LIMIT;
+  }
+
+  const parsed = parseInt(rawLimit, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_GRAPH_LIMIT;
+  }
+
+  return Math.min(parsed, MAX_GRAPH_LIMIT);
+}
+
+function buildGraphMeta(input: {
+  totalNodes: number;
+  totalEdges: number;
+  similarityEdges: number;
+  isPartial: boolean;
+  returnedNodes: number;
+  returnedEdges: number;
+}): Record<string, number | boolean> {
+  return {
+    total_nodes: input.returnedNodes,
+    total_edges: input.returnedEdges,
+    similarity_edges: input.similarityEdges,
+    partial: input.isPartial,
+    total_available_nodes: input.totalNodes,
+    total_available_edges: input.totalEdges,
+  };
+}
+
+async function getAllNodes(limit?: number | null): Promise<GraphNode[]> {
   const adapter = getAdapter();
 
+  const sql = `
+    SELECT
+      id,
+      topic,
+      decision,
+      outcome,
+      confidence,
+      created_at
+    FROM decisions
+    ORDER BY created_at DESC
+  `;
+  const stmt = adapter.prepare(limit ? `${sql}\nLIMIT ?` : sql);
+
+  const rows = (limit ? stmt.all(limit) : stmt.all()) as GraphDecisionRow[];
+
+  return rows.map(mapDecisionRowToGraphNode);
+}
+
+async function getDecisionDetail(id: string): Promise<GraphNode | null> {
+  const adapter = getAdapter();
   const stmt = adapter.prepare(`
     SELECT
       id,
@@ -118,20 +207,15 @@ async function getAllNodes(): Promise<GraphNode[]> {
       confidence,
       created_at
     FROM decisions
-    ORDER BY created_at DESC
+    WHERE id = ?
   `);
 
-  const rows = stmt.all() as Array<{
-    id: string;
-    topic: string;
-    decision: string;
-    reasoning: string;
-    outcome: string | null;
-    confidence: number | null;
-    created_at: number;
-  }>;
+  const row = stmt.get(id) as GraphDecisionRow | undefined;
+  if (!row) {
+    return null;
+  }
 
-  return rows.map((row) => ({
+  return {
     id: row.id,
     topic: row.topic,
     decision: row.decision,
@@ -139,7 +223,8 @@ async function getAllNodes(): Promise<GraphNode[]> {
     outcome: row.outcome,
     confidence: row.confidence,
     created_at: row.created_at,
-  }));
+    decision_preview: buildDecisionPreview(row.decision),
+  };
 }
 
 async function getAllEdges(): Promise<GraphEdge[]> {
@@ -284,12 +369,23 @@ async function handleGraphRequest(
   try {
     await initDB();
 
-    let nodes = await getAllNodes();
-    let edges = await getAllEdges();
-
+    const limit = parseGraphLimit(params);
+    const allEdges = await getAllEdges();
     const topicFilter = params.get('topic');
+
+    // When topic filter is active, fetch all nodes first so the filter
+    // sees every matching node — then apply limit.  Without this, SQL
+    // LIMIT could exclude matching nodes that appear later in the table.
+    let nodes = await getAllNodes(topicFilter ? null : limit);
+    let edges = allEdges;
+
     if (topicFilter) {
       nodes = filterNodesByTopic(nodes, topicFilter);
+      if (limit !== null) {
+        nodes = nodes.slice(0, limit);
+      }
+      edges = filterEdgesByNodes(edges, nodes);
+    } else if (limit !== null) {
       edges = filterEdgesByNodes(edges, nodes);
     }
 
@@ -301,15 +397,15 @@ async function handleGraphRequest(
       similarityEdges = similarityEdges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to));
     }
 
-    const allTopics = topicFilter ? [topicFilter] : getUniqueTopics(nodes);
-    const meta = {
-      total_nodes: nodes.length,
-      total_edges: edges.length,
-      similarity_edges: similarityEdges.length,
-      topics: allTopics,
-    };
-
     const latency = Date.now() - startTime;
+    const meta = buildGraphMeta({
+      totalNodes: limit ? await getDecisionCount() : nodes.length,
+      totalEdges: allEdges.length,
+      similarityEdges: similarityEdges.length,
+      isPartial: !topicFilter && limit !== null,
+      returnedNodes: nodes.length,
+      returnedEdges: edges.length,
+    });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
@@ -332,6 +428,51 @@ async function handleGraphRequest(
         message,
       })
     );
+  }
+}
+
+async function getDecisionCount(): Promise<number> {
+  const adapter = getAdapter();
+  const row = adapter.prepare('SELECT COUNT(*) as count FROM decisions').get() as
+    | { count: number }
+    | undefined;
+  return row?.count ?? 0;
+}
+
+async function handleGraphDetailRequest(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: URLSearchParams
+): Promise<void> {
+  try {
+    const decisionId = params.get('id');
+    if (!decisionId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          code: 'MISSING_ID',
+          message: 'Missing required parameter: id',
+        })
+      );
+      return;
+    }
+
+    await initDB();
+    const detail = await getDecisionDetail(decisionId);
+    if (!detail) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, code: 'NOT_FOUND', message: 'Decision not found' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ node: detail }));
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('Graph detail error:', message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: true, code: 'INTERNAL_ERROR', message }));
   }
 }
 
@@ -504,7 +645,7 @@ async function handleSimilarRequest(
       return;
     }
 
-    const searchQuery = `${decision.topic} ${decision.decision}`;
+    const searchQuery = `${decision.topic} ${decision.decision.slice(0, SIMILAR_QUERY_DECISION_CHARS)}`;
     console.log(
       `[GraphAPI] Searching for similar decisions with query: "${searchQuery.substring(0, 50)}..."`
     );
@@ -574,7 +715,8 @@ async function handleMamaSearchRequest(
 ): Promise<void> {
   try {
     const query = params.get('q');
-    const limit = Math.min(parseInt(params.get('limit') || '10', 10), 20);
+    const rawLimit = parseInt(params.get('limit') || '10', 10);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 10;
 
     if (!query) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -590,9 +732,12 @@ async function handleMamaSearchRequest(
 
     await initDB();
 
+    const topicPrefix = params.get('topicPrefix') || '';
+    const fetchLimit = topicPrefix ? Math.max(limit * 5, 100) : limit;
     const searchResults = await mama.suggest(query, {
-      limit: limit,
+      limit: fetchLimit,
       threshold: 0.3,
+      topicPrefix: topicPrefix || undefined,
     });
 
     let results: Array<{
@@ -606,7 +751,11 @@ async function handleMamaSearchRequest(
       created_at: number;
     }> = [];
     if (searchResults && searchResults.results) {
-      results = (searchResults.results as Array<Record<string, unknown>>).map((r) => ({
+      let rawResults = searchResults.results as Array<Record<string, unknown>>;
+      if (topicPrefix) {
+        rawResults = rawResults.filter((r) => String(r.topic || '').startsWith(topicPrefix));
+      }
+      results = rawResults.slice(0, limit).map((r) => ({
         id: r.id as string,
         topic: r.topic as string,
         decision: r.decision as string,
@@ -994,6 +1143,12 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: GET /graph/detail - fetch full node detail lazily
+    if (pathname === '/graph/detail' && req.method === 'GET') {
+      await handleGraphDetailRequest(req, res, params);
+      return true;
+    }
+
     // Route: POST /graph/update - update decision outcome
     if (pathname === '/graph/update' && req.method === 'POST') {
       await handleUpdateRequest(req, res);
@@ -1009,6 +1164,12 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Alias: GET /api/graph -> /graph
     if (pathname === '/api/graph' && req.method === 'GET') {
       await handleGraphRequest(req, res, params);
+      return true;
+    }
+
+    // Alias: GET /api/graph/detail -> /graph/detail
+    if (pathname === '/api/graph/detail' && req.method === 'GET') {
+      await handleGraphDetailRequest(req, res, params);
       return true;
     }
 
@@ -1049,6 +1210,133 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Alias: POST /api/save -> /api/mama/save
     if (pathname === '/api/save' && req.method === 'POST') {
       await handleMamaSaveRequest(req, res);
+      return true;
+    }
+
+    // Route: POST /api/mama/ingest-conversation - ingest conversation with LLM extraction
+    if (pathname === '/api/mama/ingest-conversation' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+
+        // Validate payload at HTTP boundary
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'messages must be a non-empty array' }));
+          return true;
+        }
+        const validRoles = new Set(['user', 'assistant']);
+        for (const msg of body.messages as unknown[]) {
+          if (
+            typeof msg !== 'object' ||
+            msg === null ||
+            typeof (msg as Record<string, unknown>).role !== 'string' ||
+            typeof (msg as Record<string, unknown>).content !== 'string'
+          ) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: true,
+                message: 'Each message must have string "role" and "content" fields',
+              })
+            );
+            return true;
+          }
+          if (!validRoles.has((msg as Record<string, unknown>).role as string)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: true,
+                message: `Invalid role "${(msg as Record<string, unknown>).role}". Must be "user" or "assistant"`,
+              })
+            );
+            return true;
+          }
+        }
+        if (body.scopes && !Array.isArray(body.scopes)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'scopes must be an array' }));
+          return true;
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { ingestConversation } = require('@jungjaehoon/mama-core');
+        const source = (body.source as { package: string; source_type: string }) || {
+          package: 'standalone' as const,
+          source_type: 'api',
+        };
+        const result = await ingestConversation({
+          messages: (body.messages || []) as Array<{ role: 'user' | 'assistant'; content: string }>,
+          scopes: (body.scopes || []) as Array<{
+            kind: 'global' | 'user' | 'channel' | 'project';
+            id: string;
+          }>,
+          source: { package: source.package as 'standalone', source_type: source.source_type },
+          extract: body.extract as
+            | { enabled: boolean; model?: string; apiKey?: string }
+            | undefined,
+          topicPrefix: (body.topicPrefix as string) || undefined,
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...result }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Use 400 for client errors (validation), 500 for unexpected server failures
+        const isClientError =
+          error instanceof Error &&
+          (error.message.includes('required') ||
+            error.message.includes('invalid') ||
+            error.message.includes('missing'));
+        const statusCode = isClientError ? 400 : 500;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/mama/audit-conversation - ingest via memory agent (creates edges)
+    if (pathname === '/api/mama/audit-conversation' && req.method === 'POST') {
+      try {
+        // Express may have already parsed the body; use req.body if available
+        const body =
+          (req as unknown as { body?: Record<string, unknown> }).body ?? (await readBody(req));
+        if (!options.auditConversation) {
+          res.writeHead(501, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));
+          return true;
+        }
+        const messages = (body.messages || []) as Array<{
+          role: 'user' | 'assistant';
+          content: string;
+        }>;
+        const conversation = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
+        const scopes = (body.scopes || []) as Array<{ kind: string; id: string }>;
+        const candidates = body.candidates as
+          | Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>
+          | undefined;
+        const ack = await options.auditConversation({ conversation, scopes, candidates });
+        if (!ack || (typeof ack === 'object' && (ack as Record<string, unknown>).error)) {
+          const errMsg =
+            (typeof ack === 'object' && (ack as Record<string, unknown>).message) ||
+            'Audit conversation failed';
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: String(errMsg) }));
+        } else if (
+          typeof ack === 'object' &&
+          (ack as Record<string, unknown>).status === 'failed'
+        ) {
+          const reason =
+            (ack as Record<string, unknown>).reason || 'Audit agent returned failed status';
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: String(reason), ack }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, ack }));
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message }));
+      }
       return true;
     }
 
@@ -2107,6 +2395,31 @@ ${content}`;
   console.log('[GraphAPI] Config saved to:', MAMA_CONFIG_PATH);
 }
 
+/**
+ * Fetch all decisions with full text (decision + reasoning) for export.
+ * Unlike getAllNodes() which returns preview-truncated fields for the graph
+ * viewer, this returns the complete text needed for Markdown/CSV/JSON export.
+ */
+async function getAllNodesForExport(): Promise<GraphNode[]> {
+  const adapter = getAdapter();
+  const rows = adapter
+    .prepare(
+      `SELECT id, topic, decision, reasoning, outcome, confidence, created_at
+       FROM decisions ORDER BY created_at DESC`
+    )
+    .all() as GraphDecisionRow[];
+  return rows.map((row) => ({
+    id: row.id,
+    topic: row.topic,
+    decision: row.decision,
+    reasoning: row.reasoning,
+    decision_preview: buildDecisionPreview(row.decision),
+    outcome: row.outcome,
+    confidence: row.confidence,
+    created_at: row.created_at,
+  }));
+}
+
 async function handleExportRequest(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -2117,7 +2430,8 @@ async function handleExportRequest(
 
     await initDB();
 
-    const decisions = await getAllNodes();
+    // Use full-text query so exports include complete decision + reasoning
+    const decisions = await getAllNodesForExport();
 
     let content: string;
     let contentType: string;
@@ -2882,6 +3196,10 @@ async function handleCodeActRequest(
 
 export {
   createGraphHandler,
+  DEFAULT_GRAPH_LIMIT,
+  mapDecisionRowToGraphNode,
+  parseGraphLimit,
+  buildGraphMeta,
   getAllNodes,
   getAllEdges,
   getAllCheckpoints,

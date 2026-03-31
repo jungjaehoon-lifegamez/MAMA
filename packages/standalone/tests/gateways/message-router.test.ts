@@ -266,6 +266,41 @@ describe('MessageRouter', () => {
       });
     });
 
+    it('should send save confirmation to originating channel when audit ack is applied', async () => {
+      const agentLoop = createMockAgentLoop(() =>
+        'Agent response that is long enough to trigger memory audit.'.repeat(4)
+      );
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+
+      const mockSendMessage = vi.fn().mockResolvedValue(undefined);
+      customRouter.setGatewayRegistry({ sendMessage: mockSendMessage });
+
+      customRouter.setMemoryAgent({
+        getSharedProcess: vi.fn().mockResolvedValue({
+          sendMessage: vi.fn().mockResolvedValue({
+            response: 'saved via tools',
+            ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved db rule' },
+          }),
+        }),
+      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
+
+      await customRouter.process({
+        source: 'telegram',
+        channelId: '7026976631',
+        userId: '7026976631',
+        text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 DB로 사용하자. 이 규칙은 기억해.',
+      });
+
+      await vi.waitFor(() => {
+        expect(mockSendMessage).toHaveBeenCalledWith(
+          'telegram',
+          '7026976631',
+          expect.stringContaining('Memory saved')
+        );
+      });
+    });
+
     it('should update channel summary when an audit ack is applied', async () => {
       const agentLoop = createMockAgentLoop(() =>
         'Agent response that is long enough to trigger memory audit.'.repeat(4)

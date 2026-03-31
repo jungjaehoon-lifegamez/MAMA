@@ -1376,6 +1376,7 @@ interface SuggestFunctionOptions {
   recencyScale?: number;
   recencyDecay?: number;
   disableRecency?: boolean;
+  topicPrefix?: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1397,15 +1398,17 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
   } = options;
 
   try {
-    const bundle = await recallMemory(userQuestion, { includeProfile: false });
+    const bundle = await recallMemory(userQuestion, {
+      includeProfile: false,
+      topicPrefix: options.topicPrefix,
+    });
     if (bundle.memories.length > 0) {
-      // Apply threshold filtering if configured
+      // recallMemory uses RRF fusion — confidence is overwritten with the normalized
+      // retrieval score (0-1 range, where 1.0 = best match in this result set).
+      // The original stored confidence is lost after RRF normalization.
+      // We capture the retrieval score separately so `similarity` reflects search
+      // relevance while `confidence` is passed through as-is from the bundle.
       let filteredMemories = bundle.memories;
-      if (threshold) {
-        filteredMemories = filteredMemories.filter(
-          (memory) => (memory.confidence ?? 1) >= threshold
-        );
-      }
 
       // Apply limit
       filteredMemories = filteredMemories.slice(0, limit);
@@ -1422,13 +1425,16 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: filteredMemories.map((memory) => ({
+        results: filteredMemories.map((memory, idx) => ({
           id: memory.id,
           topic: memory.topic,
           decision: memory.summary,
           reasoning: memory.details,
           confidence: memory.confidence,
-          similarity: 1,
+          // memory.confidence is the normalized RRF retrieval score (0-1) after
+          // recallMemory.  Use it as similarity so the field reflects search relevance
+          // rather than the original stored trust score.
+          similarity: memory.confidence ?? 1 - idx * 0.01,
           created_at: memory.created_at,
           graph_source: 'primary',
           graph_rank: 1,
@@ -3532,6 +3538,7 @@ const mama = {
   verifyBackupExists,
   deleteAutoLinks,
   validateCleanupResult,
+  expandWithGraph,
 };
 
 // Named exports for ESM consumers

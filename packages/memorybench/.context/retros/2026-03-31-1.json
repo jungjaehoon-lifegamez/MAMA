@@ -1,0 +1,38 @@
+{
+  "date": "2026-03-31",
+  "window": "7d",
+  "metrics": {
+    "commits_main": 6,
+    "commits_branch": 44,
+    "contributors": 2,
+    "prs_merged": 4,
+    "insertions": 9260,
+    "deletions": 384,
+    "net_loc": 8876,
+    "test_ratio": 0.35,
+    "active_days": 5,
+    "sessions": 5,
+    "deep_sessions": 5,
+    "peak_hour": 0,
+    "ai_assisted_commits": 40,
+    "benchmark_accuracy": 1.0
+  },
+  "authors": {
+    "정재훈": {
+      "commits": 40,
+      "insertions": 5500,
+      "deletions": 1200,
+      "test_ratio": 0.3,
+      "top_area": "memorybench/"
+    },
+    "hoonsam": {
+      "commits": 4,
+      "insertions": 9260,
+      "deletions": 384,
+      "test_ratio": 0.4,
+      "top_area": "standalone/"
+    }
+  },
+  "streak_days": 2,
+  "tweetable": "Week of Mar 24: 44 commits (2 contributors), 9.3k LOC, 35% tests, 4 PRs, peak: midnight | 100% benchmark accuracy"
+}
