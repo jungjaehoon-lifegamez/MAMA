@@ -125,6 +125,12 @@ export {
   getChannelSummary,
 } from './memory/api.js';
 export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
+export {
+  isNoise,
+  checkNoise,
+  filterNoiseFromUnits,
+  type NoiseCheckResult,
+} from './memory/noise-filter.js';
 export { listRecentMemoryEvents } from './memory/event-store.js';
 
 // Config loader

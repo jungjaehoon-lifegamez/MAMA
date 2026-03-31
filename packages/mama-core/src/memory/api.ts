@@ -12,7 +12,8 @@ import { classifyProfileEntries } from './profile-builder.js';
 import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
-import { warn } from '../debug-logger.js';
+import { warn, info } from '../debug-logger.js';
+import { filterNoiseFromUnits } from './noise-filter.js';
 import { projectMemoryTruth } from './truth-store.js';
 import { buildExtractionPrompt, parseExtractionResponse } from './extraction-prompt.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
@@ -609,6 +610,15 @@ export async function recallMemory(
   // Hybrid search: vector + BM25/lexical in parallel, fused with RRF
   await initDB();
 
+  // Resolve scope IDs upfront for scope-filtered vector search
+  let resolvedScopeFilter: { scopeIds: string[] } | undefined;
+  if (options.scopes && options.scopes.length > 0) {
+    const scopeIds = await Promise.all(
+      options.scopes.map((scope) => ensureMemoryScope(scope.kind, scope.id))
+    );
+    resolvedScopeFilter = { scopeIds };
+  }
+
   // Channel 1: Vector search (semantic similarity) — run all sub-queries
   const vectorMatched: MemoryRecord[] = [];
   try {
@@ -618,11 +628,15 @@ export async function recallMemory(
         queryEmbedding,
         vectorLimit,
         0.3,
-        options.topicPrefix
+        options.topicPrefix,
+        resolvedScopeFilter
       );
 
+      // Scope filtering is now handled inside vectorSearch via scopeFilter pre-filtering.
+      // Post-filter fallback kept for safety: if scopeFilter was used, adapter already filtered,
+      // so this is a no-op. If not, batchLoadScopes still applies.
       let filtered = vectorResults;
-      if (options.scopes && options.scopes.length > 0) {
+      if (options.scopes && options.scopes.length > 0 && !resolvedScopeFilter) {
         const vectorIds = vectorResults.map((r) => String(r.id));
         const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
         const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
@@ -1018,6 +1032,9 @@ export async function ingestMemory(
   input: IngestMemoryInput
 ): Promise<{ success: boolean; id: string }> {
   const normalized = input.content.trim();
+
+  // Note: noise filtering is applied at the ingestConversation level (extraction output).
+  // ingestMemory is a low-level API that trusts its callers to pre-filter.
   return saveMemory({
     topic:
       normalized
@@ -1176,6 +1193,14 @@ export async function ingestConversation(
     return result;
   }
 
+  // Filter noise from extracted units before saving
+  const filteredUnits = filterNoiseFromUnits(units);
+  if (filteredUnits.length < units.length) {
+    info(
+      `[memory] noise filter removed ${units.length - filteredUnits.length} of ${units.length} extracted units`
+    );
+  }
+
   const adapter = getAdapter();
   const EXTRACTION_EDGE_RELATIONSHIP = 'builds_on';
   const EXTRACTION_EDGE_REASON = 'Extracted from conversation';
@@ -1185,7 +1210,7 @@ export async function ingestConversation(
   // each subsequent save supersedes the previous one, losing independent information.
   const batchSavedIds: string[] = [];
 
-  for (const unit of units) {
+  for (const unit of filteredUnits) {
     try {
       const saved = await saveMemory({
         topic: topicPrefix ? `${topicPrefix}${unit.topic}` : unit.topic,
