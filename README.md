@@ -29,6 +29,21 @@ AI agents today are brilliant but amnesiac. They forget everything between sessi
 | **Mistakes**  | Repeat the same errors | Past failures prevent future ones       |
 | **Knowledge** | Only general knowledge | Domain-specific, accumulated over time  |
 
+### Why We Pivoted
+
+MAMA started as a multi-agent dashboard — skills marketplace, playground, agent swarm, cron scheduler. Those features still exist and work, but they're no longer the focus.
+
+Why? Because **AI agents commoditized all of it.** Claude, GPT, Codex can all orchestrate sub-agents, execute code, and run tools out of the box. Building another agent framework is competing with the foundation model providers themselves.
+
+What AI agents **cannot** do is remember. Every session starts from zero. That's the gap only a persistent memory layer can fill — and that's where MAMA's real value lies.
+
+| Commoditized (still works, not the focus) | Unique to MAMA (core focus)                     |
+| ----------------------------------------- | ----------------------------------------------- |
+| Multi-agent orchestration                 | Knowledge graph with decision evolution         |
+| Skills/plugins marketplace                | Automatic memory extraction from conversations  |
+| Code sandbox                              | Cross-source intelligence (code + chat + email) |
+| Cron scheduling                           | Domain-specific recall with "why" context       |
+
 ### The Vision: From Tool to Partner
 
 ```
