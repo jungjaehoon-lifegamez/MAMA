@@ -1023,7 +1023,7 @@ async function callExtractionLLM(
   prompt: string,
   options: NonNullable<IngestConversationInput['extract']>
 ): Promise<ExtractedMemoryUnit[]> {
-  const model = options.model ?? 'claude-sonnet-4-6-20261022';
+  const model = options.model ?? 'claude-sonnet-4-6-20250514';
   const baseUrl = options.baseUrl ?? 'https://api.anthropic.com';
 
   // Security: only send ANTHROPIC_API_KEY to Anthropic's own domain
@@ -1082,7 +1082,7 @@ export async function ingestConversation(
   const topicPrefix = input.topicPrefix || '';
 
   const rawResult = await ingestMemory({
-    content: topicPrefix ? `${topicPrefix}${conversationText.slice(0, 40)}` : conversationText,
+    content: topicPrefix ? `${topicPrefix}${conversationText}` : conversationText,
     scopes: input.scopes,
     source: input.source,
   });
