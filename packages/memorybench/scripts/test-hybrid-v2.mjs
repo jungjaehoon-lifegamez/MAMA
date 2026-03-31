@@ -469,7 +469,8 @@ async function extractAndIngest(question, runTag, session) {
 
     const entry = { i, sessionId, formattedDate, dateStr, reasoning, codeFacts, userMessages }
     sessionData.push(entry)
-    if (codeFacts.length < 2 && session) {
+    // V3: always call Sonnet to catch names/numbers code regex misses
+    if (session) {
       needsSonnet.push(sessionData.length - 1)
     }
   }
@@ -532,7 +533,8 @@ ${sections}`
       continue
     }
 
-    for (let fi = 0; fi < Math.min(allFacts.length, 4); fi++) {
+    // V3: save up to 8 facts (was 4) to preserve more detail
+    for (let fi = 0; fi < Math.min(allFacts.length, 8); fi++) {
       const { fact, dated, fromSonnet } = allFacts[fi]
       const entityKey = fromSonnet
         ? `sonnet_${s.i}_f${fi}_${dated

@@ -453,6 +453,106 @@ test("MAMAProvider.search should return server-scoped results without merging lo
   }
 })
 
+test("MAMAProvider.search should promote local date-matched records for temporal queries", async () => {
+  const provider = new MAMAProvider()
+  ;(provider as unknown as { baseUrl: string }).baseUrl = "http://localhost:3847"
+  ;(provider as unknown as { shouldSemanticRerank: () => boolean }).shouldSemanticRerank = () =>
+    false
+  ;(
+    provider as unknown as {
+      localRecords: Map<
+        string,
+        Array<{ id: string; topic: string; content: string; created_at: number }>
+      >
+    }
+  ).localRecords.set("target-container", [
+    {
+      id: "local-smoker",
+      topic: "bench_target-container_session_33",
+      content:
+        "user: I just got a smoker today and I'm excited to experiment with different types of wood and meats today. assistant: That sounds like a fantastic setup!\n\nSession session-33. Date: 11:56 am on 15 March, 2023.",
+      created_at: 33,
+    },
+  ])
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: URL | RequestInfo) => {
+    const url = String(input)
+    if (url.includes("topicPrefix=bench_target-container_")) {
+      return createResponse({
+        results: [
+          {
+            id: "server-result",
+            topic: "bench_target-container_session_11",
+            decision: "A picnic planning conversation unrelated to appliances.",
+            reasoning: "Matched weakly by server search.",
+            similarity: 5,
+            created_at: 11,
+          },
+        ] satisfies MockSearchRow[],
+      })
+    }
+    return createResponse({ results: [] })
+  }) as typeof fetch
+
+  try {
+    const results = await provider.search("What kitchen appliance did I buy 10 days ago?", {
+      containerTag: "target-container",
+      limit: 5,
+      questionDate: "2023/03/25 (Sat) 18:26",
+    })
+
+    assert.equal((results[0] as { id: string }).id, "local-smoker")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("MAMAProvider.search should treat acquisition synonyms as lexical matches for temporal queries", async () => {
+  const provider = new MAMAProvider()
+  ;(provider as unknown as { baseUrl: string }).baseUrl = "http://localhost:3847"
+  ;(provider as unknown as { shouldSemanticRerank: () => boolean }).shouldSemanticRerank = () =>
+    false
+  ;(
+    provider as unknown as {
+      localRecords: Map<
+        string,
+        Array<{ id: string; topic: string; content: string; created_at: number }>
+      >
+    }
+  ).localRecords.set("target-container", [
+    {
+      id: "same-day-false-positive",
+      topic: "bench_target-container_session_32",
+      content:
+        "user: People should buy second-hand items to reduce waste.\nassistant: That can help a lot.\n\nSession session-32. Date: 3:32 pm on 15 March, 2023.",
+      created_at: 32,
+    },
+    {
+      id: "local-smoker",
+      topic: "bench_target-container_session_33",
+      content:
+        "user: I just got a smoker today and I'm excited to experiment with different types of wood and meats today.\nassistant: That sounds like a fantastic setup!\n\nSession session-33. Date: 11:56 am on 15 March, 2023.",
+      created_at: 33,
+    },
+  ])
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => createResponse({ results: [] })) as typeof fetch
+
+  try {
+    const results = await provider.search("What kitchen appliance did I buy 10 days ago?", {
+      containerTag: "target-container",
+      limit: 5,
+      questionDate: "2023/03/25 (Sat) 18:26",
+    })
+
+    assert.equal((results[0] as { id: string }).id, "local-smoker")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test("MAMAProvider.search replay should restore scoped fallback records from data source run state", async () => {
   const sourceRunPath = mkdtempSync(join(tmpdir(), "mama-provider-source-"))
   const replayRunPath = mkdtempSync(join(tmpdir(), "mama-provider-replay-"))

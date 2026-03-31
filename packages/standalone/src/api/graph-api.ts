@@ -1250,6 +1250,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           extract: body.extract as
             | { enabled: boolean; model?: string; apiKey?: string }
             | undefined,
+          topicPrefix: (body.topicPrefix as string) || undefined,
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ...result }));

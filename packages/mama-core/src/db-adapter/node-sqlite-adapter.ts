@@ -34,23 +34,40 @@ interface NodeSQLiteStatementLike {
 
 type NodeSQLiteDatabaseCtor = new (path: string) => NodeSQLiteDatabaseLike;
 
+// Prefer better-sqlite3 (includes FTS5) over node:sqlite (lacks FTS5)
+let BetterSQLite3: NodeSQLiteDatabaseCtor | null = null;
 let DatabaseSync: NodeSQLiteDatabaseCtor | null = null;
 
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  ({ DatabaseSync } = require('node:sqlite') as {
-    DatabaseSync: NodeSQLiteDatabaseCtor;
-  });
+  const bs3 = require('better-sqlite3') as
+    | NodeSQLiteDatabaseCtor
+    | { default: NodeSQLiteDatabaseCtor };
+  BetterSQLite3 = 'default' in bs3 ? bs3.default : bs3;
 } catch {
-  DatabaseSync = null;
+  BetterSQLite3 = null;
+}
+
+if (!BetterSQLite3) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    ({ DatabaseSync } = require('node:sqlite') as {
+      DatabaseSync: NodeSQLiteDatabaseCtor;
+    });
+  } catch {
+    DatabaseSync = null;
+  }
 }
 
 class NodeSQLiteConnection {
   private db: NodeSQLiteDatabaseLike;
   private connected = true;
+  private isBetterSQLite3: boolean;
 
   constructor(db: NodeSQLiteDatabaseLike) {
     this.db = db;
+    // better-sqlite3 databases have a native .pragma() method
+    this.isBetterSQLite3 = typeof (db as unknown as Record<string, unknown>).pragma === 'function';
   }
 
   prepare(sql: string): NodeSQLiteStatementLike {
@@ -63,6 +80,16 @@ class NodeSQLiteConnection {
 
   pragma(sql: string, options?: { simple?: boolean }): unknown {
     const query = sql.trim().replace(/^PRAGMA\s+/i, '');
+
+    if (this.isBetterSQLite3) {
+      // better-sqlite3 has a native pragma method that handles both read and write pragmas
+      return (this.db as unknown as Record<string, (...args: unknown[]) => unknown>).pragma(
+        query,
+        options
+      );
+    }
+
+    // node:sqlite fallback: use prepare()
     const stmt = this.db.prepare(`PRAGMA ${query}`);
     if (options?.simple) {
       const row = stmt.get() as Record<string, unknown> | undefined;
@@ -129,21 +156,26 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       return this.db;
     }
 
-    if (!DatabaseSync) {
-      throw new Error('node:sqlite is not available in this Node.js runtime. Use Node 22.13+.');
+    const Driver = BetterSQLite3 || DatabaseSync;
+    if (!Driver) {
+      throw new Error(
+        'No SQLite driver available. Install better-sqlite3 or use Node 22.13+ (node:sqlite).'
+      );
     }
+
+    const driverName = BetterSQLite3 ? 'better-sqlite3' : 'node:sqlite';
 
     const dbPath = this.getDbPath();
     const dbDir = path.dirname(dbPath);
 
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true });
-      info(`[node-sqlite-adapter] Created database directory: ${dbDir}`);
+      info(`[sqlite-adapter] Created database directory: ${dbDir}`);
     }
 
-    const database = new DatabaseSync(dbPath);
+    const database = new Driver(dbPath);
     this.db = new NodeSQLiteConnection(database);
-    info(`[node-sqlite-adapter] Opened database at: ${dbPath}`);
+    info(`[sqlite-adapter] Opened database at: ${dbPath} (driver: ${driverName})`);
 
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('busy_timeout = 5000');
@@ -152,7 +184,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     this.db.pragma('temp_store = MEMORY');
     this.db.pragma('foreign_keys = ON');
 
-    info('[node-sqlite-adapter] Vector search: pure TS cosine similarity (no native extensions)');
+    info('[sqlite-adapter] Vector search: pure TS cosine similarity (no native extensions)');
 
     this.loadVectorCache();
 

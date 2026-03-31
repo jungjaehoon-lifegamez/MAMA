@@ -104,3 +104,4 @@ docs/*.docx
 gha-creds-*.json
 GEMINI.md
 packages/standalone/bench/results/*.json
+.gstack/

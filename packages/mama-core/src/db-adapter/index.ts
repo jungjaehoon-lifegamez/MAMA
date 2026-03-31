@@ -27,20 +27,8 @@ export interface AdapterConfig {
  * @returns Configured SQLite adapter instance
  */
 export function createAdapter(config: AdapterConfig = {}): DatabaseAdapter {
-  const configuredDriver = process.env.MAMA_SQLITE_DRIVER;
-
-  if (
-    configuredDriver &&
-    configuredDriver !== 'node-sqlite' &&
-    configuredDriver !== 'node:sqlite' &&
-    configuredDriver !== 'auto'
-  ) {
-    throw new Error(
-      `Unsupported SQLite driver "${configuredDriver}". MAMA now requires node:sqlite.`
-    );
-  }
-
-  info('[db-adapter] Using node:sqlite adapter');
+  // NodeSQLiteAdapter now auto-detects: better-sqlite3 (preferred, FTS5) → node:sqlite (fallback)
+  info('[db-adapter] Creating SQLite adapter (auto-detect driver)');
   const dbPath = config.dbPath || process.env.MAMA_DB_PATH;
   return new SQLiteAdapter({ dbPath });
 }

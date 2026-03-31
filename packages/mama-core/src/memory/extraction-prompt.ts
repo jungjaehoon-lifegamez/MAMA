@@ -22,20 +22,25 @@ export function buildExtractionPrompt(
     ? '- topic: lowercase_snake_case, MUST reuse an existing topic above when the subject matches'
     : '- topic: lowercase_snake_case';
 
-  return `You are extracting structured memory units from a conversation.
+  return `You are extracting structured memory units from a conversation about a user's life.
 
-Read the conversation and identify distinct pieces of information worth remembering.
+Read the conversation and identify every distinct piece of personal information worth remembering.
 Classify each as one of: preference, fact, decision, lesson, constraint.
 ${topicHint}
 Rules:
 ${topicRule}
-- summary: concise (<200 chars). MUST preserve: proper nouns (names, brands, places), specific numbers, dates. Example: "User's cat Luna needs microchipping" NOT "User has a cat"
-- details: full context with evidence from the conversation. Include exact quotes for names/numbers
+- summary: concise (<200 chars). MUST include ALL of these when mentioned:
+  • Names (people, pets, brands, stores, apps, services)
+  • Dates and times ("bought on February 15", "every Tuesday", "3 weeks ago")
+  • Numbers and amounts ("$5 coupon", "4 hours", "45 minutes each way", "3 weddings")
+  • Places ("at Target", "from IKEA", "in Chicago")
+  Example: "User redeemed a $5 coupon on coffee creamer at Target on March 3" NOT "User used a coupon"
+- details: quote the exact sentence(s) from the conversation that contain this information
 - confidence: 0.0-1.0 based on how explicitly stated the information is
 - For preferences: state what IS preferred and what is NOT (if mentioned)
-- For countable facts: enumerate items explicitly (e.g., "Projects: 1. X, 2. Y, 3. Z")
-- Skip small talk and meta-conversation
-- Merge related facts into one unit when they share a topic
+- For countable facts: enumerate items explicitly (e.g., "Weddings attended: 1. Rachel & Mike, 2. Emily & Sarah, 3. Jen & Tom")
+- IMPORTANT: do NOT merge unrelated facts. Each distinct event, purchase, person, or activity is a separate unit
+- Skip small talk, meta-conversation, and assistant's general knowledge responses
 
 Return ONLY a JSON array:
 [{"kind":"...","topic":"...","summary":"...","details":"...","confidence":0.9}]

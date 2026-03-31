@@ -90,3 +90,22 @@ test("buildContextString should surface the most relevant snippet instead of the
   assert.match(excerpt, /over a year/)
   assert.ok(excerpt.length < context[0].content.length / 4)
 })
+
+test("buildContextString should surface acquisition clues for purchase questions", () => {
+  const context = [
+    {
+      id: "1",
+      topic: "bench_target_session_1",
+      score: 0.99,
+      content:
+        "user: I just got a smoker today and I'm excited to experiment with different types of wood and meats today.",
+      created_at: 10,
+    },
+  ]
+
+  const promptContext = buildContextString(context, "What kitchen appliance did I buy 10 days ago?")
+  const parsed = JSON.parse(promptContext)
+  const acquisitionClues = parsed[0].acquisition_clues as string[]
+
+  assert.ok(acquisitionClues.some((clue) => /smoker/i.test(clue)))
+})

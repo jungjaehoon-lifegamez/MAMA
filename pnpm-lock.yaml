@@ -58,10 +58,16 @@ importers:
       '@huggingface/transformers':
         specifier: ^3.8.1
         version: 3.8.1
+      better-sqlite3:
+        specifier: ^12.8.0
+        version: 12.8.0
       ws:
         specifier: ^8.19.0
         version: 8.19.0
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.11
@@ -110,7 +116,7 @@ importers:
         version: 5.0.161(zod@3.25.76)
       drizzle-orm:
         specifier: ^0.45.1
-        version: 0.45.2(@cloudflare/workers-types@4.20260329.1)(@opentelemetry/api@1.9.0)(@types/pg@8.11.0)(better-sqlite3@12.8.0)(bun-types@1.3.11)(pg@8.11.3)
+        version: 0.45.2(@cloudflare/workers-types@4.20260329.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.11.0)(better-sqlite3@12.8.0)(bun-types@1.3.11)(pg@8.11.3)
       js-tiktoken:
         specifier: ^1.0.21
         version: 1.0.21
@@ -1255,6 +1261,9 @@ packages:
   '@supabase/supabase-js@2.100.1':
     resolution: {integrity: sha512-CAeFm5sfX8sbTzxoxRafhohreIzl9a7R6qHTck3MrgTqm5M5g/u0IHfEKYzI9w/17r8NINl8UZrw2i08wrO7Iw==}
     engines: {node: '>=20.0.0'}
+
+  '@types/better-sqlite3@7.6.13':
+    resolution: {integrity: sha512-NMv9ASNARoKksWtsq/SHakpYAYnhBrQgGD8zkLYk/jaK8jUGn08CfEdTRgYhMypUQAfzSP8W6gNLe0q19/t4VA==}
 
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
@@ -5078,6 +5087,10 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@types/better-sqlite3@7.6.13':
+    dependencies:
+      '@types/node': 25.3.0
+
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
@@ -5834,10 +5847,11 @@ snapshots:
     dependencies:
       esutils: 2.0.3
 
-  drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260329.1)(@opentelemetry/api@1.9.0)(@types/pg@8.11.0)(better-sqlite3@12.8.0)(bun-types@1.3.11)(pg@8.11.3):
+  drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260329.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.11.0)(better-sqlite3@12.8.0)(bun-types@1.3.11)(pg@8.11.3):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260329.1
       '@opentelemetry/api': 1.9.0
+      '@types/better-sqlite3': 7.6.13
       '@types/pg': 8.11.0
       better-sqlite3: 12.8.0
       bun-types: 1.3.11
