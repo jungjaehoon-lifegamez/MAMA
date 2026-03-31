@@ -272,7 +272,7 @@ export class MessageRouter {
     }
     const auditJob: MemoryAuditJob = {
       turnId: `audit_${Date.now()}`,
-      channelKey: 'api',
+      channelKey: 'api:default',
       source: 'api',
       scopeContext: job.scopes.map((s) => ({
         kind: s.kind as 'global' | 'user' | 'channel' | 'project',
@@ -286,9 +286,9 @@ export class MessageRouter {
         confidence: c.confidence,
         summary: c.summary,
         evidence: [c.summary],
-        channelKey: 'api',
+        channelKey: 'api:default',
         source: 'api',
-        channelId: 'api',
+        channelId: 'default',
         createdAt: Date.now(),
       })),
     };
@@ -1250,7 +1250,7 @@ INSTRUCTION:
       if (this.gatewayRegistry && channelKey) {
         const [source, ...channelParts] = channelKey.split(':');
         const channelId = channelParts.join(':');
-        const confirmMsg = `✅ 기억했습니다: ${displayTopic}`;
+        const confirmMsg = `✅ Memory saved: ${displayTopic}`;
         this.gatewayRegistry.sendMessage(source, channelId, confirmMsg).catch((err) => {
           logger.warn(
             `[memory-feedback] Failed to send confirmation: ${err instanceof Error ? err.message : String(err)}`

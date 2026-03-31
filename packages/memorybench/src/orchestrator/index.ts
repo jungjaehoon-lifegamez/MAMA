@@ -222,6 +222,11 @@ export class Orchestrator {
       effectiveLimit = limit
 
       if (questionIds && questionIds.length > 0) {
+        const allQuestionIdSet = new Set(allQuestions.map((q) => q.questionId))
+        const unknownIds = questionIds.filter((id) => !allQuestionIdSet.has(id))
+        if (unknownIds.length > 0) {
+          throw new Error(`Unknown questionIds not found in benchmark: ${unknownIds.join(", ")}`)
+        }
         logger.info(`Using explicit questionIds: ${questionIds.length} questions`)
         targetQuestionIds = questionIds
       } else if (sampling) {
@@ -251,6 +256,7 @@ export class Orchestrator {
           question: q.question,
           groundTruth: q.groundTruth,
           questionType: q.questionType,
+          questionDate: q.metadata?.questionDate as string | undefined,
         })
       }
 
@@ -266,65 +272,72 @@ export class Orchestrator {
       ),
     })
 
-    if (phases.includes("ingest")) {
-      await runIngestPhase(
-        provider,
-        benchmark,
-        checkpoint,
-        this.checkpointManager,
-        targetQuestionIds
-      )
-    }
+    try {
+      if (phases.includes("ingest")) {
+        await runIngestPhase(
+          provider,
+          benchmark,
+          checkpoint,
+          this.checkpointManager,
+          targetQuestionIds
+        )
+      }
 
-    if (phases.includes("indexing")) {
-      await runIndexingPhase(provider, checkpoint, this.checkpointManager, targetQuestionIds)
-    }
+      if (phases.includes("indexing")) {
+        await runIndexingPhase(provider, checkpoint, this.checkpointManager, targetQuestionIds)
+      }
 
-    if (phases.includes("search")) {
-      await runSearchPhase(
-        provider,
-        benchmark,
-        checkpoint,
-        this.checkpointManager,
-        targetQuestionIds
-      )
-    }
+      if (phases.includes("search")) {
+        await runSearchPhase(
+          provider,
+          benchmark,
+          checkpoint,
+          this.checkpointManager,
+          targetQuestionIds
+        )
+      }
 
-    if (phases.includes("answer")) {
-      await runAnswerPhase(
-        benchmark,
-        checkpoint,
-        this.checkpointManager,
-        targetQuestionIds,
-        provider
-      )
-    }
+      if (phases.includes("answer")) {
+        await runAnswerPhase(
+          benchmark,
+          checkpoint,
+          this.checkpointManager,
+          targetQuestionIds,
+          provider
+        )
+      }
 
-    if (phases.includes("evaluate")) {
-      const judge = createJudge(judgeName)
-      const judgeConfig = getJudgeConfig(judgeName)
-      judgeConfig.model = judgeModel
-      await judge.initialize(judgeConfig)
-      await runEvaluatePhase(
-        judge,
-        benchmark,
-        checkpoint,
-        this.checkpointManager,
-        targetQuestionIds,
-        provider
-      )
-    }
+      if (phases.includes("evaluate")) {
+        const judge = createJudge(judgeName)
+        const judgeConfig = getJudgeConfig(judgeName)
+        judgeConfig.model = judgeModel
+        await judge.initialize(judgeConfig)
+        await runEvaluatePhase(
+          judge,
+          benchmark,
+          checkpoint,
+          this.checkpointManager,
+          targetQuestionIds,
+          provider
+        )
+      }
 
-    if (phases.includes("report")) {
-      const report = generateReport(benchmark, checkpoint)
-      saveReport(report)
-      printReport(report)
-    }
+      if (phases.includes("report")) {
+        const report = generateReport(benchmark, checkpoint)
+        saveReport(report)
+        printReport(report)
+      }
 
-    // Flush all pending checkpoint saves before marking as complete
-    await this.checkpointManager.flush(checkpoint.runId)
-    this.checkpointManager.updateStatus(checkpoint, "completed")
-    logger.success("Run complete!")
+      // Flush all pending checkpoint saves before marking as complete
+      await this.checkpointManager.flush(checkpoint.runId)
+      this.checkpointManager.updateStatus(checkpoint, "completed")
+      logger.success("Run complete!")
+    } catch (error) {
+      // Always flush checkpoint state before propagating the error
+      await this.checkpointManager.flush(checkpoint.runId)
+      this.checkpointManager.updateStatus(checkpoint, "failed")
+      throw error
+    }
   }
 
   async ingest(

@@ -1256,7 +1256,14 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         res.end(JSON.stringify({ success: true, ...result }));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        // Use 400 for client errors (validation), 500 for unexpected server failures
+        const isClientError =
+          error instanceof Error &&
+          (error.message.includes('required') ||
+            error.message.includes('invalid') ||
+            error.message.includes('missing'));
+        const statusCode = isClientError ? 400 : 500;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: true, message }));
       }
       return true;

@@ -296,7 +296,7 @@ describe('MessageRouter', () => {
         expect(mockSendMessage).toHaveBeenCalledWith(
           'telegram',
           '5551000001',
-          expect.stringContaining('기억했습니다')
+          expect.stringContaining('Memory saved')
         );
       });
     });

@@ -1332,12 +1332,19 @@ export async function runAgentLoop(
     const { parseExtractionResponse } = mamaCore;
     let extractionProcess: InstanceType<typeof PersistentClaudeProcess> | null = null;
     let extractionInitPromise: Promise<InstanceType<typeof PersistentClaudeProcess>> | null = null;
+    let extractionInitLock = false;
 
     const getExtractionProcess = async (): Promise<
       InstanceType<typeof PersistentClaudeProcess>
     > => {
       if (extractionProcess) return extractionProcess;
       if (extractionInitPromise) return extractionInitPromise;
+      if (extractionInitLock) {
+        // Another call is between attempts; wait a tick and retry
+        await new Promise((r) => setTimeout(r, 50));
+        return getExtractionProcess();
+      }
+      extractionInitLock = true;
       extractionInitPromise = (async () => {
         const proc = new PersistentClaudeProcess({
           sessionId: `${crypto.randomUUID()}`,
@@ -1353,8 +1360,11 @@ export async function runAgentLoop(
       try {
         return await extractionInitPromise;
       } catch (err) {
+        extractionProcess = null;
         extractionInitPromise = null;
         throw err;
+      } finally {
+        extractionInitLock = false;
       }
     };
 
