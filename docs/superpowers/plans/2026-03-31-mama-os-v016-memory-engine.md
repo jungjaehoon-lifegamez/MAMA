@@ -6,7 +6,41 @@
 
 **Architecture:** Memory agent receives Claude Code Plugin hook events via HTTP, queues them (debounce), and processes batches through existing Sonnet extraction pipeline (`ingestConversation`). Scope-based vector search replaces topicPrefix string matching. Hybrid extraction stays in memorybench only (benchmark-specific optimization, not production).
 
+---
+
+## Pre-v0.16 Completed Work (feat/memory-stabilization-benchmark)
+
+**Merged to main:** Search quality overhaul — LongMemEval benchmark 58% → 88% (100Q) / 81.5% (200Q).
+
+| Area              | Changes                                               | Status   |
+| ----------------- | ----------------------------------------------------- | -------- |
+| RRF fusion        | Threshold fix, normalization, lexical-first ranking   | **Done** |
+| FTS5 BM25         | better-sqlite3 rollback, integrated into recallMemory | **Done** |
+| Evolution engine  | Conservative supersede (raw→extracted, ≥0.3 overlap)  | **Done** |
+| Extraction prompt | Mandatory dates/amounts/places/brands, no-merge rule  | **Done** |
+| Benchmark infra   | topicPrefix isolation, session date injection         | **Done** |
+| PR review         | ~66 comments resolved across all packages             | **Done** |
+
+**Benchmark vs Industry (LongMemEval-S):**
+
+| System      | Score     | Model             |
+| ----------- | --------- | ----------------- |
+| Mastra      | 94.87%    | GPT-5-mini        |
+| SuperMemory | 81.6%     | GPT-4o            |
+| **MAMA**    | **81.5%** | Sonnet 4.6 + Opus |
+| Zep         | 71.2%     | GPT-4o            |
+
+**Known gaps from benchmark analysis:**
+
+- knowledge-update: 70% (vs SuperMemory 88%) — need temporal metadata on facts
+- single-session-assistant: 85% (vs 96%) — assistant response extraction weak
+- Production memory agent saves noise (greetings, prompts, duplicates)
+- Checkpoint → decision continuity broken
+
+---
+
 **Eng Review Decisions (2026-03-31):**
+
 - Hybrid extractor: benchmarks only, NOT integrated into mama-core production path
 - ingestDocument: deferred to v0.17 (no consumer in v0.16)
 - Production extraction: Sonnet via existing ingestConversation
@@ -15,43 +49,53 @@
 - Queue max size: 50 (oldest dropped on overflow)
 
 **CEO Review Additions (2026-03-31, SELECTIVE EXPANSION):**
+
 - Cherry-pick 1: `mama memory search` CLI command (developer QoL)
 - Cherry-pick 2: Hook sends assistant response alongside user prompt (richer extraction)
 - Debounce queue unit tests (new code needs coverage)
 - Flush activity logging (observability)
 
-**Tech Stack:** TypeScript, Vitest, SQLite (better-sqlite3), Transformers.js (384-dim embeddings), Claude API (Sonnet for extraction)
+**Post-Benchmark Additions (2026-04-01):**
+
+- Memory agent noise filtering — reject greetings, internal prompts, duplicates
+- FTS5 trigger migration SQL (permanent, not runtime-generated)
+- Temporal metadata on facts (event_date field for time-based search)
+
+**Tech Stack:** TypeScript, Vitest, SQLite (better-sqlite3), Transformers.js (1024-dim e5-large embeddings), Claude API (Sonnet for extraction)
 
 ---
 
 ## File Structure
 
 ### New Files
-| File | Responsibility |
-|------|---------------|
-| `packages/mama-core/tests/unit/memory-scope-search.test.ts` | Scope-based search tests |
-| `packages/standalone/src/api/memory-agent-handler.ts` | HTTP endpoint + debounce queue (max 50, flush log) |
-| `packages/standalone/src/api/memory-agent-queue.ts` | Debounce queue class (enqueue, flush, overflow drop) |
+
+| File                                                         | Responsibility                                               |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `packages/mama-core/tests/unit/memory-scope-search.test.ts`  | Scope-based search tests                                     |
+| `packages/standalone/src/api/memory-agent-handler.ts`        | HTTP endpoint + debounce queue (max 50, flush log)           |
+| `packages/standalone/src/api/memory-agent-queue.ts`          | Debounce queue class (enqueue, flush, overflow drop)         |
 | `packages/standalone/tests/api/memory-agent-handler.test.ts` | Handler tests (happy path + malformed JSON + ingest failure) |
-| `packages/standalone/tests/api/memory-agent-queue.test.ts` | Queue unit tests (enqueue, flush, max size drop) |
-| `packages/standalone/src/cli/commands/memory.ts` | `mama memory search` CLI command |
+| `packages/standalone/tests/api/memory-agent-queue.test.ts`   | Queue unit tests (enqueue, flush, max size drop)             |
+| `packages/standalone/src/cli/commands/memory.ts`             | `mama memory search` CLI command                             |
 
 ### Modified Files
-| File | Changes |
-|------|---------|
-| `packages/mama-core/src/memory/types.ts` | Add `filterByScopes` utility |
-| `packages/mama-core/src/memory/api.ts` | Scope-based recall improvements |
-| `packages/mama-core/src/db-adapter/node-sqlite-adapter.ts` | Scope-based filtering (extend topicPrefix to scope) |
-| `packages/mama-core/src/db-manager.ts` | Pass scope filter to vectorSearch |
-| `packages/standalone/src/cli/commands/start.ts` | Register memory-agent HTTP endpoint |
-| `packages/claude-code-plugin/scripts/userpromptsubmit-hook.js` | Send hook events to MAMA OS memory agent |
+
+| File                                                           | Changes                                             |
+| -------------------------------------------------------------- | --------------------------------------------------- |
+| `packages/mama-core/src/memory/types.ts`                       | Add `filterByScopes` utility                        |
+| `packages/mama-core/src/memory/api.ts`                         | Scope-based recall improvements                     |
+| `packages/mama-core/src/db-adapter/node-sqlite-adapter.ts`     | Scope-based filtering (extend topicPrefix to scope) |
+| `packages/mama-core/src/db-manager.ts`                         | Pass scope filter to vectorSearch                   |
+| `packages/standalone/src/cli/commands/start.ts`                | Register memory-agent HTTP endpoint                 |
+| `packages/claude-code-plugin/scripts/userpromptsubmit-hook.js` | Send hook events to MAMA OS memory agent            |
 
 ### NOT Modified (Eng Review decisions)
-| File | Reason |
-|------|--------|
-| `packages/mama-core/src/memory/hybrid-extractor.ts` | Benchmarks only, stays in memorybench scripts |
-| `packages/mama-core/src/memory/document-ingester.ts` | Deferred to v0.17 |
-| `packages/mama-core/src/index.ts` | No new exports needed |
+
+| File                                                 | Reason                                        |
+| ---------------------------------------------------- | --------------------------------------------- |
+| `packages/mama-core/src/memory/hybrid-extractor.ts`  | Benchmarks only, stays in memorybench scripts |
+| `packages/mama-core/src/memory/document-ingester.ts` | Deferred to v0.17                             |
+| `packages/mama-core/src/index.ts`                    | No new exports needed                         |
 
 ---
 
@@ -60,6 +104,7 @@
 Extract the proven hybrid pipeline from `scripts/test-hybrid-v2.mjs` into a reusable mama-core module.
 
 **Files:**
+
 - Create: `packages/mama-core/src/memory/hybrid-extractor.ts`
 - Create: `packages/mama-core/tests/unit/memory-hybrid-extractor.test.ts`
 
@@ -74,9 +119,12 @@ describe('hybrid-extractor', () => {
   describe('code regex extraction', () => {
     it('should extract personal facts from user messages', () => {
       const messages = [
-        { role: 'user' as const, content: "I've been collecting vintage cameras for three months now." },
+        {
+          role: 'user' as const,
+          content: "I've been collecting vintage cameras for three months now.",
+        },
         { role: 'assistant' as const, content: "That's a great hobby!" },
-        { role: 'user' as const, content: "I just finished reading The Nightingale yesterday." },
+        { role: 'user' as const, content: 'I just finished reading The Nightingale yesterday.' },
       ];
       const facts = extractFactsWithCode(messages);
       expect(facts.length).toBeGreaterThanOrEqual(2);
@@ -86,17 +134,15 @@ describe('hybrid-extractor', () => {
 
     it('should return empty array for messages with no personal facts', () => {
       const messages = [
-        { role: 'user' as const, content: "Can you explain how JWT tokens work?" },
-        { role: 'assistant' as const, content: "JWT tokens are..." },
+        { role: 'user' as const, content: 'Can you explain how JWT tokens work?' },
+        { role: 'assistant' as const, content: 'JWT tokens are...' },
       ];
       const facts = extractFactsWithCode(messages);
       expect(facts).toEqual([]);
     });
 
     it('should normalize I to User in extracted facts', () => {
-      const messages = [
-        { role: 'user' as const, content: "I upgraded to 500 Mbps last week." },
-      ];
+      const messages = [{ role: 'user' as const, content: 'I upgraded to 500 Mbps last week.' }];
       const facts = extractFactsWithCode(messages);
       expect(facts[0].normalized).toContain('User');
       expect(facts[0].normalized).not.toMatch(/\bI\b/);
@@ -153,10 +199,30 @@ export const FACT_PATTERNS: RegExp[] = [
 
 const DOMAIN_LABELS: Array<{ patterns: RegExp[]; label: string }> = [
   { patterns: [/\b(made|baked|cooked|brewed)\b/i], label: 'Cooking/baking' },
-  { patterns: [/\b(started|began|finished|completed)\b.*\b(book|novel)\b/i, /\b(started|began|finished|completed)\b.*["'][^"']{3,}["']/i], label: 'Reading' },
-  { patterns: [/\b(started|watching|watched|finished|binge)\b.*\b(show|series|movie|season|episode)\b/i], label: 'Watching' },
-  { patterns: [/\b(attended|visited)\b.*\b(concert|lecture|museum|gallery|theater|festival|exhibition)\b/i, /\bvolunteered\b/i], label: 'Event' },
-  { patterns: [/\b(bought|purchased|acquired)\b/i, /\bgot\s+(a|an|my|the)\s+\w+/i], label: 'Purchase' },
+  {
+    patterns: [
+      /\b(started|began|finished|completed)\b.*\b(book|novel)\b/i,
+      /\b(started|began|finished|completed)\b.*["'][^"']{3,}["']/i,
+    ],
+    label: 'Reading',
+  },
+  {
+    patterns: [
+      /\b(started|watching|watched|finished|binge)\b.*\b(show|series|movie|season|episode)\b/i,
+    ],
+    label: 'Watching',
+  },
+  {
+    patterns: [
+      /\b(attended|visited)\b.*\b(concert|lecture|museum|gallery|theater|festival|exhibition)\b/i,
+      /\bvolunteered\b/i,
+    ],
+    label: 'Event',
+  },
+  {
+    patterns: [/\b(bought|purchased|acquired)\b/i, /\bgot\s+(a|an|my|the)\s+\w+/i],
+    label: 'Purchase',
+  },
   { patterns: [/\bwe'?re\s+\d+-\d+\b/i, /\b(record|score)\b.*\d+-\d+/i], label: 'Sports' },
   { patterns: [/\b(went to|visited|was in|traveled to)\b.*\b[A-Z][a-z]{2,}\b/i], label: 'Travel' },
   { patterns: [/\b(graduated|degree|diploma)\b/i], label: 'Education' },
@@ -193,15 +259,29 @@ function getDomainLabel(sentence: string): string | null {
 function extractEntityKey(fact: string): string {
   const quoted = fact.match(/"([^"]+)"/)?.[1];
   if (quoted) {
-    const verb = fact.match(/\b(started|began|finished|completed|got|bought|purchased|attended|went|visited)\b/i)?.[1]?.toLowerCase() ?? 'fact';
+    const verb =
+      fact
+        .match(
+          /\b(started|began|finished|completed|got|bought|purchased|attended|went|visited)\b/i
+        )?.[1]
+        ?.toLowerCase() ?? 'fact';
     return `${verb}_${quoted.toLowerCase().replace(/\s+/g, '_')}`.slice(0, 70);
   }
-  const proper = fact.match(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*/g)?.filter((w) => !['User', 'By', 'The', 'In', 'On'].includes(w));
+  const proper = fact
+    .match(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*/g)
+    ?.filter((w) => !['User', 'By', 'The', 'In', 'On'].includes(w));
   if (proper?.length) {
-    const verb = fact.match(/\b(started|finished|attended|bought|visited|went|graduated|completed)\b/i)?.[1]?.toLowerCase() ?? 'fact';
+    const verb =
+      fact
+        .match(/\b(started|finished|attended|bought|visited|went|graduated|completed)\b/i)?.[1]
+        ?.toLowerCase() ?? 'fact';
     return `${verb}_${proper[0].toLowerCase().replace(/\s+/g, '_')}`.slice(0, 70);
   }
-  const words = fact.toLowerCase().split(/\s+/).filter((w) => w.length > 4).slice(0, 3);
+  const words = fact
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 4)
+    .slice(0, 3);
   return words.join('_') || 'unknown';
 }
 ```
@@ -220,12 +300,18 @@ import { hybridExtract, type HybridExtractOptions } from '../../src/memory/hybri
 describe('hybrid extraction', () => {
   it('should use code-only when enough facts found', async () => {
     const messages = [
-      { role: 'user' as const, content: "I just finished reading The Nightingale. I started it three weeks ago." },
+      {
+        role: 'user' as const,
+        content: 'I just finished reading The Nightingale. I started it three weeks ago.',
+      },
     ];
     let llmCalled = false;
     const options: HybridExtractOptions = {
       codeThreshold: 2,
-      llmExtract: async () => { llmCalled = true; return []; },
+      llmExtract: async () => {
+        llmCalled = true;
+        return [];
+      },
     };
     const result = await hybridExtract(messages, options);
     expect(result.length).toBeGreaterThanOrEqual(2);
@@ -235,7 +321,7 @@ describe('hybrid extraction', () => {
 
   it('should call LLM when code finds fewer than threshold', async () => {
     const messages = [
-      { role: 'user' as const, content: "Can you recommend a good restaurant near Serenity Yoga?" },
+      { role: 'user' as const, content: 'Can you recommend a good restaurant near Serenity Yoga?' },
     ];
     let llmCalled = false;
     const options: HybridExtractOptions = {
@@ -266,7 +352,7 @@ export interface HybridExtractedFact {
 }
 
 export interface HybridExtractOptions {
-  codeThreshold?: number;  // default 2
+  codeThreshold?: number; // default 2
   llmExtract?: (messages: ConversationMessage[]) => Promise<string[]>;
   datePrefix?: string;
 }
@@ -281,7 +367,9 @@ export async function hybridExtract(
   const codeFacts = extractFactsWithCode(messages);
 
   const results: HybridExtractedFact[] = codeFacts.map((f, i) => ({
-    text: options.datePrefix ? `${options.datePrefix}: ${f.domainLabel ? `${f.domainLabel}: ` : ''}${f.normalized}` : f.normalized,
+    text: options.datePrefix
+      ? `${options.datePrefix}: ${f.domainLabel ? `${f.domainLabel}: ` : ''}${f.normalized}`
+      : f.normalized,
     entityKey: f.entityKey,
     domainLabel: f.domainLabel,
     source: 'code' as const,
@@ -295,7 +383,12 @@ export async function hybridExtract(
       const text = String(llmFacts[i]);
       results.push({
         text,
-        entityKey: `llm_f${i}_${text.toLowerCase().split(/\s+/).filter((w) => w.length > 4).slice(0, 2).join('_')}`.slice(0, 60),
+        entityKey: `llm_f${i}_${text
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w) => w.length > 4)
+          .slice(0, 2)
+          .join('_')}`.slice(0, 60),
         domainLabel: null,
         source: 'llm',
         factIndex: results.length,
@@ -324,6 +417,7 @@ git commit -m "feat(mama-core): add hybrid extractor module — code regex + LLM
 ## Task 2: Wire Hybrid Extraction into ingestConversation
 
 **Files:**
+
 - Modify: `packages/mama-core/src/memory/types.ts`
 - Modify: `packages/mama-core/src/memory/api.ts`
 - Modify: `packages/mama-core/src/index.ts`
@@ -335,9 +429,9 @@ git commit -m "feat(mama-core): add hybrid extractor module — code regex + LLM
 
 export interface HybridExtractConfig {
   enabled: boolean;
-  mode?: 'llm' | 'hybrid';  // default 'llm' for backward compat
-  codeThreshold?: number;    // default 2 — LLM when code finds fewer
-  batchSize?: number;        // sessions per LLM call (for batch mode)
+  mode?: 'llm' | 'hybrid'; // default 'llm' for backward compat
+  codeThreshold?: number; // default 2 — LLM when code finds fewer
+  batchSize?: number; // sessions per LLM call (for batch mode)
   model?: string;
   apiKey?: string;
   baseUrl?: string;
@@ -358,7 +452,7 @@ export interface IngestConversationInput {
     channel_id?: string;
     project_id?: string;
   };
-  extract?: HybridExtractConfig;  // was: { enabled, model, apiKey, baseUrl }
+  extract?: HybridExtractConfig; // was: { enabled, model, apiKey, baseUrl }
 }
 ```
 
@@ -410,7 +504,11 @@ if (input.extract?.mode === 'hybrid') {
 ```typescript
 // Add to packages/mama-core/src/index.ts
 export { extractFactsWithCode, hybridExtract, FACT_PATTERNS } from './memory/hybrid-extractor.js';
-export type { HybridExtractOptions, HybridExtractedFact, CodeExtractedFact } from './memory/hybrid-extractor.js';
+export type {
+  HybridExtractOptions,
+  HybridExtractedFact,
+  CodeExtractedFact,
+} from './memory/hybrid-extractor.js';
 ```
 
 - [ ] **Step 5: Run existing tests to verify no regression**
@@ -430,6 +528,7 @@ git commit -m "feat(mama-core): wire hybrid extraction into ingestConversation"
 ## Task 3: ingestDocument API
 
 **Files:**
+
 - Create: `packages/mama-core/src/memory/document-ingester.ts`
 - Create: `packages/mama-core/tests/unit/memory-document-ingester.test.ts`
 - Modify: `packages/mama-core/src/memory/api.ts`
@@ -585,6 +684,7 @@ git commit -m "feat(mama-core): add ingestDocument API for non-conversational da
 ## Task 4: Scope-Based Vector Search
 
 **Files:**
+
 - Modify: `packages/mama-core/src/db-adapter/node-sqlite-adapter.ts`
 - Modify: `packages/mama-core/src/db-manager.ts`
 - Modify: `packages/mama-core/src/memory/api.ts`
@@ -673,6 +773,7 @@ git commit -m "feat(mama-core): scope-based vector search with backward-compatib
 ## Task 5: Memory Agent HTTP Endpoint
 
 **Files:**
+
 - Create: `packages/standalone/src/api/memory-agent-handler.ts`
 - Create: `packages/standalone/tests/api/memory-agent-handler.test.ts`
 - Modify: `packages/standalone/src/cli/commands/start.ts`
@@ -700,7 +801,7 @@ describe('memory-agent-handler', () => {
   it('should skip generic questions', () => {
     const event: HookEvent = {
       type: 'UserPromptSubmit',
-      userPrompt: "How does JWT work?",
+      userPrompt: 'How does JWT work?',
       projectPath: '/Users/dev/myapp',
       timestamp: Date.now(),
     };
@@ -816,6 +917,7 @@ git commit -m "feat(standalone): add memory agent HTTP endpoint for Claude Code 
 ## Task 6: Update Claude Code Plugin Hook
 
 **Files:**
+
 - Modify: `packages/claude-code-plugin/scripts/userpromptsubmit-hook.js`
 
 - [ ] **Step 1: Add memory agent call to hook**
@@ -835,8 +937,8 @@ try {
       projectPath: process.cwd(),
       timestamp: Date.now(),
     }),
-    signal: AbortSignal.timeout(2000),  // 2s timeout, don't block the hook
-  }).catch(() => {});  // Graceful degradation — MAMA OS might be off
+    signal: AbortSignal.timeout(2000), // 2s timeout, don't block the hook
+  }).catch(() => {}); // Graceful degradation — MAMA OS might be off
 } catch {
   // Silently ignore — MAMA OS is optional
 }
@@ -868,6 +970,7 @@ git commit -m "feat(plugin): send hook events to MAMA OS memory agent endpoint"
 ## Task 7: 100-Question Benchmark Analysis
 
 **Files:**
+
 - Read: `/tmp/hybrid-100q.log` (benchmark output)
 - Create: `packages/memorybench/docs/benchmark-100q-report.md`
 
@@ -894,6 +997,7 @@ grep -A 10 "By type:" /tmp/hybrid-100q.log
 - [ ] **Step 3: Write benchmark report**
 
 Create `packages/memorybench/docs/benchmark-100q-report.md` with:
+
 - Overall accuracy (target: >60%)
 - Per-type accuracy breakdown
 - Comparison to baselines (v68: 50%, code-only: 40%, 10Q hybrid: 100%)
@@ -912,6 +1016,7 @@ git commit -m "docs(memorybench): 100-question benchmark report"
 ## Task 8: Integration Test — End-to-End
 
 **Files:**
+
 - Create: `packages/mama-core/tests/integration/memory-e2e.test.ts`
 
 - [ ] **Step 1: Write E2E test**
@@ -919,7 +1024,13 @@ git commit -m "docs(memorybench): 100-question benchmark report"
 ```typescript
 // packages/mama-core/tests/integration/memory-e2e.test.ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initDB, closeDB, ingestConversation, recallMemory, ingestDocument } from '../../src/index.js';
+import {
+  initDB,
+  closeDB,
+  ingestConversation,
+  recallMemory,
+  ingestDocument,
+} from '../../src/index.js';
 import { unlinkSync } from 'fs';
 
 const TEST_DB = '/tmp/test-mama-e2e.db';
@@ -932,14 +1043,19 @@ describe('memory engine e2e', () => {
 
   afterAll(async () => {
     await closeDB();
-    try { unlinkSync(TEST_DB); } catch {}
+    try {
+      unlinkSync(TEST_DB);
+    } catch {}
   });
 
   it('should ingest conversation with hybrid extraction and recall', async () => {
     // Ingest
     const result = await ingestConversation({
       messages: [
-        { role: 'user', content: "I just finished reading The Nightingale by Kristin Hannah. It took me 21 days." },
+        {
+          role: 'user',
+          content: 'I just finished reading The Nightingale by Kristin Hannah. It took me 21 days.',
+        },
         { role: 'assistant', content: "That's a great book!" },
       ],
       scopes: [{ kind: 'app', id: 'test' }],
@@ -951,7 +1067,9 @@ describe('memory engine e2e', () => {
     // Recall
     const bundle = await recallMemory('How long did it take to finish The Nightingale?');
     expect(bundle.memories.length).toBeGreaterThan(0);
-    const relevant = bundle.memories.find((m) => m.summary.includes('Nightingale') || m.summary.includes('21'));
+    const relevant = bundle.memories.find(
+      (m) => m.summary.includes('Nightingale') || m.summary.includes('21')
+    );
     expect(relevant).toBeDefined();
   });
 
@@ -985,19 +1103,47 @@ git commit -m "test(mama-core): add memory engine E2E test — hybrid ingest + r
 
 ---
 
-## Completion Checklist (Eng Review + CEO Review)
+## Completion Checklist (Eng Review + CEO Review + Post-Benchmark)
 
-- [ ] Task 1: Scope-based vector search
+### Pre-v0.16 (Done — feat/memory-stabilization-benchmark)
+
+- [x] Search quality overhaul (RRF, FTS5, lexical-first, stemming)
+- [x] better-sqlite3 rollback for FTS5 support
+- [x] Evolution engine: conservative supersede
+- [x] Extraction prompt: dates/amounts/places/brands mandatory
+- [x] Benchmark: 88% (100Q), 81.5% (200Q) — on par with SuperMemory 81.6%
+- [x] PR review: ~66 comments resolved
+
+### v0.16 Tasks (Remaining)
+
+- [ ] Task 1: Scope-based vector search (replace topicPrefix with scope filtering)
 - [ ] Task 2: Memory agent endpoint + debounce queue (max 50, Kagemusha pattern)
 - [ ] Task 3: Debounce queue unit tests (enqueue, flush, overflow drop)
 - [ ] Task 4: Claude Code Plugin hook (user + assistant response, fetch pattern TBD)
 - [ ] Task 5: `mama memory search` CLI command (CEO cherry-pick)
-- [ ] Task 6: 100-question benchmark report
-- [ ] Task 7: E2E integration test (Sonnet extraction path)
+- [ ] Task 6: Memory agent noise filtering (reject greetings, prompts, duplicates)
+- [ ] Task 7: FTS5 trigger migration SQL (permanent migration file)
+- [ ] Task 8: Temporal metadata on facts (event_date field)
+- [ ] Task 9: 200-question benchmark report (with industry comparison)
+- [ ] Task 10: E2E integration test (Sonnet extraction path)
 
 ### Removed / Deferred
+
 - ~~Hybrid extractor~~ → stays in memorybench scripts (benchmark-only)
 - ~~Wire hybrid into ingestConversation~~ → production uses Sonnet only
 - ~~ingestDocument~~ → deferred to v0.17 (no consumer)
 
-After all tasks pass: bump version to 0.16.0, update CHANGELOG.md, tag release.
+### Release Gate
+
+All tasks above must pass. Then: bump version to 0.16.0, update CHANGELOG.md, tag release.
+
+### Priority Order (recommended)
+
+1. Task 7 (FTS5 migration) — blocker for production safety
+2. Task 1 (scope-based search) — core infrastructure
+3. Task 6 (noise filtering) — production quality
+4. Task 2-3 (memory agent + queue) — main feature
+5. Task 4 (plugin hook) — integration
+6. Task 8 (temporal metadata) — benchmark improvement
+7. Task 5 (CLI) — developer QoL
+8. Task 9-10 (report + E2E) — validation
