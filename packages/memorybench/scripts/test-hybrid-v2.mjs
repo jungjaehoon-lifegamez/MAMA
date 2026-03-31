@@ -426,6 +426,9 @@ async function saveMemory({ topic, decision, reasoning, supersedes }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
+      if (!res.ok) {
+        throw new Error(`Save HTTP error: ${res.status} ${res.statusText}`)
+      }
       const data = await res.json()
       if (!data.success) {
         throw new Error(`Save failed: ${JSON.stringify(data)}`)
@@ -445,6 +448,9 @@ async function search(query, topicPrefix, questionDate) {
   const resolved = resolveTemporalQuery(query, questionDate)
   const url = `${BASE_URL}/api/mama/search?q=${encodeURIComponent(resolved)}&limit=15&topicPrefix=${encodeURIComponent(topicPrefix)}`
   const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`Search failed: HTTP ${res.status} ${res.statusText}`)
+  }
   const data = await res.json()
   return data.results || []
 }
@@ -535,7 +541,7 @@ ${sections}`
         })
       }
     } catch (e) {
-      // timeout or parse error — skip batch
+      console.error(`  Sonnet batch extraction failed: ${e.message?.slice(0, 120) || e}`)
     }
   }
 
@@ -718,9 +724,8 @@ Respond with ONLY "correct" or "incorrect" on the first line, then a brief expla
   console.log(`HYBRID v2 RESULTS (${results.length} questions)`)
   console.log(`${"=".repeat(60)}`)
   const correct = results.filter((r) => r.isCorrect).length
-  console.log(
-    `Accuracy: ${correct}/${results.length} (${((correct / results.length) * 100).toFixed(0)}%)`
-  )
+  const accuracyPct = results.length > 0 ? ((correct / results.length) * 100).toFixed(0) : "0"
+  console.log(`Accuracy: ${correct}/${results.length} (${accuracyPct}%)`)
   console.log()
 
   const byType = {}
@@ -745,4 +750,7 @@ Respond with ONLY "correct" or "incorrect" on the first line, then a brief expla
   })
 }
 
-run().catch(console.error)
+run().catch((err) => {
+  console.error(err)
+  process.exitCode = 1
+})

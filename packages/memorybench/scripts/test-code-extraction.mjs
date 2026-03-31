@@ -222,22 +222,38 @@ async function saveMemory({ topic, decision, reasoning, supersedes }) {
   if (supersedes?.length) {
     body.supersedes = supersedes
   }
-  const res = await fetch(`${BASE_URL}/api/mama/save`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-  const data = await res.json()
-  if (!data.success) {
-    throw new Error(`Save failed: ${JSON.stringify(data)}`)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${BASE_URL}/api/mama/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        throw new Error(`Save HTTP error: ${res.status} ${res.statusText}`)
+      }
+      const data = await res.json()
+      if (!data.success) {
+        throw new Error(`Save failed: ${JSON.stringify(data)}`)
+      }
+      return data.id
+    } catch (e) {
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 500 * 2 ** attempt))
+        continue
+      }
+      throw e
+    }
   }
-  return data.id
 }
 
 async function search(query, topicPrefix, questionDate) {
   const resolved = resolveTemporalQuery(query, questionDate)
   const url = `${BASE_URL}/api/mama/search?q=${encodeURIComponent(resolved)}&limit=15&topicPrefix=${encodeURIComponent(topicPrefix)}`
   const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`Search failed: HTTP ${res.status} ${res.statusText}`)
+  }
   const data = await res.json()
   return data.results || []
 }
@@ -366,7 +382,8 @@ async function run() {
   console.log("SUMMARY")
   console.log(`${"=".repeat(60)}`)
   const hit = results.filter((r) => r.hitAtK).length
-  console.log(`HIT@10: ${hit}/${results.length} (${((hit / results.length) * 100).toFixed(0)}%)`)
+  const hitPct = results.length > 0 ? ((hit / results.length) * 100).toFixed(0) : "0"
+  console.log(`HIT@10: ${hit}/${results.length} (${hitPct}%)`)
   console.log()
   results.forEach((r) => {
     console.log(

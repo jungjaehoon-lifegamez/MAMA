@@ -371,12 +371,19 @@ async function handleGraphRequest(
 
     const limit = parseGraphLimit(params);
     const allEdges = await getAllEdges();
-    let nodes = await getAllNodes(limit);
+    const topicFilter = params.get('topic');
+
+    // When topic filter is active, fetch all nodes first so the filter
+    // sees every matching node — then apply limit.  Without this, SQL
+    // LIMIT could exclude matching nodes that appear later in the table.
+    let nodes = await getAllNodes(topicFilter ? null : limit);
     let edges = allEdges;
 
-    const topicFilter = params.get('topic');
     if (topicFilter) {
       nodes = filterNodesByTopic(nodes, topicFilter);
+      if (limit !== null) {
+        nodes = nodes.slice(0, limit);
+      }
       edges = filterEdgesByNodes(edges, nodes);
     } else if (limit !== null) {
       edges = filterEdgesByNodes(edges, nodes);
@@ -708,7 +715,8 @@ async function handleMamaSearchRequest(
 ): Promise<void> {
   try {
     const query = params.get('q');
-    const limit = Math.min(parseInt(params.get('limit') || '10', 10), 500);
+    const rawLimit = parseInt(params.get('limit') || '10', 10);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 10;
 
     if (!query) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1296,6 +1304,14 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             'Audit conversation failed';
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: String(errMsg) }));
+        } else if (
+          typeof ack === 'object' &&
+          (ack as Record<string, unknown>).status === 'failed'
+        ) {
+          const reason =
+            (ack as Record<string, unknown>).reason || 'Audit agent returned failed status';
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: String(reason), ack }));
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, ack }));
@@ -2363,6 +2379,31 @@ ${content}`;
   console.log('[GraphAPI] Config saved to:', MAMA_CONFIG_PATH);
 }
 
+/**
+ * Fetch all decisions with full text (decision + reasoning) for export.
+ * Unlike getAllNodes() which returns preview-truncated fields for the graph
+ * viewer, this returns the complete text needed for Markdown/CSV/JSON export.
+ */
+async function getAllNodesForExport(): Promise<GraphNode[]> {
+  const adapter = getAdapter();
+  const rows = adapter
+    .prepare(
+      `SELECT id, topic, decision, reasoning, outcome, confidence, created_at
+       FROM decisions ORDER BY created_at DESC`
+    )
+    .all() as GraphDecisionRow[];
+  return rows.map((row) => ({
+    id: row.id,
+    topic: row.topic,
+    decision: row.decision,
+    reasoning: row.reasoning,
+    decision_preview: buildDecisionPreview(row.decision),
+    outcome: row.outcome,
+    confidence: row.confidence,
+    created_at: row.created_at,
+  }));
+}
+
 async function handleExportRequest(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -2373,7 +2414,8 @@ async function handleExportRequest(
 
     await initDB();
 
-    const decisions = await getAllNodes();
+    // Use full-text query so exports include complete decision + reasoning
+    const decisions = await getAllNodesForExport();
 
     let content: string;
     let contentType: string;

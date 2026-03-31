@@ -422,11 +422,25 @@ export async function saveMemory(
       const queryText = `${input.topic} ${input.summary}`;
       const embedding = await generateEmbedding(queryText);
       const semanticResults = await vectorSearch(embedding, 3, 0.82);
-      existingCandidates = semanticResults
+
+      // Scope-filter semantic candidates when a primary scope is available
+      let scopeFiltered = semanticResults;
+      if (primaryScope) {
+        const semIds = semanticResults.map((r) => String(r.id));
+        const semScopeMap = batchLoadScopes(adapter, semIds);
+        const scopeKey = `${primaryScope.kind}:${primaryScope.id}`;
+        scopeFiltered = semanticResults.filter((r) => {
+          const scopes = semScopeMap.get(String(r.id)) ?? [];
+          return scopes.length === 0 || scopes.some((s) => `${s.kind}:${s.id}` === scopeKey);
+        });
+      }
+
+      existingCandidates = scopeFiltered
         .filter((r) => {
-          const outcome = String((r as { outcome?: unknown }).outcome || '');
-          return !outcome || outcome === 'active' || outcome === '';
+          const status = String((r as { status?: unknown }).status || '');
+          return !status || status === 'active' || status === '';
         })
+        .filter((c) => !excludeIds.has(String(c.id)))
         .map((r) => ({
           id: String(r.id),
           topic: String(r.topic || ''),
@@ -657,124 +671,134 @@ export async function recallMemory(
   vectorMatched.push(...dedupedVector);
 
   // Channel 2: FTS5 BM25 search (preferred) with in-memory lexical fallback
+  // Lazy lexical: skip expensive FTS5/lexical when vector already returned enough results,
+  // unless this is an aggregation query that benefits from broader coverage.
+  const VECTOR_SUFFICIENT_THRESHOLD = 5;
+  const needsLexical = isAggregation || vectorMatched.length < VECTOR_SUFFICIENT_THRESHOLD;
   let lexicalCandidates: Array<{ memory: MemoryRecord; score: number }> = [];
   const lexicalLimit = isAggregation ? 100 : 50;
 
-  try {
-    // Try FTS5 first — proper BM25 ranking, much better than in-memory .includes()
-    // FTS5 MATCH treats spaces as AND; convert to OR so partial matches still surface.
-    // Use all non-stopword tokens for FTS5 (stopwords already removed by getLexicalQueryTokens).
-    // Additional high-frequency words that cause too many FTS5 matches are filtered separately.
-    const FTS5_NOISE_WORDS = new Set([
-      'this',
-      'that',
-      'also',
-      'just',
-      'like',
-      'some',
-      'many',
-      'much',
-      'very',
-      'more',
-      'most',
-      'such',
-      'each',
-      'every',
-      'been',
-      'being',
-      'about',
-      'would',
-      'could',
-      'should',
-      'will',
-      'year',
-      'years',
-      'time',
-      'know',
-      'think',
-      'want',
-      'need',
-      'make',
-      'made',
-    ]);
-    const ftsTokens = getLexicalQueryTokens(query)
-      .map((t) => stemToken(t))
-      .filter((t) => !FTS5_NOISE_WORDS.has(t));
-    const ftsQuery = ftsTokens.length > 0 ? ftsTokens.join(' OR ') : query;
-    const ftsResults = await fts5Search(ftsQuery, lexicalLimit);
-    if (ftsResults.length > 0) {
-      const adapter = getAdapter();
-      const fallbackSource: SaveMemoryInput['source'] = {
-        package: 'mama-core',
-        source_type: 'fts5',
-      };
+  if (needsLexical) {
+    try {
+      // Try FTS5 first — proper BM25 ranking, much better than in-memory .includes()
+      // FTS5 MATCH treats spaces as AND; convert to OR so partial matches still surface.
+      // Use all non-stopword tokens for FTS5 (stopwords already removed by getLexicalQueryTokens).
+      // Additional high-frequency words that cause too many FTS5 matches are filtered separately.
+      const FTS5_NOISE_WORDS = new Set([
+        'this',
+        'that',
+        'also',
+        'just',
+        'like',
+        'some',
+        'many',
+        'much',
+        'very',
+        'more',
+        'most',
+        'such',
+        'each',
+        'every',
+        'been',
+        'being',
+        'about',
+        'would',
+        'could',
+        'should',
+        'will',
+        'year',
+        'years',
+        'time',
+        'know',
+        'think',
+        'want',
+        'need',
+        'make',
+        'made',
+      ]);
+      const ftsTokens = getLexicalQueryTokens(query)
+        .map((t) => stemToken(t))
+        .filter((t) => !FTS5_NOISE_WORDS.has(t));
+      const ftsQuery = ftsTokens.length > 0 ? ftsTokens.join(' OR ') : query;
+      const ftsResults = await fts5Search(ftsQuery, lexicalLimit);
+      if (ftsResults.length > 0) {
+        const adapter = getAdapter();
+        const fallbackSource: SaveMemoryInput['source'] = {
+          package: 'mama-core',
+          source_type: 'fts5',
+        };
 
-      // Normalize BM25 ranks (negative values, closer to 0 = better match)
-      const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
+        // Normalize BM25 ranks (negative values, closer to 0 = better match)
+        const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
 
-      for (const ftsRow of ftsResults) {
-        const row = adapter
-          .prepare(
-            `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
-                  trust_context, kind, status, summary
-           FROM decisions WHERE id = ?`
-          )
-          .get(ftsRow.id) as Record<string, unknown> | undefined;
-        if (!row) continue;
+        for (const ftsRow of ftsResults) {
+          const row = adapter
+            .prepare(
+              `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
+                    trust_context, kind, status, summary
+             FROM decisions WHERE id = ?`
+            )
+            .get(ftsRow.id) as Record<string, unknown> | undefined;
+          if (!row) continue;
 
-        const effectiveStatus = (row.status as string) || '';
-        if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
-          continue;
+          const effectiveStatus = (row.status as string) || '';
+          if (
+            !options.includeHistory &&
+            effectiveStatus &&
+            EXCLUDED_STATUSES.has(effectiveStatus)
+          ) {
+            continue;
+          }
+
+          const memoryIds = [String(row.id)];
+          const scopeMap = batchLoadScopes(adapter, memoryIds);
+          const record = toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource);
+
+          // Scope filtering
+          if (options.scopes && options.scopes.length > 0) {
+            const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+            const scopes = scopeMap.get(record.id) ?? [];
+            if (scopes.length === 0) continue;
+            if (!scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`))) continue;
+          }
+
+          const bm25Score = maxRank > 0 ? 1 - Math.abs(ftsRow.rank) / maxRank : 0.5;
+          lexicalCandidates.push({ memory: record, score: bm25Score });
         }
-
-        const memoryIds = [String(row.id)];
-        const scopeMap = batchLoadScopes(adapter, memoryIds);
-        const record = toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource);
-
-        // Scope filtering
-        if (options.scopes && options.scopes.length > 0) {
-          const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
-          const scopes = scopeMap.get(record.id) ?? [];
-          if (scopes.length === 0) continue;
-          if (!scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`))) continue;
-        }
-
-        const bm25Score = maxRank > 0 ? 1 - Math.abs(ftsRow.rank) / maxRank : 0.5;
-        lexicalCandidates.push({ memory: record, score: bm25Score });
       }
-    }
-  } catch {
-    // FTS5 not available — fall through to in-memory lexical
-  }
-
-  // Fallback: in-memory lexical if FTS5 returned nothing
-  if (lexicalCandidates.length === 0) {
-    let lexicalRecords = await loadLexical();
-
-    if (options.scopes && options.scopes.length > 0) {
-      const lexicalIds = lexicalRecords.map((r) => r.id);
-      const scopeMap = batchLoadScopes(getAdapter(), lexicalIds);
-      const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
-      lexicalRecords = lexicalRecords.filter((r) => {
-        const scopes = scopeMap.get(r.id) ?? [];
-        if (scopes.length === 0) return false;
-        return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
-      });
+    } catch {
+      // FTS5 not available — fall through to in-memory lexical
     }
 
-    lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
-    if (subQueries.length > 1) {
-      for (const sq of subQueries.slice(1)) {
-        const subCandidates = buildLexicalCandidates(lexicalRecords, sq);
-        for (const c of subCandidates) {
-          if (!lexicalCandidates.some((existing) => existing.memory.id === c.memory.id)) {
-            lexicalCandidates.push(c);
+    // Fallback: in-memory lexical if FTS5 returned nothing
+    if (lexicalCandidates.length === 0) {
+      let lexicalRecords = await loadLexical();
+
+      if (options.scopes && options.scopes.length > 0) {
+        const lexicalIds = lexicalRecords.map((r) => r.id);
+        const scopeMap = batchLoadScopes(getAdapter(), lexicalIds);
+        const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+        lexicalRecords = lexicalRecords.filter((r) => {
+          const scopes = scopeMap.get(r.id) ?? [];
+          if (scopes.length === 0) return false;
+          return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
+        });
+      }
+
+      lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
+      if (subQueries.length > 1) {
+        for (const sq of subQueries.slice(1)) {
+          const subCandidates = buildLexicalCandidates(lexicalRecords, sq);
+          for (const c of subCandidates) {
+            if (!lexicalCandidates.some((existing) => existing.memory.id === c.memory.id)) {
+              lexicalCandidates.push(c);
+            }
           }
         }
+        lexicalCandidates.sort((a, b) => b.score - a.score);
       }
-      lexicalCandidates.sort((a, b) => b.score - a.score);
     }
-  }
+  } // end needsLexical
 
   // RRF Fusion: combine vector and lexical/FTS5 results by reciprocal rank
   // FTS5 BM25 gets 2x weight — it naturally demotes records where query terms
@@ -1023,7 +1047,7 @@ async function callExtractionLLM(
   prompt: string,
   options: NonNullable<IngestConversationInput['extract']>
 ): Promise<ExtractedMemoryUnit[]> {
-  const model = options.model ?? 'claude-sonnet-4-6-20250514';
+  const model = options.model ?? 'claude-sonnet-4-6';
   const baseUrl = options.baseUrl ?? 'https://api.anthropic.com';
 
   // Security: only send ANTHROPIC_API_KEY to Anthropic's own domain

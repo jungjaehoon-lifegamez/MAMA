@@ -252,6 +252,9 @@ async function saveMemory({ topic, decision, reasoning, supersedes }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
+      if (!res.ok) {
+        throw new Error(`Save HTTP error: ${res.status} ${res.statusText}`)
+      }
       const data = await res.json()
       if (!data.success) {
         throw new Error(`Save failed: ${JSON.stringify(data)}`)
@@ -411,7 +414,8 @@ async function run() {
   console.log(`${"=".repeat(60)}`)
   const hit = results.filter((r) => r.hitAtK).length
   const totalSonnetCalls = results.reduce((s, r) => s + r.sonnetCalls, 0)
-  console.log(`HIT@10: ${hit}/${results.length} (${((hit / results.length) * 100).toFixed(0)}%)`)
+  const hitPct = results.length > 0 ? ((hit / results.length) * 100).toFixed(0) : "0"
+  console.log(`HIT@10: ${hit}/${results.length} (${hitPct}%)`)
   console.log(`Sonnet calls: ${totalSonnetCalls}`)
   console.log()
   results.forEach((r) => {
