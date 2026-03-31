@@ -653,7 +653,7 @@ async function run() {
       )
       return result.toString().trim()
     } catch (e) {
-      return "I don't know."
+      throw new Error(`Claude CLI failed (model=${model}): ${e.message?.slice(0, 120)}`)
     }
   }
 
