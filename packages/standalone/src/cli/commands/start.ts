@@ -1330,64 +1330,29 @@ export async function runAgentLoop(
   if (mamaCore.setExtractionFn) {
     const { PersistentClaudeProcess } = await import('../../agent/persistent-cli-process.js');
     const { parseExtractionResponse } = mamaCore;
-    let extractionProcess: InstanceType<typeof PersistentClaudeProcess> | null = null;
-    let extractionInitPromise: Promise<InstanceType<typeof PersistentClaudeProcess>> | null = null;
-    let extractionInitLock = false;
 
-    const getExtractionProcess = async (): Promise<
-      InstanceType<typeof PersistentClaudeProcess>
-    > => {
-      if (extractionProcess) return extractionProcess;
-      if (extractionInitPromise) return extractionInitPromise;
-      if (extractionInitLock) {
-        // Another call is between attempts; wait a tick and retry
-        await new Promise((r) => setTimeout(r, 50));
-        return getExtractionProcess();
-      }
-      extractionInitLock = true;
-      extractionInitPromise = (async () => {
-        const proc = new PersistentClaudeProcess({
-          sessionId: `${crypto.randomUUID()}`,
-          model: 'sonnet',
-          systemPrompt:
-            'You are a memory extraction assistant. Extract structured memory units from conversations.',
-          dangerouslySkipPermissions: true,
-        });
-        await proc.start();
-        extractionProcess = proc;
-        return proc;
-      })();
+    mamaCore.setExtractionFn(async (prompt: string) => {
+      // Each extraction uses a fresh session to prevent cross-contamination.
+      // PersistentCLI with session persistence causes the LLM to "remember"
+      // previous extractions, leading to hallucinated facts from prior contexts.
+      const proc = new PersistentClaudeProcess({
+        sessionId: `${crypto.randomUUID()}`,
+        model: 'sonnet',
+        systemPrompt:
+          'You are a memory extraction assistant. Extract structured memory units from conversations.',
+        dangerouslySkipPermissions: true,
+      });
       try {
-        return await extractionInitPromise;
-      } catch (err) {
-        extractionProcess = null;
-        extractionInitPromise = null;
-        throw err;
+        await proc.start();
+        const result = await proc.sendMessage(prompt);
+        return parseExtractionResponse(result.response);
       } finally {
-        extractionInitLock = false;
-      }
-    };
-
-    // Cleanup extraction process on exit
-    const cleanupExtraction = () => {
-      if (extractionProcess) {
         try {
-          extractionProcess.stop?.();
+          proc.stop?.();
         } catch {
           /* best-effort */
         }
-        extractionProcess = null;
-        extractionInitPromise = null;
       }
-    };
-    process.on('exit', cleanupExtraction);
-    process.on('SIGINT', cleanupExtraction);
-    process.on('SIGTERM', cleanupExtraction);
-
-    mamaCore.setExtractionFn(async (prompt: string) => {
-      const proc = await getExtractionProcess();
-      const result = await proc.sendMessage(prompt);
-      return parseExtractionResponse(result.response);
     });
   }
 
