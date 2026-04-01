@@ -125,6 +125,20 @@ async function main() {
     const toolInput = input.tool_input || {};
     const filePath = toolInput.file_path || input.filePath || process.env.FILE_PATH || '';
 
+    // Relay mama_save decisions to MAMA OS (Connector C pattern)
+    if (toolName.includes('mama__save') && toolInput.type === 'decision') {
+      const running = await isMamaOsRunning();
+      if (running) {
+        const projectPath = process.env.CLAUDE_PROJECT_PATH || process.cwd();
+        const topic = toolInput.topic || 'unknown';
+        const decision = toolInput.decision || '';
+        const reasoning = toolInput.reasoning || '';
+        const content = `[mama_save] topic=${topic}\ndecision: ${decision}\nreasoning: ${reasoning}`;
+        postToMemoryAgent([{ role: 'user', content }], projectPath, 'posttooluse-mama-save');
+      }
+      process.exit(0);
+    }
+
     if (!CODE_TOOLS.has(toolName)) {
       process.exit(0);
     }
