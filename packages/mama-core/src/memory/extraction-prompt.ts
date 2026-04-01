@@ -70,15 +70,11 @@ ${topicRule}
 - Skip: assistant's general knowledge responses that don't contain user-specific information
 - Skip: conversation meta-data (session IDs, timestamps, tool status updates)
 - If the conversation contains ONLY greetings or meta-conversation with no decisions/facts, return an empty array []
-
-- LINKING: If an extracted unit relates to an existing decision above, add a "relates_to" field:
-  • "supersedes": this unit replaces/updates the existing decision (same subject, new info)
-  • "builds_on": this unit extends or adds context to the existing decision
-  • Only link when there is a clear semantic relationship, NOT just keyword overlap
+- CRITICAL: ONLY extract information that is EXPLICITLY stated in the conversation below. NEVER infer, predict, or generate additional facts. If the user says "I adopted a puppy named Luna", extract ONLY that — do NOT add "Luna needs 3 walks per day" or any other information not in the text.
+- If existing topics are listed above, REUSE matching topics but DO NOT extract facts from the topic list — only from the conversation.
 
 Return ONLY a JSON array:
-[{"kind":"...","topic":"...","summary":"...","details":"...","confidence":0.9,"relates_to":{"id":"decision_xxx","type":"builds_on"}}]
-The "relates_to" field is optional — omit it when no existing decision is related.
+[{"kind":"...","topic":"...","summary":"...","details":"...","confidence":0.9}]
 
 Conversation:
 ${conversationText}`;

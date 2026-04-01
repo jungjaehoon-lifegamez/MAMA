@@ -855,9 +855,9 @@ export async function recallMemory(
       entry.score *= 1 + 0.02 * temporalFactor;
     }
 
-    // Kind boost: preferences and constraints are stable — boost them
+    // Kind boost: slight preference for stable kinds (tie-breaker only)
     if (rec.kind === 'preference' || rec.kind === 'constraint') {
-      entry.score *= 1.3;
+      entry.score *= 1.05;
     }
   }
 
@@ -1170,51 +1170,50 @@ export async function ingestConversation(
   }
 
   let units: ExtractedMemoryUnit[];
-  try {
-    // Fetch existing topics so LLM can reuse them (enables supersedes edges)
-    await initDB();
-    const adapter = getAdapter();
-    let existingTopics: Array<{ topic: string }>;
-    if (input.scopes && input.scopes.length > 0) {
-      const scopeIds = await Promise.all(
-        input.scopes.map((scope) => ensureMemoryScope(scope.kind, scope.id))
-      );
-      const placeholders = scopeIds.map(() => '?').join(', ');
-      existingTopics = adapter
-        .prepare(
-          `SELECT DISTINCT d.topic FROM decisions d
-           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
-           WHERE msb.scope_id IN (${placeholders})
-             AND (d.status = 'active' OR d.status IS NULL)
-           ORDER BY d.created_at DESC LIMIT 200`
-        )
-        .all(...scopeIds) as Array<{ topic: string }>;
-    } else {
-      existingTopics = adapter
+
+  // Stage 1: Regex-based fact extraction (hallucination-free)
+  // Skip regex when extractionFn is overridden (test mode / custom extractors)
+  const isCustomExtractor = extractionFn !== callExtractionLLM;
+  let regexFacts: Array<{ text: string; kind: MemoryKind; label: string; entityKey: string }> = [];
+
+  if (!isCustomExtractor) {
+    const { extractFacts } = await import('./fact-extractor.js');
+    regexFacts = extractFacts(conversationText, input.sessionDate);
+    info(`[memory] regex extracted ${regexFacts.length} facts`);
+  }
+
+  if (regexFacts.length > 0) {
+    // Regex found facts — use them directly (no LLM needed)
+    units = regexFacts.slice(0, 6).map((f) => ({
+      kind: f.kind,
+      topic: f.entityKey,
+      summary: f.text.slice(0, 200),
+      details: f.text,
+      confidence: 0.95,
+    }));
+  } else {
+    // Stage 2: LLM/custom extractor — regex found nothing or custom fn set
+    try {
+      await initDB();
+      const adapter = getAdapter();
+      const existingTopics = adapter
         .prepare(
           `SELECT DISTINCT topic FROM decisions
            WHERE (status = 'active' OR status IS NULL)
            ORDER BY created_at DESC LIMIT 200`
         )
         .all() as Array<{ topic: string }>;
+      const topicList = existingTopics.map((r) => r.topic);
+
+      const prompt = buildExtractionPrompt(input.messages, topicList);
+      units = await extractionFn(prompt, input.extract);
+      info(
+        `[memory] LLM fallback returned ${units.length} units: ${JSON.stringify(units.map((u) => u.topic)).slice(0, 200)}`
+      );
+    } catch (err) {
+      warn(`[memory] LLM extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+      return result;
     }
-    const topicList = existingTopics.map((r) => r.topic);
-
-    // Fetch recent decisions with ID + summary for LLM to link edges
-    const recentDecisions = adapter
-      .prepare(
-        `SELECT id, topic, summary FROM decisions
-         WHERE (status = 'active' OR status IS NULL)
-           AND summary IS NOT NULL AND LENGTH(summary) > 10
-         ORDER BY created_at DESC LIMIT 20`
-      )
-      .all() as Array<{ id: string; topic: string; summary: string }>;
-
-    const prompt = buildExtractionPrompt(input.messages, topicList, recentDecisions);
-    units = await extractionFn(prompt, input.extract);
-  } catch (err) {
-    warn(`[memory] extraction failed: ${err instanceof Error ? err.message : String(err)}`);
-    return result;
   }
 
   // Build existing summaries set for duplicate detection (scope-aware when scopes provided)
