@@ -29,7 +29,7 @@ function isMamaOsRunning() {
         port: MAMA_PORT,
         path: '/api/metrics/health',
         method: 'GET',
-        timeout: 1500,
+        timeout: 800,
       },
       (res) => {
         let data = '';
