@@ -137,9 +137,9 @@ export function filterNoiseFromUnits(
 
     if (summaryNoisy && detailsNoisy) return false;
 
-    // Intra-batch dedup on canonical content
+    // Intra-batch dedup on canonical content (trim + lowercase, same as checkNoise)
     const content = unit.summary || unit.details;
-    const normalizedContent = content.toLowerCase();
+    const normalizedContent = content.trim().toLowerCase();
     if (seen.has(normalizedContent)) return false;
     seen.add(normalizedContent);
 
