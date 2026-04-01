@@ -132,7 +132,8 @@ async function main() {
     const input = await readStdin();
     const toolName = input.tool_name || input.toolName || process.env.TOOL_NAME || '';
     const toolInput = input.tool_input || {};
-    const filePath = toolInput.file_path || input.filePath || process.env.FILE_PATH || '';
+    const filePath =
+      toolInput.file_path || toolInput.filePath || input.filePath || process.env.FILE_PATH || '';
 
     // Relay mama_save decisions to MAMA OS (Connector C pattern)
     if (toolName.includes('mama__save') && toolInput.type === 'decision') {

@@ -884,9 +884,9 @@ export async function recallMemory(
     if (!isNaN(eventTime)) {
       const ageMs = Math.max(0, now - eventTime);
       const ageDays = ageMs / (24 * 60 * 60 * 1000);
-      // Decay: 1.0 for today, 0.5 after 30 days, 0.25 after 60 days
+      // Multiplicative tie-breaker: 1.02 for today, ~1.01 after 30 days
       const temporalFactor = 1 / (1 + ageDays / 30);
-      entry.score += 0.05 * temporalFactor;
+      entry.score *= 1 + 0.02 * temporalFactor;
     }
 
     // Kind boost: preferences and constraints are stable — boost them
@@ -921,7 +921,7 @@ export async function recallMemory(
   if (matched.length > 0) {
     const adapter = getAdapter();
     const stmtChain = adapter.prepare(
-      `SELECT id, summary, decision, event_date FROM decisions WHERE superseded_by = ?`
+      `SELECT id, summary, decision, event_date FROM decisions WHERE superseded_by = ? ORDER BY event_date ASC, id ASC`
     );
     const MAX_CHAIN_DEPTH = 5;
 
