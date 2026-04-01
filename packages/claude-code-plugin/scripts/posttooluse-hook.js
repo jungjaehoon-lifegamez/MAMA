@@ -135,7 +135,7 @@ async function main() {
         const decision = toolInput.decision || '';
         const reasoning = toolInput.reasoning || '';
         const content = `[mama_save] topic=${topic}\ndecision: ${decision}\nreasoning: ${reasoning}`;
-        postToMemoryAgent([{ role: 'user', content }], projectPath, 'posttooluse-mama-save');
+        await postToMemoryAgent([{ role: 'user', content }], projectPath, 'posttooluse-mama-save');
       }
       process.exit(0);
     }
@@ -152,7 +152,8 @@ async function main() {
     const summary = buildActionSummary(toolName, toolInput);
     const batchSize = appendToBatch(summary);
 
-    // Flush and send if batch has been accumulating (3+ edits)
+    // Flush batch: >= 3 edits triggers immediate send.
+    // < 3 edits are flushed by UserPromptSubmit (next prompt) or PreCompact (session end).
     if (batchSize >= 3) {
       const running = await isMamaOsRunning();
       if (running) {
