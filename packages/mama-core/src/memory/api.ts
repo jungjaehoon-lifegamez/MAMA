@@ -1057,7 +1057,7 @@ export async function ingestMemory(
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '') || 'ingested_memory',
     kind: 'fact',
-    summary: normalized.slice(0, 200),
+    summary: normalized.slice(0, 500),
     details: normalized,
     scopes: input.scopes ?? [],
     source: input.source,
@@ -1187,7 +1187,7 @@ export async function ingestConversation(
     units = regexFacts.slice(0, 6).map((f) => ({
       kind: f.kind,
       topic: f.entityKey,
-      summary: f.text.slice(0, 200),
+      summary: f.text.slice(0, 500),
       details: f.text,
       confidence: 0.95,
     }));
