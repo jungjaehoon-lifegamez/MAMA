@@ -34,7 +34,7 @@ function flushAndExit(json, code = 0, delayMs = 0) {
 async function readStdin() {
   return new Promise((resolve) => {
     let data = '';
-    const timeout = setTimeout(() => resolve({}), 2000);
+    const timeout = setTimeout(() => resolve({}), 500);
     process.stdin.on('data', (chunk) => {
       clearTimeout(timeout);
       data += chunk;
