@@ -868,6 +868,33 @@ export async function recallMemory(
     rrfScores.set(r.id, { record: r, score: rrfScore });
   }
 
+  // Apply temporal boost: prefer records with recent event_date
+  // and kind-based boost: preferences/constraints are "evergreen" (no decay)
+  const now = Date.now();
+  for (const entry of rrfScores.values()) {
+    const rec = entry.record;
+
+    // Temporal boost based on event_date (real-world date, not ingestion time)
+    const rawEventTime = rec.event_date
+      ? Date.parse(rec.event_date)
+      : typeof rec.created_at === 'number'
+        ? rec.created_at
+        : Number(rec.created_at) || now;
+    const eventTime = typeof rawEventTime === 'number' ? rawEventTime : now;
+    if (!isNaN(eventTime)) {
+      const ageMs = Math.max(0, now - eventTime);
+      const ageDays = ageMs / (24 * 60 * 60 * 1000);
+      // Decay: 1.0 for today, 0.5 after 30 days, 0.25 after 60 days
+      const temporalFactor = 1 / (1 + ageDays / 30);
+      entry.score += 0.05 * temporalFactor;
+    }
+
+    // Kind boost: preferences and constraints are stable — boost them
+    if (rec.kind === 'preference' || rec.kind === 'constraint') {
+      entry.score *= 1.3;
+    }
+  }
+
   const sortedRrf = Array.from(rrfScores.values()).sort((a, b) => b.score - a.score);
 
   // Normalize RRF scores to 0-1 range so downstream consumers (threshold filters,
@@ -887,31 +914,46 @@ export async function recallMemory(
     retrievalSource = 'lexical_search';
   }
 
-  // Enrich active records with summaries from their superseded predecessors.
-  // When ingestConversation extracts multiple facts under the same topic, only
-  // the last survives as "active" — the earlier ones become superseded and are
-  // excluded from search.  This recovers their key information so it is not lost.
+  // Enrich active records with full supersede chain context.
+  // Traverses the predecessor chain recursively (max 5 hops) to recover
+  // information from superseded records. This is critical for knowledge-update
+  // scenarios where facts evolve across sessions (A → B → C).
   if (matched.length > 0) {
     const adapter = getAdapter();
     const stmtChain = adapter.prepare(
-      `SELECT id, summary, decision FROM decisions WHERE superseded_by = ?`
+      `SELECT id, summary, decision, event_date FROM decisions WHERE superseded_by = ?`
     );
+    const MAX_CHAIN_DEPTH = 5;
+
     for (const record of matched) {
-      const predecessors = stmtChain.all(record.id) as Array<{
-        id: string;
-        summary?: string;
-        decision?: string;
-      }>;
-      if (predecessors.length > 0) {
-        const extra = predecessors
-          .map((p) => String(p.summary ?? p.decision ?? ''))
-          .filter(Boolean)
-          .join(' | ');
-        if (extra) {
-          record.details = record.details
-            ? `${record.details}\n[Prior context] ${extra}`
-            : `[Prior context] ${extra}`;
+      const chainSummaries: string[] = [];
+      let currentId: string | null = record.id;
+      let depth = 0;
+
+      while (currentId && depth < MAX_CHAIN_DEPTH) {
+        const predecessors = stmtChain.all(currentId) as Array<{
+          id: string;
+          summary?: string;
+          decision?: string;
+          event_date?: string;
+        }>;
+        if (predecessors.length === 0) break;
+
+        for (const p of predecessors) {
+          const text = String(p.summary ?? p.decision ?? '');
+          const date = p.event_date ? ` (${p.event_date})` : '';
+          if (text) chainSummaries.push(`${text}${date}`);
         }
+        // Follow the oldest predecessor for linear chain traversal
+        currentId = predecessors[0].id;
+        depth++;
+      }
+
+      if (chainSummaries.length > 0) {
+        const extra = chainSummaries.join(' → ');
+        record.details = record.details
+          ? `${record.details}\n[Evolution chain] ${extra}`
+          : `[Evolution chain] ${extra}`;
       }
     }
   }
