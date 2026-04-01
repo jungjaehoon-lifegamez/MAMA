@@ -117,7 +117,7 @@ function buildActionSummary(toolName, toolInput) {
 async function main() {
   try {
     const features = getEnabledFeatures();
-    if (features.size === 0) {
+    if (!features.has('memory')) {
       process.exit(0);
     }
 

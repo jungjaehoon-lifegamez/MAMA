@@ -131,9 +131,9 @@ export function filterNoiseFromUnits(
 ): ExtractedMemoryUnit[] {
   const seen = new Set<string>();
   return units.filter((unit) => {
-    // Check both summary AND details — keep if details are valuable even when summary is noise
+    // Keep if either summary or details has value (details defaults to summary in extraction)
     const summaryNoisy = isNoise(unit.summary, existingSummaries);
-    const detailsNoisy = !unit.details || isNoise(unit.details, existingSummaries);
+    const detailsNoisy = isNoise(unit.details, existingSummaries);
 
     if (summaryNoisy && detailsNoisy) return false;
 
