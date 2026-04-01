@@ -85,11 +85,8 @@ export function checkNoise(content: string, existingSummaries?: Set<string>): No
 
   // 4. Exact duplicate summary
   if (existingSummaries && existingSummaries.size > 0) {
-    const normalizedTrimmed = trimmed.toLowerCase();
-    for (const existing of existingSummaries) {
-      if (existing.toLowerCase() === normalizedTrimmed) {
-        return { isNoise: true, reason: 'duplicate' };
-      }
+    if (existingSummaries.has(trimmed.toLowerCase())) {
+      return { isNoise: true, reason: 'duplicate' };
     }
   }
 
@@ -106,10 +103,20 @@ export function filterNoiseFromUnits(
   units: ExtractedMemoryUnit[],
   existingSummaries?: Set<string>
 ): ExtractedMemoryUnit[] {
+  const seen = new Set<string>();
   return units.filter((unit) => {
-    // Check both summary and details — if *either* is the primary content,
-    // the summary is the canonical representation stored in the DB.
+    // Check both summary AND details — keep if details are valuable even when summary is noise
+    const summaryNoisy = isNoise(unit.summary, existingSummaries);
+    const detailsNoisy = !unit.details || isNoise(unit.details, existingSummaries);
+
+    if (summaryNoisy && detailsNoisy) return false;
+
+    // Intra-batch dedup on canonical content
     const content = unit.summary || unit.details;
-    return !isNoise(content, existingSummaries);
+    const normalizedContent = content.toLowerCase();
+    if (seen.has(normalizedContent)) return false;
+    seen.add(normalizedContent);
+
+    return true;
   });
 }

@@ -9,6 +9,17 @@
  */
 
 import crypto from 'node:crypto';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
+
+const logger = new DebugLogger('MemoryAgentQueue');
 
 export interface ConversationMessage {
   role: 'user' | 'assistant' | 'system';
@@ -34,9 +45,13 @@ export interface MemoryAgentQueueOptions {
   onFlush: (items: QueueItem[]) => Promise<void>;
 }
 
-function computeHash(messages: ConversationMessage[]): string {
+function computeHash(messages: ConversationMessage[], scopes: MemoryScopeRef[] = []): string {
+  const scopeKey = scopes
+    .map((s) => `${s.kind}:${s.id}`)
+    .sort()
+    .join('|');
   const content = messages.map((m) => `${m.role}:${m.content}`).join('\n');
-  return crypto.createHash('sha256').update(content).digest('hex');
+  return crypto.createHash('sha256').update(`${scopeKey}\n${content}`).digest('hex');
 }
 
 export class MemoryAgentQueue {
@@ -56,7 +71,7 @@ export class MemoryAgentQueue {
     this.timer = setInterval(() => {
       if (this.queue.length > 0 && !this.flushing) {
         this.flush().catch((err) => {
-          console.error('[MemoryAgentQueue] timer flush error:', err);
+          logger.error('timer flush error:', err);
         });
       }
     }, this.flushInterval);
@@ -67,24 +82,31 @@ export class MemoryAgentQueue {
   }
 
   /**
-   * Enqueue an item. Drops oldest if at max capacity.
+   * Enqueue an item. Triggers flush on overflow, drops oldest if still full.
    * Returns false if item was deduplicated (skipped).
    */
   enqueue(item: QueueItem): boolean {
-    const hash = computeHash(item.messages);
+    const hash = computeHash(item.messages, item.scopes);
 
     // Deduplication: skip if same content hash already queued
     if (this.hashes.has(hash)) {
       return false;
     }
 
-    // Drop oldest if at max capacity
+    // Trigger flush when at max capacity (don't drop items)
+    if (this.queue.length >= this.maxSize && !this.flushing) {
+      this.flush().catch((err) => {
+        logger.error('overflow flush error:', err);
+      });
+    }
+
+    // If still full after flush attempt (flushing in progress), drop oldest
     if (this.queue.length >= this.maxSize) {
       const dropped = this.queue.shift()!;
       if (dropped._hash) {
         this.hashes.delete(dropped._hash);
       }
-      console.warn('[MemoryAgentQueue] queue full, dropped oldest item');
+      logger.warn('queue full during flush, dropped oldest item');
     }
 
     this.queue.push({ ...item, _hash: hash });
@@ -94,6 +116,7 @@ export class MemoryAgentQueue {
 
   /**
    * Flush all queued items through the onFlush callback.
+   * Restores items and hashes on failure.
    */
   async flush(): Promise<void> {
     if (this.queue.length === 0 || this.flushing) {
@@ -102,6 +125,7 @@ export class MemoryAgentQueue {
 
     this.flushing = true;
     const items = this.queue.splice(0);
+    const savedHashes = new Set(this.hashes);
     this.hashes.clear();
 
     const count = items.length;
@@ -110,9 +134,14 @@ export class MemoryAgentQueue {
     try {
       await this.onFlush(items);
       const duration = Date.now() - start;
-      console.log(`[MemoryAgentQueue] flushed ${count} items in ${duration}ms`);
+      logger.info(`flushed ${count} items in ${duration}ms`);
     } catch (err) {
-      console.error(`[MemoryAgentQueue] flush failed for ${count} items:`, err);
+      // Restore items and hashes on failure
+      this.queue.unshift(...items);
+      for (const h of savedHashes) {
+        this.hashes.add(h);
+      }
+      logger.error(`flush failed for ${count} items:`, err);
       throw err;
     } finally {
       this.flushing = false;
