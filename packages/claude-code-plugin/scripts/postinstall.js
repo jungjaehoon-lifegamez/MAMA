@@ -7,7 +7,7 @@
  * Checks:
  * 1. Node.js version (>=22.13.0)
  * 2. Disk space (>=100MB)
- * 3. SQLite support (node:sqlite)
+ * 3. SQLite support (better-sqlite3)
  * 4. Embedding support (via @jungjaehoon/mama-core)
  * 5. Tier detection and reporting
  *
@@ -134,25 +134,25 @@ function checkDiskSpace() {
 
 /**
  * Check SQLite support
- * AC2: Attempt to load node:sqlite, enable Tier 2 on failure
+ * AC2: Attempt to load better-sqlite3, enable Tier 2 on failure
  */
 function checkSQLite() {
-  log(colors.cyan, '🔍 Checking SQLite support (node:sqlite)...');
+  log(colors.cyan, '🔍 Checking SQLite support (better-sqlite3)...');
 
   try {
-    const { DatabaseSync } = require('node:sqlite');
-    const db = new DatabaseSync(':memory:');
+    const bs3 = require('better-sqlite3');
+    const Ctor = bs3.default || bs3;
+    const db = new Ctor(':memory:');
     db.exec('CREATE TABLE test (id INTEGER)');
     db.close();
 
-    log(colors.green, '✅ SQLite support available via node:sqlite\n');
-    return { available: true, tier: 1, driver: 'node:sqlite' };
-  } catch (nodeSqliteError) {
-    const nodeSqliteMessage =
-      nodeSqliteError instanceof Error ? nodeSqliteError.message : String(nodeSqliteError);
-    log(colors.yellow, `⚠️  SQLite support unavailable: node:sqlite failed (${nodeSqliteMessage})`);
+    log(colors.green, '✅ SQLite support available via better-sqlite3 (FTS5 built-in)\n');
+    return { available: true, tier: 1, driver: 'better-sqlite3' };
+  } catch (sqliteError) {
+    const sqliteMessage = sqliteError instanceof Error ? sqliteError.message : String(sqliteError);
+    log(colors.yellow, `⚠️  SQLite support unavailable: better-sqlite3 failed (${sqliteMessage})`);
     log(colors.yellow, `\nFalling back to Tier 2 (degraded mode)`);
-    log(colors.yellow, `\nTo fix: use Node 22.13+ with built-in node:sqlite`);
+    log(colors.yellow, `\nTo fix: pnpm add better-sqlite3`);
     log(colors.yellow, `\nTier 2 features:`);
     log(colors.yellow, `  - Exact match search only (no vector search)`);
     log(colors.yellow, `  - 40% accuracy (vs 80% in Tier 1)`);
@@ -163,7 +163,7 @@ function checkSQLite() {
       tier: 2,
       reason: 'SQLite support unavailable',
       details: {
-        nodeSqlite: nodeSqliteMessage,
+        betterSqlite3: sqliteMessage,
       },
     };
   }

@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 /**
- * PreCompact Hook - Decision Preservation Before Context Compaction
+ * PreCompact Hook — Auto-save Unsaved Decisions + Compaction Prompt
  *
- * Enhanced version: queries MAMA DB directly to compare transcript decisions
- * against saved decisions, filtering out already-saved ones.
- * Generates a 7-section compaction prompt (ported from standalone pre-compact-handler.ts).
- *
- * stdin: { transcript_path }
- * stdout: { continue: true, systemMessage: "..." }
+ * Before context compression:
+ * 1. Extract decision candidates from transcript
+ * 2. Filter already-saved ones via MAMA DB
+ * 3. Auto-ingest unsaved decisions to memory agent
+ * 4. Output 7-section compaction prompt
  */
 
 const path = require('path');
@@ -16,6 +15,7 @@ const fs = require('fs');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
+const { isMamaOsRunning, postToMemoryAgent } = require('./memory-agent-client');
 
 const DECISION_PATTERNS = [
   /(?:decided|decision|chose|we'll use|going with|선택|결정)[:：]?\s*(.{10,200})/gi,
@@ -24,9 +24,6 @@ const DECISION_PATTERNS = [
 
 const MAX_DECISIONS_TO_DETECT = 5;
 
-/**
- * Extract decision candidates from transcript text
- */
 function extractDecisionCandidates(transcript) {
   const lines = transcript.trim().split('\n');
   const candidates = [];
@@ -39,10 +36,8 @@ function extractDecisionCandidates(transcript) {
     } catch {
       continue;
     }
-
     const text = msg.content || msg.text || '';
 
-    // Track topics that were explicitly saved via mama_save
     if (text.includes('mama_save') || text.includes('Decision saved')) {
       const topicMatch = text.match(/topic["':\s]+(\w+)/);
       if (topicMatch) {
@@ -56,11 +51,9 @@ function extractDecisionCandidates(transcript) {
       while ((match = pattern.exec(text)) !== null) {
         const candidate = match[1].trim();
         if (candidate.length >= 10) {
-          // Skip if saved topic word appears in candidate
           let isAlreadySaved = false;
           for (const savedTopic of savedTopics) {
-            const topicRegex = new RegExp(`\\b${savedTopic}\\b`, 'i');
-            if (topicRegex.test(candidate)) {
+            if (new RegExp(`\\b${savedTopic}\\b`, 'i').test(candidate)) {
               isAlreadySaved = true;
               break;
             }
@@ -73,21 +66,14 @@ function extractDecisionCandidates(transcript) {
     }
   }
 
-  const unique = [...new Set(candidates)];
-  return unique.slice(-MAX_DECISIONS_TO_DETECT);
+  return [...new Set(candidates)].slice(-MAX_DECISIONS_TO_DETECT);
 }
 
-/**
- * Query MAMA DB for saved decision topics to filter against
- */
 async function getSavedTopicsFromDB() {
   const topics = new Set();
-
   try {
     const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/memory-store');
     await initDB();
-
-    // Get recent decisions (no embedding needed, just list recent)
     const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
     const embedding = await generateEmbedding('recent decisions architecture');
     if (embedding) {
@@ -100,33 +86,22 @@ async function getSavedTopicsFromDB() {
         }
       }
     }
-  } catch (error) {
-    // DB not available, fall back to transcript-only analysis
-    console.error(`[MAMA] PreCompact DB fallback: ${error.message}`);
+  } catch {
+    // DB not available — transcript-only analysis
   }
-
   return topics;
 }
 
-/**
- * Filter candidates against saved topics from DB
- */
 function filterUnsaved(candidates, savedTopics) {
   return candidates.filter((candidate) => {
-    const lowerCandidate = candidate.toLowerCase();
-    for (const savedTopic of savedTopics) {
-      // Use word boundary regex to avoid partial substring matches
-      // e.g. saved topic "auth" should not filter out "authentication flow"
-      const escaped = savedTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`\\b${escaped}\\b`, 'i');
-      if (regex.test(lowerCandidate)) {
+    const lc = candidate.toLowerCase();
+    for (const saved of savedTopics) {
+      const escaped = saved.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}\\b`, 'i').test(lc)) {
         return false;
       }
-      // Also check reverse: candidate appears within saved topic
-      // e.g. candidate "Use JWT tokens" matches saved "use jwt tokens for auth"
-      const escapedCandidate = lowerCandidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const reverseRegex = new RegExp(`\\b${escapedCandidate}\\b`, 'i');
-      if (reverseRegex.test(savedTopic)) {
+      const escapedCand = lc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escapedCand}\\b`, 'i').test(saved)) {
         return false;
       }
     }
@@ -134,68 +109,11 @@ function filterUnsaved(candidates, savedTopics) {
   });
 }
 
-/**
- * Build the 7-section compaction prompt
- * Sections: User Requests, Final Goal, Work Completed, Remaining Tasks,
- *           Active Working Context, Explicit Constraints, Agent Verification State
- */
-function buildCompactionPrompt(transcript, unsavedDecisions) {
-  const sections = [];
-
-  sections.push('## 1. User Requests');
-  sections.push('Summarize the original user requests and requirements from this conversation.\n');
-
-  sections.push('## 2. Final Goal');
-  sections.push('State the ultimate objective being worked toward. What does "done" look like?\n');
-
-  sections.push('## 3. Work Completed');
-  sections.push('List all tasks, code changes, and accomplishments completed so far.\n');
-
-  sections.push('## 4. Remaining Tasks');
-  sections.push('List outstanding work items that still need to be done.\n');
-
-  sections.push('## 5. Active Working Context');
-  sections.push('Current files being edited, git branch, key variables, and active state.\n');
-
-  sections.push('## 6. Explicit Constraints');
-  sections.push(
-    'Rules, conventions, architectural decisions, or limitations stated during the conversation.\n'
-  );
-
-  sections.push('## 7. Agent Verification State');
-  sections.push('Current build/test/lint status, any error states, and verification results.\n');
-
-  let prompt = '# Compaction Summary\n\n';
-  prompt +=
-    'Before compressing context, preserve the following information in these 7 sections:\n\n';
-  prompt += sections.join('\n');
-
-  if (unsavedDecisions.length > 0) {
-    prompt += '\n---\n\n';
-    prompt += '## Unsaved Decisions\n\n';
-    prompt += 'The following decisions were detected but NOT saved to MAMA memory.\n';
-    prompt += 'Consider saving them with mama_save before compaction:\n\n';
-    unsavedDecisions.forEach((d, i) => {
-      prompt += `${i + 1}. ${d}\n`;
-    });
-  }
-
-  const lineCount = transcript.split('\n').length;
-  prompt += `\n---\n\n_Conversation context: ~${lineCount} lines before compaction._\n`;
-
-  return prompt;
-}
-
-/**
- * Build warning message for unsaved decisions
- */
 function buildWarningMessage(unsavedDecisions) {
   if (unsavedDecisions.length === 0) {
     return '';
   }
-
   const summary = unsavedDecisions.map((d, i) => `${i + 1}. ${d}`).join('\n');
-
   return (
     `[MAMA PreCompact Warning]\n` +
     `Context is about to be compressed. ` +
@@ -205,15 +123,59 @@ function buildWarningMessage(unsavedDecisions) {
   );
 }
 
-module.exports = {
-  handler: main,
-  main,
-  getEnabledFeatures,
-  extractDecisionCandidates,
-  filterUnsaved,
-  buildCompactionPrompt,
-  buildWarningMessage,
-};
+function buildCompactionPrompt(transcript, unsavedDecisions) {
+  const sections = [
+    '## 1. User Requests\nSummarize the original user requests and requirements.\n',
+    '## 2. Final Goal\nWhat does "done" look like?\n',
+    '## 3. Work Completed\nList all tasks, code changes, and accomplishments.\n',
+    '## 4. Remaining Tasks\nList outstanding work items.\n',
+    '## 5. Active Working Context\nCurrent files, git branch, key variables, active state.\n',
+    '## 6. Explicit Constraints\nRules, conventions, architectural decisions stated.\n',
+    '## 7. Agent Verification State\nBuild/test/lint status, error states, verification results.\n',
+  ];
+
+  let prompt = '# Compaction Summary\n\nPreserve the following in 7 sections:\n\n';
+  prompt += sections.join('\n');
+
+  if (unsavedDecisions.length > 0) {
+    prompt += '\n---\n\n## Unsaved Decisions (auto-ingested to memory agent)\n\n';
+    unsavedDecisions.forEach((d, i) => {
+      prompt += `${i + 1}. ${d}\n`;
+    });
+    prompt += '\nUse mama_save to persist any critical decisions with full reasoning.\n';
+  }
+
+  const lineCount = transcript.split('\n').length;
+  prompt += `\n---\n\n_~${lineCount} lines before compaction._\n`;
+  return prompt;
+}
+
+/**
+ * Build full conversation messages from transcript for memory agent ingestion.
+ * Extracts the last N meaningful exchanges (user + assistant pairs).
+ */
+function buildTranscriptMessages(transcript, maxPairs) {
+  const lines = transcript.trim().split('\n');
+  const messages = [];
+
+  for (const line of lines) {
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const role = msg.role || msg.type;
+    const content = msg.content || msg.text || '';
+    if ((role === 'user' || role === 'assistant') && content.length > 10) {
+      messages.push({ role, content: content.slice(0, 2000) });
+    }
+  }
+
+  // Take last N pairs to stay within reasonable size
+  const limit = maxPairs * 2;
+  return messages.slice(-limit);
+}
 
 async function main() {
   const features = getEnabledFeatures();
@@ -245,45 +207,60 @@ async function main() {
     process.exit(0);
   }
 
-  // Extract candidates from transcript
+  // Extract and filter unsaved decision candidates
   const candidates = extractDecisionCandidates(transcript);
+  const savedTopics = candidates.length > 0 ? await getSavedTopicsFromDB() : new Set();
+  const unsaved = candidates.length > 0 ? filterUnsaved(candidates, savedTopics) : [];
 
-  if (candidates.length === 0) {
-    // Even without unsaved decisions, output the 7-section compaction prompt
-    // Note: hookSpecificOutput only supports PreToolUse, UserPromptSubmit, PostToolUse
-    // Use systemMessage for PreCompact hooks
-    const compactionPrompt = buildCompactionPrompt(transcript, []);
-    const output = {
-      continue: true,
-      systemMessage: compactionPrompt,
-    };
-    console.log(JSON.stringify(output));
-    process.exit(0);
+  // Auto-ingest to memory agent: send recent conversation + unsaved decisions
+  const running = await isMamaOsRunning();
+  if (running) {
+    const projectPath = process.env.CLAUDE_PROJECT_PATH || process.cwd();
+
+    // Send recent conversation exchanges for full-context extraction
+    const recentMessages = buildTranscriptMessages(transcript, 10);
+    if (recentMessages.length > 0) {
+      postToMemoryAgent(recentMessages, projectPath, 'precompact-transcript');
+    }
+
+    // Also send unsaved decisions explicitly as high-priority items
+    if (unsaved.length > 0) {
+      const decisionContent = unsaved.map((d, i) => `${i + 1}. ${d}`).join('\n');
+      postToMemoryAgent(
+        [
+          {
+            role: 'assistant',
+            content: `[PreCompact] Unsaved decisions detected before context compaction:\n${decisionContent}`,
+          },
+        ],
+        projectPath,
+        'precompact-decisions'
+      );
+    }
   }
 
-  // Query MAMA DB for saved topics and filter
-  const savedTopics = await getSavedTopicsFromDB();
-  const unsaved = filterUnsaved(candidates, savedTopics);
-
-  // Build combined output: warning + compaction prompt
-  // Note: hookSpecificOutput only supports PreToolUse, UserPromptSubmit, PostToolUse
-  // Use systemMessage for PreCompact hooks
-  const warningMessage = buildWarningMessage(unsaved);
+  // Output compaction prompt
   const compactionPrompt = buildCompactionPrompt(transcript, unsaved);
-
-  const systemMessage = warningMessage
-    ? `${warningMessage}\n\n---\n\n${compactionPrompt}`
-    : compactionPrompt;
-
-  const output = {
-    continue: true,
-    systemMessage,
-  };
-
-  console.log(JSON.stringify(output));
+  console.log(
+    JSON.stringify({
+      continue: true,
+      systemMessage: compactionPrompt,
+    })
+  );
   process.exit(0);
 }
 
 if (require.main === module) {
   main().catch(() => process.exit(0));
 }
+
+module.exports = {
+  handler: main,
+  main,
+  getEnabledFeatures,
+  extractDecisionCandidates,
+  filterUnsaved,
+  buildCompactionPrompt,
+  buildWarningMessage,
+  buildTranscriptMessages,
+};

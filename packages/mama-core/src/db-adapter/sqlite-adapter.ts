@@ -1,8 +1,8 @@
 /**
  * SQLite database adapter compatibility export.
  *
- * MAMA now standardizes on Node's built-in node:sqlite runtime. Keep the
- * legacy SQLiteAdapter symbol so existing imports continue to work.
+ * MAMA standardizes on better-sqlite3 (FTS5 built-in, sync API).
+ * Keeps the SQLiteAdapter symbol so existing imports continue to work.
  */
 
 import { NodeSQLiteAdapter } from './node-sqlite-adapter.js';

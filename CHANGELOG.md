@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Claude Code Connector — hook → memory agent pipeline** (`claude-code-plugin`) — all hooks (UserPromptSubmit, PostToolUse, PreCompact) now send data to MAMA OS memory agent. UserPromptSubmit reads `transcript_path` for full session context (user + assistant), PostToolUse batches Edit/Write actions with debounce, PreCompact sends transcript + unsaved decisions. Shared `memory-agent-client.js` handles fire-and-forget HTTP delivery with health check caching
+- **Transcript-based context capture** — discovered Claude Code provides `transcript_path` in hook stdin, enabling full conversation history extraction. `readRecentTranscript()` parses JSONL entries to extract user + assistant text messages (skipping thinking, tool_use, system), sending last 5 turns to memory agent per prompt
+- **SW development extraction prompt** (`mama-core`) — extraction prompt rewritten for software development conversations. Critical distinction: user statements express decisions ("~하자", "let's use X"), assistant statements provide context (not decisions). Greetings, task-notifications, and meta-conversation explicitly skipped
 - **MemoryBench benchmarking framework** (`packages/memorybench/`) — pluggable provider/benchmark/judge framework for objectively measuring memory retrieval quality. Supports MAMA, Mem0, SuperMemory, Zep, filesystem, and RAG providers against LongMemEval (500 questions, 6 categories). Pipeline: ingest → index → search → answer → evaluate → report with checkpoint/resume. Web UI for real-time visualization and run comparison. MemScore composite metric (accuracy / latency / context tokens)
 - **Vector-first recall with lexical augmentation** (`mama-core`) — `recallMemory()` now uses vector search as primary retrieval path instead of truth text matching. Added `rankByTokenOverlap()` lexical fallback with weighted scoring (token length bonuses, phrase boost), `mergeRecallCandidates()` for vector+lexical dedup, and `lexicalScoreToConfidence()` normalization. Fixes the root cause of near-random retrieval when conversations were stored as single blobs
 - **Claude CLI extraction pipeline** — benchmark uses `ingestConversation()` with Claude CLI for typed memory extraction (fact/preference/decision/lesson/constraint), giving each fact its own embedding for precise retrieval. No API key needed
@@ -17,6 +20,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **MAMA OS daemon startup failure** — `config.yaml` had test settings (`database.path: ~/.test/db.sqlite`, `model: test-model`) left over from testing. Restored to production paths. Also fixed fragile `.replace('mama-memory.db', ...)` pattern (3 locations in `start.ts` and `graph-api.ts`) with `path.join(path.dirname(...))` so sibling DB paths work regardless of config filename
+- **Hook process exit before HTTP flush** — `postToMemoryAgent()` fire-and-forget HTTP requests were dropped because `process.exit()` was called before socket write completed. Added 150ms exit delay to ensure HTTP requests flush
 - **Vector search blocked by text matching** — `recallMemory()` used `queryRelevantTruth` as primary path which returned all decisions by update time, not query relevance. Vector search is now primary with truth status as post-filter
 - **Similarity scores hardcoded to 1** — `suggest()` now returns actual cosine similarity instead of hardcoded value, enabling meaningful ranking
 - **Extraction CLI session ID** — Claude CLI requires UUID format for `--session-id`; was using string `'extraction-cli'` causing silent extraction failures

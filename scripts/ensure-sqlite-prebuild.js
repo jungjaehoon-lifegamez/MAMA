@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 /**
- * Compatibility wrapper kept for older docs/scripts.
+ * Ensure better-sqlite3 is available.
  *
- * MAMA no longer installs better-sqlite3. SQLite comes from Node's built-in
- * `node:sqlite` runtime, so this helper now validates that the current Node.js
- * version exposes `node:sqlite` and reports a clear error otherwise.
+ * MAMA uses better-sqlite3 exclusively (FTS5 built-in, sync API, prebuild binaries).
  */
 
 /**
- * Ensure Node's built-in SQLite runtime is available
+ * Ensure better-sqlite3 is available
  * @param {Object} options
  * @param {string} options.prefix - Log prefix (e.g., '[MAMA]')
  * @returns {boolean} - true if successful, false if failed
@@ -17,14 +15,15 @@ function ensureSqliteRuntime(options = {}) {
   const prefix = options.prefix || '[MAMA]';
 
   try {
-    const { DatabaseSync } = require('node:sqlite');
-    const db = new DatabaseSync(':memory:');
+    const BetterSqlite3 = require('better-sqlite3');
+    const Ctor = BetterSqlite3.default || BetterSqlite3;
+    const db = new Ctor(':memory:');
     db.close();
-    console.log(`${prefix} SQLite runtime: OK (node:sqlite)`);
+    console.log(`${prefix} SQLite runtime: OK (better-sqlite3)`);
     return true;
   } catch (err) {
-    console.error(`${prefix} SQLite runtime unavailable:`, err.message);
-    console.error(`${prefix} MAMA now requires Node.js 22.13+ with built-in node:sqlite.`);
+    console.error(`${prefix} better-sqlite3 unavailable:`, err.message);
+    console.error(`${prefix} Install it with: pnpm add better-sqlite3`);
     return false;
   }
 }

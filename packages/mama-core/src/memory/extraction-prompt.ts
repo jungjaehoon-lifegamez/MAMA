@@ -22,25 +22,26 @@ export function buildExtractionPrompt(
     ? '- topic: lowercase_snake_case, prefer reusing an existing topic above when the subject matches'
     : '- topic: lowercase_snake_case';
 
-  return `You are extracting structured memory units from a conversation about a user's life.
+  return `You are extracting structured memory units from a software development conversation.
 
-Read the conversation and identify every distinct piece of personal information worth remembering.
+Read the conversation and identify decisions, preferences, facts, lessons, and constraints worth remembering.
 Classify each as one of: preference, fact, decision, lesson, constraint.
 ${topicHint}
 Rules:
 ${topicRule}
-- summary: concise (<200 chars). MUST include ALL of these when mentioned:
-  • Names (people, pets, brands, stores, apps, services)
-  • Dates and times ("bought on February 15", "every Tuesday", "3 weeks ago")
-  • Numbers and amounts ("$5 coupon", "4 hours", "45 minutes each way", "3 weddings")
-  • Places ("at Target", "from IKEA", "in Chicago")
-  Example: "User redeemed a $5 coupon on coffee creamer at Target on March 3" NOT "User used a coupon"
+- summary: concise (<200 chars). Include specifics: tool names, file paths, library names, reasons.
+  Example: "Decided to use better-sqlite3 instead of node:sqlite because FTS5 is not supported in node:sqlite"
+  NOT: "Changed the database driver"
 - details: quote the exact sentence(s) from the conversation that contain this information
 - confidence: 0.0-1.0 based on how explicitly stated the information is
-- For preferences: state what IS preferred and what is NOT (if mentioned)
-- For countable facts: enumerate items explicitly (e.g., "Weddings attended: 1. Rachel & Mike, 2. Emily & Sarah, 3. Jen & Tom")
-- IMPORTANT: do NOT merge unrelated facts. Each distinct event, purchase, person, or activity is a separate unit
-- Skip small talk, meta-conversation, and assistant's general knowledge responses
+- CRITICAL: The USER's statements express intent and decisions. The ASSISTANT's statements provide context, explanation, or execution.
+  • "User: PostgreSQL로 전환하자" → decision: User decided to switch to PostgreSQL
+  • "Assistant: 현재 SQLite를 쓰고 있는데..." → this is CONTEXT, not a decision to keep SQLite
+  • When user says "~하자", "~하기로 결정", "let's use X" → this IS the decision
+  • When assistant describes current state or alternatives → this is NOT a decision
+- IMPORTANT: do NOT merge unrelated facts. Each distinct decision or fact is a separate unit
+- Skip: greetings, small talk, meta-conversation ("모니터링해봐"), system notifications, task-notifications
+- Skip: assistant's general knowledge responses that don't contain user-specific information
 
 Return ONLY a JSON array:
 [{"kind":"...","topic":"...","summary":"...","details":"...","confidence":0.9}]

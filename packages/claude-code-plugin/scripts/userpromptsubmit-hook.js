@@ -20,13 +20,14 @@ const { isMamaOsRunning, postToMemoryAgent } = require('./memory-agent-client');
 // How many recent message pairs to send to memory agent
 const MAX_RECENT_PAIRS = 5;
 
-function flushAndExit(json, code = 0) {
+function flushAndExit(json, code = 0, delayMs = 0) {
   const data = typeof json === 'string' ? json : JSON.stringify(json);
+  const exit = () => setTimeout(() => process.exit(code), delayMs);
   if (process.stdout.write(data + '\n')) {
-    process.exit(code);
+    exit();
   } else {
-    process.stdout.once('drain', () => process.exit(code));
-    setTimeout(() => process.exit(code), 200);
+    process.stdout.once('drain', exit);
+    setTimeout(() => process.exit(code), delayMs + 200);
   }
 }
 
@@ -134,13 +135,26 @@ async function main() {
   const projectPath = input.cwd || process.env.CLAUDE_PROJECT_PATH || process.cwd();
   const transcriptPath = input.transcript_path || '';
 
-  // Flush any pending PostToolUse batch from previous turn
-  const BATCH_FILE = '/tmp/mama-posttooluse-batch.json';
+  // Flush any pending PostToolUse batch from previous turn (session-isolated)
+  const ppid = process.ppid || process.pid;
+  const batchFile = `/tmp/mama-posttooluse-batch-${ppid}.jsonl`;
   try {
-    const batch = JSON.parse(fs.readFileSync(BATCH_FILE, 'utf8'));
-    fs.unlinkSync(BATCH_FILE);
-    if (batch.entries && batch.entries.length > 0) {
-      const combined = batch.entries.join('\n---\n');
+    const batchContent = fs.readFileSync(batchFile, 'utf8');
+    fs.unlinkSync(batchFile);
+    const entries = batchContent
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l).entry;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+    if (entries.length > 0) {
+      const combined = entries.join('\n---\n');
       postToMemoryAgent(
         [{ role: 'assistant', content: combined }],
         projectPath,
@@ -162,7 +176,8 @@ async function main() {
     postToMemoryAgent([{ role: 'user', content: userPrompt }], projectPath, 'userpromptsubmit');
   }
 
-  flushAndExit(response);
+  // Delay exit to allow HTTP requests to flush
+  flushAndExit(response, 0, 150);
 }
 
 process.on('SIGTERM', () => flushAndExit({ continue: true }));
