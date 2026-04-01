@@ -39,6 +39,18 @@ ${topicRule}
   • "Assistant: 현재 SQLite를 쓰고 있는데..." → this is CONTEXT, not a decision to keep SQLite
   • When user says "~하자", "~하기로 결정", "let's use X" → this IS the decision
   • When assistant describes current state or alternatives → this is NOT a decision
+- KIND CLASSIFICATION GUIDE:
+  • "preference": User's ongoing taste, habit, or style choice. Stable across sessions.
+    Examples: "I prefer TypeScript over JavaScript", "항상 pnpm을 사용해", "dark mode"
+    Signal words: "prefer", "like", "always use", "좋아해", "선호", "습관"
+  • "decision": A specific choice made for a particular situation. May change.
+    Examples: "Use PostgreSQL for this project", "이번에는 Redis로 가자"
+  • "fact": An objective piece of information. Not a choice.
+    Examples: "The API runs on port 3847", "Database is 161MB"
+  • "lesson": Something learned from experience, especially from failure.
+    Examples: "node:sqlite doesn't support FTS5", "delta-only analysis lacks insight"
+  • "constraint": A limitation or requirement that restricts choices.
+    Examples: "Must use Node 22+", "Hook timeout is 3 seconds", "마감 금요일"
 - IMPORTANT: do NOT merge unrelated facts. Each distinct decision or fact is a separate unit
 - Skip: greetings ("안녕", "hello"), acknowledgements ("ok", "좋아", "네"), commands ("모니터링해봐", "확인해")
 - Skip: system notifications (<task-notification>, <system-reminder>, hook outputs)
