@@ -424,42 +424,8 @@ export async function saveMemory(
     ).filter((c) => !excludeIds.has(c.id));
   }
 
-  // Semantic fallback: if no exact topic match, find similar memories via vector search
-  if (existingCandidates.length === 0) {
-    try {
-      const queryText = `${input.topic} ${input.summary}`;
-      const embedding = await generateEmbedding(queryText);
-      const semanticResults = await vectorSearch(embedding, 3, 0.82);
-
-      // Scope-filter semantic candidates when a primary scope is available
-      let scopeFiltered = semanticResults;
-      if (primaryScope) {
-        const semIds = semanticResults.map((r) => String(r.id));
-        const semScopeMap = batchLoadScopes(adapter, semIds);
-        const scopeKey = `${primaryScope.kind}:${primaryScope.id}`;
-        scopeFiltered = semanticResults.filter((r) => {
-          const scopes = semScopeMap.get(String(r.id)) ?? [];
-          return scopes.length === 0 || scopes.some((s) => `${s.kind}:${s.id}` === scopeKey);
-        });
-      }
-
-      existingCandidates = scopeFiltered
-        .filter((r) => {
-          const status = String((r as { status?: unknown }).status || '');
-          return !status || status === 'active' || status === '';
-        })
-        .filter((c) => !excludeIds.has(String(c.id)))
-        .map((r) => ({
-          id: String(r.id),
-          topic: String(r.topic || ''),
-          summary: String(r.decision || ''),
-          kind: 'fact' as const,
-          _semanticMatch: true,
-        }));
-    } catch {
-      // Semantic search unavailable — proceed with empty candidates
-    }
-  }
+  // Cross-topic semantic edge creation removed: produced 87% noise at scale.
+  // Cross-topic relationships are created explicitly by agents or extraction LLM.
 
   const evolution = resolveMemoryEvolution({
     incoming: { topic: input.topic, summary: input.summary, kind: input.kind },
@@ -1234,7 +1200,17 @@ export async function ingestConversation(
     }
     const topicList = existingTopics.map((r) => r.topic);
 
-    const prompt = buildExtractionPrompt(input.messages, topicList);
+    // Fetch recent decisions with ID + summary for LLM to link edges
+    const recentDecisions = adapter
+      .prepare(
+        `SELECT id, topic, summary FROM decisions
+         WHERE (status = 'active' OR status IS NULL)
+           AND summary IS NOT NULL AND LENGTH(summary) > 10
+         ORDER BY created_at DESC LIMIT 20`
+      )
+      .all() as Array<{ id: string; topic: string; summary: string }>;
+
+    const prompt = buildExtractionPrompt(input.messages, topicList, recentDecisions);
     units = await extractionFn(prompt, input.extract);
   } catch (err) {
     warn(`[memory] extraction failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1316,6 +1292,27 @@ export async function ingestConversation(
           1.0,
           now
         );
+
+      // Create LLM-specified edge if relates_to is present
+      if (unit.relates_to?.id && unit.relates_to?.type) {
+        try {
+          adapter
+            .prepare(
+              `INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)`
+            )
+            .run(
+              saved.id,
+              unit.relates_to.id,
+              unit.relates_to.type,
+              `LLM extraction: ${unit.relates_to.type} link`,
+              0.9,
+              now
+            );
+        } catch {
+          // Target decision may not exist — skip silently
+        }
+      }
 
       batchSavedIds.push(saved.id);
       result.extractedMemories.push({

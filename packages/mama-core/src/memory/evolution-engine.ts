@@ -139,15 +139,10 @@ export function resolveMemoryEvolution(input: EvolutionInput): EvolutionResult {
       continue;
     }
 
-    // Semantic candidates (vector similarity >= 0.82) → builds_on
-    if (existing._semanticMatch) {
-      edges.push({
-        from_id: 'incoming',
-        to_id: existing.id,
-        type: 'builds_on',
-        reason: 'Semantically similar memory detected via vector search',
-      });
-    }
+    // Cross-topic semantic edges removed: they produced 87% noise at scale
+    // (353/405 builds_on edges were semantic-only, connecting unrelated facts).
+    // Cross-topic relationships should be created explicitly by the agent
+    // via reasoning="builds_on: <id>" in /mama:decision or by extraction LLM.
   }
 
   return { edges };

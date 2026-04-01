@@ -7,15 +7,28 @@ import {
 
 const VALID_KINDS = new Set<string>(MEMORY_KINDS);
 
+export interface ExistingDecision {
+  id: string;
+  topic: string;
+  summary: string;
+}
+
 export function buildExtractionPrompt(
   messages: ConversationMessage[],
-  existingTopics?: string[]
+  existingTopics?: string[],
+  existingDecisions?: ExistingDecision[]
 ): string {
   const conversationText = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
 
   const hasExistingTopics = existingTopics && existingTopics.length > 0;
+  const hasExistingDecisions = existingDecisions && existingDecisions.length > 0;
+
   const topicHint = hasExistingTopics
     ? `\nExisting topics (REUSE these when the subject matches instead of creating new ones):\n${existingTopics.map((t) => t.replace(/[`$\\]/g, '')).join(', ')}\n`
+    : '';
+
+  const decisionContext = hasExistingDecisions
+    ? `\nExisting decisions in memory (link to these when related):\n${existingDecisions.map((d) => `- id:${d.id} topic:${d.topic} — ${d.summary.replace(/[`$\\]/g, '').slice(0, 100)}`).join('\n')}\n`
     : '';
 
   const topicRule = hasExistingTopics
@@ -26,7 +39,7 @@ export function buildExtractionPrompt(
 
 Read the conversation and identify decisions, preferences, facts, lessons, and constraints worth remembering.
 Classify each as one of: preference, fact, decision, lesson, constraint.
-${topicHint}
+${topicHint}${decisionContext}
 Rules:
 ${topicRule}
 - summary: concise (<200 chars). Include specifics: tool names, file paths, library names, reasons.
@@ -58,8 +71,14 @@ ${topicRule}
 - Skip: conversation meta-data (session IDs, timestamps, tool status updates)
 - If the conversation contains ONLY greetings or meta-conversation with no decisions/facts, return an empty array []
 
+- LINKING: If an extracted unit relates to an existing decision above, add a "relates_to" field:
+  • "supersedes": this unit replaces/updates the existing decision (same subject, new info)
+  • "builds_on": this unit extends or adds context to the existing decision
+  • Only link when there is a clear semantic relationship, NOT just keyword overlap
+
 Return ONLY a JSON array:
-[{"kind":"...","topic":"...","summary":"...","details":"...","confidence":0.9}]
+[{"kind":"...","topic":"...","summary":"...","details":"...","confidence":0.9,"relates_to":{"id":"decision_xxx","type":"builds_on"}}]
+The "relates_to" field is optional — omit it when no existing decision is related.
 
 Conversation:
 ${conversationText}`;
@@ -110,11 +129,21 @@ export function parseExtractionResponse(response: string): ExtractedMemoryUnit[]
         obj.summary.length > 0
       );
     })
-    .map((item) => ({
-      kind: item.kind as MemoryKind,
-      topic: String(item.topic),
-      summary: String(item.summary).slice(0, 200),
-      details: typeof item.details === 'string' ? String(item.details) : String(item.summary),
-      confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0.5)),
-    }));
+    .map((item) => {
+      const relatesTo = item.relates_to as { id?: string; type?: string } | undefined;
+      return {
+        kind: item.kind as MemoryKind,
+        topic: String(item.topic),
+        summary: String(item.summary).slice(0, 200),
+        details: typeof item.details === 'string' ? String(item.details) : String(item.summary),
+        confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0.5)),
+        relates_to:
+          relatesTo &&
+          typeof relatesTo.id === 'string' &&
+          typeof relatesTo.type === 'string' &&
+          ['supersedes', 'builds_on', 'debates'].includes(relatesTo.type)
+            ? { id: relatesTo.id, type: relatesTo.type as 'supersedes' | 'builds_on' | 'debates' }
+            : undefined,
+      };
+    });
 }
