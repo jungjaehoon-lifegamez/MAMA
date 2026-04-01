@@ -15,7 +15,11 @@ const fs = require('fs');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
-const { isMamaOsRunning, postToMemoryAgent } = require('./memory-agent-client');
+const {
+  isMamaOsRunning,
+  postToMemoryAgent,
+  parseTranscriptMessages,
+} = require('./memory-agent-client');
 
 const DECISION_PATTERNS = [
   /(?:decided|decision|chose|we'll use|going with|선택|결정)[:：]?\s*(.{10,200})/gi,
@@ -150,31 +154,9 @@ function buildCompactionPrompt(transcript, unsavedDecisions) {
   return prompt;
 }
 
-/**
- * Build full conversation messages from transcript for memory agent ingestion.
- * Extracts the last N meaningful exchanges (user + assistant pairs).
- */
+// buildTranscriptMessages delegates to shared parseTranscriptMessages
 function buildTranscriptMessages(transcript, maxPairs) {
-  const lines = transcript.trim().split('\n');
-  const messages = [];
-
-  for (const line of lines) {
-    let msg;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const role = msg.role || msg.type;
-    const content = msg.content || msg.text || '';
-    if ((role === 'user' || role === 'assistant') && content.length > 10) {
-      messages.push({ role, content: content.slice(0, 2000) });
-    }
-  }
-
-  // Take last N pairs to stay within reasonable size
-  const limit = maxPairs * 2;
-  return messages.slice(-limit);
+  return parseTranscriptMessages(transcript, maxPairs);
 }
 
 async function main() {
@@ -213,9 +195,39 @@ async function main() {
   const unsaved = candidates.length > 0 ? filterUnsaved(candidates, savedTopics) : [];
 
   // Auto-ingest to memory agent: send recent conversation + unsaved decisions
+  // Also flush any pending PostToolUse batch (S4: prevents loss on short sessions)
   const running = await isMamaOsRunning();
   if (running) {
     const projectPath = process.env.CLAUDE_PROJECT_PATH || process.cwd();
+
+    // Flush pending PostToolUse batch before compaction
+    const ppid = process.ppid || process.pid;
+    const batchFile = `/tmp/mama-posttooluse-batch-${ppid}.jsonl`;
+    try {
+      const batchContent = fs.readFileSync(batchFile, 'utf8');
+      fs.unlinkSync(batchFile);
+      const entries = batchContent
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          try {
+            return JSON.parse(l).entry;
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      if (entries.length > 0) {
+        postToMemoryAgent(
+          [{ role: 'assistant', content: entries.join('\n---\n') }],
+          projectPath,
+          'posttooluse-batch'
+        );
+      }
+    } catch {
+      /* no pending batch */
+    }
 
     // Send recent conversation exchanges for full-context extraction
     const recentMessages = buildTranscriptMessages(transcript, 10);
