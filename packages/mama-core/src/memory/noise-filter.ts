@@ -34,6 +34,23 @@ const INTERNAL_PROMPT_TOKENS = [
   'mama_save',
   'tool_call',
   'pendingResolve',
+  '<task-notification>',
+  '<system-reminder>',
+  'hook success:',
+  'hook_event_name',
+];
+
+/** Patterns that indicate meta-conversation (not actionable decisions) */
+const META_PATTERNS = [
+  /^user:\s*(?:hi|hello|hey|안녕|하이)\b/i,
+  /^모니터링/,
+  /^확인해/,
+  /^테스트/,
+  /^ㅇㅋ$/,
+  /^ok$/i,
+  /^yes$/i,
+  /^네$/,
+  /^좋아$/,
 ];
 
 /** Minimum content length (after trimming) to be considered meaningful */
@@ -83,7 +100,16 @@ export function checkNoise(content: string, existingSummaries?: Set<string>): No
     }
   }
 
-  // 4. Exact duplicate summary
+  // 4. Meta-conversation (short commands, acknowledgements)
+  if (trimmed.length <= GREETING_MAX_LENGTH) {
+    for (const pattern of META_PATTERNS) {
+      if (pattern.test(trimmed)) {
+        return { isNoise: true, reason: 'meta_conversation' };
+      }
+    }
+  }
+
+  // 5. Exact duplicate summary
   if (existingSummaries && existingSummaries.size > 0) {
     if (existingSummaries.has(trimmed.toLowerCase())) {
       return { isNoise: true, reason: 'duplicate' };

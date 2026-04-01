@@ -90,6 +90,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "mcp__plugin_mama_mama__save",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js",
+            "timeout": 5
+          }
+        ]
       }
     ]
   },

@@ -40,8 +40,11 @@ ${topicRule}
   • When user says "~하자", "~하기로 결정", "let's use X" → this IS the decision
   • When assistant describes current state or alternatives → this is NOT a decision
 - IMPORTANT: do NOT merge unrelated facts. Each distinct decision or fact is a separate unit
-- Skip: greetings, small talk, meta-conversation ("모니터링해봐"), system notifications, task-notifications
+- Skip: greetings ("안녕", "hello"), acknowledgements ("ok", "좋아", "네"), commands ("모니터링해봐", "확인해")
+- Skip: system notifications (<task-notification>, <system-reminder>, hook outputs)
 - Skip: assistant's general knowledge responses that don't contain user-specific information
+- Skip: conversation meta-data (session IDs, timestamps, tool status updates)
+- If the conversation contains ONLY greetings or meta-conversation with no decisions/facts, return an empty array []
 
 Return ONLY a JSON array:
 [{"kind":"...","topic":"...","summary":"...","details":"...","confidence":0.9}]
