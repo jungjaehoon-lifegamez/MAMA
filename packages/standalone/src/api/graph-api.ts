@@ -1326,6 +1326,16 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
         // Validate scopes shape if provided
         const VALID_SCOPE_KINDS = new Set(['global', 'user', 'channel', 'project']);
+        if (body.scopes !== undefined && !Array.isArray(body.scopes)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: true,
+              message: 'scopes must be an array of {kind, id} objects',
+            })
+          );
+          return true;
+        }
         if (Array.isArray(body.scopes)) {
           const validScopes = (body.scopes as unknown[]).filter(
             (s): s is { kind: string; id: string } =>

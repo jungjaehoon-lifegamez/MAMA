@@ -112,9 +112,9 @@ async function main() {
   const os = require('os');
   const ppid = process.ppid || process.pid;
   const batchFile = path.join(os.tmpdir(), `mama-posttooluse-batch-${ppid}.jsonl`);
+  const pendingSends = [];
   try {
     const batchContent = fs.readFileSync(batchFile, 'utf8');
-    fs.unlinkSync(batchFile);
     const entries = batchContent
       .trim()
       .split('\n')
@@ -129,10 +129,18 @@ async function main() {
       .filter(Boolean);
     if (entries.length > 0) {
       const combined = entries.join('\n---\n');
-      postToMemoryAgent(
-        [{ role: 'assistant', content: combined }],
-        projectPath,
-        'posttooluse-batch'
+      pendingSends.push(
+        postToMemoryAgent(
+          [{ role: 'assistant', content: combined }],
+          projectPath,
+          'posttooluse-batch'
+        ).then(() => {
+          try {
+            fs.unlinkSync(batchFile);
+          } catch {
+            /* already gone */
+          }
+        })
       );
     }
   } catch {
@@ -143,15 +151,18 @@ async function main() {
   const recentMessages = readRecentTranscript(transcriptPath, MAX_RECENT_PAIRS);
 
   if (recentMessages.length > 0) {
-    // Send transcript-based context (includes assistant responses)
-    postToMemoryAgent(recentMessages, projectPath, 'userpromptsubmit-transcript');
+    pendingSends.push(
+      postToMemoryAgent(recentMessages, projectPath, 'userpromptsubmit-transcript')
+    );
   } else {
-    // Fallback: send just the current prompt
-    postToMemoryAgent([{ role: 'user', content: userPrompt }], projectPath, 'userpromptsubmit');
+    pendingSends.push(
+      postToMemoryAgent([{ role: 'user', content: userPrompt }], projectPath, 'userpromptsubmit')
+    );
   }
 
-  // Delay exit to allow HTTP requests to flush
-  flushAndExit(response, 0, 150);
+  // Wait for all sends to flush, then exit
+  await Promise.allSettled(pendingSends);
+  flushAndExit(response);
 }
 
 process.on('SIGTERM', () => flushAndExit({ continue: true }));

@@ -57,7 +57,8 @@ function extractDecisionCandidates(transcript) {
         if (candidate.length >= 10) {
           let isAlreadySaved = false;
           for (const savedTopic of savedTopics) {
-            if (new RegExp(`\\b${savedTopic}\\b`, 'i').test(candidate)) {
+            const escaped = savedTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            if (new RegExp(`\\b${escaped}\\b`, 'i').test(candidate)) {
               isAlreadySaved = true;
               break;
             }
@@ -263,15 +264,15 @@ async function main() {
     await Promise.all(posts);
   }
 
-  // Output compaction prompt
+  // Output compaction prompt with safe flush
   const compactionPrompt = buildCompactionPrompt(transcript, unsaved, running);
-  console.log(
-    JSON.stringify({
-      continue: true,
-      systemMessage: compactionPrompt,
-    })
-  );
-  process.exit(0);
+  const output = JSON.stringify({ continue: true, systemMessage: compactionPrompt });
+  if (process.stdout.write(output + '\n')) {
+    process.exit(0);
+  } else {
+    process.stdout.once('drain', () => process.exit(0));
+    setTimeout(() => process.exit(0), 200);
+  }
 }
 
 if (require.main === module) {

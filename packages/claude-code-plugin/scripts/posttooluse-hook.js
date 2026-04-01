@@ -53,12 +53,11 @@ function appendToBatch(entry) {
   }
 }
 
-function flushBatch() {
+function readBatch() {
   const fs = require('fs');
   const batchFile = getBatchFile();
   try {
     const content = fs.readFileSync(batchFile, 'utf8');
-    fs.unlinkSync(batchFile);
     return content
       .trim()
       .split('\n')
@@ -73,6 +72,15 @@ function flushBatch() {
       .filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+function deleteBatchFile() {
+  const fs = require('fs');
+  try {
+    fs.unlinkSync(getBatchFile());
+  } catch {
+    /* already gone */
   }
 }
 
@@ -157,14 +165,17 @@ async function main() {
     if (batchSize >= 3) {
       const running = await isMamaOsRunning();
       if (running) {
-        const entries = flushBatch();
-        const projectPath = process.env.CLAUDE_PROJECT_PATH || process.cwd();
-        const combined = entries.join('\n---\n');
-        await postToMemoryAgent(
-          [{ role: 'assistant', content: combined }],
-          projectPath,
-          'posttooluse-batch'
-        );
+        const entries = readBatch();
+        if (entries.length > 0) {
+          const projectPath = process.env.CLAUDE_PROJECT_PATH || process.cwd();
+          const combined = entries.join('\n---\n');
+          await postToMemoryAgent(
+            [{ role: 'assistant', content: combined }],
+            projectPath,
+            'posttooluse-batch'
+          );
+          deleteBatchFile();
+        }
       }
     }
 
