@@ -330,6 +330,10 @@ export interface ExtractedMemoryUnit {
   summary: string;
   details: string;
   confidence: number;
+  relates_to?: {
+    id: string;
+    type: 'supersedes' | 'builds_on' | 'debates';
+  };
 }
 
 export interface IngestConversationResult {
