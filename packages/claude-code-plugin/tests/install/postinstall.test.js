@@ -2,7 +2,7 @@
  * Tests for Story M3.4: Installation & Tier Detection
  *
  * AC1: engines.node >=22 check with descriptive errors
- * AC2: Attempt to load node:sqlite, Tier 2 fallback on failure
+ * AC2: Attempt to load better-sqlite3, Tier 2 fallback on failure
  * AC3: Success message with detected tier
  * AC4: Disk space checks, OS-specific instructions
  * AC5: CI smoke test - npm install assertions
@@ -73,7 +73,7 @@ describe('M3.4: Installation & Tier Detection', () => {
 
       if (result.available) {
         expect(result.tier).toBe(1);
-        expect(result.driver).toBe('node:sqlite');
+        expect(result.driver).toBe('better-sqlite3');
       } else {
         expect(result.tier).toBe(2);
         expect(result.reason).toBeDefined();
@@ -349,7 +349,7 @@ describe('M3.4: Installation & Tier Detection', () => {
 
       // Should have remediation steps
       expect(scriptContent).toContain('nvm install');
-      expect(scriptContent).toContain('node:sqlite');
+      expect(scriptContent).toContain('better-sqlite3');
     });
   });
 

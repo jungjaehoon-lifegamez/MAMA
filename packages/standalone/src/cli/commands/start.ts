@@ -986,7 +986,7 @@ export async function runAgentLoop(
   const oauthManager = new OAuthManager();
 
   // Initialize database for session storage
-  const dbPath = expandPath(config.database.path).replace('mama-memory.db', 'mama-sessions.db');
+  const dbPath = path.join(path.dirname(expandPath(config.database.path)), 'mama-sessions.db');
   const db = new Database(dbPath);
 
   // Initialize metrics store (respects config.metrics.enabled)
@@ -998,8 +998,8 @@ export async function runAgentLoop(
   let healthWarningInterval: ReturnType<typeof setInterval> | null = null;
 
   if (metricsEnabled) {
-    const metricsDbPath = expandPath(config.database.path).replace(
-      'mama-memory.db',
+    const metricsDbPath = path.join(
+      path.dirname(expandPath(config.database.path)),
       'mama-metrics.db'
     );
     metricsStore = MetricsStore.getInstance(metricsDbPath);

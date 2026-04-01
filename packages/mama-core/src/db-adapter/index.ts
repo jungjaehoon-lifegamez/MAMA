@@ -27,7 +27,7 @@ export interface AdapterConfig {
  * @returns Configured SQLite adapter instance
  */
 export function createAdapter(config: AdapterConfig = {}): DatabaseAdapter {
-  // SQLiteAdapter (extends NodeSQLiteAdapter) auto-detects: better-sqlite3 (preferred, FTS5) → node:sqlite (fallback)
+  // SQLiteAdapter uses better-sqlite3 exclusively (FTS5 built-in, sync API)
   info('[db-adapter] Creating SQLite adapter (auto-detect driver)');
   const dbPath = config.dbPath || process.env.MAMA_DB_PATH;
   return new SQLiteAdapter({ dbPath });

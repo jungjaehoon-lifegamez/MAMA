@@ -143,10 +143,11 @@ export class SessionManager {
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { DatabaseSync } = require('node:sqlite') as {
-        DatabaseSync: new (dbPath: string) => SQLiteDatabaseLike;
-      };
-      this.db = new DatabaseSync(this.dbPath);
+      const bs3 = require('better-sqlite3') as
+        | (new (dbPath: string) => SQLiteDatabaseLike)
+        | { default: new (dbPath: string) => SQLiteDatabaseLike };
+      const BetterSqlite3 = 'default' in bs3 ? bs3.default : bs3;
+      this.db = new BetterSqlite3(this.dbPath);
 
       // Create sessions table if not exists
       this.db.exec(CREATE_SESSIONS_TABLE);

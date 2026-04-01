@@ -1293,6 +1293,74 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: POST /api/memory-agent/ingest - receive hook events for async memory extraction
+    if (pathname === '/api/memory-agent/ingest' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'messages must be a non-empty array' }));
+          return true;
+        }
+
+        // Validate message shape: each must have role + content strings
+        const validMessages = (body.messages as unknown[]).filter(
+          (m): m is { role: string; content: string } =>
+            typeof m === 'object' &&
+            m !== null &&
+            typeof (m as Record<string, unknown>).role === 'string' &&
+            typeof (m as Record<string, unknown>).content === 'string'
+        );
+        if (validMessages.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: true,
+              message: 'messages must contain objects with role and content strings',
+            })
+          );
+          return true;
+        }
+
+        // Validate scopes shape if provided
+        const VALID_SCOPE_KINDS = new Set(['global', 'user', 'channel', 'project']);
+        const validScopes = Array.isArray(body.scopes)
+          ? (body.scopes as unknown[]).filter(
+              (s): s is { kind: string; id: string } =>
+                typeof s === 'object' &&
+                s !== null &&
+                typeof (s as Record<string, unknown>).kind === 'string' &&
+                VALID_SCOPE_KINDS.has((s as Record<string, unknown>).kind as string) &&
+                typeof (s as Record<string, unknown>).id === 'string'
+            )
+          : [];
+
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { ingestConversation } = require('@jungjaehoon/mama-core');
+        // Fire-and-forget: don't block the hook response
+        ingestConversation({
+          messages: validMessages as Array<{ role: 'user' | 'assistant'; content: string }>,
+          scopes: validScopes as Array<{
+            kind: 'global' | 'user' | 'channel' | 'project';
+            id: string;
+          }>,
+          source: { package: 'standalone' as const, source_type: 'memory-agent-hook' },
+          extract: { enabled: true },
+          sessionDate: body.sessionDate as string | undefined,
+        }).catch((err: Error) => {
+          console.error('[MemoryAgent] ingest failed:', err.message);
+        });
+
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ accepted: true, queued: body.messages.length }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message }));
+      }
+      return true;
+    }
+
     // Route: POST /api/mama/audit-conversation - ingest via memory agent (creates edges)
     if (pathname === '/api/mama/audit-conversation' && req.method === 'POST') {
       try {
@@ -1771,7 +1839,7 @@ function getSessionStats(): SessionStats {
     const expandedPath = memoryDbPath.startsWith('~/')
       ? path.join(os.homedir(), memoryDbPath.slice(2))
       : memoryDbPath;
-    const sessionsDbPath = expandedPath.replace('mama-memory.db', 'mama-sessions.db');
+    const sessionsDbPath = path.join(path.dirname(expandedPath), 'mama-sessions.db');
 
     if (!fs.existsSync(sessionsDbPath)) {
       return { total: 0, bySource: {}, channels: [] };
