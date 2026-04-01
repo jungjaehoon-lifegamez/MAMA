@@ -473,7 +473,7 @@ async function saveMemory({ topic, decision, reasoning, supersedes }) {
 
 async function search(query, topicPrefix, questionDate) {
   const resolved = resolveTemporalQuery(query, questionDate)
-  const url = `${BASE_URL}/api/mama/search?q=${encodeURIComponent(resolved)}&limit=15&topicPrefix=${encodeURIComponent(topicPrefix)}`
+  const url = `${BASE_URL}/api/mama/search?q=${encodeURIComponent(resolved)}&limit=30&topicPrefix=${encodeURIComponent(topicPrefix)}`
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(url)
@@ -727,7 +727,7 @@ async function run() {
     // Search
     const searchResults = await search(q.question, topicPrefix, q.question_date)
     const context = searchResults
-      .slice(0, 10)
+      .slice(0, 20)
       .map((r) => {
         const mod = r.modality ? `[${r.modality}] ` : ""
         return mod + (r.decision || r.content || "")
