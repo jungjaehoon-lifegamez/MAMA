@@ -180,7 +180,7 @@ No single app can produce these insights. Only connected memory can.
 
 ## Architecture
 
-```
+```text
 MAMA OS v1.0
 
   Orchestrator (MAMA OS):
