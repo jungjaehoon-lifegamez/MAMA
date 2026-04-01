@@ -1188,7 +1188,7 @@ export async function ingestConversation(
       kind: f.kind,
       topic: f.entityKey,
       summary: f.text.slice(0, 500),
-      details: `[${f.label}] Extracted from: ${input.messages.map((m) => m.role).join(', ')}. ${input.sessionDate ? 'Date: ' + input.sessionDate + '. ' : ''}Messages: ${input.messages.length}`,
+      details: conversationText,
       confidence: 0.95,
     }));
   } else {
