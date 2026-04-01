@@ -759,7 +759,7 @@ export async function recallMemory(
           const row = adapter
             .prepare(
               `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
-                    trust_context, kind, status, summary
+                    trust_context, kind, status, summary, event_date
              FROM decisions WHERE id = ?`
             )
             .get(ftsRow.id) as Record<string, unknown> | undefined;
@@ -1241,14 +1241,32 @@ export async function ingestConversation(
     return result;
   }
 
-  // Build existing summaries set for duplicate detection
-  const existingSummaryRows = getAdapter()
-    .prepare(
-      `SELECT DISTINCT summary FROM decisions
-       WHERE (status = 'active' OR status IS NULL)
-       ORDER BY created_at DESC LIMIT 500`
-    )
-    .all() as Array<{ summary: string }>;
+  // Build existing summaries set for duplicate detection (scope-aware when scopes provided)
+  const dedupAdapter = getAdapter();
+  let existingSummaryRows: Array<{ summary: string }>;
+  if (input.scopes && input.scopes.length > 0) {
+    const scopeIds = await Promise.all(
+      input.scopes.map((scope) => ensureMemoryScope(scope.kind, scope.id))
+    );
+    const ph = scopeIds.map(() => '?').join(', ');
+    existingSummaryRows = dedupAdapter
+      .prepare(
+        `SELECT DISTINCT d.summary FROM decisions d
+         JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+         WHERE msb.scope_id IN (${ph})
+           AND (d.status = 'active' OR d.status IS NULL)
+         ORDER BY d.created_at DESC LIMIT 500`
+      )
+      .all(...scopeIds) as Array<{ summary: string }>;
+  } else {
+    existingSummaryRows = dedupAdapter
+      .prepare(
+        `SELECT DISTINCT summary FROM decisions
+         WHERE (status = 'active' OR status IS NULL)
+         ORDER BY created_at DESC LIMIT 500`
+      )
+      .all() as Array<{ summary: string }>;
+  }
   const existingSummaries = new Set(
     existingSummaryRows.map((r) => (r.summary || '').toLowerCase())
   );
