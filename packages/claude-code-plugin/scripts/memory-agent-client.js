@@ -57,41 +57,49 @@ function isMamaOsRunning() {
 }
 
 /**
- * Fire-and-forget POST to memory agent ingest endpoint.
+ * POST to memory agent ingest endpoint.
+ * Returns a promise that resolves when the request socket is flushed,
+ * allowing callers to await it before exiting if needed.
  *
  * @param {Array<{role: string, content: string}>} messages
  * @param {string} [projectPath]
  * @param {string} [sourceType] - hook name for tracking (e.g. 'posttooluse', 'precompact')
+ * @returns {Promise<void>}
  */
 function postToMemoryAgent(messages, projectPath, sourceType) {
   if (!messages || messages.length === 0) {
-    return;
+    return Promise.resolve();
   }
 
-  const body = JSON.stringify({
-    messages,
-    scopes: projectPath ? [{ kind: 'project', id: projectPath }] : [],
-    sourceType: sourceType || 'hook',
-  });
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      messages,
+      scopes: projectPath ? [{ kind: 'project', id: projectPath }] : [],
+      sourceType: sourceType || 'hook',
+    });
 
-  const req = http.request(
-    {
-      hostname: '127.0.0.1',
-      port: MAMA_PORT,
-      path: '/api/memory-agent/ingest',
-      method: 'POST',
-      timeout: 3000,
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: MAMA_PORT,
+        path: '/api/memory-agent/ingest',
+        method: 'POST',
+        timeout: 3000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
       },
-    },
-    () => {} // fire-and-forget
-  );
-  req.on('error', () => {});
-  req.on('timeout', () => req.destroy());
-  req.write(body);
-  req.end();
+      () => resolve()
+    );
+    req.on('error', () => resolve());
+    req.on('timeout', () => {
+      req.destroy();
+      resolve();
+    });
+    req.write(body);
+    req.end();
+  });
 }
 
 /**
@@ -119,37 +127,33 @@ function parseTranscriptMessages(content, maxPairs) {
       continue;
     }
 
-    // Claude Code transcript format: type field
-    const type = entry.type || entry.role;
+    // Normalize: prefer entry.message envelope when present, fallback to entry itself
+    const envelope = entry.message || entry;
+    const type = envelope.type || envelope.role;
 
-    if (type === 'user') {
-      const text = typeof entry.content === 'string' ? entry.content : entry.message?.content || '';
-      if (text && text.length > 2) {
-        messages.push({ role: 'user', content: text.slice(0, 2000) });
-      }
-    } else if (type === 'assistant') {
-      // Content may be: plain string, array of blocks (Claude Code), or nested in message
-      if (typeof entry.content === 'string') {
-        if (entry.content.length > 5) {
-          messages.push({ role: 'assistant', content: entry.content.slice(0, 2000) });
-        }
-      } else {
-        const blocks = Array.isArray(entry.content) ? entry.content : entry.message?.content || [];
-        if (Array.isArray(blocks)) {
-          const textParts = [];
-          for (const block of blocks) {
-            if (block.type === 'text' && block.text) {
-              textParts.push(block.text);
-            }
-          }
-          const text = textParts.join('\n');
-          if (text && text.length > 5) {
-            messages.push({ role: 'assistant', content: text.slice(0, 2000) });
-          }
-        }
-      }
+    if (type !== 'user' && type !== 'assistant') {
+      continue;
     }
-    // Skip: system, thinking, tool_use, tool_result, file-history-snapshot
+
+    // Normalize content: string or array of blocks → plain string
+    let text = '';
+    const rawContent = envelope.content;
+    if (typeof rawContent === 'string') {
+      text = rawContent;
+    } else if (Array.isArray(rawContent)) {
+      const textParts = [];
+      for (const block of rawContent) {
+        if (block.type === 'text' && block.text) {
+          textParts.push(block.text);
+        }
+      }
+      text = textParts.join('\n');
+    }
+
+    const minLen = type === 'user' ? 3 : 6;
+    if (text.length >= minLen) {
+      messages.push({ role: type, content: text.slice(0, 2000) });
+    }
   }
 
   const limit = maxPairs * 2;

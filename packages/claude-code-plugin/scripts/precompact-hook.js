@@ -127,7 +127,7 @@ function buildWarningMessage(unsavedDecisions) {
   );
 }
 
-function buildCompactionPrompt(transcript, unsavedDecisions) {
+function buildCompactionPrompt(transcript, unsavedDecisions, agentAvailable = false) {
   const sections = [
     '## 1. User Requests\nSummarize the original user requests and requirements.\n',
     '## 2. Final Goal\nWhat does "done" look like?\n',
@@ -142,7 +142,10 @@ function buildCompactionPrompt(transcript, unsavedDecisions) {
   prompt += sections.join('\n');
 
   if (unsavedDecisions.length > 0) {
-    prompt += '\n---\n\n## Unsaved Decisions (auto-ingested to memory agent)\n\n';
+    const label = agentAvailable
+      ? '## Unsaved Decisions (auto-ingested to memory agent)'
+      : '## Unsaved Decisions';
+    prompt += `\n---\n\n${label}\n\n`;
     unsavedDecisions.forEach((d, i) => {
       prompt += `${i + 1}. ${d}\n`;
     });
@@ -199,10 +202,12 @@ async function main() {
   const running = await isMamaOsRunning();
   if (running) {
     const projectPath = process.env.CLAUDE_PROJECT_PATH || process.cwd();
+    const posts = [];
 
     // Flush pending PostToolUse batch before compaction
+    const os = require('os');
     const ppid = process.ppid || process.pid;
-    const batchFile = `/tmp/mama-posttooluse-batch-${ppid}.jsonl`;
+    const batchFile = path.join(os.tmpdir(), `mama-posttooluse-batch-${ppid}.jsonl`);
     try {
       const batchContent = fs.readFileSync(batchFile, 'utf8');
       fs.unlinkSync(batchFile);
@@ -219,10 +224,12 @@ async function main() {
         })
         .filter(Boolean);
       if (entries.length > 0) {
-        postToMemoryAgent(
-          [{ role: 'assistant', content: entries.join('\n---\n') }],
-          projectPath,
-          'posttooluse-batch'
+        posts.push(
+          postToMemoryAgent(
+            [{ role: 'assistant', content: entries.join('\n---\n') }],
+            projectPath,
+            'posttooluse-batch'
+          )
         );
       }
     } catch {
@@ -232,27 +239,32 @@ async function main() {
     // Send recent conversation exchanges for full-context extraction
     const recentMessages = buildTranscriptMessages(transcript, 10);
     if (recentMessages.length > 0) {
-      postToMemoryAgent(recentMessages, projectPath, 'precompact-transcript');
+      posts.push(postToMemoryAgent(recentMessages, projectPath, 'precompact-transcript'));
     }
 
     // Also send unsaved decisions explicitly as high-priority items
     if (unsaved.length > 0) {
       const decisionContent = unsaved.map((d, i) => `${i + 1}. ${d}`).join('\n');
-      postToMemoryAgent(
-        [
-          {
-            role: 'assistant',
-            content: `[PreCompact] Unsaved decisions detected before context compaction:\n${decisionContent}`,
-          },
-        ],
-        projectPath,
-        'precompact-decisions'
+      posts.push(
+        postToMemoryAgent(
+          [
+            {
+              role: 'assistant',
+              content: `[PreCompact] Unsaved decisions detected before context compaction:\n${decisionContent}`,
+            },
+          ],
+          projectPath,
+          'precompact-decisions'
+        )
       );
     }
+
+    // Wait for all posts to flush before exiting
+    await Promise.all(posts);
   }
 
   // Output compaction prompt
-  const compactionPrompt = buildCompactionPrompt(transcript, unsaved);
+  const compactionPrompt = buildCompactionPrompt(transcript, unsaved, running);
   console.log(
     JSON.stringify({
       continue: true,

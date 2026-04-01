@@ -23,8 +23,9 @@ const CODE_TOOLS = new Set(['Edit', 'Write']);
 const DEBOUNCE_WINDOW_MS = 5000;
 
 function getBatchFile() {
+  const os = require('os');
   const ppid = process.ppid || process.pid;
-  return `/tmp/mama-posttooluse-batch-${ppid}.jsonl`;
+  return path.join(os.tmpdir(), `mama-posttooluse-batch-${ppid}.jsonl`);
 }
 
 function appendToBatch(entry) {
@@ -151,14 +152,14 @@ async function main() {
     const summary = buildActionSummary(toolName, toolInput);
     const batchSize = appendToBatch(summary);
 
-    // Flush and send if batch has been accumulating (3+ edits or first edit)
+    // Flush and send if batch has been accumulating (3+ edits)
     if (batchSize >= 3) {
       const running = await isMamaOsRunning();
       if (running) {
         const entries = flushBatch();
         const projectPath = process.env.CLAUDE_PROJECT_PATH || process.cwd();
         const combined = entries.join('\n---\n');
-        postToMemoryAgent(
+        await postToMemoryAgent(
           [{ role: 'assistant', content: combined }],
           projectPath,
           'posttooluse-batch'

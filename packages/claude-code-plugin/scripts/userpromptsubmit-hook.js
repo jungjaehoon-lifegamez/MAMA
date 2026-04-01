@@ -38,22 +38,31 @@ function flushAndExit(json, code = 0, delayMs = 0) {
 async function readStdin() {
   return new Promise((resolve) => {
     let data = '';
-    const timeout = setTimeout(() => resolve({}), 500);
+    let resolved = false;
+    const done = (result) => {
+      if (resolved) {
+        return;
+      }
+      resolved = true;
+      process.stdin.removeAllListeners();
+      resolve(result);
+    };
+    // Absolute deadline — not reset on data chunks
+    const timeout = setTimeout(() => done({}), 500);
     process.stdin.on('data', (chunk) => {
-      clearTimeout(timeout);
       data += chunk;
     });
     process.stdin.on('end', () => {
       clearTimeout(timeout);
       try {
-        resolve(data ? JSON.parse(data) : {});
+        done(data ? JSON.parse(data) : {});
       } catch {
-        resolve({});
+        done({});
       }
     });
     process.stdin.on('error', () => {
       clearTimeout(timeout);
-      resolve({});
+      done({});
     });
   });
 }
@@ -76,7 +85,7 @@ function readRecentTranscript(transcriptPath, maxPairs) {
 
 async function main() {
   const features = getEnabledFeatures();
-  if (features.size === 0) {
+  if (!features.has('memory')) {
     flushAndExit({ continue: true });
     return;
   }
@@ -100,8 +109,9 @@ async function main() {
   const transcriptPath = input.transcript_path || '';
 
   // Flush any pending PostToolUse batch from previous turn (session-isolated)
+  const os = require('os');
   const ppid = process.ppid || process.pid;
-  const batchFile = `/tmp/mama-posttooluse-batch-${ppid}.jsonl`;
+  const batchFile = path.join(os.tmpdir(), `mama-posttooluse-batch-${ppid}.jsonl`);
   try {
     const batchContent = fs.readFileSync(batchFile, 'utf8');
     fs.unlinkSync(batchFile);

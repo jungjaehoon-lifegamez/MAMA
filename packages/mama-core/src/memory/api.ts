@@ -672,6 +672,7 @@ export async function recallMemory(
           source: { package: 'mama-core', source_type: 'vector_search' },
           created_at: result.created_at ?? Date.now(),
           updated_at: result.created_at ?? Date.now(),
+          event_date: (result as unknown as { event_date?: string }).event_date,
         });
       }
     } // end sub-query loop
