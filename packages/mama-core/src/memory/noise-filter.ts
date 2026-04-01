@@ -36,8 +36,14 @@ const INTERNAL_PROMPT_TOKENS = [
   'pendingResolve',
   '<task-notification>',
   '<system-reminder>',
+  '<local-command-caveat>',
+  '<local-command-stdout>',
+  '<command-name>',
+  '<command-message>',
   'hook success:',
   'hook_event_name',
+  'Agent wrote unknown file',
+  'Agent edited unknown file',
 ];
 
 /** Patterns that indicate meta-conversation (not actionable decisions) */

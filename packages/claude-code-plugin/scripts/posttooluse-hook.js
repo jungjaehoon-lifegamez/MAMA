@@ -153,7 +153,7 @@ async function main() {
       process.exit(0);
     }
 
-    if (!shouldProcessFile(filePath)) {
+    if (!filePath || !shouldProcessFile(filePath)) {
       process.exit(0);
     }
 
