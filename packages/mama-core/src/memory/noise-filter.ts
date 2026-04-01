@@ -131,17 +131,20 @@ export function filterNoiseFromUnits(
 ): ExtractedMemoryUnit[] {
   const seen = new Set<string>();
   return units.filter((unit) => {
-    // Keep if either summary or details has value (details defaults to summary in extraction)
-    const summaryNoisy = isNoise(unit.summary, existingSummaries);
-    const detailsNoisy = isNoise(unit.details, existingSummaries);
-
-    if (summaryNoisy && detailsNoisy) return false;
-
-    // Intra-batch dedup on canonical content (trim + lowercase, same as checkNoise)
+    // 1. Intra-batch dedup first (cheapest check, prevents duplicate processing)
     const content = unit.summary || unit.details;
     const normalizedContent = content.trim().toLowerCase();
-    if (seen.has(normalizedContent)) return false;
+    if (seen.has(normalizedContent)) {
+      return false;
+    }
     seen.add(normalizedContent);
+
+    // 2. Per-field noise check — keep if either summary or details has value
+    const summaryNoisy = isNoise(unit.summary, existingSummaries);
+    const detailsNoisy = isNoise(unit.details, existingSummaries);
+    if (summaryNoisy && detailsNoisy) {
+      return false;
+    }
 
     return true;
   });

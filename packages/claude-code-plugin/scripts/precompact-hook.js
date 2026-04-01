@@ -158,11 +158,6 @@ function buildCompactionPrompt(transcript, unsavedDecisions, agentAvailable = fa
   return prompt;
 }
 
-// buildTranscriptMessages delegates to shared parseTranscriptMessages
-function buildTranscriptMessages(transcript, maxPairs) {
-  return parseTranscriptMessages(transcript, maxPairs);
-}
-
 async function main() {
   const features = getEnabledFeatures();
   if (!features.has('memory')) {
@@ -238,7 +233,7 @@ async function main() {
     }
 
     // Send recent conversation exchanges for full-context extraction
-    const recentMessages = buildTranscriptMessages(transcript, 10);
+    const recentMessages = parseTranscriptMessages(transcript, 10);
     if (recentMessages.length > 0) {
       posts.push(postToMemoryAgent(recentMessages, projectPath, 'precompact-transcript'));
     }
@@ -287,5 +282,4 @@ module.exports = {
   filterUnsaved,
   buildCompactionPrompt,
   buildWarningMessage,
-  buildTranscriptMessages,
 };
