@@ -474,12 +474,23 @@ async function saveMemory({ topic, decision, reasoning, supersedes }) {
 async function search(query, topicPrefix, questionDate) {
   const resolved = resolveTemporalQuery(query, questionDate)
   const url = `${BASE_URL}/api/mama/search?q=${encodeURIComponent(resolved)}&limit=15&topicPrefix=${encodeURIComponent(topicPrefix)}`
-  const res = await fetch(url)
-  if (!res.ok) {
-    throw new Error(`Search failed: HTTP ${res.status} ${res.statusText}`)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) {
+        throw new Error(`Search HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      return data.results || []
+    } catch (e) {
+      if (attempt < 2) {
+        console.error(`  Search retry ${attempt + 1}: ${e.message?.slice(0, 60)}`)
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      return [] // Return empty on final failure instead of crashing
+    }
   }
-  const data = await res.json()
-  return data.results || []
 }
 
 // ─── Extraction + Ingest ─────────────────────────────────────────────────────
@@ -679,16 +690,24 @@ async function run() {
   console.log(`PHASE 2: SEARCH + ANSWER + EVALUATE (${ALL_IDS.length} questions)`)
   console.log(`${"═".repeat(60)}`)
 
-  function callModel(prompt, model = ANSWER_MODEL) {
-    try {
-      const escaped = prompt.replace(/'/g, "'\\''")
-      const result = execSync(
-        `claude -p '${escaped}' --model ${model} --output-format text 2>/dev/null`,
-        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
-      )
-      return result.toString().trim()
-    } catch (e) {
-      throw new Error(`Claude CLI failed (model=${model}): ${e.message?.slice(0, 120)}`)
+  function callModel(prompt, model = ANSWER_MODEL, retries = 2) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const escaped = prompt.replace(/'/g, "'\\''")
+        const result = execSync(
+          `claude -p '${escaped}' --model ${model} --output-format text 2>/dev/null`,
+          { timeout: 90000, maxBuffer: 10 * 1024 * 1024 }
+        )
+        return result.toString().trim()
+      } catch (e) {
+        if (attempt < retries) {
+          console.error(`  Retry ${attempt + 1}/${retries}: ${e.message?.slice(0, 60)}`)
+          // Wait before retry
+          execSync("sleep 3")
+          continue
+        }
+        throw new Error(`Claude CLI failed (model=${model}): ${e.message?.slice(0, 120)}`)
+      }
     }
   }
 
@@ -739,11 +758,12 @@ Question: ${q.question}
 
 Answer concisely and directly.`
 
-    const hypothesis = callModel(answerPrompt)
-    console.log(`Answer: ${hypothesis.slice(0, 120)}`)
+    try {
+      const hypothesis = callModel(answerPrompt)
+      console.log(`Answer: ${hypothesis.slice(0, 120)}`)
 
-    // Evaluate via independent call
-    const evalPrompt = `You are an evaluator. Determine if the hypothesis correctly answers the question based on the ground truth.
+      // Evaluate via independent call
+      const evalPrompt = `You are an evaluator. Determine if the hypothesis correctly answers the question based on the ground truth.
 
 Question: ${q.question}
 Ground Truth: ${String(q.answer)}
@@ -751,12 +771,22 @@ Hypothesis: ${hypothesis}
 
 Respond with ONLY "correct" or "incorrect" on the first line, then a brief explanation.`
 
-    const evalResult = callModel(evalPrompt)
-    const isCorrect = evalResult.toLowerCase().startsWith("correct")
-    console.log(`Eval: ${isCorrect ? "✓ CORRECT" : "✗ INCORRECT"}`)
-    console.log(`  ${evalResult.slice(0, 120)}`)
+      const evalResult = callModel(evalPrompt)
+      const isCorrect = evalResult.toLowerCase().startsWith("correct")
+      console.log(`Eval: ${isCorrect ? "✓ CORRECT" : "✗ INCORRECT"}`)
+      console.log(`  ${evalResult.slice(0, 120)}`)
 
-    results.push({ qid, type: q.question_type, isCorrect, hypothesis: hypothesis.slice(0, 80) })
+      results.push({ qid, type: q.question_type, isCorrect, hypothesis: hypothesis.slice(0, 80) })
+    } catch (e) {
+      console.log(`Answer: ERROR - ${e.message?.slice(0, 80)}`)
+      console.log(`Eval: ✗ ERROR`)
+      results.push({
+        qid,
+        type: q.question_type,
+        isCorrect: false,
+        hypothesis: `ERROR: ${e.message?.slice(0, 60)}`,
+      })
+    }
   }
 
   // Summary
