@@ -10,7 +10,11 @@ describe('memory engine e2e', () => {
   let saveMemory: typeof import('../../src/memory/api.js').saveMemory;
   let getAdapter: typeof import('../../src/db-manager.js').getAdapter;
 
+  let originalForceTier3: string | undefined;
+
   beforeAll(async () => {
+    originalForceTier3 = process.env.MAMA_FORCE_TIER_3;
+    process.env.MAMA_FORCE_TIER_3 = 'true';
     process.env.MAMA_DB_PATH = TEST_DB;
     const dbManager = await import('../../src/db-manager.js');
     const memoryApi = await import('../../src/memory/api.js');
@@ -23,6 +27,11 @@ describe('memory engine e2e', () => {
   });
 
   afterAll(() => {
+    if (originalForceTier3 !== undefined) {
+      process.env.MAMA_FORCE_TIER_3 = originalForceTier3;
+    } else {
+      delete process.env.MAMA_FORCE_TIER_3;
+    }
     try {
       if (existsSync(TEST_DB)) unlinkSync(TEST_DB);
       if (existsSync(TEST_DB + '-wal')) unlinkSync(TEST_DB + '-wal');

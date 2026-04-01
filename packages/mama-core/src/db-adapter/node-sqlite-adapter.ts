@@ -1,15 +1,15 @@
 /**
- * SQLite Database Adapter using node:sqlite
+ * SQLite Database Adapter using better-sqlite3
  *
- * Keeps the existing DatabaseAdapter surface while avoiding external native addon installation.
+ * better-sqlite3 is the sole driver — FTS5 built-in, synchronous API,
+ * prebuild binaries for most platforms.
  */
 
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { DatabaseAdapter, type VectorSearchResult, type RunResult } from './base-adapter.js';
-import { NodeSQLiteStatement } from './node-sqlite-statement.js';
-import { type Statement } from './statement.js';
+import { SQLiteStatement, type Statement } from './statement.js';
 import { info, warn, error as logError } from '../debug-logger.js';
 import { cosineSimilarity } from '../embeddings.js';
 
@@ -20,57 +20,40 @@ interface SQLiteAdapterConfig {
   dbPath?: string;
 }
 
-interface NodeSQLiteDatabaseLike {
+interface BetterSQLite3Database {
   exec(sql: string): void;
   close(): void;
-  prepare(sql: string): NodeSQLiteStatementLike;
+  prepare(sql: string): BetterSQLite3Statement;
+  pragma(source: string, options?: { simple?: boolean }): unknown;
 }
 
-interface NodeSQLiteStatementLike {
+interface BetterSQLite3Statement {
   all: (...params: unknown[]) => unknown[];
   get: (...params: unknown[]) => unknown;
   run: (...params: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
 }
 
-type NodeSQLiteDatabaseCtor = new (path: string) => NodeSQLiteDatabaseLike;
+type BetterSQLite3Ctor = new (path: string) => BetterSQLite3Database;
 
-// Prefer better-sqlite3 (includes FTS5) over node:sqlite (lacks FTS5)
-let BetterSQLite3: NodeSQLiteDatabaseCtor | null = null;
-let DatabaseSync: NodeSQLiteDatabaseCtor | null = null;
+let BetterSQLite3: BetterSQLite3Ctor | null = null;
 
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const bs3 = require('better-sqlite3') as
-    | NodeSQLiteDatabaseCtor
-    | { default: NodeSQLiteDatabaseCtor };
+  const bs3 = require('better-sqlite3') as BetterSQLite3Ctor | { default: BetterSQLite3Ctor };
   BetterSQLite3 = 'default' in bs3 ? bs3.default : bs3;
 } catch {
   BetterSQLite3 = null;
 }
 
-if (!BetterSQLite3) {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    ({ DatabaseSync } = require('node:sqlite') as {
-      DatabaseSync: NodeSQLiteDatabaseCtor;
-    });
-  } catch {
-    DatabaseSync = null;
-  }
-}
-
-class NodeSQLiteConnection {
-  private db: NodeSQLiteDatabaseLike;
+class BetterSQLite3Connection {
+  private db: BetterSQLite3Database;
   private connected = true;
-  private isBetterSQLite3: boolean;
 
-  constructor(db: NodeSQLiteDatabaseLike) {
+  constructor(db: BetterSQLite3Database) {
     this.db = db;
-    // better-sqlite3 databases have a native .pragma() method
-    this.isBetterSQLite3 = typeof (db as unknown as Record<string, unknown>).pragma === 'function';
   }
 
-  prepare(sql: string): NodeSQLiteStatementLike {
+  prepare(sql: string): BetterSQLite3Statement {
     return this.db.prepare(sql);
   }
 
@@ -80,25 +63,7 @@ class NodeSQLiteConnection {
 
   pragma(sql: string, options?: { simple?: boolean }): unknown {
     const query = sql.trim().replace(/^PRAGMA\s+/i, '');
-
-    if (this.isBetterSQLite3) {
-      // better-sqlite3 has a native pragma method that handles both read and write pragmas
-      return (this.db as unknown as Record<string, (...args: unknown[]) => unknown>).pragma(
-        query,
-        options
-      );
-    }
-
-    // node:sqlite fallback: use prepare()
-    const stmt = this.db.prepare(`PRAGMA ${query}`);
-    if (options?.simple) {
-      const row = stmt.get() as Record<string, unknown> | undefined;
-      if (!row) {
-        return undefined;
-      }
-      return Object.values(row)[0];
-    }
-    return stmt.all();
+    return this.db.pragma(query, options);
   }
 
   close(): void {
@@ -116,7 +81,7 @@ class NodeSQLiteConnection {
 
 export class NodeSQLiteAdapter extends DatabaseAdapter {
   private config: SQLiteAdapterConfig;
-  private db: NodeSQLiteConnection | null = null;
+  private db: BetterSQLite3Connection | null = null;
   private _vectorSearchEnabled = true;
   private vectorCache: Map<number, Float32Array> = new Map();
   private topicCache: Map<number, string> = new Map();
@@ -155,19 +120,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     return targetPath;
   }
 
-  connect(): NodeSQLiteConnection {
+  connect(): BetterSQLite3Connection {
     if (this.db) {
       return this.db;
     }
 
-    const Driver = BetterSQLite3 || DatabaseSync;
-    if (!Driver) {
-      throw new Error(
-        'No SQLite driver available. Install better-sqlite3 or use Node 22.13+ (node:sqlite).'
-      );
+    if (!BetterSQLite3) {
+      throw new Error('better-sqlite3 is not installed. Run: pnpm add better-sqlite3');
     }
-
-    const driverName = BetterSQLite3 ? 'better-sqlite3' : 'node:sqlite';
 
     const dbPath = this.getDbPath();
     const dbDir = path.dirname(dbPath);
@@ -177,9 +137,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       info(`[sqlite-adapter] Created database directory: ${dbDir}`);
     }
 
-    const database = new Driver(dbPath);
-    this.db = new NodeSQLiteConnection(database);
-    info(`[sqlite-adapter] Opened database at: ${dbPath} (driver: ${driverName})`);
+    const database = new BetterSQLite3(dbPath);
+    this.db = new BetterSQLite3Connection(database);
+    info(`[sqlite-adapter] Opened database at: ${dbPath} (driver: better-sqlite3)`);
 
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('busy_timeout = 5000');
@@ -305,7 +265,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     if (!this.isConnected() || !this.db) {
       throw new Error('Database not connected');
     }
-    return new NodeSQLiteStatement(this.db.prepare(sql));
+    return new SQLiteStatement(this.db.prepare(sql));
   }
 
   exec(sql: string): void {
@@ -357,6 +317,10 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     const bestMatches: VectorSearchResult[] = [];
     let minScore = -Infinity;
 
+    // Explicit empty scope filter = no matches possible
+    if (scopeFilter && (!scopeFilter.scopeIds || scopeFilter.scopeIds.length === 0)) {
+      return [];
+    }
     // Pre-compute scope filter set for O(1) lookups
     const scopeIdSet = scopeFilter?.scopeIds?.length ? new Set(scopeFilter.scopeIds) : null;
 

@@ -19,6 +19,7 @@ describe('MemoryAgentQueue', () => {
 
   afterEach(() => {
     queue?.stop();
+    vi.useRealTimers();
   });
 
   function makeItem(content: string, scopes: QueueItem['scopes'] = []): QueueItem {
@@ -37,16 +38,18 @@ describe('MemoryAgentQueue', () => {
       expect(queue.size).toBe(1);
     });
 
-    it('should drop oldest item when at max capacity', () => {
+    it('should flush then accept new item when at max capacity', () => {
+      // flush() synchronously splices the queue before awaiting onFlush,
+      // so after the fire-and-forget flush, queue is empty and the new item is added.
       queue = new MemoryAgentQueue({ maxSize: 3, flushInterval: 30_000, onFlush });
       queue.enqueue(makeItem('one'));
       queue.enqueue(makeItem('two'));
       queue.enqueue(makeItem('three'));
       expect(queue.size).toBe(3);
 
-      // This should drop "one"
       queue.enqueue(makeItem('four'));
-      expect(queue.size).toBe(3);
+      // flush() synchronously emptied the queue, then 'four' was added
+      expect(queue.size).toBe(1);
     });
 
     it('should deduplicate items with identical content', () => {
@@ -62,6 +65,15 @@ describe('MemoryAgentQueue', () => {
       queue = new MemoryAgentQueue({ maxSize: 50, flushInterval: 30_000, onFlush });
       queue.enqueue(makeItem('content A'));
       queue.enqueue(makeItem('content B'));
+      expect(queue.size).toBe(2);
+    });
+
+    it('should not deduplicate items with same content but different scopes', () => {
+      queue = new MemoryAgentQueue({ maxSize: 50, flushInterval: 30_000, onFlush });
+      const result1 = queue.enqueue(makeItem('same content', [{ kind: 'project', id: 'proj-a' }]));
+      const result2 = queue.enqueue(makeItem('same content', [{ kind: 'project', id: 'proj-b' }]));
+      expect(result1).toBe(true);
+      expect(result2).toBe(true);
       expect(queue.size).toBe(2);
     });
   });
@@ -106,6 +118,23 @@ describe('MemoryAgentQueue', () => {
 
       await expect(queue.flush()).rejects.toThrow('flush failed');
     });
+
+    it('should restore items on flush failure', async () => {
+      const failFlush = vi.fn(async () => {
+        throw new Error('transient error');
+      });
+      queue = new MemoryAgentQueue({ maxSize: 50, flushInterval: 30_000, onFlush: failFlush });
+      queue.enqueue(makeItem('important data'));
+
+      await expect(queue.flush()).rejects.toThrow('transient error');
+
+      // Items should be restored
+      expect(queue.size).toBe(1);
+
+      // Dedup should still work (hashes restored)
+      const result = queue.enqueue(makeItem('important data'));
+      expect(result).toBe(false);
+    });
   });
 
   describe('timer flush', () => {
@@ -119,8 +148,6 @@ describe('MemoryAgentQueue', () => {
 
       expect(onFlush).toHaveBeenCalledOnce();
       expect(queue.size).toBe(0);
-
-      vi.useRealTimers();
     });
   });
 

@@ -1198,8 +1198,20 @@ export async function ingestConversation(
     return result;
   }
 
+  // Build existing summaries set for duplicate detection
+  const existingSummaryRows = getAdapter()
+    .prepare(
+      `SELECT DISTINCT summary FROM decisions
+       WHERE (status = 'active' OR status IS NULL)
+       ORDER BY created_at DESC LIMIT 500`
+    )
+    .all() as Array<{ summary: string }>;
+  const existingSummaries = new Set(
+    existingSummaryRows.map((r) => (r.summary || '').toLowerCase())
+  );
+
   // Filter noise from extracted units before saving
-  const filteredUnits = filterNoiseFromUnits(units);
+  const filteredUnits = filterNoiseFromUnits(units, existingSummaries);
   if (filteredUnits.length < units.length) {
     info(
       `[memory] noise filter removed ${units.length - filteredUnits.length} of ${units.length} extracted units`

@@ -51,6 +51,25 @@ export function createMemoryAgentRoute(
         }
       }
 
+      // Validate scope entries if provided
+      if (Array.isArray(body.scopes)) {
+        for (let i = 0; i < body.scopes.length; i++) {
+          const scope = body.scopes[i];
+          if (
+            !scope ||
+            typeof scope !== 'object' ||
+            typeof scope.kind !== 'string' ||
+            typeof scope.id !== 'string'
+          ) {
+            res.status(400).json({
+              error: `Invalid scope at index ${i}: must have "kind" (string) and "id" (string)`,
+              code: 'BAD_REQUEST',
+            });
+            return;
+          }
+        }
+      }
+
       const scopes = Array.isArray(body.scopes) ? body.scopes : [];
       const enqueued = queue.enqueue({
         messages: body.messages,

@@ -76,13 +76,13 @@ describe('isNoise', () => {
   // ---------- duplicate detection ----------
   describe('duplicate detection', () => {
     it('rejects exact duplicate summary (case-insensitive)', () => {
-      const existing = new Set(['The project uses SQLite for storage']);
+      const existing = new Set(['the project uses sqlite for storage']);
       expect(isNoise('the project uses sqlite for storage', existing)).toBe(true);
       expect(checkNoise('the project uses sqlite for storage', existing).reason).toBe('duplicate');
     });
 
     it('allows non-duplicate content', () => {
-      const existing = new Set(['The project uses SQLite for storage']);
+      const existing = new Set(['the project uses sqlite for storage']);
       expect(isNoise('The project also uses Redis for caching', existing)).toBe(false);
     });
 
@@ -155,10 +155,38 @@ describe('filterNoiseFromUnits', () => {
 
   it('supports existing summaries for dedup', () => {
     const units = [makeUnit('We use pnpm workspaces'), makeUnit('Deploy to Fly.io')];
-    const existing = new Set(['We use pnpm workspaces']);
+    const existing = new Set(['we use pnpm workspaces']);
 
     const filtered = filterNoiseFromUnits(units, existing);
     expect(filtered).toHaveLength(1);
     expect(filtered[0].summary).toBe('Deploy to Fly.io');
+  });
+
+  it('removes intra-batch duplicates', () => {
+    const units = [
+      makeUnit('User prefers dark mode'),
+      makeUnit('User prefers dark mode'),
+      makeUnit('Project uses TypeScript'),
+    ];
+
+    const filtered = filterNoiseFromUnits(units);
+    expect(filtered).toHaveLength(2);
+    expect(filtered[0].summary).toBe('User prefers dark mode');
+    expect(filtered[1].summary).toBe('Project uses TypeScript');
+  });
+
+  it('keeps unit when summary is noise but details are meaningful', () => {
+    const units: ExtractedMemoryUnit[] = [
+      {
+        kind: 'fact',
+        topic: 'test',
+        summary: 'hi there',
+        details: 'User greeted and then explained their PostgreSQL migration strategy',
+        confidence: 0.8,
+      },
+    ];
+
+    const filtered = filterNoiseFromUnits(units);
+    expect(filtered).toHaveLength(1);
   });
 });

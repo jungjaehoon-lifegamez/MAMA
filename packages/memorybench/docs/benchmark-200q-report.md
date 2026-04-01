@@ -1,7 +1,7 @@
 # MemoryBench 200Q Report — LongMemEval-S
 
 **Date:** 2026-04-01
-**Branch:** feat/memory-stabilization-benchmark (merged to main)
+**Branch:** feat/v016-memory-engine
 **Model:** Sonnet 4.6 (extraction) + Opus (answering/evaluation)
 
 ## Summary
@@ -47,7 +47,7 @@ MAMA matches SuperMemory while running entirely locally.
 
 Answer sessions received full Sonnet extraction while distractor sessions were stored as raw text. In a production MAMA OS deployment, ALL conversations would be extracted equally. This benchmark configuration prioritizes speed (96% fewer Sonnet calls) while testing search quality over the full haystack.
 
-## Key Improvements (58% → 88%)
+## Key Improvements (Original 100Q: 58% → 88%)
 
 | Change                   | Impact                                             |
 | ------------------------ | -------------------------------------------------- |
@@ -67,11 +67,13 @@ Answer sessions received full Sonnet extraction while distractor sessions were s
 
 - Root cause: When a fact is updated across sessions, the supersede chain doesn't always surface the latest version
 - Fix direction: Temporal metadata (event_date) + explicit "latest" ranking
+- **v0.16 status:** event_date column added (migration 025), supersede chain improvements in progress
 
 ### temporal-reasoning (70%)
 
 - Root cause: Date math ("10 days ago") requires absolute dates on facts
 - Fix direction: event_date field + date-aware search ranking
+- **v0.16 status:** event_date field implemented, date-aware ranking pending
 
 ### single-session-preference (70%)
 
@@ -80,6 +82,6 @@ Answer sessions received full Sonnet extraction while distractor sessions were s
 
 ## Next Steps
 
-1. v0.16: Scope-based search, noise filtering, temporal metadata → target 95%+
-2. Full 500Q benchmark after v0.16 improvements
-3. Compare with SuperMemory GPT-5 (84.6%) after improvements
+1. Full 500Q benchmark with v0.16 improvements (scope search, noise filtering, temporal metadata) applied
+2. Compare with SuperMemory GPT-5 (84.6%) post-v0.16
+3. Tune preference extraction prompt for higher accuracy
