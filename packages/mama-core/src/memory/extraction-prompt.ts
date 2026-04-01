@@ -42,7 +42,7 @@ Classify each as one of: preference, fact, decision, lesson, constraint.
 ${topicHint}${decisionContext}
 Rules:
 ${topicRule}
-- summary: concise (<200 chars). Include specifics: tool names, file paths, library names, reasons.
+- summary: include ALL specifics mentioned: tool names, file paths, library names, numbers, dates, reasons. Do not truncate.
   Example: "Decided to use better-sqlite3 instead of node:sqlite because FTS5 is not supported in node:sqlite"
   NOT: "Changed the database driver"
 - details: quote the exact sentence(s) from the conversation that contain this information
@@ -130,7 +130,7 @@ export function parseExtractionResponse(response: string): ExtractedMemoryUnit[]
       return {
         kind: item.kind as MemoryKind,
         topic: String(item.topic),
-        summary: String(item.summary).slice(0, 200),
+        summary: String(item.summary).slice(0, 500),
         details: typeof item.details === 'string' ? String(item.details) : String(item.summary),
         confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0.5)),
         relates_to:
