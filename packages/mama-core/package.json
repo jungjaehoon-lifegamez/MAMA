@@ -11,6 +11,7 @@
     "./embedding-client": "./dist/embedding-client.js",
     "./embedding-server": "./dist/embedding-server/index.js",
     "./memory/types": "./dist/memory/types.js",
+    "./memory/fact-extractor": "./dist/memory/fact-extractor.js",
     "./memory-store": "./dist/memory-store.js",
     "./db-manager": "./dist/db-manager.js",
     "./db-adapter": "./dist/db-adapter/index.js",

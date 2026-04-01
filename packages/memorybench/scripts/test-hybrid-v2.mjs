@@ -419,8 +419,30 @@ function resolveTemporalQuery(query, questionDate) {
 
 // ─── MAMA API ────────────────────────────────────────────────────────────────
 
+// Classify fact modality from text
+function classifyModality(text) {
+  if (/\b(prefer|always use|much prefer|really like|don't like|favorite)\b/i.test(text)) {
+    return "preference"
+  }
+  if (/\b(plan|plans|hoping|hope|want|thinking of|considering|would like)\b/i.test(text)) {
+    return "plan"
+  }
+  if (/\b(used to|have been|had been|'ve been)\b/i.test(text)) {
+    return "past_habit"
+  }
+  if (
+    /\b(went|attended|bought|started|finished|completed|graduated|made|visited|got|did|spent|saw)\b/i.test(
+      text
+    )
+  ) {
+    return "completed"
+  }
+  return "state"
+}
+
 async function saveMemory({ topic, decision, reasoning, supersedes }) {
-  const body = { topic, decision, reasoning }
+  const modality = classifyModality(decision)
+  const body = { topic, decision, reasoning, modality }
   if (supersedes?.length) {
     body.supersedes = supersedes
   }
@@ -687,7 +709,10 @@ async function run() {
     const searchResults = await search(q.question, topicPrefix, q.question_date)
     const context = searchResults
       .slice(0, 10)
-      .map((r) => r.decision || r.content || "")
+      .map((r) => {
+        const mod = r.modality ? `[${r.modality}] ` : ""
+        return mod + (r.decision || r.content || "")
+      })
       .join("\n\n")
     console.log(`Search: ${searchResults.length} results`)
 
@@ -700,6 +725,8 @@ async function run() {
     const answerPrompt = `You are a personal assistant with access to the user's memory. Answer the user's question using the context below.
 ${dateContext}
 Rules:
+- Each memory is tagged with a modality: [completed] = actually happened, [plan] = intended/hoped, [past_habit] = used to do, [state] = current status, [preference] = likes/prefers.
+- When counting events or activities, only count [completed] items. Plans and past habits are NOT events that happened.
 - If the context contains the answer or enough clues to infer it, answer directly.
 - Use reasoning: "Valentine's Day" = February 14th. "got back from a 2-day workshop" = spent 2 days.
 - Extract specific details: names, numbers, places, dates, brands from the context.

@@ -42,6 +42,7 @@ import { warn as logWarn, error as logError } from './debug-logger.js';
 import {
   saveMemory,
   recallMemory,
+  detectQueryModality,
   buildProfile,
   ingestMemory,
   evolveMemory,
@@ -70,6 +71,7 @@ interface SaveParams {
   outcome?: 'pending' | 'success' | 'failure' | 'partial' | 'superseded';
   failure_reason?: string | null;
   limitation?: string | null;
+  modality?: 'completed' | 'plan' | 'past_habit' | 'state' | 'preference';
   trust_context?: Record<string, unknown> | null;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
   scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
@@ -498,6 +500,7 @@ async function save({
   trust_context: _trust_context = null,
   is_static,
   scopes: inputScopes,
+  modality,
 }: SaveParams): Promise<SaveResult> {
   // Validate required fields
   if (!topic || typeof topic !== 'string') {
@@ -571,6 +574,7 @@ async function save({
       package: 'mama-core',
       source_type: 'legacy_save',
     },
+    modality,
   });
   logComplete(`Decision saved: ${decisionId.substring(0, 20)}...`);
 
@@ -1403,12 +1407,49 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       topicPrefix: options.topicPrefix,
     });
     if (bundle.memories.length > 0) {
-      // recallMemory uses RRF fusion — confidence is overwritten with the normalized
-      // retrieval score (0-1 range, where 1.0 = best match in this result set).
-      // The original stored confidence is lost after RRF normalization.
-      // We capture the retrieval score separately so `similarity` reflects search
-      // relevance while `confidence` is passed through as-is from the bundle.
-      let filteredMemories = bundle.memories;
+      // Merge primary memories with graph-expanded records (edge-connected facts).
+      const seenIds = new Set(bundle.memories.map((m) => m.id));
+      const expandedRecords = bundle.graph_context.expanded.filter((m) => !seenIds.has(m.id));
+      const allMemories = [...bundle.memories, ...expandedRecords];
+
+      // Content-based dedup: when multiple records have near-identical summaries,
+      // keep only the most recent one. This prevents the same fact (stored multiple
+      // times via code regex + Sonnet extraction) from dominating search results.
+      const dedupKey = (s: string) =>
+        s
+          .toLowerCase()
+          .replace(/\d{4}[-/]\d{2}[-/]\d{2}:?\s*/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 150);
+      const dedupMap = new Map<string, (typeof allMemories)[0]>();
+      for (const m of allMemories) {
+        const key = dedupKey(m.summary);
+        const existing = dedupMap.get(key);
+        if (!existing || (m.created_at ?? 0) > (existing.created_at ?? 0)) {
+          dedupMap.set(key, m);
+        }
+      }
+      let filteredMemories = Array.from(dedupMap.values());
+
+      // Modality-aware filtering: prioritize facts matching query intent
+      const queryIntent = detectQueryModality(userQuestion);
+      if (queryIntent) {
+        const matching: typeof filteredMemories = [];
+        const rest: typeof filteredMemories = [];
+        for (const m of filteredMemories) {
+          (m.modality === queryIntent ? matching : rest).push(m);
+        }
+        filteredMemories = [...matching, ...rest];
+      }
+
+      // Annotate with edge context from the graph for downstream consumers.
+      const edgeLookup = new Map<string, Array<{ type: string; to_id: string; reason?: string }>>();
+      for (const edge of bundle.graph_context.edges) {
+        const list = edgeLookup.get(edge.from_id) ?? [];
+        list.push({ type: edge.type, to_id: edge.to_id, reason: edge.reason });
+        edgeLookup.set(edge.from_id, list);
+      }
 
       // Apply limit
       filteredMemories = filteredMemories.slice(0, limit);
@@ -1436,10 +1477,10 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
           // rather than the original stored trust score.
           similarity: memory.confidence ?? 1 - idx * 0.01,
           created_at: memory.created_at,
-          graph_source: 'primary',
+          modality: memory.modality ?? null,
+          graph_source: seenIds.has(memory.id) ? 'primary' : 'expanded',
           graph_rank: 1,
-          related_to: null,
-          edge_reason: null,
+          edges: edgeLookup.get(memory.id) ?? [],
         })),
         meta: {
           count: filteredMemories.length,

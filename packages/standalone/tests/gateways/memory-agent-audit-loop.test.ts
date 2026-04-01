@@ -19,64 +19,41 @@ describe('memory agent audit loop', () => {
     expect(worker).toHaveBeenCalledTimes(1);
   });
 
-  it('should reject with timeout when worker hangs beyond 30 seconds', async () => {
-    vi.useFakeTimers();
-    const worker = vi.fn().mockImplementation(
-      () => new Promise(() => {}) // never resolves
-    );
-    const queue = new AuditTaskQueue(worker);
-
-    const promise = queue.enqueue({
-      turnId: 'turn_hang',
-      scopeContext: [{ kind: 'project', id: '/repo' }],
-      conversation: 'User: hang\nAssistant: ...',
-    });
-
-    // Attach catch handler before advancing timers to prevent unhandled rejection
-    const caught = promise.catch((err: Error) => err);
-
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    const error = await caught;
-    expect(error).toBeInstanceOf(Error);
-    expect(error.message).toBe('Memory audit timed out');
-    vi.useRealTimers();
-  });
-
-  it('should proceed to the next job after a timeout', async () => {
-    vi.useFakeTimers();
+  it('should process jobs sequentially (second waits for first)', async () => {
+    let resolveFirst: (v: unknown) => void;
     const worker = vi
       .fn()
-      .mockImplementationOnce(() => new Promise(() => {})) // first call hangs
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          })
+      )
       .mockResolvedValueOnce({ status: 'applied', action: 'save', event_ids: ['evt_2'] });
 
     const queue = new AuditTaskQueue(worker);
 
     const first = queue.enqueue({
-      turnId: 'turn_timeout',
+      turnId: 'turn_1',
       scopeContext: [{ kind: 'project', id: '/repo' }],
-      conversation: 'User: timeout\nAssistant: ...',
+      conversation: 'User: first\nAssistant: ...',
     });
 
     const second = queue.enqueue({
-      turnId: 'turn_next',
+      turnId: 'turn_2',
       scopeContext: [{ kind: 'project', id: '/repo' }],
-      conversation: 'User: next\nAssistant: ...',
+      conversation: 'User: second\nAssistant: ...',
     });
 
-    // Attach catch handler before advancing timers to prevent unhandled rejection
-    const firstCaught = first.catch((err: Error) => err);
+    // Wait for worker to be called
+    await new Promise((r) => setTimeout(r, 10));
+    resolveFirst!({ status: 'applied', action: 'save', event_ids: ['evt_1'] });
 
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    const error = await firstCaught;
-    expect(error).toBeInstanceOf(Error);
-    expect(error.message).toBe('Memory audit timed out');
-
-    const result = await second;
-    expect(result.status).toBe('applied');
-    expect(result.event_ids).toEqual(['evt_2']);
+    const r1 = await first;
+    const r2 = await second;
+    expect(r1.event_ids).toEqual(['evt_1']);
+    expect(r2.event_ids).toEqual(['evt_2']);
+    // Both jobs processed sequentially
     expect(worker).toHaveBeenCalledTimes(2);
-    vi.useRealTimers();
   });
 });

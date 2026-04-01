@@ -232,6 +232,7 @@ export class MessageRouter {
     this.memoryAuditQueue = new AuditTaskQueue(async (job) => {
       const process = await processManager.getSharedProcess('memory');
       const result = await process.sendMessage(this.buildMemoryAuditPrompt(job));
+      console.log(`[MemoryAudit] response=${JSON.stringify(result?.response?.slice(0, 500))}`);
       if (
         result &&
         typeof result === 'object' &&
@@ -1154,7 +1155,11 @@ ${historyContext}
     const scopeContext = job.scopeContext.map((scope) => `${scope.kind}:${scope.id}`).join(', ');
     const candidateLines = (job.candidates ?? []).map((candidate) => {
       const topic = candidate.topicHint ? ` topic=${escapeBackticks(candidate.topicHint)}` : '';
-      return `- kind=${candidate.kind}${topic} confidence=${candidate.confidence} summary=${JSON.stringify(candidate.summary)}`;
+      const modality = candidate.modality ? ` modality=${candidate.modality}` : '';
+      const entities = candidate.entities?.length
+        ? ` entities=[${candidate.entities.join(',')}]`
+        : '';
+      return `- kind=${candidate.kind}${topic}${modality}${entities} confidence=${candidate.confidence} summary=${JSON.stringify(candidate.summary)}`;
     });
     const safeConversation = escapeBackticks(job.conversation);
     return `Memory scopes: ${scopeContext}
@@ -1168,8 +1173,8 @@ ${candidateLines.length > 0 ? candidateLines.join('\n') : '- none'}
 
 INSTRUCTION:
 - Call mama_search exactly once first.
-- If the conversation contains a decision, preference, fact, lesson, or superseding update, call mama_save exactly once.
-- If nothing should be saved, do not call mama_save.
+- If candidates are listed above, you MUST call mama_save for the most important candidate. Reuse an existing topic from mama_search results when the subject matches.
+- If no candidates are listed, save only if the conversation contains a decision, preference, fact, lesson, or superseding update.
 - Do not call resource discovery tools.
 - Do not ask follow-up questions.
 - After tool work finishes, respond with exactly DONE or SKIP.`;

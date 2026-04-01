@@ -764,6 +764,7 @@ async function handleMamaSearchRequest(
         confidence: (r.confidence ?? null) as number | null,
         similarity: (r.similarity ?? r.final_score ?? 0.5) as number,
         created_at: r.created_at as number,
+        modality: (r.modality ?? null) as string | null,
       }));
     }
 
@@ -813,6 +814,7 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
       decision: body.decision,
       reasoning: body.reasoning,
       confidence: body.confidence ?? 0.8,
+      modality: body.modality,
     });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1360,21 +1362,69 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           ? (body.scopes as Array<{ kind: string; id: string }>)
           : [];
 
+        // Regex extraction → memory agent pipeline:
+        // 1. Extract fact candidates using regex (fast, no LLM cost)
+        // 2. Pass candidates + conversation to memory agent for judgment
+        //    (agent does mama_search → topic reuse → mama_save with proper edges)
+        const conversationText = validMessages.map((m) => `${m.role}: ${m.content}`).join('\n');
+
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { ingestConversation } = require('@jungjaehoon/mama-core');
-        // Fire-and-forget: don't block the hook response
-        ingestConversation({
-          messages: validMessages as Array<{ role: 'user' | 'assistant'; content: string }>,
-          scopes: validScopes as Array<{
-            kind: 'global' | 'user' | 'channel' | 'project';
-            id: string;
-          }>,
-          source: { package: 'standalone' as const, source_type: 'memory-agent-hook' },
-          extract: { enabled: true },
-          sessionDate: body.sessionDate as string | undefined,
-        }).catch((err: Error) => {
-          console.error('[MemoryAgent] ingest failed:', err.message);
-        });
+        const { extractFacts } = require('@jungjaehoon/mama-core/memory/fact-extractor');
+        const regexFacts = extractFacts(
+          conversationText,
+          body.sessionDate as string | undefined
+        ) as Array<{
+          text: string;
+          kind: string;
+          label: string;
+          entityKey: string;
+        }>;
+
+        const candidates = regexFacts.map(
+          (f: {
+            text: string;
+            kind: string;
+            entityKey: string;
+            modality?: string;
+            entities?: string[];
+          }) => ({
+            kind: f.kind,
+            topicHint: f.entityKey,
+            confidence: 0.95,
+            summary: f.text,
+            modality: f.modality,
+            entities: f.entities,
+          })
+        );
+
+        if (options.auditConversation) {
+          // Route through memory agent for topic reuse + edge creation
+          options
+            .auditConversation({
+              conversation: conversationText,
+              scopes: validScopes,
+              candidates,
+            })
+            .catch((err: Error) => {
+              console.error('[MemoryAgent] audit failed:', err.message);
+            });
+        } else {
+          // Fallback: direct ingestConversation when memory agent unavailable
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { ingestConversation } = require('@jungjaehoon/mama-core');
+          ingestConversation({
+            messages: validMessages as Array<{ role: 'user' | 'assistant'; content: string }>,
+            scopes: validScopes as Array<{
+              kind: 'global' | 'user' | 'channel' | 'project';
+              id: string;
+            }>,
+            source: { package: 'standalone' as const, source_type: 'memory-agent-hook' },
+            extract: { enabled: true },
+            sessionDate: body.sessionDate as string | undefined,
+          }).catch((err: Error) => {
+            console.error('[MemoryAgent] ingest fallback failed:', err.message);
+          });
+        }
 
         res.writeHead(202, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ accepted: true, queued: validMessages.length }));

@@ -7,6 +7,8 @@ export type SaveCandidateKind =
   | 'profile_update'
   | 'change';
 
+export type FactModality = 'completed' | 'plan' | 'past_habit' | 'state' | 'preference';
+
 export interface SaveCandidate {
   id: string;
   kind: SaveCandidateKind;
@@ -20,4 +22,6 @@ export interface SaveCandidate {
   userId?: string;
   projectId?: string;
   createdAt: number;
+  modality?: FactModality;
+  entities?: string[];
 }

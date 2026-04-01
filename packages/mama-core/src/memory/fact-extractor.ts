@@ -18,48 +18,54 @@ import type { MemoryKind } from './types.js';
 // ── Fact detection patterns (user statements containing personal information) ──
 
 const FACT_PATTERNS = [
-  // Actions & events
-  /\bI\s+(just\s+)?(started|began|finished|completed|graduated|attended)\b/i,
-  /\bI\s+(just\s+)?(got|bought|purchased|acquired|received)\s+(a|an|my|the)\b/i,
-  /\bI\s+(just\s+)?(got|bought|purchased|acquired)\b/i,
-  /\bI\s+recently\s+(attended|went|visited|saw|watched|volunteered|completed|finished|made|baked)\b/i,
-  /\bI\s+went\s+(to|on)\b/i,
-  /\bI\s+visited\b/i,
-  /\bI\s+volunteered\b/i,
-  /\bI\s+ran\b/i,
-  // Current state
-  /\bI\s+(am\s+currently|'m\s+currently)\b/i,
-  /\bI\s+(am|'m)\s+(reading|watching|writing|playing|learning|training|working|living)\b/i,
-  /\bI\s+(work|live|play|run|do)\b/i,
-  /\bI'?ve\s+(made|baked|cooked|tried|been\s+doing|been\s+playing|been\s+training)\b/i,
-  // Duration & time
-  /\bI\s+spent\s+\d+\s+(day|days|week|weeks|hour|hours)\b/i,
+  // ── Broad 1st-person action (catches most user statements) ──
+  /\bI\s+(just\s+)?\w{2,}ed\b/i, // I + past tense verb (walked, attended, graduated...)
+  /\bI\s+(just\s+)?\w{2,}ght\b/i, // I + irregular past (bought, thought, brought...)
+  /\bI\s+went\b/i, // I went (for/to/on)
+  /\bI\s+ran\b/i, // I ran
+  /\bI\s+made\b/i, // I made
+  /\bI\s+got\b/i, // I got
+  /\bI\s+did\b/i, // I did
+  /\bI\s+spent\b/i, // I spent
+  /\bI\s+saw\b/i, // I saw
+
+  // ── Plans & intentions ──
+  /\bI\s+(plan|hope|want|need)\b/i,
+  /\bI'?m\s+(hoping|planning|thinking|considering|looking)\b/i,
+  /\bI'?d\s+(like|love|want)\b/i,
+
+  // ── Current state ──
+  /\bI\s+(am|'m)\s+\w+ing\b/i, // I am/I'm + verb-ing (reading, working, living...)
+  /\bI\s+(am|'m)\s+(a|an|the|currently)\b/i,
+  /\bI\s+(work|live|have|consider)\b/i,
+
+  // ── Past habits / ongoing ──
+  /\bI\s+used\s+to\b/i,
+  /\bI'?ve\s+been\b/i, // I've been doing/slacking/training...
   /\bI\s+was\s+in\s+[A-Z]/,
-  // Decisions & preferences
+
+  // ── Decisions & preferences ──
   /\bI\s+(prefer|always use|switched|changed|decided|chose)\b/i,
   /\bI\s+(much prefer|really like|don't like|hate)\b/i,
-  /\bwe\s+(just\s+)?(moved|switched|migrated|raised|launched|hired)\b/i,
-  /\bwe\s+(decided|chose)\b/i,
+
+  // ── We/our (team/company/family) ──
+  /\bwe\s+(just\s+)?\w{2,}ed\b/i, // we + past tense
+  /\bwe\s+(decided|chose|moved|switched)\b/i,
   /\bour\s+\w*\s*(team|record|score|league|anniversary|wedding|startup|company)\b/i,
   /\bwe'?re\s+\d+-\d+\b/i,
-  // Possessive facts
-  /\bmy\s+(startup|company|team|wife|husband|dog|cat|puppy|pet|car|house)\b/i,
-  // Assistant recommendations & suggestions
-  /\bI'?d?\s+recommend\b/i,
-  /\brecommend\s+(using|choosing|going\s+with|a\s+normalized)\b/i,
-  /\bI\s+suggest\b/i,
-  /\bfor\s+your\s+case\b/i,
-  // Specific quantities worth preserving
+
+  // ── Possessive facts ──
+  /\bmy\s+(startup|company|team|wife|husband|dog|cat|puppy|pet|car|house|record|degree)\b/i,
+
+  // ── Specific quantities (high-value signals) ──
   /\b\d+%\s*\w+\b/,
   /\$\d+[KMB]?\b/i,
   /\b\d+\s+(hours?|minutes?|months?|years?|days?|weeks?)\b/i,
-  // Especially + specific detail patterns
-  /\bespecially\b/i,
-  /\bspecifically\b/i,
-  // Korean patterns
+
+  // ── Korean patterns ──
   /결정했|선택했|시작했|변경했|전환했|이사했|입양했/,
   /선호해|좋아해|싫어해|항상 사용/,
-  /추천|권장|제안/,
+  /계획|예정|하려고|할거|생각중/,
 ];
 
 // ── Domain labels for classification ──
@@ -147,11 +153,15 @@ const DOMAIN_LABELS: Array<{ patterns: RegExp[]; label: string; kind: MemoryKind
 
 // ── Extraction functions ──
 
+import type { FactModality } from './types.js';
+
 export interface ExtractedFact {
   text: string;
   kind: MemoryKind;
   label: string;
   entityKey: string;
+  modality: FactModality;
+  entities: string[];
 }
 
 /**
@@ -191,9 +201,6 @@ export function extractFactSentences(text: string): string[] {
 }
 
 /**
- * Normalize a fact sentence: replace "I" with "User", trim.
- */
-/**
  * Normalize a fact sentence: replace first-person pronouns with "User".
  * Only normalizes when the sentence appears to be from user's perspective
  * (not assistant recommendations).
@@ -230,32 +237,59 @@ export function classifyFact(fact: string): { label: string; kind: MemoryKind } 
 
 /**
  * Generate stable entity key for supersedes tracking.
+ *
+ * Priority: entities (activity/proper nouns) > quoted strings > word-based fallback.
+ * When entities are available, use the primary entity as key so that facts about
+ * the same subject (e.g., "yoga") share a topic and trigger evolution rules.
  */
-export function generateEntityKey(fact: string): string {
-  const quoted = fact.match(/"([^"]+)"/)?.[1];
-  if (quoted) {
-    const verb =
-      fact
-        .match(
-          /\b(started|began|finished|completed|got|bought|purchased|attended|went|visited|switched|changed|adopted|raised)\b/i
-        )?.[1]
-        ?.toLowerCase() ?? 'fact';
-    return `${verb}_${quoted.toLowerCase().replace(/\s+/g, '_')}`.slice(0, 70);
+export function generateEntityKey(fact: string, entities?: string[]): string {
+  // Priority 1: Use extracted entities (most stable for evolution tracking)
+  if (entities?.length) {
+    // Filter out generic entities like days of the week, months
+    const generic = new Set([
+      'monday',
+      'tuesday',
+      'wednesday',
+      'thursday',
+      'friday',
+      'saturday',
+      'sunday',
+      'session',
+      'may',
+      'june',
+      'july',
+      'january',
+      'february',
+      'march',
+      'april',
+      'august',
+      'september',
+      'october',
+      'november',
+      'december',
+      'new',
+    ]);
+    const meaningful = entities.filter((e) => !generic.has(e));
+    if (meaningful.length > 0) {
+      return meaningful[0].replace(/\s+/g, '_').slice(0, 70);
+    }
   }
 
+  // Priority 2: Quoted strings
+  const quoted = fact.match(/"([^"]+)"/)?.[1];
+  if (quoted) {
+    return quoted.toLowerCase().replace(/\s+/g, '_').slice(0, 70);
+  }
+
+  // Priority 3: Proper nouns
   const proper = fact
     .match(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*/g)
     ?.filter((w) => !['User', 'By', 'The', 'In', 'On', 'For', 'And', 'But'].includes(w));
   if (proper?.length) {
-    const verb =
-      fact
-        .match(
-          /\b(started|finished|attended|bought|visited|went|graduated|completed|switched|changed|adopted|raised|moved|prefer)\b/i
-        )?.[1]
-        ?.toLowerCase() ?? 'fact';
-    return `${verb}_${proper[0].toLowerCase().replace(/\s+/g, '_')}`.slice(0, 70);
+    return proper[0].toLowerCase().replace(/\s+/g, '_').slice(0, 70);
   }
 
+  // Priority 4: Significant words fallback
   const words = fact
     .toLowerCase()
     .split(/\s+/)
@@ -266,6 +300,118 @@ export function generateEntityKey(fact: string): string {
     )
     .slice(0, 3);
   return words.join('_') || 'unknown';
+}
+
+/**
+ * Classify the modality (tense/intent) of a fact sentence.
+ * This determines HOW the fact relates to reality:
+ * - completed: user actually did this (past tense action)
+ * - plan: user intends to do this (future-oriented)
+ * - past_habit: user used to do this regularly
+ * - state: current attribute or status
+ * - preference: user's taste or choice
+ */
+export function classifyModality(sentence: string): FactModality {
+  // Preference first (overlaps with others)
+  if (/\b(prefer|always use|much prefer|really like|don't like|hate|favorite)\b/i.test(sentence)) {
+    return 'preference';
+  }
+  if (/선호|좋아해|싫어해|항상 사용/i.test(sentence)) {
+    return 'preference';
+  }
+
+  // Plan/intention
+  if (
+    /\b(plan|plans|planning|hoping|hope|want|wants|going to|thinking of|considering|would like|looking forward)\b/i.test(
+      sentence
+    )
+  ) {
+    return 'plan';
+  }
+
+  // Past habit
+  if (/\b(used to|have been|had been|'ve been)\b/i.test(sentence)) {
+    return 'past_habit';
+  }
+  if (/\bUser've been\b/i.test(sentence)) {
+    return 'past_habit';
+  }
+
+  // Completed action (past tense verbs)
+  if (
+    /\b(went|attended|bought|purchased|started|finished|completed|graduated|ran|made|baked|visited|adopted|raised|moved|switched|changed|volunteered|tried|spent|watched|saw|received|got)\b/i.test(
+      sentence
+    )
+  ) {
+    return 'completed';
+  }
+
+  // State/current (present tense being/having)
+  if (/\b(am|is|are|have|has|currently|consider|considers|live|work|works)\b/i.test(sentence)) {
+    return 'state';
+  }
+
+  return 'state'; // default
+}
+
+/**
+ * Extract key entities (proper nouns, quoted strings, significant nouns) from a sentence.
+ * Used for entity-based edge creation between facts that share entities.
+ */
+export function extractEntities(sentence: string): string[] {
+  const entities: string[] = [];
+
+  // Quoted strings
+  const quoted = sentence.match(/"([^"]+)"/g) || sentence.match(/'([^']+)'/g) || [];
+  for (const q of quoted) {
+    entities.push(q.replace(/['"]/g, '').toLowerCase());
+  }
+
+  // Proper nouns (capitalized words, excluding sentence starters and common words)
+  const skip = new Set([
+    'User',
+    'I',
+    'My',
+    'We',
+    'The',
+    'By',
+    'In',
+    'On',
+    'For',
+    'And',
+    'But',
+    'Do',
+    'If',
+    'So',
+    'Or',
+    'Also',
+    'Currently',
+    'Especially',
+    'Recently',
+  ]);
+  const proper = sentence.match(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*/g) || [];
+  for (const p of proper) {
+    if (!skip.has(p)) {
+      entities.push(p.toLowerCase());
+    }
+  }
+
+  // Key nouns after "my" (possessive)
+  const possessive = sentence.match(/\bmy\s+(\w+)/gi) || [];
+  for (const p of possessive) {
+    entities.push(p.replace(/^my\s+/i, '').toLowerCase());
+  }
+
+  // Activity/domain nouns (common subjects worth tracking)
+  const activities =
+    sentence.match(
+      /\b(yoga|jog|jogging|running|swimming|cycling|hiking|cooking|baking|painting|sculpting|piano|guitar|violin|weddings?|marathon|volleyball|basketball|soccer|tennis|chess|meditation|smoker|camera|degree)\b/gi
+    ) || [];
+  for (const a of activities) {
+    entities.push(a.toLowerCase());
+  }
+
+  return [...new Set(entities)];
 }
 
 /**
@@ -283,13 +429,17 @@ export function extractFacts(text: string, sessionDate?: string): ExtractedFact[
     const normalized = normalizeFact(sentence);
     const dated = injectDate(normalized, sessionDate);
     const { label, kind } = classifyFact(sentence);
-    const entityKey = generateEntityKey(sentence);
+    const modality = classifyModality(sentence);
+    const entities = extractEntities(sentence);
+    const entityKey = generateEntityKey(sentence, entities);
 
     facts.push({
       text: dated,
       kind,
       label,
       entityKey,
+      modality,
+      entities,
     });
   }
 
