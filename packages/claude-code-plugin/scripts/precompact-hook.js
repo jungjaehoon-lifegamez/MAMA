@@ -19,6 +19,7 @@ const {
   isMamaOsRunning,
   postToMemoryAgent,
   parseTranscriptMessages,
+  saveCheckpointToMamaOs,
 } = require('./memory-agent-client');
 
 const DECISION_PATTERNS = [
@@ -257,6 +258,20 @@ async function main() {
 
     // Wait for all posts to flush before exiting
     await Promise.all(posts);
+
+    // Auto-save checkpoint to MAMA OS (session state for next session)
+    const checkpointMessages = parseTranscriptMessages(transcript, 5);
+    const userMessages = checkpointMessages.filter((m) => m.role === 'user');
+    const assistantMessages = checkpointMessages.filter((m) => m.role === 'assistant');
+    const checkpointSummary = [
+      '# Auto-checkpoint (PreCompact)',
+      `User: ${userMessages.map((m) => m.content.slice(0, 100)).join('; ')}`,
+      `Assistant: ${assistantMessages.map((m) => m.content.slice(0, 100)).join('; ')}`,
+      unsaved.length > 0 ? `Unsaved decisions: ${unsaved.join('; ')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    await saveCheckpointToMamaOs(checkpointSummary, [], '');
   }
 
   // Output compaction prompt with safe flush

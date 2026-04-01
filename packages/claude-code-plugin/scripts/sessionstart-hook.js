@@ -140,25 +140,58 @@ async function warmDatabase() {
 }
 
 /**
- * Query recent decisions and last checkpoint
+ * Query recent decisions and last checkpoint.
+ * Tries MAMA OS API first (includes auto-collected data from all hooks),
+ * falls back to local ~/.claude/ DB if MAMA OS is not running.
  *
- * @returns {Promise<{decisions: Array, checkpoint: Object|null}>}
+ * @returns {Promise<{decisions: Array, checkpoint: Object|null, source: string}>}
  */
 async function queryRecentContext() {
+  // Try MAMA OS API first (has auto-collected decisions + checkpoints)
+  try {
+    const {
+      isMamaOsRunning,
+      searchMamaOs,
+      loadCheckpointFromMamaOs,
+    } = require('./memory-agent-client');
+
+    const running = await isMamaOsRunning();
+    if (running) {
+      const [searchResult, checkpoint] = await Promise.all([
+        searchMamaOs('recent decisions architecture code', 5),
+        loadCheckpointFromMamaOs(),
+      ]);
+      const decisions = (searchResult.results || []).map((r) => ({
+        id: r.id,
+        topic: r.topic,
+        decision: r.decision,
+        reasoning: r.reasoning,
+        outcome: r.outcome,
+        confidence: r.confidence,
+        created_at: r.created_at,
+      }));
+      info(
+        `[SessionStart] Context from MAMA OS API: ${decisions.length} decisions, checkpoint: ${checkpoint ? 'yes' : 'no'}`
+      );
+      return { decisions, checkpoint, source: 'mama-os' };
+    }
+  } catch (err) {
+    warn(`[SessionStart] MAMA OS API fallback: ${err.message}`);
+  }
+
+  // Fallback: local ~/.claude/ DB
   try {
     const { getAdapter } = require('@jungjaehoon/mama-core/memory-store');
     const adapter = getAdapter();
 
-    // Query recent 5 decisions (excluding checkpoints)
     const decisionsStmt = adapter.prepare(`
       SELECT id, topic, decision, reasoning, outcome, confidence, created_at
       FROM decisions
       ORDER BY created_at DESC
       LIMIT 5
     `);
-    const decisions = await decisionsStmt.all();
+    const decisions = decisionsStmt.all();
 
-    // Query last active checkpoint
     const checkpointStmt = adapter.prepare(`
       SELECT id, timestamp, summary, open_files, next_steps
       FROM checkpoints
@@ -166,12 +199,15 @@ async function queryRecentContext() {
       ORDER BY timestamp DESC
       LIMIT 1
     `);
-    const checkpoint = await checkpointStmt.get();
+    const checkpoint = checkpointStmt.get();
 
-    return { decisions, checkpoint };
+    info(
+      `[SessionStart] Context from local DB: ${decisions.length} decisions, checkpoint: ${checkpoint ? 'yes' : 'no'}`
+    );
+    return { decisions, checkpoint: checkpoint || null, source: 'local' };
   } catch (error) {
     warn(`[SessionStart] Failed to query recent context: ${error.message}`);
-    return { decisions: [], checkpoint: null };
+    return { decisions: [], checkpoint: null, source: 'none' };
   }
 }
 

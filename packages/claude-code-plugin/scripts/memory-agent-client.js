@@ -103,6 +103,125 @@ function postToMemoryAgent(messages, projectPath, sourceType) {
 }
 
 /**
+ * Save a checkpoint to MAMA OS.
+ * @returns {Promise<number|null>} Checkpoint ID or null on failure
+ */
+function saveCheckpointToMamaOs(summary, openFiles, nextSteps) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      summary: summary || '',
+      open_files: openFiles || [],
+      next_steps: nextSteps || '',
+    });
+
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: MAMA_PORT,
+        path: '/api/checkpoint/save',
+        method: 'POST',
+        timeout: 5000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed.id || null);
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * Search MAMA OS for relevant context (decisions + checkpoints).
+ * @returns {Promise<{results: Array, checkpoint: object|null}>}
+ */
+function searchMamaOs(query, limit) {
+  return new Promise((resolve) => {
+    const q = encodeURIComponent(query || '');
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: MAMA_PORT,
+        path: `/api/mama/search?q=${q}&limit=${limit || 5}`,
+        method: 'GET',
+        timeout: 2000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve({ results: [] });
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve({ results: [] }));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ results: [] });
+    });
+    req.end();
+  });
+}
+
+/**
+ * Load the latest checkpoint from MAMA OS.
+ * @returns {Promise<object|null>}
+ */
+function loadCheckpointFromMamaOs() {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: MAMA_PORT,
+        path: '/api/checkpoint/load',
+        method: 'GET',
+        timeout: 2000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed.checkpoint || parsed.data?.checkpoint || null);
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
+/**
  * Parse JSONL transcript content into conversation messages.
  * Handles both Claude Code format (type=user/assistant, content as array of blocks)
  * and simple format (role + content string).
@@ -160,4 +279,11 @@ function parseTranscriptMessages(content, maxPairs) {
   return messages.slice(-limit);
 }
 
-module.exports = { isMamaOsRunning, postToMemoryAgent, parseTranscriptMessages };
+module.exports = {
+  isMamaOsRunning,
+  postToMemoryAgent,
+  parseTranscriptMessages,
+  saveCheckpointToMamaOs,
+  searchMamaOs,
+  loadCheckpointFromMamaOs,
+};
