@@ -15,7 +15,11 @@ const fs = require('fs');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
-const { isMamaOsRunning, postToMemoryAgent } = require('./memory-agent-client');
+const {
+  isMamaOsRunning,
+  postToMemoryAgent,
+  parseTranscriptMessages,
+} = require('./memory-agent-client');
 
 // How many recent message pairs to send to memory agent
 const MAX_RECENT_PAIRS = 5;
@@ -56,58 +60,18 @@ async function readStdin() {
 
 /**
  * Read recent conversation from transcript JSONL file.
- * Extracts user + assistant text messages (skips thinking, tool_use, system).
+ * Delegates to shared parseTranscriptMessages for consistent parsing.
  */
 function readRecentTranscript(transcriptPath, maxPairs) {
   if (!transcriptPath) {
     return [];
   }
-
-  let content;
   try {
-    content = fs.readFileSync(transcriptPath, 'utf8');
+    const content = fs.readFileSync(transcriptPath, 'utf8');
+    return parseTranscriptMessages(content, maxPairs);
   } catch {
     return [];
   }
-
-  const messages = [];
-  const lines = content.trim().split('\n');
-
-  for (const line of lines) {
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
-    const type = entry.type;
-    if (type === 'user') {
-      // User message: content is plain string or in message.content
-      const text = typeof entry.content === 'string' ? entry.content : entry.message?.content || '';
-      if (text && text.length > 2) {
-        messages.push({ role: 'user', content: text.slice(0, 2000) });
-      }
-    } else if (type === 'assistant') {
-      // Assistant message: content is array of blocks, extract text blocks only
-      const blocks = Array.isArray(entry.content) ? entry.content : entry.message?.content || [];
-      const textParts = [];
-      for (const block of blocks) {
-        if (block.type === 'text' && block.text) {
-          textParts.push(block.text);
-        }
-      }
-      const text = textParts.join('\n');
-      if (text && text.length > 5) {
-        messages.push({ role: 'assistant', content: text.slice(0, 2000) });
-      }
-    }
-    // Skip: system, thinking, tool_use, tool_result, file-history-snapshot
-  }
-
-  // Return last N pairs
-  const limit = maxPairs * 2;
-  return messages.slice(-limit);
 }
 
 async function main() {

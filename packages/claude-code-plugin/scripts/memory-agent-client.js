@@ -94,4 +94,66 @@ function postToMemoryAgent(messages, projectPath, sourceType) {
   req.end();
 }
 
-module.exports = { isMamaOsRunning, postToMemoryAgent };
+/**
+ * Parse JSONL transcript content into conversation messages.
+ * Handles both Claude Code format (type=user/assistant, content as array of blocks)
+ * and simple format (role + content string).
+ *
+ * @param {string} content - Raw JSONL content
+ * @param {number} maxPairs - Maximum user+assistant pairs to return
+ * @returns {Array<{role: string, content: string}>}
+ */
+function parseTranscriptMessages(content, maxPairs) {
+  if (!content) {
+    return [];
+  }
+
+  const messages = [];
+  const lines = content.trim().split('\n');
+
+  for (const line of lines) {
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    // Claude Code transcript format: type field
+    const type = entry.type || entry.role;
+
+    if (type === 'user') {
+      const text = typeof entry.content === 'string' ? entry.content : entry.message?.content || '';
+      if (text && text.length > 2) {
+        messages.push({ role: 'user', content: text.slice(0, 2000) });
+      }
+    } else if (type === 'assistant') {
+      // Content may be: plain string, array of blocks (Claude Code), or nested in message
+      if (typeof entry.content === 'string') {
+        if (entry.content.length > 5) {
+          messages.push({ role: 'assistant', content: entry.content.slice(0, 2000) });
+        }
+      } else {
+        const blocks = Array.isArray(entry.content) ? entry.content : entry.message?.content || [];
+        if (Array.isArray(blocks)) {
+          const textParts = [];
+          for (const block of blocks) {
+            if (block.type === 'text' && block.text) {
+              textParts.push(block.text);
+            }
+          }
+          const text = textParts.join('\n');
+          if (text && text.length > 5) {
+            messages.push({ role: 'assistant', content: text.slice(0, 2000) });
+          }
+        }
+      }
+    }
+    // Skip: system, thinking, tool_use, tool_result, file-history-snapshot
+  }
+
+  const limit = maxPairs * 2;
+  return messages.slice(-limit);
+}
+
+module.exports = { isMamaOsRunning, postToMemoryAgent, parseTranscriptMessages };
