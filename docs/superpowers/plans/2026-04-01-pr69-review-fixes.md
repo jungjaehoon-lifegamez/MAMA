@@ -10,6 +10,8 @@
 
 ---
 
+## Implementation Tasks
+
 ### Task 1: Hook stdout safety — `flushAndExit` helper
 
 **Files:**
@@ -680,13 +682,13 @@ git commit -m "fix(tests): move vi.useRealTimers to afterEach to prevent timer l
 
 - [ ] **Step 1: Fix branch name (line 4)**
 
-```
+```markdown
 **Branch:** feat/v016-memory-engine
 ```
 
 - [ ] **Step 2: Clarify improvement scope (line 50)**
 
-```
+```markdown
 ## Key Improvements (Original 100Q: 58% → 88%)
 ```
 

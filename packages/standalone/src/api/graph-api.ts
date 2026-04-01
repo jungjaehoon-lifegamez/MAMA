@@ -1303,20 +1303,22 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           return true;
         }
 
-        // Validate message shape: each must have role + content strings
+        // Validate message shape: each must have valid role + content strings
+        const VALID_ROLES = new Set(['user', 'assistant', 'system']);
         const validMessages = (body.messages as unknown[]).filter(
           (m): m is { role: string; content: string } =>
             typeof m === 'object' &&
             m !== null &&
             typeof (m as Record<string, unknown>).role === 'string' &&
+            VALID_ROLES.has((m as Record<string, unknown>).role as string) &&
             typeof (m as Record<string, unknown>).content === 'string'
         );
-        if (validMessages.length === 0) {
+        if (validMessages.length !== (body.messages as unknown[]).length) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(
             JSON.stringify({
               error: true,
-              message: 'messages must contain objects with role and content strings',
+              message: `messages: ${(body.messages as unknown[]).length - validMessages.length} invalid item(s). Each must have role (user|assistant|system) and content (string).`,
             })
           );
           return true;
@@ -1324,15 +1326,28 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
         // Validate scopes shape if provided
         const VALID_SCOPE_KINDS = new Set(['global', 'user', 'channel', 'project']);
+        if (Array.isArray(body.scopes)) {
+          const validScopes = (body.scopes as unknown[]).filter(
+            (s): s is { kind: string; id: string } =>
+              typeof s === 'object' &&
+              s !== null &&
+              typeof (s as Record<string, unknown>).kind === 'string' &&
+              VALID_SCOPE_KINDS.has((s as Record<string, unknown>).kind as string) &&
+              typeof (s as Record<string, unknown>).id === 'string'
+          );
+          if (validScopes.length !== (body.scopes as unknown[]).length) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: true,
+                message: `scopes: ${(body.scopes as unknown[]).length - validScopes.length} invalid item(s). Each must have kind (global|user|channel|project) and id (string).`,
+              })
+            );
+            return true;
+          }
+        }
         const validScopes = Array.isArray(body.scopes)
-          ? (body.scopes as unknown[]).filter(
-              (s): s is { kind: string; id: string } =>
-                typeof s === 'object' &&
-                s !== null &&
-                typeof (s as Record<string, unknown>).kind === 'string' &&
-                VALID_SCOPE_KINDS.has((s as Record<string, unknown>).kind as string) &&
-                typeof (s as Record<string, unknown>).id === 'string'
-            )
+          ? (body.scopes as Array<{ kind: string; id: string }>)
           : [];
 
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1352,7 +1367,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         });
 
         res.writeHead(202, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ accepted: true, queued: body.messages.length }));
+        res.end(JSON.stringify({ accepted: true, queued: validMessages.length }));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         res.writeHead(500, { 'Content-Type': 'application/json' });

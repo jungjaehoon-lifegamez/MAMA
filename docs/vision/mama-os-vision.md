@@ -96,7 +96,7 @@ This is what Claude Desktop cannot do. Claude waits for you to ask. MAMA OS watc
 
 Connectors are domain-specialized agents that collect data from specific sources, manage raw archives, and feed structured facts to MAMA OS:
 
-```
+```text
 Connectors (delta polling + raw archive + domain-specific extraction)
   ┌─────────────┬──────────────┬────────────────┬──────────────┐
   │ Kagemusha   │ GWS          │ Claude Code    │ (future)     │
