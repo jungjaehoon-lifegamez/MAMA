@@ -19,6 +19,7 @@ import { buildExtractionPrompt, parseExtractionResponse } from './extraction-pro
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
 import type {
+  FactModality,
   MemoryKind,
   MemoryAgentBootstrap,
   MemoryAuditAck,
@@ -54,6 +55,10 @@ interface SaveMemoryInput {
   excludeIds?: string[];
   /** Real-world date the fact/decision pertains to (ISO 8601 date string) */
   event_date?: string;
+  /** Fact modality: completed/plan/past_habit/state/preference */
+  modality?: 'completed' | 'plan' | 'past_habit' | 'state' | 'preference';
+  /** Key entities mentioned in the fact (for entity-based edge creation) */
+  entities?: string[];
 }
 
 interface RecallMemoryOptions {
@@ -101,6 +106,7 @@ function toMemoryRecord(
     scopes,
     source: savedSource ?? fallbackSource,
     event_date: row.event_date ? String(row.event_date) : undefined,
+    modality: row.modality ? String(row.modality) : undefined,
     created_at: row.created_at as number | string,
     updated_at: (row.updated_at as number | string) ?? (row.created_at as number | string),
   };
@@ -229,8 +235,21 @@ function stemToken(token: string): string {
   if (token.length <= 4) return token;
   // Order matters: try longest suffix first
   if (token.endsWith('ies') && token.length > 4) return token.slice(0, -3) + 'y';
-  if (token.endsWith('ing') && token.length > 5) return token.slice(0, -3);
-  if (token.endsWith('ed') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('ing') && token.length > 5) {
+    const base = token.slice(0, -3);
+    // Dedup doubled consonant: jogging→jog, running→run, swimming→swim
+    if (base.length >= 2 && base[base.length - 1] === base[base.length - 2]) {
+      return base.slice(0, -1);
+    }
+    return base;
+  }
+  if (token.endsWith('ed') && token.length > 4) {
+    const base = token.slice(0, -2);
+    if (base.length >= 2 && base[base.length - 1] === base[base.length - 2]) {
+      return base.slice(0, -1);
+    }
+    return base;
+  }
   if (token.endsWith('s') && !token.endsWith('ss')) return token.slice(0, -1);
   return token;
 }
@@ -428,7 +447,13 @@ export async function saveMemory(
   // Cross-topic relationships are created explicitly by agents or extraction LLM.
 
   const evolution = resolveMemoryEvolution({
-    incoming: { topic: input.topic, summary: input.summary, kind: input.kind },
+    incoming: {
+      topic: input.topic,
+      summary: input.summary,
+      kind: input.kind,
+      modality: input.modality,
+      entities: input.entities,
+    },
     existing: existingCandidates.map((c) => ({
       ...c,
       kind: (c.kind || 'fact') as MemoryRecord['kind'],
@@ -463,7 +488,9 @@ export async function saveMemory(
         `
           UPDATE decisions
           SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?, updated_at = ?,
-              event_date = COALESCE(?, event_date)
+              event_date = COALESCE(?, event_date),
+              modality = COALESCE(?, modality),
+              entities = COALESCE(?, entities)
           WHERE id = ?
         `
       )
@@ -475,6 +502,8 @@ export async function saveMemory(
         JSON.stringify({ source: input.source }),
         now,
         input.event_date ?? null,
+        input.modality ?? null,
+        input.entities ? JSON.stringify(input.entities) : null,
         id
       );
 
@@ -529,6 +558,32 @@ export async function saveMemory(
   return { success: true, id };
 }
 
+/**
+ * Detect query modality intent from the query text.
+ * Used by recallMemory and suggest to boost matching modality facts.
+ */
+export function detectQueryModality(query: string): FactModality | null {
+  if (
+    /\b(did i|have i|i attended|i went|i bought|i finished|i completed|i graduated|how many.*did)\b/i.test(
+      query
+    )
+  ) {
+    return 'completed';
+  }
+  if (
+    /\b(i'?m\s+planning|i\s+plan to|i'?m\s+going to|i\s+want to|i'?m\s+hoping to)\b/i.test(query)
+  ) {
+    return 'plan';
+  }
+  if (/\b(what is my current|what am i|my current record|my current status)\b/i.test(query)) {
+    return 'state';
+  }
+  if (/\b(i prefer|my favorite|i always use)\b/i.test(query)) {
+    return 'preference';
+  }
+  return null;
+}
+
 export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSnapshot> {
   const records = await loadScopedMemories(scopes);
   return classifyProfileEntries(records);
@@ -577,6 +632,8 @@ export async function recallMemory(
       subQueries.push(...parts);
     }
   }
+
+  const queryModality = detectQueryModality(query);
 
   // Hybrid search: vector + BM25/lexical in parallel, fused with RRF
   await initDB();
@@ -639,7 +696,8 @@ export async function recallMemory(
           created_at: result.created_at ?? Date.now(),
           updated_at: result.created_at ?? Date.now(),
           event_date: (result as unknown as { event_date?: string }).event_date,
-        });
+          modality: (result as unknown as { modality?: string }).modality,
+        } as MemoryRecord);
       }
     } // end sub-query loop
   } catch (vectorErr) {
@@ -708,7 +766,8 @@ export async function recallMemory(
       ]);
       const ftsTokens = getLexicalQueryTokens(query)
         .map((t) => stemToken(t))
-        .filter((t) => !FTS5_NOISE_WORDS.has(t));
+        .filter((t) => !FTS5_NOISE_WORDS.has(t))
+        .map((t) => `${t}*`); // Prefix match: "jog*" matches "jog", "jogging", etc.
       const ftsQuery = ftsTokens.length > 0 ? ftsTokens.join(' OR ') : query;
       const ftsResults = await fts5Search(ftsQuery, lexicalLimit);
       if (ftsResults.length > 0) {
@@ -725,7 +784,7 @@ export async function recallMemory(
           const row = adapter
             .prepare(
               `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
-                    trust_context, kind, status, summary, event_date
+                    trust_context, kind, status, summary, event_date, modality, entities
              FROM decisions WHERE id = ?`
             )
             .get(ftsRow.id) as Record<string, unknown> | undefined;
@@ -858,6 +917,21 @@ export async function recallMemory(
     // Kind boost: slight preference for stable kinds (tie-breaker only)
     if (rec.kind === 'preference' || rec.kind === 'constraint') {
       entry.score *= 1.05;
+    }
+
+    // Modality boost: match query intent to fact modality.
+    // "did I do", "have I attended" → completed facts ranked higher
+    // "what am I planning" → plan facts ranked higher
+    const recModality = rec.modality;
+    if (recModality && queryModality) {
+      if (recModality === queryModality) {
+        entry.score *= 1.15; // 15% boost for matching modality
+      } else if (
+        queryModality === 'completed' &&
+        (recModality === 'plan' || recModality === 'past_habit')
+      ) {
+        entry.score *= 0.85; // 15% penalty: query asks "did" but fact is plan/habit
+      }
     }
   }
 
@@ -1058,7 +1132,7 @@ export async function ingestMemory(
         .replace(/^_+|_+$/g, '') || 'ingested_memory',
     kind: 'fact',
     summary: normalized.slice(0, 500),
-    details: `Raw conversation: ${input.content}`,
+    details: normalized,
     scopes: input.scopes ?? [],
     source: input.source,
   });
@@ -1171,15 +1245,24 @@ export async function ingestConversation(
 
   let units: ExtractedMemoryUnit[];
 
-  // Stage 1: Regex-based fact extraction (hallucination-free)
-  // Skip regex when extractionFn is overridden (test mode / custom extractors)
-  const isCustomExtractor = extractionFn !== callExtractionLLM;
-  let regexFacts: Array<{ text: string; kind: MemoryKind; label: string; entityKey: string }> = [];
+  // Stage 1: Regex-based fact extraction (always runs — hallucination-free, fast)
+  let regexFacts: Array<{
+    text: string;
+    kind: MemoryKind;
+    label: string;
+    entityKey: string;
+    modality: FactModality;
+    entities: string[];
+  }> = [];
 
-  if (!isCustomExtractor) {
+  try {
     const { extractFacts } = await import('./fact-extractor.js');
     regexFacts = extractFacts(conversationText, input.sessionDate);
-    info(`[memory] regex extracted ${regexFacts.length} facts`);
+    info(
+      `[memory] regex extracted ${regexFacts.length} facts, topics: ${regexFacts.map((f) => f.entityKey).join(', ')}`
+    );
+  } catch {
+    // fact-extractor not available — fall through to LLM
   }
 
   if (regexFacts.length > 0) {
@@ -1188,8 +1271,10 @@ export async function ingestConversation(
       kind: f.kind,
       topic: f.entityKey,
       summary: f.text.slice(0, 500),
-      details: conversationText,
+      details: f.text,
       confidence: 0.95,
+      modality: f.modality,
+      entities: f.entities,
     }));
   } else {
     // Stage 2: LLM/custom extractor — regex found nothing or custom fn set
@@ -1274,6 +1359,8 @@ export async function ingestConversation(
         scopes: input.scopes,
         source: input.source,
         event_date: input.sessionDate,
+        modality: unit.modality,
+        entities: unit.entities,
         excludeIds: batchSavedIds,
       });
 

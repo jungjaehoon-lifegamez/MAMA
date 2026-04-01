@@ -28,6 +28,7 @@ const recallMemoryMock = vi.fn(async () => ({
 vi.mock('../../src/memory/api.js', () => ({
   saveMemory: saveMemoryMock,
   recallMemory: recallMemoryMock,
+  detectQueryModality: vi.fn(() => null),
   buildProfile: vi.fn(),
   ingestMemory: vi.fn(),
   evolveMemory: vi.fn(),

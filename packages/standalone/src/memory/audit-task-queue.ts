@@ -21,32 +21,13 @@ export interface MemoryAuditAckLike {
 
 type AuditWorker = (job: MemoryAuditJob) => Promise<MemoryAuditAckLike>;
 
-const AUDIT_TIMEOUT_MS = parseInt(process.env.MAMA_AUDIT_TIMEOUT_MS || '30000', 10);
-
 export class AuditTaskQueue {
   private tail: Promise<void> = Promise.resolve();
 
   constructor(private readonly worker: AuditWorker) {}
 
   async enqueue(job: MemoryAuditJob): Promise<MemoryAuditAckLike> {
-    const run = this.tail.then(() => {
-      return new Promise<MemoryAuditAckLike>((resolve, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error('Memory audit timed out')),
-          AUDIT_TIMEOUT_MS
-        );
-        this.worker(job).then(
-          (result) => {
-            clearTimeout(timer);
-            resolve(result);
-          },
-          (err) => {
-            clearTimeout(timer);
-            reject(err);
-          }
-        );
-      });
-    });
+    const run = this.tail.then(() => this.worker(job));
     this.tail = run.then(
       () => undefined,
       () => undefined

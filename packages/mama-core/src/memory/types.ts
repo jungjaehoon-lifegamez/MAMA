@@ -64,6 +64,8 @@ export interface MemoryRecord {
   };
   /** Real-world date the fact/decision pertains to (ISO 8601 date string, e.g. "2026-03-31") */
   event_date?: string;
+  /** Fact modality: completed/plan/past_habit/state/preference */
+  modality?: string;
   created_at: number | string;
   updated_at: number | string;
 }
@@ -324,12 +326,16 @@ export interface IngestConversationInput {
   sessionDate?: string;
 }
 
+export type FactModality = 'completed' | 'plan' | 'past_habit' | 'state' | 'preference';
+
 export interface ExtractedMemoryUnit {
   kind: MemoryKind;
   topic: string;
   summary: string;
   details: string;
   confidence: number;
+  modality?: FactModality;
+  entities?: string[];
   relates_to?: {
     id: string;
     type: 'supersedes' | 'builds_on' | 'debates';

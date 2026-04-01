@@ -1,9 +1,16 @@
-import type { MemoryEdge, MemoryRecord } from './types.js';
+import type { MemoryEdge, MemoryRecord, FactModality } from './types.js';
 
 interface EvolutionInput {
-  incoming: Pick<MemoryRecord, 'topic' | 'summary' | 'kind'>;
+  incoming: Pick<MemoryRecord, 'topic' | 'summary' | 'kind'> & {
+    modality?: FactModality;
+    entities?: string[];
+  };
   existing: Array<
-    Pick<MemoryRecord, 'id' | 'topic' | 'summary' | 'kind'> & { _semanticMatch?: boolean }
+    Pick<MemoryRecord, 'id' | 'topic' | 'summary' | 'kind'> & {
+      _semanticMatch?: boolean;
+      modality?: FactModality;
+      entities?: string[];
+    }
   >;
 }
 
@@ -87,21 +94,49 @@ function summaryOverlapRatio(left: string, right: string): number {
 }
 
 /**
+ * Check if two facts share at least one entity.
+ */
+function hasSharedEntity(a?: string[], b?: string[]): boolean {
+  if (!a?.length || !b?.length) return false;
+  const setB = new Set(b);
+  return a.some((e) => setB.has(e));
+}
+
+/**
+ * Modality transition rules for supersedes detection.
+ * When facts share an entity and modality transitions, the newer fact supersedes.
+ *
+ * plan → completed: plan was executed
+ * past_habit → state: habit changed
+ * past_habit → completed: resumed/changed habit
+ * state → state: status updated
+ * plan → plan: plan revised
+ */
+const SUPERSEDE_TRANSITIONS = new Set([
+  'plan→completed',
+  'past_habit→state',
+  'past_habit→completed',
+  'state→state',
+  'plan→plan',
+  'state→completed',
+]);
+
+/**
  * Resolve how an incoming memory relates to existing memories.
  *
- * Supersede rules (conservative — avoid information loss):
- *   1. Raw → Extracted: structured fact replaces raw conversation (same topic, raw kind)
- *   2. Same fact update: same topic + high summary overlap (≥0.6) between two extracted facts
- *
- * Everything else → builds_on (preserves independent facts under same topic)
+ * Rules (priority order):
+ *   1. Raw → Extracted: structured fact replaces raw conversation (same topic)
+ *   2. Modality transition + shared entity: supersedes (plan→completed, state→state, etc.)
+ *   3. Same topic + high summary overlap: supersedes (fact update)
+ *   4. Same topic + low overlap: builds_on (independent facts under same topic)
+ *   5. Cross-topic: no auto-edge (agent creates these explicitly)
  */
 export function resolveMemoryEvolution(input: EvolutionInput): EvolutionResult {
   const edges: MemoryEdge[] = [];
 
   for (const existing of input.existing) {
     if (existing.topic === input.incoming.topic) {
-      // Rule 1: Raw → Extracted supersede (ingestConversation saves raw first, then extracted)
-      // Raw records have kind='fact' but summary starts with conversation text (role prefixes)
+      // Rule 1: Raw → Extracted supersede
       const existingIsRaw =
         existing.kind === 'fact' && /^(user:|assistant:)/i.test(existing.summary.trim());
 
@@ -115,9 +150,25 @@ export function resolveMemoryEvolution(input: EvolutionInput): EvolutionResult {
         continue;
       }
 
-      // Rule 2: Same fact update — supersede if summaries share meaningful overlap.
-      // Threshold 0.3 balances: "Use SQLite" → "Switch to PostgreSQL" (same topic, genuine update)
-      // vs "User's cat Luna" / "User's wedding plan" (same topic, independent facts).
+      // Rule 2: Modality transition + shared entity → supersedes
+      if (
+        existing.modality &&
+        input.incoming.modality &&
+        hasSharedEntity(input.incoming.entities, existing.entities)
+      ) {
+        const transition = `${existing.modality}→${input.incoming.modality}`;
+        if (SUPERSEDE_TRANSITIONS.has(transition)) {
+          edges.push({
+            from_id: 'incoming',
+            to_id: existing.id,
+            type: 'supersedes',
+            reason: `Modality transition: ${transition}`,
+          });
+          continue;
+        }
+      }
+
+      // Rule 3: Same fact update — supersede if summaries share meaningful overlap
       const overlap = summaryOverlapRatio(existing.summary, input.incoming.summary);
       if (overlap >= 0.3) {
         edges.push({
@@ -129,7 +180,7 @@ export function resolveMemoryEvolution(input: EvolutionInput): EvolutionResult {
         continue;
       }
 
-      // Different content under same topic → independent facts, link as builds_on
+      // Rule 4: Different content under same topic → independent facts
       edges.push({
         from_id: 'incoming',
         to_id: existing.id,
@@ -139,10 +190,8 @@ export function resolveMemoryEvolution(input: EvolutionInput): EvolutionResult {
       continue;
     }
 
-    // Cross-topic semantic edges removed: they produced 87% noise at scale
-    // (353/405 builds_on edges were semantic-only, connecting unrelated facts).
-    // Cross-topic relationships should be created explicitly by the agent
-    // via reasoning="builds_on: <id>" in /mama:decision or by extraction LLM.
+    // Rule 5: Cross-topic — no auto-edge
+    // Agent creates these explicitly via mama_save with reasoning
   }
 
   return { edges };
