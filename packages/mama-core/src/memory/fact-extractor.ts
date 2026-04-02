@@ -339,7 +339,7 @@ export function classifyModality(sentence: string): FactModality {
 
   // Completed action (past tense verbs)
   if (
-    /\b(went|attended|bought|purchased|started|finished|completed|graduated|ran|made|baked|visited|adopted|raised|moved|switched|changed|volunteered|tried|spent|watched|saw|received|got)\b/i.test(
+    /\b(went|attended|bought|purchased|started|finished|completed|graduated|ran|made|baked|visited|adopted|raised|moved|switched|changed|volunteered|tried|spent|watched|saw|received|got|participated|assisted|joined|signed|enrolled|registered|donated|organized|hosted|performed|presented|delivered|submitted|returned|redeemed|ordered|assembled|installed|cooked|wore|drove|flew|hiked|swam|cycled|walked|played|won|lost|earned|sold|paid|rented)\b/i.test(
       sentence
     )
   ) {
