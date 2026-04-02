@@ -242,26 +242,48 @@ class PersistentSession {
 // ─── Code extraction (same patterns) ─────────────────────────────────────────
 
 const FACT_PATTERNS = [
-  /\bI\s+(just\s+)?(started|began|finished|completed|graduated|attended)\b/i,
-  /\bI\s+(just\s+)?(got|bought|purchased|acquired|received)\s+(a|an|my|the)\b/i,
-  /\bI\s+(just\s+)?(got|bought|purchased|acquired)\b/i,
-  /\bI\s+(am\s+currently|'m\s+currently)\b/i,
-  /\bI\s+(am|'m)\s+(reading|watching|writing|playing|learning|training|working)\b/i,
-  /\bI\s+recently\s+(attended|went|visited|saw|watched|volunteered|completed|finished|made|baked)\b/i,
-  /\bI\s+went\s+(to|on|for)\b/i,
-  /\bI\s+visited\b/i,
-  /\bI\s+volunteered\b/i,
-  /\bI\s+(work|live|play|run|do)\b/i,
-  /\bI\s+spent\s+\d+\s+(day|days|week|weeks|hour|hours)\b/i,
+  // ── Broad 1st-person action (catches most user statements) ──
+  /\bI\s+(just\s+)?\w{2,}ed\b/i, // I + past tense verb (walked, attended, graduated...)
+  /\bI\s+(just\s+)?\w{2,}ght\b/i, // I + irregular past (bought, thought, brought...)
+  /\bI\s+went\b/i,
+  /\bI\s+ran\b/i,
+  /\bI\s+made\b/i,
+  /\bI\s+got\b/i,
+  /\bI\s+did\b/i,
+  /\bI\s+spent\b/i,
+  /\bI\s+saw\b/i,
+  /\bI\s+wore\b/i,
+  /\bI\s+took\b/i,
+  /\bI\s+gave\b/i,
+  /\bI\s+had\b/i,
+  /\bI\s+remember\b/i, // "I remember buying..."
+  // ── Plans & intentions ──
+  /\bI\s+(plan|hope|want|need)\b/i,
+  /\bI'?m\s+(hoping|planning|thinking|considering|looking)\b/i,
+  /\bI'?d\s+(like|love|want)\b/i,
+  // ── Current state ──
+  /\bI\s+(am|'m)\s+\w+ing\b/i,
+  /\bI\s+(am|'m)\s+(a|an|the|currently)\b/i,
+  /\bI\s+(work|live|have|consider)\b/i,
+  // ── Past habits / ongoing ──
+  /\bI\s+used\s+to\b/i,
+  /\bI'?ve\s+been\b/i,
   /\bI\s+was\s+(just\s+)?(in|at|talking)\b/i,
-  /\bI'?ve\s+(made|baked|cooked|tried|been\s+\w+ing)\b/i, // expanded: been + any verb-ing
-  /\bI\s+(upgraded|assembled|set\s+up|replaced|installed|organized)\b/i,
-  /\bI\s+(usually|normally|typically)\b/i,
-  /\bI\s+finally\s+\w+/i,
-  /\bI\s+(love|like|prefer|enjoy)\s+\w+/i,
-  /\bmy\s+(new|sister|brother|cousin|friend|mom|dad)\b.*\b[A-Z][a-z]{2,}\b/i,
+  /\bI\s+(usually|normally|typically|finally)\b/i,
+  // ── Decisions & preferences ──
+  /\bI\s+(prefer|always use|switched|changed|decided|chose)\b/i,
+  /\bI\s+(love|like|enjoy|really like|much prefer|don't like|hate)\b/i,
+  // ── We/our ──
+  /\bwe\s+(just\s+)?\w{2,}ed\b/i,
+  /\bwe\s+(decided|chose|moved|switched)\b/i,
   /\bour\s+\w*\s*(team|record|score|league)\b/i,
   /\bwe'?re\s+\d+-\d+\b/i,
+  // ── Possessive facts ──
+  /\bmy\s+(new|sister|brother|cousin|friend|mom|dad|wife|husband|dog|cat)\b/i,
+  // ── Specific quantities (high-value signals) ──
+  /\$\d+[KMB]?\b/i, // dollar amounts
+  /\b\d+%\s*\w+\b/, // percentages
+  /\b\d+\s+(hours?|minutes?|months?|years?|days?|weeks?)\b/i, // durations
   /\b\d+[-\s]+(minute|hour|day|week|month|year)\b.*\b(commute|trip|jog|walk|run|drive)\b/i,
 ]
 
