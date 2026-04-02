@@ -1412,19 +1412,100 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       const expandedRecords = bundle.graph_context.expanded.filter((m) => !seenIds.has(m.id));
       const allMemories = [...bundle.memories, ...expandedRecords];
 
-      // Content-based dedup: when multiple records have near-identical summaries,
-      // keep only the most recent one. This prevents the same fact (stored multiple
-      // times via code regex + Sonnet extraction) from dominating search results.
-      const dedupKey = (s: string) =>
-        s
+      // Content-based dedup: extract key nouns and compare.
+      // "User recently got a new coffee table" and "User just got a coffee table"
+      // both reduce to the same key nouns → dedup as same fact.
+      const DEDUP_STOP = new Set([
+        'user',
+        'the',
+        'a',
+        'an',
+        'and',
+        'or',
+        'but',
+        'in',
+        'on',
+        'at',
+        'to',
+        'for',
+        'of',
+        'by',
+        'with',
+        'from',
+        'is',
+        'are',
+        'was',
+        'were',
+        'be',
+        'been',
+        'has',
+        'have',
+        'had',
+        'do',
+        'does',
+        'did',
+        'will',
+        'would',
+        'can',
+        'could',
+        'should',
+        'may',
+        'might',
+        'just',
+        'recently',
+        'also',
+        'got',
+        'new',
+        'really',
+        'very',
+        'about',
+        'some',
+        'think',
+        'like',
+        'been',
+        'going',
+        'getting',
+        'doing',
+        "user's",
+        'that',
+        'this',
+        'it',
+        'my',
+        'its',
+        'their',
+        'our',
+        'your',
+        'which',
+        'where',
+        'when',
+        'how',
+        'what',
+        'who',
+        'so',
+        'if',
+        'not',
+        'no',
+        'all',
+        'way',
+        'said',
+        'speaking',
+        'actually',
+        'still',
+      ]);
+      const dedupKey = (s: string) => {
+        const words = s
           .toLowerCase()
           .replace(/\d{4}[-/]\d{2}[-/]\d{2}:?\s*/g, '')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 150);
+          .replace(/[^a-z0-9\s]/g, '')
+          .split(/\s+/)
+          .filter((w) => w.length > 2 && !DEDUP_STOP.has(w))
+          .sort();
+        return words.slice(0, 8).join(' ');
+      };
       const dedupMap = new Map<string, (typeof allMemories)[0]>();
       for (const m of allMemories) {
         const key = dedupKey(m.summary);
+        if (!key) continue; // skip empty keys
         const existing = dedupMap.get(key);
         if (!existing || (m.created_at ?? 0) > (existing.created_at ?? 0)) {
           dedupMap.set(key, m);
