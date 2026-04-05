@@ -14,6 +14,7 @@ import { runIngestPhase } from "./phases/ingest"
 import { runIndexingPhase } from "./phases/indexing"
 import { runSearchPhase } from "./phases/search"
 import { runAnswerPhase } from "./phases/answer"
+import { runAgenticAnswerPhase } from "./phases/answer-agentic"
 import { runEvaluatePhase } from "./phases/evaluate"
 import { generateReport, saveReport, printReport } from "./phases/report"
 
@@ -315,13 +316,23 @@ export class Orchestrator {
       }
 
       if (phases.includes("answer")) {
-        await runAnswerPhase(
-          benchmark,
-          checkpoint,
-          this.checkpointManager,
-          targetQuestionIds,
-          provider
-        )
+        if (process.env.MEMORYBENCH_AGENTIC_SEARCH === "true") {
+          await runAgenticAnswerPhase(
+            provider,
+            benchmark,
+            checkpoint,
+            this.checkpointManager,
+            targetQuestionIds
+          )
+        } else {
+          await runAnswerPhase(
+            benchmark,
+            checkpoint,
+            this.checkpointManager,
+            targetQuestionIds,
+            provider
+          )
+        }
       }
 
       if (phases.includes("evaluate")) {
