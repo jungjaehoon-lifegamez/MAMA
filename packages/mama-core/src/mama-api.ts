@@ -73,6 +73,8 @@ interface SaveParams {
   trust_context?: Record<string, unknown> | null;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
   scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
+  /** ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15") */
+  event_date?: string | null;
 }
 
 /**
@@ -498,6 +500,7 @@ async function save({
   trust_context: _trust_context = null,
   is_static,
   scopes: inputScopes,
+  event_date,
 }: SaveParams): Promise<SaveResult> {
   // Validate required fields
   if (!topic || typeof topic !== 'string') {
@@ -571,6 +574,7 @@ async function save({
       package: 'mama-core',
       source_type: 'legacy_save',
     },
+    eventDate: event_date ?? undefined,
   });
   logComplete(`Decision saved: ${decisionId.substring(0, 20)}...`);
 

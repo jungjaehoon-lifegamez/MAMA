@@ -52,8 +52,36 @@ test("buildContextString should compact large provider results", () => {
       id: "7",
       topic: "bench_target_session_7",
       score: 0.33,
-      content: "user: This seventh result should still be omitted.",
+      content: "user: This seventh result is now included (MAX_CONTEXT_RESULTS=10).",
       created_at: 4,
+    },
+    {
+      id: "8",
+      topic: "bench_target_session_8",
+      score: 0.29,
+      content: "user: Eighth result.",
+      created_at: 3,
+    },
+    {
+      id: "9",
+      topic: "bench_target_session_9",
+      score: 0.26,
+      content: "user: Ninth result.",
+      created_at: 2,
+    },
+    {
+      id: "10",
+      topic: "bench_target_session_10",
+      score: 0.24,
+      content: "user: Tenth result.",
+      created_at: 1,
+    },
+    {
+      id: "11",
+      topic: "bench_target_session_11",
+      score: 0.22,
+      content: "user: This eleventh result should be omitted.",
+      created_at: 0,
     },
   ]
 
@@ -64,7 +92,8 @@ test("buildContextString should compact large provider results", () => {
   assert.match(promptContext, /numeric_clues/)
   assert.match(promptContext, /bench_target_session_5/)
   assert.match(promptContext, /bench_target_session_6/)
-  assert.doesNotMatch(promptContext, /bench_target_session_7/)
+  assert.match(promptContext, /bench_target_session_7/)
+  assert.doesNotMatch(promptContext, /bench_target_session_11/)
   assert.ok(promptContext.length < 9000)
 })
 

@@ -318,6 +318,12 @@ export interface IngestConversationInput {
   };
   /** Prefix for all topics created by this ingestion (e.g. "bench_questionId_") for data isolation */
   topicPrefix?: string;
+  /**
+   * ISO 8601 date string (e.g. "2023-01-15") representing when the conversation actually occurred.
+   * When provided, all memories extracted from this ingestion will have their event_date set to this value.
+   * Defaults to created_at (ingestion time) if omitted.
+   */
+  sessionDate?: string;
 }
 
 export interface ExtractedMemoryUnit {

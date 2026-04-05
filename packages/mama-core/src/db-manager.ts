@@ -412,6 +412,8 @@ export interface DecisionInput {
   evidence?: string | null;
   alternatives?: string | null;
   risks?: string | null;
+  /** ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15") */
+  event_date?: string | null;
 }
 
 /**
@@ -461,8 +463,8 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
           confidence, created_at, updated_at,
           needs_validation, validation_attempts, last_validated_at, usage_count,
           trust_context, usage_success, usage_failure, time_saved,
-          evidence, alternatives, risks
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          evidence, alternatives, risks, event_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const insertResult = stmt.run(
@@ -494,7 +496,8 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
         decision.time_saved || 0,
         decision.evidence || null,
         decision.alternatives || null,
-        decision.risks || null
+        decision.risks || null,
+        decision.event_date || null
       );
 
       const rowid = Number(insertResult.lastInsertRowid);
