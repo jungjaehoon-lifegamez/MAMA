@@ -37,9 +37,9 @@ Search strategy:
 
 Rules:
 - You may search up to ${MAX_TOOL_CALLS} times total
-- After gathering enough information, provide a direct, personalized answer using what you found
-- If the context doesn't directly answer but is related, use it to give a personalized response
-- Only say "I don't know" after exhausting all searches
+- ONLY use information explicitly found in search results — do NOT infer, guess, or add facts not in the results
+- If the context doesn't directly answer but is related, use only what was actually found to personalize
+- Only say "I don't know" after exhausting all searches with no relevant results
 - Do NOT include tool_call blocks in your final answer`
 
 async function callMamaSearch(
