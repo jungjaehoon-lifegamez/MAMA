@@ -51,6 +51,11 @@ interface SaveMemoryInput {
   };
   /** IDs to exclude from supersede candidates (e.g., sibling facts from same ingestion batch) */
   excludeIds?: string[];
+  /**
+   * ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15").
+   * Stored in the event_date column. Defaults to created_at if omitted.
+   */
+  eventDate?: string;
 }
 
 interface RecallMemoryOptions {
@@ -65,6 +70,7 @@ interface IngestMemoryInput {
   content: string;
   scopes?: MemoryScopeRef[];
   source: SaveMemoryInput['source'];
+  eventDate?: string;
 }
 
 function buildDecisionId(topic: string): string {
@@ -477,6 +483,7 @@ export async function saveMemory(
     created_at: now,
     updated_at: now,
     trust_context: JSON.stringify({ source: input.source }),
+    event_date: input.eventDate ?? null,
   });
 
   // Pre-resolve scope IDs before the synchronous transaction
@@ -1030,6 +1037,7 @@ export async function ingestMemory(
     details: normalized,
     scopes: input.scopes ?? [],
     source: input.source,
+    eventDate: input.eventDate,
   });
 }
 
@@ -1127,6 +1135,7 @@ export async function ingestConversation(
     content: topicPrefix ? `${topicPrefix}${conversationText}` : conversationText,
     scopes: input.scopes,
     source: input.source,
+    eventDate: input.sessionDate,
   });
 
   const result: IngestConversationResult = {
@@ -1196,6 +1205,7 @@ export async function ingestConversation(
         scopes: input.scopes,
         source: input.source,
         excludeIds: batchSavedIds,
+        eventDate: input.sessionDate,
       });
 
       const now = Date.now();
