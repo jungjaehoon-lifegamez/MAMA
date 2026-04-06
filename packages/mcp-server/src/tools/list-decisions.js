@@ -36,12 +36,24 @@ const listDecisionsTool = {
         minimum: 1,
         maximum: 100,
       },
+      scopes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
+            id: { type: 'string' },
+          },
+          required: ['kind', 'id'],
+        },
+        description: 'Filter list by scope. If omitted, lists all scopes.',
+      },
     },
     required: [],
   },
 
   async handler(params, _context) {
-    const { limit = 20 } = params || {};
+    const { limit = 20, scopes } = params || {};
 
     try {
       // Validation: Limit range check
@@ -54,7 +66,7 @@ const listDecisionsTool = {
 
       // Call MAMA API with markdown format for human display
       // mama.list() defaults to JSON (LLM-first), but we need markdown for user display
-      const list = await mama.list({ limit, format: 'markdown' });
+      const list = await mama.list({ limit, format: 'markdown', ...(scopes && { scopes }) });
 
       // Return success response with formatted list
       return {
