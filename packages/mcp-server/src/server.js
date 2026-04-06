@@ -192,272 +192,79 @@ class MAMAServer {
   }
 
   setupHandlers() {
-    // List available tools - Simplified to 4 core tools (2025-11-25)
-    // Design principle: LLM infers relationships from search results
-    // Fewer tools = more flexibility, less constraint
+    // Tool definitions come from src/tools/ (single source of truth).
+    // Legacy unified tools (save, search, update) kept as wrappers for backward compat.
+    const legacyNotice = this.legacyHttpEmbeddingMode
+      ? `${this.getLegacyMigrationNotice()}\n\n`
+      : '';
+
+    const legacyTools = [
+      {
+        name: 'save',
+        description: `${legacyNotice}${memoryTools.save_decision.description}\n\nAlso supports type='checkpoint' for session state.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            ...memoryTools.save_decision.inputSchema.properties,
+            type: {
+              type: 'string',
+              enum: ['decision', 'checkpoint'],
+              description: "What to save: 'decision' or 'checkpoint'",
+            },
+            summary: {
+              type: 'string',
+              description: '[Checkpoint] Session state summary.',
+            },
+            next_steps: {
+              type: 'string',
+              description: '[Checkpoint] Instructions for next session.',
+            },
+            open_files: {
+              type: 'array',
+              items: { type: 'string' },
+              description: '[Checkpoint] Currently relevant files.',
+            },
+          },
+          required: ['type'],
+        },
+      },
+      {
+        name: 'search',
+        description: memoryTools.suggest_decision.description,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search query. Semantic search finds related decisions.',
+            },
+            type: {
+              type: 'string',
+              enum: ['all', 'decision', 'checkpoint'],
+              description: "Filter by type. Default: 'all'",
+            },
+            limit: { type: 'number', description: 'Maximum results. Default: 10' },
+            scopes: memoryTools.save_decision.inputSchema.properties.scopes,
+          },
+        },
+      },
+      {
+        name: 'update',
+        description: memoryTools.update_outcome.description,
+        inputSchema: memoryTools.update_outcome.inputSchema,
+      },
+    ];
+
+    // All tools: legacy wrappers + all v2 tools from src/tools/
+    const v2Tools = Object.values(memoryTools)
+      .filter((t) => t.name && t.inputSchema)
+      .map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        // 1. SAVE - Unified save for decisions and checkpoints
-        {
-          name: 'save',
-          description: `${this.legacyHttpEmbeddingMode ? `${this.getLegacyMigrationNotice()}\n\n` : ''}🤝 Save a decision or checkpoint to your reasoning graph.
-
-⚡ TRIGGERS - Call this when:
-• User says: "기억해줘", "remember", "decided", "결정했어"
-• Lesson learned: "깨달았어", "알게됐어", "this worked/failed"
-• Architectural choice made
-• Session ending → use type='checkpoint'
-
-🔗 REQUIRED WORKFLOW (Don't create orphans!):
-1. Call 'search' FIRST to find related decisions
-2. Check if same topic exists (yours will supersede it)
-3. MUST include link in reasoning/summary field
-
-📎 LINKING FORMAT:
-• [Decision] reasoning: End with 'builds_on: <id>' or 'debates: <id>' or 'synthesizes: [id1, id2]'
-• [Checkpoint] summary: Include 'Related decisions: decision_xxx, decision_yyy'
-
-type='decision': choices & lessons (same topic = evolution chain)
-type='checkpoint': session state for resumption (ALSO requires search first!)`,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              type: {
-                type: 'string',
-                enum: ['decision', 'checkpoint'],
-                description: "What to save: 'decision' or 'checkpoint'",
-              },
-              // Decision fields
-              topic: {
-                type: 'string',
-                description:
-                  "[Decision] Topic identifier (e.g., 'auth_strategy'). ⚡ REUSE same topic = supersedes previous, creating evolution chain.",
-              },
-              decision: {
-                type: 'string',
-                description: "[Decision] The decision made (e.g., 'Use JWT with refresh tokens').",
-              },
-              reasoning: {
-                type: 'string',
-                description:
-                  "[Decision] Why this decision was made. Include 5-layer narrative: (1) Context - what problem/situation; (2) Evidence - what proves this works (tests, benchmarks, prior experience); (3) Alternatives - what other options were considered and why rejected; (4) Risks - known limitations or failure modes; (5) Rationale - final reasoning for this choice. ⚠️ REQUIRED: End with 'builds_on: <id>' or 'debates: <id>' or 'synthesizes: [id1, id2]' to link related decisions.",
-              },
-              confidence: {
-                type: 'number',
-                description: '[Decision] Confidence 0.0-1.0. Default: 0.5',
-                minimum: 0,
-                maximum: 1,
-              },
-              // Scope & temporal fields
-              scopes: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    kind: {
-                      type: 'string',
-                      enum: ['global', 'user', 'channel', 'project'],
-                    },
-                    id: { type: 'string' },
-                  },
-                  required: ['kind', 'id'],
-                },
-                description:
-                  '[Decision] Memory scopes for isolation. Example: [{"kind": "project", "id": "/path/to/project"}]',
-              },
-              event_date: {
-                type: 'string',
-                description:
-                  '[Decision] ISO 8601 date when the event occurred (e.g., "2024-01-15"). Defaults to now.',
-              },
-              // Checkpoint fields
-              summary: {
-                type: 'string',
-                description:
-                  "[Checkpoint] Session state summary. Use 4-section format: (1) 🎯 Goal & Progress - what was the goal, where did you stop; (2) ✅ Evidence - mark each item as Verified/Not run/Assumed with proof; (3) ⏳ Unfinished & Risks - incomplete work, blockers, unknowns; (4) 🚦 Next Agent Briefing - Definition of Done, quick health checks to run first. ⚠️ Include 'Related decisions: decision_xxx, decision_yyy' to link context.",
-              },
-              next_steps: {
-                type: 'string',
-                description:
-                  '[Checkpoint] Instructions for next session: DoD (Definition of Done), quick verification commands (npm test, curl health), constraints/cautions.',
-              },
-              open_files: {
-                type: 'array',
-                items: { type: 'string' },
-                description: '[Checkpoint] Currently relevant files.',
-              },
-            },
-            required: ['type'],
-          },
-        },
-        // 2. SEARCH - Unified search across decisions and checkpoints
-        {
-          name: 'search',
-          description: `🔍 Search the reasoning graph before acting.
-
-⚡ TRIGGERS - Call this BEFORE:
-• ⚠️ REQUIRED before 'save' (find links first!)
-• Making architectural choices (check prior art)
-• Debugging (find past failures on similar issues)
-• Starting work on a topic (load context)
-• User asks: "뭐였더라", "what did we decide", "이전에"
-
-🔗 USE FOR REASONING GRAPH:
-• Find decisions to supersede (same topic)
-• Find decisions to link (builds_on, debates, synthesizes)
-• Understand decision evolution (time-ordered results)
-
-Cross-lingual: Works in Korean and English.
-⚠️ High similarity (>0.8) = MUST link with builds_on/debates/synthesizes.
-
-🧠 OUTPUT EXPECTATION:
-When presenting search results to the user or agent, include a brief **Reasoning Summary** grounded in the actual results:
-- Why these results match (tokens/endpoint/field overlap)
-- What is known vs unknown (explicitly mark unknowns)
-- What to do next (use contract fields, avoid guessing)`,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              query: {
-                type: 'string',
-                description:
-                  'Search query (optional). Semantic search finds related decisions even with different wording. If empty, returns recent items sorted by time.',
-              },
-              type: {
-                type: 'string',
-                enum: ['all', 'decision', 'checkpoint'],
-                description:
-                  "Filter by type: 'decision' for architectural choices, 'checkpoint' for session states, 'all' for both. Default: 'all'",
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum results. Default: 10',
-              },
-              scopes: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    kind: {
-                      type: 'string',
-                      enum: ['global', 'user', 'channel', 'project'],
-                    },
-                    id: { type: 'string' },
-                  },
-                  required: ['kind', 'id'],
-                },
-                description: 'Filter search results by scope.',
-              },
-            },
-          },
-        },
-        // 3. UPDATE - Update decision outcome
-        {
-          name: 'update',
-          description: `📝 Update decision outcome after real-world validation.
-
-⚡ TRIGGERS - Call this when:
-• Days/weeks later: issues discovered → mark 'failed' + reason
-• Production success confirmed → mark 'success'
-• Partial results with caveats → mark 'partial'
-• User says: "이거 안됐어", "this didn't work", "성공했어"
-
-🔗 REASONING GRAPH IMPACT:
-• 'failed' outcomes teach future LLMs what to avoid
-• After failure → save NEW decision with same topic to supersede
-
-💡 TIP: Don't just update - if approach changed, save a NEW decision with same topic. This creates evolution history.`,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              id: {
-                type: 'string',
-                description: 'Decision ID to update.',
-              },
-              outcome: {
-                type: 'string',
-                description:
-                  "New outcome status (case-insensitive): 'success' or 'SUCCESS', 'failed' or 'FAILED', 'partial' or 'PARTIAL'.",
-              },
-              reason: {
-                type: 'string',
-                description:
-                  'Why it succeeded/failed/was partial. Include specific evidence: error logs, metrics, user feedback, or what broke.',
-              },
-            },
-            required: ['id', 'outcome'],
-          },
-        },
-        // 4. SEARCH_DECISIONS_AND_CONTRACTS - PreToolUse RPC for hooks
-        {
-          name: 'search_decisions_and_contracts',
-          description:
-            'Search decisions and related contracts for PreToolUse injection (MAMA v2 hooks).',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              query: {
-                type: 'string',
-                description: 'Search query for decisions.',
-              },
-              filePath: {
-                type: 'string',
-                description: 'File path context for contract search.',
-              },
-              toolName: {
-                type: 'string',
-                description: 'Tool name context (Edit/Write/apply_patch).',
-              },
-              decisionLimit: {
-                type: 'number',
-                description: 'Max decision results (default: 5).',
-              },
-              contractLimit: {
-                type: 'number',
-                description: 'Max contract results (default: 3).',
-              },
-              similarityThreshold: {
-                type: 'number',
-                description: 'Similarity threshold for vector search (default: 0.7).',
-              },
-            },
-          },
-        },
-        // 5. LOAD_CHECKPOINT - Resume previous session
-        {
-          name: 'load_checkpoint',
-          description: `🔄 Resume a previous session with full context.
-
-⚡ TRIGGERS - Call this:
-• At session start
-• User says: "이어서", "continue", "where were we", "지난번"
-• After long break from project
-
-🔗 AFTER LOADING:
-1. Verify Evidence items (code may have changed!)
-2. Run health checks from next_steps first
-3. Call 'search' to refresh related decisions
-
-Returns: summary (4-section), next_steps (DoD + commands), open_files
-
-⚠️ WARNING: Checkpoint may be stale. Always verify before continuing.`,
-          inputSchema: {
-            type: 'object',
-            properties: {},
-          },
-        },
-        // === v2 tools from src/tools/ ===
-        ...Object.values(memoryTools)
-          .filter((t) => t.name && t.inputSchema)
-          .map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: t.inputSchema,
-          })),
-      ],
+      tools: [...legacyTools, ...v2Tools],
     }));
 
-    // Handle tool execution - 4 core tools only
+    // Handle tool execution — legacy wrappers + v2 tools from src/tools/
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       const toolStart = Date.now();
@@ -467,6 +274,7 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
         let result;
 
         switch (name) {
+          // Legacy unified wrappers (backward compat)
           case 'save':
             result = await this.handleSave(args);
             break;
@@ -476,14 +284,8 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
           case 'update':
             result = await this.handleUpdate(args);
             break;
-          case 'search_decisions_and_contracts':
-            result = await this.handleSearchDecisionsAndContracts(args);
-            break;
-          case 'load_checkpoint':
-            result = await memoryTools.load_checkpoint.handler(args);
-            break;
           default:
-            // Route to src/tools/ handlers
+            // All other tools → src/tools/ handlers (single source of truth)
             if (memoryTools[name] && typeof memoryTools[name].handler === 'function') {
               result = await memoryTools[name].handler(args);
             } else {
