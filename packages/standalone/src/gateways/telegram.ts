@@ -1,14 +1,16 @@
 /**
  * Telegram Gateway for MAMA Standalone
  *
- * Production-hardened Telegram bot integration:
+ * Production-hardened Telegram bot integration using grammY:
  * - 2-stage message dedup (message_id + content signature)
  * - Group chat filtering (mention/command/reply-to-bot only)
  * - Sticker receive/send with emotion mapping
  * - ToolStatusTracker streaming (placeholder → editMessageText)
- * - Typing indicator, polling error handling, IPv4 forced
+ * - Typing indicator, error handling
  */
 
+import { Bot } from 'grammy';
+import type { Context } from 'grammy';
 import type { NormalizedMessage } from './types.js';
 import { BaseGateway } from './base-gateway.js';
 import type { MessageRouter, ProcessingResult } from './message-router.js';
@@ -63,7 +65,7 @@ export interface TelegramGatewayOptions {
   messageRouter: MessageRouter;
   /** Gateway configuration */
   config?: Partial<TelegramGatewayConfig>;
-  /** Polling interval in ms */
+  /** Polling interval in ms (unused with grammY, kept for interface compat) */
   pollIntervalMs?: number;
 }
 
@@ -75,12 +77,11 @@ export class TelegramGateway extends BaseGateway {
 
   private token: string;
   private config: TelegramGatewayConfig;
-  private bot: TelegramBot | null = null;
+  private bot: Bot | null = null;
   private botId = 0;
   private botUsername = '';
   private lastError: string | null = null;
   private lastMessageAt: number | undefined;
-  private pollIntervalMs: number;
 
   // Dedup maps
   private recentMessageIds = new Map<string, number>();
@@ -100,7 +101,6 @@ export class TelegramGateway extends BaseGateway {
   constructor(options: TelegramGatewayOptions) {
     super({ messageRouter: options.messageRouter });
     this.token = options.token;
-    this.pollIntervalMs = options.pollIntervalMs ?? 10_000;
     this.config = {
       enabled: true,
       token: options.token,
@@ -115,22 +115,13 @@ export class TelegramGateway extends BaseGateway {
     }
 
     try {
-      const TelegramBotModule = await import('node-telegram-bot-api');
-      const TelegramBotClass = TelegramBotModule.default;
+      this.bot = new Bot(this.token);
 
-      this.bot = new TelegramBotClass(this.token, {
-        polling: {
-          interval: Math.max(this.pollIntervalMs, 2000),
-          params: { timeout: 30 },
-        },
-        // Force IPv4 — @types/request requires url in Options but node-telegram-bot-api only uses CoreOptions fields
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        request: { family: 4 } as any,
-      });
-
-      this.bot.on('message', async (msg: unknown) => {
+      this.bot.on('message', async (ctx: Context) => {
         try {
-          await this.handleMessage(msg as TelegramMessage);
+          if (ctx.message) {
+            await this.handleMessage(ctx.message);
+          }
         } catch (error) {
           console.error('[Telegram] Error handling message:', error);
           this.emitEvent({
@@ -142,21 +133,20 @@ export class TelegramGateway extends BaseGateway {
         }
       });
 
-      this.bot.on('polling_error', (err: unknown) => {
-        const error = err as Error;
-        this.lastError = error.message ?? String(err);
-        console.error(`[Telegram] polling error: ${this.lastError}`);
+      this.bot.catch((err) => {
+        this.lastError = err.message ?? String(err);
+        console.error(`[Telegram] error: ${this.lastError}`);
       });
 
-      const me = await this.bot.getMe();
-      this.botId = me.id;
-      this.botUsername = me.username || '';
+      await this.bot.init();
+      this.botId = this.bot.botInfo.id;
+      this.botUsername = this.bot.botInfo.username || '';
       console.log(`Telegram bot logged in as @${this.botUsername}`);
 
       this.connected = true;
       this.lastError = null;
 
-      // Periodic dedup cleanup (prevents stale entries when idle)
+      // Periodic dedup cleanup
       this.dedupCleanupTimer = setInterval(() => {
         const now = Date.now();
         for (const [key, ts] of this.recentMessageIds) {
@@ -173,11 +163,13 @@ export class TelegramGateway extends BaseGateway {
         timestamp: new Date(),
         data: { username: this.botUsername },
       });
+
+      // Start long polling (non-blocking)
+      this.bot.start();
     } catch (error) {
-      // Clean up partially initialized bot/poller to prevent leaks on retry
       if (this.bot) {
         try {
-          await this.bot.stopPolling();
+          await this.bot.stop();
         } catch {
           /* ignore */
         }
@@ -196,7 +188,7 @@ export class TelegramGateway extends BaseGateway {
     }
     if (this.bot) {
       try {
-        await this.bot.stopPolling();
+        await this.bot.stop();
       } catch {
         /* ignore */
       }
@@ -212,7 +204,7 @@ export class TelegramGateway extends BaseGateway {
     });
   }
 
-  private async handleMessage(msg: TelegramMessage): Promise<void> {
+  private async handleMessage(msg: NonNullable<Context['message']>): Promise<void> {
     if (!msg.from || !msg.chat) return;
 
     const now = Date.now();
@@ -300,16 +292,17 @@ export class TelegramGateway extends BaseGateway {
 
     // Typing indicator
     const chatId = String(msg.chat.id);
-    const sendTyping = () => this.bot?.sendChatAction(chatId, 'typing').catch(() => {});
+    const numChatId = msg.chat.id;
+    const sendTyping = () => this.bot?.api.sendChatAction(numChatId, 'typing').catch(() => {});
     sendTyping();
     const typingInterval = setInterval(sendTyping, TYPING_INTERVAL_MS);
 
     // ToolStatusTracker for streaming progress
-    const bot = this.bot!;
+    const api = this.bot!.api;
     const telegramAdapter: PlatformAdapter = {
       postPlaceholder: async (content: string) => {
         try {
-          const sent = (await bot.sendMessage(chatId, content)) as { message_id: number };
+          const sent = await api.sendMessage(numChatId, content);
           return String(sent.message_id);
         } catch {
           return null;
@@ -317,20 +310,14 @@ export class TelegramGateway extends BaseGateway {
       },
       editPlaceholder: async (handle: string, content: string) => {
         try {
-          await bot.editMessageText(content, {
-            chat_id: chatId,
-            message_id: Number(handle),
-          });
+          await api.editMessageText(numChatId, Number(handle), content);
         } catch {
           /* ignore same-text errors */
         }
       },
       deletePlaceholder: async (handle: string) => {
         try {
-          await bot.editMessageText('✅', {
-            chat_id: chatId,
-            message_id: Number(handle),
-          });
+          await api.editMessageText(numChatId, Number(handle), '✅');
         } catch {
           /* ignore */
         }
@@ -375,14 +362,15 @@ export class TelegramGateway extends BaseGateway {
     if (!this.bot) throw new Error('Telegram gateway not connected');
     if (!text.trim()) return;
     const chunks = this.splitMessage(text, TELEGRAM_MAX_LENGTH);
+    const numChatId = Number(chatId);
     for (const chunk of chunks) {
       try {
-        await this.bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+        await this.bot.api.sendMessage(numChatId, chunk, { parse_mode: 'Markdown' });
       } catch (err) {
         // Retry as plain text only for Markdown parse errors (400)
-        const status = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+        const status = (err as { error_code?: number })?.error_code;
         if (status === 400) {
-          await this.bot.sendMessage(chatId, chunk);
+          await this.bot.api.sendMessage(numChatId, chunk);
         } else {
           throw err;
         }
@@ -392,12 +380,14 @@ export class TelegramGateway extends BaseGateway {
 
   async sendFile(chatId: string, filePath: string, caption?: string): Promise<void> {
     if (!this.bot) throw new Error('Telegram gateway not connected');
-    await this.bot.sendDocument(chatId, filePath, { caption });
+    const { InputFile } = await import('grammy');
+    await this.bot.api.sendDocument(Number(chatId), new InputFile(filePath), { caption });
   }
 
   async sendImage(chatId: string, imagePath: string, caption?: string): Promise<void> {
     if (!this.bot) throw new Error('Telegram gateway not connected');
-    await this.bot.sendPhoto(chatId, imagePath, { caption });
+    const { InputFile } = await import('grammy');
+    await this.bot.api.sendPhoto(Number(chatId), new InputFile(imagePath), { caption });
   }
 
   async sendSticker(chatId: string | number, emotion: string): Promise<boolean> {
@@ -405,14 +395,15 @@ export class TelegramGateway extends BaseGateway {
     await this.loadStickerSet();
 
     const candidates = EMOTION_EMOJI[emotion] ?? EMOTION_EMOJI.happy;
+    const numChatId = typeof chatId === 'string' ? Number(chatId) : chatId;
     for (const emoji of candidates) {
       const fileId = this.stickerCache.get(emoji);
       if (fileId) {
-        await this.bot.sendSticker(chatId, fileId);
+        await this.bot.api.sendSticker(numChatId, fileId);
         return true;
       }
     }
-    await this.bot.sendMessage(chatId, candidates[0]);
+    await this.bot.api.sendMessage(numChatId, candidates[0]);
     return false;
   }
 
@@ -444,7 +435,7 @@ export class TelegramGateway extends BaseGateway {
   private async loadStickerSet(): Promise<void> {
     if (this.stickerSetLoaded || !this.bot) return;
     try {
-      const set = await this.bot.getStickerSet(DEFAULT_STICKER_SET);
+      const set = await this.bot.api.getStickerSet(DEFAULT_STICKER_SET);
       for (const sticker of set.stickers) {
         if (sticker.emoji && !this.stickerCache.has(sticker.emoji)) {
           this.stickerCache.set(sticker.emoji, sticker.file_id);
@@ -452,64 +443,7 @@ export class TelegramGateway extends BaseGateway {
       }
       this.stickerSetLoaded = true;
     } catch {
-      // Sticker set not found or network error — mark as loaded to prevent repeated failing calls
       this.stickerSetLoaded = true;
     }
   }
-}
-
-// Type definitions for node-telegram-bot-api
-interface TelegramBot {
-  on(event: 'message', callback: (msg: TelegramMessage) => void): void;
-  on(event: 'polling_error', callback: (error: Error) => void): void;
-  getMe(): Promise<{ id: number; username?: string }>;
-  stopPolling(): Promise<void>;
-  sendMessage(
-    chatId: string | number,
-    text: string,
-    options?: { parse_mode?: string }
-  ): Promise<unknown>;
-  editMessageText(
-    text: string,
-    options: { chat_id: string | number; message_id: number }
-  ): Promise<unknown>;
-  sendPhoto(
-    chatId: string | number,
-    photo: string,
-    options?: { caption?: string }
-  ): Promise<unknown>;
-  sendDocument(
-    chatId: string | number,
-    document: string,
-    options?: { caption?: string }
-  ): Promise<unknown>;
-  sendChatAction(chatId: string | number, action: string): Promise<unknown>;
-  sendSticker(chatId: string | number, sticker: string): Promise<unknown>;
-  getStickerSet(name: string): Promise<{ stickers: Array<{ file_id: string; emoji?: string }> }>;
-}
-
-interface TelegramMessage {
-  message_id: number;
-  from?: {
-    id: number;
-    username?: string;
-  };
-  chat: {
-    id: number;
-    type: string;
-  };
-  text?: string;
-  sticker?: {
-    file_id: string;
-    emoji?: string;
-    set_name?: string;
-  };
-  entities?: Array<{
-    type: string;
-    offset: number;
-    length: number;
-  }>;
-  reply_to_message?: {
-    from?: { id: number };
-  };
 }
