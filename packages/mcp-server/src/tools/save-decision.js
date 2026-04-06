@@ -211,6 +211,31 @@ Structure your reasoning with these layers for maximum value:
         type: 'string',
         description: 'Potential risks or downsides (Tension layer).',
       },
+      scopes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: {
+              type: 'string',
+              enum: ['global', 'user', 'channel', 'project'],
+              description: 'Scope type',
+            },
+            id: {
+              type: 'string',
+              description: 'Scope identifier (e.g., project path, channel ID)',
+            },
+          },
+          required: ['kind', 'id'],
+        },
+        description:
+          'Memory scopes for isolation. Decisions are stored per-scope. If omitted, decision is unscoped (global). Example: [{"kind": "project", "id": "/path/to/project"}]',
+      },
+      event_date: {
+        type: 'string',
+        description:
+          'ISO 8601 date when the event actually occurred (e.g., "2024-01-15"). If omitted, defaults to current time. Use this when recording decisions about past events.',
+      },
     },
     required: ['topic', 'decision', 'reasoning'],
   },
@@ -226,6 +251,8 @@ Structure your reasoning with these layers for maximum value:
       evidence,
       alternatives,
       risks,
+      scopes,
+      event_date,
     } = params || {};
 
     try {
@@ -305,6 +332,8 @@ Structure your reasoning with these layers for maximum value:
         alternatives,
         risks,
         trust_context: trustContext,
+        ...(scopes && { scopes }),
+        ...(event_date && { event_date }),
       });
 
       // Story 1.2: Return enhanced response with collaborative fields
