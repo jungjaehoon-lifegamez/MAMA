@@ -42,7 +42,7 @@ src/
 
 ```
 127.0.0.1:3847 (configurable via MAMA_EMBEDDING_PORT)
-- Model stays loaded in memory (Xenova/multilingual-e5-small, quantized q8)
+- Model stays loaded in memory (Xenova/multilingual-e5-large, quantized q8)
 - ~50ms embedding requests (vs 2-9s cold start)
 - Shared by Claude Code, Desktop, Cursor, Aider, etc.
 - Port discovery via ~/.mama-embedding-port
@@ -79,7 +79,7 @@ Tier degradation happens at runtime (not user-configurable). Check `db-manager.j
 - **Entry Point:** `src/index.js` (exports all public APIs)
 - **Error Handling:** Throw explicit errors (no silent fallbacks)
 - **Database:** SQLite only (PostgreSQL adapter exists but incomplete)
-- **Embeddings:** 384-dimensional vectors (Xenova/multilingual-e5-small, q8 default) — **dimension MUST stay 384**
+- **Embeddings:** 1024-dimensional vectors (Xenova/multilingual-e5-large, q8 default) — **dimension MUST stay 1024**
 
 ---
 

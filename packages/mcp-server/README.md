@@ -231,7 +231,7 @@ Interactive visualization of your reasoning graph.
 ## Technical Details
 
 - **Database:** SQLite + pure-TS cosine similarity
-- **Embeddings:** Transformers.js (Xenova/multilingual-e5-small, 384-dim)
+- **Embeddings:** Transformers.js (Xenova/multilingual-e5-large, 1024-dim)
 - **Transport:** stdio-based MCP protocol (default) + optional HTTP embedding server (port 3849)
 - **Storage:** ~/.claude/mama-memory.db (configurable via MAMA_DB_PATH)
 - **Port File:** ~/.mama-embedding-port (for client discovery)
