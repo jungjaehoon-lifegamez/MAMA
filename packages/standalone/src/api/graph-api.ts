@@ -1313,8 +1313,16 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));
           return true;
         }
-        const messages = (body.messages as Array<{ role: string; content: string }>).filter(
-          (m) => m && typeof m.role === 'string' && typeof m.content === 'string'
+        // Cast to unknown[] first for safe per-element validation (user-supplied HTTP input)
+        const rawMessages = body.messages as Array<unknown>;
+        const messages = rawMessages.filter(
+          (m): m is { role: string; content: string } =>
+            m !== null &&
+            typeof m === 'object' &&
+            'role' in m &&
+            typeof (m as Record<string, unknown>).role === 'string' &&
+            'content' in m &&
+            typeof (m as Record<string, unknown>).content === 'string'
         );
         if (messages.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
