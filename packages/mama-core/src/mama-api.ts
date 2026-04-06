@@ -26,7 +26,7 @@ import crypto from 'crypto';
 
 // Internal modules
 import { createEdgesFromReasoning } from './decision-tracker.js';
-import { DecisionRecord, SemanticEdgeItem, fts5Search } from './db-manager.js';
+import { DecisionRecord, SemanticEdgeItem, fts5Search, ensureMemoryScope } from './db-manager.js';
 import {
   queryDecisionGraph,
   querySemanticEdges,
@@ -1382,6 +1382,7 @@ interface SuggestFunctionOptions {
   recencyDecay?: number;
   disableRecency?: boolean;
   topicPrefix?: string;
+  scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1406,6 +1407,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     const bundle = await recallMemory(userQuestion, {
       includeProfile: false,
       topicPrefix: options.topicPrefix,
+      ...(options.scopes && { scopes: options.scopes }),
     });
     if (bundle.memories.length > 0) {
       // recallMemory uses RRF fusion — confidence is overwritten with the normalized
@@ -1814,6 +1816,7 @@ Example: { "ranking": [2, 0, 4, 1, 3] } means 3rd is most relevant, then 1st, th
 interface ListDecisionsOptions {
   limit?: number;
   format?: 'json' | 'markdown';
+  scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
 }
 
 async function listDecisions(
@@ -1823,13 +1826,32 @@ async function listDecisions(
 
   try {
     const adapter = getAdapter();
-    const stmt = adapter.prepare(`
-      SELECT * FROM decisions
-      WHERE superseded_by IS NULL
-      ORDER BY created_at DESC
-      LIMIT ?
-    `);
-    const decisions = await stmt.all(limit);
+    let decisions;
+
+    if (options.scopes && options.scopes.length > 0) {
+      // Scope-filtered query: JOIN memory_scope_bindings + memory_scopes
+      const scopeIds = await Promise.all(
+        options.scopes.map((s) => ensureMemoryScope(s.kind, s.id))
+      );
+      const placeholders = scopeIds.map(() => '?').join(', ');
+      const stmt = adapter.prepare(`
+        SELECT DISTINCT d.* FROM decisions d
+        JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+        WHERE msb.scope_id IN (${placeholders})
+          AND d.superseded_by IS NULL
+        ORDER BY d.created_at DESC
+        LIMIT ?
+      `);
+      decisions = await stmt.all(...scopeIds, limit);
+    } else {
+      const stmt = adapter.prepare(`
+        SELECT * FROM decisions
+        WHERE superseded_by IS NULL
+        ORDER BY created_at DESC
+        LIMIT ?
+      `);
+      decisions = await stmt.all(limit);
+    }
 
     if (format === 'markdown') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
