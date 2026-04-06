@@ -71,6 +71,8 @@ export interface DecisionRecord {
   created_at: number;
   updated_at?: number;
   edges?: DecisionEdgeRow[];
+  /** ISO 8601 date when the event actually occurred. Null if not set. */
+  event_date?: string | null;
 }
 
 export interface OutcomeData {
@@ -412,6 +414,8 @@ export interface DecisionInput {
   evidence?: string | null;
   alternatives?: string | null;
   risks?: string | null;
+  /** ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15") */
+  event_date?: string | null;
 }
 
 /**
@@ -426,6 +430,14 @@ export interface DecisionInput {
 export async function insertDecisionWithEmbedding(decision: DecisionInput): Promise<string> {
   const adapter = getAdapter();
   const { generateEnhancedEmbedding } = await import('./embeddings.js');
+
+  // Validate event_date before any DB operations
+  if (decision.event_date !== null && decision.event_date !== undefined) {
+    const d = decision.event_date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || isNaN(new Date(d).getTime())) {
+      throw new Error(`Invalid event_date: must be ISO 8601 YYYY-MM-DD (got: ${d})`);
+    }
+  }
 
   try {
     // Generate embedding BEFORE transaction (required for SQLite's sync transaction)
@@ -461,8 +473,8 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
           confidence, created_at, updated_at,
           needs_validation, validation_attempts, last_validated_at, usage_count,
           trust_context, usage_success, usage_failure, time_saved,
-          evidence, alternatives, risks
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          evidence, alternatives, risks, event_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const insertResult = stmt.run(
@@ -494,7 +506,8 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
         decision.time_saved || 0,
         decision.evidence || null,
         decision.alternatives || null,
-        decision.risks || null
+        decision.risks || null,
+        decision.event_date || null
       );
 
       const rowid = Number(insertResult.lastInsertRowid);

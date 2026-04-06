@@ -75,13 +75,20 @@ export class ClaudeSession {
     const args = [
       "--print",
       "--verbose",
-      "--input-format", "stream-json",
-      "--output-format", "stream-json",
-      "--session-id", sessionId,
-      "--setting-sources", "project,local",
-      "--plugin-dir", emptyPluginDir,
-      "--tools", "",
-      "--model", this.options.model,
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--session-id",
+      sessionId,
+      "--setting-sources",
+      "project",
+      "--plugin-dir",
+      emptyPluginDir,
+      "--tools",
+      "",
+      "--model",
+      this.options.model,
     ]
 
     if (this.options.systemPrompt) {
@@ -140,10 +147,11 @@ export class ClaudeSession {
         }, timeoutMs)
       }
 
-      const message = JSON.stringify({
-        type: "user",
-        message: { role: "user", content: text },
-      }) + "\n"
+      const message =
+        JSON.stringify({
+          type: "user",
+          message: { role: "user", content: text },
+        }) + "\n"
 
       this.process!.stdin!.write(message, (err) => {
         if (err && this.pendingReject) {
@@ -165,7 +173,9 @@ export class ClaudeSession {
       try {
         const event: StreamMessage = JSON.parse(line)
         this.processEvent(event)
-      } catch {}
+      } catch {
+        // ignore malformed JSON lines
+      }
     }
 
     // Try to parse buffer as complete JSON
@@ -174,7 +184,9 @@ export class ClaudeSession {
         const event: StreamMessage = JSON.parse(this.outputBuffer)
         this.processEvent(event)
         this.outputBuffer = ""
-      } catch {}
+      } catch {
+        // ignore incomplete buffer
+      }
     }
   }
 

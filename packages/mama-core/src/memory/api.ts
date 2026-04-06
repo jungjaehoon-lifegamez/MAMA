@@ -51,6 +51,11 @@ interface SaveMemoryInput {
   };
   /** IDs to exclude from supersede candidates (e.g., sibling facts from same ingestion batch) */
   excludeIds?: string[];
+  /**
+   * ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15").
+   * Stored in the event_date column. Defaults to created_at if omitted.
+   */
+  eventDate?: string;
 }
 
 interface RecallMemoryOptions {
@@ -65,6 +70,7 @@ interface IngestMemoryInput {
   content: string;
   scopes?: MemoryScopeRef[];
   source: SaveMemoryInput['source'];
+  eventDate?: string;
 }
 
 function buildDecisionId(topic: string): string {
@@ -99,6 +105,7 @@ function toMemoryRecord(
     source: savedSource ?? fallbackSource,
     created_at: row.created_at as number | string,
     updated_at: (row.updated_at as number | string) ?? (row.created_at as number | string),
+    event_date: (row.event_date as string) ?? null,
   };
 }
 
@@ -142,7 +149,7 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
       .prepare(
         `
           SELECT id, topic, decision, reasoning, confidence, created_at, updated_at, trust_context,
-                 kind, status, summary
+                 kind, status, summary, event_date
           FROM decisions
           ORDER BY created_at DESC
         `
@@ -157,7 +164,7 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
       .prepare(
         `
           SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.confidence, d.created_at,
-                 d.updated_at, d.trust_context, d.kind, d.status, d.summary
+                 d.updated_at, d.trust_context, d.kind, d.status, d.summary, d.event_date
           FROM decisions d
           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
           WHERE msb.scope_id IN (${placeholders})
@@ -477,6 +484,7 @@ export async function saveMemory(
     created_at: now,
     updated_at: now,
     trust_context: JSON.stringify({ source: input.source }),
+    event_date: input.eventDate ?? null,
   });
 
   // Pre-resolve scope IDs before the synchronous transaction
@@ -739,7 +747,7 @@ export async function recallMemory(
           const row = adapter
             .prepare(
               `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
-                    trust_context, kind, status, summary
+                    trust_context, kind, status, summary, event_date
              FROM decisions WHERE id = ?`
             )
             .get(ftsRow.id) as Record<string, unknown> | undefined;
@@ -1030,6 +1038,7 @@ export async function ingestMemory(
     details: normalized,
     scopes: input.scopes ?? [],
     source: input.source,
+    eventDate: input.eventDate,
   });
 }
 
@@ -1127,6 +1136,7 @@ export async function ingestConversation(
     content: topicPrefix ? `${topicPrefix}${conversationText}` : conversationText,
     scopes: input.scopes,
     source: input.source,
+    eventDate: input.sessionDate,
   });
 
   const result: IngestConversationResult = {
@@ -1196,6 +1206,7 @@ export async function ingestConversation(
         scopes: input.scopes,
         source: input.source,
         excludeIds: batchSavedIds,
+        eventDate: input.sessionDate,
       });
 
       const now = Date.now();
