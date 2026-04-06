@@ -15,6 +15,7 @@
  * - search_narrative: Semantic search with link expansion ✅
  * - generate_quality_report: Generate coverage and quality metrics report ✅
  * - get_restart_metrics: Get restart success rate and latency metrics ✅
+ * - ingest_conversation: Ingest conversation messages into memory ✅
  *
  * @module tools
  */
@@ -27,6 +28,7 @@ const { updateOutcomeTool } = require('./update-outcome.js');
 const { saveCheckpointTool, loadCheckpointTool } = require('./checkpoint-tools.js');
 const { searchNarrativeTool } = require('./search-narrative.js');
 const { generateQualityReportTool, getRestartMetricsTool } = require('./quality-metrics-tools.js');
+const { ingestConversationTool } = require('./ingest-conversation.js');
 
 /**
  * Create all MAMA memory tools
@@ -47,6 +49,7 @@ function createMemoryTools() {
     search_narrative: searchNarrativeTool,
     generate_quality_report: generateQualityReportTool,
     get_restart_metrics: getRestartMetricsTool,
+    ingest_conversation: ingestConversationTool,
   };
 }
 
@@ -63,4 +66,5 @@ module.exports = {
   searchNarrativeTool,
   generateQualityReportTool,
   getRestartMetricsTool,
+  ingestConversationTool,
 };

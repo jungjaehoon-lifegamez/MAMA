@@ -17,7 +17,7 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const suggestDecisionTool = {
   name: 'suggest_decision',
   description:
-    "Auto-suggest relevant past decisions based on user's question. Uses semantic search to find decisions related to the current context. Returns null if no relevant decisions found. Supports multilingual queries (English, Korean, etc.).",
+    "Auto-suggest relevant past decisions based on user's question. Uses semantic search to find decisions related to the current context. Returns null if no relevant decisions found. Supports multilingual queries (English, Korean, etc.). Use 'scopes' to filter by project/channel.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -48,12 +48,24 @@ const suggestDecisionTool = {
         description: 'Optional: Disable recency weighting entirely. Default: false',
         default: false,
       },
+      scopes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
+            id: { type: 'string' },
+          },
+          required: ['kind', 'id'],
+        },
+        description: 'Filter suggestions by scope. If omitted, searches all scopes.',
+      },
     },
     required: ['userQuestion'],
   },
 
   async handler(params, _context) {
-    const { userQuestion, recencyWeight, recencyScale, recencyDecay, disableRecency } =
+    const { userQuestion, recencyWeight, recencyScale, recencyDecay, disableRecency, scopes } =
       params || {};
 
     try {
@@ -65,13 +77,13 @@ const suggestDecisionTool = {
         };
       }
 
-      // Call MAMA API with markdown format
       const suggestions = await mama.suggest(userQuestion, {
         format: 'markdown',
         recencyWeight,
         recencyScale,
         recencyDecay,
         disableRecency,
+        ...(scopes && { scopes }),
       });
 
       if (!suggestions) {

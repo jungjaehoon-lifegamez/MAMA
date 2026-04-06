@@ -140,6 +140,7 @@ pnpm vitest run tests/commands/
 - **Standalone Memory Runtime** (`packages/standalone/src/memory/`): extractSaveCandidates (rule-based candidate detection), AuditTaskQueue (serial job queue), buildMemoryAuditAckFromAgentResult (candidate-aware ack classification), buildMemoryAgentDashboardPayload (stats + channel tracking), formatRecallBundle, deriveMemoryScopes, AgentNoticeQueue, buildStandaloneMemoryBootstrap
 - **Scopes:** project, channel, user, global — memories are isolated per scope; mama_save now forwards scopes through the full save chain
 - **Truth projection:** historical records preserved, only current truth surfaced in recall
+- **Temporal:** `event_date TEXT` column on decisions (ISO 8601) — stores when events occurred vs. when ingested. Threaded via `sessionDate` (ingestConversation) / `eventDate` (saveMemory) / `event_date` (DB/API)
 
 ### Embeddings
 
@@ -162,6 +163,10 @@ All tools follow standard MCP patterns:
 - Input validation via JSON schema
 - Error handling with typed error codes
 - Result format: `{ success: boolean, data?: any, error?: string }`
+
+**Scope-aware tools:** `save_decision`, `recall_decision`, `suggest_decision`, `list_decisions`, `ingest_conversation` accept optional `scopes` parameter (`[{kind: 'project'|'user'|'channel'|'global', id: string}]`) for memory isolation per project/channel.
+
+**Temporal tracking:** `save_decision` and `ingest_conversation` accept optional `event_date` (ISO 8601 YYYY-MM-DD) for recording when events occurred vs. when saved.
 
 ## Release & Deployment
 

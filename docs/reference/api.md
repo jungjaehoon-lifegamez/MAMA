@@ -4,9 +4,9 @@ This document details the Model Context Protocol (MCP) tools provided by the MAM
 
 ## Overview
 
-MAMA (Memory-Augmented MCP Assistant) provides **4 core tools** for decision tracking, semantic search, and session continuity.
+MAMA (Memory-Augmented MCP Assistant) provides **11 tools** for decision tracking, scoped memory, semantic search, conversation ingestion, and session continuity.
 
-**Design Principle (v1.3.0):** LLM can infer decision relationships from time-ordered search results. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
+**Design Principle (v1.3.3):** LLM can infer decision relationships from time-ordered search results. All tools support `scopes` for project/channel isolation and `event_date` for temporal tracking. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
 
 - **Transport**: Stdio
 - **Server Name**: `mama-server`
@@ -20,14 +20,16 @@ MAMA (Memory-Augmented MCP Assistant) provides **4 core tools** for decision tra
 
 ### OpenClaw Plugin
 
-OpenClaw uses the same 4 tools with `mama_` prefix:
+OpenClaw uses key tools with `mama_` prefix:
 
-| MCP Server        | OpenClaw Plugin        |
-| ----------------- | ---------------------- |
-| `save`            | `mama_save`            |
-| `search`          | `mama_search`          |
-| `update`          | `mama_update`          |
-| `load_checkpoint` | `mama_load_checkpoint` |
+| MCP Server            | OpenClaw Plugin        |
+| --------------------- | ---------------------- |
+| `save_decision`       | `mama_save`            |
+| `suggest_decision`    | `mama_search`          |
+| `recall_decision`     | `mama_recall`          |
+| `update_outcome`      | `mama_update`          |
+| `ingest_conversation` | `mama_ingest`          |
+| `load_checkpoint`     | `mama_load_checkpoint` |
 
 OpenClaw also provides **auto-recall**: relevant decisions are automatically injected on agent start based on user prompt.
 
@@ -64,7 +66,7 @@ All tools return a standard MCP response structure.
 
 ---
 
-## Tool Catalog (4 Core Tools)
+## Tool Catalog
 
 ### 1. `save`
 
@@ -74,17 +76,18 @@ Save a decision or checkpoint to MAMA's memory.
 
 #### Input Schema
 
-| Field        | Type   | Required       | Description                                                                                                     |
-| ------------ | ------ | -------------- | --------------------------------------------------------------------------------------------------------------- |
-| `type`       | string | Yes            | `'decision'` or `'checkpoint'`                                                                                  |
-| `topic`      | string | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous.                                     |
-| `decision`   | string | For decision   | The decision made                                                                                               |
-| `reasoning`  | string | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3).                                     |
-| `confidence` | number | No             | 0.0-1.0, default 0.5                                                                                            |
-| `scopes`     | array  | No             | Standalone gateway only. Memory scope refs, e.g. `[{kind:"project",id:"/path"}]`. Not yet in MCP server schema. |
-| `summary`    | string | For checkpoint | Session state: what was done, what's pending                                                                    |
-| `next_steps` | string | No             | Instructions for next session                                                                                   |
-| `open_files` | array  | No             | List of relevant file paths                                                                                     |
+| Field        | Type   | Required       | Description                                                                                                    |
+| ------------ | ------ | -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `type`       | string | Yes            | `'decision'` or `'checkpoint'`                                                                                 |
+| `topic`      | string | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous.                                    |
+| `decision`   | string | For decision   | The decision made                                                                                              |
+| `reasoning`  | string | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3).                                    |
+| `confidence` | number | No             | 0.0-1.0, default 0.5                                                                                           |
+| `scopes`     | array  | No             | Memory scope refs for isolation, e.g. `[{kind:"project",id:"/path"}]`. Supported in MCP server and standalone. |
+| `event_date` | string | No             | ISO 8601 date when the event occurred (e.g. "2024-01-15"). Defaults to current time if omitted.                |
+| `summary`    | string | For checkpoint | Session state: what was done, what's pending                                                                   |
+| `next_steps` | string | No             | Instructions for next session                                                                                  |
+| `open_files` | array  | No             | List of relevant file paths                                                                                    |
 
 #### Example: Save Decision
 
