@@ -87,7 +87,7 @@ Tacit knowledge — the know-how that lives in conversations, failed experiments
      └──────────────────────────────┘
                    │
               SQLite (local)
-         ~/.mama/mama-memory.db
+         ~/.claude/mama-memory.db
 ```
 
 **Local-first.** All data stays on your device. No cloud dependency. AI provider independent — works with Claude, GPT, Codex.
@@ -209,22 +209,14 @@ Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 | **Always-On Daemon**   | Production | Cron scheduler, web dashboard at localhost:3847                                 |
 | **Evolution Engine**   | Production | Conservative supersede (overlap-based), builds_on for independent facts         |
 
-### What's In Progress (v0.16)
-
-| Feature                 | Status  | Goal                                                        |
-| ----------------------- | ------- | ----------------------------------------------------------- |
-| **Noise Filtering**     | Planned | Reject greetings, internal prompts, duplicates from storage |
-| **FTS5 Migration**      | Planned | Permanent trigger SQL instead of runtime-generated          |
-| **Pattern Recognition** | Planned | Detect recurring workflows from accumulated knowledge       |
-| **Cross-Source Memory** | Planned | Code decisions + team chat + email = unified graph          |
-
 ### What's Not Built Yet
 
 | Feature                       | Target | Why It Matters                                        |
 | ----------------------------- | ------ | ----------------------------------------------------- |
+| **Noise Filtering**           | v0.17  | Reject greetings, internal prompts, duplicates        |
 | **Pattern Recognition**       | v0.17  | Detect recurring workflows from accumulated knowledge |
-| **Workflow Recommendations**  | v0.18  | "Your team usually does X before Y" suggestions       |
 | **Cross-Source Intelligence** | v0.17  | Code decisions + team chat + email = unified graph    |
+| **Workflow Recommendations**  | v0.18  | "Your team usually does X before Y" suggestions       |
 | **Memory Explorer UI**        | v0.18  | Visual graph of decision evolution                    |
 | **Enterprise Server Mode**    | v0.19  | Central server for team knowledge (vs personal local) |
 | **Domain Automation**         | v1.0   | Knowledge graph → automated workflow execution        |
@@ -247,7 +239,7 @@ git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA
 pnpm install
 pnpm build
-pnpm test     # 2600+ tests across all packages
+pnpm test     # 2000+ tests across all packages
 ```
 
 See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.

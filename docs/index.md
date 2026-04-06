@@ -151,5 +151,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.12.1 - Multi-Agent Stability, MCP Tool Access, Dashboard Agent Control
-**Last Updated:** 2026-02-26
+**Status:** MAMA OS v0.14.5 — Scoped Memory, event_date Temporal Tracking, MCP v2 API Integration
+**Last Updated:** 2026-04-06

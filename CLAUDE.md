@@ -164,6 +164,10 @@ All tools follow standard MCP patterns:
 - Error handling with typed error codes
 - Result format: `{ success: boolean, data?: any, error?: string }`
 
+**Scope-aware tools:** `save_decision`, `recall_decision`, `suggest_decision`, `list_decisions`, `ingest_conversation` accept optional `scopes` parameter (`[{kind: 'project'|'user'|'channel'|'global', id: string}]`) for memory isolation per project/channel.
+
+**Temporal tracking:** `save_decision` and `ingest_conversation` accept optional `event_date` (ISO 8601 YYYY-MM-DD) for recording when events occurred vs. when saved.
+
 ## Release & Deployment
 
 ### 1. MAMA OS (packages/standalone/) → npm
