@@ -139,9 +139,9 @@ function configureModel(updates) {
 function getSupportedModels() {
   return [
     {
-      name: 'Xenova/multilingual-e5-small',
-      dimension: 384,
-      size: '~113MB (q8)',
+      name: 'Xenova/multilingual-e5-large',
+      dimension: 1024,
+      size: '~560MB (q8)',
       languages: ['English', 'Korean', 'Japanese', 'Chinese', '100+ languages'],
       recommended: true,
       description:
@@ -422,7 +422,7 @@ mamaConfigureCommand({
   show: true,  // Show current config (default)
   listModels: true,  // List supported models
   model: 'MODEL_NAME',  // Change embedding model
-  dimension: 384,  // Change embedding dimension
+  dimension: 1024,  // Change embedding dimension
   cacheDir: '/path/to/cache'  // Change cache directory
 })
 \`\`\`
@@ -438,12 +438,12 @@ mamaConfigureCommand({ show: true })
 mamaConfigureCommand({ listModels: true })
 
 // Change embedding model
-mamaConfigureCommand({ model: 'Xenova/multilingual-e5-small' })
+mamaConfigureCommand({ model: 'Xenova/multilingual-e5-large' })
 
 // Change multiple settings
 mamaConfigureCommand({
-  model: 'Xenova/multilingual-e5-small',
-  dimension: 384
+  model: 'Xenova/multilingual-e5-large',
+  dimension: 1024
 })
 \`\`\`
 
@@ -472,8 +472,8 @@ MAMA operates in three tiers:
 
 See full list: \`/mama-configure --listModels\`
 
-Default: **Xenova/multilingual-e5-small**
-- 384 dimensions
+Default: **Xenova/multilingual-e5-large**
+- 1024 dimensions
 - ~120MB download
 - Supports 100+ languages
 - Balanced accuracy/performance

@@ -119,7 +119,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_last_active ON sessions(last_active_at);
 -- because sqlite-vss requires extension loading first
 --
 -- CREATE VIRTUAL TABLE vss_memories USING vss0(
---   embedding(384)                    -- multilingual-e5-small embeddings
+--   embedding(1024)                   -- multilingual-e5-large embeddings
 -- );
 
 -- ══════════════════════════════════════════════════════════════

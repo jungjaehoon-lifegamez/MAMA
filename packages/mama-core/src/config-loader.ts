@@ -6,7 +6,7 @@
  *
  * Loads user configuration from ~/.mama/config.json with sensible defaults.
  * Supports:
- * - Model selection (default: multilingual-e5-small)
+ * - Model selection (default: multilingual-e5-large)
  * - Embedding dimensions
  * - Cache directory configuration
  *
@@ -28,8 +28,8 @@ export interface MAMAConfig {
 
 // Default configuration
 export const DEFAULT_CONFIG: MAMAConfig = {
-  modelName: 'Xenova/multilingual-e5-small',
-  embeddingDim: 384,
+  modelName: 'Xenova/multilingual-e5-large',
+  embeddingDim: 1024,
   quantized: true,
   cacheDir: path.join(os.homedir(), '.cache', 'huggingface', 'transformers'),
 };

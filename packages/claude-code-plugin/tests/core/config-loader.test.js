@@ -47,8 +47,8 @@ describe('Story M1.4: Config Loader', () => {
     it('should have correct default config values', async () => {
       const { DEFAULT_CONFIG } = await import('@jungjaehoon/mama-core/config-loader');
 
-      expect(DEFAULT_CONFIG.modelName).toBe('Xenova/multilingual-e5-small');
-      expect(DEFAULT_CONFIG.embeddingDim).toBe(384);
+      expect(DEFAULT_CONFIG.modelName).toBe('Xenova/multilingual-e5-large');
+      expect(DEFAULT_CONFIG.embeddingDim).toBe(1024);
       expect(DEFAULT_CONFIG.cacheDir).toContain('huggingface');
     });
   });
@@ -80,8 +80,8 @@ describe('Story M1.4: Config Loader', () => {
       expect(fs.existsSync(CONFIG_PATH)).toBe(true);
 
       const configData = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-      expect(configData.modelName).toBe('Xenova/multilingual-e5-small');
-      expect(configData.embeddingDim).toBe(384);
+      expect(configData.modelName).toBe('Xenova/multilingual-e5-large');
+      expect(configData.embeddingDim).toBe(1024);
     });
 
     it('should load custom config from file', async () => {
@@ -171,7 +171,7 @@ describe('Story M1.4: Config Loader', () => {
       // Set initial config
       updateConfig({
         modelName: 'Xenova/initial-model',
-        embeddingDim: 384,
+        embeddingDim: 1024,
       });
 
       // Update only model name
@@ -181,7 +181,7 @@ describe('Story M1.4: Config Loader', () => {
 
       const config = loadConfig(true);
       expect(config.modelName).toBe('Xenova/updated-model');
-      expect(config.embeddingDim).toBe(384); // Should remain unchanged
+      expect(config.embeddingDim).toBe(1024); // Should remain unchanged
     });
   });
 
@@ -190,7 +190,7 @@ describe('Story M1.4: Config Loader', () => {
       // Write config with invalid modelName
       const invalidConfig = {
         modelName: 123, // Invalid type
-        embeddingDim: 384,
+        embeddingDim: 1024,
       };
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(invalidConfig, null, 2));
 

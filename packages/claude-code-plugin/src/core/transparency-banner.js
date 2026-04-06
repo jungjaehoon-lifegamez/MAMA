@@ -56,7 +56,7 @@ const FIX_INSTRUCTIONS = {
     steps: [
       '1. Install Transformers.js: npm install @xenova/transformers',
       '2. Configure model in ~/.mama/config.json:',
-      '   { "embeddingModel": "Xenova/multilingual-e5-small" }',
+      '   { "embeddingModel": "Xenova/multilingual-e5-large" }',
       '3. Restart Claude Code to reload configuration',
     ],
     impact: 'Without embeddings, MAMA falls back to keyword search (30% less accurate)',

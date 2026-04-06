@@ -190,7 +190,7 @@ Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 ## Technical Details
 
 - **Database:** SQLite via better-sqlite3 (FTS5 full-text search + vector embeddings)
-- **Embeddings:** Xenova/multilingual-e5-small (384-dim, quantized q8, 100+ languages)
+- **Embeddings:** Xenova/multilingual-e5-large (1024-dim, quantized q8, 100+ languages)
 - **Search:** Hybrid retrieval — FTS5 BM25 (lexical) + cosine similarity (semantic) + RRF fusion
 - **Extraction:** Sonnet for structured fact extraction from conversations
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant

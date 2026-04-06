@@ -2,7 +2,7 @@
  * MAMA (Memory-Augmented MCP Architecture) - Embedding Generation
  *
  * Story M1.4: Configurable embedding model selection
- * Generates embeddings using configurable model (default: multilingual-e5-small)
+ * Generates embeddings using configurable model (default: multilingual-e5-large)
  * Supports: Korean-English cross-lingual similarity, enhanced metadata
  *
  * @module embeddings
@@ -173,7 +173,7 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
  * Inspired by A-mem: Content + Metadata for richer semantic representation
  *
  * @param decision - Decision object
- * @returns 384-dim enhanced embedding
+ * @returns 1024-dim enhanced embedding
  */
 export async function generateEnhancedEmbedding(
   decision: DecisionForEmbedding
