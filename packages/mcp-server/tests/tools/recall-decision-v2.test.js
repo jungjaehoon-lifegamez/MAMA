@@ -15,4 +15,15 @@ describe('recall_decision v2: scopes + format', () => {
   it('topic is still required', () => {
     expect(recallDecisionTool.inputSchema.required).toContain('topic');
   });
+
+  it('rejects empty topic', async () => {
+    const result = await recallDecisionTool.handler({ topic: '' });
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Validation error');
+  });
+
+  it('rejects missing topic', async () => {
+    const result = await recallDecisionTool.handler({});
+    expect(result.success).toBe(false);
+  });
 });
