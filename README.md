@@ -145,10 +145,10 @@ MAMA now outperforms SuperMemory while running **entirely locally** with open-so
 
 | Package                                          | Version | Description                                  |
 | ------------------------------------------------ | ------- | -------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.14.5  | Always-on runtime with messenger gateways    |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.9.3   | MCP server for Claude Desktop/Code           |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.3.3   | Core library (memory engine, embeddings, DB) |
-| [mama plugin](packages/claude-code-plugin/)      | 1.8.3   | Claude Code plugin (marketplace)             |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.16.0  | Always-on runtime with messenger gateways    |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.10.0  | MCP server for Claude Desktop/Code           |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.4.0   | Core library (memory engine, embeddings, DB) |
+| [mama plugin](packages/claude-code-plugin/)      | 1.9.0   | Claude Code plugin (marketplace)             |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework      |
 
 ## Quick Start

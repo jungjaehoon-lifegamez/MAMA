@@ -151,5 +151,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.14.5 — Scoped Memory, event_date Temporal Tracking, MCP v2 API Integration
+**Status:** MAMA OS v0.16.0 — Scoped Memory, event_date Temporal Tracking, MCP v2 API Integration
 **Last Updated:** 2026-04-06
