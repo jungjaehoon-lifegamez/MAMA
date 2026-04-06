@@ -127,7 +127,8 @@ export async function runToolUseAnswerPhase(
     const containerTag = `${question.questionId}-${checkpoint.dataSourceRunId}`
     const questionDate = checkpoint.questions[question.questionId]?.questionDate
     const questionType = checkpoint.questions[question.questionId]?.questionType || ""
-    const resultFile = checkpoint.questions[question.questionId].phases.search.resultFile!
+    const resultFile = checkpoint.questions[question.questionId]?.phases.search.resultFile ?? ""
+    if (!resultFile) continue
 
     const startTime = Date.now()
     checkpointManager.updatePhase(checkpoint, question.questionId, "answer", {
