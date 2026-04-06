@@ -34,12 +34,29 @@ const recallDecisionTool = {
         description:
           "Decision topic to recall (e.g., 'auth_strategy', 'mesh_detail_choice'). Use the EXACT SAME topic name used in save_decision to see full decision evolution graph. Different topic names will show separate, disconnected decisions.",
       },
+      format: {
+        type: 'string',
+        enum: ['markdown', 'json'],
+        description: "Output format. Default: 'markdown'",
+      },
+      scopes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
+            id: { type: 'string' },
+          },
+          required: ['kind', 'id'],
+        },
+        description: 'Filter recall results by scope. If omitted, returns all scopes.',
+      },
     },
     required: ['topic'],
   },
 
   async handler(params, _context) {
-    const { topic } = params || {};
+    const { topic, format = 'markdown', scopes } = params || {};
 
     try {
       // Validation: Non-empty string check
@@ -50,9 +67,11 @@ const recallDecisionTool = {
         };
       }
 
-      // Call MAMA API with markdown format for human display
-      // mama.recall() defaults to JSON (LLM-first), but we need markdown for user display
-      const history = await mama.recall(topic, { format: 'markdown' });
+      // Call MAMA API with specified format (defaults to markdown for human display)
+      const history = await mama.recall(topic, {
+        format,
+        ...(scopes && { scopes }),
+      });
 
       // Return success response with formatted history
       return {
