@@ -255,13 +255,23 @@ class MAMAServer {
       },
     ];
 
-    // All tools: legacy wrappers + all v2 tools from src/tools/
-    const v2Tools = Object.values(memoryTools)
-      .filter((t) => t.name && t.inputSchema)
-      .map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+    // Only expose tools that provide genuinely new functionality not covered by
+    // the unified save/search/update tools above. src/tools/ handlers are still
+    // available for internal routing via the CallTool default case.
+    const additionalTools = [
+      'ingest_conversation',
+      'search_decisions_and_contracts',
+      'load_checkpoint',
+    ]
+      .filter((name) => memoryTools[name])
+      .map((name) => ({
+        name: memoryTools[name].name,
+        description: memoryTools[name].description,
+        inputSchema: memoryTools[name].inputSchema,
+      }));
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [...legacyTools, ...v2Tools],
+      tools: [...legacyTools, ...additionalTools],
     }));
 
     // Handle tool execution — legacy wrappers + v2 tools from src/tools/
