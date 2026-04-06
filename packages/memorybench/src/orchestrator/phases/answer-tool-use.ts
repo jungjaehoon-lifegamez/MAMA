@@ -1,8 +1,8 @@
 /**
  * Tool-use Answer Phase
  *
- * ClaudeSession(CLI) + gateway-tools 패턴으로 LLM이 mama_search를 직접 호출.
- * Static search 결과를 초기 컨텍스트로 주고, Claude가 부족하면 스스로 재검색.
+ * ClaudeSession(CLI) + gateway-tools pattern: LLM calls mama_search directly.
+ * Static search results as initial context, Claude re-searches if insufficient.
  *
  * Format: ```tool_call\n{"name":"mama_search","input":{"query":"..."}}\n```
  */
@@ -15,9 +15,11 @@ import { CheckpointManager } from "../checkpoint"
 import { logger } from "../../utils/logger"
 import { ClaudeSession } from "../../utils/claude-session"
 
-const TOOL_USE_MODEL = process.env.MEMORYBENCH_TOOL_USE_MODEL || "sonnet"
 const MAX_TOOL_CALLS = 3
-const MAMA_BASE_URL = "http://localhost:3847"
+
+function getToolUseModel(): string {
+  return process.env.MEMORYBENCH_TOOL_USE_MODEL || "sonnet"
+}
 
 const GATEWAY_TOOLS_SYSTEM = `You have access to one tool to search the user's personal memory database:
 
@@ -41,27 +43,16 @@ Rules:
 - Only say "I don't know" after genuinely exhausting all search angles
 - Do NOT include tool_call blocks in your final answer`
 
-async function callMamaSearch(
-  query: string,
-  containerTag: string,
-  questionDate?: string
-): Promise<unknown[]> {
-  try {
-    // topicPrefix = "bench_<questionId>" — matches how topics are stored
-    const questionId = containerTag.split("-")[0]
-    const topicPrefix = `bench_${questionId}`
-    const url = new URL(`${MAMA_BASE_URL}/api/mama/search`)
-    url.searchParams.set("q", query)
-    url.searchParams.set("topicPrefix", topicPrefix)
-    url.searchParams.set("limit", "10")
-    if (questionDate) url.searchParams.set("questionDate", questionDate)
-
-    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) })
-    const data = (await res.json()) as { results?: unknown[] }
-    return data.results ?? []
-  } catch {
-    return []
-  }
+/** Format search results as raw text for LLM consumption */
+function formatResults(results: unknown[], limit: number): string {
+  return results
+    .slice(0, limit)
+    .map((r, i) => {
+      const rec = r as Record<string, unknown>
+      const text = (rec.decision as string) || (rec.content as string) || ""
+      return `[${i + 1}] topic: ${rec.topic}\n${text}`
+    })
+    .join("\n\n")
 }
 
 function parseToolCalls(text: string): Array<{ name: string; input: Record<string, unknown> }> {
@@ -75,18 +66,33 @@ function parseToolCalls(text: string): Array<{ name: string; input: Record<strin
         calls.push({ name: parsed.name, input: parsed.input || {} })
       }
     } catch {
-      // ignore malformed
+      // ignore malformed tool_call blocks
     }
   }
   return calls
 }
 
-function removedToolCallBlocks(text: string): string {
+function removeToolCallBlocks(text: string): string {
   return text.replace(/```tool_call\s*\n[\s\S]*?\n```/g, "").trim()
 }
 
+function getTypeInstruction(questionType: string): string {
+  switch (questionType) {
+    case "single-session-preference":
+      return `[PREFERENCE QUESTION] The user is asking for a recommendation or advice. Look for ANY related items, purchases, hobbies, or preferences the user mentioned — even if not directly about the question topic. Use what you find to personalize your response.`
+    case "temporal-reasoning":
+      return `[TEMPORAL QUESTION] This requires date calculation. Identify exact dates from the context, compute the difference carefully (count calendar days/months), and show your math.`
+    case "knowledge-update":
+      return `[KNOWLEDGE UPDATE QUESTION] The user's situation may have changed over time. Look for the LATEST information. Pay attention to words like "initially", "now", "recently", "upgraded".`
+    case "multi-session":
+      return `[MULTI-SESSION QUESTION] The answer may require combining information scattered across multiple conversations. Count carefully and list each item before giving a total.`
+    default:
+      return `[FACTUAL RECALL] Answer with the specific fact the user mentioned. Be precise with names, numbers, and details.`
+  }
+}
+
 export async function runToolUseAnswerPhase(
-  _provider: Provider,
+  provider: Provider,
   benchmark: Benchmark,
   checkpoint: RunCheckpoint,
   checkpointManager: CheckpointManager,
@@ -111,14 +117,16 @@ export async function runToolUseAnswerPhase(
     return
   }
 
+  const model = getToolUseModel()
   logger.info(
-    `[tool-use] Answering ${pendingQuestions.length} questions (model: ${TOOL_USE_MODEL}, max tool calls: ${MAX_TOOL_CALLS})`
+    `[tool-use] Answering ${pendingQuestions.length} questions (model: ${model}, max tool calls: ${MAX_TOOL_CALLS})`
   )
 
   for (let i = 0; i < pendingQuestions.length; i++) {
     const question = pendingQuestions[i]
     const containerTag = `${question.questionId}-${checkpoint.dataSourceRunId}`
     const questionDate = checkpoint.questions[question.questionId]?.questionDate
+    const questionType = checkpoint.questions[question.questionId]?.questionType || ""
     const resultFile = checkpoint.questions[question.questionId].phases.search.resultFile!
 
     const startTime = Date.now()
@@ -127,9 +135,8 @@ export async function runToolUseAnswerPhase(
       startedAt: new Date().toISOString(),
     })
 
-    // Fresh session per question
     const session = new ClaudeSession({
-      model: TOOL_USE_MODEL,
+      model,
       systemPrompt: GATEWAY_TOOLS_SYSTEM,
       timeoutMs: 120_000,
     })
@@ -139,18 +146,12 @@ export async function runToolUseAnswerPhase(
 
       const searchData = JSON.parse(readFileSync(resultFile, "utf8"))
       const initialContext: unknown[] = searchData.results || []
-      // Use raw decision text — buildContextString uses keyword snippet extraction
-      // which produces empty strings when query and content have a semantic gap.
-      const contextStr = initialContext
-        .slice(0, 10)
-        .map((r, i) => {
-          const rec = r as Record<string, unknown>
-          const text = (rec.decision as string) || (rec.content as string) || ""
-          return `[${i + 1}] topic: ${rec.topic}\n${text.slice(0, 400)}`
-        })
-        .join("\n\n")
+      const contextStr = formatResults(initialContext, 10)
+      const typeInstruction = getTypeInstruction(questionType)
 
       const firstPrompt = `${questionDate ? `Question date: ${questionDate}\n` : ""}Question: ${question.question}
+
+${typeInstruction}
 
 Initial search results:
 ${contextStr || "(no results)"}
@@ -162,42 +163,36 @@ Only say "I don't know" after exhausting all search attempts.`
       let response = await session.prompt(firstPrompt)
       let toolCallCount = 0
 
-      // Tool-use loop
       while (toolCallCount < MAX_TOOL_CALLS) {
         const toolCalls = parseToolCalls(response)
         if (toolCalls.length === 0) break
 
-        // Execute tool calls, build results message
         const resultParts: string[] = []
         for (const call of toolCalls) {
           if (call.name === "mama_search") {
             const query = String(call.input.query || "")
             toolCallCount++
             logger.debug(`[tool-use] ${question.questionId} tool call ${toolCallCount}: "${query}"`)
-            const results = await callMamaSearch(query, containerTag, questionDate)
-            // Use raw decision text so Claude sees full content regardless of keyword-based snippet extraction
-            const snippet = results
-              .slice(0, 5)
-              .map((r, i) => {
-                const rec = r as Record<string, unknown>
-                const text = (rec.decision as string) || (rec.content as string) || ""
-                return `[${i + 1}] topic: ${rec.topic}\n${text.slice(0, 400)}`
-              })
-              .join("\n\n")
-            resultParts.push(`mama_search("${query}") results:\n${snippet || "(no results)"}`)
+            const results = await provider.search(query, {
+              containerTag,
+              limit: 10,
+              questionDate,
+            })
+            resultParts.push(
+              `mama_search("${query}") results:\n${formatResults(results, 5) || "(no results)"}`
+            )
           }
         }
 
         if (resultParts.length === 0) break
 
-        // Feed results back, ask for answer
         response = await session.prompt(
           resultParts.join("\n\n") +
             "\n\nBased on all information gathered, provide your final answer."
         )
       }
 
-      const finalAnswer = removedToolCallBlocks(response).trim()
+      const finalAnswer = removeToolCallBlocks(response)
       if (!finalAnswer) throw new Error("Empty answer from model")
 
       const durationMs = Date.now() - startTime
@@ -219,9 +214,7 @@ Only say "I don't know" after exhausting all search attempts.`
         status: "failed",
         error,
       })
-      logger.error(
-        `[tool-use] Failed to answer ${question.questionId}: ${error} | ${e instanceof Error ? e.stack?.split("\n")[1] : ""}`
-      )
+      logger.error(`[tool-use] Failed to answer ${question.questionId}: ${error}`)
     } finally {
       session.close()
     }
