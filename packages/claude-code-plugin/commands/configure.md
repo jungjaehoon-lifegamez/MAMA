@@ -14,7 +14,7 @@ You are helping the user view or modify MAMA configuration.
 
 1. Parse configuration action:
    - `--show` (default): Display current configuration
-   - `--model=X`: Change embedding model (e.g., 'Xenova/multilingual-e5-small')
+   - `--model=X`: Change embedding model (e.g., 'Xenova/multilingual-e5-large')
    - `--db-path=X`: Change database location (e.g., '~/.claude/mama-memory.db')
    - `--tier-check`: Re-run tier detection (check SQLite, embeddings availability)
    - `--disable-http`: Disable HTTP server (Graph Viewer + Mobile Chat)
@@ -170,7 +170,7 @@ You are helping the user view or modify MAMA configuration.
 
 **Alternatives:**
 
-- `Xenova/multilingual-e5-small` (384-dim, ~113MB q8, 100+ languages, default)
+- `Xenova/multilingual-e5-large` (1024-dim, ~560MB q8, 100+ languages, default)
 - `Xenova/multilingual-e5-base` (768-dim, 420MB, better accuracy, slower)
 - `Xenova/all-MiniLM-L6-v2` (384-dim, ~90MB, English-focused, faster cold start)
 

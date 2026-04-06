@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS error_patterns (
   first_seen INTEGER NOT NULL,     -- First occurrence timestamp
 
   -- Vector Embedding (for semantic matching)
-  embedding BLOB,                  -- 384-dim embedding (multilingual-e5-small)
+  embedding BLOB,                  -- 1024-dim embedding (multilingual-e5-large)
 
   -- Metadata
   created_at INTEGER DEFAULT (unixepoch()),
