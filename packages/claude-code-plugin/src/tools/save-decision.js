@@ -126,7 +126,7 @@ function buildContractTrustContext(decision, reasoning) {
 const saveDecisionTool = {
   name: 'save_decision',
   description:
-    "Save a decision or insight to MAMA's memory for future reference. Use this when the user explicitly wants to remember something important (e.g., architectural decisions, parameter choices, lessons learned). The decision will be stored with semantic embeddings for later retrieval.\n\n⚡ IMPORTANT - Graph Connectivity: Reuse the SAME topic name for related decisions to create decision graphs (supersedes/refines/contradicts edges). Example: Use 'auth_strategy' for all authentication decisions, not 'auth_strategy_v1', 'auth_strategy_v2'. This enables Learn/Unlearn/Relearn workflows.",
+    "Save a decision or insight to MAMA's memory for future reference. Use this when the user explicitly wants to remember something important (e.g., architectural decisions, parameter choices, lessons learned). The decision will be stored with semantic embeddings for later retrieval.\n\n⚡ IMPORTANT - Graph Connectivity: Reuse the SAME topic name for related decisions to create decision graphs (supersedes/refines/contradicts edges). Example: Use 'auth_strategy' for all authentication decisions, not 'auth_strategy_v1', 'auth_strategy_v2'. This enables Learn/Unlearn/Relearn workflows. Use 'scopes' to isolate decisions per project/channel and 'event_date' to record when events occurred.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -164,6 +164,31 @@ const saveDecisionTool = {
         description:
           "Decision outcome status. Use 'pending' for new decisions (default), 'success' when confirmed working, 'failure' when approach failed.",
       },
+      scopes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: {
+              type: 'string',
+              enum: ['global', 'user', 'channel', 'project'],
+              description: 'Scope type',
+            },
+            id: {
+              type: 'string',
+              description: 'Scope identifier (e.g., project path, channel ID)',
+            },
+          },
+          required: ['kind', 'id'],
+        },
+        description:
+          'Memory scopes for isolation. Decisions are stored per-scope. If omitted, decision is unscoped (global). Example: [{"kind": "project", "id": "/path/to/project"}]',
+      },
+      event_date: {
+        type: 'string',
+        description:
+          'ISO 8601 date when the event actually occurred (e.g., "2024-01-15"). If omitted, defaults to current time.',
+      },
     },
     required: ['topic', 'decision', 'reasoning'],
   },
@@ -176,6 +201,8 @@ const saveDecisionTool = {
       confidence = 0.5,
       type = 'user_decision',
       outcome = 'pending',
+      scopes,
+      event_date,
     } = params || {};
 
     try {
@@ -251,6 +278,8 @@ const saveDecisionTool = {
         type, // Pass type instead of user_involvement
         outcome,
         trust_context: trustContext,
+        ...(scopes && { scopes }),
+        ...(event_date && { event_date }),
       });
 
       return {
