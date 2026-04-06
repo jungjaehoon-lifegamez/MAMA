@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **event_date temporal tracking** — `decisions` table now stores when events actually occurred (migration 024). Threaded through `ingestConversation(sessionDate)` → `saveMemory(eventDate)` → DB. Search API returns `event_date` in results
 - **Tool-use answer phase** (`memorybench`) — LLM re-searches via `mama_search` gateway tool when initial results are insufficient. Question-type-specific prompts. LongMemEval 100Q: 78% (static) → 93% (tool-use)
 - **Memory agent persona v5** — temporal marker extraction: relative time (yesterday, last week) → ISO 8601 `event_date` in `mama_save`
+- **MCP v2 API integration** — all MCP tools (`save_decision`, `recall_decision`, `suggest_decision`, `list_decisions`) now accept `scopes` parameter for scope-based memory isolation. `save_decision` also accepts `event_date`. New `ingest_conversation` MCP tool for importing conversations. Plugin `save_decision` updated with scopes + event_date
 
 ### Fixed
 
