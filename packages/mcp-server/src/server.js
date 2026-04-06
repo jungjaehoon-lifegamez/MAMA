@@ -373,7 +373,20 @@ After failure → save a NEW decision with same topic to create evolution histor
       {
         name: 'search_decisions_and_contracts',
         description: 'Search decisions and contracts for PreToolUse hook injection.',
-        inputSchema: memoryTools.search_decisions_and_contracts.inputSchema,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query for decisions.' },
+            filePath: { type: 'string', description: 'File path context.' },
+            toolName: { type: 'string', description: 'Tool name (Edit/Write/apply_patch).' },
+            decisionLimit: { type: 'number', description: 'Max decisions (default: 5).' },
+            contractLimit: { type: 'number', description: 'Max contracts (default: 3).' },
+            similarityThreshold: {
+              type: 'number',
+              description: 'Similarity threshold (default: 0.7).',
+            },
+          },
+        },
       },
     ];
 
