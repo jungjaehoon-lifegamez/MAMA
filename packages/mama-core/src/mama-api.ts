@@ -87,6 +87,7 @@ interface SimilarDecision {
   reasoning?: string;
   similarity?: number;
   created_at?: number | string;
+  event_date?: string | null;
 }
 
 /**
@@ -1440,6 +1441,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
           // rather than the original stored trust score.
           similarity: memory.confidence ?? 1 - idx * 0.01,
           created_at: memory.created_at,
+          event_date: memory.event_date ?? null,
           graph_source: 'primary',
           graph_rank: 1,
           related_to: null,
