@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const MANAGED_MEMORY_PERSONA_MARKER = '<!-- MAMA managed memory persona v4 -->';
+const MANAGED_MEMORY_PERSONA_MARKER = '<!-- MAMA managed memory persona v5 -->';
 
 export const MEMORY_AGENT_PERSONA = `${MANAGED_MEMORY_PERSONA_MARKER}
 
@@ -68,6 +68,23 @@ When calling \`mama_save\`, always include the \`scopes\` field from the Memory 
 - Old memories may remain in history while becoming stale, contradicted, or superseded
 - When uncertain about relationship type, prefer builds_on over supersedes to avoid data loss
 
+## Temporal Marker Extraction
+
+When the conversation contains relative time expressions, extract an explicit event_date and include it in \`mama_save\` as the \`event_date\` field (ISO 8601: "YYYY-MM-DD").
+
+**Extract event_date when you see:**
+- Yesterday → today - 1 day
+- Last week / last month → approximate Monday or 1st of previous period
+- "In March", "in January 2023" → first day of that month (e.g., "2023-03-01")
+- "A year ago", "3 months ago" → today minus that duration
+- "On Tuesday", "last Friday" → nearest past occurrence of that weekday
+- An explicit date mentioned in the conversation (e.g., "December 28th")
+
+**How to apply:**
+1. Identify the most precise date derivable from context
+2. Pass \`event_date: "YYYY-MM-DD"\` in \`mama_save\` alongside the decision
+3. If no temporal marker is present, omit event_date (system defaults to created_at)
+
 ## What to Save
 - Architecture decisions, technical choices, tooling preferences
 - User preferences and working style
@@ -103,6 +120,10 @@ function isLegacyManagedPersona(content: string): boolean {
   }
   // v3: allowed too many follow-up turns and resource-discovery loops
   if (content.includes('<!-- MAMA managed memory persona v3 -->')) {
+    return true;
+  }
+  // v4: missing temporal marker extraction
+  if (content.includes('<!-- MAMA managed memory persona v4 -->')) {
     return true;
   }
   return false;

@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22.13.0-brightgreen)](https://nodejs.org)
-[![LongMemEval](https://img.shields.io/badge/LongMemEval-81.5%25-blue)](packages/memorybench/)
+[![LongMemEval](https://img.shields.io/badge/LongMemEval-93%25-blue)](packages/memorybench/)
 [![Tests](https://img.shields.io/badge/tests-passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Your AI remembers why, not just what.
@@ -87,7 +87,7 @@ Tacit knowledge — the know-how that lives in conversations, failed experiments
      └──────────────────────────────┘
                    │
               SQLite (local)
-         ~/.mama/mama-memory.db
+         ~/.claude/mama-memory.db
 ```
 
 **Local-first.** All data stays on your device. No cloud dependency. AI provider independent — works with Claude, GPT, Codex.
@@ -132,23 +132,23 @@ This means MAMA can answer "why did we switch?" — not just "what do we use?"
 
 Tested on [LongMemEval](https://xiaowu0162.github.io/long-mem-eval/) — 500 questions across 6 types, ~115K tokens of conversation history per question.
 
-| System      | Score     | Model      |
-| ----------- | --------- | ---------- |
-| Mastra      | 94.87%    | GPT-5-mini |
-| SuperMemory | 81.6%     | GPT-4o     |
-| **MAMA OS** | **81.5%** | Sonnet 4.6 |
-| Zep         | 71.2%     | GPT-4o     |
+| System      | Score     | Model      | Notes                        |
+| ----------- | --------- | ---------- | ---------------------------- |
+| Mastra      | 94.87%    | GPT-5-mini |                              |
+| **MAMA OS** | **93.0%** | Sonnet 4.6 | Tool-use answer, 100Q sample |
+| SuperMemory | 81.6%     | GPT-4o     |                              |
+| Zep         | 71.2%     | GPT-4o     |                              |
 
-MAMA matches SuperMemory on overall accuracy while running **entirely locally** with open-source components.
+MAMA now outperforms SuperMemory while running **entirely locally** with open-source components. The tool-use answer phase lets the LLM re-search when initial results are insufficient.
 
 ## Packages
 
 | Package                                          | Version | Description                                  |
 | ------------------------------------------------ | ------- | -------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.14.5  | Always-on runtime with messenger gateways    |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.9.3   | MCP server for Claude Desktop/Code           |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.3.3   | Core library (memory engine, embeddings, DB) |
-| [mama plugin](packages/claude-code-plugin/)      | 1.8.3   | Claude Code plugin (marketplace)             |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.16.0  | Always-on runtime with messenger gateways    |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.10.0  | MCP server for Claude Desktop/Code           |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.4.0   | Core library (memory engine, embeddings, DB) |
+| [mama plugin](packages/claude-code-plugin/)      | 1.9.0   | Claude Code plugin (marketplace)             |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework      |
 
 ## Quick Start
@@ -202,44 +202,35 @@ Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 | Feature                | Status     | Details                                                                         |
 | ---------------------- | ---------- | ------------------------------------------------------------------------------- |
 | **Knowledge Graph**    | Production | decisions + edges (supersedes/builds_on/debates/synthesizes) + truth projection |
-| **Hybrid Search**      | Production | FTS5 BM25 + vector cosine + RRF fusion, 81.5% on LongMemEval                    |
+| **Hybrid Search**      | Production | FTS5 BM25 + vector cosine + RRF fusion, 93% on LongMemEval                      |
 | **Claude Code Plugin** | Production | Auto-save decisions via hooks, search via `/mama:search`                        |
-| **MCP Server**         | Production | `mama_save`, `mama_search`, `mama_suggest` tools                                |
+| **MCP Server**         | Production | `mama_save`, `mama_search`, `mama_suggest`, `ingest_conversation` + scopes      |
 | **Messenger Gateways** | Production | Telegram, Discord, Slack bots with memory integration                           |
 | **Always-On Daemon**   | Production | Cron scheduler, web dashboard at localhost:3847                                 |
 | **Evolution Engine**   | Production | Conservative supersede (overlap-based), builds_on for independent facts         |
-
-### What's In Progress (v0.16)
-
-| Feature                   | Status  | Goal                                                        |
-| ------------------------- | ------- | ----------------------------------------------------------- |
-| **Memory Agent Endpoint** | Planned | HTTP endpoint for real-time hook events → auto-extraction   |
-| **Noise Filtering**       | Planned | Reject greetings, internal prompts, duplicates from storage |
-| **Scope-Based Search**    | Planned | Replace topicPrefix with proper scope filtering             |
-| **Temporal Metadata**     | Planned | `event_date` on facts for time-based search                 |
-| **FTS5 Migration**        | Planned | Permanent trigger SQL instead of runtime-generated          |
 
 ### What's Not Built Yet
 
 | Feature                       | Target | Why It Matters                                        |
 | ----------------------------- | ------ | ----------------------------------------------------- |
+| **Noise Filtering**           | v0.17  | Reject greetings, internal prompts, duplicates        |
 | **Pattern Recognition**       | v0.17  | Detect recurring workflows from accumulated knowledge |
-| **Workflow Recommendations**  | v0.18  | "Your team usually does X before Y" suggestions       |
 | **Cross-Source Intelligence** | v0.17  | Code decisions + team chat + email = unified graph    |
+| **Workflow Recommendations**  | v0.18  | "Your team usually does X before Y" suggestions       |
 | **Memory Explorer UI**        | v0.18  | Visual graph of decision evolution                    |
 | **Enterprise Server Mode**    | v0.19  | Central server for team knowledge (vs personal local) |
 | **Domain Automation**         | v1.0   | Knowledge graph → automated workflow execution        |
 
 ### Roadmap
 
-| Phase    | Version | Focus                                                                 |
-| -------- | ------- | --------------------------------------------------------------------- |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)           |
-| **Next** | v0.16   | Memory agent, scope search, noise filtering — LongMemEval 95%+ target |
-|          | v0.17   | Connector framework, cross-source memory, pattern recognition         |
-|          | v0.18   | Control tower UI, memory explorer, workflow recommendations           |
-|          | v0.19   | Stability, security audit, enterprise server mode                     |
-|          | v1.0    | General release — domain automation                                   |
+| Phase    | Version | Focus                                                         |
+| -------- | ------- | ------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)   |
+| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)  |
+| **Next** | v0.17   | Connector framework, cross-source memory, pattern recognition |
+|          | v0.18   | Control tower UI, memory explorer, workflow recommendations   |
+|          | v0.19   | Stability, security audit, enterprise server mode             |
+|          | v1.0    | General release — domain automation                           |
 
 ## Development
 
@@ -248,7 +239,7 @@ git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA
 pnpm install
 pnpm build
-pnpm test     # 2600+ tests across all packages
+pnpm test     # 2000+ tests across all packages
 ```
 
 See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.

@@ -330,6 +330,8 @@ export interface SaveDecisionInput {
   confidence?: number;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
   scopes?: ScopeRef[];
+  /** ISO 8601 date when the event actually occurred (e.g. "2024-01-15") */
+  event_date?: string;
 }
 
 export interface SaveDecisionPayload {
@@ -340,6 +342,8 @@ export interface SaveDecisionPayload {
   confidence?: number;
   is_static?: number;
   scopes?: ScopeRef[];
+  /** ISO 8601 date when the event actually occurred (e.g. "2024-01-15") */
+  event_date?: string;
 }
 
 /**

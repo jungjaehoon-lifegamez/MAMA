@@ -39,6 +39,8 @@ export interface DecisionForFormat {
   evidence?: string | string[] | unknown;
   alternatives?: string | string[] | unknown;
   risks?: string;
+  /** ISO 8601 date when the event actually occurred. Null if not set. */
+  event_date?: string | null;
 }
 
 /**
