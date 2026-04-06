@@ -7,7 +7,10 @@ export function buildDefaultAnswerPrompt(
 ): string {
   const contextStr = buildContextString(context, question)
 
-  return `You are a question-answering system. Based on the retrieved context below, answer the question.
+  return `---NEW INDEPENDENT QUESTION---
+Ignore all previous questions and answers. Answer only the question below.
+
+You are a question-answering system. Based on the retrieved context below, answer the question.
 
 Question: ${question}
 Question Date: ${questionDate || "Not specified"}

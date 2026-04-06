@@ -64,6 +64,8 @@ export interface MemoryRecord {
   };
   created_at: number | string;
   updated_at: number | string;
+  /** ISO 8601 date when the event actually occurred (e.g. "2023-01-15"). Null if not set. */
+  event_date?: string | null;
 }
 
 export interface MemoryEdge {
