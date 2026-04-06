@@ -764,6 +764,7 @@ async function handleMamaSearchRequest(
         confidence: (r.confidence ?? null) as number | null,
         similarity: (r.similarity ?? r.final_score ?? 0.5) as number,
         created_at: r.created_at as number,
+        event_date: (r.event_date as string) ?? null,
       }));
     }
 

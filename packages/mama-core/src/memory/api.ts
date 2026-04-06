@@ -105,6 +105,7 @@ function toMemoryRecord(
     source: savedSource ?? fallbackSource,
     created_at: row.created_at as number | string,
     updated_at: (row.updated_at as number | string) ?? (row.created_at as number | string),
+    event_date: (row.event_date as string) ?? null,
   };
 }
 
