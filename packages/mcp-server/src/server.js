@@ -248,6 +248,28 @@ type='checkpoint': session state for resumption (ALSO requires search first!)`,
                 minimum: 0,
                 maximum: 1,
               },
+              // Scope & temporal fields
+              scopes: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      enum: ['global', 'user', 'channel', 'project'],
+                    },
+                    id: { type: 'string' },
+                  },
+                  required: ['kind', 'id'],
+                },
+                description:
+                  '[Decision] Memory scopes for isolation. Example: [{"kind": "project", "id": "/path/to/project"}]',
+              },
+              event_date: {
+                type: 'string',
+                description:
+                  '[Decision] ISO 8601 date when the event occurred (e.g., "2024-01-15"). Defaults to now.',
+              },
               // Checkpoint fields
               summary: {
                 type: 'string',
@@ -310,6 +332,21 @@ When presenting search results to the user or agent, include a brief **Reasoning
               limit: {
                 type: 'number',
                 description: 'Maximum results. Default: 10',
+              },
+              scopes: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    kind: {
+                      type: 'string',
+                      enum: ['global', 'user', 'channel', 'project'],
+                    },
+                    id: { type: 'string' },
+                  },
+                  required: ['kind', 'id'],
+                },
+                description: 'Filter search results by scope.',
               },
             },
           },
@@ -490,11 +527,19 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
     const { type } = args;
 
     if (type === 'decision') {
-      const { topic, decision, reasoning, confidence = 0.5 } = args;
+      const { topic, decision, reasoning, confidence = 0.5, scopes, event_date } = args;
       if (!topic || !decision || !reasoning) {
         return { success: false, message: '❌ Decision requires: topic, decision, reasoning' };
       }
-      const id = await mama.save({ type: 'user_decision', topic, decision, reasoning, confidence });
+      const id = await mama.save({
+        type: 'user_decision',
+        topic,
+        decision,
+        reasoning,
+        confidence,
+        ...(scopes && { scopes }),
+        ...(event_date && { event_date }),
+      });
       return {
         success: true,
         id,
@@ -524,7 +569,7 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
    * Handle unified search (decisions + checkpoints)
    */
   async handleSearch(args) {
-    const { query, type = 'all', limit = 10 } = args;
+    const { query, type = 'all', limit = 10, scopes } = args;
 
     const results = [];
 
@@ -532,12 +577,13 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
     if (type === 'all' || type === 'decision') {
       let decisions;
       if (query) {
-        // suggest() returns { results: [...] } object or null
-        // Note: suggest() takes options object as second parameter
-        const suggestResult = await mama.suggest(query, { limit });
+        const suggestResult = await mama.suggest(query, {
+          limit,
+          ...(scopes && { scopes }),
+        });
         decisions = suggestResult?.results || [];
       } else {
-        decisions = await mama.list(limit);
+        decisions = await mama.list({ limit, ...(scopes && { scopes }) });
       }
       // Ensure decisions is an array
       if (Array.isArray(decisions)) {
