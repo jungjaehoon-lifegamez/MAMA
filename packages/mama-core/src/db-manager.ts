@@ -71,6 +71,8 @@ export interface DecisionRecord {
   created_at: number;
   updated_at?: number;
   edges?: DecisionEdgeRow[];
+  /** ISO 8601 date when the event actually occurred. Null if not set. */
+  event_date?: string | null;
 }
 
 export interface OutcomeData {

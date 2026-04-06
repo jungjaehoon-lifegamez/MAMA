@@ -26,7 +26,7 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const listDecisionsTool = {
   name: 'list_decisions',
   description:
-    "List recent decisions in chronological order. Returns formatted list showing time, type (user/assistant), topic, preview, confidence, and status. Use this to see recent activity or find decisions by browsing. Filter by scope using the 'scopes' parameter.",
+    'List recent decisions in chronological order. Returns formatted list showing time, type (user/assistant), topic, preview, confidence, and status. Use this to see recent activity or find decisions by browsing.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -36,24 +36,12 @@ const listDecisionsTool = {
         minimum: 1,
         maximum: 100,
       },
-      scopes: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
-            id: { type: 'string' },
-          },
-          required: ['kind', 'id'],
-        },
-        description: 'Filter list by scope. If omitted, lists all scopes.',
-      },
     },
     required: [],
   },
 
   async handler(params, _context) {
-    const { limit = 20, scopes } = params || {};
+    const { limit = 20 } = params || {};
 
     try {
       // Validation: Limit range check
@@ -64,9 +52,8 @@ const listDecisionsTool = {
         };
       }
 
-      // Call MAMA API with markdown format for human display
-      // mama.list() defaults to JSON (LLM-first), but we need markdown for user display
-      const list = await mama.list({ limit, format: 'markdown', ...(scopes && { scopes }) });
+      // NOTE: list() does not yet support scoped filtering.
+      const list = await mama.list({ limit, format: 'markdown' });
 
       // Return success response with formatted list
       return {

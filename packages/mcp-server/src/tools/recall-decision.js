@@ -25,7 +25,7 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const recallDecisionTool = {
   name: 'recall_decision',
   description:
-    'Recall full decision history for a specific topic. Returns past decisions on this topic, optionally filtered by scope, in chronological order with reasoning, confidence, and outcomes. Use this when you need to review previous decisions, understand decision evolution, or check current position on a topic.\n\n⚡ GRAPH TRAVERSAL: When the same topic is reused across multiple decisions, this tool automatically shows the decision evolution chain (supersedes graph), enabling Learn/Unlearn/Relearn workflows.',
+    'Recall full decision history for a specific topic. Returns all past decisions on this topic in chronological order with reasoning, confidence, and outcomes. Use this when you need to review previous decisions, understand decision evolution, or check current position on a topic.\n\n⚡ GRAPH TRAVERSAL: When the same topic is reused across multiple decisions, this tool automatically shows the decision evolution chain (supersedes graph), enabling Learn/Unlearn/Relearn workflows.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -39,24 +39,12 @@ const recallDecisionTool = {
         enum: ['markdown', 'json'],
         description: "Output format. Default: 'markdown'",
       },
-      scopes: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
-            id: { type: 'string' },
-          },
-          required: ['kind', 'id'],
-        },
-        description: 'Filter recall results by scope. If omitted, returns all scopes.',
-      },
     },
     required: ['topic'],
   },
 
   async handler(params, _context) {
-    const { topic, format = 'markdown', scopes } = params || {};
+    const { topic, format = 'markdown' } = params || {};
 
     try {
       // Validation: Non-empty string check
@@ -67,11 +55,8 @@ const recallDecisionTool = {
         };
       }
 
-      // Call MAMA API with specified format (defaults to markdown for human display)
-      const history = await mama.recall(topic, {
-        format,
-        ...(scopes && { scopes }),
-      });
+      // NOTE: recall() does topic-exact-match and does not yet support scoped filtering.
+      const history = await mama.recall(topic, { format });
 
       // Return success response with formatted history
       return {
