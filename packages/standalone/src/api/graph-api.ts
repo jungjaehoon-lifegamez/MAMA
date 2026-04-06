@@ -1312,10 +1312,15 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));
           return true;
         }
-        const messages = body.messages as Array<{
-          role: 'user' | 'assistant' | 'system';
-          content: string;
-        }>;
+        // Validate messages shape before use (user-supplied input from HTTP API)
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'messages must be a non-empty array' }));
+          return true;
+        }
+        const messages = (body.messages as Array<{ role: string; content: string }>).filter(
+          (m) => m && typeof m.role === 'string' && typeof m.content === 'string'
+        );
         const conversation = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
         const scopes = (body.scopes || []) as Array<{ kind: string; id: string }>;
         // Fire-and-forget so hook returns quickly
