@@ -26,7 +26,7 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const listDecisionsTool = {
   name: 'list_decisions',
   description:
-    'List recent decisions in chronological order. Returns formatted list showing time, type (user/assistant), topic, preview, confidence, and status. Use this to see recent activity or find decisions by browsing.',
+    "List recent decisions in chronological order. Returns formatted list showing time, type (user/assistant), topic, preview, confidence, and status. Use this to see recent activity or find decisions by browsing. Filter by scope using the 'scopes' parameter.",
   inputSchema: {
     type: 'object',
     properties: {

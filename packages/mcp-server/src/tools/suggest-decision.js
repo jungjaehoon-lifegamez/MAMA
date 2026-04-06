@@ -17,7 +17,7 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const suggestDecisionTool = {
   name: 'suggest_decision',
   description:
-    "Auto-suggest relevant past decisions based on user's question. Uses semantic search to find decisions related to the current context. Returns null if no relevant decisions found. Supports multilingual queries (English, Korean, etc.).",
+    "Auto-suggest relevant past decisions based on user's question. Uses semantic search to find decisions related to the current context. Returns null if no relevant decisions found. Supports multilingual queries (English, Korean, etc.). Filter by scope using the 'scopes' parameter.",
   inputSchema: {
     type: 'object',
     properties: {
