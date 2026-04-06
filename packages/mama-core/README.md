@@ -77,7 +77,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ### Memory API
 
 - **memory/api** - Scoped memory operations
-  - `saveMemory(input)` - Save typed memory with scopes (preference, fact, decision, lesson, constraint)
+  - `saveMemory(input)` - Save typed memory with scopes and optional event_date (preference, fact, decision, lesson, constraint)
   - `recallMemory(query, options)` - Truth-aware recall with scope filtering
   - `buildProfile(scopes)` - Build memory profile (static/dynamic/evidence)
   - `ingestMemory(input)` - Ingest raw content as memory

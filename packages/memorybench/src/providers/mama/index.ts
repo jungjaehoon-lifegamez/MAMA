@@ -732,6 +732,7 @@ ${candidates
               topic,
               decision: dated,
               reasoning,
+              ...(isoDate ? { event_date: isoDate } : {}),
               ...(existingId ? { supersedes: [existingId] } : {}),
             }
             const res = await fetch(`${this.baseUrl}/api/mama/save`, {
@@ -781,6 +782,7 @@ ${candidates
                 model: extractionModel,
                 ...(anthropicApiKey ? { apiKey: anthropicApiKey } : {}),
               },
+              ...(isoDate ? { sessionDate: isoDate } : {}),
             }),
           })
 
@@ -828,7 +830,12 @@ ${candidates
             method: "POST",
             headers: { "Content-Type": "application/json" },
             signal: AbortSignal.timeout(10000),
-            body: JSON.stringify({ topic, decision: conversationText, reasoning }),
+            body: JSON.stringify({
+              topic,
+              decision: conversationText,
+              reasoning,
+              ...(isoDate ? { event_date: isoDate } : {}),
+            }),
           })
 
           const data = (await res.json()) as { success?: boolean; id?: string; error?: boolean }

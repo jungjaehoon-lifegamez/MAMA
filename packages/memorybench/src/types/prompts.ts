@@ -5,8 +5,8 @@ export type JudgePromptFunction = (
   hypothesis: string
 ) => JudgePromptResult
 
-const MAX_CONTEXT_RESULTS = 6
-const MAX_CONTEXT_EXCERPT_CHARS = 1200
+const MAX_CONTEXT_RESULTS = 10
+const MAX_CONTEXT_EXCERPT_CHARS = 3000
 const EXCERPT_WINDOW_CHARS = 400
 const MAX_CLUES_PER_TYPE = 10
 const MAX_CLUE_CHARS = 220

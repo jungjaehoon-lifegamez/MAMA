@@ -749,6 +749,7 @@ async function handleMamaSearchRequest(
       confidence: number | null;
       similarity: number;
       created_at: number;
+      event_date: string | null;
     }> = [];
     if (searchResults && searchResults.results) {
       let rawResults = searchResults.results as Array<Record<string, unknown>>;
@@ -764,6 +765,7 @@ async function handleMamaSearchRequest(
         confidence: (r.confidence ?? null) as number | null,
         similarity: (r.similarity ?? r.final_score ?? 0.5) as number,
         created_at: r.created_at as number,
+        event_date: (r.event_date as string) ?? null,
       }));
     }
 
@@ -813,6 +815,7 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
       decision: body.decision,
       reasoning: body.reasoning,
       confidence: body.confidence ?? 0.8,
+      ...(body.event_date ? { event_date: body.event_date } : {}),
     });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1275,6 +1278,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             | { enabled: boolean; model?: string; apiKey?: string }
             | undefined,
           topicPrefix: (body.topicPrefix as string) || undefined,
+          sessionDate: (body.sessionDate as string) || undefined,
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ...result }));
@@ -1288,6 +1292,54 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             error.message.includes('missing'));
         const statusCode = isClientError ? 400 : 500;
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/memory-agent/ingest - plugin-compat alias for audit-conversation
+    // Claude Code plugin posts hook events here; forward async with 202 accepted.
+    if (pathname === '/api/memory-agent/ingest' && req.method === 'POST') {
+      try {
+        const body =
+          (req as unknown as { body?: Record<string, unknown> }).body ?? (await readBody(req));
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'messages must be a non-empty array' }));
+          return true;
+        }
+        if (!options.auditConversation) {
+          res.writeHead(501, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));
+          return true;
+        }
+        // Cast to unknown[] first for safe per-element validation (user-supplied HTTP input)
+        const rawMessages = body.messages as Array<unknown>;
+        const messages = rawMessages.filter(
+          (m): m is { role: string; content: string } =>
+            m !== null &&
+            typeof m === 'object' &&
+            'role' in m &&
+            typeof (m as Record<string, unknown>).role === 'string' &&
+            'content' in m &&
+            typeof (m as Record<string, unknown>).content === 'string'
+        );
+        if (messages.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'No valid messages after filtering' }));
+          return true;
+        }
+        const conversation = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
+        const scopes = (body.scopes || []) as Array<{ kind: string; id: string }>;
+        // Fire-and-forget so hook returns quickly
+        options
+          .auditConversation({ conversation, scopes })
+          .catch((err: Error) => logger.error('[MemoryAgent] ingest failed', err));
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ accepted: true, queued: messages.length }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: true, message }));
       }
       return true;
