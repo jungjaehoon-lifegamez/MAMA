@@ -48,12 +48,24 @@ const suggestDecisionTool = {
         description: 'Optional: Disable recency weighting entirely. Default: false',
         default: false,
       },
+      scopes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
+            id: { type: 'string' },
+          },
+          required: ['kind', 'id'],
+        },
+        description: 'Filter suggestions by scope. If omitted, searches all scopes.',
+      },
     },
     required: ['userQuestion'],
   },
 
   async handler(params, _context) {
-    const { userQuestion, recencyWeight, recencyScale, recencyDecay, disableRecency } =
+    const { userQuestion, recencyWeight, recencyScale, recencyDecay, disableRecency, scopes } =
       params || {};
 
     try {
@@ -72,6 +84,7 @@ const suggestDecisionTool = {
         recencyScale,
         recencyDecay,
         disableRecency,
+        ...(scopes && { scopes }),
       });
 
       if (!suggestions) {
