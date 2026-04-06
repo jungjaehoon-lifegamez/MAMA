@@ -13,9 +13,10 @@
 const mama = require('@jungjaehoon/mama-core/mama-api');
 
 /**
- * Recall decision tool definition
+ * Create recall decision tool with dependencies
+ * @param {Object} mamaApi - MAMA API instance
  */
-const recallDecisionTool = {
+const createRecallDecisionTool = (mamaApi) => ({
   name: 'recall_decision',
   description:
     'Recall decision history for a topic using semantic search. Returns past decisions filtered by scope if provided. Use this when you need to review previous decisions, understand decision evolution, or check current position on a topic.\n\n⚡ GRAPH TRAVERSAL: When the same topic is reused across multiple decisions, this tool automatically shows the decision evolution chain (supersedes graph), enabling Learn/Unlearn/Relearn workflows.',
@@ -69,7 +70,7 @@ const recallDecisionTool = {
 
       if (scopes && scopes.length > 0) {
         // Use v2 recallMemory for scope-aware semantic recall
-        const bundle = await mama.recallMemory(topic, {
+        const bundle = await mamaApi.recallMemory(topic, {
           scopes,
           includeHistory: true,
         });
@@ -96,7 +97,7 @@ const recallDecisionTool = {
       }
 
       // Legacy path: topic-exact-match recall (no scopes)
-      const history = await mama.recall(topic, { format });
+      const history = await mamaApi.recall(topic, { format });
 
       return {
         success: true,
@@ -111,6 +112,9 @@ const recallDecisionTool = {
       };
     }
   },
-};
+});
 
-module.exports = { recallDecisionTool };
+// Default instance with real dependency
+const recallDecisionTool = createRecallDecisionTool(mama);
+
+module.exports = { recallDecisionTool, createRecallDecisionTool };
