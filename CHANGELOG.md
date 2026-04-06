@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.1] - 2026-04-07
+
+### Fixed
+
+- **Telegram gateway: 0 vulnerabilities** — migrated from `node-telegram-bot-api` (8 vulnerabilities via deprecated `request` chain) to `grammY` (1.42.0). Zero npm audit issues. Package count reduced 372 → 244
+- **MCP protocol scopes wiring** — `server.js` inline tool definitions were missing `scopes` and `event_date` parameters. `src/tools/` files had them but were not connected to the MCP protocol handlers. Now `save` and `search` MCP tools correctly pass scopes + event_date to mama-core
+- **Default embedding model** — changed from `Xenova/multilingual-e5-small` (384-dim, ~113MB) to `Xenova/multilingual-e5-large` (1024-dim, ~560MB) to match production usage across all packages, docs, and tests
+
 ## [0.16.0] - 2026-04-06
 
 ### Added
