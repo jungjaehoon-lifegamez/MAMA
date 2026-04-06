@@ -140,6 +140,7 @@ pnpm vitest run tests/commands/
 - **Standalone Memory Runtime** (`packages/standalone/src/memory/`): extractSaveCandidates (rule-based candidate detection), AuditTaskQueue (serial job queue), buildMemoryAuditAckFromAgentResult (candidate-aware ack classification), buildMemoryAgentDashboardPayload (stats + channel tracking), formatRecallBundle, deriveMemoryScopes, AgentNoticeQueue, buildStandaloneMemoryBootstrap
 - **Scopes:** project, channel, user, global — memories are isolated per scope; mama_save now forwards scopes through the full save chain
 - **Truth projection:** historical records preserved, only current truth surfaced in recall
+- **Temporal:** `event_date TEXT` column on decisions (ISO 8601) — stores when events occurred vs. when ingested. Threaded via `sessionDate` (ingestConversation) / `eventDate` (saveMemory) / `event_date` (DB/API)
 
 ### Embeddings
 
