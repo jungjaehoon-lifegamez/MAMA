@@ -610,9 +610,13 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
       );
     }
 
-    // Sort by time (newest first) and limit
-    results.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-    const limited = results.slice(0, limit);
+    // Decisions are already sorted by similarity from suggest().
+    // Only sort checkpoints by time. Keep decisions first (relevance), checkpoints after (recency).
+    const decisions = results.filter((r) => r._type === 'decision');
+    const checkpoints = results
+      .filter((r) => r._type === 'checkpoint')
+      .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    const limited = [...decisions, ...checkpoints].slice(0, limit);
 
     return {
       success: true,
