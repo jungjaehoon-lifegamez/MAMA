@@ -204,20 +204,19 @@ Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 | **Knowledge Graph**    | Production | decisions + edges (supersedes/builds_on/debates/synthesizes) + truth projection |
 | **Hybrid Search**      | Production | FTS5 BM25 + vector cosine + RRF fusion, 93% on LongMemEval                      |
 | **Claude Code Plugin** | Production | Auto-save decisions via hooks, search via `/mama:search`                        |
-| **MCP Server**         | Production | `mama_save`, `mama_search`, `mama_suggest` tools                                |
+| **MCP Server**         | Production | `mama_save`, `mama_search`, `mama_suggest`, `ingest_conversation` + scopes      |
 | **Messenger Gateways** | Production | Telegram, Discord, Slack bots with memory integration                           |
 | **Always-On Daemon**   | Production | Cron scheduler, web dashboard at localhost:3847                                 |
 | **Evolution Engine**   | Production | Conservative supersede (overlap-based), builds_on for independent facts         |
 
 ### What's In Progress (v0.16)
 
-| Feature                   | Status  | Goal                                                        |
-| ------------------------- | ------- | ----------------------------------------------------------- |
-| **Memory Agent Endpoint** | Planned | HTTP endpoint for real-time hook events → auto-extraction   |
-| **Noise Filtering**       | Planned | Reject greetings, internal prompts, duplicates from storage |
-| **Scope-Based Search**    | Planned | Replace topicPrefix with proper scope filtering             |
-| **Temporal Metadata**     | Planned | `event_date` on facts for time-based search                 |
-| **FTS5 Migration**        | Planned | Permanent trigger SQL instead of runtime-generated          |
+| Feature                 | Status  | Goal                                                        |
+| ----------------------- | ------- | ----------------------------------------------------------- |
+| **Noise Filtering**     | Planned | Reject greetings, internal prompts, duplicates from storage |
+| **FTS5 Migration**      | Planned | Permanent trigger SQL instead of runtime-generated          |
+| **Pattern Recognition** | Planned | Detect recurring workflows from accumulated knowledge       |
+| **Cross-Source Memory** | Planned | Code decisions + team chat + email = unified graph          |
 
 ### What's Not Built Yet
 
