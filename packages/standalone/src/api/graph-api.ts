@@ -749,6 +749,7 @@ async function handleMamaSearchRequest(
       confidence: number | null;
       similarity: number;
       created_at: number;
+      event_date: string | null;
     }> = [];
     if (searchResults && searchResults.results) {
       let rawResults = searchResults.results as Array<Record<string, unknown>>;
@@ -1312,21 +1313,20 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));
           return true;
         }
-        // Validate messages shape before use (user-supplied input from HTTP API)
-        if (!Array.isArray(body.messages) || body.messages.length === 0) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: true, message: 'messages must be a non-empty array' }));
-          return true;
-        }
         const messages = (body.messages as Array<{ role: string; content: string }>).filter(
           (m) => m && typeof m.role === 'string' && typeof m.content === 'string'
         );
+        if (messages.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: true, message: 'No valid messages after filtering' }));
+          return true;
+        }
         const conversation = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
         const scopes = (body.scopes || []) as Array<{ kind: string; id: string }>;
         // Fire-and-forget so hook returns quickly
         options
           .auditConversation({ conversation, scopes })
-          .catch((err: Error) => console.error('[MemoryAgent] ingest failed:', err.message));
+          .catch((err: Error) => logger.error('[MemoryAgent] ingest failed', err));
         res.writeHead(202, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ accepted: true, queued: messages.length }));
       } catch (error) {
