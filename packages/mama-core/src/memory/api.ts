@@ -149,7 +149,7 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
       .prepare(
         `
           SELECT id, topic, decision, reasoning, confidence, created_at, updated_at, trust_context,
-                 kind, status, summary
+                 kind, status, summary, event_date
           FROM decisions
           ORDER BY created_at DESC
         `
@@ -164,7 +164,7 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
       .prepare(
         `
           SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.confidence, d.created_at,
-                 d.updated_at, d.trust_context, d.kind, d.status, d.summary
+                 d.updated_at, d.trust_context, d.kind, d.status, d.summary, d.event_date
           FROM decisions d
           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
           WHERE msb.scope_id IN (${placeholders})
@@ -747,7 +747,7 @@ export async function recallMemory(
           const row = adapter
             .prepare(
               `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
-                    trust_context, kind, status, summary
+                    trust_context, kind, status, summary, event_date
              FROM decisions WHERE id = ?`
             )
             .get(ftsRow.id) as Record<string, unknown> | undefined;

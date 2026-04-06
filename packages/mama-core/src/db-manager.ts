@@ -431,6 +431,14 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
   const adapter = getAdapter();
   const { generateEnhancedEmbedding } = await import('./embeddings.js');
 
+  // Validate event_date before any DB operations
+  if (decision.event_date !== null && decision.event_date !== undefined) {
+    const d = decision.event_date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || isNaN(new Date(d).getTime())) {
+      throw new Error(`Invalid event_date: must be ISO 8601 YYYY-MM-DD (got: ${d})`);
+    }
+  }
+
   try {
     // Generate embedding BEFORE transaction (required for SQLite's sync transaction)
     // Note: Redact topic for privacy - only log length
