@@ -46,6 +46,7 @@ export async function handleSave(
       is_static: d.is_static,
       type: 'user_decision',
       scopes: d.scopes,
+      ...(d.event_date && { event_date: d.event_date }),
     };
     return await api.save(payload);
   }
