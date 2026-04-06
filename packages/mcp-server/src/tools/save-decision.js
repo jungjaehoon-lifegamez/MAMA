@@ -149,6 +149,10 @@ When you find similar past decisions (returned in similar_decisions), choose you
 - **debate**: Present a counter-argument with evidence. Explain why the prior decision may be wrong.
 - **synthesize**: Merge multiple decisions into a new unified approach.
 
+**SCOPES & TEMPORAL:**
+- Use 'scopes' to isolate decisions per project/channel/user (e.g., [{"kind": "project", "id": "/my/app"}])
+- Use 'event_date' (ISO 8601) to record when events actually happened vs. when they were saved
+
 **5-LAYER REASONING (CoT Guide):**
 Structure your reasoning with these layers for maximum value:
 1. **Context**: What problem/situation prompted this decision?
