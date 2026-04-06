@@ -307,7 +307,7 @@ export async function listScopesForMemory(
  * Stores embedding in the embeddings table for vector similarity search
  *
  * @param decisionRowid - SQLite rowid
- * @param embedding - 384-dim embedding vector
+ * @param embedding - 1024-dim embedding vector
  */
 export async function insertEmbedding(
   decisionRowid: number,
@@ -329,7 +329,7 @@ export async function insertEmbedding(
  *
  * Returns empty array if vector search not available (no keyword fallback)
  *
- * @param queryEmbedding - Query embedding (384-dim)
+ * @param queryEmbedding - Query embedding (1024-dim)
  * @param limit - Max results to return (default: 5)
  * @param threshold - Minimum similarity threshold (default: 0.7)
  * @returns Array of decisions with similarity scores, or empty array

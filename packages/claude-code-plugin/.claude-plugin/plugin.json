@@ -87,7 +87,7 @@
       "command": "npx",
       "args": ["-y", "@jungjaehoon/mama-server"],
       "env": {
-        "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-small"
+        "MAMA_EMBEDDING_MODEL": "Xenova/multilingual-e5-large"
       }
     }
   }

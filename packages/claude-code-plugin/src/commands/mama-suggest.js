@@ -223,7 +223,7 @@ mamaSuggestCommand({
 
 MAMA uses **vector embeddings** to understand the meaning of your query:
 
-1. **Query embedding**: Your query is converted to a 384-dimensional vector
+1. **Query embedding**: Your query is converted to a 1024-dimensional vector
 2. **Similarity search**: Vector database finds most similar decision embeddings
 3. **Recency boost**: Recent decisions get slight boost (configurable)
 4. **Final ranking**: Combined score = similarity × (1 - recencyWeight) + recency × recencyWeight

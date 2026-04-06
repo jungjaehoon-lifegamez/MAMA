@@ -53,7 +53,7 @@ export abstract class DatabaseAdapter {
 
   /**
    * Vector similarity search
-   * @param embedding - Query embedding (384-dim)
+   * @param embedding - Query embedding (1024-dim)
    * @param limit - Max results
    * @returns Search results with distance
    */

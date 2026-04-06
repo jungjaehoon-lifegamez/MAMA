@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **mama-api.js** - High-level API interface for MAMA operations
 - **memory-store.js** - Decision CRUD operations with SQLite + sqlite-vec
 - **db-manager.js** - Database initialization and migration management
-- **embeddings.js** - Transformers.js embedding generation (Xenova/all-MiniLM-L6-v2)
+- **embeddings.js** - Transformers.js embedding generation (Xenova/multilingual-e5-large)
 
 #### Embedding Infrastructure
 
@@ -66,5 +66,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Pure JavaScript (no TypeScript compilation required)
 - SQLite + sqlite-vec for vector operations
-- 384-dimensional embeddings (cross-lingual: English + Korean)
+- 1024-dimensional embeddings (cross-lingual: English + Korean)
 - All dependencies bundled for standalone operation
