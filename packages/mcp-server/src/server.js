@@ -28,9 +28,9 @@ const {
 } = require('@modelcontextprotocol/sdk/types.js');
 const path = require('path');
 
-// Import MAMA tools - Simplified to 4 core tools (2025-11-25 refactor)
-// Rationale: LLM can infer relationships from search results, fewer tools = more flexibility
-const { loadCheckpointTool } = require('./tools/checkpoint-tools.js');
+// Import all MAMA tools from src/tools/ — single source of truth for tool definitions
+const { createMemoryTools } = require('./tools/index.js');
+const memoryTools = createMemoryTools();
 const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Import core modules from mama-core
@@ -446,6 +446,14 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
             properties: {},
           },
         },
+        // === v2 tools from src/tools/ ===
+        ...Object.values(memoryTools)
+          .filter((t) => t.name && t.inputSchema)
+          .map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+          })),
       ],
     }));
 
@@ -472,10 +480,15 @@ Returns: summary (4-section), next_steps (DoD + commands), open_files
             result = await this.handleSearchDecisionsAndContracts(args);
             break;
           case 'load_checkpoint':
-            result = await loadCheckpointTool.handler(args);
+            result = await memoryTools.load_checkpoint.handler(args);
             break;
           default:
-            throw new Error(`Unknown tool: ${name}`);
+            // Route to src/tools/ handlers
+            if (memoryTools[name] && typeof memoryTools[name].handler === 'function') {
+              result = await memoryTools[name].handler(args);
+            } else {
+              throw new Error(`Unknown tool: ${name}`);
+            }
         }
 
         const shouldInjectLegacyNotice =
