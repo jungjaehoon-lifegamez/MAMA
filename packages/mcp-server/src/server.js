@@ -198,19 +198,69 @@ class MAMAServer {
       ? `${this.getLegacyMigrationNotice()}\n\n`
       : '';
 
-    const legacyTools = [
+    const tools = [
+      // 1. SAVE — decisions, checkpoints, conversation ingestion
       {
         name: 'save',
-        description: `${legacyNotice}${memoryTools.save_decision.description}\n\nAlso supports type='checkpoint' for session state.`,
+        description: `${legacyNotice}Save to MAMA memory. Use type parameter to choose what to save.
+
+**type='decision'** — Save architectural decisions, lessons learned, insights.
+  Required: topic, decision, reasoning. Optional: confidence, scopes, event_date.
+  Triggers: user says "기억해", "remember", "decided". Reuse same topic to create evolution chain.
+
+**type='checkpoint'** — Save session state for resumption.
+  Required: summary (4-section: Goal, Evidence, Unfinished, Next Briefing).
+  Optional: next_steps, open_files. Triggers: session ending, "체크포인트", "save progress".
+
+**type='ingest'** — Import conversation messages into memory with optional extraction.
+  Required: messages (array of {role, content}). Optional: scopes, session_date, extract.
+
+**Scopes**: Isolate memories per project/channel. Example: [{"kind":"project","id":"/my/app"}]
+**event_date**: ISO 8601 date when event occurred (e.g. "2024-01-15"), not when saved.`,
         inputSchema: {
           type: 'object',
           properties: {
-            ...memoryTools.save_decision.inputSchema.properties,
             type: {
               type: 'string',
-              enum: ['decision', 'checkpoint'],
-              description: "What to save: 'decision' or 'checkpoint'",
+              enum: ['decision', 'checkpoint', 'ingest'],
+              description: "What to save: 'decision', 'checkpoint', or 'ingest'",
             },
+            // Decision fields
+            topic: {
+              type: 'string',
+              description: '[Decision] Topic identifier. Reuse same topic = supersedes previous.',
+            },
+            decision: {
+              type: 'string',
+              description: '[Decision] The decision made.',
+            },
+            reasoning: {
+              type: 'string',
+              description: "[Decision] Why. End with 'builds_on: <id>' or 'debates: <id>' to link.",
+            },
+            confidence: {
+              type: 'number',
+              description: '[Decision] 0.0-1.0. Default: 0.5',
+              minimum: 0,
+              maximum: 1,
+            },
+            scopes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
+                  id: { type: 'string' },
+                },
+                required: ['kind', 'id'],
+              },
+              description: 'Memory scopes for isolation.',
+            },
+            event_date: {
+              type: 'string',
+              description: 'ISO 8601 date when event occurred (e.g. "2024-01-15").',
+            },
+            // Checkpoint fields
             summary: {
               type: 'string',
               description: '[Checkpoint] Session state summary.',
@@ -224,55 +274,110 @@ class MAMAServer {
               items: { type: 'string' },
               description: '[Checkpoint] Currently relevant files.',
             },
+            // Ingest fields
+            messages: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  role: { type: 'string', enum: ['user', 'assistant', 'system'] },
+                  content: { type: 'string' },
+                },
+                required: ['role', 'content'],
+              },
+              description: '[Ingest] Conversation messages to import.',
+            },
+            session_date: {
+              type: 'string',
+              description: '[Ingest] ISO 8601 date when conversation occurred.',
+            },
+            extract: {
+              type: 'boolean',
+              description: '[Ingest] Extract structured memories via LLM. Default: false',
+            },
           },
           required: ['type'],
         },
       },
+      // 2. SEARCH — unified search across decisions, checkpoints, load latest checkpoint
       {
         name: 'search',
-        description: memoryTools.suggest_decision.description,
+        description: `Search MAMA memory. Returns results ranked by semantic similarity.
+
+**With query** — Semantic search across decisions and checkpoints. Cross-lingual (Korean + English).
+  Triggers: "뭐였더라", "what did we decide", making architectural choices, debugging.
+
+**Without query** — List recent items sorted by time.
+
+**Resume session**: type='checkpoint' without query → loads latest checkpoint with full context (narrative, links, next steps).
+  Triggers: "이어서", "continue", "where were we", session start.
+
+**type parameter**: 'decision' (choices/lessons only), 'checkpoint' (session states / resume), 'all' (both, default).
+**scopes**: Filter by project/channel. Omit for global search.
+**limit**: Max results (default: 10).
+
+⚠️ REQUIRED: Call search BEFORE save to find related decisions and avoid orphans.`,
         inputSchema: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'Search query. Semantic search finds related decisions.',
+              description: 'Search query. Omit to list recent items.',
             },
             type: {
               type: 'string',
               enum: ['all', 'decision', 'checkpoint'],
               description: "Filter by type. Default: 'all'",
             },
-            limit: { type: 'number', description: 'Maximum results. Default: 10' },
-            scopes: memoryTools.save_decision.inputSchema.properties.scopes,
+            limit: { type: 'number', description: 'Max results. Default: 10' },
+            scopes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
+                  id: { type: 'string' },
+                },
+                required: ['kind', 'id'],
+              },
+              description: 'Filter by scope.',
+            },
           },
         },
       },
+      // 3. UPDATE — decision outcome tracking
       {
         name: 'update',
-        description: memoryTools.update_outcome.description,
-        inputSchema: memoryTools.update_outcome.inputSchema,
+        description: `Update decision outcome after real-world validation.
+
+Triggers: "이거 안됐어", "this worked", days later when issues discovered.
+outcome: 'success', 'failed', 'partial' (case-insensitive).
+After failure → save a NEW decision with same topic to create evolution history.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Decision ID to update.' },
+            outcome: {
+              type: 'string',
+              description: "'success', 'failed', or 'partial' (case-insensitive).",
+            },
+            reason: {
+              type: 'string',
+              description: 'Why it succeeded/failed/was partial. Include evidence.',
+            },
+          },
+          required: ['id', 'outcome'],
+        },
+      },
+      // 4. SEARCH_DECISIONS_AND_CONTRACTS — PreToolUse hook RPC
+      {
+        name: 'search_decisions_and_contracts',
+        description: 'Search decisions and contracts for PreToolUse hook injection.',
+        inputSchema: memoryTools.search_decisions_and_contracts.inputSchema,
       },
     ];
 
-    // Only expose tools that provide genuinely new functionality not covered by
-    // the unified save/search/update tools above. src/tools/ handlers are still
-    // available for internal routing via the CallTool default case.
-    const additionalTools = [
-      'ingest_conversation',
-      'search_decisions_and_contracts',
-      'load_checkpoint',
-    ]
-      .filter((name) => memoryTools[name])
-      .map((name) => ({
-        name: memoryTools[name].name,
-        description: memoryTools[name].description,
-        inputSchema: memoryTools[name].inputSchema,
-      }));
-
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [...legacyTools, ...additionalTools],
-    }));
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
     // Handle tool execution — legacy wrappers + v2 tools from src/tools/
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -387,7 +492,11 @@ class MAMAServer {
       };
     }
 
-    return { success: false, message: "❌ type must be 'decision' or 'checkpoint'" };
+    if (type === 'ingest') {
+      return await memoryTools.ingest_conversation.handler(args);
+    }
+
+    return { success: false, message: "❌ type must be 'decision', 'checkpoint', or 'ingest'" };
   }
 
   /**
@@ -395,6 +504,11 @@ class MAMAServer {
    */
   async handleSearch(args) {
     const { query, type = 'all', limit = 10, scopes } = args;
+
+    // type='checkpoint' without query → load latest checkpoint (resume session)
+    if (type === 'checkpoint' && !query) {
+      return await memoryTools.load_checkpoint.handler(args);
+    }
 
     const results = [];
 
@@ -410,7 +524,6 @@ class MAMAServer {
       } else {
         decisions = await mama.list({ limit, ...(scopes && { scopes }) });
       }
-      // Ensure decisions is an array
       if (Array.isArray(decisions)) {
         results.push(
           ...decisions.map((d) => ({
@@ -421,8 +534,24 @@ class MAMAServer {
       }
     }
 
-    // Search checkpoints
-    if (type === 'all' || type === 'checkpoint') {
+    // Search checkpoints (with query = search, without = handled above as load)
+    if ((type === 'all' || type === 'checkpoint') && query) {
+      const checkpoints = await mama.listCheckpoints(limit);
+      results.push(
+        ...checkpoints
+          .filter((c) => c.summary && c.summary.toLowerCase().includes(query.toLowerCase()))
+          .map((c) => ({
+            id: `checkpoint_${c.id}`,
+            summary: c.summary,
+            next_steps: c.next_steps,
+            created_at: c.timestamp,
+            _type: 'checkpoint',
+          }))
+      );
+    }
+
+    // type='all' without query — include recent checkpoints
+    if (type === 'all' && !query) {
       const checkpoints = await mama.listCheckpoints(limit);
       results.push(
         ...checkpoints.map((c) => ({
