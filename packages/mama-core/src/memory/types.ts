@@ -1,7 +1,15 @@
 export const MEMORY_SCOPE_KINDS = ['global', 'user', 'channel', 'project'] as const;
 export type MemoryScopeKind = (typeof MEMORY_SCOPE_KINDS)[number];
 
-export const MEMORY_KINDS = ['decision', 'preference', 'constraint', 'lesson', 'fact'] as const;
+export const MEMORY_KINDS = [
+  'decision',
+  'preference',
+  'constraint',
+  'lesson',
+  'fact',
+  'task',
+  'schedule',
+] as const;
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
 
 export const MEMORY_STATUSES = ['active', 'superseded', 'contradicted', 'stale'] as const;

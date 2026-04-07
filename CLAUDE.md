@@ -267,6 +267,45 @@ Once saved:
 - Important function signature changes
 - Architecture pattern decisions
 
+## Connector Framework (v0.17)
+
+MAMA OS can connect to external data sources via a plugin-based connector framework.
+
+### Configuration
+
+```bash
+# Config file location
+~/.mama/connectors.json
+
+# CLI commands
+mama connector add <name>     # activate connector + authentication guide
+mama connector remove <name>  # deactivate connector
+mama connector list           # list all connectors + status
+mama connector status         # health + last poll time
+```
+
+### Key Source Files
+
+```
+packages/standalone/src/connectors/
+├── framework/              ← IConnector, ConnectorRegistry, PollingScheduler, RawStore
+├── slack/   telegram/   discord/   chatwork/   imessage/
+├── gmail/   calendar/   drive/   sheets/
+├── notion/  obsidian/  kagemusha/  trello/
+└── index.ts
+
+packages/standalone/src/memory/
+└── history-extractor.ts    ← 3-pass extraction: buildProjectTruth, buildActivityExtractionPrompt, buildSpokeExtractionPrompt
+```
+
+### Source Role Classification
+
+Connectors classify each channel by role: `truth` (spreadsheets/kanban), `hub` (project channels), `deliverable` (file storage), `spoke` (individual channels), `reference` (calendar/docs). The 3-pass memory extraction uses this classification to build project intelligence without requiring manual tagging.
+
+### Raw Data Storage
+
+Each connector writes to its own SQLite database at `~/.mama/connectors/<name>/raw.db`. Only structured facts flow into `mama-core`. Poll state persists at `~/.mama/connectors/poll-state.json`.
+
 ## Important Constraints
 
 1. **Never rewrite working code** - Check mcp-server/src/mama/ first

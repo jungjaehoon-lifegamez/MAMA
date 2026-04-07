@@ -29,6 +29,7 @@ const { saveCheckpointTool, loadCheckpointTool } = require('./checkpoint-tools.j
 const { searchNarrativeTool } = require('./search-narrative.js');
 const { generateQualityReportTool, getRestartMetricsTool } = require('./quality-metrics-tools.js');
 const { ingestConversationTool } = require('./ingest-conversation.js');
+const { searchDecisionsAndContractsTool } = require('./search-decisions-and-contracts.js');
 
 /**
  * Create all MAMA memory tools
@@ -50,6 +51,7 @@ function createMemoryTools() {
     generate_quality_report: generateQualityReportTool,
     get_restart_metrics: getRestartMetricsTool,
     ingest_conversation: ingestConversationTool,
+    search_decisions_and_contracts: searchDecisionsAndContractsTool,
   };
 }
 
@@ -67,4 +69,5 @@ module.exports = {
   generateQualityReportTool,
   getRestartMetricsTool,
   ingestConversationTool,
+  searchDecisionsAndContractsTool,
 };
