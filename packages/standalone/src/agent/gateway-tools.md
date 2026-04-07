@@ -5,7 +5,6 @@ Call tools via JSON block:
 ```tool_call
 {"name": "tool_name", "input": {"param1": "value1"}}
 ```
-
 ## MAMA Memory
 
 - **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
@@ -66,7 +65,6 @@ Call tools via JSON block:
 ## Code-Act Sandbox
 
 - **code_act**() — Execute JavaScript in sandboxed QuickJS
-
 ## Sending Media to Webchat
 
 To display images in webchat, you MUST include the full file path in your response text.

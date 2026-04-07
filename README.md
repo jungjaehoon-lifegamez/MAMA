@@ -145,7 +145,7 @@ MAMA now outperforms SuperMemory while running **entirely locally** with open-so
 
 | Package                                          | Version | Description                                  |
 | ------------------------------------------------ | ------- | -------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.16.1  | Always-on runtime with messenger gateways    |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.17.0  | Always-on runtime with messenger gateways    |
 | [@jungjaehoon/mama-server](packages/mcp-server/) | 1.12.1  | MCP server for Claude Desktop/Code           |
 | [@jungjaehoon/mama-core](packages/mama-core/)    | 1.4.0   | Core library (memory engine, embeddings, DB) |
 | [mama plugin](packages/claude-code-plugin/)      | 1.9.0   | Claude Code plugin (marketplace)             |
@@ -199,38 +199,36 @@ Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 
 ### What Works Today
 
-| Feature                | Status     | Details                                                                         |
-| ---------------------- | ---------- | ------------------------------------------------------------------------------- |
-| **Knowledge Graph**    | Production | decisions + edges (supersedes/builds_on/debates/synthesizes) + truth projection |
-| **Hybrid Search**      | Production | FTS5 BM25 + vector cosine + RRF fusion, 93% on LongMemEval                      |
-| **Claude Code Plugin** | Production | Auto-save decisions via hooks, search via `/mama:search`                        |
-| **MCP Server**         | Production | `mama_save`, `mama_search`, `mama_suggest`, `ingest_conversation` + scopes      |
-| **Messenger Gateways** | Production | Telegram, Discord, Slack bots with memory integration                           |
-| **Always-On Daemon**   | Production | Cron scheduler, web dashboard at localhost:3847                                 |
-| **Evolution Engine**   | Production | Conservative supersede (overlap-based), builds_on for independent facts         |
+| Feature                 | Status     | Details                                                                                                                                                                                                                                                 |
+| ----------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Knowledge Graph**     | Production | decisions + edges (supersedes/builds_on/debates/synthesizes) + truth projection                                                                                                                                                                         |
+| **Hybrid Search**       | Production | FTS5 BM25 + vector cosine + RRF fusion, 93% on LongMemEval                                                                                                                                                                                              |
+| **Claude Code Plugin**  | Production | Auto-save decisions via hooks, search via `/mama:search`                                                                                                                                                                                                |
+| **MCP Server**          | Production | `mama_save`, `mama_search`, `mama_suggest`, `ingest_conversation` + scopes                                                                                                                                                                              |
+| **Messenger Gateways**  | Production | Telegram, Discord, Slack bots with memory integration                                                                                                                                                                                                   |
+| **Always-On Daemon**    | Production | Cron scheduler, web dashboard at localhost:3847                                                                                                                                                                                                         |
+| **Evolution Engine**    | Production | Conservative supersede (overlap-based), builds_on for independent facts                                                                                                                                                                                 |
+| **Connector Framework** | v0.17      | 13 data source connectors (Slack, Gmail, Notion, iMessage, Sheets, Trello, Drive, and more). Automatic project intelligence extraction via truth-first 3-pass pipeline. Hub/spoke/truth source role classification. Config at `~/.mama/connectors.json` |
 
 ### What's Not Built Yet
 
-| Feature                       | Target | Why It Matters                                        |
-| ----------------------------- | ------ | ----------------------------------------------------- |
-| **Noise Filtering**           | v0.17  | Reject greetings, internal prompts, duplicates        |
-| **Pattern Recognition**       | v0.17  | Detect recurring workflows from accumulated knowledge |
-| **Cross-Source Intelligence** | v0.17  | Code decisions + team chat + email = unified graph    |
-| **Workflow Recommendations**  | v0.18  | "Your team usually does X before Y" suggestions       |
-| **Memory Explorer UI**        | v0.18  | Visual graph of decision evolution                    |
-| **Enterprise Server Mode**    | v0.19  | Central server for team knowledge (vs personal local) |
-| **Domain Automation**         | v1.0   | Knowledge graph → automated workflow execution        |
+| Feature                      | Target | Why It Matters                                        |
+| ---------------------------- | ------ | ----------------------------------------------------- |
+| **Workflow Recommendations** | v0.18  | "Your team usually does X before Y" suggestions       |
+| **Memory Explorer UI**       | v0.18  | Visual graph of decision evolution                    |
+| **Enterprise Server Mode**   | v0.19  | Central server for team knowledge (vs personal local) |
+| **Domain Automation**        | v1.0   | Knowledge graph → automated workflow execution        |
 
 ### Roadmap
 
-| Phase    | Version | Focus                                                         |
-| -------- | ------- | ------------------------------------------------------------- |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)   |
-| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)  |
-| **Next** | v0.17   | Connector framework, cross-source memory, pattern recognition |
-|          | v0.18   | Control tower UI, memory explorer, workflow recommendations   |
-|          | v0.19   | Stability, security audit, enterprise server mode             |
-|          | v1.0    | General release — domain automation                           |
+| Phase    | Version | Focus                                                                                   |
+| -------- | ------- | --------------------------------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                             |
+| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                            |
+| **Done** | v0.17   | Connector framework (13 connectors), truth-first 3-pass extraction, cross-source memory |
+| **Next** | v0.18   | Control tower UI, memory explorer, workflow recommendations                             |
+|          | v0.19   | Stability, security audit, enterprise server mode                                       |
+|          | v1.0    | General release — domain automation                                                     |
 
 ## Development
 
