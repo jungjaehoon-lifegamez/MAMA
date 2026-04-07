@@ -12,3 +12,4 @@ export { ConnectorRegistry } from './connector-registry.js';
 export { PollingScheduler } from './polling-scheduler.js';
 export { RawStore } from './raw-store.js';
 export { parseGwsOutput, execGws } from './gws-utils.js';
+export { loadConnectorsConfig, saveConnectorsConfig } from './config-store.js';

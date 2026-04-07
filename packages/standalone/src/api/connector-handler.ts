@@ -10,6 +10,10 @@ import type { ConnectorRegistry } from '../connectors/framework/connector-regist
 import type { PollingScheduler } from '../connectors/framework/polling-scheduler.js';
 import type { ChannelConfig } from '../connectors/framework/types.js';
 import { AVAILABLE_CONNECTORS } from '../connectors/index.js';
+import {
+  loadConnectorsConfig,
+  saveConnectorsConfig,
+} from '../connectors/framework/config-store.js';
 
 export interface ConnectorHandlerDeps {
   registry: ConnectorRegistry | null;
@@ -23,7 +27,6 @@ export interface ConnectorHandlerDeps {
 export function createConnectorRouter(deps: ConnectorHandlerDeps): Router {
   const router = Router();
 
-  // GET /api/connectors/status — health + last poll for all connectors
   router.get(
     '/status',
     asyncHandler(async (_req, res) => {
@@ -59,7 +62,6 @@ export function createConnectorRouter(deps: ConnectorHandlerDeps): Router {
     })
   );
 
-  // GET /api/connectors/events — recent extraction events
   router.get('/events', (_req, res) => {
     const limitParam = Array.isArray(_req.query.limit) ? _req.query.limit[0] : _req.query.limit;
     const limit = Math.min(Number(limitParam) || 50, 200);
@@ -69,7 +71,6 @@ export function createConnectorRouter(deps: ConnectorHandlerDeps): Router {
     });
   });
 
-  // POST /api/connectors/:name/poll — trigger manual poll (fire-and-forget)
   router.post(
     '/:name/poll',
     asyncHandler(async (req, res) => {
@@ -85,7 +86,6 @@ export function createConnectorRouter(deps: ConnectorHandlerDeps): Router {
     })
   );
 
-  // POST /api/connectors/:name/toggle — enable/disable a connector
   router.post(
     '/:name/toggle',
     asyncHandler(async (req, res) => {
@@ -97,24 +97,7 @@ export function createConnectorRouter(deps: ConnectorHandlerDeps): Router {
         return;
       }
 
-      // Read and update connectors.json
-      const { existsSync, readFileSync, writeFileSync, mkdirSync } = await import('node:fs');
-      const { homedir } = await import('node:os');
-      const { join } = await import('node:path');
-
-      const configPath = join(homedir(), '.mama', 'connectors.json');
-      const dir = join(homedir(), '.mama');
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-      let config: Record<string, unknown> = {};
-      if (existsSync(configPath)) {
-        try {
-          config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        } catch {
-          config = {};
-        }
-      }
-
+      const config = loadConnectorsConfig();
       if (!config[name]) {
         config[name] = {
           enabled: enabled ?? true,
@@ -123,10 +106,9 @@ export function createConnectorRouter(deps: ConnectorHandlerDeps): Router {
           auth: { type: 'none' },
         };
       } else {
-        (config[name] as Record<string, unknown>).enabled = enabled ?? true;
+        config[name]!.enabled = enabled ?? true;
       }
-
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      saveConnectorsConfig(config);
       res.json({
         success: true,
         message: `Connector "${name}" ${enabled ? 'enabled' : 'disabled'}. Restart MAMA OS to apply.`,

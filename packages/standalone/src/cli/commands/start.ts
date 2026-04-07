@@ -2446,75 +2446,53 @@ export async function runAgentLoop(
         }
       };
 
-      connectorScheduler.startBatch(
-        connectorRegistry,
-        allChannelConfigs,
-        60, // unified polling interval (minutes)
-        async ({ truth, activity, spoke }) => {
-          // Pass 0: Truth → ProjectTruth (no LLM)
-          const projectTruth = buildProjectTruth(truth);
-          if (truth.length > 0) {
-            console.log(
-              `[connector] truth snapshot: ${Object.keys(projectTruth.projects).length} projects`
-            );
-          }
-
-          // Pass 1: Activity extraction with truth context
-          if (activity.length > 0) {
-            const activityGroups = groupByChannel(activity);
-            console.log(
-              `[connector] activity: ${activity.length} items in ${activityGroups.size} channels`
-            );
-            await extractAndSave('activity', activityGroups, (items) =>
-              buildActivityExtractionPrompt(items, projectTruth)
-            );
-          }
-
-          // Pass 2: Spoke extraction with project context
-          if (spoke.length > 0) {
-            const hubContext = Object.entries(projectTruth.projects).flatMap(([proj, p]) =>
-              Object.entries(p.workUnits).map(([wu, state]) => ({
-                project: proj,
-                workUnit: wu,
-                assignedTo: state.assigned,
-                status: state.status,
-              }))
-            );
-            const spokeGroups = groupByChannel(spoke);
-            console.log(`[connector] spoke: ${spoke.length} items in ${spokeGroups.size} channels`);
-            await extractAndSave('spoke', spokeGroups, (items) =>
-              buildSpokeExtractionPrompt(items, hubContext, projectTruth)
-            );
-          }
+      const handleBatchExtract = async ({
+        truth,
+        activity,
+        spoke,
+      }: {
+        truth: NormalizedItem[];
+        activity: NormalizedItem[];
+        spoke: NormalizedItem[];
+      }): Promise<void> => {
+        const projectTruth = buildProjectTruth(truth);
+        if (truth.length > 0) {
+          console.log(
+            `[connector] truth snapshot: ${Object.keys(projectTruth.projects).length} projects`
+          );
         }
-      );
+
+        if (activity.length > 0) {
+          const activityGroups = groupByChannel(activity);
+          console.log(
+            `[connector] activity: ${activity.length} items in ${activityGroups.size} channels`
+          );
+          await extractAndSave('activity', activityGroups, (items) =>
+            buildActivityExtractionPrompt(items, projectTruth)
+          );
+        }
+
+        if (spoke.length > 0) {
+          const hubContext = Object.entries(projectTruth.projects).flatMap(([proj, p]) =>
+            Object.entries(p.workUnits).map(([wu, state]) => ({
+              project: proj,
+              workUnit: wu,
+              assignedTo: state.assigned,
+              status: state.status,
+            }))
+          );
+          const spokeGroups = groupByChannel(spoke);
+          console.log(`[connector] spoke: ${spoke.length} items in ${spokeGroups.size} channels`);
+          await extractAndSave('spoke', spokeGroups, (items) =>
+            buildSpokeExtractionPrompt(items, hubContext, projectTruth)
+          );
+        }
+      };
+
+      connectorScheduler.startBatch(connectorRegistry, allChannelConfigs, 60, handleBatchExtract);
 
       connectorTriggerPoll = () =>
-        connectorScheduler.pollAll(
-          connectorRegistry,
-          allChannelConfigs,
-          async ({ truth, activity, spoke }) => {
-            const pt = buildProjectTruth(truth);
-            if (activity.length > 0) {
-              await extractAndSave('activity', groupByChannel(activity), (items) =>
-                buildActivityExtractionPrompt(items, pt)
-              );
-            }
-            if (spoke.length > 0) {
-              const hc = Object.entries(pt.projects).flatMap(([proj, p]) =>
-                Object.entries(p.workUnits).map(([wu, state]) => ({
-                  project: proj,
-                  workUnit: wu,
-                  assignedTo: state.assigned,
-                  status: state.status,
-                }))
-              );
-              await extractAndSave('spoke', groupByChannel(spoke), (items) =>
-                buildSpokeExtractionPrompt(items, hc, pt)
-              );
-            }
-          }
-        );
+        connectorScheduler.pollAll(connectorRegistry, allChannelConfigs, handleBatchExtract);
 
       console.log(`[connector] ${connectorRegistry.getActive().size} connectors active`);
 
