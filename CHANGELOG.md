@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.0] - 2026-04-07
+
+### Added
+
+- **Connector Framework** — plugin-based architecture for connecting MAMA OS to external data sources. `IConnector` interface, `ConnectorRegistry` (dynamic loading), `PollingScheduler` (batch polling with state persistence), `RawStore` (per-connector SQLite evidence storage). Source role classification: truth, hub, deliverable, spoke, reference. Shared `gws-utils.ts` utility for Google Workspace CLI commands (Gmail, Calendar, Sheets, Drive)
+- **13 Connectors** — Slack (Web API), Telegram (Bot API), Discord (REST API), Chatwork (API), iMessage (local DB), Gmail (gws CLI), Calendar (gws CLI), Notion (API), Obsidian (local vault), Kagemusha (kagemusha.db reader), Sheets (gws CLI, truth source), Trello (REST API, truth source), Drive (gws CLI, deliverable tracking)
+- **Truth-first 3-pass extraction** — Pass 0: structured data (spreadsheet/kanban) → `ProjectTruth` snapshot (no LLM). Pass 1: cross-source activity merged by timestamp + truth context → LLM extraction. Pass 2: spoke channels linked to projects via context. Functions: `buildProjectTruth`, `buildActivityExtractionPrompt`, `buildSpokeExtractionPrompt`
+- **Batch polling** — `PollingScheduler.pollAll()` collects from all connectors, classifies by source role, and feeds unified 3-pass pipeline
+- **CLI: `mama connector`** — `add/remove/list/status` commands for managing connectors. Config at `~/.mama/connectors.json`
+- **Memory kinds: task, schedule** — `mama-core` MEMORY_KINDS extended to support project task tracking and schedule events from connectors
+- **DB migration 025** — adds `kind` CHECK constraint for `task` and `schedule` values in the decisions table
+
+### Changed
+
+- **search_decisions_and_contracts** — migrated from inline handler in `server.js` to `src/tools/search-decisions-and-contracts.js` (single source of truth)
+
 ## [0.16.1] - 2026-04-07
 
 ### Fixed
