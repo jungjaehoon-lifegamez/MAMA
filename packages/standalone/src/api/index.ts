@@ -21,6 +21,7 @@ import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
 import { createSecurityMiddleware } from '../security/security-monitor.js';
+import { createConnectorRouter, type ConnectorHandlerDeps } from './connector-handler.js';
 
 // Re-export types
 export * from './types.js';
@@ -31,6 +32,8 @@ export { InMemoryHeartbeatTracker, DEFAULT_HEARTBEAT_PROMPT } from './heartbeat-
 export { asyncHandler, validateRequired, ApiError } from './error-handler.js';
 export { createTokenRouter, initTokenUsageTable, insertTokenUsage } from './token-handler.js';
 export type { TokenUsageRecord } from './token-handler.js';
+export { ConnectorEventLog, type ConnectorEvent } from './connector-event-log.js';
+export type { ConnectorHandlerDeps } from './connector-handler.js';
 
 /**
  * API server options
@@ -58,6 +61,8 @@ export interface ApiServerOptions {
   healthCheckService?: {
     check(): Promise<SystemHealthReport>;
   };
+  /** Connector dependencies for Control Tower API */
+  connectorDeps?: ConnectorHandlerDeps;
 }
 
 /**
@@ -97,13 +102,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   // Security headers
   app.disable('x-powered-by');
-  app.use((req, res, next) => {
-    // Allow playgrounds to be loaded in iframes (viewer embeds them)
-    if (!req.path.startsWith('/playgrounds/')) {
-      res.setHeader('X-Frame-Options', 'DENY');
-    } else {
-      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-    }
+  app.use((_req, res, next) => {
+    res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
   });
@@ -163,6 +163,12 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   if (skillRegistry) {
     const skillsRouter = createSkillsRouter(skillRegistry);
     app.use('/api/skills', skillsRouter);
+  }
+
+  // Mount connector router for Control Tower
+  if (options.connectorDeps) {
+    const connectorRouter = createConnectorRouter(options.connectorDeps);
+    app.use('/api/connectors', connectorRouter);
   }
 
   // Health check endpoint (watchdog)

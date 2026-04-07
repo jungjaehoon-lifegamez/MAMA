@@ -2295,13 +2295,30 @@ export async function runAgentLoop(
   tokenKeepAlive.start();
 
   // === Connector Framework ===
+  const { ConnectorEventLog } = await import('../../api/connector-event-log.js');
+  const connectorEventLog = new ConnectorEventLog();
+  let connectorRegistryRef:
+    | import('../../connectors/framework/connector-registry.js').ConnectorRegistry
+    | null = null;
+  let connectorSchedulerRef:
+    | import('../../connectors/framework/polling-scheduler.js').PollingScheduler
+    | null = null;
+  let connectorChannelConfigs: Record<
+    string,
+    Record<string, import('../../connectors/framework/types.js').ChannelConfig>
+  > = {};
+  let connectorTriggerPoll: (() => Promise<void>) | undefined;
+
   const connectorsConfigPath = join(homedir(), '.mama', 'connectors.json');
   if (existsSync(connectorsConfigPath)) {
     const { ConnectorRegistry, PollingScheduler, RawStore } =
       await import('../../connectors/framework/index.js');
     const { loadConnector } = await import('../../connectors/index.js');
     const {
-      buildProjectTruth, buildActivityExtractionPrompt, buildSpokeExtractionPrompt, groupByChannel,
+      buildProjectTruth,
+      buildActivityExtractionPrompt,
+      buildSpokeExtractionPrompt,
+      groupByChannel,
     } = await import('../../memory/history-extractor.js');
     const { saveMemory, MEMORY_KINDS } = await import('@jungjaehoon/mama-core');
     type MemoryKind = import('@jungjaehoon/mama-core').MemoryKind;
@@ -2317,6 +2334,7 @@ export async function runAgentLoop(
       connectorsConfig = {} as ConnectorsJson;
     }
     const connectorRegistry = new ConnectorRegistry();
+    connectorRegistryRef = connectorRegistry;
     const rawStore = new RawStore(join(homedir(), '.mama', 'connectors'));
 
     // Build channel configs for role classification
@@ -2337,6 +2355,8 @@ export async function runAgentLoop(
       }
     }
 
+    connectorChannelConfigs = allChannelConfigs;
+
     for (const [name, connConfig] of Object.entries(connectorsConfig)) {
       if (!connConfig.enabled) continue;
       try {
@@ -2354,6 +2374,7 @@ export async function runAgentLoop(
         rawStore,
         join(homedir(), '.mama', 'connectors')
       );
+      connectorSchedulerRef = connectorScheduler;
 
       const validKinds = new Set<string>(MEMORY_KINDS);
 
@@ -2405,9 +2426,22 @@ export async function runAgentLoop(
                 });
               }
               console.log(`[connector] ${label}:${channelKey}: ${extracted.length} memories saved`);
+              connectorEventLog.push({
+                timestamp: new Date().toISOString(),
+                source: label,
+                channel: channelKey,
+                memoriesExtracted: extracted.length,
+              });
             }
           } catch (err) {
             console.error(`[connector] ${label}:${channelKey} extraction failed:`, err);
+            connectorEventLog.push({
+              timestamp: new Date().toISOString(),
+              source: label,
+              channel: channelKey,
+              memoriesExtracted: 0,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         }
       };
@@ -2455,6 +2489,33 @@ export async function runAgentLoop(
         }
       );
 
+      connectorTriggerPoll = () =>
+        connectorScheduler.pollAll(
+          connectorRegistry,
+          allChannelConfigs,
+          async ({ truth, activity, spoke }) => {
+            const pt = buildProjectTruth(truth);
+            if (activity.length > 0) {
+              await extractAndSave('activity', groupByChannel(activity), (items) =>
+                buildActivityExtractionPrompt(items, pt)
+              );
+            }
+            if (spoke.length > 0) {
+              const hc = Object.entries(pt.projects).flatMap(([proj, p]) =>
+                Object.entries(p.workUnits).map(([wu, state]) => ({
+                  project: proj,
+                  workUnit: wu,
+                  assignedTo: state.assigned,
+                  status: state.status,
+                }))
+              );
+              await extractAndSave('spoke', groupByChannel(spoke), (items) =>
+                buildSpokeExtractionPrompt(items, hc, pt)
+              );
+            }
+          }
+        );
+
       console.log(`[connector] ${connectorRegistry.getActive().size} connectors active`);
 
       // Add to graceful shutdown
@@ -2484,6 +2545,13 @@ export async function runAgentLoop(
       }
     },
     enableAutoKillPort: config.enable_auto_kill_port,
+    connectorDeps: {
+      registry: connectorRegistryRef,
+      scheduler: connectorSchedulerRef,
+      eventLog: connectorEventLog,
+      channelConfigs: connectorChannelConfigs,
+      triggerPoll: connectorTriggerPoll,
+    },
   });
 
   // Memory Agent stats API

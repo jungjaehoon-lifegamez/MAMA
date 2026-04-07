@@ -268,6 +268,7 @@ export class SettingsModule {
     await this.loadSettings();
     this.initBackendModelBinding();
     this.initDelegatedEventHandlers();
+    await this.loadConnectorSettings();
   }
 
   initDelegatedEventHandlers(): void {
@@ -1560,5 +1561,92 @@ export class SettingsModule {
 
     this.setValue('settings-token-daily-limit', budget.daily_limit || '');
     this.setValue('settings-token-alert-threshold', budget.alert_threshold || '');
+  }
+
+  /**
+   * Load and render connector settings
+   */
+  async loadConnectorSettings(): Promise<void> {
+    const container = getElementByIdOrNull<HTMLElement>('settings-connectors');
+    if (!container) return;
+
+    try {
+      const data = await API.get<{
+        connectors: Array<{
+          name: string;
+          enabled: boolean;
+          healthy: boolean;
+          channelCount: number;
+        }>;
+      }>('/api/connectors/status');
+      const connectors = data?.connectors || [];
+
+      if (connectors.length === 0) {
+        container.innerHTML = '<p class="text-[10px] text-gray-400">No connectors available</p>';
+        return;
+      }
+
+      const icons: Record<string, string> = {
+        slack: '💬',
+        telegram: '✈️',
+        discord: '🎮',
+        chatwork: '💼',
+        gmail: '📧',
+        calendar: '📅',
+        notion: '📝',
+        obsidian: '📓',
+        sheets: '📊',
+        trello: '📋',
+        drive: '📁',
+        kagemusha: '🥷',
+        imessage: '💭',
+      };
+
+      container.innerHTML = `
+        <div class="space-y-1">
+          ${connectors
+            .map((c) => {
+              const icon = icons[c.name] || '🔌';
+              return `
+              <div class="flex items-center justify-between py-1">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm">${icon}</span>
+                  <span class="text-xs font-medium text-gray-900">${escapeHtml(c.name)}</span>
+                  ${c.enabled && c.channelCount > 0 ? `<span class="text-[9px] text-gray-400">${c.channelCount} ch</span>` : ''}
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" ${c.enabled ? 'checked' : ''}
+                    data-connector-name="${escapeHtml(c.name)}"
+                    class="sr-only peer connector-toggle">
+                  <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
+                </label>
+              </div>
+            `;
+            })
+            .join('')}
+        </div>
+      `;
+
+      // Bind toggle events
+      container.querySelectorAll('.connector-toggle').forEach((input) => {
+        input.addEventListener('change', async (event) => {
+          const target = event.target as HTMLInputElement;
+          const name = target.dataset.connectorName;
+          if (!name) return;
+          try {
+            await API.post(`/api/connectors/${name}/toggle`, { enabled: target.checked });
+            showToast(
+              `${name} ${target.checked ? 'enabled' : 'disabled'}. Restart MAMA OS to apply.`
+            );
+          } catch (e) {
+            logger.error('[Settings] Connector toggle failed:', e);
+            target.checked = !target.checked; // revert
+            showToast('Toggle failed');
+          }
+        });
+      });
+    } catch {
+      container.innerHTML = '<p class="text-[10px] text-gray-400">Connector API not available</p>';
+    }
   }
 }
