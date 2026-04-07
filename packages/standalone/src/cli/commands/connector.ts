@@ -1,35 +1,18 @@
 /**
  * mama connector command
  *
- * Manage data source connectors (list, add, remove, status).
+ * Manage data source connectors (list, add, remove, status, config).
  * Config file: ~/.mama/connectors.json
  */
-
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 import { Command } from 'commander';
 
 import { AVAILABLE_CONNECTORS, loadConnector } from '../../connectors/index.js';
-import type { ConnectorsConfig, ConnectorConfig } from '../../connectors/index.js';
-
-const CONNECTORS_CONFIG_PATH = join(homedir(), '.mama', 'connectors.json');
-
-function loadConnectorsConfig(): ConnectorsConfig {
-  if (!existsSync(CONNECTORS_CONFIG_PATH)) return {};
-  try {
-    return JSON.parse(readFileSync(CONNECTORS_CONFIG_PATH, 'utf-8')) as ConnectorsConfig;
-  } catch {
-    return {};
-  }
-}
-
-function saveConnectorsConfig(config: ConnectorsConfig): void {
-  const dir = join(homedir(), '.mama');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(CONNECTORS_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
-}
+import type { ConnectorConfig } from '../../connectors/index.js';
+import {
+  loadConnectorsConfig,
+  saveConnectorsConfig,
+} from '../../connectors/framework/config-store.js';
 
 export function createConnectorCommand(): Command {
   const cmd = new Command('connector').description('Manage data source connectors');

@@ -22,6 +22,7 @@ import {
   getErrorMessage,
   showToast,
 } from '../utils/dom.js';
+import { formatRelativeTime, CONNECTOR_ICONS } from '../utils/format.js';
 import {
   API,
   type HealthCheckItem,
@@ -165,9 +166,8 @@ export class DashboardModule {
       }
       this.healthData = healthData.status === 'fulfilled' ? healthData.value : null;
 
-      // Load connector data (may not be available if no connectors configured)
-      await this.loadConnectorStatus();
-      await this.loadConnectorEvents();
+      // Load connector data in parallel
+      await Promise.allSettled([this.loadConnectorStatus(), this.loadConnectorEvents()]);
 
       this.render();
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
@@ -234,27 +234,11 @@ export class DashboardModule {
       return;
     }
 
-    const connectorIcons: Record<string, string> = {
-      slack: '💬',
-      telegram: '✈️',
-      discord: '🎮',
-      chatwork: '💼',
-      gmail: '📧',
-      calendar: '📅',
-      notion: '📝',
-      obsidian: '📓',
-      sheets: '📊',
-      trello: '📋',
-      drive: '📁',
-      kagemusha: '🥷',
-      imessage: '💭',
-    };
-
     const html = this.connectorStatus
       .map((c) => {
-        const icon = connectorIcons[c.name] || '🔌';
+        const icon = CONNECTOR_ICONS[c.name] || '🔌';
         const dot = c.enabled ? (c.healthy ? '🟢' : '🟡') : '⚪';
-        const lastPoll = c.lastPollTime ? this.formatRelativeTime(c.lastPollTime) : 'never';
+        const lastPoll = c.lastPollTime ? formatRelativeTime(c.lastPollTime) : 'never';
         const pollBtn = c.enabled
           ? `<button data-action="poll-connector" data-connector-name="${escapeAttr(c.name)}"
               class="text-[10px] text-gray-400 hover:text-mama-yellow-hover ml-auto">poll</button>`
@@ -300,23 +284,6 @@ export class DashboardModule {
       statsEl.textContent = `${stats.totalMemories} memories extracted · ${stats.total} events${stats.errors > 0 ? ` · ${stats.errors} errors` : ''}`;
     }
 
-    const connectorIcons: Record<string, string> = {
-      activity: '📡',
-      spoke: '💬',
-      truth: '📊',
-      slack: '💬',
-      telegram: '✈️',
-      discord: '🎮',
-      chatwork: '💼',
-      gmail: '📧',
-      sheets: '📊',
-      trello: '📋',
-      drive: '📁',
-      notion: '📝',
-      obsidian: '📓',
-      kagemusha: '🥷',
-    };
-
     const html = events
       .slice(0, 50)
       .map((ev) => {
@@ -324,7 +291,7 @@ export class DashboardModule {
           hour: '2-digit',
           minute: '2-digit',
         });
-        const icon = connectorIcons[ev.source] || '📡';
+        const icon = CONNECTOR_ICONS[ev.source] || '📡';
         const isError = !!ev.error;
 
         return `
@@ -418,25 +385,6 @@ export class DashboardModule {
       .join('');
 
     container.innerHTML = html;
-  }
-
-  /**
-   * Format relative time (e.g., "2m ago", "3d ago")
-   */
-  formatRelativeTime(timestamp: number | string | Date | undefined): string {
-    if (timestamp === undefined || timestamp === null || timestamp === '') return 'Never';
-
-    const now = Date.now();
-    const target = typeof timestamp === 'number' ? timestamp : new Date(timestamp).getTime();
-    const diff = now - target;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
   }
 
   /**

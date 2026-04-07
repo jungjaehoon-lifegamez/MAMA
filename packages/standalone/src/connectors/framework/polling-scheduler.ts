@@ -23,37 +23,24 @@ export class PollingScheduler {
   private lastPollTimes = new Map<string, Date>();
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly stateFile: string;
-  private readonly extractedFile: string;
-  private extractedIds = new Set<string>();
   private isBatchRunning = false;
 
   constructor(rawStore: RawStore, basePath: string) {
     this.rawStore = rawStore;
     this.stateFile = join(basePath, 'poll-state.json');
-    this.extractedFile = join(basePath, 'extracted-ids.json');
     this.restoreState();
   }
 
   private restoreState(): void {
-    if (existsSync(this.stateFile)) {
-      try {
-        const raw = readFileSync(this.stateFile, 'utf8');
-        const state = JSON.parse(raw) as PollState;
-        for (const [name, iso] of Object.entries(state)) {
-          this.lastPollTimes.set(name, new Date(iso));
-        }
-      } catch {
-        // Corrupt state file — start fresh
+    if (!existsSync(this.stateFile)) return;
+    try {
+      const raw = readFileSync(this.stateFile, 'utf8');
+      const state = JSON.parse(raw) as PollState;
+      for (const [name, iso] of Object.entries(state)) {
+        this.lastPollTimes.set(name, new Date(iso));
       }
-    }
-    if (existsSync(this.extractedFile)) {
-      try {
-        const raw = readFileSync(this.extractedFile, 'utf8');
-        const ids = JSON.parse(raw) as string[];
-        this.extractedIds = new Set(ids);
-      } catch {
-        // Corrupt file — start fresh
-      }
+    } catch {
+      // Corrupt state file — start fresh
     }
   }
 
@@ -63,10 +50,6 @@ export class PollingScheduler {
       state[name] = date.toISOString();
     }
     writeFileSync(this.stateFile, JSON.stringify(state, null, 2), 'utf8');
-    // Keep extracted IDs bounded (last 10000)
-    const ids = [...this.extractedIds];
-    const bounded = ids.length > 10000 ? ids.slice(ids.length - 10000) : ids;
-    writeFileSync(this.extractedFile, JSON.stringify(bounded), 'utf8');
   }
 
   async pollAll(
@@ -97,7 +80,6 @@ export class PollingScheduler {
               this.rawStore.save(name, items);
               allItems.push(...items);
             }
-            // Only advance the cursor after a successful poll+save
             this.lastPollTimes.set(name, new Date());
             success = true;
             break;
@@ -107,7 +89,7 @@ export class PollingScheduler {
               err instanceof Error ? err.message : err
             );
             if (attempt < 3) {
-              const delay = attempt * 2000; // 2s, 4s
+              const delay = attempt * 2000;
               await new Promise((resolve) => setTimeout(resolve, delay));
             }
           }
@@ -122,15 +104,24 @@ export class PollingScheduler {
 
       console.log(`[connector] pollAll total: ${allItems.length} items`);
       if (allItems.length > 0) {
-        // Filter to only unextracted items to prevent re-extraction
-        const unextractedItems = allItems.filter((item) => !this.extractedIds.has(item.sourceId));
+        // Query unextracted items from each connector's raw DB (extracted_at IS NULL)
+        const unextractedItems: NormalizedItem[] = [];
+        const connectorForItem = new Map<string, string>();
+        for (const [name] of registry.getActive()) {
+          // Use a wide window — the extracted_at IS NULL filter does the real dedup
+          const fresh = this.rawStore.queryUnextracted(name, new Date(0));
+          for (const item of fresh) {
+            connectorForItem.set(item.sourceId, name);
+          }
+          unextractedItems.push(...fresh);
+        }
 
         if (unextractedItems.length === 0) {
           console.log(`[connector] all ${allItems.length} items already extracted, skipping`);
         } else {
           if (unextractedItems.length < allItems.length) {
             console.log(
-              `[connector] ${allItems.length - unextractedItems.length} items already extracted, processing ${unextractedItems.length} new`
+              `[connector] ${allItems.length - unextractedItems.length} already extracted, processing ${unextractedItems.length} new`
             );
           }
           const classified = classifyItemsByRole(unextractedItems, channelConfigs, 'hub');
@@ -139,9 +130,16 @@ export class PollingScheduler {
           );
           await onBatchExtract(classified);
 
-          // Mark all items as extracted after successful extraction
+          // Mark extracted in each connector's raw DB
+          const byConnector = new Map<string, string[]>();
           for (const item of unextractedItems) {
-            this.extractedIds.add(item.sourceId);
+            const cn = connectorForItem.get(item.sourceId) ?? item.source;
+            const ids = byConnector.get(cn) ?? [];
+            ids.push(item.sourceId);
+            byConnector.set(cn, ids);
+          }
+          for (const [cn, ids] of byConnector) {
+            this.rawStore.markExtracted(cn, ids);
           }
         }
       }
@@ -158,11 +156,9 @@ export class PollingScheduler {
     intervalMinutes: number,
     onBatchExtract: BatchExtractCallback
   ): void {
-    // Initial poll (fire-and-forget)
     this.pollAll(registry, channelConfigs, onBatchExtract).catch((err) =>
       console.error('[connector] initial batch poll error:', err)
     );
-    // Periodic
     this.timers.set(
       '__batch__',
       setInterval(

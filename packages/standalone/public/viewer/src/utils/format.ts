@@ -332,3 +332,24 @@ function wrapCheckpointSections(text: string): string {
   // Replace the checkpoint content with collapsible version
   return text.replace(checkpointContent, collapsibleHtml);
 }
+
+/** Connector name → emoji icon mapping, shared across Control Tower and Settings. */
+export const CONNECTOR_ICONS: Record<string, string> = {
+  slack: '💬',
+  telegram: '✈️',
+  discord: '🎮',
+  chatwork: '💼',
+  gmail: '📧',
+  calendar: '📅',
+  notion: '📝',
+  obsidian: '📓',
+  sheets: '📊',
+  trello: '📋',
+  drive: '📁',
+  kagemusha: '🥷',
+  imessage: '💭',
+  // Extraction source roles (used in event stream)
+  activity: '📡',
+  spoke: '💬',
+  truth: '📊',
+};

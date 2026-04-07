@@ -13,7 +13,7 @@
 /* eslint-env browser */
 
 import { showToast, escapeHtml, escapeAttr, getElementByIdOrNull } from '../utils/dom.js';
-import { formatModelName } from '../utils/format.js';
+import { formatModelName, CONNECTOR_ICONS } from '../utils/format.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 import {
   API,
@@ -1586,27 +1586,11 @@ export class SettingsModule {
         return;
       }
 
-      const icons: Record<string, string> = {
-        slack: '💬',
-        telegram: '✈️',
-        discord: '🎮',
-        chatwork: '💼',
-        gmail: '📧',
-        calendar: '📅',
-        notion: '📝',
-        obsidian: '📓',
-        sheets: '📊',
-        trello: '📋',
-        drive: '📁',
-        kagemusha: '🥷',
-        imessage: '💭',
-      };
-
       container.innerHTML = `
         <div class="space-y-1">
           ${connectors
             .map((c) => {
-              const icon = icons[c.name] || '🔌';
+              const icon = CONNECTOR_ICONS[c.name] || '🔌';
               return `
               <div class="flex items-center justify-between py-1">
                 <div class="flex items-center gap-2">

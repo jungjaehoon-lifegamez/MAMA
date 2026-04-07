@@ -40,6 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_raw_items_timestamp ON raw_items(timestamp);
 
 export class RawStore {
   private dbs = new Map<string, Database>();
+  private migrated = new Set<string>();
   private readonly basePath: string;
 
   constructor(basePath: string) {
@@ -54,6 +55,17 @@ export class RawStore {
     mkdirSync(dir, { recursive: true });
     const db = new Database(join(dir, 'raw.db'));
     db.exec(SCHEMA);
+
+    // Migrate existing DBs: add extracted_at column if missing
+    if (!this.migrated.has(connectorName)) {
+      try {
+        db.exec('ALTER TABLE raw_items ADD COLUMN extracted_at INTEGER');
+      } catch {
+        // Column already exists — expected for new DBs
+      }
+      this.migrated.add(connectorName);
+    }
+
     this.dbs.set(connectorName, db);
     return db;
   }
@@ -86,59 +98,37 @@ export class RawStore {
       .prepare('SELECT * FROM raw_items WHERE timestamp >= ? ORDER BY timestamp ASC')
       .all(since.getTime()) as RawRow[];
 
-    return rows.map((row) => ({
-      source: row.source,
-      sourceId: row.source_id,
-      channel: row.channel,
-      author: row.author,
-      content: row.content,
-      timestamp: new Date(row.timestamp),
-      type: row.type as NormalizedItem['type'],
-      metadata:
-        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
-    }));
+    return rows.map((row) => toNormalizedItem(row));
   }
 
   /**
-   * Query items that have NOT been extracted yet (extracted_at IS NULL).
+   * Returns only items not yet sent through extraction, preventing duplicate LLM calls across restarts.
    */
   queryUnextracted(connectorName: string, since: Date): NormalizedItem[] {
     const db = this.getDb(connectorName);
-    // Migrate: add extracted_at column if missing (existing DBs)
-    try {
-      db.exec('ALTER TABLE raw_items ADD COLUMN extracted_at INTEGER');
-    } catch {
-      // Column already exists — expected
-    }
     const rows = db
       .prepare(
         'SELECT * FROM raw_items WHERE timestamp >= ? AND extracted_at IS NULL ORDER BY timestamp ASC'
       )
       .all(since.getTime()) as RawRow[];
 
-    return rows.map((row) => ({
-      source: row.source,
-      sourceId: row.source_id,
-      channel: row.channel,
-      author: row.author,
-      content: row.content,
-      timestamp: new Date(row.timestamp),
-      type: row.type as NormalizedItem['type'],
-      metadata:
-        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
-    }));
+    return rows.map((row) => toNormalizedItem(row));
   }
 
-  /**
-   * Mark items as extracted by their source IDs.
-   */
   markExtracted(connectorName: string, sourceIds: string[]): void {
     if (sourceIds.length === 0) return;
     const db = this.getDb(connectorName);
     const now = Date.now();
-    const stmt = db.prepare('UPDATE raw_items SET extracted_at = ? WHERE source_id = ?');
-    for (const id of sourceIds) {
-      stmt.run(now, id);
+    db.exec('BEGIN');
+    try {
+      const stmt = db.prepare('UPDATE raw_items SET extracted_at = ? WHERE source_id = ?');
+      for (const id of sourceIds) {
+        stmt.run(now, id);
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
     }
   }
 
@@ -148,4 +138,18 @@ export class RawStore {
     }
     this.dbs.clear();
   }
+}
+
+function toNormalizedItem(row: RawRow): NormalizedItem {
+  return {
+    source: row.source,
+    sourceId: row.source_id,
+    channel: row.channel,
+    author: row.author,
+    content: row.content,
+    timestamp: new Date(row.timestamp),
+    type: row.type as NormalizedItem['type'],
+    metadata:
+      row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
+  };
 }
