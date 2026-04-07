@@ -311,6 +311,78 @@ describe('ChatworkConnector', () => {
     });
   });
 
+  describe('incremental polling (client-side dedup)', () => {
+    it('skips already-seen messages on second poll', async () => {
+      const msg1 = makeChatworkMessage({
+        message_id: '1001',
+        body: 'first',
+        send_time: 1700000001,
+      });
+      const msg2 = makeChatworkMessage({
+        message_id: '1002',
+        body: 'second',
+        send_time: 1700000002,
+      });
+
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          // First poll: returns both messages
+          .mockResolvedValueOnce({
+            ok: true,
+            json: vi.fn().mockResolvedValue([msg1, msg2]),
+          })
+          // Second poll: API returns same messages again
+          .mockResolvedValueOnce({
+            ok: true,
+            json: vi.fn().mockResolvedValue([msg1, msg2]),
+          })
+      );
+
+      const connector = new ChatworkConnector(
+        makeConfig({ channels: { '12345': { role: 'hub', name: 'project' } } })
+      );
+      await connector.init();
+
+      const firstPoll = await connector.poll(new Date(0));
+      expect(firstPoll).toHaveLength(2);
+
+      const secondPoll = await connector.poll(new Date(0));
+      // Second poll should skip already-seen messages (message_id <= lastMessageId)
+      expect(secondPoll).toHaveLength(0);
+    });
+
+    it('returns only new messages on second poll', async () => {
+      const msg1 = makeChatworkMessage({ message_id: '1001', body: 'old', send_time: 1700000001 });
+      const msg2 = makeChatworkMessage({ message_id: '1002', body: 'new', send_time: 1700000002 });
+
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            json: vi.fn().mockResolvedValue([msg1]),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: vi.fn().mockResolvedValue([msg1, msg2]),
+          })
+      );
+
+      const connector = new ChatworkConnector(
+        makeConfig({ channels: { '12345': { role: 'hub', name: 'project' } } })
+      );
+      await connector.init();
+
+      await connector.poll(new Date(0));
+      const items = await connector.poll(new Date(0));
+      expect(items).toHaveLength(1);
+      expect(items[0]?.content).toBe('new');
+    });
+  });
+
   describe('dispose', () => {
     it('clears the token so authenticate returns false', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));

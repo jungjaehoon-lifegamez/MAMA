@@ -171,5 +171,106 @@ export function createConnectorCommand(): Command {
       console.log('');
     });
 
+  // ── config ──────────────────────────────────────────────────────────────────
+  cmd
+    .command('config <name>')
+    .description('Configure channels for a connector')
+    .option('--add-channel <id>', 'Add a channel/room/folder ID')
+    .option('--role <role>', 'Set role: truth, hub, deliverable, spoke, reference, ignore', 'hub')
+    .option('--channel-name <name>', 'Friendly name for the channel')
+    .option('--remove-channel <id>', 'Remove a channel')
+    .option('--poll-interval <minutes>', 'Set poll interval in minutes')
+    .option('--list', 'List current channel config')
+    .action(
+      (
+        name: string,
+        opts: {
+          addChannel?: string;
+          role?: string;
+          channelName?: string;
+          removeChannel?: string;
+          pollInterval?: string;
+          list?: boolean;
+        }
+      ) => {
+        if (!(AVAILABLE_CONNECTORS as readonly string[]).includes(name)) {
+          console.error(`Unknown connector: ${name}`);
+          console.error(`Available: ${AVAILABLE_CONNECTORS.join(', ')}`);
+          process.exitCode = 1;
+          return;
+        }
+
+        const config = loadConnectorsConfig();
+        if (!config[name]) {
+          console.error(`Connector '${name}' not configured. Run: mama connector add ${name}`);
+          process.exitCode = 1;
+          return;
+        }
+
+        const cc = config[name]!;
+
+        // List channels
+        if (opts.list || (!opts.addChannel && !opts.removeChannel && !opts.pollInterval)) {
+          console.log(`\nConnector: ${name}`);
+          console.log(`  Enabled: ${cc.enabled}`);
+          console.log(`  Poll interval: ${cc.pollIntervalMinutes}m`);
+          console.log(`  Auth: ${cc.auth.type}`);
+          const channels = Object.entries(cc.channels);
+          if (channels.length === 0) {
+            console.log('  Channels: (none)');
+          } else {
+            console.log('  Channels:');
+            for (const [id, ch] of channels) {
+              const label = ch.name ? `${ch.name} (${id})` : id;
+              console.log(`    ${label}  role=${ch.role}`);
+            }
+          }
+          console.log('');
+          return;
+        }
+
+        // Set poll interval
+        if (opts.pollInterval) {
+          const mins = parseInt(opts.pollInterval, 10);
+          if (isNaN(mins) || mins < 1) {
+            console.error('Poll interval must be a positive integer (minutes)');
+            process.exitCode = 1;
+            return;
+          }
+          cc.pollIntervalMinutes = mins;
+          console.log(`✓ Poll interval set to ${mins} minutes`);
+        }
+
+        // Add channel
+        if (opts.addChannel) {
+          const validRoles = ['truth', 'hub', 'deliverable', 'spoke', 'reference', 'ignore'];
+          const role = opts.role ?? 'hub';
+          if (!validRoles.includes(role)) {
+            console.error(`Invalid role: ${role}. Valid: ${validRoles.join(', ')}`);
+            process.exitCode = 1;
+            return;
+          }
+          cc.channels[opts.addChannel] = {
+            role: role as 'truth' | 'hub' | 'deliverable' | 'spoke' | 'reference' | 'ignore',
+            ...(opts.channelName ? { name: opts.channelName } : {}),
+          };
+          console.log(`✓ Channel '${opts.addChannel}' added with role=${role}`);
+        }
+
+        // Remove channel
+        if (opts.removeChannel) {
+          if (cc.channels[opts.removeChannel]) {
+            delete cc.channels[opts.removeChannel];
+            console.log(`✓ Channel '${opts.removeChannel}' removed`);
+          } else {
+            console.log(`Channel '${opts.removeChannel}' not found`);
+          }
+        }
+
+        saveConnectorsConfig(config);
+        console.log('Config saved. Restart MAMA OS to apply.\n');
+      }
+    );
+
   return cmd;
 }
