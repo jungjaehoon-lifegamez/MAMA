@@ -26,7 +26,6 @@ const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } = require('@modelcontextprotocol/sdk/types.js');
-const path = require('path');
 
 // Import all MAMA tools from src/tools/ — single source of truth for tool definitions
 const { createMemoryTools } = require('./tools/index.js');
@@ -35,8 +34,6 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Import core modules from mama-core
 const { initDB } = require('@jungjaehoon/mama-core/db-manager');
-const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
-const { vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
 const embeddingServer = require('@jungjaehoon/mama-core/embedding-server');
 const http = require('http');
 
@@ -369,24 +366,11 @@ After failure → save a NEW decision with same topic to create evolution histor
           required: ['id', 'outcome'],
         },
       },
-      // 4. SEARCH_DECISIONS_AND_CONTRACTS — PreToolUse hook RPC
+      // 4. SEARCH_DECISIONS_AND_CONTRACTS — PreToolUse hook RPC (defined in src/tools/)
       {
-        name: 'search_decisions_and_contracts',
-        description: 'Search decisions and contracts for PreToolUse hook injection.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: 'Search query for decisions.' },
-            filePath: { type: 'string', description: 'File path context.' },
-            toolName: { type: 'string', description: 'Tool name (Edit/Write/apply_patch).' },
-            decisionLimit: { type: 'number', description: 'Max decisions (default: 5).' },
-            contractLimit: { type: 'number', description: 'Max contracts (default: 3).' },
-            similarityThreshold: {
-              type: 'number',
-              description: 'Similarity threshold (default: 0.7).',
-            },
-          },
-        },
+        name: memoryTools.search_decisions_and_contracts.name,
+        description: memoryTools.search_decisions_and_contracts.description,
+        inputSchema: memoryTools.search_decisions_and_contracts.inputSchema,
       },
     ];
 
@@ -589,74 +573,6 @@ After failure → save a NEW decision with same topic to create evolution histor
       success: true,
       count: limited.length,
       results: limited,
-    };
-  }
-
-  /**
-   * Handle PreToolUse search for decisions + contracts
-   */
-  async handleSearchDecisionsAndContracts(args = {}) {
-    const {
-      query = '',
-      filePath = '',
-      toolName = '',
-      decisionLimit = 5,
-      contractLimit = 3,
-      similarityThreshold = 0.7,
-    } = args;
-
-    await initDB();
-
-    let decisionResults = [];
-    let contractResults = [];
-
-    // Decision search
-    if (decisionLimit > 0 && query) {
-      try {
-        const queryEmbedding = await generateEmbedding(query);
-        const results = await vectorSearch(queryEmbedding, decisionLimit, similarityThreshold);
-        if (Array.isArray(results)) {
-          decisionResults = results.slice(0, decisionLimit);
-        }
-      } catch (err) {
-        console.error('[MAMA MCP] Decision search failed:', err.message);
-      }
-    }
-
-    // Contract search (file-specific)
-    const contractTools = ['Edit', 'Write', 'apply_patch'];
-    const codeExtensions = ['.js', '.ts', '.jsx', '.tsx', '.py', '.go', '.rs', '.java'];
-    const ext = filePath ? path.extname(filePath) : '';
-
-    if (
-      contractLimit > 0 &&
-      filePath &&
-      contractTools.includes(toolName) &&
-      codeExtensions.includes(ext)
-    ) {
-      const basename = path.basename(filePath, ext);
-      const keywords = basename.split(/[-_]/).filter(Boolean);
-      const contractQuery = `contract api ${keywords.join(' ')}`.trim();
-
-      if (contractQuery) {
-        try {
-          const contractEmbedding = await generateEmbedding(contractQuery);
-          const contractMatches = await vectorSearch(contractEmbedding, 10, similarityThreshold);
-          if (Array.isArray(contractMatches)) {
-            contractResults = contractMatches
-              .filter((r) => r.topic && r.topic.startsWith('contract_'))
-              .slice(0, contractLimit);
-          }
-        } catch (err) {
-          console.error('[MAMA MCP] Contract search failed:', err.message);
-        }
-      }
-    }
-
-    return {
-      success: true,
-      decisionResults,
-      contractResults,
     };
   }
 
