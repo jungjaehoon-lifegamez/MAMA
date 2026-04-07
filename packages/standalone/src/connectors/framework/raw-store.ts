@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS raw_items (
   timestamp INTEGER NOT NULL,
   type TEXT NOT NULL,
   metadata TEXT,
-  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  extracted_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_raw_items_timestamp ON raw_items(timestamp);
 `;
@@ -96,6 +97,49 @@ export class RawStore {
       metadata:
         row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
     }));
+  }
+
+  /**
+   * Query items that have NOT been extracted yet (extracted_at IS NULL).
+   */
+  queryUnextracted(connectorName: string, since: Date): NormalizedItem[] {
+    const db = this.getDb(connectorName);
+    // Migrate: add extracted_at column if missing (existing DBs)
+    try {
+      db.exec('ALTER TABLE raw_items ADD COLUMN extracted_at INTEGER');
+    } catch {
+      // Column already exists — expected
+    }
+    const rows = db
+      .prepare(
+        'SELECT * FROM raw_items WHERE timestamp >= ? AND extracted_at IS NULL ORDER BY timestamp ASC'
+      )
+      .all(since.getTime()) as RawRow[];
+
+    return rows.map((row) => ({
+      source: row.source,
+      sourceId: row.source_id,
+      channel: row.channel,
+      author: row.author,
+      content: row.content,
+      timestamp: new Date(row.timestamp),
+      type: row.type as NormalizedItem['type'],
+      metadata:
+        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
+    }));
+  }
+
+  /**
+   * Mark items as extracted by their source IDs.
+   */
+  markExtracted(connectorName: string, sourceIds: string[]): void {
+    if (sourceIds.length === 0) return;
+    const db = this.getDb(connectorName);
+    const now = Date.now();
+    const stmt = db.prepare('UPDATE raw_items SET extracted_at = ? WHERE source_id = ?');
+    for (const id of sourceIds) {
+      stmt.run(now, id);
+    }
   }
 
   close(): void {

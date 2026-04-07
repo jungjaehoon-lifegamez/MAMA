@@ -23,24 +23,37 @@ export class PollingScheduler {
   private lastPollTimes = new Map<string, Date>();
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly stateFile: string;
+  private readonly extractedFile: string;
+  private extractedIds = new Set<string>();
   private isBatchRunning = false;
 
   constructor(rawStore: RawStore, basePath: string) {
     this.rawStore = rawStore;
     this.stateFile = join(basePath, 'poll-state.json');
+    this.extractedFile = join(basePath, 'extracted-ids.json');
     this.restoreState();
   }
 
   private restoreState(): void {
-    if (!existsSync(this.stateFile)) return;
-    try {
-      const raw = readFileSync(this.stateFile, 'utf8');
-      const state = JSON.parse(raw) as PollState;
-      for (const [name, iso] of Object.entries(state)) {
-        this.lastPollTimes.set(name, new Date(iso));
+    if (existsSync(this.stateFile)) {
+      try {
+        const raw = readFileSync(this.stateFile, 'utf8');
+        const state = JSON.parse(raw) as PollState;
+        for (const [name, iso] of Object.entries(state)) {
+          this.lastPollTimes.set(name, new Date(iso));
+        }
+      } catch {
+        // Corrupt state file — start fresh
       }
-    } catch {
-      // Corrupt state file — start fresh
+    }
+    if (existsSync(this.extractedFile)) {
+      try {
+        const raw = readFileSync(this.extractedFile, 'utf8');
+        const ids = JSON.parse(raw) as string[];
+        this.extractedIds = new Set(ids);
+      } catch {
+        // Corrupt file — start fresh
+      }
     }
   }
 
@@ -50,6 +63,10 @@ export class PollingScheduler {
       state[name] = date.toISOString();
     }
     writeFileSync(this.stateFile, JSON.stringify(state, null, 2), 'utf8');
+    // Keep extracted IDs bounded (last 10000)
+    const ids = [...this.extractedIds];
+    const bounded = ids.length > 10000 ? ids.slice(ids.length - 10000) : ids;
+    writeFileSync(this.extractedFile, JSON.stringify(bounded), 'utf8');
   }
 
   async pollAll(
@@ -68,29 +85,65 @@ export class PollingScheduler {
 
       for (const [name, connector] of registry.getActive()) {
         const since = this.lastPollTimes.get(name) ?? new Date(Date.now() - 24 * 60 * 60 * 1000);
-        try {
-          const items = await connector.poll(since);
-          console.log(
-            `[connector:${name}] polled ${items.length} items (since: ${since.toISOString()})`
-          );
-          if (items.length > 0) {
-            this.rawStore.save(name, items);
-            allItems.push(...items);
+        let success = false;
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const items = await connector.poll(since);
+            console.log(
+              `[connector:${name}] polled ${items.length} items (since: ${since.toISOString()})`
+            );
+            if (items.length > 0) {
+              this.rawStore.save(name, items);
+              allItems.push(...items);
+            }
+            // Only advance the cursor after a successful poll+save
+            this.lastPollTimes.set(name, new Date());
+            success = true;
+            break;
+          } catch (err) {
+            console.error(
+              `[connector:${name}] poll error (attempt ${attempt}/3):`,
+              err instanceof Error ? err.message : err
+            );
+            if (attempt < 3) {
+              const delay = attempt * 2000; // 2s, 4s
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            }
           }
-          // Only advance the cursor after a successful poll+save
-          this.lastPollTimes.set(name, new Date());
-        } catch (err) {
-          console.error(`[connector:${name}] poll error:`, err);
+        }
+
+        if (!success) {
+          console.error(
+            `[connector:${name}] all 3 retry attempts failed, skipping until next cycle`
+          );
         }
       }
 
       console.log(`[connector] pollAll total: ${allItems.length} items`);
       if (allItems.length > 0) {
-        const classified = classifyItemsByRole(allItems, channelConfigs, 'hub');
-        console.log(
-          `[connector] classified: truth=${classified.truth.length} activity=${classified.activity.length} spoke=${classified.spoke.length}`
-        );
-        await onBatchExtract(classified);
+        // Filter to only unextracted items to prevent re-extraction
+        const unextractedItems = allItems.filter((item) => !this.extractedIds.has(item.sourceId));
+
+        if (unextractedItems.length === 0) {
+          console.log(`[connector] all ${allItems.length} items already extracted, skipping`);
+        } else {
+          if (unextractedItems.length < allItems.length) {
+            console.log(
+              `[connector] ${allItems.length - unextractedItems.length} items already extracted, processing ${unextractedItems.length} new`
+            );
+          }
+          const classified = classifyItemsByRole(unextractedItems, channelConfigs, 'hub');
+          console.log(
+            `[connector] classified: truth=${classified.truth.length} activity=${classified.activity.length} spoke=${classified.spoke.length}`
+          );
+          await onBatchExtract(classified);
+
+          // Mark all items as extracted after successful extraction
+          for (const item of unextractedItems) {
+            this.extractedIds.add(item.sourceId);
+          }
+        }
       }
 
       this.persistState();

@@ -246,6 +246,60 @@ describe('SlackConnector', () => {
       expect(items[2]?.content).toBe('third');
     });
 
+    it('paginates using cursor when response_metadata.next_cursor is present', async () => {
+      // Page 1
+      mockWebClient.conversations.history.mockResolvedValueOnce({
+        messages: [
+          { ts: '1700000001.000', user: 'U123', text: 'page1-msg1' },
+          { ts: '1700000002.000', user: 'U123', text: 'page1-msg2' },
+        ],
+        response_metadata: { next_cursor: 'cursor_abc' },
+      });
+      // Page 2
+      mockWebClient.conversations.history.mockResolvedValueOnce({
+        messages: [{ ts: '1700000003.000', user: 'U123', text: 'page2-msg1' }],
+        response_metadata: { next_cursor: '' }, // empty = no more pages
+      });
+
+      const connector = new SlackConnector(
+        makeConfig({ channels: { C001: { role: 'hub', name: 'general' } } })
+      );
+      await connector.init();
+      const items = await connector.poll(new Date(0));
+
+      expect(items).toHaveLength(3);
+      expect(items.map((i) => i.content)).toEqual(['page1-msg1', 'page1-msg2', 'page2-msg1']);
+
+      // Verify cursor was passed in second call
+      const calls = mockWebClient.conversations.history.mock.calls as Array<
+        Array<{ cursor?: string }>
+      >;
+      expect(calls[0][0].cursor).toBeUndefined();
+      expect(calls[1][0].cursor).toBe('cursor_abc');
+    });
+
+    it('handles pagination error gracefully on second page', async () => {
+      mockWebClient.conversations.history
+        .mockResolvedValueOnce({
+          messages: [{ ts: '1700000001.000', user: 'U123', text: 'ok' }],
+          response_metadata: { next_cursor: 'cursor_fail' },
+        })
+        .mockRejectedValueOnce(new Error('rate_limited'));
+
+      const connector = new SlackConnector(
+        makeConfig({ channels: { C001: { role: 'hub', name: 'general' } } })
+      );
+      await connector.init();
+      // Should not throw — error is caught per channel
+      const items = await connector.poll(new Date(0));
+      // Items from first page are kept in the local `items` array before the error,
+      // but the try/catch is around the entire do-while loop so items from page 1
+      // that were pushed before the error on page 2 are still in the array
+      expect(items).toHaveLength(1);
+      const health = await connector.healthCheck();
+      expect(health.error).toBeDefined();
+    });
+
     it('uses oldest param based on since timestamp', async () => {
       const since = new Date('2024-01-01T00:00:00.000Z');
       const connector = new SlackConnector(

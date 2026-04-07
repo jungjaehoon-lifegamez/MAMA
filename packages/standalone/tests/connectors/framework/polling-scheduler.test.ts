@@ -135,10 +135,19 @@ describe('PollingScheduler', () => {
       const scheduler = new PollingScheduler(rawStore, tmpDir);
       const registry = new ConnectorRegistry();
 
-      const item = makeItem('batch-1', new Date());
-      item.source = 'slack';
-      item.channel = 'general';
-      registry.register('slack', makeMockConnector('slack', [item]));
+      const item1 = makeItem('batch-1', new Date());
+      item1.source = 'slack';
+      item1.channel = 'general';
+      const item2 = makeItem('batch-2', new Date());
+      item2.source = 'slack';
+      item2.channel = 'general';
+
+      // First poll returns item1, second poll returns item2 (new item to avoid dedup)
+      const connector = makeMockConnector('slack', [item1]);
+      (connector.poll as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce([item1])
+        .mockResolvedValueOnce([item2]);
+      registry.register('slack', connector);
 
       const channelConfigs = { slack: { general: { role: 'hub' as const } } };
 
@@ -149,7 +158,7 @@ describe('PollingScheduler', () => {
 
       expect(onBatchExtract).toHaveBeenCalledOnce();
 
-      // Advance 1 minute — should trigger another batch poll
+      // Advance 1 minute — should trigger another batch poll with new item
       await vi.advanceTimersByTimeAsync(60 * 1000);
       expect(onBatchExtract.mock.calls.length).toBeGreaterThan(1);
 
@@ -164,7 +173,17 @@ describe('PollingScheduler', () => {
       const item = makeItem('batch-stop', new Date());
       item.source = 'slack';
       item.channel = 'general';
-      registry.register('slack', makeMockConnector('slack', [item]));
+      // Return different items each time to avoid dedup filter
+      let callCount = 0;
+      const connector = makeMockConnector('slack', [item]);
+      (connector.poll as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        callCount++;
+        const newItem = makeItem(`batch-stop-${callCount}`, new Date());
+        newItem.source = 'slack';
+        newItem.channel = 'general';
+        return Promise.resolve([newItem]);
+      });
+      registry.register('slack', connector);
 
       const channelConfigs = { slack: { general: { role: 'hub' as const } } };
 
@@ -176,6 +195,78 @@ describe('PollingScheduler', () => {
 
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000); // advance 5 minutes
       expect(onBatchExtract.mock.calls.length).toBe(callsAtStop);
+    });
+  });
+
+  describe('retry on poll failure', () => {
+    it('retries up to 3 times on poll error', async () => {
+      vi.useRealTimers();
+      const rawStore2 = new RawStore(tmpDir);
+      const scheduler = new PollingScheduler(rawStore2, tmpDir);
+      const registry = new ConnectorRegistry();
+
+      const failConnector = makeMockConnector('flaky', []);
+      (failConnector.poll as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error('timeout'))
+        .mockRejectedValueOnce(new Error('timeout'))
+        .mockResolvedValueOnce([]);
+      registry.register('flaky', failConnector);
+
+      await scheduler.pollAll(registry, {}, vi.fn());
+
+      expect(failConnector.poll).toHaveBeenCalledTimes(3);
+      // Should have advanced the cursor (successful on 3rd attempt)
+      expect(scheduler.getLastPollTime('flaky')).toBeDefined();
+
+      rawStore2.close();
+      vi.useFakeTimers();
+    }, 15000);
+
+    it('gives up after 3 failures', async () => {
+      vi.useRealTimers();
+      const rawStore2 = new RawStore(tmpDir);
+      const scheduler = new PollingScheduler(rawStore2, tmpDir);
+      const registry = new ConnectorRegistry();
+
+      const failConnector = makeMockConnector('broken', []);
+      (failConnector.poll as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('permanent_error')
+      );
+      registry.register('broken', failConnector);
+
+      await scheduler.pollAll(registry, {}, vi.fn());
+
+      expect(failConnector.poll).toHaveBeenCalledTimes(3);
+      // Should NOT have advanced cursor
+      expect(scheduler.getLastPollTime('broken')).toBeUndefined();
+
+      rawStore2.close();
+      vi.useFakeTimers();
+    }, 15000);
+  });
+
+  describe('extraction dedup', () => {
+    it('skips extraction for already-extracted items on second poll', async () => {
+      const onExtract = vi.fn().mockResolvedValue(undefined);
+      const scheduler = new PollingScheduler(rawStore, tmpDir);
+      const registry = new ConnectorRegistry();
+
+      const item = makeItem('dedup-1', new Date('2026-04-07T10:00:00Z'));
+      item.source = 'slack';
+      item.channel = 'general';
+      const connector = makeMockConnector('slack', [item]);
+      registry.register('slack', connector);
+
+      const channelConfigs = { slack: { general: { role: 'hub' as const } } };
+
+      // First poll — should extract
+      await scheduler.pollAll(registry, channelConfigs, onExtract);
+      expect(onExtract).toHaveBeenCalledOnce();
+
+      // Second poll with same items — should skip extraction
+      await scheduler.pollAll(registry, channelConfigs, onExtract);
+      // onExtract should still be called only once (no new items to extract)
+      expect(onExtract).toHaveBeenCalledOnce();
     });
   });
 
