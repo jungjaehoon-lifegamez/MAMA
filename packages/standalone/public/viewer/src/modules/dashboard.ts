@@ -1,13 +1,16 @@
 /**
- * Dashboard Module - MAMA OS Dashboard
+ * Dashboard Module - MAMA OS Control Tower
  * @module modules/dashboard
- * @version 1.0.0
+ * @version 2.0.0
  *
- * Handles Dashboard tab functionality including:
+ * Handles Control Tower tab functionality including:
+ * - Event Stream (connector extraction results)
+ * - Connected Apps (connector status)
  * - Gateway status display (Discord, Slack, Telegram, Chatwork)
  * - Memory statistics
- * - Agent configuration display
- * - Top topics
+ * - System Health
+ * - Token Usage
+ * - Cron Jobs
  */
 
 /* eslint-env browser */
@@ -19,15 +22,10 @@ import {
   getErrorMessage,
   showToast,
 } from '../utils/dom.js';
-import { formatModelName } from '../utils/format.js';
 import {
   API,
   type HealthCheckItem,
   type HealthReportResponse,
-  type McpServer,
-  type McpServersResponse,
-  type MultiAgentAgent,
-  type MultiAgentDashboardStatus,
   type TokenSummaryResponse,
   type TokensByAgentResponse,
 } from '../utils/api.js';
@@ -43,67 +41,16 @@ type DashboardGateway = {
   rooms?: string[];
 };
 
-type DashboardSessionChannel = {
-  source: string;
-  channelId: string;
-  channelName?: string;
-  messageCount?: number;
-  lastActive?: number | string;
-};
-
-type DashboardSessions = {
-  total: number;
-  bySource: Record<string, number>;
-  channels: DashboardSessionChannel[];
-};
-
 type DashboardMemoryStats = {
   total?: number;
   thisWeek?: number;
   thisMonth?: number;
   checkpoints?: number;
-  topTopics?: Array<{ topic: string; count: number }>;
-};
-
-type DashboardAgentConfig = {
-  model?: string;
-  maxTurns?: number;
-  timeout?: number;
 };
 
 type DashboardData = {
   gateways?: Record<string, DashboardGateway>;
-  sessions?: DashboardSessions;
   memory?: DashboardMemoryStats;
-  agent?: DashboardAgentConfig;
-  heartbeat?: {
-    enabled?: boolean;
-    interval?: number;
-    quiet_start?: number;
-    quiet_end?: number;
-    quietStart?: number;
-    quietEnd?: number;
-  };
-};
-
-type MultiAgentDashboardData = {
-  enabled: boolean;
-  agents: MultiAgentAgent[];
-  activeChains?: number;
-};
-
-type DashboardDelegation = {
-  status: string;
-  claimedBy?: string;
-  description?: string;
-  wave?: number;
-  completedAt?: number | string;
-  claimedAt?: number | string;
-};
-
-type DashboardDelegationsData = {
-  delegations: DashboardDelegation[];
-  count?: number;
 };
 
 type DashboardTokenData = {
@@ -111,17 +58,40 @@ type DashboardTokenData = {
   byAgent?: TokensByAgentResponse;
 };
 
+type ConnectorStatusItem = {
+  name: string;
+  enabled: boolean;
+  healthy: boolean;
+  lastPollTime: string | null;
+  lastPollCount: number;
+  channelCount: number;
+};
+
+type ConnectorEvent = {
+  timestamp: string;
+  source: string;
+  channel: string;
+  memoriesExtracted: number;
+  error?: string;
+};
+
+type ConnectorEventsResponse = {
+  events: ConnectorEvent[];
+  stats: { total: number; errors: number; totalMemories: number };
+};
+
 /**
- * Dashboard Module Class
+ * Dashboard Module Class — Control Tower
  */
 export class DashboardModule {
   data: DashboardData | null = null;
   updateInterval: ReturnType<typeof setInterval> | null = null;
   initialized = false;
   onCronClick: ((event: MouseEvent) => void) | null = null;
-  mcpServers: McpServer[] = [];
-  multiAgentData: MultiAgentDashboardData = { enabled: false, agents: [] };
-  delegationsData: DashboardDelegationsData = { delegations: [], count: 0 };
+  tokenData: DashboardTokenData | null = null;
+  healthData: HealthReportResponse | null = null;
+  connectorStatus: ConnectorStatusItem[] = [];
+  connectorEvents: ConnectorEventsResponse | null = null;
   cronData: {
     jobs?: Array<{
       id: string;
@@ -132,19 +102,16 @@ export class DashboardModule {
       enabled?: boolean;
     }>;
   } | null = null;
-  tokenData: DashboardTokenData | null = null;
-  healthData: HealthReportResponse | null = null;
 
   constructor() {
     this.data = null;
     this.updateInterval = null;
     this.initialized = false;
     this.onCronClick = null;
-    this.mcpServers = [];
   }
 
   /**
-   * Initialize dashboard
+   * Initialize Control Tower
    */
   async init(): Promise<void> {
     if (this.initialized) {
@@ -155,43 +122,19 @@ export class DashboardModule {
     // Event delegation for dashboard actions
     this.onCronClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
-      if (!target) {
-        return;
-      }
+      if (!target) return;
 
       const cronButton = target.closest<HTMLElement>('[data-action="run-cron"]');
       if (cronButton) {
         const jobId = cronButton.getAttribute('data-cron-id');
-        if (jobId) {
-          this.runCronJob(jobId);
-        }
+        if (jobId) this.runCronJob(jobId);
         return;
       }
 
-      const settingsLink = target.closest<HTMLElement>('[data-action="open-settings"]');
-      if (settingsLink) {
-        const settingsTab = document.querySelector<HTMLElement>('[data-tab="settings"]');
-        if (settingsTab) {
-          settingsTab.click();
-        }
-        return;
-      }
-
-      const restartBtn = target.closest<HTMLElement>('[data-action="restart-agent"]');
-      if (restartBtn) {
-        const agentId = restartBtn.getAttribute('data-agent-id');
-        if (agentId) {
-          this.restartAgent(agentId);
-        }
-        return;
-      }
-
-      const stopBtn = target.closest<HTMLElement>('[data-action="stop-agent"]');
-      if (stopBtn) {
-        const agentId = stopBtn.getAttribute('data-agent-id');
-        if (agentId) {
-          this.stopAgent(agentId);
-        }
+      const pollBtn = target.closest<HTMLElement>('[data-action="poll-connector"]');
+      if (pollBtn) {
+        const name = pollBtn.getAttribute('data-connector-name');
+        if (name) this.triggerPoll(name);
       }
     };
     document.addEventListener('click', this.onCronClick);
@@ -203,60 +146,28 @@ export class DashboardModule {
   }
 
   /**
-   * Load dashboard status from API
+   * Load all dashboard data from APIs
    */
   async loadStatus(): Promise<void> {
     try {
       this.data = await API.get<DashboardData>('/api/dashboard/status');
 
-      // Load multi-agent status (Sprint 3 F2)
-      try {
-        this.multiAgentData = await API.get<MultiAgentDashboardStatus>('/api/multi-agent/status');
-      } catch (e) {
-        logger.warn('[Dashboard] Multi-agent status unavailable:', e);
-        this.multiAgentData = { enabled: false, agents: [] };
-      }
+      // Load all data in parallel
+      const [cronData, tokenData, healthData] = await Promise.allSettled([
+        API.getCronJobs(),
+        Promise.all([API.getTokenSummary(), API.getTokensByAgent()]),
+        API.getHealthReport(),
+      ]);
 
-      // Load delegations (F4 endpoint)
-      try {
-        this.delegationsData = await API.get<DashboardDelegationsData>(
-          '/api/multi-agent/delegations?limit=10'
-        );
-      } catch (e) {
-        logger.warn('[Dashboard] Delegations unavailable:', e);
-        this.delegationsData = { delegations: [], count: 0 };
+      this.cronData = cronData.status === 'fulfilled' ? cronData.value : null;
+      if (tokenData.status === 'fulfilled') {
+        this.tokenData = { summary: tokenData.value[0], byAgent: tokenData.value[1] };
       }
+      this.healthData = healthData.status === 'fulfilled' ? healthData.value : null;
 
-      // Load cron jobs
-      try {
-        this.cronData = await API.getCronJobs();
-      } catch (e) {
-        logger.warn('[Dashboard] Cron data unavailable:', e);
-        this.cronData = null;
-      }
-
-      // Load token summary
-      try {
-        const [summary, byAgent] = await Promise.all([
-          API.getTokenSummary(),
-          API.getTokensByAgent(),
-        ]);
-        this.tokenData = { summary, byAgent };
-      } catch (e) {
-        logger.warn('[Dashboard] Token data unavailable:', e);
-        this.tokenData = null;
-      }
-
-      // Load health report
-      try {
-        this.healthData = await API.getHealthReport();
-      } catch (e) {
-        logger.warn('[Dashboard] Health report unavailable:', e);
-        this.healthData = null;
-      }
-
-      // Load MCP servers
-      await this.loadMCPServers();
+      // Load connector data (may not be available if no connectors configured)
+      await this.loadConnectorStatus();
+      await this.loadConnectorEvents();
 
       this.render();
       this.setStatus(`Last updated: ${new Date().toLocaleTimeString()}`);
@@ -267,38 +178,175 @@ export class DashboardModule {
   }
 
   /**
-   * Load MCP servers from API
+   * Load connector status from API
    */
-  async loadMCPServers(): Promise<void> {
+  async loadConnectorStatus(): Promise<void> {
     try {
-      const data = await API.get<McpServersResponse>('/api/mcp-servers');
-      if (data && 'servers' in data) {
-        this.mcpServers = data.servers || [];
-        this.renderMCPServers();
-      }
-    } catch (error) {
-      logger.error('Failed to load MCP servers:', error);
+      const data = await API.get<{ connectors: ConnectorStatusItem[] }>('/api/connectors/status');
+      this.connectorStatus = data?.connectors || [];
+    } catch {
+      this.connectorStatus = [];
     }
+    this.renderConnectorStatus();
+  }
+
+  /**
+   * Load connector events from API
+   */
+  async loadConnectorEvents(): Promise<void> {
+    try {
+      this.connectorEvents = await API.get<ConnectorEventsResponse>('/api/connectors/events');
+    } catch {
+      this.connectorEvents = null;
+    }
+    this.renderConnectorEvents();
   }
 
   /**
    * Render all dashboard sections
    */
   render(): void {
-    if (!this.data) {
+    if (!this.data) return;
+
+    this.renderConnectorStatus();
+    this.renderConnectorEvents();
+    this.renderMemoryStats();
+    this.renderGateways();
+    this.renderSystemHealth();
+    this.renderCronJobs();
+    this.renderTokenSummary();
+  }
+
+  /**
+   * Render connected apps panel
+   */
+  renderConnectorStatus(): void {
+    const container = getElementByIdOrNull<HTMLElement>('connector-status');
+    if (!container) return;
+
+    if (this.connectorStatus.length === 0) {
+      container.innerHTML = `
+        <div class="bg-white border border-gray-200 rounded-lg p-3 text-center">
+          <p class="text-sm text-gray-400">No connectors configured</p>
+          <p class="text-[10px] text-gray-300 mt-1">Use <code>mama connector add</code> to connect apps</p>
+        </div>
+      `;
       return;
     }
 
-    this.renderSystemHealth();
-    this.renderGateways();
-    this.renderMCPServers();
-    this.renderSessions();
-    this.renderAgentSwarm();
-    this.renderMemoryStats();
-    this.renderAgentConfig();
-    this.renderCronJobs();
-    this.renderTokenSummary();
-    this.renderTopTopics();
+    const connectorIcons: Record<string, string> = {
+      slack: '💬',
+      telegram: '✈️',
+      discord: '🎮',
+      chatwork: '💼',
+      gmail: '📧',
+      calendar: '📅',
+      notion: '📝',
+      obsidian: '📓',
+      sheets: '📊',
+      trello: '📋',
+      drive: '📁',
+      kagemusha: '🥷',
+      imessage: '💭',
+    };
+
+    const html = this.connectorStatus
+      .map((c) => {
+        const icon = connectorIcons[c.name] || '🔌';
+        const dot = c.enabled ? (c.healthy ? '🟢' : '🟡') : '⚪';
+        const lastPoll = c.lastPollTime ? this.formatRelativeTime(c.lastPollTime) : 'never';
+        const pollBtn = c.enabled
+          ? `<button data-action="poll-connector" data-connector-name="${escapeAttr(c.name)}"
+              class="text-[10px] text-gray-400 hover:text-mama-yellow-hover ml-auto">poll</button>`
+          : '';
+
+        return `
+          <div class="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2">
+            <span class="text-xs">${dot}</span>
+            <span class="text-sm">${icon}</span>
+            <div class="flex-1 min-w-0">
+              <span class="text-xs font-medium text-gray-900">${escapeHtml(c.name)}</span>
+              ${c.enabled ? `<span class="text-[10px] text-gray-400 ml-1">${lastPoll}</span>` : ''}
+            </div>
+            ${c.enabled && c.lastPollCount > 0 ? `<span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">${c.lastPollCount}</span>` : ''}
+            ${pollBtn}
+          </div>
+        `;
+      })
+      .join('');
+
+    container.innerHTML = html;
+  }
+
+  /**
+   * Render event stream timeline
+   */
+  renderConnectorEvents(): void {
+    const container = getElementByIdOrNull<HTMLElement>('connector-events');
+    const statsEl = getElementByIdOrNull<HTMLElement>('connector-event-stats');
+    if (!container) return;
+
+    if (!this.connectorEvents || this.connectorEvents.events.length === 0) {
+      container.innerHTML = `
+        <div class="text-sm text-gray-400 text-center py-6">No extraction events yet</div>
+      `;
+      if (statsEl) statsEl.textContent = '';
+      return;
+    }
+
+    const { events, stats } = this.connectorEvents;
+
+    if (statsEl) {
+      statsEl.textContent = `${stats.totalMemories} memories extracted · ${stats.total} events${stats.errors > 0 ? ` · ${stats.errors} errors` : ''}`;
+    }
+
+    const connectorIcons: Record<string, string> = {
+      activity: '📡',
+      spoke: '💬',
+      truth: '📊',
+      slack: '💬',
+      telegram: '✈️',
+      discord: '🎮',
+      chatwork: '💼',
+      gmail: '📧',
+      sheets: '📊',
+      trello: '📋',
+      drive: '📁',
+      notion: '📝',
+      obsidian: '📓',
+      kagemusha: '🥷',
+    };
+
+    const html = events
+      .slice(0, 50)
+      .map((ev) => {
+        const time = new Date(ev.timestamp).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        const icon = connectorIcons[ev.source] || '📡';
+        const isError = !!ev.error;
+
+        return `
+          <div class="flex items-start gap-2 py-1.5 border-b border-gray-50 last:border-0 ${isError ? 'bg-red-50' : ''}">
+            <span class="text-[10px] text-gray-400 mt-0.5 shrink-0">${time}</span>
+            <span class="text-sm shrink-0">${icon}</span>
+            <div class="flex-1 min-w-0">
+              <span class="text-xs font-medium text-gray-700">${escapeHtml(ev.channel)}</span>
+              ${
+                isError
+                  ? `<span class="text-[10px] text-red-500 ml-1">${escapeHtml(ev.error!)}</span>`
+                  : ev.memoriesExtracted > 0
+                    ? `<span class="text-[10px] text-green-600 ml-1">${ev.memoriesExtracted} memories</span>`
+                    : `<span class="text-[10px] text-gray-400 ml-1">no new memories</span>`
+              }
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    container.innerHTML = html;
   }
 
   /**
@@ -306,9 +354,7 @@ export class DashboardModule {
    */
   renderGateways(): void {
     const container = getElementByIdOrNull<HTMLElement>('dashboard-gateways');
-    if (!container || !this.data.gateways) {
-      return;
-    }
+    if (!container || !this.data?.gateways) return;
 
     const gateways = [
       { key: 'discord', name: 'Discord', icon: '💬', color: 'indigo' },
@@ -317,41 +363,17 @@ export class DashboardModule {
       { key: 'chatwork', name: 'Chatwork', icon: '💼', color: 'orange' },
     ];
 
-    // Count active bots
-    const enabledCount = gateways.filter((gw) => this.data.gateways[gw.key]?.enabled).length;
-    const configuredCount = gateways.filter((gw) => this.data.gateways[gw.key]?.configured).length;
-
-    // Update header with bot count
-    const header = container.previousElementSibling;
-    if (header && header.tagName === 'H2') {
-      header.innerHTML = `Gateway Status <span class="text-sm font-normal text-gray-500">(${enabledCount}/${configuredCount} active)</span>`;
-    }
-
     const html = gateways
       .map((gw) => {
-        const status = this.data.gateways[gw.key] || {};
+        const status = this.data!.gateways![gw.key] || {};
         const isConfigured = status.configured;
         const isEnabled = status.enabled;
 
         const statusBadge = isConfigured
           ? isEnabled
-            ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-600 font-medium">Enabled</span>`
-            : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-600 font-medium">Disabled</span>`
-          : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">Not Configured</span>`;
-
-        // Get channel info based on gateway type
-        let channelInfo = '';
-        if (isConfigured) {
-          if (gw.key === 'discord' && status.channel) {
-            channelInfo = `<span class="text-[10px] bg-mama-lavender-light text-gray-600 px-1.5 py-0.5 rounded">#${escapeHtml(status.channel)}</span>`;
-          } else if (gw.key === 'telegram' && status.chats?.length > 0) {
-            channelInfo = `<span class="text-[10px] bg-mama-lavender-light text-gray-600 px-1.5 py-0.5 rounded">${status.chats.length} chat(s)</span>`;
-          } else if (gw.key === 'slack' && status.channel) {
-            channelInfo = `<span class="text-[10px] bg-mama-lavender-light text-gray-600 px-1.5 py-0.5 rounded">#${escapeHtml(status.channel)}</span>`;
-          } else if (gw.key === 'chatwork' && status.rooms?.length > 0) {
-            channelInfo = `<span class="text-[10px] bg-mama-lavender-light text-gray-600 px-1.5 py-0.5 rounded">${status.rooms.length} room(s)</span>`;
-          }
-        }
+            ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-600 font-medium">Active</span>`
+            : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-600 font-medium">Off</span>`
+          : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">---</span>`;
 
         return `
           <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
@@ -360,212 +382,12 @@ export class DashboardModule {
               ${statusBadge}
             </div>
             <h3 class="font-semibold text-sm text-gray-900">${gw.name}</h3>
-            <div class="flex items-center gap-2 mt-1">
-              <p class="text-[10px] text-gray-500">
-                ${isConfigured ? 'Token ✓' : 'No token'}
-              </p>
-              ${channelInfo}
-            </div>
           </div>
         `;
       })
       .join('');
 
     container.innerHTML = html;
-  }
-
-  /**
-   * Render MCP servers
-   */
-  renderMCPServers(): void {
-    const container = getElementByIdOrNull<HTMLElement>('dashboard-mcp');
-    if (!container) {
-      return;
-    }
-
-    if (this.mcpServers.length === 0) {
-      container.innerHTML = `
-        <p class="text-gray-500 text-sm col-span-full py-4 text-center">
-          No MCP servers configured
-        </p>
-      `;
-      return;
-    }
-
-    const icons = {
-      'brave-devtools': '🌐',
-      'brave-search': '🔍',
-      mama: '🧠',
-      slack: '💬',
-      notion: '📝',
-      linear: '📊',
-      asana: '✅',
-      atlassian: '🔷',
-      ms365: '📧',
-      monday: '📅',
-      clickup: '✓',
-    };
-
-    const html = this.mcpServers
-      .map((server) => {
-        const icon = icons[server.name] || '🔌';
-        const isHttp = server.type === 'http';
-        const statusBadge = isHttp
-          ? 'bg-yellow-100 text-yellow-700'
-          : 'bg-green-100 text-green-700';
-        const statusText = isHttp ? 'OAuth' : 'Ready';
-
-        return `
-          <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
-            <div class="flex items-center justify-between mb-1">
-              <div class="flex items-center gap-2">
-                <span class="text-lg">${icon}</span>
-                <h4 class="font-semibold text-sm text-gray-900">${escapeHtml(server.name)}</h4>
-              </div>
-              <span class="text-[10px] px-1.5 py-0.5 rounded ${statusBadge}">${statusText}</span>
-            </div>
-            <p class="text-[10px] text-gray-500 truncate">${escapeHtml(server.type === 'http' ? server.url : server.command)}</p>
-          </div>
-        `;
-      })
-      .join('');
-
-    container.innerHTML = html;
-  }
-
-  /**
-   * Render session statistics
-   */
-  renderSessions(): void {
-    const container = getElementByIdOrNull<HTMLElement>('dashboard-sessions');
-    if (!container) {
-      return;
-    }
-
-    const sessions = this.data.sessions || { total: 0, bySource: {}, channels: [] };
-
-    if (sessions.total === 0) {
-      container.innerHTML = `
-        <p class="text-gray-500 text-sm text-center py-4">
-          No active sessions yet. Start chatting to create sessions.
-        </p>
-      `;
-      return;
-    }
-
-    // Source icons and labels
-    const sourceInfo = {
-      discord: { icon: '🎮', label: 'Discord', color: 'bg-indigo-100 text-indigo-700' },
-      telegram: { icon: '✈️', label: 'Telegram', color: 'bg-sky-100 text-sky-700' },
-      slack: { icon: '📱', label: 'Slack', color: 'bg-purple-100 text-purple-700' },
-      chatwork: { icon: '💼', label: 'Chatwork', color: 'bg-green-100 text-green-700' },
-      viewer: { icon: '🖥️', label: 'OS Viewer', color: 'bg-gray-100 text-gray-700' },
-      mobile: { icon: '📲', label: 'Mobile', color: 'bg-orange-100 text-orange-700' },
-    };
-
-    // Build source summary
-    const sourceSummary = Object.entries(sessions.bySource)
-      .map(([source, count]) => {
-        const info = sourceInfo[source] || {
-          icon: '📝',
-          label: source,
-          color: 'bg-gray-100 text-gray-700',
-        };
-        const safeLabel = escapeHtml(info.label);
-        return `<span class="inline-flex items-center gap-1 ${info.color} px-2 py-1 rounded text-xs font-medium">
-          ${info.icon} ${safeLabel}: ${count}
-        </span>`;
-      })
-      .join('');
-
-    // Build recent channels list
-    const channelList = sessions.channels
-      .slice(0, 5)
-      .map((ch) => {
-        const info = sourceInfo[ch.source] || {
-          icon: '📝',
-          label: ch.source,
-          color: 'bg-gray-100 text-gray-700',
-        };
-        const lastActive = this.formatRelativeTime(ch.lastActive);
-
-        // Use channel name if available, otherwise use meaningful fallbacks
-        let channelDisplay;
-        if (ch.channelName) {
-          // Show channel name (already human-readable)
-          channelDisplay =
-            ch.channelName.length > 25 ? ch.channelName.slice(0, 22) + '...' : ch.channelName;
-        } else if (ch.source === 'viewer' || ch.channelId === 'mama_os_main') {
-          // OS Viewer - shared channel
-          channelDisplay = 'MAMA OS';
-        } else if (ch.source === 'mobile') {
-          // Mobile app - show user-friendly name
-          channelDisplay = 'Mobile App';
-        } else {
-          // Fallback: truncate channel ID (Discord channels before update)
-          channelDisplay =
-            ch.channelId.length > 12
-              ? ch.channelId.slice(0, 6) + '...' + ch.channelId.slice(-4)
-              : ch.channelId;
-        }
-
-        return `
-          <div class="flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0">
-            <div class="flex items-center gap-2">
-              <span class="${info.color} px-1.5 py-0.5 rounded text-[10px] font-medium" title="${escapeHtml(info.label)}">${info.icon}</span>
-              <span class="text-xs text-gray-700" title="${escapeHtml(ch.channelId)}">${escapeHtml(channelDisplay)}</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">${ch.messageCount} turns</span>
-              <span class="text-[10px] text-gray-400">${lastActive}</span>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-
-    container.innerHTML = `
-      <div class="mb-3">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-gray-900">Sessions by Platform</span>
-          <span class="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full">${sessions.total} total</span>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          ${sourceSummary}
-        </div>
-      </div>
-      <div>
-        <p class="text-xs text-gray-500 mb-2">Recent Channels:</p>
-        ${channelList || '<p class="text-xs text-gray-400">No recent activity</p>'}
-      </div>
-    `;
-  }
-
-  /**
-   * Format relative time (e.g., "2h ago", "3d ago")
-   */
-  formatRelativeTime(timestamp: number | string | Date | undefined): string {
-    if (timestamp === undefined || timestamp === null || timestamp === '') {
-      return 'Never';
-    }
-
-    const now = Date.now();
-    const target = typeof timestamp === 'number' ? timestamp : new Date(timestamp).getTime();
-    const diff = now - target;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (minutes < 1) {
-      return 'Just now';
-    }
-    if (minutes < 60) {
-      return `${minutes}m ago`;
-    }
-    if (hours < 24) {
-      return `${hours}h ago`;
-    }
-    return `${days}d ago`;
   }
 
   /**
@@ -573,14 +395,11 @@ export class DashboardModule {
    */
   renderMemoryStats(): void {
     const container = getElementByIdOrNull<HTMLElement>('dashboard-memory');
-    if (!container || !this.data.memory) {
-      return;
-    }
+    if (!container || !this.data?.memory) return;
 
     const memory = this.data.memory;
-
     const stats = [
-      { label: 'Total Decisions', value: memory.total || 0, icon: '🧠' },
+      { label: 'Total Facts', value: memory.total || 0, icon: '🧠' },
       { label: 'This Week', value: memory.thisWeek || 0, icon: '📅' },
       { label: 'This Month', value: memory.thisMonth || 0, icon: '📆' },
       { label: 'Checkpoints', value: memory.checkpoints || 0, icon: '💾' },
@@ -602,387 +421,22 @@ export class DashboardModule {
   }
 
   /**
-   * Render agent configuration
+   * Format relative time (e.g., "2m ago", "3d ago")
    */
-  renderAgentConfig(): void {
-    const container = getElementByIdOrNull<HTMLElement>('dashboard-agent');
-    if (!container || !this.data.agent) {
-      return;
-    }
+  formatRelativeTime(timestamp: number | string | Date | undefined): string {
+    if (timestamp === undefined || timestamp === null || timestamp === '') return 'Never';
 
-    const agent = this.data.agent;
-    const heartbeat = this.data.heartbeat || {};
-    const friendlyModel = formatModelName(agent.model) || 'Not Set';
+    const now = Date.now();
+    const target = typeof timestamp === 'number' ? timestamp : new Date(timestamp).getTime();
+    const diff = now - target;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
 
-    container.innerHTML = `
-      <div class="mb-3 pb-3 border-b border-gray-200">
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-[10px] text-gray-500 uppercase tracking-wide">Current Model</p>
-            <p class="font-bold text-gray-900 text-sm">${escapeHtml(friendlyModel)}</p>
-            <p class="text-[10px] text-gray-400 font-mono">${escapeHtml(agent.model || 'Not configured')}</p>
-          </div>
-          <span class="text-2xl">🤖</span>
-        </div>
-      </div>
-      <div class="grid grid-cols-3 gap-3">
-        <div>
-          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Max Turns</p>
-          <p class="font-semibold text-gray-900 text-sm mt-0.5">${agent.maxTurns || 'N/A'}</p>
-        </div>
-        <div>
-          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Timeout</p>
-          <p class="font-semibold text-gray-900 text-sm mt-0.5">${this.formatTimeout(agent.timeout)}</p>
-        </div>
-        <div>
-          <p class="text-[10px] text-gray-500 uppercase tracking-wide">Heartbeat</p>
-          <p class="font-semibold text-gray-900 text-sm mt-0.5">
-            ${heartbeat.enabled ? `${Math.round((heartbeat.interval || 1800000) / 60000)}min` : 'Off'}
-          </p>
-        </div>
-      </div>
-      ${
-        heartbeat.enabled
-          ? `
-        <div class="mt-2 pt-2 border-t border-gray-200">
-          <p class="text-[10px] text-gray-500">
-            Quiet hours: ${heartbeat.quiet_start ?? heartbeat.quietStart ?? 23}:00 - ${
-              heartbeat.quiet_end ?? heartbeat.quietEnd ?? 8
-            }:00
-          </p>
-        </div>
-      `
-          : ''
-      }
-    `;
-  }
-
-  /**
-   * Render agent swarm section
-   * Sprint 3 F2: Multi-agent dashboard
-   */
-  renderAgentSwarm(): void {
-    const container = getElementByIdOrNull<HTMLElement>('dashboard-agent-swarm');
-    if (!container) {
-      return;
-    }
-
-    const multiAgent = this.multiAgentData || { enabled: false, agents: [] };
-
-    if (!multiAgent.enabled) {
-      container.innerHTML = `
-        <p class="text-gray-500 text-sm text-center py-4">
-          Multi-agent is not enabled. Enable in <a href="/viewer?tab=settings" class="text-indigo-600 hover:underline" data-action="open-settings">Settings</a>.
-        </p>
-      `;
-      return;
-    }
-
-    const agents = multiAgent.agents || [];
-
-    if (agents.length === 0) {
-      container.innerHTML = `
-        <p class="text-gray-500 text-sm text-center py-4">
-          No agents configured yet.
-        </p>
-      `;
-      return;
-    }
-
-    // Tier badge colors
-    const tierColors = {
-      1: { bg: 'bg-indigo-100', text: 'text-indigo-700', label: 'T1' },
-      2: { bg: 'bg-green-100', text: 'text-green-700', label: 'T2' },
-      3: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'T3' },
-    };
-
-    // Status icons (F2 enhanced)
-    const statusIcons = {
-      idle: '🟢', // 대기 중
-      online: '🟢', // 온라인 (fallback)
-      busy: '🟡', // 작업 중
-      starting: '🔵', // 시작 중
-      dead: '🔴', // 비정상 종료
-      offline: '🔴', // 오프라인
-      disabled: '⚪', // 비활성
-    };
-
-    // Status text labels
-    const statusLabels = {
-      idle: 'Ready',
-      online: 'Ready',
-      busy: 'Working...',
-      starting: 'Starting...',
-      dead: 'Error',
-      offline: 'Offline',
-      disabled: 'Disabled',
-    };
-
-    // Agent cards
-    const agentCards = agents
-      .map((agent) => {
-        const tier = tierColors[agent.tier] || tierColors[1];
-        const statusIcon = statusIcons[agent.status] || statusIcons.offline;
-        const statusLabel = statusLabels[agent.status] || 'Unknown';
-        const friendlyModel = formatModelName(agent.model) || agent.model || 'Default';
-
-        return `
-          <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
-            <div class="flex items-center justify-between mb-1.5">
-              <div class="flex items-center gap-2">
-                <span class="${tier.bg} ${tier.text} text-[10px] font-bold px-1.5 py-0.5 rounded">${tier.label}</span>
-                <span class="text-[10px]">${statusIcon} ${escapeHtml(statusLabel)}</span>
-              </div>
-            </div>
-            <h3 class="font-semibold text-sm text-gray-900">${escapeHtml(agent.name)}</h3>
-            <p class="text-[10px] text-gray-500 mt-0.5">${escapeHtml(friendlyModel)}</p>
-            ${
-              agent.lastActivity
-                ? `<p class="text-[10px] text-gray-400 mt-1">Last: ${this.formatRelativeTime(agent.lastActivity)}</p>`
-                : ''
-            }
-            <div class="flex gap-1 mt-2 pt-2 border-t border-gray-100">
-              <button
-                data-action="restart-agent"
-                data-agent-id="${escapeAttr(agent.id)}"
-                class="text-xs px-3 py-1.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                title="Restart agent"
-              >Restart</button>
-              ${
-                agent.status === 'busy'
-                  ? `<button
-                      data-action="stop-agent"
-                      data-agent-id="${escapeAttr(agent.id)}"
-                      class="text-xs px-3 py-1.5 rounded bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
-                      title="Stop agent"
-                    >Stop</button>`
-                  : ''
-              }
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-
-    // Recent delegations (F2 F4 API integration)
-    const delegationsData = this.delegationsData || { delegations: [], count: 0 };
-    const delegations = delegationsData.delegations || [];
-
-    // Status badge colors
-    const statusColors = {
-      completed: 'bg-green-100 text-green-700',
-      claimed: 'bg-yellow-100 text-yellow-700',
-      failed: 'bg-red-100 text-red-700',
-      pending: 'bg-gray-100 text-gray-700',
-    };
-
-    const delegationList =
-      delegations.length > 0
-        ? delegations
-            .slice(0, 5)
-            .map((del) => {
-              const statusColor = statusColors[del.status] || statusColors.pending;
-              const timestamp = del.completedAt || del.claimedAt;
-              return `
-            <div class="text-xs text-gray-700 py-1 border-b border-gray-100 last:border-0">
-              <span class="${statusColor} text-[10px] font-bold px-1 py-0.5 rounded">${escapeHtml(del.status)}</span>
-              <span class="font-medium">${escapeHtml(del.claimedBy || 'unknown')}</span>:
-              "${escapeHtml(del.description)}"
-              ${del.wave ? `<span class="text-gray-400">(wave ${del.wave})</span>` : ''}
-              ${timestamp ? `<span class="text-gray-400 text-[10px]"> ${this.formatRelativeTime(timestamp)}</span>` : ''}
-            </div>
-          `;
-            })
-            .join('')
-        : '<p class="text-xs text-gray-400">No recent delegations</p>';
-
-    // Active chains
-    const activeChains = multiAgent.activeChains || 0;
-    const chainBadge =
-      activeChains > 0
-        ? `<span class="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">${activeChains} active</span>`
-        : '<span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">0 active</span>';
-
-    container.innerHTML = `
-      <div class="mb-3">
-        <p class="text-xs text-gray-500 mb-2">Agent Team:</p>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-          ${agentCards}
-        </div>
-      </div>
-        <div class="mb-2 pb-2 border-b border-gray-200">
-        <div class="flex items-center justify-between mb-2">
-          <p class="text-xs text-gray-500">Delegation Chain:</p>
-          ${chainBadge}
-        </div>
-        <div class="bg-mama-lavender-light rounded p-2">
-          ${delegationList}
-        </div>
-      </div>
-    `;
-  }
-
-  /**
-   * Render top topics
-   */
-  renderTopTopics(): void {
-    const container = getElementByIdOrNull<HTMLElement>('dashboard-topics');
-    if (!container || !this.data.memory) {
-      return;
-    }
-
-    const topics = this.data.memory.topTopics || [];
-
-    if (topics.length === 0) {
-      container.innerHTML = `
-        <p class="text-gray-500 text-sm">No topics yet. Start making decisions!</p>
-      `;
-      return;
-    }
-
-    const counts = topics
-      .map((topic) => (Number.isFinite(topic.count) ? topic.count : 0))
-      .filter((count) => count >= 0);
-    const maxCount = Math.max(1, ...counts);
-
-    const html = topics
-      .map((topic) => {
-        const safeCount = Number.isFinite(topic.count) ? topic.count : 0;
-        return `
-        <div class="flex items-center gap-3 mb-2">
-          <div class="flex-1">
-            <div class="flex justify-between items-center mb-1">
-              <span class="text-sm font-medium text-gray-900">${escapeHtml(topic.topic)}</span>
-              <span class="text-xs text-gray-500">${safeCount}</span>
-            </div>
-            <div class="w-full bg-gray-200 rounded-full h-2">
-              <div class="bg-mama-yellow h-2 rounded-full" style="width: ${(safeCount / maxCount) * 100}%"></div>
-            </div>
-          </div>
-        </div>
-            `;
-      })
-      .join('');
-
-    container.innerHTML = html;
-  }
-
-  /**
-   * Format timeout in human readable format
-   */
-  formatTimeout(ms?: number): string {
-    if (!ms) {
-      return 'N/A';
-    }
-    if (ms < 60000) {
-      return `${Math.round(ms / 1000)}s`;
-    }
-    return `${Math.round(ms / 60000)}min`;
-  }
-
-  /**
-   * Render cron jobs section
-   */
-  renderCronJobs(): void {
-    const container = getElementByIdOrNull<HTMLElement>('dashboard-cron');
-    if (!container) {
-      return;
-    }
-
-    const jobs = this.cronData?.jobs || this.cronData || [];
-
-    if (!Array.isArray(jobs) || jobs.length === 0) {
-      container.innerHTML = `
-        <p class="text-gray-500 text-sm text-center py-4">
-          No cron jobs configured. Ask the agent to schedule a task or use the Settings tab.
-        </p>
-      `;
-      return;
-    }
-
-    const rows = jobs
-      .map((job) => {
-        const isEnabled = job.enabled !== false;
-        const statusBadge = isEnabled
-          ? '<span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-600">Active</span>'
-          : '<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Paused</span>';
-
-        const nextRun = job.nextRun
-          ? new Date(job.nextRun).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          : '-';
-
-        return `
-        <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-medium text-sm text-gray-900 truncate">${escapeHtml(job.name || job.id)}</span>
-              ${statusBadge}
-            </div>
-            <p class="text-xs text-gray-500 mt-0.5">
-              <code class="bg-gray-100 px-1 py-0.5 rounded text-[10px]">${escapeHtml(job.schedule || job.cron || '')}</code>
-              <span class="ml-2">Next: ${nextRun}</span>
-            </p>
-          </div>
-          <div class="flex items-center gap-1 ml-2 shrink-0">
-            <button class="text-xs px-2 py-1 bg-mama-yellow hover:bg-mama-yellow-hover text-mama-black rounded transition-colors"
-              data-action="run-cron"
-              data-cron-id="${escapeAttr(job.id)}" title="Run Now">
-              Run
-            </button>
-          </div>
-        </div>
-      `;
-      })
-      .join('');
-
-    container.innerHTML = `
-      <div class="space-y-0">
-        ${rows}
-      </div>
-    `;
-  }
-
-  /**
-   * Run a cron job immediately
-   */
-  async runCronJob(id: string): Promise<void> {
-    try {
-      await API.runCronJob(id);
-      const statusEl = getElementByIdOrNull<HTMLElement>('dashboard-status');
-      if (statusEl) {
-        statusEl.textContent = `Cron job "${id}" triggered`;
-      }
-      await this.loadStatus();
-    } catch (e) {
-      logger.error('[Dashboard] Failed to run cron job:', e);
-      const statusEl = getElementByIdOrNull<HTMLElement>('dashboard-status');
-      if (statusEl) {
-        const message = getErrorMessage(e);
-        statusEl.textContent = `Cron job "${id}" failed: ${message}`;
-      }
-    }
-  }
-
-  async restartAgent(agentId: string): Promise<void> {
-    try {
-      await API.restartAgent(agentId);
-      showToast(`Agent "${agentId}" restarted`);
-      await this.loadStatus();
-    } catch (e) {
-      logger.error('[Dashboard] Failed to restart agent:', e);
-      showToast(`Restart failed: ${getErrorMessage(e)}`);
-    }
-  }
-
-  async stopAgent(agentId: string): Promise<void> {
-    try {
-      await API.stopAgent(agentId);
-      showToast(`Agent "${agentId}" stopped`);
-      await this.loadStatus();
-    } catch (e) {
-      logger.error('[Dashboard] Failed to stop agent:', e);
-      showToast(`Stop failed: ${getErrorMessage(e)}`);
-    }
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
   }
 
   /**
@@ -990,9 +444,7 @@ export class DashboardModule {
    */
   renderSystemHealth(): void {
     const container = getElementByIdOrNull<HTMLElement>('dashboard-health');
-    if (!container) {
-      return;
-    }
+    if (!container) return;
 
     if (!this.healthData) {
       container.innerHTML = `
@@ -1013,7 +465,6 @@ export class DashboardModule {
           ? 'bg-yellow-100 text-yellow-700'
           : 'bg-red-100 text-red-700';
 
-    // Render checks list (new connection-based health)
     const checks: HealthCheckItem[] = h.checks || [];
     const checksHtml =
       checks.length > 0
@@ -1041,7 +492,6 @@ export class DashboardModule {
             .join('')
         : '';
 
-    // Fallback: legacy component cards if no checks available
     const rawComponents = h.components || {};
     let legacyCardsHtml = '';
     if (checks.length === 0) {
@@ -1091,14 +541,12 @@ export class DashboardModule {
    */
   renderTokenSummary(): void {
     const container = getElementByIdOrNull<HTMLElement>('dashboard-tokens');
-    if (!container) {
-      return;
-    }
+    if (!container) return;
 
     if (!this.tokenData?.summary) {
       container.innerHTML = `
         <p class="text-gray-500 text-sm text-center py-4">
-          Token tracking not yet available. Usage data will appear after conversations.
+          Token tracking not yet available.
         </p>
       `;
       return;
@@ -1108,26 +556,17 @@ export class DashboardModule {
     const agents = this.tokenData.byAgent?.agents || [];
 
     const formatTokens = (n: number | undefined): string => {
-      if (!n || n === 0) {
-        return '0';
-      }
-      if (n >= 1000000) {
-        return (n / 1000000).toFixed(1) + 'M';
-      }
-      if (n >= 1000) {
-        return (n / 1000).toFixed(1) + 'K';
-      }
+      if (!n || n === 0) return '0';
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
       return n.toString();
     };
 
     const formatCost = (usd: number | undefined): string => {
-      if (!usd || usd === 0) {
-        return '$0.00';
-      }
+      if (!usd || usd === 0) return '$0.00';
       return '$' + usd.toFixed(2);
     };
 
-    // Summary cards
     const periods = [
       {
         label: 'Today',
@@ -1162,7 +601,6 @@ export class DashboardModule {
       )
       .join('');
 
-    // Agent breakdown (mini bar chart)
     const maxTokens = Math.max(
       ...agents.map((a) => (a.input_tokens || 0) + (a.output_tokens || 0)),
       1
@@ -1200,6 +638,89 @@ export class DashboardModule {
           : ''
       }
     `;
+  }
+
+  /**
+   * Render cron jobs section
+   */
+  renderCronJobs(): void {
+    const container = getElementByIdOrNull<HTMLElement>('dashboard-cron');
+    if (!container) return;
+
+    const jobs = this.cronData?.jobs || this.cronData || [];
+
+    if (!Array.isArray(jobs) || jobs.length === 0) {
+      container.innerHTML = `
+        <p class="text-gray-500 text-sm text-center py-4">
+          No cron jobs configured.
+        </p>
+      `;
+      return;
+    }
+
+    const rows = jobs
+      .map((job) => {
+        const isEnabled = job.enabled !== false;
+        const statusBadge = isEnabled
+          ? '<span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-600">Active</span>'
+          : '<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Paused</span>';
+
+        const nextRun = job.nextRun
+          ? new Date(job.nextRun).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : '-';
+
+        return `
+        <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-medium text-sm text-gray-900 truncate">${escapeHtml(job.name || job.id)}</span>
+              ${statusBadge}
+            </div>
+            <p class="text-xs text-gray-500 mt-0.5">
+              <code class="bg-gray-100 px-1 py-0.5 rounded text-[10px]">${escapeHtml(job.schedule || job.cron || '')}</code>
+              <span class="ml-2">Next: ${nextRun}</span>
+            </p>
+          </div>
+          <div class="flex items-center gap-1 ml-2 shrink-0">
+            <button class="text-xs px-2 py-1 bg-mama-yellow hover:bg-mama-yellow-hover text-mama-black rounded transition-colors"
+              data-action="run-cron"
+              data-cron-id="${escapeAttr(job.id)}" title="Run Now">
+              Run
+            </button>
+          </div>
+        </div>
+      `;
+      })
+      .join('');
+
+    container.innerHTML = `<div class="space-y-0">${rows}</div>`;
+  }
+
+  /**
+   * Run a cron job immediately
+   */
+  async runCronJob(id: string): Promise<void> {
+    try {
+      await API.runCronJob(id);
+      this.setStatus(`Cron job "${id}" triggered`);
+      await this.loadStatus();
+    } catch (e) {
+      logger.error('[Dashboard] Failed to run cron job:', e);
+      this.setStatus(`Cron job "${id}" failed: ${getErrorMessage(e)}`, 'error');
+    }
+  }
+
+  /**
+   * Trigger a manual connector poll
+   */
+  async triggerPoll(name: string): Promise<void> {
+    try {
+      await API.post(`/api/connectors/${name}/poll`, {});
+      showToast(`Poll triggered for ${name}`);
+    } catch (e) {
+      logger.error('[Dashboard] Failed to trigger poll:', e);
+      showToast(`Poll failed: ${getErrorMessage(e)}`);
+    }
   }
 
   /**
