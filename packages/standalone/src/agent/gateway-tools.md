@@ -5,6 +5,7 @@ Call tools via JSON block:
 ```tool_call
 {"name": "tool_name", "input": {"param1": "value1"}}
 ```
+
 ## MAMA Memory
 
 - **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
@@ -14,6 +15,13 @@ Call tools via JSON block:
 - **mama_load_checkpoint**() — Resume session. No params.
 - **mama_add**(content) — Auto-extract and save facts from conversation content via Haiku
 - **mama_ingest**(content, scopes?, source?) — Ingest raw content into memory v2
+
+## Business Data (progressive exploration: overview -> entities -> tasks -> messages)
+
+- **kagemusha_overview**((none)) — Get overview: room/task/message counts across all channels
+- **kagemusha_entities**(channel?, activeOnly?, limit?) — List people and project channels with activity stats
+- **kagemusha_tasks**(sourceRoom?, status?, priority?, search?, limit?) — Query tasks by room, status, priority, or text search
+- **kagemusha_messages**(channelId (required), since?, limit?, search?) — Read raw messages from a specific channel (follow entities -> tasks -> messages)
 
 ## Utility
 
@@ -67,6 +75,11 @@ Call tools via JSON block:
 ## Code-Act Sandbox
 
 - **code_act**() — Execute JavaScript in sandboxed QuickJS
+
+## Multi-Agent Delegation
+
+- **delegate**(agentId, task, background?) — Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Returns the agent's response.
+
 ## Sending Media to Webchat
 
 To display images in webchat, you MUST include the full file path in your response text.
