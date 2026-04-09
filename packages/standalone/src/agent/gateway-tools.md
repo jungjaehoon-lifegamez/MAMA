@@ -80,6 +80,10 @@ Call tools via JSON block:
 
 - **delegate**(agentId, task, background?) — Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Returns the agent's response.
 
+## System
+
+- **agent_notices**(limit?) — Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.
+
 ## Sending Media to Webchat
 
 To display images in webchat, you MUST include the full file path in your response text.

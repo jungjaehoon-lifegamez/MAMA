@@ -22,7 +22,8 @@ export type ToolCategory =
   | 'playground'
   | 'webchat'
   | 'code_act'
-  | 'multi_agent';
+  | 'multi_agent'
+  | 'system';
 
 export interface ToolDefinitionMeta {
   name: GatewayToolName;
@@ -297,6 +298,15 @@ register({
   params: 'channelId (required), since?, limit?, search?',
 });
 
+// System tools
+register({
+  name: 'agent_notices',
+  description:
+    'Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.',
+  category: 'system',
+  params: 'limit?',
+});
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export class ToolRegistry {
@@ -395,6 +405,7 @@ export class ToolRegistry {
       webchat: 'Webchat',
       code_act: 'Code-Act Sandbox',
       multi_agent: 'Multi-Agent Delegation',
+      system: 'System',
     };
 
     const sections: string[] = ['# Gateway Tools\n'];
