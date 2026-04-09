@@ -2094,29 +2094,65 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    // Synchronous delegation: get persistent process, execute, return result
-    try {
-      const source = this.currentSource || 'viewer';
-      const channelId = this.currentChannelId || 'default';
-      const process = await this.agentProcessManager.getProcess(source, channelId, agentId);
+    // Synchronous delegation with retry + backoff for resilience
+    const source = this.currentSource || 'viewer';
+    const channelId = this.currentChannelId || 'default';
+    const startTime = Date.now();
 
-      const delegationPrompt = this.delegationManagerRef.buildDelegationPrompt(sourceAgentId, task);
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
 
-      const startTime = Date.now();
-      const result = await process.sendMessage(delegationPrompt);
-      const duration = Date.now() - startTime;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const process = await this.agentProcessManager.getProcess(source, channelId, agentId);
 
-      return {
-        success: true,
-        data: { agentId, response: result.response, duration_ms: duration },
-      } as GatewayToolResult;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      return {
-        success: false,
-        error: `Delegation to ${agentId} failed: ${errMsg}`,
-      } as GatewayToolResult;
+        let delegationPrompt = this.delegationManagerRef.buildDelegationPrompt(sourceAgentId, task);
+
+        // Inject channel history for fresh processes (no prior context)
+        const sessionId = process.getSessionId?.();
+        if (!sessionId || attempt > 0) {
+          // Fresh process or retried after crash — inject channel history for context
+          try {
+            const { getChannelHistory } = await import('../gateways/channel-history.js');
+            const channelHistory = getChannelHistory();
+            if (channelHistory) {
+              const historyContext = channelHistory.formatForContext(channelId, '', agentId);
+              if (historyContext) {
+                delegationPrompt = `${historyContext}\n\n${delegationPrompt}`;
+              }
+            }
+          } catch {
+            // Channel history injection is best-effort — proceed without it
+          }
+        }
+
+        const result = await process.sendMessage(delegationPrompt);
+        return {
+          success: true,
+          data: { agentId, response: result.response, duration_ms: Date.now() - startTime },
+        } as GatewayToolResult;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        const isBusy = lastError.message.includes('busy');
+        const isCrash = lastError.message.includes('exited with code');
+
+        if (isCrash) {
+          // Force remove crashed process so next getProcess() creates a fresh one
+          this.agentProcessManager.stopProcess(source, channelId, agentId);
+        }
+
+        if (attempt < MAX_RETRIES - 1 && (isBusy || isCrash)) {
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1))); // 1s, 2s backoff
+          continue;
+        }
+        break;
+      }
     }
+
+    return {
+      success: false,
+      error: `Delegation to ${agentId} failed after ${MAX_RETRIES} attempts: ${lastError?.message}`,
+    } as GatewayToolResult;
   }
 
   private async executeCodeAct(input: { code: string }): Promise<GatewayToolResult> {
